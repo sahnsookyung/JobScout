@@ -1,0 +1,13 @@
+{
+  "00-index.md": "srs_tasks/00-index.md",
+  "01-platform-foundations.md": "srs_tasks/01-platform-foundations.md",
+  "02-job-search-service-jobspy.md": "srs_tasks/02-job-search-service-jobspy.md",
+  "03-job-inbox-tracker.md": "srs_tasks/03-job-inbox-tracker.md",
+  "04-matching-semantic-engine.md": "srs_tasks/04-matching-semantic-engine.md",
+  "05-tailoring-generation-diff-exports.md": "srs_tasks/05-tailoring-generation-diff-exports.md",
+  "06-quality-filters-service.md": "srs_tasks/06-quality-filters-service.md",
+  "07-dedup-clustering.md": "srs_tasks/07-dedup-clustering.md",
+  "08-notifications-digests-reminders.md": "srs_tasks/08-notifications-digests-reminders.md",
+  "09-privacy-byok-local-retention.md": "srs_tasks/09-privacy-byok-local-retention.md",
+  "10-observability-ci-cd.md": "srs_tasks/10-observability-ci-cd.md"
+}
