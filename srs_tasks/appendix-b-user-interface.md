@@ -1,0 +1,2 @@
+# User interface additional idea
+We could also provide an endpoint by which they can interact with the filtered out JDs. The user could look at each JD and swipe left or right to mark it as not interested or interested. This can then be used for feedback as to generate a resume or not. 

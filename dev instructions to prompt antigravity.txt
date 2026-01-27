@@ -1,0 +1,38 @@
+We should use a postgres DB to store the jobs that are returned from the jobspy API calls. It is very important that we also store the vector embeddings for retrieval later, so we can filter by resume and calculate scores.
+
+Prior to storing the data, once we received the data from the jobspy API calls, we want to perform ETL, using simple Requirements lookups first, but if that doens't work calling an LLM to investigate the description and extract requirements.
+
+Investigate the srs_tasks to get an idea of the app dev context.
+
+
+Recommended Workflow (ETL)
+1. Extract (Scraper/JobSpy):
+- GET /api/v1/search_jobs → Returns 50 raw job objects (Title, Company, Description).
+- Output: Raw JSON.
+
+2. Triage (Main App):
+- Check DB: "Do we already have this job_url?"
+- Filter out duplicates.
+*Regarding 2: apply stage 1 and stage 2 to filter out duplicates.*
+Stage 1: The "Strict" Hash (Canonical ID)
+Create a deterministic hash of the core immutable fields. If this matches, it's 100% a duplicate.
+Formula: SHA256(lowercase(Company) + lowercase(JobTitle) + lowercase(City))
+Why: "Software Engineer" at "Google" in "Tokyo" is likely the same job, regardless of the board.
+Limitation: Fails if one board says "Senior Engineer" and another says "Sr. Engineer".
+
+Stage 2: Fuzzy Metadata Match (The "Likely" Check)
+If Stage 1 fails, check for "highly similar" metadata within a short time window (e.g., posted in the last 7 days).
+Company: Jaro-Winkler distance > 0.9 (Handles "Google" vs "Google Inc.")
+Title: Token sort ratio > 80% (Handles "Senior Engineer - Backend" vs "Backend Senior Engineer")
+Location: Exact match or geohash proximity.
+Action: If these match, flag as potential_duplicate.
+
+3. Transform (Main App Worker):
+- For each new job description:
+- Call LLM: "Extract skills, responsibilities, and constraints from this text as a JSON list."
+- Call Embedding Model: Convert each extracted item to a vector.
+
+4. Load (Main App):
+- Insert into job_post and job_requirement_unit.
+
+
