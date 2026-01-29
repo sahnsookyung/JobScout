@@ -1,9 +1,9 @@
 import json
 import logging
 import os
-from main_driver.database import db_session_scope
-from main_driver.etl import ETLProcessor
-from main_driver.models import JobPost, JobRequirementUnit
+from job_scout_hub.database.database import db_session_scope
+from job_scout_hub.etl.etl import ETLProcessor
+from job_scout_hub.database.models import JobPost, JobRequirementUnit
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -14,7 +14,7 @@ def run_test():
     logger.info("Initializing DB...")
     # We might need to wait for Postgres to be ready if running in docker-compose for the first time
     # But init_db has retries.
-    from main_driver.init_db import init_db
+    from job_scout_hub.database.init_db import init_db
     init_db()
 
     # 2. Load Data
@@ -29,7 +29,7 @@ def run_test():
 
     # 3. Process Data
     with db_session_scope() as session:
-        processor = ETLProcessor(session)
+        processor = ETLProcessor(session, mock_mode=True)
         
         for entry in data:
             site = entry.get('site')
@@ -39,7 +39,7 @@ def run_test():
                  try:
                      site_list = ast.literal_eval(site)
                      site = site_list[0]
-                 except:
+                 except (ValueError, SyntaxError):
                      pass
             elif isinstance(site, list):
                 site = site[0]

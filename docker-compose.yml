@@ -18,9 +18,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  # This is your Main Driver container
+  # This is your Main Driver container (renamed context, kept service name for now)
   main-driver:
-    build: ./main_driver
+    build:
+      context: ./job_scout_hub
+      dockerfile: Dockerfile
     depends_on:
       - jobspy-service
       - postgres
@@ -29,6 +31,18 @@ services:
       - DATABASE_URL=postgresql://user:password@postgres:5432/jobscout
     volumes:
       - ./api_responses.json:/app/api_responses.json # Mount for testing
+      - ./job_scout_hub:/app/job_scout_hub # Live code reload
+      - ./job_scout_hub/config.yaml:/app/job_scout_hub/config.yaml
+
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: user@example.com
+      PGADMIN_DEFAULT_PASSWORD: password
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
 
 volumes:
   postgres_data:

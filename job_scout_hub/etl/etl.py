@@ -2,19 +2,46 @@ import hashlib
 import json
 import logging
 import random
+import os
 from typing import Dict, List, Optional, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from main_driver.models import JobPost, JobPostSource, JobPostContent, JobRequirementUnit, JobRequirementUnitEmbedding
-from main_driver.database import db_session_scope
+from job_scout_hub.database.models import JobPost, JobPostSource, JobPostContent, JobRequirementUnit, JobRequirementUnitEmbedding
+from job_scout_hub.database.database import db_session_scope
+from openai import OpenAI
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ETLProcessor:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, mock_mode: bool = True, llm_config: Optional[Dict[str, Any]] = None):
         self.db = db
+        self.mock_mode = mock_mode
+        self.openai_client = None
+        
+        if not self.mock_mode:
+            # Extract config values with defaults
+            llm_config = llm_config or {}
+            api_key = llm_config.get('api_key') or os.environ.get("OPENAI_API_KEY")
+            base_url = llm_config.get('base_url')
+            
+            self.extraction_model = llm_config.get('extraction_model', 'gpt-4o-mini')
+            self.embedding_model = llm_config.get('embedding_model', 'text-embedding-3-small')
+            self.embedding_dimensions = llm_config.get('embedding_dimensions', 768)
+            
+            if not api_key and not base_url:
+                logger.warning("No API key or base_url found. Falling back to mock mode.")
+                self.mock_mode = True
+            else:
+                # Create client with optional base_url for local models
+                client_kwargs = {}
+                if api_key:
+                    client_kwargs['api_key'] = api_key
+                if base_url:
+                    client_kwargs['base_url'] = base_url
+                    
+                self.openai_client = OpenAI(**client_kwargs)
 
     def calculate_canonical_fingerprint(self, company: str, title: str, location_text: str) -> str:
         """
@@ -32,7 +59,6 @@ class ETLProcessor:
     def extract_requirements_mock(self, description: str) -> List[Dict[str, Any]]:
         """
         Mock LLM extraction. Returns dummy requirements.
-        In production, this would call OpenAI/Anthropic.
         """
         # Simple heuristic for testing: split by newlines and take a few
         lines = [l.strip() for l in description.split('\n') if len(l.strip()) > 20]
@@ -46,11 +72,60 @@ class ETLProcessor:
             })
         return units
 
+    def extract_requirements_openai(self, description: str) -> List[Dict[str, Any]]:
+        prompt = f"""
+        Extract job requirements from the following job description. 
+        Return a JSON object with a key 'requirements' containing a list of objects.
+        Each object should have:
+        - 'req_type': one of ['required', 'preferred', 'responsibility', 'benefit', 'other']
+        - 'text': the extracted text (concise)
+        - 'tags': a list of keywords (optional)
+        
+        Job Description:
+        {description[:4000]}
+        """
+        try:
+            response = self.openai_client.chat.completions.create(
+                model=self.extraction_model,
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that extracts structured data from job descriptions."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={ "type": "json_object" }
+            )
+            content = response.choices[0].message.content
+            data = json.loads(content)
+            requirements = data.get('requirements', [])
+            
+            # Add ordinal
+            for i, req in enumerate(requirements):
+                req['ordinal'] = i
+            return requirements
+            
+        except Exception as e:
+            logger.error(f"OpenAI extraction failed: {e}")
+            return self.extract_requirements_mock(description)
+
     def generate_embedding_mock(self, _: str) -> List[float]:
         """
         Mock embedding generation. Returns random 768-dim vector.
         """
-        return [random.random() for _ in range(768)]
+        # pgvector (vector(768)) requires exactly 768 dimensions
+        return [random.random() for _ in range(768)] # Keep at 768 to match model definition if that's what we kept
+
+    # Note: If changing to text-embedding-3-small, dimension is 1536 by default. 
+    # If keeping 768 in DB, use dimensions=768 param in API call (supported in v3 models).
+    def generate_embedding_openai(self, text: str) -> List[float]:
+        try:
+            response = self.openai_client.embeddings.create(
+                input=text,
+                model=self.embedding_model,
+                dimensions=self.embedding_dimensions
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            logger.error(f"OpenAI embedding failed: {e}")
+            return self.generate_embedding_mock(text)
 
     def _normalize_location(self, location: Any) -> str:
         location_text = "Unknown"
@@ -81,7 +156,7 @@ class ETLProcessor:
             self.db.add(job_post)
             self.db.flush()
         return job_post
-
+    
     def _get_or_create_source(self, job_post_id: Any, site_name: str, job_data: Dict[str, Any]):
         job_url = job_data.get('job_url')
         existing_source = self.db.execute(
@@ -120,19 +195,27 @@ class ETLProcessor:
         if not job_data.get('description'):
             return
 
-        requirements = self.extract_requirements_mock(job_data.get('description'))
+        if self.mock_mode:
+            requirements = self.extract_requirements_mock(job_data.get('description'))
+        else:
+            requirements = self.extract_requirements_openai(job_data.get('description'))
+            
         for req in requirements:
             jru = JobRequirementUnit(
                 job_post_id=job_post_id,
-                req_type=req['req_type'],
-                text=req['text'],
-                tags=req['tags'],
-                ordinal=req['ordinal']
+                req_type=req.get('req_type', 'required'),
+                text=req.get('text', ''),
+                tags=req.get('tags', {}),
+                ordinal=req.get('ordinal', 0)
             )
             self.db.add(jru)
             self.db.flush() 
             
-            vector = self.generate_embedding_mock(req['text'])
+            if self.mock_mode:
+                vector = self.generate_embedding_mock(req.get('text', ''))
+            else:
+                vector = self.generate_embedding_openai(req.get('text', ''))
+            
             embedding = JobRequirementUnitEmbedding(
                 job_requirement_unit_id=jru.id,
                 embedding=vector

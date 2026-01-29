@@ -1,8 +1,0 @@
-sqlalchemy
-psycopg2-binary
-pgvector
-requests
-openai
-tenacity
-pydantic
-python-dotenv
