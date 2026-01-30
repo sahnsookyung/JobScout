@@ -126,7 +126,7 @@ class JobRequirementUnitEmbedding(Base):
     __tablename__ = 'job_requirement_unit_embedding'
     
     job_requirement_unit_id = Column(UUID(as_uuid=True), ForeignKey('job_requirement_unit.id', ondelete='CASCADE'), primary_key=True)
-    embedding = Column(Vector(768), nullable=False)
+    embedding = Column(Vector(1024), nullable=False)  # qwen3-embedding:4b uses 1024 dimensions
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
     
     unit = relationship("JobRequirementUnit", back_populates="embedding_row")

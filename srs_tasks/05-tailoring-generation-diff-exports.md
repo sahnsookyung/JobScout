@@ -59,3 +59,6 @@ And returns:
 ## Risks / gotchas
 - Diffing natural language is tricky; keep deterministic formatting before diff.
 - DOCX generation is often the most brittle—treat it as a first-class test surface.
+
+## Important considerations
+- Also check which country the company is based in and make sure to generate resume improvement criteria that we can use to improve the resume.

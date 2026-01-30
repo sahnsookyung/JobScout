@@ -1,5 +1,6 @@
 import hashlib
 import json
+import requests
 import logging
 import random
 import os
@@ -26,7 +27,13 @@ class ETLProcessor:
             api_key = llm_config.get('api_key') or os.environ.get("OPENAI_API_KEY")
             base_url = llm_config.get('base_url')
             
+            # Extraction configuration
+            self.extraction_type = llm_config.get('extraction_type', 'openai')
             self.extraction_model = llm_config.get('extraction_model', 'gpt-4o-mini')
+            self.extraction_url = llm_config.get('extraction_url')
+            self.extraction_labels = llm_config.get('extraction_labels', [])
+            
+            # Embedding configuration
             self.embedding_model = llm_config.get('embedding_model', 'text-embedding-3-small')
             self.embedding_dimensions = llm_config.get('embedding_dimensions', 768)
             
@@ -105,13 +112,71 @@ class ETLProcessor:
         except Exception as e:
             logger.error(f"OpenAI extraction failed: {e}")
             return self.extract_requirements_mock(description)
+    
+    def extract_requirements_gliner(self, description: str) -> List[Dict[str, Any]]:
+        """
+        Extract requirements using GLiNER entity extraction service.
+        """
+        if not self.extraction_url:
+            logger.warning("GLiNER extraction_url not configured, falling back to mock")
+            return self.extract_requirements_mock(description)
+        
+        try:
+            payload = {
+                "text": description[:4000],  # Truncate long descriptions
+                "labels": self.extraction_labels if self.extraction_labels else None,
+                "threshold": 0.3
+            }
+            
+            response = requests.post(
+                self.extraction_url,
+                json=payload,
+                timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            # Convert GLiNER entities to requirement format
+            entities = data.get('entities', [])
+            requirements = []
+            ordinal = 0
+            
+            for entity in entities:
+                # Map entity labels to requirement types
+                label = entity.get('label', '')
+                if label in ['responsibility']:
+                    req_type = 'responsibility'
+                elif label in ['benefit']:
+                    req_type = 'benefit'
+                elif label in ['experience_years', 'education_degree', 'certification']:
+                    req_type = 'required'
+                else:
+                    req_type = 'required'  # Default for skills, languages, etc.
+                
+                requirements.append({
+                    'req_type': req_type,
+                    'text': entity.get('text', ''),
+                    'tags': {
+                        'entity_label': label,
+                        'confidence': entity.get('score', 0.0)
+                    },
+                    'ordinal': ordinal
+                })
+                ordinal += 1
+            
+            logger.info(f"GLiNER extracted {len(requirements)} entities")
+            return requirements
+            
+        except Exception as e:
+            logger.error(f"GLiNER extraction failed: {e}")
+            return self.extract_requirements_mock(description)
 
     def generate_embedding_mock(self, _: str) -> List[float]:
         """
         Mock embedding generation. Returns random 768-dim vector.
         """
         # pgvector (vector(768)) requires exactly 768 dimensions
-        return [random.random() for _ in range(768)] # Keep at 768 to match model definition if that's what we kept
+        return [random.random() for _ in range(1024)] # Match qwen3-embedding:4b dimensions
 
     # Note: If changing to text-embedding-3-small, dimension is 1536 by default. 
     # If keeping 768 in DB, use dimensions=768 param in API call (supported in v3 models).
@@ -197,7 +262,9 @@ class ETLProcessor:
 
         if self.mock_mode:
             requirements = self.extract_requirements_mock(job_data.get('description'))
-        else:
+        elif self.extraction_type == 'gliner':
+            requirements = self.extract_requirements_gliner(job_data.get('description'))
+        else:  # 'openai' or default
             requirements = self.extract_requirements_openai(job_data.get('description'))
             
         for req in requirements:

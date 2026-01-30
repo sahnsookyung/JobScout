@@ -24,7 +24,10 @@ class JobSpyConfig(BaseModel):
 class LlmConfig(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
-    extraction_model: str = "gpt-4o-mini"
+    extraction_model: Optional[str] = "gpt-4o-mini"
+    extraction_url: Optional[str] = None  # GLiNER endpoint
+    extraction_type: str = "openai"  # "openai" or "gliner"
+    extraction_labels: Optional[List[str]] = None  # GLiNER labels
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 768
 

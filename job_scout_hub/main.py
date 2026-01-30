@@ -98,6 +98,9 @@ def run_cycle():
             'base_url': config.etl.llm.base_url,
             'api_key': config.etl.llm.api_key,
             'extraction_model': config.etl.llm.extraction_model,
+            'extraction_type': config.etl.llm.extraction_type,
+            'extraction_url': config.etl.llm.extraction_url,
+            'extraction_labels': config.etl.llm.extraction_labels,
             'embedding_model': config.etl.llm.embedding_model,
             'embedding_dimensions': config.etl.llm.embedding_dimensions,
         }

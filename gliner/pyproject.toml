@@ -1,0 +1,11 @@
+[project]
+name = "gliner-service"
+version = "0.1.0"
+description = "GLiNER entity extraction service"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "gliner>=0.2.0",
+    "pydantic>=2.0.0",
+]

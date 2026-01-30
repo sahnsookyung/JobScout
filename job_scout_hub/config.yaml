@@ -6,13 +6,32 @@ jobspy:
   # url: "http://localhost:8000" # This is the host for JobSpy when running main.py locally
 
 etl:
-  mock: true # Set to false to use real OpenAI API
+  mock: false # Using local AI stack
   llm:
-    base_url: null # Set to local endpoint like "http://localhost:11434/v1" for Ollama
-    api_key: null # Optional for local models, required for OpenAI
-    extraction_model: "gpt-4o-mini"
-    embedding_model: "text-embedding-3-small"
-    embedding_dimensions: 768
+    # Ollama for embeddings (OpenAI-compatible API)
+    base_url: "http://ollama:11434/v1"
+    api_key: "ollama" # Dummy key for local Ollama
+    
+    # GLiNER for entity extraction
+    extraction_url: "http://gliner:8001/extract"
+    extraction_type: "gliner" # Use "openai" for GPT-based extraction
+    
+    # Model configurations
+    embedding_model: "qwen3-embedding:4b"
+    embedding_dimensions: 1024 # qwen3-embedding:4b uses 1024 dimensions
+    
+    # GLiNER extraction labels (aligned with SRS)
+    extraction_labels:
+      - "programming_language"
+      - "framework"
+      - "tool"
+      - "platform"
+      - "skill"
+      - "experience_years"
+      - "education_degree"
+      - "certification"
+      - "responsibility"
+      - "benefit"
 
 schedule:
   interval_seconds: 3600  # Run every hour
