@@ -2,7 +2,6 @@ import hashlib
 import json
 import requests
 import logging
-import random
 import os
 from typing import Dict, List, Optional, Any
 from sqlalchemy.orm import Session
@@ -17,42 +16,34 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ETLProcessor:
-    def __init__(self, db: Session, mock_mode: bool = True, llm_config: Optional[Dict[str, Any]] = None):
+    def __init__(self, db: Session, llm_config: Optional[Dict[str, Any]] = None):
         self.db = db
-        self.mock_mode = mock_mode
-        self.openai_client = None
+        llm_config = llm_config or {}
         
-        if not self.mock_mode:
-            # Extract config values with defaults
-            llm_config = llm_config or {}
-            api_key = llm_config.get('api_key') or os.environ.get("OPENAI_API_KEY")
-            base_url = llm_config.get('base_url')
-            
-            # Extraction configuration
-            self.extraction_type = llm_config.get('extraction_type', 'openai')
-            self.extraction_model = llm_config.get('extraction_model')
-            
-            if not self.extraction_model:
-                self.extraction_model = 'qwen3:14b' if self.extraction_type == 'ollama' else 'gpt-4o-mini' 
+        api_key = llm_config.get('api_key') or os.environ.get("OPENAI_API_KEY")
+        base_url = llm_config.get('base_url')
+        
+        # Extraction configuration
+        self.extraction_type = llm_config.get('extraction_type', 'openai')
+        self.extraction_model = llm_config.get('extraction_model')
+        
+        if not self.extraction_model:
+            self.extraction_model = 'qwen3:14b' if self.extraction_type == 'ollama' else Exception("No extraction model specified")
 
-            self.extraction_labels = llm_config.get('extraction_labels', [])
+        self.extraction_labels = llm_config.get('extraction_labels', [])
+        
+        # Embedding configuration
+        self.embedding_model = llm_config.get('embedding_model', 'text-embedding-3-small')
+        self.embedding_dimensions = llm_config.get('embedding_dimensions', 768)
+        
+        # Create client with optional base_url for local models
+        client_kwargs = {}
+        if api_key:
+            client_kwargs['api_key'] = api_key
+        if base_url:
+            client_kwargs['base_url'] = base_url
             
-            # Embedding configuration
-            self.embedding_model = llm_config.get('embedding_model', 'text-embedding-3-small')
-            self.embedding_dimensions = llm_config.get('embedding_dimensions', 768)
-            
-            if not api_key and not base_url:
-                logger.warning("No API key or base_url found. Falling back to mock mode.")
-                self.mock_mode = True
-            else:
-                # Create client with optional base_url for local models
-                client_kwargs = {}
-                if api_key:
-                    client_kwargs['api_key'] = api_key
-                if base_url:
-                    client_kwargs['base_url'] = base_url
-                    
-                self.openai_client = OpenAI(**client_kwargs)
+        self.openai_client = OpenAI(**client_kwargs)
 
     def calculate_canonical_fingerprint(self, company: str, title: str, location_text: str) -> str:
         """
@@ -67,23 +58,7 @@ class ETLProcessor:
         result = self.db.execute(stmt).scalar_one_or_none()
         return result
 
-    def extract_requirements_mock(self, description: str) -> List[Dict[str, Any]]:
-        """
-        Mock LLM extraction. Returns dummy requirements.
-        """
-        # Simple heuristic for testing: split by newlines and take a few
-        lines = [l.strip() for l in description.split('\n') if len(l.strip()) > 20]
-        units = []
-        for i, line in enumerate(lines[:5]): # Take top 5 lines as "requirements" for now
-            units.append({
-                "req_type": "responsibility" if "work" in line.lower() else "required",
-                "text": line[:500], # Truncate if too long
-                "tags": {"mock": True},
-                "ordinal": i
-            })
-        return units
-
-    def extract_requirements_openai(self, description: str) -> List[Dict[str, Any]]:
+    def extract_requirements_openai(self, description: str) -> Dict[str, Any]:
         """
         Extract requirements using LLM with structured JSON output.
         """
@@ -124,39 +99,29 @@ class ETLProcessor:
             )
             content = response.choices[0].message.content
             data = json.loads(content)
-            requirements = data.get('requirements', [])
+            
+            # Ensure requirements list exists
+            if 'requirements' not in data:
+                data['requirements'] = []
             
             # Add ordinal
-            for i, req in enumerate(requirements):
+            for i, req in enumerate(data['requirements']):
                 req['ordinal'] = i
-            return requirements
+            return data
             
         except Exception as e:
             logger.error(f"LLM extraction failed: {e}")
-            logger.info("Falling back to mock extraction due to failure")
-            return self.extract_requirements_mock(description)
+            raise
 
-
-    def generate_embedding_mock(self, _: str) -> List[float]:
-        """
-        Mock embedding generation. Returns random 768-dim vector.
-        """
-        # pgvector (vector(768)) requires exactly 768 dimensions
-        return [random.random() for _ in range(1024)] # Match qwen3-embedding:4b dimensions
-
-    # Note: If changing to text-embedding-3-small, dimension is 1536 by default. 
+    # Note: If changing to text-embedding-3-small, dimension is 1536 by default.
     # If keeping 768 in DB, use dimensions=768 param in API call (supported in v3 models).
     def generate_embedding_openai(self, text: str) -> List[float]:
-        try:
-            response = self.openai_client.embeddings.create(
-                input=text,
-                model=self.embedding_model,
-                dimensions=self.embedding_dimensions
-            )
-            return response.data[0].embedding
-        except Exception as e:
-            logger.error(f"OpenAI embedding failed: {e}")
-            return self.generate_embedding_mock(text)
+        response = self.openai_client.embeddings.create(
+            input=text,
+            model=self.embedding_model,
+            dimensions=self.embedding_dimensions
+        )
+        return response.data[0].embedding
 
     def _normalize_location(self, location: Any) -> str:
         location_text = "Unknown"
@@ -208,6 +173,9 @@ class ETLProcessor:
              self.db.add(new_source)
 
     def _get_or_create_content(self, job_post_id: Any, job_data: Dict[str, Any]):
+        """
+        Extracts and embeds requirements. Skips extraction if content already exists.
+        """
         existing_content = self.db.execute(
             select(JobPostContent).where(JobPostContent.job_post_id == job_post_id)
         ).scalar_one_or_none()
@@ -222,40 +190,69 @@ class ETLProcessor:
             self.db.add(content)
             self._extract_and_embed_requirements(job_post_id, job_data)
 
-    def _extract_and_embed_requirements(self, job_post_id: Any, job_data: Dict[str, Any]):
-        if not job_data.get('description'):
-            return
+    def _extract_requirements(self, job_post: JobPost, description: str) -> List[Dict[str, Any]]:
+        """
+        Extract structured data from job description using LLM.
+        Updates job_post with structural fields (min_years_experience, etc.).
+        Returns list of requirement dictionaries.
+        """
+        extracted_data = self.extract_requirements_openai(description)
 
-        if self.mock_mode:
-            requirements = self.extract_requirements_mock(job_data.get('description'))
-        elif self.extraction_type == 'gliner':
-            # Deprecated: Fallback to OpenAI/Ollama logic or Mock
-            logger.warning("GLiNER extraction type is deprecated. Using default LLM extraction.")
-            requirements = self.extract_requirements_openai(job_data.get('description'))
-        else:  # 'openai' or default
-            requirements = self.extract_requirements_openai(job_data.get('description'))
-            
+        # Update structural fields on job_post
+        job_post.min_years_experience = extracted_data.get('min_years_experience')
+        job_post.requires_degree = extracted_data.get('requires_degree')
+        job_post.security_clearance = extracted_data.get('security_clearance')
+
+        return extracted_data.get('requirements', [])
+
+    def _embed_job_and_requirements(self, job_post: JobPost, description: str, requirements: List[Dict[str, Any]]):
+        """
+        Generate embeddings for job post and requirements.
+        Creates coarse embedding for JobPost and contextualized embeddings for each requirement.
+        """
+        # Generate Coarse Embedding (Whole Job Context)
+        coarse_text = f"{job_post.title} at {job_post.company}: {description[:1000]}"
+        job_post.summary_embedding = self.generate_embedding_openai(coarse_text)
+
+        # Create requirement units and embeddings
         for req in requirements:
             jru = JobRequirementUnit(
-                job_post_id=job_post_id,
+                job_post_id=job_post.id,
                 req_type=req.get('req_type', 'required'),
                 text=req.get('text', ''),
                 tags={'skills': req.get('skills', [])},
                 ordinal=req.get('ordinal', 0)
             )
             self.db.add(jru)
-            self.db.flush() 
-            
-            if self.mock_mode:
-                vector = self.generate_embedding_mock(req.get('text', ''))
-            else:
-                vector = self.generate_embedding_openai(req.get('text', ''))
-            
+            self.db.flush()
+
+            # Contextualize Requirement Embedding
+            context_text = f"Job Role: {job_post.title} at {job_post.company}. Requirement: {req.get('text', '')}"
+            vector = self.generate_embedding_openai(context_text)
+
             embedding = JobRequirementUnitEmbedding(
                 job_requirement_unit_id=jru.id,
                 embedding=vector
             )
             self.db.add(embedding)
+
+    def _extract_and_embed_requirements(self, job_post_id: Any, job_data: Dict[str, Any]):
+        """
+        Main orchestration method for extraction and embedding.
+        Calls _extract_requirements and _embed_job_and_requirements in sequence.
+        """
+        description = job_data.get('description')
+        if not description:
+            return
+
+        # Get JobPost for updating and context
+        job_post = self.db.execute(select(JobPost).where(JobPost.id == job_post_id)).scalar_one()
+
+        # Step 1: Extract requirements and update structural fields
+        requirements = self._extract_requirements(job_post, description)
+
+        # Step 2: Generate embeddings
+        self._embed_job_and_requirements(job_post, description, requirements)
 
     def process_job_data(self, job_data: Dict[str, Any], site_name: str):
         """

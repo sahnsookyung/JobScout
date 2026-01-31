@@ -41,6 +41,14 @@ class JobPost(Base):
     last_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
     status = Column(Text, nullable=False, default='active') # active|expired|unknown
 
+    # Structured fields for filtering
+    min_years_experience = Column(Integer)
+    requires_degree = Column(Boolean)
+    security_clearance = Column(Boolean)
+    
+    # Coarse embedding for the whole job
+    summary_embedding = Column(Vector(1024))
+
     # Relationship
     sources = relationship("JobPostSource", back_populates="job_post", cascade="all, delete-orphan")
     content = relationship("JobPostContent", uselist=False, back_populates="job_post", cascade="all, delete-orphan")

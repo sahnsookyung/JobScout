@@ -32,13 +32,12 @@ class LlmConfig(BaseModel):
     embedding_dimensions: int = 768
 
 class EtlConfig(BaseModel):
-    mock: bool = True
     llm: Optional[LlmConfig] = LlmConfig()
 
 class AppConfig(BaseModel):
     database: DatabaseConfig
     jobspy: Optional[JobSpyConfig] = None
-    etl: Optional[EtlConfig] = EtlConfig(mock=True)
+    etl: Optional[EtlConfig] = EtlConfig()
     schedule: ScheduleConfig
     scrapers: List[ScraperConfig]
 

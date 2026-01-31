@@ -6,7 +6,6 @@ jobspy:
   # url: "http://localhost:8000" # This is the host for JobSpy when running main.py locally
 
 etl:
-  mock: false # Using local AI stack
   llm:
     # Ollama for embeddings (OpenAI-compatible API)
     base_url: "http://ollama:11434/v1"

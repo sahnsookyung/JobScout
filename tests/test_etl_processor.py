@@ -6,14 +6,17 @@ from job_scout_hub.etl.etl import ETLProcessor
 class TestETLRefactor(unittest.TestCase):
     def setUp(self):
         self.mock_db = MagicMock()
-        self.etl = ETLProcessor(db=self.mock_db, mock_mode=False, llm_config={"extraction_type": "ollama"})
+        self.etl = ETLProcessor(db=self.mock_db, llm_config={"extraction_type": "ollama"})
 
     def test_extract_requirements_ollama_schema(self):
         # Mock the OpenAI client
         self.etl.openai_client = MagicMock()
         
-        # Mock response content
+        # Mock response content - now includes structural fields
         mock_response_content = json.dumps({
+            "min_years_experience": 5,
+            "requires_degree": True,
+            "security_clearance": False,
             "requirements": [
                 {
                     "req_type": "required",
@@ -38,10 +41,16 @@ class TestETLRefactor(unittest.TestCase):
         
         self.etl.openai_client.chat.completions.create.return_value = mock_response
 
-        # Run extraction
-        requirements = self.etl.extract_requirements_openai("Sample description")
+        # Run extraction - now returns a dict
+        result = self.etl.extract_requirements_openai("Sample description")
 
-        # Verify results
+        # Verify structural fields
+        self.assertEqual(result['min_years_experience'], 5)
+        self.assertEqual(result['requires_degree'], True)
+        self.assertEqual(result['security_clearance'], False)
+        
+        # Verify requirements list
+        requirements = result['requirements']
         self.assertEqual(len(requirements), 2)
         self.assertEqual(requirements[0]['req_type'], 'required')
         self.assertEqual(requirements[0]['text'], 'Must have Python experience')
@@ -62,14 +71,14 @@ class TestETLRefactor(unittest.TestCase):
             "extraction_type": "ollama",
             "extraction_model": "llama3:8b"
         }
-        etl = ETLProcessor(db=self.mock_db, mock_mode=False, llm_config=custom_config)
+        etl = ETLProcessor(db=self.mock_db, llm_config=custom_config)
         self.assertEqual(etl.extraction_model, "llama3:8b")
 
         # Test fallback when model is missing for ollama
         default_config = {
             "extraction_type": "ollama"
         }
-        etl_default = ETLProcessor(db=self.mock_db, mock_mode=False, llm_config=default_config)
+        etl_default = ETLProcessor(db=self.mock_db, llm_config=default_config)
         self.assertEqual(etl_default.extraction_model, "qwen3:14b")
 
 if __name__ == '__main__':

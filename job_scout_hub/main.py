@@ -85,12 +85,7 @@ def run_cycle():
     api_url = "http://jobspy-service:8000"
     if config.jobspy and config.jobspy.url:
         api_url = config.jobspy.url
-    
-    # Determine Mock Mode
-    mock_mode = True
-    if config.etl and config.etl.mock is False:
-        mock_mode = False
-    
+
     # Extract LLM config
     llm_config = None
     if config.etl and config.etl.llm:
@@ -104,9 +99,9 @@ def run_cycle():
             'embedding_model': config.etl.llm.embedding_model,
             'embedding_dimensions': config.etl.llm.embedding_dimensions,
         }
-    
+
     with db_session_scope() as session:
-        processor = ETLProcessor(session, mock_mode=mock_mode, llm_config=llm_config)
+        processor = ETLProcessor(session, llm_config=llm_config)
         
         for scraper_cfg in config.scrapers:
             if not running: break

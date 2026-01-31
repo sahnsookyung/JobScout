@@ -39,7 +39,7 @@ def run_test():
             "extraction_model": "qwen3:14b",
             "api_key": "ollama"
         }
-        processor = ETLProcessor(session, mock_mode=False, llm_config=llm_config)
+        processor = ETLProcessor(session, llm_config=llm_config)
         
         for entry in data:
             site = entry.get('site')
