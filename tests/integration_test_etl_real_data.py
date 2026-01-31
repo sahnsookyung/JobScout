@@ -20,8 +20,11 @@ def run_test():
     # 2. Load Data
     json_path = "/app/api_responses.json"
     if not os.path.exists(json_path):
-        # Fallback for local testing if not in docker
-        json_path = "../api_responses.json"
+        # Fallback for local testing (running from repo root)
+        if os.path.exists("api_responses.json"):
+             json_path = "api_responses.json"
+        elif os.path.exists("../api_responses.json"):
+             json_path = "../api_responses.json"
     
     logger.info(f"Loading data from {json_path}...")
     with open(json_path, 'r') as f:
@@ -29,7 +32,14 @@ def run_test():
 
     # 3. Process Data
     with db_session_scope() as session:
-        processor = ETLProcessor(session, mock_mode=True)
+        # Use localhost:11435 for Docker Ollama exposed to host
+        llm_config = {
+            "base_url": "http://localhost:11435/v1",
+            "extraction_type": "ollama",
+            "extraction_model": "qwen3:14b",
+            "api_key": "ollama"
+        }
+        processor = ETLProcessor(session, mock_mode=False, llm_config=llm_config)
         
         for entry in data:
             site = entry.get('site')

@@ -13,5 +13,9 @@ services:
     stdin_open: true
     tty: true
 
+  ollama:
+    ports:
+      - "11435:11434"
+
 volumes:
   playwright_cache: # Declare named volume [web:27]

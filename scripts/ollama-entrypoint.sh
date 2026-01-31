@@ -12,10 +12,16 @@ sleep 10
 
 # Pull embedding model
 EMBEDDING_MODEL="${OLLAMA_EMBEDDING_MODEL:-qwen3-embedding:4b}"
-echo "Pulling embedding model: $EMBEDDING_MODEL (this may take several minutes)"
+echo "Pulling embedding model: $EMBEDDING_MODEL"
 ollama pull "$EMBEDDING_MODEL" || {
     echo "Warning: Failed to pull model $EMBEDDING_MODEL"
-    echo "You may need to pull it manually or check your internet connection"
+}
+
+# Pull extraction model
+EXTRACTION_MODEL="${OLLAMA_EXTRACTION_MODEL:-qwen3:14b}"
+echo "Pulling extraction model: $EXTRACTION_MODEL"
+ollama pull "$EXTRACTION_MODEL" || {
+    echo "Warning: Failed to pull model $EXTRACTION_MODEL"
 }
 
 echo "Ollama setup complete!"

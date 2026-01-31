@@ -50,6 +50,7 @@ services:
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
       - OLLAMA_EMBEDDING_MODEL=${OLLAMA_EMBEDDING_MODEL:-qwen3-embedding:4b}
+      - OLLAMA_EXTRACTION_MODEL=${OLLAMA_EXTRACTION_MODEL:-qwen3:14b}
     volumes:
       - ollama_models:/root/.ollama
       - ./scripts:/scripts:ro
@@ -63,31 +64,7 @@ services:
     profiles:
       - "" # Always start
       - expose # Optional port exposure
-    # Conditional port mapping via override or profile
-
-    # GLiNER for local entity extraction
-  gliner:
-    build:
-      context: ./gliner
-      dockerfile: Dockerfile
-    environment:
-      - GLINER_MODEL=${GLINER_MODEL:-urchade/gliner_mediumv2.1}
-      - OLLAMA_URL=http://ollama:11434
-    volumes:
-      - gliner_cache:/root/.cache/huggingface
-      - ./gliner:/app:ro
-    ports:
-      - "${GLINER_PORT:-8001}:8001"
-    depends_on:
-      ollama:
-        condition: service_healthy
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8001/health" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
 volumes:
   postgres_data:
   ollama_models:
-  gliner_cache:

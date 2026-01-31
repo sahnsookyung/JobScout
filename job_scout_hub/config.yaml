@@ -12,9 +12,10 @@ etl:
     base_url: "http://ollama:11434/v1"
     api_key: "ollama" # Dummy key for local Ollama
     
-    # GLiNER for entity extraction
-    extraction_url: "http://gliner:8001/extract"
-    extraction_type: "gliner" # Use "openai" for GPT-based extraction
+    # Extraction
+    extraction_url: "" # Not used for Ollama/OpenAI
+    extraction_type: "ollama" # Use "openai", "ollama" or "mock"
+    extraction_model: "qwen3:14b"
     
     # Model configurations
     embedding_model: "qwen3-embedding:4b"

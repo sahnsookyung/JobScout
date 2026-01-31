@@ -10,6 +10,7 @@ from sqlalchemy import select
 from job_scout_hub.database.models import JobPost, JobPostSource, JobPostContent, JobRequirementUnit, JobRequirementUnitEmbedding
 from job_scout_hub.database.database import db_session_scope
 from openai import OpenAI
+from job_scout_hub.etl.schemas import EXTRACTION_SCHEMA
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,8 +30,11 @@ class ETLProcessor:
             
             # Extraction configuration
             self.extraction_type = llm_config.get('extraction_type', 'openai')
-            self.extraction_model = llm_config.get('extraction_model', 'gpt-4o-mini')
-            self.extraction_url = llm_config.get('extraction_url')
+            self.extraction_model = llm_config.get('extraction_model')
+            
+            if not self.extraction_model:
+                self.extraction_model = 'qwen3:14b' if self.extraction_type == 'ollama' else 'gpt-4o-mini' 
+
             self.extraction_labels = llm_config.get('extraction_labels', [])
             
             # Embedding configuration
@@ -80,25 +84,43 @@ class ETLProcessor:
         return units
 
     def extract_requirements_openai(self, description: str) -> List[Dict[str, Any]]:
-        prompt = f"""
-        Extract job requirements from the following job description. 
-        Return a JSON object with a key 'requirements' containing a list of objects.
-        Each object should have:
-        - 'req_type': one of ['required', 'preferred', 'responsibility', 'benefit', 'other']
-        - 'text': the extracted text (concise)
-        - 'tags': a list of keywords (optional)
-        
-        Job Description:
-        {description[:4000]}
+        """
+        Extract requirements using LLM with structured JSON output.
         """
         try:
+            # Prepare messages
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant that extracts structured data from job descriptions."},
+                {"role": "user", "content": f"Extract job requirements from the following job description into the requested JSON format.\n\nDescription:\n{description}"}
+            ]
+
+            # Different clients might handle 'response_format' differently.
+            # OpenAI standard uses response_format={"type": "json_object"} or json_schema (in newer versions).
+            # Ollama (via OpenAI client) supports 'format'="json" or guided decoding if using vLLM etc.
+            # Given user request sample code: "extra_body": {"guided_json": json_schema}
+            # The standard OpenAI library passing 'response_format' with schema is the most compatible way if the backend supports it.
+            # If using standard Ollama, 'format="json"' enforces VALID JSON but not necessarily SCHEMA.
+            # However, the user provided sample suggests they might be using vLLM or similar that supports 'guided_json'.
+            # OR they want us to use standard structured outputs.
+            # We will try the standard 'json_schema' approach for 'response_format' if supported,
+            # or 'extra_body' as requested for specific backends.
+            
+            # Use 'extra_body' for vLLM/Ollama compatible guided decoding if needed, 
+            # OR standard response_format for OpenAI/compatible endpoints.
+            
+            # Attempting standard structured output (OpenAI compatible) first which works well with modern Ollama/vLLM
+            
             response = self.openai_client.chat.completions.create(
                 model=self.extraction_model,
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that extracts structured data from job descriptions."},
-                    {"role": "user", "content": prompt}
-                ],
-                response_format={ "type": "json_object" }
+                messages=messages,
+                response_format={
+                    "type": "json_schema", 
+                    "json_schema": {
+                        "name": "extraction_response", 
+                        "schema": EXTRACTION_SCHEMA
+                    }
+                },
+                # Fallback specific params if the above doesn't work depends on the backend version
             )
             content = response.choices[0].message.content
             data = json.loads(content)
@@ -110,66 +132,10 @@ class ETLProcessor:
             return requirements
             
         except Exception as e:
-            logger.error(f"OpenAI extraction failed: {e}")
+            logger.error(f"LLM extraction failed: {e}")
+            logger.info("Falling back to mock extraction due to failure")
             return self.extract_requirements_mock(description)
-    
-    def extract_requirements_gliner(self, description: str) -> List[Dict[str, Any]]:
-        """
-        Extract requirements using GLiNER entity extraction service.
-        """
-        if not self.extraction_url:
-            logger.warning("GLiNER extraction_url not configured, falling back to mock")
-            return self.extract_requirements_mock(description)
-        
-        try:
-            payload = {
-                "text": description[:4000],  # Truncate long descriptions
-                "labels": self.extraction_labels if self.extraction_labels else None,
-                "threshold": 0.3
-            }
-            
-            response = requests.post(
-                self.extraction_url,
-                json=payload,
-                timeout=30
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            # Convert GLiNER entities to requirement format
-            entities = data.get('entities', [])
-            requirements = []
-            ordinal = 0
-            
-            for entity in entities:
-                # Map entity labels to requirement types
-                label = entity.get('label', '')
-                if label in ['responsibility']:
-                    req_type = 'responsibility'
-                elif label in ['benefit']:
-                    req_type = 'benefit'
-                elif label in ['experience_years', 'education_degree', 'certification']:
-                    req_type = 'required'
-                else:
-                    req_type = 'required'  # Default for skills, languages, etc.
-                
-                requirements.append({
-                    'req_type': req_type,
-                    'text': entity.get('text', ''),
-                    'tags': {
-                        'entity_label': label,
-                        'confidence': entity.get('score', 0.0)
-                    },
-                    'ordinal': ordinal
-                })
-                ordinal += 1
-            
-            logger.info(f"GLiNER extracted {len(requirements)} entities")
-            return requirements
-            
-        except Exception as e:
-            logger.error(f"GLiNER extraction failed: {e}")
-            return self.extract_requirements_mock(description)
+
 
     def generate_embedding_mock(self, _: str) -> List[float]:
         """
@@ -263,7 +229,9 @@ class ETLProcessor:
         if self.mock_mode:
             requirements = self.extract_requirements_mock(job_data.get('description'))
         elif self.extraction_type == 'gliner':
-            requirements = self.extract_requirements_gliner(job_data.get('description'))
+            # Deprecated: Fallback to OpenAI/Ollama logic or Mock
+            logger.warning("GLiNER extraction type is deprecated. Using default LLM extraction.")
+            requirements = self.extract_requirements_openai(job_data.get('description'))
         else:  # 'openai' or default
             requirements = self.extract_requirements_openai(job_data.get('description'))
             
@@ -272,7 +240,7 @@ class ETLProcessor:
                 job_post_id=job_post_id,
                 req_type=req.get('req_type', 'required'),
                 text=req.get('text', ''),
-                tags=req.get('tags', {}),
+                tags={'skills': req.get('skills', [])},
                 ordinal=req.get('ordinal', 0)
             )
             self.db.add(jru)
