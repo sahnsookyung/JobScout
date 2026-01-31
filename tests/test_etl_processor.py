@@ -6,7 +6,7 @@ from job_scout_hub.etl.etl import ETLProcessor
 class TestETLRefactor(unittest.TestCase):
     def setUp(self):
         self.mock_db = MagicMock()
-        self.etl = ETLProcessor(db=self.mock_db, llm_config={"extraction_type": "ollama"})
+        self.etl = ETLProcessor(db=self.mock_db, llm_config={"extraction_type": "ollama", "api_key": "dummy"})
 
     def test_extract_requirements_ollama_schema(self):
         # Mock the OpenAI client
@@ -69,14 +69,16 @@ class TestETLRefactor(unittest.TestCase):
         # Test that we can override the model via config
         custom_config = {
             "extraction_type": "ollama",
-            "extraction_model": "llama3:8b"
+            "extraction_model": "llama3:8b",
+            "api_key": "dummy"
         }
         etl = ETLProcessor(db=self.mock_db, llm_config=custom_config)
         self.assertEqual(etl.extraction_model, "llama3:8b")
 
         # Test fallback when model is missing for ollama
         default_config = {
-            "extraction_type": "ollama"
+            "extraction_type": "ollama",
+            "api_key": "dummy"
         }
         etl_default = ETLProcessor(db=self.mock_db, llm_config=default_config)
         self.assertEqual(etl_default.extraction_model, "qwen3:14b")

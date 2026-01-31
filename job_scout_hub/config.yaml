@@ -1,14 +1,15 @@
 database:
-  url: "postgresql://user:password@postgres:5432/jobscout"
+  # DEFAULT only. In Docker, this is overridden by DATABASE_URL env var.
+  url: "postgresql://user:password@localhost:5432/jobscout"
 
 jobspy:
-  url: "http://jobspy-service:8000" # This is the container for JobSpy and the URL when using Docker to run JobScout
-  # url: "http://localhost:8000" # This is the host for JobSpy when running main.py locally
+  # DEFAULT only. In Docker, this is overridden by JOBSPY_URL env var.
+  url: "http://localhost:8000" 
 
 etl:
   llm:
-    # Ollama for embeddings (OpenAI-compatible API)
-    base_url: "http://ollama:11434/v1"
+    # DEFAULT only. In Docker, this is overridden by ETL_LLM_BASE_URL env var.
+    base_url: "http://localhost:11434/v1"
     api_key: "ollama" # Dummy key for local Ollama
     
     # Extraction
@@ -16,11 +17,10 @@ etl:
     extraction_type: "ollama" # Use "openai", "ollama" or "mock"
     extraction_model: "qwen3:14b"
     
-    # Model configurations
+    # Embedding
     embedding_model: "qwen3-embedding:4b"
-    embedding_dimensions: 1024 # qwen3-embedding:4b uses 1024 dimensions
+    embedding_dimensions: 1024 # Embedding Dimension: Up to 2560, supports user-defined output dimensions ranging from 32 to 2560 (https://huggingface.co/Qwen/Qwen3-Embedding-4B)
     
-    # GLiNER extraction labels (aligned with SRS)
     extraction_labels:
       - "programming_language"
       - "framework"
@@ -38,9 +38,10 @@ schedule:
 
 scrapers:
   - site_type: ["tokyodev"]
-    search_term: "python"
+    search_term: ""
     results_wanted: 5
     options:
+      japanese_requirements: ["none"]
       seniorities: ["intern", "junior", "intermediate"]
       
   - site_type: ["japandev"]
@@ -48,15 +49,26 @@ scrapers:
     results_wanted: 5
     options:
       japanese_levels: ["japanese_level_not_required"]
+      seniorities: ["seniority_level_junior", "seniority_level_mid_level"]
+      applicant_locations: ["candidate_location_anywhere"]
 
   - site_type: ["indeed"]
     search_term: "software engineer"
     location: "Tokyo"
-    results_wanted: 5
-    hours_old: 24
-
+    country: "Japan"
+    results_wanted: 3
+    hours_old: 168 # 24 * 7
+  
   - site_type: ["glassdoor"]
     search_term: "software engineer"
     location: "Tokyo"
-    results_wanted: 5
-    hours_old: 24
+    results_wanted: 3
+    hours_old: 168
+    request_timeout: 300 # 5 mins
+
+  - site_type: ["linkedin"]
+    search_term: "software engineer"
+    location: "Tokyo"
+    results_wanted: 3
+    hours_old: 168
+    linkedin_fetch_description: True

@@ -29,7 +29,7 @@ class LlmConfig(BaseModel):
     extraction_type: str = "openai"  # "openai" or "gliner"
     extraction_labels: Optional[List[str]] = None  # GLiNER labels
     embedding_model: str = "text-embedding-3-small"
-    embedding_dimensions: int = 768
+    embedding_dimensions: int = 1024
 
 class EtlConfig(BaseModel):
     llm: Optional[LlmConfig] = LlmConfig()
@@ -64,5 +64,14 @@ def load_config(config_path: str = "main_driver/config.yaml") -> AppConfig:
         if 'jobspy' not in data or data['jobspy'] is None:
             data['jobspy'] = {}
         data['jobspy']['url'] = env_jobspy_url
+
+    # Allow env var override for LLM Base URL
+    env_llm_base_url = os.environ.get("ETL_LLM_BASE_URL")
+    if env_llm_base_url:
+        if 'etl' not in data:
+            data['etl'] = {}
+        if 'llm' not in data['etl']:
+            data['etl']['llm'] = {}
+        data['etl']['llm']['base_url'] = env_llm_base_url
 
     return AppConfig(**data)

@@ -3,6 +3,7 @@ import json
 import requests
 import logging
 import os
+import time
 from typing import Dict, List, Optional, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -33,8 +34,8 @@ class ETLProcessor:
         self.extraction_labels = llm_config.get('extraction_labels', [])
         
         # Embedding configuration
-        self.embedding_model = llm_config.get('embedding_model', 'text-embedding-3-small')
-        self.embedding_dimensions = llm_config.get('embedding_dimensions', 768)
+        self.embedding_model = llm_config.get('embedding_model', 'qwen3-embedding:4b')
+        self.embedding_dimensions = llm_config.get('embedding_dimensions', 1024)
         
         # Create client with optional base_url for local models
         client_kwargs = {}
@@ -62,6 +63,7 @@ class ETLProcessor:
         """
         Extract requirements using LLM with structured JSON output.
         """
+        start_time = time.time()
         try:
             # Prepare messages
             messages = [
@@ -79,19 +81,19 @@ class ETLProcessor:
             # OR they want us to use standard structured outputs.
             # We will try the standard 'json_schema' approach for 'response_format' if supported,
             # or 'extra_body' as requested for specific backends.
-            
-            # Use 'extra_body' for vLLM/Ollama compatible guided decoding if needed, 
+
+            # Use 'extra_body' for vLLM/Ollama compatible guided decoding if needed,
             # OR standard response_format for OpenAI/compatible endpoints.
-            
+
             # Attempting standard structured output (OpenAI compatible) first which works well with modern Ollama/vLLM
-            
+
             response = self.openai_client.chat.completions.create(
                 model=self.extraction_model,
                 messages=messages,
                 response_format={
-                    "type": "json_schema", 
+                    "type": "json_schema",
                     "json_schema": {
-                        "name": "extraction_response", 
+                        "name": "extraction_response",
                         "schema": EXTRACTION_SCHEMA
                     }
                 },
@@ -99,29 +101,40 @@ class ETLProcessor:
             )
             content = response.choices[0].message.content
             data = json.loads(content)
-            
+
             # Ensure requirements list exists
             if 'requirements' not in data:
                 data['requirements'] = []
-            
+
             # Add ordinal
             for i, req in enumerate(data['requirements']):
                 req['ordinal'] = i
+
+            elapsed = time.time() - start_time
+            logger.info(f"Extraction completed in {elapsed:.2f}s - extracted {len(data['requirements'])} requirements")
             return data
-            
+
         except Exception as e:
-            logger.error(f"LLM extraction failed: {e}")
+            elapsed = time.time() - start_time
+            logger.error(f"LLM extraction failed after {elapsed:.2f}s: {e}")
             raise
 
-    # Note: If changing to text-embedding-3-small, dimension is 1536 by default.
-    # If keeping 768 in DB, use dimensions=768 param in API call (supported in v3 models).
     def generate_embedding_openai(self, text: str) -> List[float]:
-        response = self.openai_client.embeddings.create(
-            input=text,
-            model=self.embedding_model,
-            dimensions=self.embedding_dimensions
-        )
-        return response.data[0].embedding
+        start_time = time.time()
+        try:
+            response = self.openai_client.embeddings.create(
+                input=text,
+                model=self.embedding_model,
+                dimensions=self.embedding_dimensions
+            )
+            result = response.data[0].embedding
+            elapsed = time.time() - start_time
+            logger.debug(f"Embedding generated in {elapsed:.2f}s - {len(result)} dimensions")
+            return result
+        except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error(f"Embedding failed after {elapsed:.2f}s: {e}")
+            raise
 
     def _normalize_location(self, location: Any) -> str:
         location_text = "Unknown"
@@ -172,7 +185,7 @@ class ETLProcessor:
              )
              self.db.add(new_source)
 
-    def _get_or_create_content(self, job_post_id: Any, job_data: Dict[str, Any]):
+    def _get_or_create_content(self, job_post_id: Any, job_data: Dict[str, Any], skip_ai: bool = False):
         """
         Extracts and embeds requirements. Skips extraction if content already exists.
         """
@@ -188,7 +201,11 @@ class ETLProcessor:
                 raw_payload=job_data
             )
             self.db.add(content)
-            self._extract_and_embed_requirements(job_post_id, job_data)
+            
+            if not skip_ai:
+                self._extract_and_embed_requirements(job_post_id, job_data)
+            else:
+                self.db.flush() # Ensure content is saved even if skipping AI
 
     def _extract_requirements(self, job_post: JobPost, description: str) -> List[Dict[str, Any]]:
         """
@@ -254,7 +271,7 @@ class ETLProcessor:
         # Step 2: Generate embeddings
         self._embed_job_and_requirements(job_post, description, requirements)
 
-    def process_job_data(self, job_data: Dict[str, Any], site_name: str):
+    def process_job_data(self, job_data: Dict[str, Any], site_name: str, skip_ai: bool = False):
         """
         Main entry point for a single job entry from scraper.
         """
@@ -267,6 +284,149 @@ class ETLProcessor:
         location_text = self._normalize_location(job_data.get('location'))
         job_post = self._get_or_create_job_post(title, company, location_text, job_data)
         self._get_or_create_source(job_post.id, site_name, job_data)
-        self._get_or_create_content(job_post.id, job_data)
+        
+        # Always create content (it stores the raw description)
+        self._get_or_create_content(job_post.id, job_data, skip_ai=skip_ai)
+
+    def run_extraction_batch(self, limit: int = 100):
+        """
+        Scan for jobs that have content but no key structural fields (e.g. min_years_experience is None).
+        run extraction on them.
+        """
+        batch_start = time.time()
+        logger.info("Starting extraction batch...")
+        # Find jobs where description exists but extracted fields are null
+        # We'll use 'min_years_experience' as a proxy for "not extracted yet"
+        # Since we initialized it to NULL in schema.
+        stmt = select(JobPost).join(JobPostContent).where(
+            JobPost.min_years_experience == None,
+            JobPostContent.description != None
+        ).limit(limit)
+
+        jobs_to_process = self.db.execute(stmt).scalars().all()
+        logger.info(f"Found {len(jobs_to_process)} jobs needing extraction")
+
+        success_count = 0
+        for job in jobs_to_process:
+            job_start = time.time()
+            try:
+                # Re-fetch content to get description
+                content = self.db.execute(
+                    select(JobPostContent).where(JobPostContent.job_post_id == job.id)
+                ).scalar_one()
+
+                logger.info(f"Extracting for job {job.id}: {job.title}")
+                self._extract_requirements(job, content.description)
+                self.db.commit() # Commit after each successful extraction
+                success_count += 1
+                job_elapsed = time.time() - job_start
+                logger.info(f"Job {job.id} extraction completed and committed in {job_elapsed:.2f}s")
+            except Exception as e:
+                job_elapsed = time.time() - job_start
+                logger.error(f"Failed to extract for job {job.id} after {job_elapsed:.2f}s: {e}")
+                self.db.rollback()
+
+        batch_elapsed = time.time() - batch_start
+        logger.info(f"Extraction batch completed: {success_count}/{len(jobs_to_process)} jobs processed in {batch_elapsed:.2f}s")
+
+    def run_embedding_batch(self, limit: int = 100):
+        """
+        Scan for jobs/requirements that need embeddings.
+        1. Jobs with no summary_embedding
+        2. RequirementUnits with no embeddings
+        """
+        batch_start = time.time()
+        logger.info("Starting embedding batch...")
+
+        # 1. Jobs missing summary embedding
+        stmt_jobs = select(JobPost).join(JobPostContent).where(
+            JobPost.summary_embedding == None,
+            JobPostContent.description != None
+        ).limit(limit)
+        jobs = self.db.execute(stmt_jobs).scalars().all()
+
+        logger.info(f"Found {len(jobs)} jobs needing summary embedding")
+        job_success_count = 0
+        for job in jobs:
+            job_start = time.time()
+            try:
+                content = self.db.execute(
+                    select(JobPostContent).where(JobPostContent.job_post_id == job.id)
+                ).scalar_one()
+
+                coarse_text = f"{job.title} at {job.company}: {content.description[:1000]}"
+                job.summary_embedding = self.generate_embedding_openai(coarse_text)
+                self.db.commit()
+                job_success_count += 1
+                job_elapsed = time.time() - job_start
+                logger.info(f"Job {job.id} embedding completed and committed in {job_elapsed:.2f}s")
+            except Exception as e:
+                job_elapsed = time.time() - job_start
+                logger.error(f"Failed job embedding {job.id} after {job_elapsed:.2f}s: {e}")
+                self.db.rollback()
+
+        # 2. Requirements missing embeddings
+        # We need to join back to JobPost to get context (Title/Company)
+        # Check for non-existent embedding relation
+        stmt_reqs = select(JobRequirementUnit).outerjoin(JobRequirementUnitEmbedding).where(
+            JobRequirementUnitEmbedding.id == None
+        ).limit(limit * 10) # Process more requirements per batch
+
+        reqs = self.db.execute(stmt_reqs).scalars().all()
+        logger.info(f"Found {len(reqs)} requirements needing embedding")
+
+        req_success_count = 0
+        for req in reqs:
+            req_start = time.time()
+            try:
+                job = self.db.execute(select(JobPost).where(JobPost.id == req.job_post_id)).scalar_one()
+                context_text = f"Job Role: {job.title} at {job.company}. Requirement: {req.text}"
+                vector = self.generate_embedding_openai(context_text)
+
+                embedding = JobRequirementUnitEmbedding(
+                    job_requirement_unit_id=req.id,
+                    embedding=vector
+                )
+                self.db.add(embedding)
+                self.db.commit()
+                req_success_count += 1
+                req_elapsed = time.time() - req_start
+                logger.debug(f"Requirement {req.id} embedding completed and committed in {req_elapsed:.2f}s")
+            except Exception as e:
+                req_elapsed = time.time() - req_start
+                logger.error(f"Failed req embedding {req.id} after {req_elapsed:.2f}s: {e}")
+                self.db.rollback()
+
+        batch_elapsed = time.time() - batch_start
+        logger.info(f"Embedding batch completed: {job_success_count}/{len(jobs)} jobs, {req_success_count}/{len(reqs)} requirements processed in {batch_elapsed:.2f}s")
+
+    def unload_model(self, model_name: str):
+        """
+        Unload a model from Ollama to free memory.
+        """
+        if not model_name:
+            return
+
+        # Access base_url from openai_client if possible, or default to internal docker host
+        # Since we use openai_client with base_url, we can try to parse it
+        # But simpler is to rely on config or default standard Ollama port
+        # We need the direct HTTP API, not OpenAI compatible one for this specific 'generate' endpoint 
+        # (though newer versions might support it differently, standard way is /api/generate)
+        
+        # We'll try to guess the host from the client's base_url
+        base_url = str(self.openai_client.base_url).rstrip('v1/').rstrip('/')
+        if not base_url or base_url == "https://api.openai.com": 
+            # If using real OpenAI, we can't unload. 
+            # If default, assume local ollama
+            base_url = "http://ollama:11434"
+            
+        url = f"{base_url}/api/generate"
+        payload = {"model": model_name, "keep_alive": 0}
+        
+        try:
+            logger.info(f"Unloading model: {model_name} via {url}")
+            requests.post(url, json=payload, timeout=5)
+        except Exception as e:
+            logger.warning(f"Failed to unload model {model_name}: {e}")
 
 from sqlalchemy.sql import func

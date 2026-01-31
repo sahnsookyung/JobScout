@@ -29,6 +29,10 @@ services:
     environment:
       - JOBSPY_URL=http://jobspy-service:8000
       - DATABASE_URL=postgresql://user:password@postgres:5432/jobscout
+      # Default to local host Ollama. To use docker container, set this to http://ollama:11434/v1
+      - ETL_LLM_BASE_URL=${ETL_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./api_responses.json:/app/api_responses.json # Mount for testing
       - ./job_scout_hub:/app/job_scout_hub # Live code reload
@@ -43,8 +47,9 @@ services:
       - "5050:80"
     depends_on:
       - postgres
-
   # Ollama for local embeddings
+  # Ollama for local embeddings (Optional Profile)
+  # Run with: docker compose --profile docker-ollama up
   ollama:
     image: ollama/ollama:${OLLAMA_IMAGE:-0.15.2}
     environment:
@@ -62,7 +67,7 @@ services:
       retries: 3
       start_period: 30s
     profiles:
-      - "" # Always start
+      - docker-ollama
       - expose # Optional port exposure
 
 volumes:
