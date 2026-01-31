@@ -2,7 +2,7 @@ import unittest
 import os
 import yaml
 from unittest.mock import patch, mock_open
-from job_scout_hub.core.config_loader import load_config, AppConfig, LlmConfig
+from core.config_loader import load_config, AppConfig, LlmConfig
 
 class TestConfigLoader(unittest.TestCase):
 

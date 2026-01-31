@@ -1,18 +1,22 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 import json
-from job_scout_hub.etl.etl import ETLProcessor
+from etl.orchestrator import JobETLOrchestrator
+from core.ai_service import OpenAIService
+from database.repository import JobRepository
 
 class TestETLRefactor(unittest.TestCase):
     def setUp(self):
-        self.mock_db = MagicMock()
-        self.etl = ETLProcessor(db=self.mock_db, llm_config={"extraction_type": "ollama", "api_key": "dummy"})
+        self.mock_repo = MagicMock(spec=JobRepository)
+        self.mock_ai = MagicMock(spec=OpenAIService)
+        self.orchestrator = JobETLOrchestrator(repo=self.mock_repo, ai_service=self.mock_ai)
 
-    def test_extract_requirements_ollama_schema(self):
-        # Mock the OpenAI client
-        self.etl.openai_client = MagicMock()
+    def test_extract_structured_data_service(self):
+        # Test OpenAIService independently
+        service = OpenAIService(api_key="dummy")
+        service.client = MagicMock()
         
-        # Mock response content - now includes structural fields
+        # Mock response content
         mock_response_content = json.dumps({
             "min_years_experience": 5,
             "requires_degree": True,
@@ -22,16 +26,12 @@ class TestETLRefactor(unittest.TestCase):
                     "req_type": "required",
                     "text": "Must have Python experience",
                     "skills": ["python"]
-                },
-                {
-                    "req_type": "responsibility",
-                    "text": "Develop backend services",
-                    "skills": ["backend"]
                 }
-            ]
+            ],
+            "thought_process": "Analysis here"
         })
         
-        # Setup the mock return value
+        # Setup the mock
         mock_message = MagicMock()
         mock_message.content = mock_response_content
         mock_choice = MagicMock()
@@ -39,49 +39,37 @@ class TestETLRefactor(unittest.TestCase):
         mock_response = MagicMock()
         mock_response.choices = [mock_choice]
         
-        self.etl.openai_client.chat.completions.create.return_value = mock_response
+        service.client.chat.completions.create.return_value = mock_response
 
-        # Run extraction - now returns a dict
-        result = self.etl.extract_requirements_openai("Sample description")
+        # Run extraction
+        result = service.extract_structured_data("Sample description", {"properties": {}})
 
         # Verify structural fields
         self.assertEqual(result['min_years_experience'], 5)
         self.assertEqual(result['requires_degree'], True)
-        self.assertEqual(result['security_clearance'], False)
+        self.assertEqual(result['thought_process'], "Analysis here")
         
-        # Verify requirements list
-        requirements = result['requirements']
-        self.assertEqual(len(requirements), 2)
-        self.assertEqual(requirements[0]['req_type'], 'required')
-        self.assertEqual(requirements[0]['text'], 'Must have Python experience')
-        self.assertEqual(requirements[0]['ordinal'], 0)
-        self.assertEqual(requirements[1]['req_type'], 'responsibility')
-        self.assertEqual(requirements[1]['ordinal'], 1)
-
-        # Verify call arguments to ensure schema was passed
-        call_kwargs = self.etl.openai_client.chat.completions.create.call_args[1]
+        # Verify call arguments
+        call_kwargs = service.client.chat.completions.create.call_args[1]
         self.assertIn('response_format', call_kwargs)
         self.assertEqual(call_kwargs['response_format']['type'], 'json_schema')
-        self.assertEqual(call_kwargs['response_format']['json_schema']['name'], 'extraction_response')
-        self.assertEqual(call_kwargs['model'], 'qwen3:14b')
 
-    def test_config_override(self):
-        # Test that we can override the model via config
-        custom_config = {
-            "extraction_type": "ollama",
-            "extraction_model": "llama3:8b",
-            "api_key": "dummy"
-        }
-        etl = ETLProcessor(db=self.mock_db, llm_config=custom_config)
-        self.assertEqual(etl.extraction_model, "llama3:8b")
-
-        # Test fallback when model is missing for ollama
-        default_config = {
-            "extraction_type": "ollama",
-            "api_key": "dummy"
-        }
-        etl_default = ETLProcessor(db=self.mock_db, llm_config=default_config)
-        self.assertEqual(etl_default.extraction_model, "qwen3:14b")
+    def test_orchestrator_flow(self):
+        # Test Orchestrator flow
+        job_data = {"title": "Engineer", "company_name": "Tech Corp", "location": "Remote"}
+        
+        # Setup repo mock returns
+        self.mock_repo.get_by_fingerprint.return_value = None
+        mock_post = MagicMock()
+        mock_post.id = "123"
+        self.mock_repo.create_job_post.return_value = mock_post
+        
+        self.orchestrator.process_incoming_job(job_data, "site_x")
+        
+        # Verify repo calls
+        self.mock_repo.create_job_post.assert_called_once()
+        self.mock_repo.get_or_create_source.assert_called_once_with("123", "site_x", job_data)
+        self.mock_repo.get_or_create_content.assert_called_once_with("123", job_data)
 
 if __name__ == '__main__':
     unittest.main()

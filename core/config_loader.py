@@ -41,12 +41,10 @@ class AppConfig(BaseModel):
     schedule: ScheduleConfig
     scrapers: List[ScraperConfig]
 
-def load_config(config_path: str = "main_driver/config.yaml") -> AppConfig:
+def load_config(config_path: str = "config.yaml") -> AppConfig:
     # If not found at relative path (e.g. running from root), try absolute or adjusted path
     if not os.path.exists(config_path):
-        # Specific fallback for Docker where WORKDIR is /app and config is in /app/main_driver/config.yaml
-        # But we run as python -m main_driver.main from /app.
-        # Let's try to resolve relative to this file
+        # Specific fallback for Docker where WORKDIR is /app and config is in /app/config.yaml
         base_dir = os.path.dirname(os.path.abspath(__file__))
         config_path = os.path.join(base_dir, "..", "config.yaml")
 

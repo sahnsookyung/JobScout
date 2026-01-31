@@ -1,12 +1,9 @@
 FROM python:3.12-slim-bookworm
 RUN pip install uv
 
-# Include /app in PYTHONPATH so we can import 'job_scout_hub' package from within /app
-ENV PYTHONPATH=/app
-
 WORKDIR /app
 
-# Copy the project description
+# Copy the project description first for better caching
 COPY pyproject.toml uv.lock* /app/
 
 # Install the project's dependencies
@@ -15,7 +12,7 @@ COPY pyproject.toml uv.lock* /app/
 RUN uv sync --frozen --no-install-project
 
 # Copy the rest of the application
-COPY . /app/job_scout_hub
+COPY . /app/
 
 # Install the project itself
 RUN uv sync --frozen
@@ -24,4 +21,4 @@ RUN uv sync --frozen
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Default command
-CMD ["python", "-m", "job_scout_hub.main"]
+CMD ["python", "main.py"]

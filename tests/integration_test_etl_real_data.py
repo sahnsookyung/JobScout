@@ -1,9 +1,11 @@
 import json
 import logging
 import os
-from job_scout_hub.database.database import db_session_scope
-from job_scout_hub.etl.etl import ETLProcessor
-from job_scout_hub.database.models import JobPost, JobRequirementUnit
+from database.database import db_session_scope
+from database.repository import JobRepository
+from core.ai_service import OpenAIService
+from etl.orchestrator import JobETLOrchestrator
+from database.models import JobPost, JobRequirementUnit
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -12,9 +14,7 @@ logger = logging.getLogger(__name__)
 def run_test():
     # 1. Initialize DB
     logger.info("Initializing DB...")
-    # We might need to wait for Postgres to be ready if running in docker-compose for the first time
-    # But init_db has retries.
-    from job_scout_hub.database.init_db import init_db
+    from database.init_db import init_db
     init_db()
 
     # 2. Load Data
@@ -32,14 +32,15 @@ def run_test():
 
     # 3. Process Data
     with db_session_scope() as session:
-        # Use localhost:11435 for Docker Ollama exposed to host
+        # Layers
+        repo = JobRepository(session)
         llm_config = {
-            "base_url": "http://localhost:11435/v1",
-            "extraction_type": "ollama",
-            "extraction_model": "qwen3:14b",
-            "api_key": "ollama"
+            "base_url": "http://localhost:11434/v1",
+            "api_key": "ollama",
+            "extraction_model": "qwen3:14b"
         }
-        processor = ETLProcessor(session, llm_config=llm_config)
+        ai_service = OpenAIService(**llm_config)
+        orchestrator = JobETLOrchestrator(repo, ai_service)
         
         for entry in data:
             site = entry.get('site')
@@ -58,7 +59,8 @@ def run_test():
             logger.info(f"Processing {len(result_data)} jobs for site {site}")
             
             for job in result_data:
-                processor.process_job_data(job, str(site))
+                # Use orchestrator to process incoming job
+                orchestrator.process_incoming_job(job, str(site))
         
         # 4. Verify Insertion
         job_count = session.query(JobPost).count()

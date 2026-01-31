@@ -21,7 +21,7 @@ services:
   # This is your Main Driver container (renamed context, kept service name for now)
   main-driver:
     build:
-      context: ./job_scout_hub
+      context: .
       dockerfile: Dockerfile
     depends_on:
       - jobspy-service
@@ -35,8 +35,8 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./api_responses.json:/app/api_responses.json # Mount for testing
-      - ./job_scout_hub:/app/job_scout_hub # Live code reload
-      - ./job_scout_hub/config.yaml:/app/job_scout_hub/config.yaml
+      - .:/app # Live code reload
+      - ./config.yaml:/app/config.yaml
 
   pgadmin:
     image: dpage/pgadmin4

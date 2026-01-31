@@ -1,5 +1,5 @@
 import unittest
-from job_scout_hub.database.models import JobPost, JobRequirementUnit, JobRequirementUnitEmbedding
+from database.models import JobPost, JobRequirementUnit, JobRequirementUnitEmbedding
 
 class TestModels(unittest.TestCase):
     

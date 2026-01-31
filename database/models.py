@@ -40,6 +40,8 @@ class JobPost(Base):
     first_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
     last_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
     status = Column(Text, nullable=False, default='active') # active|expired|unknown
+    is_extracted = Column(Boolean, nullable=False, default=False)
+    is_embedded = Column(Boolean, nullable=False, default=False)
 
     # Structured fields for filtering
     min_years_experience = Column(Integer)

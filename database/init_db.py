@@ -2,8 +2,8 @@ import logging
 import time
 from sqlalchemy import text
 from tenacity import retry, stop_after_attempt, wait_fixed
-from job_scout_hub.database.database import engine
-from job_scout_hub.database.models import Base
+from database.database import engine
+from database.models import Base
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

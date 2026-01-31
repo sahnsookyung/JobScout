@@ -5,10 +5,12 @@ import sys
 import os
 import requests
 from tenacity import retry, stop_after_attempt, wait_fixed
-from job_scout_hub.core.config_loader import load_config
-from job_scout_hub.database.database import db_session_scope
-from job_scout_hub.database.init_db import init_db
-from job_scout_hub.etl.etl import ETLProcessor
+from core.config_loader import load_config
+from database.database import db_session_scope
+from database.init_db import init_db
+from database.repository import JobRepository
+from core.ai_service import OpenAIService
+from etl.orchestrator import JobETLOrchestrator
 
 # Configure logging
 logging.basicConfig(
@@ -138,92 +140,80 @@ def run_internal_sequential_cycle():
     if config.jobspy and config.jobspy.url:
         api_url = config.jobspy.url
 
-    # Setup LLM Config
-    llm_config = None
+    # Setup AI & Data Layers
+    repo = JobRepository(session)
+    
+    llm_config = {}
     if config.etl and config.etl.llm:
         llm_config = {
             'base_url': config.etl.llm.base_url,
             'api_key': config.etl.llm.api_key,
             'extraction_model': config.etl.llm.extraction_model,
-            'extraction_type': config.etl.llm.extraction_type,
-            'extraction_url': config.etl.llm.extraction_url,
-            'extraction_labels': config.etl.llm.extraction_labels,
             'embedding_model': config.etl.llm.embedding_model,
-            'embedding_dimensions': config.etl.llm.embedding_dimensions,
         }
+    ai_service = OpenAIService(**llm_config)
+    
+    orchestrator = JobETLOrchestrator(repo, ai_service)
 
-    with db_session_scope() as session:
-        processor = ETLProcessor(session, llm_config=llm_config)
+    # --- Step 1: Gather ---
+    step_start = time.time()
+    logger.info("Step 1: Gathering Jobs (Skipping AI)...")
+    total_jobs_gathered = 0
+    for scraper_cfg in config.scrapers:
+        if not running: break
 
-        # --- Step 1: Gather ---
-        step_start = time.time()
-        logger.info("Step 1: Gathering Jobs (Skipping AI)...")
-        total_jobs_gathered = 0
-        for scraper_cfg in config.scrapers:
-            if not running: break
+        task_id = submit_scraping_job(scraper_cfg, api_url)
+        if not task_id:
+            continue
 
-            task_id = submit_scraping_job(scraper_cfg, api_url)
-            if not task_id:
-                continue
+        jobs = poll_job_status(task_id, api_url)
+        if jobs:
+            site_name = str(scraper_cfg.site_type)
+            logger.info(f"Processing {len(jobs)} jobs for {site_name}")
+            for job in jobs:
+                # 3. Create Source & Content
+                orchestrator.process_incoming_job(job, site_name)
+            total_jobs_gathered += len(jobs)
 
-            jobs = poll_job_status(task_id, api_url)
-            if jobs:
-                site_name = str(scraper_cfg.site_type)
-                logger.info(f"Processing {len(jobs)} jobs for {site_name}")
-                for job in jobs:
-                    # Save raw data only
-                    processor.process_job_data(job, site_name, skip_ai=True)
-                total_jobs_gathered += len(jobs)
+            # Commit after each scraper batch to ensure persistence
+            session.commit()
+    step_elapsed = time.time() - step_start
+    logger.info(f"Step 1 completed: Gathered {total_jobs_gathered} jobs in {step_elapsed:.2f}s")
 
-                # Commit after each scraper batch to ensure persistence
-                session.commit()
-        step_elapsed = time.time() - step_start
-        logger.info(f"Step 1 completed: Gathered {total_jobs_gathered} jobs in {step_elapsed:.2f}s")
+    if not running: return
 
-        if not running: return
+    # --- Step 2: Extract ---
+    step_start = time.time()
+    logger.info("Step 2: Running Extraction Batch...")
+    while running:
+            # Run one batch of extractions
+            orchestrator.run_extraction_batch(limit=200)
+            break 
+    step_elapsed = time.time() - step_start
+    logger.info(f"Step 2 completed: Extraction batch finished in {step_elapsed:.2f}s")
 
-        # --- Step 2: Extract ---
-        step_start = time.time()
-        logger.info("Step 2: Running Extraction Batch...")
-        # Process in chunks until caught up or stopped
-        # We use a large limit or loop until 0 found. For now, one large batch is fine or simple loop.
-        # Let's do a loop to ensure we catch everything gathered.
-        while running:
-             # run_extraction_batch returns nothing, but we could check count if we modded it.
-             # For now, let's just run it once with a high limit, or assume the user wants one pass per cycle.
-             # The request was "run particular jobs run as one unit to completion".
-             # Let's run a generous batch.
-             processor.run_extraction_batch(limit=200)
-             break # For this cycle
-        step_elapsed = time.time() - step_start
-        logger.info(f"Step 2 completed: Extraction batch finished in {step_elapsed:.2f}s")
+    # --- Step 3: Unload Extraction Model ---
+    step_start = time.time()
+    logger.info("Step 3: Unloading Extraction Model...")
+    orchestrator.unload_models()
+    step_elapsed = time.time() - step_start
+    logger.info(f"Step 3 completed: Model unloaded in {step_elapsed:.2f}s")
 
-        # --- Step 3: Unload Extraction Model ---
-        step_start = time.time()
-        logger.info("Step 3: Unloading Extraction Model...")
-        if processor.extraction_model:
-            processor.unload_model(processor.extraction_model)
-        step_elapsed = time.time() - step_start
-        logger.info(f"Step 3 completed: Model unloaded in {step_elapsed:.2f}s")
-
-        if not running: return
-
-        # --- Step 4: Embed ---
-        step_start = time.time()
-        logger.info("Step 4: Running Embedding Batch...")
-        while running:
-             processor.run_embedding_batch(limit=200)
-             break
-        step_elapsed = time.time() - step_start
-        logger.info(f"Step 4 completed: Embedding batch finished in {step_elapsed:.2f}s")
-
-        # --- Step 5: Unload Embedding Model ---
-        step_start = time.time()
-        logger.info("Step 5: Unloading Embedding Model...")
-        if processor.embedding_model:
-             processor.unload_model(processor.embedding_model)
-        step_elapsed = time.time() - step_start
-        logger.info(f"Step 5 completed: Model unloaded in {step_elapsed:.2f}s")
+    # --- Step 4: Embed ---
+    if not running: return
+    step_start = time.time()
+    logger.info("Step 4: Running Embedding Batch...")
+    orchestrator.run_embedding_batch(limit=100)
+    step_elapsed = time.time() - step_start
+    logger.info(f"Step 4 completed: Embedding batch finished in {step_elapsed:.2f}s")
+    
+    # --- Step 5: Unload Embedding Model ---
+    step_start = time.time()
+    logger.info("Step 5: Unloading Embedding Model...")
+    # unload_models unloads both if possible, redundant but safe
+    orchestrator.unload_models()
+    step_elapsed = time.time() - step_start
+    logger.info(f"Step 5 completed: Model unloaded in {step_elapsed:.2f}s")
 
     cycle_elapsed = time.time() - cycle_start
     logger.info(f"Sequential Cycle Completed in {cycle_elapsed:.2f}s")
