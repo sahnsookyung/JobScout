@@ -50,6 +50,7 @@ EXTRACTION_SCHEMA = {
         },
         "currency": {
             "type": "string",
+            "enum": ["USD", "JPY", "EUR", "GBP", "CAD", "AUD", "CHF", "CNY", "HKD", "SGD", "NZD", "SEK", "NOK", "DKK", "MXN", "BRL", "INR", "KRW", "TWD", "Unspecified"],
             "description": "Currency code (e.g. USD, JPY, EUR). Null if not specified."
         },
 

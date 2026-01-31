@@ -34,11 +34,11 @@ class JobETLOrchestrator:
             self.repo.update_timestamp(job_post)
         else:
             logger.info(f"New job found: {title} at {company}")
-            job_post = self.repo.create_job_post(job_data, fingerprint)
+            job_post = self.repo.create_job_post(job_data, fingerprint, location_text)
 
         # 3. Create Source & Content
         self.repo.get_or_create_source(job_post.id, site_name, job_data)
-        self.repo.get_or_create_content(job_post.id, job_data)
+        self.repo.save_job_content(job_post.id, job_data)
         
         # Note: We do NOT trigger extraction here anymore. 
         # We rely on the batched sequential process.
@@ -57,12 +57,10 @@ class JobETLOrchestrator:
         for job in jobs:
             job_start = time.time()
             try:
-                # 1. Get Content
-                content = self.repo.get_content_for_job(job.id)
                 logger.info(f"Extracting for job {job.id}: {job.title}")
                 
-                # 2. Call AI Service
-                data = self.ai.extract_structured_data(content.description, EXTRACTION_SCHEMA)
+                # 1. Call AI Service (description is now on job_post directly)
+                data = self.ai.extract_structured_data(job.description, EXTRACTION_SCHEMA)
                 
                 # 3. Update DB
                 self.repo.update_job_metadata(job, data)
@@ -95,8 +93,7 @@ class JobETLOrchestrator:
         job_success = 0
         for job in jobs:
             try:
-                content = self.repo.get_content_for_job(job.id)
-                text = f"{job.title} at {job.company}: {content.description[:1000]}"
+                text = f"{job.title} at {job.company}: {job.description[:1000]}"
                 vector = self.ai.generate_embedding(text)
                 
                 self.repo.save_job_embedding(job, vector)

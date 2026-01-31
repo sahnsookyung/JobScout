@@ -35,8 +35,11 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./api_responses.json:/app/api_responses.json # Mount for testing
-      - .:/app # Live code reload
       - ./config.yaml:/app/config.yaml
+      - ./main.py:/app/main.py:ro  # Only mount specific files for live reload
+      - ./core:/app/core:ro
+      - ./database:/app/database:ro
+      - ./etl:/app/etl:ro
 
   pgadmin:
     image: dpage/pgadmin4

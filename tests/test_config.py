@@ -11,7 +11,6 @@ class TestConfigLoader(unittest.TestCase):
             "database": {"url": "postgresql://user:pass@localhost:5432/db"},
             "jobspy": {"url": "http://localhost:8000"},
             "etl": {
-                "mock": False,
                 "llm": {
                     "base_url": "http://ollama:11434",
                     "extraction_type": "ollama",

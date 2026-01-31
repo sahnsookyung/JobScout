@@ -37,7 +37,9 @@ def run_test():
         llm_config = {
             "base_url": "http://localhost:11434/v1",
             "api_key": "ollama",
-            "extraction_model": "qwen3:14b"
+            "model_config": {
+                "extraction_model": "qwen3:14b"
+            }
         }
         ai_service = OpenAIService(**llm_config)
         orchestrator = JobETLOrchestrator(repo, ai_service)

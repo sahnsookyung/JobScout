@@ -69,7 +69,7 @@ class TestETLRefactor(unittest.TestCase):
         # Verify repo calls
         self.mock_repo.create_job_post.assert_called_once()
         self.mock_repo.get_or_create_source.assert_called_once_with("123", "site_x", job_data)
-        self.mock_repo.get_or_create_content.assert_called_once_with("123", job_data)
+        self.mock_repo.save_job_content.assert_called_once_with("123", job_data)
 
 if __name__ == '__main__':
     unittest.main()
