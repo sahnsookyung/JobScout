@@ -92,8 +92,23 @@ class NotificationService:
             'redis://localhost:6379/0'
         )
         
-        # Base URL for links
-        self.base_url = os.environ.get('BASE_URL', 'http://localhost:5000')
+        # Load base URL from config.yaml or environment variable
+        from pathlib import Path
+        import yaml
+        
+        config_path = Path(__file__).parent.parent / 'config.yaml'
+        base_url = 'http://localhost:8080'  # Default fallback
+        
+        if config_path.exists():
+            try:
+                with open(config_path, 'r') as f:
+                    config = yaml.safe_load(f)
+                    base_url = config.get('notifications', {}).get('base_url', base_url)
+            except Exception as e:
+                logger.warning(f"Could not load base_url from config.yaml: {e}")
+        
+        # Environment variable overrides config file
+        self.base_url = os.environ.get('BASE_URL', base_url)
         
         if RQ_AVAILABLE:
             try:
@@ -295,7 +310,7 @@ Results Summary:
 - Total matches analyzed: {total_matches}
 - High-quality matches (70+ score): {high_score_matches}
 
-View all your matches at: http://localhost:5000
+View all your matches at: {self.base_url}
 
 ---
 JobScout

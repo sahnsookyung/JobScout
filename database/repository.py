@@ -108,6 +108,14 @@ class JobRepository:
         job_post.is_extracted = True
 
     def save_requirements(self, job_post: JobPost, requirements: List[Dict[str, Any]]):
+        # Map AI extraction values to database values
+        req_type_mapping = {
+            'must_have': 'required',
+            'nice_to_have': 'preferred',
+            'responsibility': 'responsibility',
+            'benefit': 'benefit'
+        }
+        
         for req in requirements:
             tags = {
                 'skills': req.get('related_skills', []),
@@ -115,9 +123,13 @@ class JobRepository:
                 'proficiency': req.get('proficiency')
             }
 
+            # Map the req_type from AI extraction schema to database schema
+            raw_req_type = req.get('req_type', 'must_have')
+            mapped_req_type = req_type_mapping.get(raw_req_type, 'required')
+
             jru = JobRequirementUnit(
                 job_post_id=job_post.id,
-                req_type=req.get('req_type', 'must_have'),
+                req_type=mapped_req_type,
                 text=req.get('text', ''),
                 tags=tags,
                 ordinal=req.get('ordinal', 0)

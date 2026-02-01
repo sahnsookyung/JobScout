@@ -2,6 +2,11 @@ database:
   # DEFAULT only. In Docker, this is overridden by DATABASE_URL env var.
   url: "postgresql://user:password@localhost:5432/jobscout"
 
+web:
+  # Web dashboard server configuration
+  host: "0.0.0.0"
+  port: 8080  # Changed from 5000 to avoid conflicts
+
 jobspy:
   # DEFAULT only. In Docker, this is overridden by JOBSPY_URL env var.
   url: "http://localhost:8000" 
@@ -81,6 +86,9 @@ matching:
 notifications:
   # Set to true to enable notifications (disabled by default)
   enabled: true
+  
+  # Base URL for links in notifications (e.g., to view matches in dashboard)
+  base_url: "http://localhost:8080"  # Uses web.port from above
   
   # Unique user identifier for notifications
   # user_id: "your_user_id"

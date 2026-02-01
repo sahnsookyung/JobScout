@@ -15,6 +15,7 @@ of the MatcherService.
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 import logging
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database.repository import JobRepository
@@ -401,7 +402,7 @@ class ScoringService:
             match_record.matched_requirements_count = len(scored_match.matched_requirements)
             match_record.match_type = scored_match.match_type
             match_record.preferences_file_hash = preferences_file_hash
-            match_record.calculated_at = func.now()
+            # calculated_at will be updated by database server_default on UPDATE
             # Preserve notified status on update
         else:
             # Create new match

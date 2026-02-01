@@ -8,14 +8,15 @@ Usage:
     uv run python web/app.py
     
 Then open:
-    - http://localhost:5000 - Dashboard
-    - http://localhost:5000/docs - API Documentation (Swagger UI)
-    - http://localhost:5000/redoc - Alternative API Documentation
+    - http://localhost:8080 - Dashboard (default port, configurable in config.yaml)
+    - http://localhost:8080/docs - API Documentation (Swagger UI)
+    - http://localhost:8080/redoc - Alternative API Documentation
 """
 
 import os
 import sys
 import json
+import yaml
 import logging
 from pathlib import Path
 from datetime import datetime
@@ -39,8 +40,20 @@ from database.models import JobMatch, JobPost, JobMatchRequirement
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Database configuration - use environment variable or default local development URL
-DB_URL = os.environ.get('DATABASE_URL', 'postgresql://user:password@localhost:5432/jobscout')
+# Load configuration
+config_path = project_root / 'config.yaml'
+if config_path.exists():
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+else:
+    config = {}
+
+# Web server configuration (with environment variable overrides for Docker)
+WEB_HOST = os.environ.get('WEB_HOST', config.get('web', {}).get('host', '0.0.0.0'))
+WEB_PORT = int(os.environ.get('WEB_PORT', config.get('web', {}).get('port', 8080)))
+
+# Database configuration - use environment variable or config file
+DB_URL = os.environ.get('DATABASE_URL', config.get('database', {}).get('url', 'postgresql://user:password@localhost:5432/jobscout'))
 
 # Create engine once at module level (not per-request)
 ENGINE = create_engine(DB_URL)
@@ -505,9 +518,9 @@ if __name__ == "__main__":
     print("=" * 60)
     print("JobScout Web Dashboard (FastAPI)")
     print("=" * 60)
-    print(f"\nDashboard:     http://localhost:5000")
-    print(f"API Docs:      http://localhost:5000/docs")
-    print(f"Alt API Docs:  http://localhost:5000/redoc")
+    print(f"\nDashboard:     http://localhost:{WEB_PORT}")
+    print(f"API Docs:      http://localhost:{WEB_PORT}/docs")
+    print(f"Alt API Docs:  http://localhost:{WEB_PORT}/redoc")
     print(f"\nPress Ctrl+C to stop the server\n")
     
-    uvicorn.run(app, host="0.0.0.0", port=5000)
+    uvicorn.run(app, host=WEB_HOST, port=WEB_PORT)
