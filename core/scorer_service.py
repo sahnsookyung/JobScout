@@ -13,7 +13,7 @@ of the MatcherService.
 """
 
 from typing import List, Dict, Any, Optional, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -49,6 +49,8 @@ class ScoredJobMatch:
     missing_requirements: List[RequirementMatchResult]
     resume_fingerprint: str
     match_type: str
+    ranking_mode: str = "discovery"  # discovery or strict
+    score_components: Optional[Dict[str, Any]] = field(default=None)  # Detailed breakdown for explainability
 
 
 class ScoringService:
@@ -61,6 +63,10 @@ class ScoringService:
     - Weighted base score
     - Penalties for mismatches
     - Final overall score
+    
+    Supports configurable ranking modes:
+    - Discovery mode: optimize for breadth/recall
+    - Strict mode: optimize for precision with coverage gates
     
     Designed to be independent - can be run as separate microservice.
     """
@@ -113,6 +119,190 @@ class ScoringService:
             self.config.weight_required * required_coverage +
             self.config.weight_preferred * preferred_coverage
         )
+    
+    def calculate_discovery_score(
+        self,
+        job_similarity: float,
+        required_coverage: float,
+        preferred_coverage: float,
+        preferences_alignment: Optional[PreferencesAlignmentScore],
+        soft_penalties: float,
+        ranking_config: Any
+    ) -> Tuple[float, Dict[str, Any]]:
+        """
+        Calculate score using discovery mode formula (FR-6.1).
+        
+        Discovery mode prioritizes exploration while preventing weak fits from dominating.
+        
+        Formula:
+        - preferences_alignment_default_score = 0.5 if preferences absent
+        - required_coverage_factor = floor + (1 - floor) * (required_coverage ^ power)
+        - blended_score = w_sim*job_similarity + w_prefcov*preferred_coverage + w_prefalign*pref_align
+        - overall_score = clamp(0, 100, 100 * required_coverage_factor * blended_score - soft_penalties)
+        
+        Args:
+            job_similarity: Job-level cosine similarity (0.0-1.0)
+            required_coverage: Fraction of required requirements covered (0.0-1.0)
+            preferred_coverage: Fraction of preferred requirements covered (0.0-1.0)
+            preferences_alignment: Preferences alignment score object
+            soft_penalties: Total penalty points
+            ranking_config: DiscoveryModeConfig instance
+        
+        Returns:
+            Tuple of (overall_score, score_components_dict)
+        """
+        cfg = ranking_config
+        
+        # Preferences alignment score with default
+        if preferences_alignment:
+            pref_align_score = preferences_alignment.overall_score
+        else:
+            pref_align_score = 0.5  # Neutral default per FR-6.1
+        
+        # Required coverage factor (non-linear dampening)
+        req_factor = (
+            cfg.required_coverage_factor_floor + 
+            (1.0 - cfg.required_coverage_factor_floor) * 
+            (required_coverage ** cfg.required_coverage_factor_power)
+        )
+        
+        # Blended relevance score (weighted combination)
+        blended_score = (
+            cfg.job_similarity_weight * job_similarity +
+            cfg.preferred_coverage_weight * preferred_coverage +
+            cfg.preferences_alignment_weight * pref_align_score
+        )
+        
+        # Apply penalties with multiplier
+        adjusted_penalties = soft_penalties * cfg.penalties_multiplier
+        
+        # Final score calculation
+        raw_score = 100.0 * req_factor * blended_score - adjusted_penalties
+        overall_score = max(0.0, min(100.0, raw_score))
+        
+        # Return score with component breakdown for explainability
+        score_components = {
+            'mode': 'discovery',
+            'job_similarity': job_similarity,
+            'required_coverage': required_coverage,
+            'preferred_coverage': preferred_coverage,
+            'preferences_alignment_score': pref_align_score,
+            'required_coverage_factor': req_factor,
+            'blended_score': blended_score,
+            'soft_penalties': soft_penalties,
+            'penalties_multiplier': cfg.penalties_multiplier,
+            'adjusted_penalties': adjusted_penalties,
+            'raw_score': raw_score,
+            'overall_score': overall_score
+        }
+        
+        return overall_score, score_components
+    
+    def calculate_strict_score(
+        self,
+        job_similarity: float,
+        required_coverage: float,
+        preferred_coverage: float,
+        preferences_alignment: Optional[PreferencesAlignmentScore],
+        penalties: float,
+        ranking_config: Any
+    ) -> Tuple[float, Dict[str, Any]]:
+        """
+        Calculate score using strict mode formula (FR-6.2).
+        
+        Strict mode strongly prefers high required coverage and enforces hard constraints.
+        
+        Formula:
+        - If required_coverage < required_coverage_minimum:
+          - If low_fit_policy == reject: overall_score = 0
+          - If low_fit_policy == cap: overall_score = min(calculated_score, low_fit_score_cap)
+        - Otherwise:
+          - required_coverage_factor = required_coverage ^ power
+          - blended_score = w_req*required_coverage + w_sim*job_similarity + w_prefcov*preferred_coverage + w_prefalign*pref_align
+          - overall_score = clamp(0, 100, 100 * blended_score - penalties)
+        
+        Args:
+            job_similarity: Job-level cosine similarity (0.0-1.0)
+            required_coverage: Fraction of required requirements covered (0.0-1.0)
+            preferred_coverage: Fraction of preferred requirements covered (0.0-1.0)
+            preferences_alignment: Preferences alignment score object
+            penalties: Total penalty points
+            ranking_config: StrictModeConfig instance
+        
+        Returns:
+            Tuple of (overall_score, score_components_dict)
+        """
+        cfg = ranking_config
+        
+        # Preferences alignment score with default
+        if preferences_alignment:
+            pref_align_score = preferences_alignment.overall_score
+        else:
+            pref_align_score = 0.5  # Neutral default
+        
+        # Check coverage gate
+        coverage_gate_triggered = required_coverage < cfg.required_coverage_minimum
+        gate_action = None
+        
+        if coverage_gate_triggered:
+            gate_action = cfg.low_fit_policy
+            if cfg.low_fit_policy == "reject":
+                # Reject low-coverage matches entirely
+                score_components = {
+                    'mode': 'strict',
+                    'job_similarity': job_similarity,
+                    'required_coverage': required_coverage,
+                    'preferred_coverage': preferred_coverage,
+                    'preferences_alignment_score': pref_align_score,
+                    'coverage_gate_triggered': True,
+                    'gate_action': 'reject',
+                    'required_coverage_minimum': cfg.required_coverage_minimum,
+                    'overall_score': 0.0
+                }
+                return 0.0, score_components
+        
+        # Required coverage factor (exponential emphasis)
+        req_factor = required_coverage ** cfg.required_coverage_emphasis_power
+        
+        # Blended relevance score (weighted combination with required coverage prominently)
+        blended_score = (
+            cfg.required_coverage_weight * required_coverage +
+            cfg.job_similarity_weight * job_similarity +
+            cfg.preferred_coverage_weight * preferred_coverage +
+            cfg.preferences_alignment_weight * pref_align_score
+        )
+        
+        # Apply penalties with multiplier (strict mode penalizes more)
+        adjusted_penalties = penalties * cfg.penalties_multiplier
+        
+        # Final score calculation
+        raw_score = 100.0 * req_factor * blended_score - adjusted_penalties
+        overall_score = max(0.0, min(100.0, raw_score))
+        
+        # Apply low-fit cap if triggered and policy is "cap"
+        if coverage_gate_triggered and cfg.low_fit_policy == "cap":
+            overall_score = min(overall_score, cfg.low_fit_score_cap)
+        
+        # Return score with component breakdown for explainability
+        score_components = {
+            'mode': 'strict',
+            'job_similarity': job_similarity,
+            'required_coverage': required_coverage,
+            'preferred_coverage': preferred_coverage,
+            'preferences_alignment_score': pref_align_score,
+            'required_coverage_factor': req_factor,
+            'blended_score': blended_score,
+            'penalties': penalties,
+            'penalties_multiplier': cfg.penalties_multiplier,
+            'adjusted_penalties': adjusted_penalties,
+            'coverage_gate_triggered': coverage_gate_triggered,
+            'gate_action': gate_action,
+            'required_coverage_minimum': cfg.required_coverage_minimum,
+            'raw_score': raw_score,
+            'overall_score': overall_score
+        }
+        
+        return overall_score, score_components
     
     def calculate_preferences_boost(
         self,
@@ -363,6 +553,153 @@ class ScoringService:
         
         return scored_matches
     
+    def score_preliminary_match_with_mode(
+        self,
+        preliminary: JobMatchPreliminary,
+        ranking_config: Any,
+        match_type: str = "requirements_only"
+    ) -> ScoredJobMatch:
+        """
+        Calculate final score from preliminary match using mode-specific formula.
+        
+        Supports discovery and strict modes with different scoring formulas:
+        - Discovery: optimize for breadth/recall (FR-6.1)
+        - Strict: optimize for precision with coverage gates (FR-6.2)
+        
+        Args:
+            preliminary: Preliminary match from MatcherService
+            ranking_config: RankingConfig (contains mode and mode-specific settings)
+            match_type: Type of match being performed
+        
+        Returns:
+            ScoredJobMatch with mode-specific score and component breakdown
+        """
+        job = preliminary.job
+        mode = ranking_config.mode
+        
+        # Calculate coverage (common to both modes)
+        required_coverage, preferred_coverage = self.calculate_coverage(
+            preliminary.requirement_matches,
+            preliminary.missing_requirements
+        )
+        
+        # Calculate penalties (with mode-specific handling)
+        penalties, penalty_details = self.calculate_penalties(
+            job,
+            required_coverage,
+            preliminary.requirement_matches,
+            preliminary.missing_requirements,
+            preliminary.preferences_alignment
+        )
+        
+        if mode == "discovery":
+            # Discovery mode: optimize for breadth/recall (FR-6.1)
+            mode_config = ranking_config.discovery
+            
+            # Missing required policy: disabled by default in discovery
+            if mode_config.missing_required_policy == "disabled":
+                # Remove missing_required penalties to avoid double-counting
+                penalties = sum(p['amount'] for p in penalty_details if p['type'] != 'missing_required')
+                penalty_details = [p for p in penalty_details if p['type'] != 'missing_required']
+            
+            overall_score, score_components = self.calculate_discovery_score(
+                job_similarity=preliminary.job_similarity,
+                required_coverage=required_coverage,
+                preferred_coverage=preferred_coverage,
+                preferences_alignment=preliminary.preferences_alignment,
+                soft_penalties=penalties,
+                ranking_config=mode_config
+            )
+            
+            # Calculate base_score and preferences_boost for backward compatibility
+            base_score = score_components.get('blended_score', 0.0) * 100.0
+            preferences_boost = 0.0  # Discovery mode integrates preferences into blend
+            
+        else:  # strict mode
+            # Strict mode: optimize for precision with coverage gates (FR-6.2)
+            mode_config = ranking_config.strict
+            
+            overall_score, score_components = self.calculate_strict_score(
+                job_similarity=preliminary.job_similarity,
+                required_coverage=required_coverage,
+                preferred_coverage=preferred_coverage,
+                preferences_alignment=preliminary.preferences_alignment,
+                penalties=penalties,
+                ranking_config=mode_config
+            )
+            
+            # Calculate base_score and preferences_boost for backward compatibility
+            base_score = score_components.get('blended_score', 0.0) * 100.0
+            preferences_boost = 0.0  # Strict mode integrates preferences into blend
+        
+        # Log score components for debugging
+        logger.debug(f"Job {job.id} ({mode} mode): score={overall_score:.1f}, "
+                    f"req_cov={required_coverage:.2f}, sim={preliminary.job_similarity:.2f}")
+        
+        return ScoredJobMatch(
+            job=job,
+            overall_score=overall_score,
+            base_score=base_score,
+            preferences_boost=preferences_boost,
+            penalties=penalties,
+            required_coverage=required_coverage,
+            preferred_coverage=preferred_coverage,
+            job_similarity=preliminary.job_similarity,
+            preferences_alignment=preliminary.preferences_alignment,
+            penalty_details=penalty_details,
+            matched_requirements=preliminary.requirement_matches,
+            missing_requirements=preliminary.missing_requirements,
+            resume_fingerprint=preliminary.resume_fingerprint,
+            match_type=match_type,
+            ranking_mode=mode,
+            score_components=score_components
+        )
+    
+    def score_matches_with_mode(
+        self,
+        preliminary_matches: List[JobMatchPreliminary],
+        ranking_config: Any,
+        match_type: str = "requirements_only",
+        final_results_n: Optional[int] = None
+    ) -> List[ScoredJobMatch]:
+        """
+        Score multiple preliminary matches using mode-specific formula.
+        
+        Args:
+            preliminary_matches: List of preliminary matches from Stage 2
+            ranking_config: RankingConfig with mode and mode-specific settings
+            match_type: Type of match being performed
+            final_results_n: Optional limit on final results (defaults to mode config)
+        
+        Returns:
+            List of ScoredJobMatch sorted by overall score (highest first),
+            limited to final_results_n
+        """
+        scored_matches = []
+        
+        for preliminary in preliminary_matches:
+            scored = self.score_preliminary_match_with_mode(
+                preliminary, ranking_config, match_type
+            )
+            scored_matches.append(scored)
+        
+        # Sort by overall score descending
+        scored_matches.sort(key=lambda x: x.overall_score, reverse=True)
+        
+        # Apply final results limit based on mode
+        if final_results_n is None:
+            if ranking_config.mode == "discovery":
+                final_results_n = ranking_config.discovery.final_results_n
+            else:
+                final_results_n = ranking_config.strict.final_results_n
+        
+        limited_matches = scored_matches[:final_results_n]
+        
+        logger.info(f"Scored {len(scored_matches)} matches in {ranking_config.mode} mode, "
+                   f"returning top {len(limited_matches)}")
+        
+        return limited_matches
+    
     def save_match_to_db(
         self,
         scored_match: ScoredJobMatch,
@@ -402,7 +739,7 @@ class ScoringService:
             match_record.matched_requirements_count = len(scored_match.matched_requirements)
             match_record.match_type = scored_match.match_type
             match_record.preferences_file_hash = preferences_file_hash
-            # calculated_at will be updated by database server_default on UPDATE
+            match_record.calculated_at = func.now()
             # Preserve notified status on update
         else:
             # Create new match

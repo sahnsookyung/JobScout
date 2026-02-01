@@ -1,7 +1,7 @@
 import yaml
 import os
-from typing import List, Optional, Dict, Any, Union
-from pydantic import BaseModel
+from typing import List, Optional, Dict, Any, Union, Literal
+from pydantic import BaseModel, Field
 
 class ScraperConfig(BaseModel):
     site_type: List[str]
@@ -34,6 +34,72 @@ class LlmConfig(BaseModel):
 class EtlConfig(BaseModel):
     llm: Optional[LlmConfig] = LlmConfig()
 
+class DiscoveryModeConfig(BaseModel):
+    """
+    Configuration for discovery mode ranking (optimize for breadth/recall).
+    
+    Discovery mode surfaces adjacent fits while preventing weak fits from dominating.
+    """
+    candidate_pool_size_k: int = 500  # Stage 1 retrieval size
+    final_results_n: int = 50  # Stage 2 output size
+    
+    # Scoring weights (must sum to 1.0)
+    job_similarity_weight: float = 0.55
+    preferred_coverage_weight: float = 0.25
+    preferences_alignment_weight: float = 0.20
+    
+    # Required coverage factor parameters
+    required_coverage_factor_floor: float = 0.25
+    required_coverage_factor_power: float = 2.0
+    
+    # Missing required handling: disabled (default), soft, or hard
+    missing_required_policy: Literal["disabled", "soft", "hard"] = "disabled"
+    
+    # Penalty scaling multiplier
+    penalties_multiplier: float = 1.0
+
+
+class StrictModeConfig(BaseModel):
+    """
+    Configuration for strict mode ranking (optimize for precision).
+    
+    Strict mode aggressively filters for high-confidence fits.
+    """
+    candidate_pool_size_k: int = 200  # Stage 1 retrieval size
+    final_results_n: int = 30  # Stage 2 output size
+    
+    # Scoring weights (must sum to 1.0)
+    required_coverage_weight: float = 0.55
+    job_similarity_weight: float = 0.25
+    preferred_coverage_weight: float = 0.15
+    preferences_alignment_weight: float = 0.05
+    
+    # Required coverage gate
+    required_coverage_minimum: float = 0.75  # Minimum required coverage to pass gate
+    required_coverage_emphasis_power: float = 3.0  # Exponent for req coverage factor
+    
+    # Low-fit handling: reject (score=0) or cap (score capped at low_fit_score_cap)
+    low_fit_policy: Literal["reject", "cap"] = "reject"
+    low_fit_score_cap: float = 50.0  # Maximum score if coverage < minimum and policy is "cap"
+    
+    # Missing required handling: soft or hard (default enabled_soft)
+    missing_required_policy: Literal["disabled", "soft", "hard"] = "soft"
+    
+    # Penalty scaling multiplier (strict mode penalizes more)
+    penalties_multiplier: float = 1.3
+
+
+class RankingConfig(BaseModel):
+    """
+    Configuration for two-stage ranking with configurable modes.
+    
+    Supports "discovery" mode (breadth/recall) and "strict" mode (precision).
+    """
+    mode: Literal["discovery", "strict"] = "discovery"
+    discovery: DiscoveryModeConfig = Field(default_factory=DiscoveryModeConfig)
+    strict: StrictModeConfig = Field(default_factory=StrictModeConfig)
+
+
 class MatcherConfig(BaseModel):
     """
     Configuration for the MatcherService (Stage 1: Vector Retrieval).
@@ -47,6 +113,9 @@ class MatcherConfig(BaseModel):
     embedding_dimensions: int = 1024
     batch_size: int = 100  # Number of jobs to process per batch
     include_job_level_matching: bool = True  # Also match at job summary level
+    
+    # Ranking mode configuration for two-stage pipeline
+    ranking: RankingConfig = Field(default_factory=RankingConfig)
 
 class ScorerConfig(BaseModel):
     """

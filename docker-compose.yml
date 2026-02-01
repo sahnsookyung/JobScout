@@ -6,6 +6,20 @@ services:
     ports:
       - "8000:8000"
 
+  # Redis for async notification queue
+  redis:
+    image: redis:7-alpine
+    container_name: jobscout-redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # Postgres with pgvector
   postgres:
     image: pgvector/pgvector:pg16
@@ -26,10 +40,15 @@ services:
     depends_on:
       - jobspy-service
       - postgres
+      - redis
+    env_file:
+      - .env
     environment:
+      # These override .env values for Docker networking
       - JOBSPY_URL=http://jobspy-service:8000
       - DATABASE_URL=postgresql://user:password@postgres:5432/jobscout
-      # Default to local host Ollama. To use docker container, set this to http://ollama:11434/v1
+      - REDIS_URL=redis://redis:6379/0
+      # Default to local host Ollama
       - ETL_LLM_BASE_URL=${ETL_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -75,4 +94,5 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:
   ollama_models:

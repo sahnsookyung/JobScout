@@ -91,6 +91,8 @@ class JobPost(Base):
         Index('idx_job_post_company', 'company'),
         Index('idx_job_post_remote', 'is_remote'),
         Index('idx_job_post_tenant', 'tenant_id'),
+        # HNSW index for vector similarity search on summary_embedding (DR-1)
+        Index('idx_job_post_summary_embedding_hnsw', 'summary_embedding', postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}, postgresql_ops={'summary_embedding': 'vector_cosine_ops'}),
     )
 
 class JobPostSource(Base):

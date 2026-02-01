@@ -57,7 +57,7 @@ if not RUN_TESTS:
     sys.exit(0)
 
 from redis import Redis
-from rq import Queue, Worker
+from rq import Queue, Worker, SimpleWorker
 from rq.job import Job
 
 from notification import (
@@ -363,10 +363,13 @@ class TestNotificationsWithRedis(unittest.TestCase):
         self.assertEqual(len(self.queue), 1)
         
         # Start a worker in burst mode to process the job
-        worker = Worker(['notifications'], connection=self.redis_conn)
+        # Use SimpleWorker instead of Worker to avoid fork-safety issues
+        # SimpleWorker runs jobs in the main process instead of forking,
+        # preventing segfaults from inherited database connection state
+        worker = SimpleWorker(['notifications'], connection=self.redis_conn)
         
         # Process in burst mode (processes all jobs then exits)
-        print("  Processing job in burst mode...")
+        print("  Processing job in burst mode (SimpleWorker)...")
         worker.work(burst=True)
         
         # Verify job was processed (removed from queue)

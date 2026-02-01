@@ -324,6 +324,51 @@ class JobRepository:
         ).limit(limit)
         return self.db.execute(stmt).scalars().all()
 
+    def get_top_jobs_by_summary_embedding(
+        self, 
+        resume_embedding: List[float], 
+        limit: int, 
+        tenant_id: Optional[Any] = None,
+        require_remote: Optional[bool] = None
+    ) -> List[JobPost]:
+        """
+        Retrieve top-K candidate jobs using vector similarity against summary_embedding.
+        
+        Stage 1 of two-stage matching pipeline. Retrieves jobs where:
+        - is_embedded == True
+        - summary_embedding IS NOT NULL
+        
+        Orders by cosine distance ascending (most similar first).
+        
+        Args:
+            resume_embedding: The resume embedding vector to compare against
+            limit: Maximum number of jobs to return (candidate_pool_size_k)
+            tenant_id: Optional tenant filter
+            require_remote: Optional remote-only filter
+            
+        Returns:
+            List of JobPost objects ordered by similarity (best first)
+        """
+        from pgvector.sqlalchemy import cosine_distance
+        
+        # Base query: embedded jobs with non-null embeddings
+        stmt = select(JobPost).where(
+            JobPost.is_embedded == True,
+            JobPost.summary_embedding != None
+        )
+        
+        # Apply optional filters
+        if tenant_id is not None:
+            stmt = stmt.where(JobPost.tenant_id == tenant_id)
+        
+        if require_remote is not None:
+            stmt = stmt.where(JobPost.is_remote == require_remote)
+        
+        # Order by cosine distance (ascending = most similar first)
+        stmt = stmt.order_by(cosine_distance(JobPost.summary_embedding, resume_embedding)).limit(limit)
+        
+        return self.db.execute(stmt).scalars().all()
+
     def commit(self):
         self.db.commit()
 

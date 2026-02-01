@@ -499,6 +499,137 @@ class MatcherService:
         
         return results
     
+    def match_resume_two_stage(
+        self,
+        resume_data: Dict[str, Any],
+        preferences: Optional[Dict[str, Any]] = None,
+        tenant_id: Optional[Any] = None,
+        require_remote: Optional[bool] = None
+    ) -> List[JobMatchPreliminary]:
+        """
+        Two-stage matching pipeline: retrieve candidates -> compute preliminaries.
+        
+        FR-1, FR-2, FR-4 implementation:
+        - Stage 1: Retrieve top-K candidates using vector similarity on summary_embedding
+        - Stage 2: Compute requirement-level matching only on retrieved candidates
+        
+        Args:
+            resume_data: Full resume data
+            preferences: Optional user preferences for enhanced matching
+            tenant_id: Optional tenant filter for Stage 1
+            require_remote: Optional remote-only filter for Stage 1
+        
+        Returns:
+            List of preliminary matches for exactly K candidates (as configured)
+        """
+        # Determine ranking mode and get configuration
+        ranking_config = self.config.ranking
+        mode = ranking_config.mode
+        
+        if mode == "discovery":
+            candidate_pool_size = ranking_config.discovery.candidate_pool_size_k
+        else:  # strict mode
+            candidate_pool_size = ranking_config.strict.candidate_pool_size_k
+        
+        logger.info(f"Starting two-stage matching in {mode} mode (K={candidate_pool_size})")
+        
+        # FR-1: Compute resume-level embedding once per run
+        # Create a composite resume text for embedding
+        evidence_units = self.extract_resume_evidence(resume_data)
+        resume_text = " ".join([e.text for e in evidence_units[:10]])  # Top 10 evidence units
+        resume_embedding = self.ai.generate_embedding(resume_text)
+        
+        # FR-2, FR-3: Stage 1 - Retrieve candidate jobs using vector similarity
+        logger.debug(f"Stage 1: Retrieving top {candidate_pool_size} candidates by vector similarity")
+        candidate_jobs = self.repo.get_top_jobs_by_summary_embedding(
+            resume_embedding=resume_embedding,
+            limit=candidate_pool_size,
+            tenant_id=tenant_id,
+            require_remote=require_remote
+        )
+        
+        if not candidate_jobs:
+            logger.warning("No candidate jobs found in Stage 1 retrieval")
+            return []
+        
+        logger.info(f"Stage 1 retrieved {len(candidate_jobs)} candidate jobs")
+        
+        # FR-4: Stage 2 - Compute preliminary matching on candidates only
+        # Generate embeddings for evidence units once
+        self.embed_evidence_units(evidence_units)
+        
+        resume_fingerprint = generate_resume_fingerprint(resume_data)
+        preliminary_matches = []
+        
+        logger.debug(f"Stage 2: Computing requirement-level matching for {len(candidate_jobs)} candidates")
+        for job in candidate_jobs:
+            # Compute job-level similarity using pre-computed resume embedding
+            job_similarity = 0.0
+            if job.summary_embedding is not None:
+                job_similarity = self.calculate_similarity(resume_embedding, job.summary_embedding)
+            
+            # Compute preferences alignment
+            preferences_alignment = None
+            if preferences:
+                preferences_alignment = self.calculate_preferences_alignment(job, preferences)
+            
+            # Compute requirement-level matching
+            matched_requirements = []
+            missing_requirements = []
+            
+            for req in job.requirements:
+                best_match = None
+                best_similarity = 0.0
+                
+                # Get requirement embedding
+                if req.embedding_row and req.embedding_row.embedding is not None:
+                    req_embedding = req.embedding_row.embedding
+                else:
+                    req_embedding = self.ai.generate_embedding(req.text)
+                
+                # Find best matching evidence
+                for evidence in evidence_units:
+                    if evidence.embedding is None:
+                        evidence.embedding = self.ai.generate_embedding(evidence.text)
+                    
+                    similarity = self.calculate_similarity(req_embedding, evidence.embedding)
+                    
+                    if similarity > best_similarity:
+                        best_similarity = similarity
+                        best_match = evidence
+                
+                is_covered = best_similarity >= self.config.similarity_threshold
+                
+                req_match = RequirementMatchResult(
+                    requirement=req,
+                    evidence=best_match if is_covered else None,
+                    similarity=best_similarity,
+                    is_covered=is_covered
+                )
+                
+                if is_covered:
+                    matched_requirements.append(req_match)
+                else:
+                    missing_requirements.append(req_match)
+            
+            preliminary = JobMatchPreliminary(
+                job=job,
+                job_similarity=job_similarity,
+                preferences_alignment=preferences_alignment,
+                requirement_matches=matched_requirements,
+                missing_requirements=missing_requirements,
+                resume_fingerprint=resume_fingerprint
+            )
+            preliminary_matches.append(preliminary)
+        
+        logger.info(f"Stage 2 completed: computed preliminaries for {len(preliminary_matches)} candidates")
+        
+        # Bounded work verification: ensure we processed exactly K candidates
+        if len(preliminary_matches) != len(candidate_jobs):
+            logger.warning(f"Stage 2 mismatch: processed {len(preliminary_matches)} vs expected {len(candidate_jobs)}")
+        
+        return preliminary_matches
+    
     def get_jobs_for_matching(self, limit: int = None) -> List[JobPost]:
         """
         Fetch jobs that are ready for matching.
