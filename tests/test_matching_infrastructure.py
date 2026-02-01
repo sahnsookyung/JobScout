@@ -24,6 +24,8 @@ from datetime import datetime
 from typing import List, Dict, Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 # Core services (no DB needed)
 from core.config_loader import load_config, MatchingConfig, MatcherConfig, ScorerConfig
 from core.matcher_service import MatcherService, ResumeEvidenceUnit, MockMatcherService
@@ -319,10 +321,7 @@ scrapers: []
         print(f"  ✓ Required coverage: {scored.required_coverage*100:.0f}%")
 
 
-@unittest.skipIf(
-    not SQLALCHEMY_AVAILABLE,
-    "SQLAlchemy not available - skipping DB tests"
-)
+@pytest.mark.db
 class TestMatchingDatabase(unittest.TestCase):
     """
     DATABASE TESTS - Require PostgreSQL with pgvector.
@@ -330,58 +329,50 @@ class TestMatchingDatabase(unittest.TestCase):
     These tests verify database operations, models, and repository methods.
     They require a running PostgreSQL instance with pgvector extension.
     
-    To run these tests:
-      1. Start test DB: docker-compose -f docker-compose.test.yml up -d
-      2. Run tests: TEST_DATABASE_URL=postgresql://testuser:testpass@localhost:5433/jobscout_test python -m pytest tests/test_matching_infrastructure.py::TestMatchingDatabase -v
-      3. Stop DB: docker-compose -f docker-compose.test.yml down
+    The test database is automatically managed by the test_database fixture
+    in conftest.py using testcontainers. It will start a container before
+    tests and stop it after all tests complete.
     
-    Or use: ./run_tests.sh --with-db --db-only
+    To run these tests:
+      pytest tests/test_matching_infrastructure.py::TestMatchingDatabase -v
+    
+    Or with external database:
+      TEST_DATABASE_URL=postgresql://... pytest tests/test_matching_infrastructure.py::TestMatchingDatabase -v
     """
     
-    @classmethod
-    def setUpClass(cls):
-        """Set up database connection."""
-        # Get database URL from environment or use default
-        cls.db_url = os.environ.get(
-            "TEST_DATABASE_URL",
-            "postgresql://testuser:testpass@localhost:5433/jobscout_test"
-        )
-        
-        # Try to connect
-        try:
-            cls.engine = create_engine(cls.db_url)
-            # Test connection
-            with cls.engine.connect() as conn:
-                conn.execute(text("SELECT 1"))
-            cls.has_db = True
-        except Exception as e:
-            print(f"\n⚠ Database not accessible: {e}")
-            print("⚠ Skipping database tests")
-            cls.has_db = False
-            return
-        
-        # Create tables
-        Base.metadata.create_all(cls.engine)
-        cls.SessionLocal = sessionmaker(bind=cls.engine)
-        
-        # Load test resume
+    @pytest.fixture(scope="class")
+    def db_engine(self, test_database):
+        """Create database engine for the test class."""
+        engine = create_engine(test_database)
+        Base.metadata.create_all(engine)
+        yield engine
+        Base.metadata.drop_all(engine)
+    
+    @pytest.fixture(scope="class")
+    def db_sessionmaker(self, db_engine):
+        """Create sessionmaker for the test class."""
+        return sessionmaker(bind=db_engine)
+    
+    @pytest.fixture(scope="class")
+    def _resume_data(self):
+        """Load test resume data."""
         resume_path = os.path.join(os.path.dirname(__file__), '..', 'resume.json')
         if os.path.exists(resume_path):
             with open(resume_path, 'r') as f:
-                cls.resume_data = json.load(f)
+                return json.load(f)
         else:
-            cls.resume_data = {
+            return {
                 "name": "Test User",
                 "sections": [
                     {"title": "Skills", "items": [{"description": "Python, Java", "highlights": []}]}
                 ]
             }
     
-    def setUp(self):
-        """Set up test session."""
-        if not self.has_db:
-            self.skipTest("Database not available")
-        
+    @pytest.fixture(autouse=True)
+    def setup(self, db_sessionmaker, _resume_data):
+        """Set up test session for each test method."""
+        self.SessionLocal = db_sessionmaker
+        self.resume_data = _resume_data
         self.session = self.SessionLocal()
         self.repo = JobRepository(self.session)
         
@@ -392,12 +383,10 @@ class TestMatchingDatabase(unittest.TestCase):
         self.session.query(JobRequirementUnit).delete()
         self.session.query(JobPost).delete()
         self.session.commit()
-    
-    def tearDown(self):
-        """Clean up."""
-        if hasattr(self, 'session'):
-            self.session.rollback()
-            self.session.close()
+        yield
+        # Cleanup after each test
+        self.session.rollback()
+        self.session.close()
     
     def _create_test_job(self, title: str, company: str, is_remote: bool = True) -> JobPost:
         """Helper to create a test job."""
@@ -504,7 +493,7 @@ class TestMatchingDatabase(unittest.TestCase):
         self.session.commit()
         
         self.assertIsNotNone(req_match.id)
-        self.assertEqual(req_match.similarity_score, 0.85)
+        self.assertAlmostEqual(float(req_match.similarity_score), 0.85, places=2)
         
         print(f"  ✓ Created JobMatchRequirement with ID: {req_match.id}")
         print(f"  ✓ Similarity: {req_match.similarity_score}")

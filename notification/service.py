@@ -8,9 +8,9 @@ Main service that orchestrates notifications using:
 - Redis Queue for async processing
 
 Usage:
-    from core.notification_service import NotificationService
+    from notification.service import NotificationService
     
-    service = NotificationService(repo)
+    service = NotificationService()
     
     # This checks deduplication, sends via queue, and tracks
     service.send_notification(
@@ -25,16 +25,16 @@ Usage:
 """
 
 import os
-import json
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
 from enum import Enum
+from urllib.parse import urljoin
 
 # RQ imports
 try:
     from redis import Redis
-    from rq import Queue
+    from rq import Queue, Retry
     from rq.job import Job
     RQ_AVAILABLE = True
 except ImportError:
@@ -92,16 +92,24 @@ class NotificationService:
             'redis://localhost:6379/0'
         )
         
+        # Base URL for links
+        self.base_url = os.environ.get('BASE_URL', 'http://localhost:5000')
+        
         if RQ_AVAILABLE:
             try:
                 self.redis_conn = Redis.from_url(self.redis_url)
+                # Validate connection with ping before using
+                self.redis_conn.ping()
                 self.queue = Queue('notifications', connection=self.redis_conn)
                 self.async_mode = True
-                logger.info(f"Notification service connected to Redis")
+                logger.info("Notification service connected to Redis")
             except Exception as e:
-                logger.warning(f"Redis not available: {e}. Using sync mode.")
+                logger.error(f"Redis connection failed: {e}. Falling back to sync mode.")
+                self.redis_conn = None
+                self.queue = None
                 self.async_mode = False
         else:
+            logger.warning("RQ not available. Using sync mode.")
             self.async_mode = False
     
     def send_notification(
@@ -167,11 +175,14 @@ class NotificationService:
         
         # Queue or process immediately
         if self.async_mode:
+            # Add retry policy for transient failures
+            retry_policy = Retry(max=3, interval=[5, 10, 20])  # Retry 3 times with increasing delays
             job = self.queue.enqueue(
                 process_notification_task,
                 notification_data,
                 job_timeout='5m',
-                result_ttl=86400
+                result_ttl=86400,
+                retry=retry_policy
             )
             notification_id = job.id
             logger.info(f"Queued notification as job {job.id}")
@@ -225,11 +236,11 @@ class NotificationService:
 
 Position: {job_title}
 Company: {company}
-Location: {'Remote' if is_remote else location}
+Location: {'Remote' if is_remote else (location or 'Onsite')}
 Match Score: {score:.1f}/100
 
 This job aligns well with your skills and preferences.
-View details: http://localhost:5000/api/matches/{match_id}
+View details: {urljoin(self.base_url, f"/api/matches/{match_id}")}
 
 ---
 JobScout
@@ -248,7 +259,7 @@ JobScout
                     body=body,
                     user_id=user_id,
                     job_match_id=match_id,
-                    event_type="new_high_score_match",
+                    event_type="new_high_score_match" if score >= 60 else "new_match",
                     priority=priority,
                     metadata={
                         'job_title': job_title,
@@ -321,8 +332,20 @@ JobScout
         return results
     
     def _get_recipient_for_channel(self, user_id: str, channel: str) -> str:
-        """Get recipient address for a channel."""
-        # In production, fetch from user preferences
+        """
+        Get recipient address for a given notification channel.
+        
+        Args:
+            user_id: The user ID to look up preferences for
+            channel: The notification channel type (email, discord, telegram, slack)
+            
+        Returns:
+            The recipient address/URL/ID for the specified channel
+            
+        Raises:
+            ValueError: If the channel type is not supported
+        """
+        # In production, fetch from user preferences using user_id
         # For now, use environment variables or defaults
         
         if channel == 'email':
@@ -334,8 +357,8 @@ JobScout
         elif channel == 'slack':
             return os.environ.get('SLACK_WEBHOOK_URL', '')
         else:
-            return ''
-    
+            raise ValueError(f"Unsupported channel type: {channel}")
+
     def get_queue_status(self) -> Dict[str, Any]:
         """Get queue status."""
         if not self.async_mode:
@@ -437,7 +460,7 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
                     metadata=metadata,
                     allow_resend=allow_resend
                 )
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to record notification failure: {e}")
         
         raise

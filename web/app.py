@@ -15,6 +15,8 @@ Then open:
 
 import os
 import sys
+import json
+import logging
 from pathlib import Path
 from datetime import datetime
 from typing import List, Optional, Dict, Any
@@ -24,21 +26,34 @@ from decimal import Decimal
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, desc
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 from decimal import Decimal
 
 from database.models import JobMatch, JobPost, JobMatchRequirement
 
-# Database configuration
-DB_URL = os.environ.get(
-    'DATABASE_URL',
-    'postgresql://user:password@localhost:5432/jobscout'
-)
+# Configure logging
+logger = logging.getLogger(__name__)
+
+# Database configuration - use environment variable or default local development URL
+DB_URL = os.environ.get('DATABASE_URL', 'postgresql://user:password@localhost:5432/jobscout')
+
+# Create engine once at module level (not per-request)
+ENGINE = create_engine(DB_URL)
+SessionLocal = sessionmaker(bind=ENGINE)
+
+
+def get_db():
+    """FastAPI dependency that yields a database session and ensures cleanup."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 # Create FastAPI app with metadata
 app = FastAPI(
@@ -165,13 +180,6 @@ class StatsResponse(BaseModel):
 
 # Helper functions
 
-def get_db_session():
-    """Create database session."""
-    engine = create_engine(DB_URL)
-    SessionLocal = sessionmaker(bind=engine)
-    return SessionLocal()
-
-
 def decimal_to_float(val):
     """Convert Decimal to float safely."""
     if val is None:
@@ -198,17 +206,17 @@ def read_root():
 def get_matches(
     min_score: float = Query(default=0, ge=0, le=100, description="Minimum match score to include"),
     status: str = Query(default="active", description="Match status: active, stale, or all"),
-    limit: int = Query(default=50, ge=1, le=1000, description="Maximum number of results")
+    limit: int = Query(default=50, ge=1, le=1000, description="Maximum number of results"),
+    db: Session = Depends(get_db)
 ):
     """
     Get a list of job matches with optional filtering.
     
     Returns matches sorted by overall score (highest first).
     """
-    session = get_db_session()
     try:
         # Build query
-        query = session.query(JobMatch)
+        query = db.query(JobMatch)
         
         if status != "all":
             query = query.filter(JobMatch.status == status)
@@ -217,10 +225,15 @@ def get_matches(
             JobMatch.overall_score >= min_score
         ).order_by(desc(JobMatch.overall_score)).limit(limit).all()
         
+        # Batch load all related JobPost records to avoid N+1 queries
+        job_ids = [match.job_post_id for match in matches]
+        jobs = db.query(JobPost).filter(JobPost.id.in_(job_ids)).all() if job_ids else []
+        jobs_by_id = {str(job.id): job for job in jobs}
+        
         # Format results
         results = []
         for match in matches:
-            job = session.query(JobPost).get(match.job_post_id)
+            job = jobs_by_id.get(str(match.job_post_id))
             if job:
                 results.append(MatchSummary(
                     match_id=str(match.id),
@@ -242,28 +255,26 @@ def get_matches(
         return MatchesResponse(success=True, count=len(results), matches=results)
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        session.close()
+        logger.exception("Error fetching matches")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/matches/{match_id}", response_model=MatchDetailResponse, tags=["matches"])
-def get_match_details(match_id: str):
+def get_match_details(match_id: str, db: Session = Depends(get_db)):
     """
     Get detailed information about a specific match.
     
     Includes match metadata, job details, and requirement coverage.
     """
-    session = get_db_session()
     try:
-        match = session.query(JobMatch).get(match_id)
+        match = db.query(JobMatch).get(match_id)
         if not match:
             raise HTTPException(status_code=404, detail="Match not found")
         
-        job = session.query(JobPost).get(match.job_post_id)
+        job = db.query(JobPost).get(match.job_post_id)
         
         # Get requirement matches
-        req_matches = session.query(JobMatchRequirement).filter(
+        req_matches = db.query(JobMatchRequirement).filter(
             JobMatchRequirement.job_match_id == match_id
         ).all()
         
@@ -282,10 +293,9 @@ def get_match_details(match_id: str):
         # Parse penalty details
         penalty_details = match.penalty_details or {}
         if isinstance(penalty_details, str):
-            import json
             try:
                 penalty_details = json.loads(penalty_details)
-            except:
+            except (json.JSONDecodeError, ValueError):
                 penalty_details = {}
         
         return MatchDetailResponse(
@@ -327,35 +337,33 @@ def get_match_details(match_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        session.close()
+        logger.exception("Error fetching match details")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/stats", response_model=StatsResponse, tags=["stats"])
-def get_stats():
+def get_stats(db: Session = Depends(get_db)):
     """
     Get overall statistics about matches in the database.
     
     Returns total counts and score distribution.
     """
-    session = get_db_session()
     try:
-        total_matches = session.query(JobMatch).count()
-        active_matches = session.query(JobMatch).filter(JobMatch.status == 'active').count()
+        total_matches = db.query(JobMatch).count()
+        active_matches = db.query(JobMatch).filter(JobMatch.status == 'active').count()
         
         # Score distribution
         score_dist = {
-            'excellent': session.query(JobMatch).filter(JobMatch.overall_score >= 80).count(),
-            'good': session.query(JobMatch).filter(
+            'excellent': db.query(JobMatch).filter(JobMatch.overall_score >= 80).count(),
+            'good': db.query(JobMatch).filter(
                 JobMatch.overall_score >= 60,
                 JobMatch.overall_score < 80
             ).count(),
-            'average': session.query(JobMatch).filter(
+            'average': db.query(JobMatch).filter(
                 JobMatch.overall_score >= 40,
                 JobMatch.overall_score < 60
             ).count(),
-            'poor': session.query(JobMatch).filter(JobMatch.overall_score < 40).count(),
+            'poor': db.query(JobMatch).filter(JobMatch.overall_score < 40).count(),
         }
         
         return StatsResponse(
@@ -368,15 +376,18 @@ def get_stats():
         )
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        session.close()
+        logger.exception("Error fetching stats")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # Notification endpoints
 from notification import NotificationService, NotificationPriority
+from database.repository import JobRepository
 
-notification_service = NotificationService()
+def get_notification_service(db: Session = Depends(get_db)):
+    """Get notification service with database session."""
+    repo = JobRepository(db)
+    return NotificationService(repo)
 
 class NotificationRequest(BaseModel):
     """Request to send a notification."""
@@ -400,7 +411,10 @@ class QueueStatusResponse(BaseModel):
     redis_connected: bool
 
 @app.post("/api/notifications/send", response_model=NotificationResponse, tags=["notifications"])
-def send_notification(request: NotificationRequest):
+def send_notification(
+    request: NotificationRequest,
+    notification_service: NotificationService = Depends(get_notification_service)
+):
     """
     Send a notification via the message queue.
     
@@ -430,7 +444,9 @@ def send_notification(request: NotificationRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/notifications/queue-status", response_model=QueueStatusResponse, tags=["notifications"])
-def get_queue_status():
+def get_queue_status(
+    notification_service: NotificationService = Depends(get_notification_service)
+):
     """
     Get the status of the notification queue.
     
@@ -454,7 +470,8 @@ def test_match_notification(
     user_id: str = Query(..., description="User ID to notify"),
     job_title: str = Query(default="Senior Python Developer", description="Job title"),
     company: str = Query(default="TechCorp", description="Company name"),
-    score: float = Query(default=85.0, ge=0, le=100, description="Match score")
+    score: float = Query(default=85.0, ge=0, le=100, description="Match score"),
+    notification_service: NotificationService = Depends(get_notification_service)
 ):
     """
     Test sending a job match notification.

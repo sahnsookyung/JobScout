@@ -8,6 +8,7 @@ from sqlalchemy import (
     Column, Integer, String, Boolean, Numeric, Text, ForeignKey, TIMESTAMP,
     Date, func, UniqueConstraint, Index, DateTime, Float
 )
+from sqlalchemy.sql import text as sql_text
 from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from pgvector.sqlalchemy import Vector
@@ -19,7 +20,7 @@ class Tenant(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(Text, nullable=False)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
 
 class JobPost(Base):
     __tablename__ = 'job_post'
@@ -36,8 +37,8 @@ class JobPost(Base):
     # Fingerprinting / Tracking
     canonical_fingerprint = Column(Text, nullable=False)
     fingerprint_version = Column(Integer, nullable=False, default=1)
-    first_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
-    last_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
+    first_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    last_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
     status = Column(Text, nullable=False, default='active') # active|expired|unknown
     
     # State Flags
@@ -104,8 +105,8 @@ class JobPostSource(Base):
     source_job_id = Column(Text)
     date_posted = Column(Date)
     
-    first_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
-    last_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
+    first_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    last_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
     is_active = Column(Boolean, nullable=False, default=True)
 
     job_post = relationship("JobPost", back_populates="sources")
@@ -127,7 +128,7 @@ class JobRequirementUnit(Base):
     tags = Column(JSONB, nullable=False, default={})
     ordinal = Column(Integer)
     
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
 
     job_post = relationship("JobPost", back_populates="requirements")
     embedding_row = relationship("JobRequirementUnitEmbedding", uselist=False, back_populates="unit", cascade="all, delete-orphan")
@@ -142,7 +143,7 @@ class JobRequirementUnitEmbedding(Base):
 
     job_requirement_unit_id = Column(UUID(as_uuid=True), ForeignKey('job_requirement_unit.id', ondelete='CASCADE'), primary_key=True)
     embedding = Column(Vector(1024), nullable=False)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
 
     unit = relationship("JobRequirementUnit", back_populates="embedding_row")
 
@@ -180,8 +181,8 @@ class JobMatch(Base):
     penalty_details = Column(JSONB, default={})  # Detailed penalty breakdown
     
     # Coverage metrics
-    required_coverage = Column(Numeric(3, 2))  # % of required requirements covered
-    preferred_coverage = Column(Numeric(3, 2))  # % of preferred requirements covered
+    required_coverage = Column(Numeric(3, 2))  # Fraction of required requirements covered (0.00-1.00)
+    preferred_coverage = Column(Numeric(3, 2))  # Fraction of preferred requirements covered (0.00-1.00)
     total_requirements = Column(Integer, default=0)  # Total requirements matched against
     matched_requirements_count = Column(Integer, default=0)  # Number matched
     
@@ -194,9 +195,9 @@ class JobMatch(Base):
     status = Column(Text, default='active')  # active|stale|invalidated
     invalidated_reason = Column(Text, nullable=True)  # Reason if invalidated
     notified = Column(Boolean, default=False)  # Whether user was notified of this match
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
-    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now(), onupdate=func.now())
-    calculated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"), onupdate=sql_text("timezone('UTC', now())"))
+    calculated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
     
     # Relationships
     job_post = relationship("JobPost", back_populates="matches")
@@ -238,7 +239,7 @@ class JobMatchRequirement(Base):
     is_covered = Column(Boolean, default=False)  # Whether this meets threshold
     req_type = Column(Text, nullable=False)  # required|preferred|responsibility|constraint|benefit
     
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
 
     # Relationships
     job_match = relationship("JobMatch", back_populates="requirement_matches")
@@ -287,8 +288,8 @@ class NotificationTracker(Base):
     error_message = Column(Text, nullable=True)
     
     # Timestamps
-    first_sent_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
-    last_sent_at = Column(TIMESTAMP(timezone=True), nullable=False, default=func.now())
+    first_sent_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    last_sent_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
     send_count = Column(Integer, default=1)  # How many times this was sent (for resends)
     
     # Resend policy

@@ -9,9 +9,9 @@ Follows SOLID principles:
 - Dependency Inversion: Depends on abstractions
 
 Usage:
-    from core.notification_tracker import NotificationTracker
+    from notification.tracker import NotificationTrackerService
     
-    tracker = NotificationTracker(repo)
+    tracker = NotificationTrackerService(repo)
     
     # Check if notification should be sent
     if tracker.should_send_notification(
@@ -38,13 +38,17 @@ Usage:
 import hashlib
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 
+from sqlalchemy import select, delete, desc
 from database.repository import JobRepository
 from database.models import NotificationTracker
+
+# Constants
+RESEND_INTERVAL_NEVER = 999999  # Effectively never
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +136,7 @@ class DefaultDeduplicationStrategy(DeduplicationStrategy):
             return False
         
         min_interval = timedelta(hours=existing_notification.resend_interval_hours or self.default_interval_hours)
-        time_since_last = datetime.now() - existing_notification.last_sent_at
+        time_since_last = datetime.now(timezone.utc) - existing_notification.last_sent_at
         
         if time_since_last < min_interval:
             logger.info(f"Too soon to resend (sent {time_since_last} ago)")
@@ -155,7 +159,7 @@ class AggressiveDeduplicationStrategy(DeduplicationStrategy):
         return existing_notification is None
     
     def get_resend_interval(self) -> int:
-        return 999999  # Effectively never
+        return RESEND_INTERVAL_NEVER
 
 
 class NotificationTrackerService:
@@ -207,7 +211,7 @@ class NotificationTrackerService:
         content = {
             'subject': subject,
             'body': body[:500],  # First 500 chars to avoid huge hashes
-            'metadata_keys': sorted(metadata.keys()) if metadata else []
+            'metadata': json.dumps(metadata, sort_keys=True, default=str) if metadata else None
         }
         normalized = json.dumps(content, sort_keys=True)
         return hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:16]
@@ -270,7 +274,6 @@ class NotificationTrackerService:
         dedup_hash: str
     ) -> Optional[NotificationTracker]:
         """Look up existing notification by dedup hash."""
-        from sqlalchemy import select
         
         stmt = select(NotificationTracker).where(
             NotificationTracker.dedup_hash == dedup_hash
@@ -292,7 +295,8 @@ class NotificationTrackerService:
         success: bool,
         error_message: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        allow_resend: bool = True
+        allow_resend: bool = True,
+        commit: bool = True
     ) -> NotificationTracker:
         """
         Record that a notification was sent.
@@ -322,7 +326,7 @@ class NotificationTrackerService:
         
         if existing:
             # Update existing record
-            existing.last_sent_at = datetime.now()
+            existing.last_sent_at = datetime.now(timezone.utc)
             existing.send_count += 1
             existing.content_hash = content_hash
             existing.sent_successfully = success
@@ -352,7 +356,8 @@ class NotificationTrackerService:
             self.repo.db.add(tracker)
             logger.info(f"Created new notification record for {event_type}")
         
-        self.repo.db.commit()
+        if commit:
+            self.repo.db.commit()
         return tracker
     
     def get_notification_history(
@@ -362,7 +367,6 @@ class NotificationTrackerService:
         event_type: Optional[str] = None
     ) -> list:
         """Get notification history for a user."""
-        from sqlalchemy import select, desc
         
         stmt = select(NotificationTracker).where(
             NotificationTracker.user_id == user_id
@@ -377,9 +381,10 @@ class NotificationTrackerService:
     
     def clear_old_notifications(self, days: int = 30) -> int:
         """Clear notification history older than specified days."""
-        from sqlalchemy import delete
         
-        cutoff = datetime.now() - timedelta(days=days)
+        if days < 1:
+            raise ValueError("days must be >= 1")
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         
         stmt = delete(NotificationTracker).where(
             NotificationTracker.last_sent_at < cutoff
@@ -400,7 +405,8 @@ def should_notify_user(
     user_id: str,
     job_match_id: str,
     event_type: str = "new_match",
-    channel: str = "email"
+    channel: str = "email",
+    tracker: Optional[NotificationTrackerService] = None
 ) -> bool:
     """
     Quick check if user should be notified about a job match.
@@ -411,8 +417,8 @@ def should_notify_user(
         if should_notify_user(repo, "user123", "match456"):
             notification_service.notify_new_match(...)
     """
-    tracker = NotificationTrackerService(repo)
-    return tracker.should_send_notification(
+    tracker_service = tracker or NotificationTrackerService(repo)
+    return tracker_service.should_send_notification(
         user_id=user_id,
         job_match_id=job_match_id,
         event_type=event_type,

@@ -20,6 +20,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=7.0.0",
+    "testcontainers>=4.0.0",
 ]
 web = [
     "fastapi>=0.100.0",
@@ -29,6 +30,6 @@ web = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = ["*_test_*.py"]
+python_files = ["test_*.py", "*_test.py", "integration_test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

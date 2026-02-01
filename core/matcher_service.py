@@ -20,8 +20,6 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 import math
 import logging
-from sqlalchemy.orm import Session
-
 from database.repository import JobRepository
 from database.models import (
     JobPost, JobRequirementUnit, JobRequirementUnitEmbedding,

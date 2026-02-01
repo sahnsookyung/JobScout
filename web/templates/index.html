@@ -108,7 +108,8 @@
         }
         
         select:focus, input:focus {
-            outline: none;
+            outline: 2px solid #667eea;
+            outline-offset: 2px;
             border-color: #667eea;
         }
         
@@ -350,7 +351,7 @@
         
         <div class="filters">
             <div class="filter-group">
-                <label>Minimum Score</label>
+                <label for="minScore">Minimum Score</label>
                 <select id="minScore">
                     <option value="0">All Jobs</option>
                     <option value="30" selected>30+ (Show decent matches)</option>
@@ -361,7 +362,7 @@
             </div>
             
             <div class="filter-group">
-                <label>Status</label>
+                <label for="status">Status</label>
                 <select id="status">
                     <option value="active" selected>Active</option>
                     <option value="stale">Stale</option>
@@ -369,7 +370,7 @@
                 </select>
             </div>
             
-            <button onclick="loadMatches()">Refresh Results</button>
+            <button id="refreshBtn">Refresh Results</button>
         </div>
         
         <div id="matches" class="matches-grid">
@@ -381,7 +382,7 @@
     <div id="modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <button class="modal-close" onclick="closeModal()">&times;</button>
+                <button class="modal-close" id="modalCloseBtn">&times;</button>
                 <h2 id="modalTitle">Job Details</h2>
                 <p id="modalCompany"></p>
             </div>
@@ -392,44 +393,69 @@
     </div>
 
     <script>
+        // XSS Prevention: Escape HTML helper function
+        function escapeHtml(text) {
+            if (text === null || text === undefined) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
         // Load stats on page load
         loadStats();
         loadMatches();
         
-        // Event listeners
+        // Event listeners for filters
         document.getElementById('minScore').addEventListener('change', loadMatches);
         document.getElementById('status').addEventListener('change', loadMatches);
+        document.getElementById('refreshBtn').addEventListener('click', loadMatches);
+        document.getElementById('modalCloseBtn').addEventListener('click', closeModal);
+        
+        // Delegated event handling for match cards
+        document.getElementById('matches').addEventListener('click', function(e) {
+            const matchCard = e.target.closest('.match-card');
+            if (matchCard && matchCard.dataset.matchId) {
+                showDetails(matchCard.dataset.matchId);
+            }
+        });
         
         async function loadStats() {
+            const container = document.getElementById('stats');
             try {
                 const response = await fetch('/api/stats');
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    container.innerHTML = '<div class="error">HTTP ' + escapeHtml(response.status) + ': ' + escapeHtml(response.statusText) + '</div>';
+                    return;
+                }
                 const data = await response.json();
                 
                 if (data.success) {
                     const stats = data.stats;
                     const scoreDist = stats.score_distribution;
                     
-                    document.getElementById('stats').innerHTML = `
+                    container.innerHTML = `
                         <div class="stat-card">
                             <div class="stat-label">Total Matches</div>
-                            <div class="stat-value">${stats.total_matches}</div>
+                            <div class="stat-value">${escapeHtml(stats.total_matches)}</div>
                         </div>
                         <div class="stat-card">
                             <div class="stat-label">Active Matches</div>
-                            <div class="stat-value">${stats.active_matches}</div>
+                            <div class="stat-value">${escapeHtml(stats.active_matches)}</div>
                         </div>
                         <div class="stat-card">
                             <div class="stat-label">Excellent (80+)</div>
-                            <div class="stat-value">${scoreDist.excellent}</div>
+                            <div class="stat-value">${escapeHtml(scoreDist.excellent)}</div>
                         </div>
                         <div class="stat-card">
                             <div class="stat-label">Good (60-79)</div>
-                            <div class="stat-value">${scoreDist.good}</div>
+                            <div class="stat-value">${escapeHtml(scoreDist.good)}</div>
                         </div>
                     `;
                 }
             } catch (error) {
                 console.error('Failed to load stats:', error);
+                container.innerHTML = '<div class="error">Failed to load stats: ' + escapeHtml(error.message) + '</div>';
             }
         }
         
@@ -441,11 +467,16 @@
             container.innerHTML = '<div class="loading">Loading matches...</div>';
             
             try {
-                const response = await fetch(`/api/matches?min_score=${minScore}&status=${status}`);
+                const response = await fetch('/api/matches?min_score=' + encodeURIComponent(minScore) + '&status=' + encodeURIComponent(status));
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    container.innerHTML = '<div class="error">HTTP ' + escapeHtml(response.status) + ': ' + escapeHtml(response.statusText) + '</div>';
+                    return;
+                }
                 const data = await response.json();
                 
                 if (!data.success) {
-                    container.innerHTML = `<div class="error">Error: ${data.error}</div>`;
+                    container.innerHTML = '<div class="error">Error: ' + escapeHtml(data.error) + '</div>';
                     return;
                 }
                 
@@ -460,16 +491,16 @@
                 }
                 
                 container.innerHTML = data.matches.map(match => `
-                    <div class="match-card" onclick="showDetails('${match.match_id}')">
+                    <div class="match-card" data-match-id="${escapeHtml(match.match_id)}">
                         <div class="match-header" style="position: relative;">
                             <div class="match-score">${match.overall_score.toFixed(1)}</div>
-                            <div class="match-title">${match.title}</div>
-                            <div class="match-company">${match.company}</div>
+                            <div class="match-title">${escapeHtml(match.title)}</div>
+                            <div class="match-company">${escapeHtml(match.company)}</div>
                         </div>
                         <div class="match-body">
                             <div class="match-meta">
                                 <div class="meta-item">
-                                    <span>${match.is_remote ? 'Remote' : match.location}</span>
+                                    <span>${match.is_remote ? 'Remote' : escapeHtml(match.location)}</span>
                                 </div>
                                 <div class="meta-item">
                                     <span>${match.match_type === 'with_preferences' ? 'With Preferences' : 'Requirements Only'}</span>
@@ -501,13 +532,18 @@
                 `).join('');
                 
             } catch (error) {
-                container.innerHTML = `<div class="error">Failed to load matches: ${error.message}</div>`;
+                container.innerHTML = '<div class="error">Failed to load matches: ' + escapeHtml(error.message) + '</div>';
             }
         }
         
         async function showDetails(matchId) {
             try {
-                const response = await fetch(`/api/matches/${matchId}`);
+                const response = await fetch('/api/matches/' + encodeURIComponent(matchId));
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    alert('Failed to load details: HTTP ' + response.status + ' - ' + response.statusText);
+                    return;
+                }
                 const data = await response.json();
                 
                 if (!data.success) {
@@ -546,7 +582,7 @@
                         ${job.description ? `
                             <div style="margin-bottom: 20px;">
                                 <h4 style="margin-bottom: 10px;">Description</h4>
-                                <p style="color: #666; line-height: 1.6;">${job.description}</p>
+                                <p style="color: #666; line-height: 1.6;">${escapeHtml(job.description)}</p>
                             </div>
                         ` : ''}
                         
@@ -555,8 +591,8 @@
                             <ul class="requirements-list">
                                 ${covered.map(r => `
                                     <li class="requirement-item requirement-covered">
-                                        <strong>${r.req_type.toUpperCase()}:</strong> ${r.requirement_id}<br>
-                                        ${r.evidence_text ? `<small style="color: #666;">Matched with: "${r.evidence_text.substring(0, 100)}..."</small>` : ''}
+                                        <strong>${escapeHtml(r.req_type.toUpperCase())}:</strong> ${escapeHtml(r.requirement_id)}<br>
+                                        ${r.evidence_text ? '<small style="color: #666;">Matched with: "' + escapeHtml(r.evidence_text.substring(0, 100)) + '..."</small>' : ''}
                                         <div style="margin-top: 5px; font-size: 0.9em; color: #4caf50;">
                                             Similarity: ${(r.similarity_score * 100).toFixed(1)}%
                                         </div>
@@ -571,7 +607,7 @@
                                 <ul class="requirements-list">
                                     ${uncovered.map(r => `
                                         <li class="requirement-item requirement-uncovered">
-                                            <strong>${r.req_type.toUpperCase()}:</strong> ${r.requirement_id}<br>
+                                            <strong>${escapeHtml(r.req_type.toUpperCase())}:</strong> ${escapeHtml(r.requirement_id)}<br>
                                             <small style="color: #999;">Best similarity: ${(r.similarity_score * 100).toFixed(1)}%</small>
                                         </li>
                                     `).join('')}

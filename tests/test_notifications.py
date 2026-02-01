@@ -19,7 +19,7 @@ from unittest.mock import Mock, patch, MagicMock
 import json
 import os
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
 
 # Test the notification channels, tracker, and service
@@ -93,8 +93,8 @@ class TestNotificationChannels(unittest.TestCase):
         mock_smtp.login.assert_called_once_with('test@example.com', 'password')
         mock_smtp.send_message.assert_called_once()
     
-    def test_email_channel_send_no_config_logs_only(self):
-        """Test email sending without config logs only."""
+    def test_email_channel_send_no_config_returns_failure(self):
+        """Test email sending without config returns failure."""
         # Clear config
         for key in ['SMTP_SERVER', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD']:
             os.environ.pop(key, None)
@@ -107,8 +107,8 @@ class TestNotificationChannels(unittest.TestCase):
             metadata={}
         )
         
-        # Should return True (logged only) when not configured
-        self.assertTrue(result)
+        # Should return False when not configured
+        self.assertFalse(result)
     
     # ============ Discord Channel Tests ============
     
@@ -141,7 +141,7 @@ class TestNotificationChannels(unittest.TestCase):
         self.assertEqual(payload['embeds'][0]['title'], 'Test Notification')
     
     def test_discord_channel_send_no_webhook(self):
-        """Test Discord sending without webhook logs only."""
+        """Test Discord sending without webhook returns failure."""
         os.environ.pop('DISCORD_WEBHOOK_URL', None)
         
         channel = DiscordChannel()
@@ -152,7 +152,7 @@ class TestNotificationChannels(unittest.TestCase):
             metadata={}  # No webhook in metadata either
         )
         
-        self.assertTrue(result)  # Logs only
+        self.assertFalse(result)  # Returns False when not configured
     
     @patch('notification.channels.requests.post')
     def test_discord_channel_send_failure(self, mock_post):
@@ -198,7 +198,7 @@ class TestNotificationChannels(unittest.TestCase):
         self.assertEqual(payload['parse_mode'], 'HTML')
     
     def test_telegram_channel_send_no_token(self):
-        """Test Telegram sending without token logs only."""
+        """Test Telegram sending without token returns failure."""
         os.environ.pop('TELEGRAM_BOT_TOKEN', None)
         
         channel = TelegramChannel()
@@ -209,7 +209,7 @@ class TestNotificationChannels(unittest.TestCase):
             metadata={}
         )
         
-        self.assertTrue(result)  # Logs only
+        self.assertFalse(result)  # Returns False when not configured
     
     @patch('notification.channels.requests.post')
     def test_telegram_channel_api_error(self, mock_post):
@@ -425,8 +425,12 @@ class ConfigTestChannel(NotificationChannel):
                 sys.path.remove(temp_dir)
             os.unlink(temp_file)
     
-    def test_load_channel_from_environment_variable(self):
+    @patch('notification.channels._validate_channel_file_path')
+    def test_load_channel_from_environment_variable(self, mock_validate):
         """Test loading channel from NOTIFICATION_CHANNEL_PATH env var."""
+        # Mock validation to always pass for test files
+        mock_validate.return_value = True
+        
         custom_channel_code = '''
 from notification import NotificationChannel
 
@@ -517,7 +521,7 @@ class TestNotificationTracker(unittest.TestCase):
         
         existing = Mock()
         existing.content_hash = 'hash1'
-        existing.last_sent_at = datetime.now()
+        existing.last_sent_at = datetime.now(timezone.utc)
         existing.allow_resend = False
         
         event = NotificationEvent(
@@ -537,7 +541,7 @@ class TestNotificationTracker(unittest.TestCase):
         
         existing = Mock()
         existing.content_hash = 'hash1'
-        existing.last_sent_at = datetime.now()
+        existing.last_sent_at = datetime.now(timezone.utc)
         
         event = NotificationEvent(
             user_id='user1',
@@ -556,7 +560,7 @@ class TestNotificationTracker(unittest.TestCase):
         
         existing = Mock()
         existing.content_hash = 'hash1'
-        existing.last_sent_at = datetime.now() - timedelta(hours=25)  # Over 24h ago
+        existing.last_sent_at = datetime.now(timezone.utc) - timedelta(hours=25)  # Over 24h ago
         existing.allow_resend = True
         existing.resend_interval_hours = 24
         
@@ -576,7 +580,7 @@ class TestNotificationTracker(unittest.TestCase):
         strategy = AggressiveDeduplicationStrategy()
         
         existing = Mock()
-        existing.last_sent_at = datetime.now() - timedelta(days=30)
+        existing.last_sent_at = datetime.now(timezone.utc) - timedelta(days=30)
         
         event = NotificationEvent(
             user_id='user1',
@@ -615,7 +619,7 @@ class TestNotificationTracker(unittest.TestCase):
         """Test blocks duplicate notifications."""
         existing = Mock()
         existing.content_hash = 'existing_hash'
-        existing.last_sent_at = datetime.now()
+        existing.last_sent_at = datetime.now(timezone.utc)
         existing.allow_resend = False
         mock_get_existing.return_value = existing
         

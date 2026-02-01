@@ -18,7 +18,7 @@ Usage:
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import logging
 import json
 import os
@@ -132,6 +132,18 @@ def _is_dry_run_mode() -> bool:
     return os.environ.get('NOTIFICATION_DRY_RUN', '').lower() in ('true', '1', 'yes')
 
 
+def _mask_email(email: str) -> str:
+    """
+    Mask email address for safe logging (PII protection).
+    
+    Shows only domain, e.g., "***@example.com"
+    """
+    if '@' not in email:
+        return "***"
+    local, domain = email.rsplit('@', 1)
+    return f"***@{domain}"
+
+
 class NotificationChannel(ABC):
     """
     Abstract base class for all notification channels.
@@ -185,13 +197,8 @@ class EmailChannel(NotificationChannel):
     
     def send(self, recipient: str, subject: str, body: str, metadata: Dict[str, Any]) -> bool:
         if not self.validate_config():
-            if _is_dry_run_mode():
-                logger.warning("Email not configured, logging only (dry-run mode)")
-                logger.info(f"[EMAIL] To: {recipient}, Subject: {subject}")
-                return True
-            else:
-                logger.error("Email not configured - set SMTP environment variables or enable dry-run mode")
-                return False
+            logger.error("Email not configured - SMTP environment variables not set")
+            return False
         
         try:
             smtp_server = os.environ.get('SMTP_SERVER', 'smtp.gmail.com')
@@ -211,11 +218,13 @@ class EmailChannel(NotificationChannel):
                 server.login(username, password)
                 server.send_message(msg)
             
-            logger.info(f"Email sent to {recipient}")
+            # Log with masked email for PII protection
+            logger.info(f"Email sent to {_mask_email(recipient)}")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to send email: {e}")
+            # Log with masked email for PII protection
+            logger.error(f"Failed to send email to {_mask_email(recipient)}: {e}")
             return False
 
 
@@ -235,13 +244,8 @@ class DiscordChannel(NotificationChannel):
         webhook_url = metadata.get('discord_webhook_url') or os.environ.get('DISCORD_WEBHOOK_URL', '')
         
         if not webhook_url:
-            if _is_dry_run_mode():
-                logger.warning("Discord webhook not configured, logging only (dry-run mode)")
-                logger.info(f"[DISCORD] To: {recipient}, Message: {body}")
-                return True
-            else:
-                logger.error("Discord webhook not configured - set DISCORD_WEBHOOK_URL or enable dry-run mode")
-                return False
+            logger.error("Discord webhook not configured - DISCORD_WEBHOOK_URL not set")
+            return False
         
         try:
             # Discord webhook format
@@ -308,9 +312,8 @@ class TelegramChannel(NotificationChannel):
         bot_token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
         
         if not bot_token:
-            logger.warning("Telegram bot token not configured, logging only")
-            logger.info(f"[TELEGRAM] To: {recipient}, Message: {body}")
-            return True
+            logger.error("Telegram bot token not configured - TELEGRAM_BOT_TOKEN not set")
+            return False
         
         try:
             # Telegram Bot API endpoint
@@ -490,11 +493,15 @@ class NotificationChannelFactory:
                     obj is not NotificationChannel and
                     hasattr(obj, 'channel_type')):
                     
-                    # Get channel_type as class attribute (don't instantiate)
-                    channel_type = getattr(obj, 'channel_type', None)
-                    if isinstance(channel_type, str):
-                        cls._channels[channel_type] = obj
-                        logger.info(f"Loaded custom channel '{channel_type}' from {file_path}")
+                    # Get channel_type by instantiating (needed for properties)
+                    try:
+                        instance = obj()
+                        channel_type = instance.channel_type
+                        if isinstance(channel_type, str):
+                            cls._channels[channel_type] = obj
+                            logger.info(f"Loaded custom channel '{channel_type}' from {file_path}")
+                    except Exception as e:
+                        logger.warning(f"Could not instantiate channel class {name}: {e}")
                     
         except Exception as e:
             logger.error(f"Failed to load custom channel from {file_path}: {e}")

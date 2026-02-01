@@ -2,7 +2,7 @@ import logging
 import json
 import copy
 from typing import List, Optional, Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 from sqlalchemy import select, delete, and_, or_, func
@@ -28,12 +28,15 @@ class JobRepository:
         return self.db.execute(stmt).scalar_one()
 
     def create_job_post(self, job_data: dict, fingerprint: str, location_text: str) -> JobPost:
+        now = datetime.now(timezone.utc)
         job_post = JobPost(
             title=job_data['title'],
             company=job_data['company_name'],
             location_text=location_text,
             is_remote=job_data.get('is_remote'),
             canonical_fingerprint=fingerprint,
+            first_seen_at=now,
+            last_seen_at=now,
             # Initialize empty payload if needed
             raw_payload={} 
         )
