@@ -34,10 +34,107 @@ class LlmConfig(BaseModel):
 class EtlConfig(BaseModel):
     llm: Optional[LlmConfig] = LlmConfig()
 
+class MatcherConfig(BaseModel):
+    """
+    Configuration for the MatcherService (Stage 1: Vector Retrieval).
+    
+    Handles matching resume evidence to job requirements via vector similarity.
+    """
+    enabled: bool = True
+    similarity_threshold: float = 0.5  # Minimum similarity for a match
+    top_k_requirements: int = 3  # Number of best matches to consider per requirement
+    embedding_model: Optional[str] = None  # Uses ETL model if not specified
+    embedding_dimensions: int = 1024
+    batch_size: int = 100  # Number of jobs to process per batch
+    include_job_level_matching: bool = True  # Also match at job summary level
+
+class ScorerConfig(BaseModel):
+    """
+    Configuration for the ScoringService (Stage 2: Rule-based Scoring).
+    
+    Handles calculating final scores with coverage metrics and penalties.
+    """
+    enabled: bool = True
+    # Scoring weights (per A4.3)
+    weight_required: float = 0.7
+    weight_preferred: float = 0.3
+    
+    # Penalty amounts (per A4.2)
+    penalty_missing_required: float = 15.0
+    penalty_location_mismatch: float = 10.0
+    penalty_seniority_mismatch: float = 10.0
+    penalty_compensation_mismatch: float = 10.0
+    
+    # User preferences
+    wants_remote: bool = True
+    min_salary: Optional[int] = None
+    max_salary: Optional[int] = None
+    target_seniority: Optional[str] = None  # junior|mid|senior
+
+class MatchingConfig(BaseModel):
+    """
+    Top-level matching configuration.
+    
+    Supports two modes:
+    - requirements_only: Match resume to job requirements only
+    - with_preferences: Also match job to user preferences
+    """
+    enabled: bool = True
+    mode: str = "requirements_only"  # requirements_only|with_preferences
+    
+    # Resume file path (relative to config or absolute)
+    resume_file: str = "resume.json"
+    
+    # Preferences file (only used if mode == "with_preferences")
+    preferences_file: Optional[str] = None  # e.g., "preferences.json"
+    
+    # Sub-service configs (can be updated independently)
+    matcher: MatcherConfig = MatcherConfig()
+    scorer: ScorerConfig = ScorerConfig()
+    
+    # Invalidation settings
+    invalidate_on_job_change: bool = True
+    invalidate_on_resume_change: bool = True
+    recalculate_existing: bool = False  # If True, recalculate even if match exists
+
+class NotificationChannelConfig(BaseModel):
+    """Configuration for a single notification channel."""
+    enabled: bool = True
+    recipient: Optional[str] = None  # Email, webhook URL, chat ID, etc.
+    
+class NotificationConfig(BaseModel):
+    """
+    Configuration for notifications.
+    
+    Controls when and how users are notified about job matches.
+    """
+    enabled: bool = False  # Disabled by default - user must opt-in
+    
+    # User identification
+    user_id: Optional[str] = None  # Unique identifier for the user
+    
+    # Notification thresholds
+    min_score_threshold: float = 70.0  # Only notify for matches above this score
+    notify_on_new_match: bool = True  # Notify when new high-score match found
+    notify_on_batch_complete: bool = True  # Send summary after each batch
+    
+    # Channels to use (at least one must be configured)
+    channels: Dict[str, NotificationChannelConfig] = {}
+    
+    # Deduplication settings
+    deduplication_enabled: bool = True  # Prevent duplicate notifications
+    resend_interval_hours: int = 24  # Minimum hours between resending
+    
+    # Redis queue settings
+    use_async_queue: bool = True  # Use Redis queue for async processing
+    redis_url: Optional[str] = None  # Override default Redis URL
+
 class AppConfig(BaseModel):
     database: DatabaseConfig
     jobspy: Optional[JobSpyConfig] = None
     etl: Optional[EtlConfig] = EtlConfig()
+    matching: Optional[MatchingConfig] = MatchingConfig()
+    notifications: Optional[NotificationConfig] = None
     schedule: ScheduleConfig
     scrapers: List[ScraperConfig]
 

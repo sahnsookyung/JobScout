@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  postgres-test:
+    image: ankane/pgvector:latest
+    container_name: jobscout-test-db
+    environment:
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+      POSTGRES_DB: jobscout_test
+    ports:
+      - "5433:5432"  # Use 5433 to avoid conflict with local PostgreSQL
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      - ./tests/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d jobscout_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - jobscout-test-network
+
+volumes:
+  postgres_test_data:
+    driver: local
+
+networks:
+  jobscout-test-network:
+    driver: bridge

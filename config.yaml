@@ -33,6 +33,107 @@ etl:
       - "responsibility"
       - "benefit"
 
+matching:
+  enabled: true
+  # Mode: requirements_only (default) or with_preferences
+  mode: "requirements_only"
+  
+  # Resume file path (relative to working directory or absolute)
+  resume_file: "resume.json"
+  
+  # Preferences file (only used if mode == "with_preferences")
+  # preferences_file: "preferences.json"
+  
+  # Invalidation settings
+  invalidate_on_job_change: true
+  invalidate_on_resume_change: true
+  recalculate_existing: false  # If true, recalculate matches even if they exist
+  
+  # Stage 1: Matcher Service (Vector Retrieval)
+  matcher:
+    enabled: true
+    similarity_threshold: 0.5
+    top_k_requirements: 3
+    # embedding_model: null  # Uses ETL embedding model if not specified
+    embedding_dimensions: 1024
+    batch_size: 100
+    include_job_level_matching: true  # Also match at job summary level
+  
+  # Stage 2: Scorer Service (Rule-based Scoring)
+  scorer:
+    enabled: true
+    # Scoring weights
+    weight_required: 0.7
+    weight_preferred: 0.3
+    
+    # Penalty amounts
+    penalty_missing_required: 15.0
+    penalty_location_mismatch: 10.0
+    penalty_seniority_mismatch: 10.0
+    penalty_compensation_mismatch: 10.0
+    
+    # User preferences for scoring
+    wants_remote: true
+    # min_salary: 50000
+    # max_salary: 150000
+    # target_seniority: "mid"  # junior|mid|senior
+
+notifications:
+  # Set to true to enable notifications (disabled by default)
+  enabled: true
+  
+  # Unique user identifier for notifications
+  # user_id: "your_user_id"
+  
+  # Only notify for matches above this score (0-100)
+  min_score_threshold: 70.0
+  
+  # Notification triggers
+  notify_on_new_match: true        # When a high-scoring match is found
+  notify_on_batch_complete: true   # Summary after each matching batch
+  
+  # Custom notification channels - load external channel implementations
+  # See docs/NOTIFICATIONS.md for details on creating custom channels
+  # custom_channels:
+  #   - name: "my_webhook"
+  #     module: "my_package.channels"      # Python module path
+  #     class: "CustomWebhookChannel"      # Class name in module
+  
+  # Notification channels (configure at least one)
+  # Recipients are read from environment variables if not specified here
+  channels:
+    # email:
+    #   enabled: true
+    #   recipient: "your-email@example.com"  # Optional: overrides EMAIL env var
+    #   # Requires: SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD
+    
+    discord:
+      enabled: true
+      recipient: ""  # Not used, set DISCORD_WEBHOOK_URL env var instead
+      # Requires: DISCORD_WEBHOOK_URL
+    
+    # telegram:
+    #   enabled: true
+    #   recipient: "@your_channel_or_chat_id"  # Chat ID or @channelusername
+    #   # Requires: TELEGRAM_BOT_TOKEN
+    
+    # webhook:
+    #   enabled: true
+    #   recipient: "https://your-webhook.com/endpoint"
+    #   # No env vars required - URL specified here or in metadata
+    
+    # in_app:
+    #   enabled: true
+    #   # Logs only - for future dashboard integration
+  
+  # Deduplication prevents sending the same notification twice
+  deduplication_enabled: true
+  resend_interval_hours: 24
+  
+  # Async processing via Redis Queue
+  use_async_queue: true
+  # redis_url: "redis://localhost:6379/0"  # Optional: overrides REDIS_URL env var
+
 schedule:
   interval_seconds: 3600  # Run every hour
 

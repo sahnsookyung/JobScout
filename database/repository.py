@@ -1,14 +1,16 @@
 import logging
 import json
 import copy
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
+from datetime import datetime
 
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func
+from sqlalchemy import select, delete, and_, or_, func
 
 from database.models import (
     JobPost, JobPostSource, 
-    JobRequirementUnit, JobRequirementUnitEmbedding
+    JobRequirementUnit, JobRequirementUnitEmbedding,
+    JobMatch, JobMatchRequirement, generate_resume_fingerprint
 )
 
 logger = logging.getLogger(__name__)
@@ -199,6 +201,113 @@ class JobRepository:
             embedding=embedding
         )
         self.db.add(emb_row)
+
+    # --- Match Helpers ---
+
+    def get_embedded_jobs_for_matching(self, limit: int = 100) -> List[JobPost]:
+        """
+        Get jobs that are ready for matching.
+        Jobs must have been embedded (have embeddings).
+        """
+        stmt = select(JobPost).where(
+            JobPost.is_embedded == True
+        ).limit(limit)
+        return self.db.execute(stmt).scalars().all()
+
+    def get_existing_match(
+        self, 
+        job_post_id: Any, 
+        resume_fingerprint: str
+    ) -> Optional[JobMatch]:
+        """
+        Check if a match already exists for this job-resume combination.
+        """
+        stmt = select(JobMatch).where(
+            JobMatch.job_post_id == job_post_id,
+            JobMatch.resume_fingerprint == resume_fingerprint
+        )
+        return self.db.execute(stmt).scalar_one_or_none()
+
+    def get_matches_for_resume(
+        self, 
+        resume_fingerprint: str,
+        min_score: Optional[float] = None,
+        status: str = 'active'
+    ) -> List[JobMatch]:
+        """
+        Get all matches for a specific resume fingerprint.
+        """
+        stmt = select(JobMatch).where(
+            JobMatch.resume_fingerprint == resume_fingerprint,
+            JobMatch.status == status
+        )
+        
+        if min_score is not None:
+            stmt = stmt.where(JobMatch.overall_score >= min_score)
+        
+        stmt = stmt.order_by(JobMatch.overall_score.desc())
+        return self.db.execute(stmt).scalars().all()
+
+    def invalidate_matches_for_job(
+        self, 
+        job_post_id: Any,
+        reason: str = "Job content changed"
+    ) -> int:
+        """
+        Invalidate all existing matches for a job when content changes.
+        Returns number of matches invalidated.
+        """
+        stmt = select(JobMatch).where(
+            JobMatch.job_post_id == job_post_id,
+            JobMatch.status == 'active'
+        )
+        matches = self.db.execute(stmt).scalars().all()
+        
+        count = 0
+        for match in matches:
+            match.status = 'stale'
+            match.invalidated_reason = reason
+            count += 1
+        
+        if count > 0:
+            logger.info(f"Invalidated {count} matches for job {job_post_id}: {reason}")
+        
+        return count
+
+    def invalidate_matches_for_resume(
+        self, 
+        resume_fingerprint: str,
+        reason: str = "Resume changed"
+    ) -> int:
+        """
+        Invalidate all existing matches for a resume when it changes.
+        Returns number of matches invalidated.
+        """
+        stmt = select(JobMatch).where(
+            JobMatch.resume_fingerprint == resume_fingerprint,
+            JobMatch.status == 'active'
+        )
+        matches = self.db.execute(stmt).scalars().all()
+        
+        count = 0
+        for match in matches:
+            match.status = 'stale'
+            match.invalidated_reason = reason
+            count += 1
+        
+        if count > 0:
+            logger.info(f"Invalidated {count} matches for resume fingerprint: {reason}")
+        
+        return count
+
+    def get_stale_matches(self, limit: int = 100) -> List[JobMatch]:
+        """
+        Get matches that need recalculation.
+        """
+        stmt = select(JobMatch).where(
+            JobMatch.status == 'stale'
+        ).limit(limit)
+        return self.db.execute(stmt).scalars().all()
 
     def commit(self):
         self.db.commit()

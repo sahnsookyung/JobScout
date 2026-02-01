@@ -1,0 +1,135 @@
+{
+    "name": "Soo Kyung Ahn",
+    "title": "Software Engineer",
+    "pdfUrl": "/content/Soo Kyung Ahn CV.pdf",
+    "sections": [
+        {
+            "title": "Summary",
+            "items": [
+                {
+                    "company": "",
+                    "role": "",
+                    "period": "",
+                    "description": "Pragmatic software engineer with 3.5+ years of experience building reliable, production-grade backend systems in the payments and digital goods space. Proven track record in shipping high-impact services to South Africa's top banks and retailers. Expert in Java and AWS.",
+                    "highlights": []
+                }
+            ]
+        },
+        {
+            "title": "Professional Experience",
+            "items": [
+                {
+                    "company": "Electrum Payments",
+                    "role": "Software Engineer - Digital Goods and Services Team",
+                    "period": "2022 - 2025",
+                    "description": "Led the development and maintenance of backend services for digital goods (airtime, vouchers, money transfers, lotto), powering high-volume transactions across South Africa's top banks and national retailers.",
+                    "highlights": [
+                        "Engineered modular, plugin-based service components that enabled rapid feature delivery and robust testability across a shared payments platform.",
+                        "Managed service deployment on AWS-backed Kubernetes (EKS), owning Istio routing, rollout orchestration, and runtime diagnostics.",
+                        "Partnered with DevOps to integrate core infrastructure (Kafka, SQS/SNS, Route53) and observability stacks into developer workflows.",
+                        "Designed Kibana dashboards and Elasticsearch queries for real-time operational visibility and business-critical monitoring.",
+                        "Prototyped internal AI-powered tools including an LLM-based code review bot and automated ticket triage system.",
+                        "Drove test automation (JUnit, Mockito), code quality (SonarQube), and CI/CD reliability across the team."
+                    ]
+                }
+            ]
+        },
+        {
+            "title": "Education",
+            "items": [
+                {
+                    "company": "University of Cape Town",
+                    "role": "Honours in Computer Science",
+                    "period": "2021",
+                    "description": "Postgraduate specialization in Computer Science.",
+                    "highlights": [
+                        "First class GPA"
+                    ]
+                },
+                {
+                    "company": "University of Cape Town",
+                    "role": "B.S. in Computer Science and Applied Statistics",
+                    "period": "2018 - 2020",
+                    "description": "Double major undergraduate degree.",
+                    "highlights": [
+                        "Dean's Merit List",
+                        "Distinction"
+                    ]
+                }
+            ]
+        },
+        {
+            "title": "Skills",
+            "items": [
+                {
+                    "company": "",
+                    "role": "",
+                    "period": "",
+                    "description": "Technical Stack: Java, Python, MySQL, PostgresSQL, AWS, Kubernetes, Kafka, Elasticsearch, .",
+                    "highlights": [
+                        "AI & ML: LLM Orchestration (OpenAI, Gemini, Anthropic), Local Inference (Ollama, vLLM, GGUF), Voice Pipelines (Kokoro TTS, Faster-Whisper, Silero VAD), Prompt templating.",
+                        "Interactive Applications: Unity 3D (C#), VR Development.",
+                        "Frontend Engineering: TypeScript, React.js, Web Components, TailwindCSS, Three.js, Vite",
+                        "Backend Engineering: Python, Java, Event-Driven Architecture (Kafka, SQS), REST APIs, WebSockets, Databases (MySQL/PostgreSQL), Playwright (web scraping)",
+                        "Infrastructure: AWS(EKS, EC2, S3, Lambda, RDS, Route53, SQS/SNS), Kubernetes, Docker, Istio, Observability Stack (ELK, Prometheus, Grafana), CI/CD (Github Actions, CircleCI)."
+                    ]
+                }
+            ]
+        },
+        {
+            "title": "Projects",
+            "items": [
+                {
+                    "company": "",
+                    "role": "",
+                    "period": "",
+                    "description": "Locally Hosted Conversational Voice Agent | Python, Kokoro TTS, Whisper, Ollama",
+                    "highlights": [
+                        "<a href='https://github.com/sahnsookyung/LLM-voice-chatbot' target='_blank'>github.com/sahnsookyung/LLM-voice-chatbot</a>",
+                        "Built an end-to-end local voice agent using Silero VAD, Faster-Whisper (STT), Ollama (LLM), and Kokoro TTS.",
+                        "Implemented streaming TTS playback and non-blocking audio capture; profiled latency bottlenecks across STT/LLM inference and audio chunk boundaries.",
+                        "Implemented sliding-window conversation history and prompt templating to control context growth across multi-turn chats.",
+                        "Ran quantized LLMs via Ollama (e.g., Gemma-3-27b GGUF) and tuned for local memory/quality trade-offs."
+                    ]
+                },
+                {
+                    "company": "",
+                    "role": "",
+                    "period": "",
+                    "description": "LLM-Based Data Expansion Pipeline | Python, Gemini API, RunPod",
+                    "highlights": [
+                        "<a href='https://github.com/sahnsookyung/parts-data-cleaning' target='_blank'>github.com/sahnsookyung/parts-data-cleaning</a>",
+                        "Built a batch pipeline for dataset expansion with caching, retry logic, and exception logging to handle rate limits and transient API failures.",
+                        "Benchmarked RunPod-hosted Gemma-27b vs managed LLM APIs; migrated to Gemini 2.5 Flash to improve speed/quality per cost.",
+                        "Streamed responses to maintain throughput when provider-side batch APIs were unreliable."
+                    ]
+                },
+                {
+                    "company": "",
+                    "role": "",
+                    "period": "",
+                    "description": "Interactive Portfolio Website | TypeScript, Web Components, Tailwind CSS, Three.js",
+                    "highlights": [
+                        "<a href='https://github.com/sahnsookyung/jiko-shoukaisho-website' target='_blank'>github.com/sahnsookyung/jiko-shoukaisho-website</a>",
+                        "Single-page interactive portfolio using clickable SVG regions, overlay viewers, and tooltips to present professional and personal background.",
+                        "TypeScript Web Components for UI modules (tooltips, overlays, navigation), keeping the codebase modular and easy to extend.",
+                        "3D visual effects and animations with Three.js, optimized via code-splitting, effect toggles, and SVG asset minification.",
+                        "Built with Vite and Tailwind CSS to enable fast iteration on layout and styling with a lightweight, framework-free stack."
+                    ]
+                }
+            ]
+        }
+    ],
+    "links": [
+        {
+            "platform": "GitHub",
+            "url": "https://github.com/sahnsookyung",
+            "icon": "github"
+        },
+        {
+            "platform": "LinkedIn",
+            "url": "https://www.linkedin.com/in/soo-kyung-ahn-9a7aa012a/",
+            "icon": "linkedin"
+        }
+    ]
+}
