@@ -561,6 +561,29 @@
                 const covered = requirements.filter(r => r.is_covered);
                 const uncovered = requirements.filter(r => !r.is_covered);
                 
+                // Helper function to format penalty details
+                function formatPenaltyDetails(details) {
+                    if (!details || !details.details || !Array.isArray(details.details) || details.details.length === 0) {
+                        return '';
+                    }
+                    return details.details.map(p => `
+                        <li class="requirement-item requirement-uncovered">
+                            <strong style="color: #f44336;">${escapeHtml(p.reason || p.type)}:</strong> 
+                            <span style="color: #f44336; font-weight: bold;">-${p.amount.toFixed(1)}</span><br>
+                            ${p.details ? '<small style="color: #666;">' + escapeHtml(typeof p.details === 'object' ? JSON.stringify(p.details).slice(0, 100) : p.details.toString().slice(0, 100)) + '</small>' : ''}
+                        </li>
+                    `).join('');
+                }
+                
+                // Helper function to format description with better line breaks
+                function formatDescription(desc) {
+                    if (!desc) return '';
+                    // Convert newlines to <br> tags and preserve whitespace
+                    return escapeHtml(desc).split('\n').map(line => line.trim() ? `<p style="margin-bottom: 8px;">${line}</p>` : '').join('');
+                }
+                
+                const penaltyDetailsHtml = formatPenaltyDetails(match.penalty_details);
+                
                 document.getElementById('modalBody').innerHTML = `
                     <div style="margin-bottom: 20px;">
                         <h3 style="margin-bottom: 15px;">Match Score: ${match.overall_score.toFixed(1)}/100</h3>
@@ -579,10 +602,19 @@
                             </div>
                         </div>
                         
+                        ${penaltyDetailsHtml ? `
+                            <div style="margin-bottom: 20px;">
+                                <h4 style="margin-bottom: 10px; color: #f44336;">Penalty Details</h4>
+                                <ul class="requirements-list">
+                                    ${penaltyDetailsHtml}
+                                </ul>
+                            </div>
+                        ` : ''}
+                        
                         ${job.description ? `
                             <div style="margin-bottom: 20px;">
                                 <h4 style="margin-bottom: 10px;">Description</h4>
-                                <p style="color: #666; line-height: 1.6;">${escapeHtml(job.description)}</p>
+                                <div style="color: #666; line-height: 1.6;">${formatDescription(job.description)}</div>
                             </div>
                         ` : ''}
                         
