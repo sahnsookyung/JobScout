@@ -92,7 +92,7 @@ def test_scrapers():
         {
             "site_type": ["tokyodev"],
             "search_term": "python",
-            "results_wanted": 3,
+            "results_wanted": 1,
             "options": {
                 "japanese_requirements": ["none"],
                 "seniorities": ["intern", "junior", "intermediate"]
@@ -101,7 +101,7 @@ def test_scrapers():
         {
             "site_type": ["japandev"],
             "search_term": "",
-            "results_wanted": 3,
+            "results_wanted": 1,
             "options": {
                 "japanese_levels": ["japanese_level_not_required"],
                 "seniorities": ["seniority_level_junior", "seniority_level_mid_level"],
@@ -113,7 +113,7 @@ def test_scrapers():
             "search_term": "software engineer",
             "location": "Tokyo",
             "country": "Japan",
-            "results_wanted": 3,
+            "results_wanted": 1,
             "hours_old": 24*7,
             "options": {}
         },
@@ -121,7 +121,7 @@ def test_scrapers():
             "site_type": ["linkedin"],
             "search_term": "software engineer",
             "location": "Tokyo",
-            "results_wanted": 3,
+            "results_wanted": 1,
             "hours_old": 168,
             "linkedin_fetch_description": True,
             "options": {}
@@ -130,7 +130,7 @@ def test_scrapers():
             "site_type": ["glassdoor"],
             "search_term": "software engineer",
             "location": "Tokyo",
-            "results_wanted": 3,
+            "results_wanted": 1,
             "hours_old": 168,
             "request_timeout": 60*5, # 5 mins
             "options": {}

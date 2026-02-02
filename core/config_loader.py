@@ -20,6 +20,9 @@ class DatabaseConfig(BaseModel):
 
 class JobSpyConfig(BaseModel):
     url: str
+    poll_interval_seconds: int = 10
+    job_timeout_seconds: int = 300
+    request_timeout_seconds: int = 30
 
 class LlmConfig(BaseModel):
     base_url: Optional[str] = None
@@ -181,6 +184,9 @@ class NotificationConfig(BaseModel):
     
     # User identification
     user_id: Optional[str] = None  # Unique identifier for the user
+    
+    # Base URL for links in notifications
+    base_url: str = "http://localhost:8080"  # Base URL for notification links
     
     # Notification thresholds
     min_score_threshold: float = 70.0  # Only notify for matches above this score

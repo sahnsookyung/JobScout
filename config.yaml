@@ -140,7 +140,7 @@ notifications:
   
   # Async processing via Redis Queue
   use_async_queue: true
-  # redis_url: "redis://localhost:6379/0"  # Optional: overrides REDIS_URL env var
+  redis_url: "redis://localhost:6379/0"  # Optional: overrides REDIS_URL env var
 
 schedule:
   interval_seconds: 3600  # Run every hour

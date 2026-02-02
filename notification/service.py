@@ -70,7 +70,9 @@ class NotificationService:
         self,
         repo: JobRepository,
         redis_url: Optional[str] = None,
-        skip_dedup: bool = False
+        skip_dedup: bool = False,
+        base_url: Optional[str] = None,
+        use_async_queue: bool = True
     ):
         """
         Initialize notification service.
@@ -79,6 +81,8 @@ class NotificationService:
             repo: Repository for database operations
             redis_url: Redis connection URL
             skip_dedup: If True, disable deduplication (for testing)
+            base_url: Base URL for links in notifications (injected from config)
+            use_async_queue: Whether to use async queue or sync mode
         """
         self.repo = repo
         self.skip_dedup = skip_dedup
@@ -92,25 +96,20 @@ class NotificationService:
             'redis://localhost:6379/0'
         )
         
-        # Load base URL from config.yaml or environment variable
-        from pathlib import Path
-        import yaml
+        # Base URL injected from config (no direct config.yaml read)
+        # Falls back to environment variable or default
+        self.base_url = base_url or os.environ.get('BASE_URL', 'http://localhost:8080')
         
-        config_path = Path(__file__).parent.parent / 'config.yaml'
-        base_url = 'http://localhost:8080'  # Default fallback
+        # Store the preferred mode from config
+        self._use_async_queue = use_async_queue
         
-        if config_path.exists():
-            try:
-                with open(config_path, 'r') as f:
-                    config = yaml.safe_load(f)
-                    base_url = config.get('notifications', {}).get('base_url', base_url)
-            except Exception as e:
-                logger.warning(f"Could not load base_url from config.yaml: {e}")
-        
-        # Environment variable overrides config file
-        self.base_url = os.environ.get('BASE_URL', base_url)
-        
-        if RQ_AVAILABLE:
+        if not use_async_queue:
+            # Explicitly disabled via config - force sync mode
+            logger.info("Async queue disabled via config. Using sync mode.")
+            self.redis_conn = None
+            self.queue = None
+            self.async_mode = False
+        elif RQ_AVAILABLE:
             try:
                 self.redis_conn = Redis.from_url(self.redis_url)
                 # Validate connection with ping before using
