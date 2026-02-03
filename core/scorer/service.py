@@ -1,29 +1,30 @@
 #!/usr/bin/env python3
 """
-Scoring Service - Stage 2: Rule-based Scoring with Preferences Support.
+Scoring Service - Stage 2: Rule-based Scoring with Fit/Want scores.
 
 Takes preliminary matches from MatcherService and calculates final scores:
-- Coverage metrics (required vs preferred)
-- Preferences alignment integration
-- Penalty application (location, seniority, compensation, preferences)
-- Final weighted score with preferences boost
+- Fit Score: "Can do the job" (requirements + JD similarity - capability penalties)
+- Want Score: "Matches what I want" (facet embeddings vs user wants)
+- Overall Score: Weighted combination of Fit and Want
 
 Designed to be microservice-ready and can run independently
 of the MatcherService.
 """
 
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 import logging
+import numpy as np
 from sqlalchemy import select
 
 from database.repository import JobRepository
-from database.models import StructuredResume
+from database.models import StructuredResume, JobFacetEmbedding
 from core.config_loader import ScorerConfig
 from core.matcher import JobMatchPreliminary
 
 from core.scorer.models import ScoredJobMatch
 from core.scorer import coverage, scoring_modes, preferences
 from core.scorer import penalties as penalty_calculations
+from core.scorer import fit_score, want_score
 
 logger = logging.getLogger(__name__)
 
@@ -309,3 +310,116 @@ class ScoringService:
                    f"returning top {len(limited_matches)}")
 
         return limited_matches
+
+    def score_preliminary_match_fit_want(
+        self,
+        preliminary: JobMatchPreliminary,
+        user_want_embeddings: List[np.ndarray],
+        job_facet_embeddings: Dict[str, np.ndarray],
+        match_type: str = "requirements_only"
+    ) -> ScoredJobMatch:
+        """
+        Calculate Fit, Want, and Overall scores for a preliminary match.
+
+        Args:
+            preliminary: Preliminary match from MatcherService
+            user_want_embeddings: List of embedding vectors for user wants
+            job_facet_embeddings: Dict mapping facet_key -> embedding vector
+            match_type: Type of match being performed
+
+        Returns:
+            ScoredJobMatch with fit_score, want_score, overall_score
+        """
+        job = preliminary.job
+
+        required_coverage, preferred_coverage = coverage.calculate_coverage(
+            preliminary.requirement_matches,
+            preliminary.missing_requirements
+        )
+
+        fit_penalties, penalty_details = penalty_calculations.calculate_fit_penalties(
+            job=job,
+            matched_requirements=preliminary.requirement_matches,
+            missing_requirements=preliminary.missing_requirements,
+            config=self.config,
+            resume_fingerprint=preliminary.resume_fingerprint,
+            repo=self.repo
+        )
+
+        fit_score_value, fit_components = fit_score.calculate_fit_score(
+            job_similarity=preliminary.job_similarity,
+            required_coverage=required_coverage,
+            preferred_coverage=preferred_coverage,
+            fit_penalties=fit_penalties,
+            config=self.config
+        )
+
+        want_score_value, want_components = want_score.calculate_want_score(
+            user_want_embeddings=user_want_embeddings,
+            job_facet_embeddings=job_facet_embeddings,
+            facet_weights=self.config.facet_weights
+        )
+
+        overall_score = min(100.0,
+            self.config.fit_weight * fit_score_value + self.config.want_weight * want_score_value
+        )
+
+        logger.debug(f"Job {job.id}: fit={fit_score_value:.1f}, want={want_score_value:.1f}, overall={overall_score:.1f}")
+
+        return ScoredJobMatch(
+            job=job,
+            fit_score=fit_score_value,
+            want_score=want_score_value,
+            overall_score=overall_score,
+            fit_components=fit_components,
+            want_components=want_components,
+            base_score=fit_components.get('blended', 0.0) * 100.0,
+            preferences_boost=0.0,
+            penalties=fit_penalties,
+            required_coverage=required_coverage,
+            preferred_coverage=preferred_coverage,
+            job_similarity=preliminary.job_similarity,
+            preferences_alignment=preliminary.preferences_alignment,
+            penalty_details=penalty_details,
+            matched_requirements=preliminary.requirement_matches,
+            missing_requirements=preliminary.missing_requirements,
+            resume_fingerprint=preliminary.resume_fingerprint,
+            match_type=match_type
+        )
+
+    def score_matches_fit_want(
+        self,
+        preliminary_matches: List[JobMatchPreliminary],
+        user_want_embeddings: List[np.ndarray],
+        job_facet_embeddings_map: Dict[str, Dict[str, np.ndarray]],
+        match_type: str = "requirements_only"
+    ) -> List[ScoredJobMatch]:
+        """
+        Score multiple preliminary matches with Fit/Want/Overall scores.
+
+        Args:
+            preliminary_matches: List of preliminary matches
+            user_want_embeddings: User wants embeddings
+            job_facet_embeddings_map: Dict mapping job_id -> facet embeddings
+            match_type: Type of match being performed
+
+        Returns:
+            List of ScoredJobMatch sorted by overall score
+        """
+        scored_matches = []
+
+        for preliminary in preliminary_matches:
+            job_id = str(preliminary.job.id)
+            job_facets = job_facet_embeddings_map.get(job_id, {})
+
+            scored = self.score_preliminary_match_fit_want(
+                preliminary=preliminary,
+                user_want_embeddings=user_want_embeddings,
+                job_facet_embeddings=job_facets,
+                match_type=match_type
+            )
+            scored_matches.append(scored)
+
+        scored_matches.sort(key=lambda x: x.overall_score, reverse=True)
+
+        return scored_matches

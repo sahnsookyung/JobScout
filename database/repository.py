@@ -13,7 +13,7 @@ from database.models import (
     JobPost, JobPostSource, 
     JobRequirementUnit, JobRequirementUnitEmbedding,
     JobMatch, JobMatchRequirement, generate_resume_fingerprint,
-    StructuredResume
+    StructuredResume, JobFacetEmbedding, UserWants
 )
 
 logger = logging.getLogger(__name__)
@@ -599,6 +599,102 @@ class JobRepository:
             stmt = stmt.limit(limit)
         
         return self.db.execute(stmt).scalars().all()
+
+    def get_jobs_needing_facet_extraction(self, limit: int = 100) -> List[JobPost]:
+        """
+        Get jobs that have been embedded but don't have facet embeddings yet.
+        """
+        stmt = select(JobPost).where(
+            JobPost.is_embedded == True
+        ).outerjoin(JobFacetEmbedding).where(
+            JobFacetEmbedding.id == None
+        ).limit(limit)
+        return self.db.execute(stmt).scalars().all()
+
+    def save_job_facet_embedding(
+        self,
+        job_post_id: Any,
+        facet_key: str,
+        facet_text: str,
+        embedding: List[float],
+        content_hash: str
+    ) -> JobFacetEmbedding:
+        """
+        Save or update a job facet embedding.
+        """
+        existing_stmt = select(JobFacetEmbedding).where(
+            JobFacetEmbedding.job_post_id == job_post_id,
+            JobFacetEmbedding.facet_key == facet_key
+        )
+        existing = self.db.execute(existing_stmt).scalar_one_or_none()
+
+        if existing:
+            existing.embedding = embedding
+            existing.facet_text = facet_text
+            existing.content_hash = content_hash
+            return existing
+        else:
+            facet_emb = JobFacetEmbedding(
+                job_post_id=job_post_id,
+                facet_key=facet_key,
+                facet_text=facet_text,
+                embedding=embedding,
+                content_hash=content_hash
+            )
+            self.db.add(facet_emb)
+            return facet_emb
+
+    def get_job_facet_embeddings(self, job_post_id: Any) -> Dict[str, List[float]]:
+        """
+        Get all facet embeddings for a job as a dict {facet_key: embedding}.
+        """
+        stmt = select(JobFacetEmbedding).where(
+            JobFacetEmbedding.job_post_id == job_post_id
+        )
+        results = self.db.execute(stmt).scalars().all()
+        return {r.facet_key: r.embedding for r in results}
+
+    def mark_job_facets_extracted(self, job_post_id: Any):
+        """
+        Mark that a job has had its facets extracted.
+        Currently a no-op since we check via existence of facet embeddings.
+        """
+        pass
+
+    def save_user_wants(
+        self,
+        user_id: str,
+        resume_fingerprint: Optional[str],
+        wants_text: str,
+        embedding: List[float],
+        facet_key: Optional[str] = None
+    ) -> UserWants:
+        """
+        Save a user want with its embedding.
+        """
+        user_want = UserWants(
+            user_id=user_id,
+            resume_fingerprint=resume_fingerprint,
+            wants_text=wants_text,
+            embedding=embedding,
+            facet_key=facet_key
+        )
+        self.db.add(user_want)
+        return user_want
+
+    def get_user_wants_embeddings(
+        self,
+        user_id: str,
+        resume_fingerprint: Optional[str] = None
+    ) -> List[List[float]]:
+        """
+        Get all user wants embeddings for a user.
+        """
+        stmt = select(UserWants.embedding).where(UserWants.user_id == user_id)
+        if resume_fingerprint:
+            stmt = stmt.where(UserWants.resume_fingerprint == resume_fingerprint)
+        results = self.db.execute(stmt).scalars().all()
+        return list(results)
 
     def commit(self):
         self.db.commit()

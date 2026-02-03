@@ -163,31 +163,56 @@ class MatcherConfig(BaseModel):
     # Ranking mode configuration for two-stage pipeline
     ranking: RankingConfig = Field(default_factory=RankingConfig)
 
+class FacetWeights(BaseModel):
+    """Weights for each facet in Want score calculation."""
+    remote_flexibility: float = 0.15
+    compensation: float = 0.20
+    learning_growth: float = 0.15
+    company_culture: float = 0.15
+    work_life_balance: float = 0.15
+    tech_stack: float = 0.10
+    visa_sponsorship: float = 0.10
+
+
 class ScorerConfig(BaseModel):
     """
     Configuration for the ScoringService (Stage 2: Rule-based Scoring).
-    
+
     Handles calculating final scores with coverage metrics and penalties.
     """
     enabled: bool = True
     # Scoring weights (per A4.3)
     weight_required: float = 0.7
     weight_preferred: float = 0.3
-    
-    # Penalty amounts (per A4.2)
+
+    # NEW: Fit/Want weights for overall score
+    # overall_score = fit_weight * fit_score + want_weight * want_score
+    fit_weight: float = 0.70
+    want_weight: float = 0.30
+
+    # NEW: Facet weights for Want score calculation
+    facet_weights: FacetWeights = Field(default_factory=FacetWeights)
+
+    # Penalty amounts
+    # Capability penalties (used in Fit score)
     penalty_missing_required: float = 15.0
-    penalty_location_mismatch: float = 10.0
     penalty_seniority_mismatch: float = 10.0
     penalty_compensation_mismatch: float = 10.0
-    
-    # Boost amounts
+    penalty_experience_shortfall: float = 15.0
+
+    # Legacy penalties (kept for backward compatibility with old scoring path)
+    penalty_location_mismatch: float = 10.0
+
+    # Preferences boost (kept for backward compatibility)
     preferences_boost_max: float = 15.0
-    
-    # User preferences
+
+    # User preferences (for display-time hard filters)
     wants_remote: bool = True
     min_salary: Optional[int] = None
     max_salary: Optional[int] = None
-    target_seniority: Optional[str] = None  # junior|mid|senior
+    target_seniority: Optional[str] = None
+    avoid_industries: List[str] = Field(default_factory=list)
+    avoid_roles: List[str] = Field(default_factory=list)
 
 class MatchingConfig(BaseModel):
     """

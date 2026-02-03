@@ -8,7 +8,7 @@ import os
 import json
 import argparse
 import threading
-from typing import Optional
+from typing import Optional, List
 
 from core.config_loader import load_config
 from core.app_context import AppContext
@@ -64,6 +64,24 @@ def load_preferences_data(preferences_file_path: str) -> Optional[dict]:
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in preferences file: {e}")
         return None
+
+
+def load_user_wants_data(wants_file_path: str) -> List[str]:
+    """
+    Load user wants from a file.
+    Each line is a separate want.
+    """
+    logger.info(f"Loading user wants from {wants_file_path}")
+    try:
+        with open(wants_file_path, 'r') as f:
+            wants = [line.strip() for line in f if line.strip()]
+            return wants
+    except FileNotFoundError:
+        logger.warning(f"User wants file not found: {wants_file_path}")
+        return []
+    except Exception as e:
+        logger.error(f"Error reading user wants file: {e}")
+        return []
 
 
 def run_etl_pipeline(ctx: AppContext, stop_event: threading.Event) -> None:
@@ -259,10 +277,40 @@ def run_matching_pipeline(ctx: AppContext, stop_event: threading.Event) -> None:
     logger.info("=== MATCHING STEP 7: Running ScorerService (Rule-based Scoring) ===")
 
     scorer = ScoringService(repo=ctx.repo, config=matching_config.scorer)
-    scored_matches = scorer.score_matches(
-        preliminary_matches=preliminary_matches,
-        match_type=matching_config.mode
-    )
+
+    user_wants = []
+    user_want_embeddings = []
+    if hasattr(matching_config, 'user_wants_file') and matching_config.user_wants_file:
+        wants_file = matching_config.user_wants_file
+        if not os.path.isabs(wants_file):
+            wants_file = os.path.join(os.getcwd(), wants_file)
+        user_wants = load_user_wants_data(wants_file)
+        if user_wants:
+            logger.info(f"Loaded {len(user_wants)} user wants from {matching_config.user_wants_file}")
+            for want_text in user_wants:
+                embedding = ctx.ai_service.generate_embedding(want_text)
+                user_want_embeddings.append(embedding)
+
+    if user_want_embeddings:
+        logger.info("=== Using Fit/Want scoring with user wants embeddings ===")
+        job_facet_embeddings_map = {}
+        for preliminary in preliminary_matches:
+            job_id = str(preliminary.job.id)
+            if job_id not in job_facet_embeddings_map:
+                job_facet_embeddings_map[job_id] = ctx.repo.get_job_facet_embeddings(preliminary.job.id)
+
+        scored_matches = scorer.score_matches_fit_want(
+            preliminary_matches=preliminary_matches,
+            user_want_embeddings=user_want_embeddings,
+            job_facet_embeddings_map=job_facet_embeddings_map,
+            match_type=matching_config.mode
+        )
+    else:
+        logger.info("=== No user wants configured, using legacy scoring ===")
+        scored_matches = scorer.score_matches(
+            preliminary_matches=preliminary_matches,
+            match_type=matching_config.mode
+        )
 
     step_elapsed = time.time() - step_start
     logger.info(f"MATCHING Step 7 completed: Scored {len(scored_matches)} matches in {step_elapsed:.2f}s")
@@ -271,7 +319,10 @@ def run_matching_pipeline(ctx: AppContext, stop_event: threading.Event) -> None:
         logger.info("Top 5 Matches:")
         for i, match in enumerate(scored_matches[:5], 1):
             job = match.job
-            logger.info(f"  {i}. {job.title} @ {job.company}: {match.overall_score:.1f}/100")
+            if hasattr(match, 'fit_score') and hasattr(match, 'want_score'):
+                logger.info(f"  {i}. {job.title} @ {job.company}: overall={match.overall_score:.1f}/100 (fit={match.fit_score:.1f}, want={match.want_score:.1f})")
+            else:
+                logger.info(f"  {i}. {job.title} @ {job.company}: {match.overall_score:.1f}/100")
 
     if stop_event.is_set():
         return

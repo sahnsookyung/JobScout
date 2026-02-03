@@ -101,6 +101,44 @@ EXTRACTION_SCHEMA = {
 }
 
 
+FACET_EXTRACTION_SCHEMA = {
+    "type": "object",
+    "description": "Extract per-facet text for embedding-based Want scoring.",
+    "properties": {
+        "remote_flexibility": {
+            "type": "string",
+            "description": "Extract all text about remote work flexibility, WFH policies, location independence. Example: 'Fully remote, work from anywhere in the world, flexible hours, async-first culture'"
+        },
+        "compensation": {
+            "type": "string",
+            "description": "Extract all text about compensation, bonuses, equity, benefits. Example: '$150k-$200k base + 20% bonus + $50k equity refresh + $2k/yr learning budget + premium health insurance'"
+        },
+        "learning_growth": {
+            "type": "string",
+            "description": "Extract all text about learning opportunities, mentorship, career development. Example: '$2000/yr learning budget, mentorship program, weekly tech talks, conference attendance covered'"
+        },
+        "company_culture": {
+            "type": "string",
+            "description": "Extract all text about company values, DEI, work environment. Example: 'Values work-life balance, inclusive culture, transparent communication, customer-obsessed'"
+        },
+        "work_life_balance": {
+            "type": "string",
+            "description": "Extract all text about working hours, PTO, burnout prevention. Example: '40hr/week max, unlimited PTO with minimum 20 days encouraged, no after-hours expectation, sabbatical program'"
+        },
+        "tech_stack": {
+            "type": "string",
+            "description": "Extract the tech stack, tools, and technologies used. Example: 'Python, React, PostgreSQL, AWS, Kubernetes, Redis, GraphQL'"
+        },
+        "visa_sponsorship": {
+            "type": "string",
+            "description": "Extract visa sponsorship and relocation details. Example: 'H1B and green card sponsorship available, $10k relocation bonus, visa processing assistance'"
+        }
+    },
+    "required": ["remote_flexibility", "compensation", "learning_growth", "company_culture", "work_life_balance", "tech_stack", "visa_sponsorship"],
+    "additionalProperties": False
+}
+
+
 """
 Comprehensive Resume Extraction Schema (resume.v1)
 

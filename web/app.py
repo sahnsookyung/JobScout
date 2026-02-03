@@ -87,7 +87,13 @@ class MatchSummary(BaseModel):
     company: str
     location: Optional[str]
     is_remote: Optional[bool]
+
+    # New: Explicit Fit/Want/Overall scores
+    fit_score: Optional[float] = Field(None, ge=0, le=100)
+    want_score: Optional[float] = Field(None, ge=0, le=100)
     overall_score: float = Field(ge=0, le=100)
+
+    # Legacy fields for backward compatibility
     base_score: float = Field(ge=0, le=100)
     penalties: float = Field(ge=0)
     required_coverage: float = Field(ge=0, le=1)
@@ -95,7 +101,7 @@ class MatchSummary(BaseModel):
     match_type: str
     created_at: Optional[str]
     calculated_at: Optional[str]
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -105,7 +111,9 @@ class MatchSummary(BaseModel):
                 "company": "TechCorp",
                 "location": "Remote",
                 "is_remote": True,
-                "overall_score": 85.5,
+                "fit_score": 82.5,
+                "want_score": 78.0,
+                "overall_score": 81.0,
                 "base_score": 95.0,
                 "penalties": 9.5,
                 "required_coverage": 0.9,
@@ -148,7 +156,19 @@ class MatchDetail(BaseModel):
     """Detailed match information."""
     match_id: str
     resume_fingerprint: str
+
+    # New: Explicit Fit/Want/Overall scores
+    fit_score: Optional[float] = None
+    want_score: Optional[float] = None
     overall_score: float
+
+    # Score breakdowns
+    fit_components: Optional[Dict[str, Any]] = None
+    want_components: Optional[Dict[str, Any]] = None
+    fit_weight: Optional[float] = None
+    want_weight: Optional[float] = None
+
+    # Legacy fields
     base_score: float
     penalties: float
     required_coverage: float
@@ -189,6 +209,13 @@ class StatsResponse(BaseModel):
     """Response containing overall statistics."""
     success: bool
     stats: Dict[str, Any]
+
+
+class ScoringWeightsResponse(BaseModel):
+    """Response containing scoring weights configuration."""
+    fit_weight: float
+    want_weight: float
+    facet_weights: Dict[str, float]
 
 
 # Helper functions
@@ -255,6 +282,8 @@ def get_matches(
                     company=job.company or "Unknown",
                     location=job.location_text,
                     is_remote=job.is_remote,
+                    fit_score=decimal_to_float(match.fit_score) if match.fit_score else None,
+                    want_score=decimal_to_float(match.want_score) if match.want_score else None,
                     overall_score=decimal_to_float(match.overall_score),
                     base_score=decimal_to_float(match.base_score),
                     penalties=decimal_to_float(match.penalties),
@@ -316,7 +345,13 @@ def get_match_details(match_id: str, db: Session = Depends(get_db)):
             match=MatchDetail(
                 match_id=str(match.id),
                 resume_fingerprint=match.resume_fingerprint or "",
+                fit_score=decimal_to_float(match.fit_score) if match.fit_score else None,
+                want_score=decimal_to_float(match.want_score) if match.want_score else None,
                 overall_score=decimal_to_float(match.overall_score),
+                fit_components=match.fit_components if hasattr(match, 'fit_components') else None,
+                want_components=match.want_components if hasattr(match, 'want_components') else None,
+                fit_weight=decimal_to_float(match.fit_weight) if match.fit_weight else None,
+                want_weight=decimal_to_float(match.want_weight) if match.want_weight else None,
                 base_score=decimal_to_float(match.base_score),
                 penalties=decimal_to_float(match.penalties),
                 required_coverage=decimal_to_float(match.required_coverage),
@@ -391,6 +426,30 @@ def get_stats(db: Session = Depends(get_db)):
     except Exception as e:
         logger.exception("Error fetching stats")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/config/scoring-weights", response_model=ScoringWeightsResponse, tags=["config"])
+def get_scoring_weights():
+    """
+    Get current scoring weights configuration.
+
+    Returns Fit/Want weights and facet weights for Want score calculation.
+    """
+    scorer_config = config.get('matching', {}).get('scorer', {})
+
+    return ScoringWeightsResponse(
+        fit_weight=scorer_config.get('fit_weight', 0.70),
+        want_weight=scorer_config.get('want_weight', 0.30),
+        facet_weights=scorer_config.get('facet_weights', {
+            'remote_flexibility': 0.15,
+            'compensation': 0.20,
+            'learning_growth': 0.15,
+            'company_culture': 0.15,
+            'work_life_balance': 0.15,
+            'tech_stack': 0.10,
+            'visa_sponsorship': 0.10
+        })
+    )
 
 
 # Notification endpoints

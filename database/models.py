@@ -192,10 +192,65 @@ class ResumeSectionEmbedding(Base):
         Index('idx_rse_embedding_hnsw', 'embedding', postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}, postgresql_ops={'embedding': 'vector_cosine_ops'}),
     )
 
+class JobFacetEmbedding(Base):
+    """
+    Stores per-facet embeddings for job posts.
+
+    Each job can have multiple facets describing perks/benefits/working conditions:
+    - remote_flexibility
+    - compensation
+    - learning_growth
+    - company_culture
+    - work_life_balance
+    - tech_stack
+    - visa_sponsorship
+    """
+    __tablename__ = 'job_facet_embedding'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_post_id = Column(UUID(as_uuid=True), ForeignKey('job_post.id', ondelete='CASCADE'), nullable=False)
+
+    facet_key = Column(Text, nullable=False)
+    facet_text = Column(Text, nullable=False)
+    embedding = Column(Vector(1024), nullable=False)
+
+    content_hash = Column(Text)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+
+    __table_args__ = (
+        UniqueConstraint('job_post_id', 'facet_key', name='uq_job_facet_job_key'),
+        Index('idx_job_facet_job', 'job_post_id'),
+        Index('idx_job_facet_key', 'facet_key'),
+        Index('jru_facet_embedding_hnsw', 'embedding', postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}, postgresql_ops={'embedding': 'vector_cosine_ops'}),
+    )
+
+
+class UserWants(Base):
+    """
+    Stores user-provided wants as individual entries with their embeddings.
+    """
+    __tablename__ = 'user_wants'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(Text, nullable=False, index=True)
+    resume_fingerprint = Column(Text, nullable=True)
+
+    wants_text = Column(Text, nullable=False)
+    embedding = Column(Vector(1024), nullable=False)
+    facet_key = Column(Text)
+
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+
+    __table_args__ = (
+        Index('idx_user_wants_user', 'user_id'),
+        Index('idx_user_wants_resume', 'resume_fingerprint'),
+    )
+
+
 class JobMatch(Base):
     """
     Stores match results between a resume and a job post.
-    
+
     Tracks:
     - Overall job-level match (JD alignment)
     - Requirement-level matches (skills coverage)
@@ -206,52 +261,53 @@ class JobMatch(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_post_id = Column(UUID(as_uuid=True), ForeignKey('job_post.id', ondelete='CASCADE'), nullable=False)
-    
-    # Resume identification for invalidation
-    resume_fingerprint = Column(Text, nullable=False)  # Hash of resume content
-    resume_version = Column(Text, nullable=True)  # Optional version identifier
-    
-    # Job content identification for invalidation
-    job_content_hash = Column(Text, nullable=True)  # Hash of job content at match time
-    
-    # Job-level matching (JD alignment)
-    job_similarity = Column(Numeric(3, 2))  # Overall JD similarity score (0.00-1.00)
-    
-    # Aggregate requirement-level scores
-    overall_score = Column(Numeric(5, 2))  # Final weighted score (0.00-100.00)
-    base_score = Column(Numeric(5, 2))  # Score before penalties
-    penalties = Column(Numeric(5, 2), default=0)  # Total penalty points
-    penalty_details = Column(JSONB, default={})  # Detailed penalty breakdown
-    
-    # Coverage metrics
-    required_coverage = Column(Numeric(3, 2))  # Fraction of required requirements covered (0.00-1.00)
-    preferred_coverage = Column(Numeric(3, 2))  # Fraction of preferred requirements covered (0.00-1.00)
-    total_requirements = Column(Integer, default=0)  # Total requirements matched against
-    matched_requirements_count = Column(Integer, default=0)  # Number matched
-    
-    # Matching configuration used
-    match_type = Column(Text, default='requirements_only')  # 'requirements_only' or 'with_preferences'
-    preferences_file_hash = Column(Text, nullable=True)  # Hash of preferences file if used
-    similarity_threshold = Column(Numeric(3, 2), default=0.50)  # Threshold used for matching
-    
-    # Status and timestamps
-    status = Column(Text, default='active')  # active|stale|invalidated
-    invalidated_reason = Column(Text, nullable=True)  # Reason if invalidated
-    notified = Column(Boolean, default=False)  # Whether user was notified of this match
+
+    resume_fingerprint = Column(Text, nullable=False)
+    resume_version = Column(Text, nullable=True)
+
+    job_content_hash = Column(Text, nullable=True)
+
+    job_similarity = Column(Numeric(3, 2))
+
+    fit_score = Column(Numeric(5, 2))
+    want_score = Column(Numeric(5, 2))
+    overall_score = Column(Numeric(5, 2))
+
+    fit_components = Column(JSONB, default={})
+    want_components = Column(JSONB, default={})
+
+    fit_weight = Column(Numeric(3, 2))
+    want_weight = Column(Numeric(3, 2))
+
+    base_score = Column(Numeric(5, 2))
+    penalties = Column(Numeric(5, 2), default=0)
+    penalty_details = Column(JSONB, default={})
+
+    required_coverage = Column(Numeric(3, 2))
+    preferred_coverage = Column(Numeric(3, 2))
+    total_requirements = Column(Integer, default=0)
+    matched_requirements_count = Column(Integer, default=0)
+
+    match_type = Column(Text, default='requirements_only')
+    preferences_file_hash = Column(Text, nullable=True)
+    similarity_threshold = Column(Numeric(3, 2), default=0.50)
+
+    status = Column(Text, default='active')
+    invalidated_reason = Column(Text, nullable=True)
+    notified = Column(Boolean, default=False)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"), onupdate=sql_text("timezone('UTC', now())"))
     calculated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
-    
-    # Relationships
+
     job_post = relationship("JobPost", back_populates="matches")
     requirement_matches = relationship("JobMatchRequirement", back_populates="job_match", cascade="all, delete-orphan")
 
     __table_args__ = (
-        # Unique constraint: one match per job-resume combination
         UniqueConstraint('job_post_id', 'resume_fingerprint', name='uq_job_match_job_resume'),
-        # Indexes for common queries
         Index('idx_job_match_resume', 'resume_fingerprint'),
         Index('idx_job_match_score', 'overall_score'),
+        Index('idx_job_match_fit', 'fit_score'),
+        Index('idx_job_match_want', 'want_score'),
         Index('idx_job_match_status', 'status'),
         Index('idx_job_match_notified', 'notified'),
         Index('idx_job_match_calculated', 'calculated_at'),

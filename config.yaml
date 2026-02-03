@@ -67,25 +67,39 @@ matching:
   # Stage 2: Scorer Service (Rule-based Scoring)
   scorer:
     enabled: true
-    # Scoring weights
+
+    # Scoring weights (Fit: "can do the job", Want: "matches what I want")
+    # overall_score = fit_weight * fit_score + want_weight * want_score
+    fit_weight: 0.70
+    want_weight: 0.30
+
+    # Facet weights for Want score calculation
+    facet_weights:
+      remote_flexibility: 0.15
+      compensation: 0.20
+      learning_growth: 0.15
+      company_culture: 0.15
+      work_life_balance: 0.15
+      tech_stack: 0.10
+      visa_sponsorship: 0.10
+
+    # Coverage weights (used in Fit score calculation)
     weight_required: 0.7
     weight_preferred: 0.3
 
-    # Penalty amounts
+    # Capability penalty amounts (Fit score only)
     penalty_missing_required: 15.0
-    penalty_location_mismatch: 10.0
     penalty_seniority_mismatch: 10.0
     penalty_compensation_mismatch: 10.0
     penalty_experience_shortfall: 15.0
 
-    # Preferences boost
-    preferences_boost_max: 15.0
-
-    # User preferences for scoring
+    # User preferences (for display-time hard filters, NOT scoring)
     wants_remote: true
     # min_salary: 50000
     # max_salary: 150000
     # target_seniority: "mid"  # junior|mid|senior
+    # avoid_industries: []
+    # avoid_roles: []
 
 notifications:
   # Set to true to enable notifications (disabled by default)

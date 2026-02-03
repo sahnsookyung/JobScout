@@ -359,6 +359,151 @@
             background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
             transition: width 0.3s ease;
         }
+
+        /* Fit/Want Score Colors */
+        .fit-score {
+            background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+        }
+
+        .want-score {
+            background: linear-gradient(135deg, #4CAF50 0%, #388E3C 100%);
+        }
+
+        .overall-score {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .toggle {
+            position: relative;
+            width: 50px;
+            height: 26px;
+        }
+
+        .toggle input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 34px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        .toggle input:checked + .toggle-slider {
+            background-color: #4CAF50;
+        }
+
+        .toggle input:checked + .toggle-slider:before {
+            transform: translateX(24px);
+        }
+
+        .range-slider {
+            width: 100%;
+            margin: 10px 0;
+        }
+
+        .range-values {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8em;
+            color: #666;
+        }
+
+        .weight-editor {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .weight-editor h3 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .weight-slider {
+            margin-bottom: 20px;
+        }
+
+        .weight-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 5px;
+            font-size: 0.85em;
+            color: #666;
+        }
+
+        .facet-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 10px;
+        }
+
+        .facet-tag {
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8em;
+        }
+
+        .sort-options {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .sort-btn {
+            background: #f5f5f5;
+            color: #666;
+            border: 2px solid #e0e0e0;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.9em;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .sort-btn:hover {
+            background: #e0e0e0;
+        }
+
+        .sort-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
     </style>
 </head>
 <body>
@@ -374,16 +519,38 @@
         
         <div class="filters">
             <div class="filter-group">
-                <label for="minScore">Minimum Score</label>
+                <label for="minScore">Min Overall</label>
                 <select id="minScore">
                     <option value="0">All Jobs</option>
-                    <option value="30" selected>30+ (Show decent matches)</option>
-                    <option value="50">50+ (Good matches)</option>
-                    <option value="70">70+ (Great matches)</option>
-                    <option value="80">80+ (Excellent matches)</option>
+                    <option value="30">30+</option>
+                    <option value="50">50+</option>
+                    <option value="70">70+</option>
+                    <option value="80">80+</option>
                 </select>
             </div>
-            
+
+            <div class="filter-group">
+                <label for="minFitScore">Min Fit</label>
+                <select id="minFitScore">
+                    <option value="0">Any</option>
+                    <option value="30">30+</option>
+                    <option value="50">50+</option>
+                    <option value="70">70+</option>
+                    <option value="80">80+</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label for="minWantScore">Min Want</label>
+                <select id="minWantScore">
+                    <option value="0">Any</option>
+                    <option value="30">30+</option>
+                    <option value="50">50+</option>
+                    <option value="70">70+</option>
+                    <option value="80">80+</option>
+                </select>
+            </div>
+
             <div class="filter-group">
                 <label for="status">Status</label>
                 <select id="status">
@@ -392,8 +559,47 @@
                     <option value="all">All</option>
                 </select>
             </div>
-            
-            <button id="refreshBtn">Refresh Results</button>
+
+            <div class="filter-group">
+                <label>Show Want Score</label>
+                <label class="toggle">
+                    <input type="checkbox" id="showWantScore" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+
+            <div class="filter-group">
+                <label>Sort By</label>
+                <div class="sort-options">
+                    <button class="sort-btn active" data-sort="overall">Overall</button>
+                    <button class="sort-btn" data-sort="fit">Fit</button>
+                    <button class="sort-btn" data-sort="want">Want</button>
+                </div>
+            </div>
+
+            <button id="refreshBtn">Refresh</button>
+        </div>
+
+        <!-- Weight Editor -->
+        <div class="weight-editor" id="weightEditor">
+            <h3>Score Weighting</h3>
+            <div class="weight-slider">
+                <label>Fit Weight: <span id="fitWeightLabel">70%</span></label>
+                <input type="range" id="fitWeight" min="0" max="100" value="70" class="range-slider">
+                <div class="weight-labels">
+                    <span>0%</span>
+                    <span>100%</span>
+                </div>
+            </div>
+            <div class="weight-slider">
+                <label>Want Weight: <span id="wantWeightLabel">30%</span></label>
+                <input type="range" id="wantWeight" min="0" max="100" value="30" class="range-slider" readonly>
+                <div class="weight-labels">
+                    <span>0%</span>
+                    <span>100%</span>
+                </div>
+            </div>
+            <p style="font-size: 0.85em; color: #666;">Weights determine how Overall score is calculated: Overall = Fit×FitWeight + Want×WantWeight</p>
         </div>
         
         <div id="matches" class="matches-grid">
@@ -423,24 +629,75 @@
             div.textContent = text;
             return div.innerHTML;
         }
-        
-        // Load stats on page load
+
+        // State
+        let allMatches = [];
+        let currentSort = 'overall';
+        let showWantScore = true;
+        let fitWeight = 0.7;
+        let wantWeight = 0.3;
+
+        // Initialize
         loadStats();
+        loadScoringWeights();
         loadMatches();
-        
-        // Event listeners for filters
-        document.getElementById('minScore').addEventListener('change', loadMatches);
-        document.getElementById('status').addEventListener('change', loadMatches);
+
+        // Event listeners
+        document.getElementById('minScore').addEventListener('change', applyFiltersAndSort);
+        document.getElementById('minFitScore').addEventListener('change', applyFiltersAndSort);
+        document.getElementById('minWantScore').addEventListener('change', applyFiltersAndSort);
+        document.getElementById('status').addEventListener('change', applyFiltersAndSort);
+        document.getElementById('showWantScore').addEventListener('change', function(e) {
+            showWantScore = e.target.checked;
+            renderMatches();
+        });
         document.getElementById('refreshBtn').addEventListener('click', loadMatches);
         document.getElementById('modalCloseBtn').addEventListener('click', closeModal);
-        
-        // Delegated event handling for match cards
+
+        // Weight slider listeners
+        document.getElementById('fitWeight').addEventListener('input', function(e) {
+            fitWeight = e.target.value / 100;
+            wantWeight = 1 - fitWeight;
+            document.getElementById('wantWeight').value = wantWeight * 100;
+            document.getElementById('fitWeightLabel').textContent = e.target.value + '%';
+            document.getElementById('wantWeightLabel').textContent = (wantWeight * 100).toFixed(0) + '%';
+            applyFiltersAndSort();
+        });
+
+        // Sort button listeners
+        document.querySelectorAll('.sort-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                currentSort = this.dataset.sort;
+                applyFiltersAndSort();
+            });
+        });
+
+        // Modal event delegation
         document.getElementById('matches').addEventListener('click', function(e) {
             const matchCard = e.target.closest('.match-card');
             if (matchCard && matchCard.dataset.matchId) {
                 showDetails(matchCard.dataset.matchId);
             }
         });
+
+        async function loadScoringWeights() {
+            try {
+                const response = await fetch('/api/config/scoring-weights');
+                if (response.ok) {
+                    const data = await response.json();
+                    fitWeight = data.fit_weight || 0.7;
+                    wantWeight = data.want_weight || 0.3;
+                    document.getElementById('fitWeight').value = fitWeight * 100;
+                    document.getElementById('wantWeight').value = wantWeight * 100;
+                    document.getElementById('fitWeightLabel').textContent = (fitWeight * 100).toFixed(0) + '%';
+                    document.getElementById('wantWeightLabel').textContent = (wantWeight * 100).toFixed(0) + '%';
+                }
+            } catch (error) {
+                console.log('Could not load scoring weights');
+            }
+        }
         
         async function loadStats() {
             const container = document.getElementById('stats');
@@ -485,10 +742,10 @@
         async function loadMatches() {
             const minScore = document.getElementById('minScore').value;
             const status = document.getElementById('status').value;
-            
+
             const container = document.getElementById('matches');
             container.innerHTML = '<div class="loading">Loading matches...</div>';
-            
+
             try {
                 const response = await fetch('/api/matches?min_score=' + encodeURIComponent(minScore) + '&status=' + encodeURIComponent(status));
                 if (!response.ok) {
@@ -497,44 +754,100 @@
                     return;
                 }
                 const data = await response.json();
-                
+
                 if (!data.success) {
                     container.innerHTML = '<div class="error">Error: ' + escapeHtml(data.error) + '</div>';
                     return;
                 }
-                
-                if (data.count === 0) {
-                    container.innerHTML = `
-                        <div class="empty-state">
-                            <h2>No matches found</h2>
-                            <p>Try adjusting your filters or run the pipeline to generate matches.</p>
-                        </div>
-                    `;
-                    return;
+
+                allMatches = data.matches || [];
+                applyFiltersAndSort();
+
+            } catch (error) {
+                container.innerHTML = '<div class="error">Failed to load matches: ' + escapeHtml(error.message) + '</div>';
+            }
+        }
+
+        function applyFiltersAndSort() {
+            const minFitScore = parseFloat(document.getElementById('minFitScore').value) || 0;
+            const minWantScore = parseFloat(document.getElementById('minWantScore').value) || 0;
+
+            let filtered = allMatches.filter(match => {
+                if (minFitScore > 0 && (match.fit_score || 0) < minFitScore) return false;
+                if (minWantScore > 0 && (match.want_score || 0) < minWantScore) return false;
+                return true;
+            });
+
+            filtered.sort((a, b) => {
+                let scoreA, scoreB;
+                if (currentSort === 'fit') {
+                    scoreA = a.fit_score || 0;
+                    scoreB = b.fit_score || 0;
+                } else if (currentSort === 'want') {
+                    scoreA = a.want_score || 0;
+                    scoreB = b.want_score || 0;
+                } else {
+                    scoreA = a.overall_score || 0;
+                    scoreB = b.overall_score || 0;
                 }
-                
-                container.innerHTML = data.matches.map(match => `
+                return scoreB - scoreA;
+            });
+
+            renderFilteredMatches(filtered);
+        }
+
+        function renderFilteredMatches(matches) {
+            const container = document.getElementById('matches');
+
+            if (matches.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <h2>No matches found</h2>
+                        <p>Try adjusting your filters.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = matches.map(match => {
+                const hasFitWant = match.fit_score !== undefined && match.fit_score !== null;
+                const fitScore = hasFitWant ? match.fit_score : match.overall_score;
+                const wantScore = hasFitWant ? (match.want_score || 0) : 0;
+
+                return `
                     <div class="match-card" data-match-id="${escapeHtml(match.match_id)}">
                         <div class="match-header" style="position: relative;">
-                            <div class="match-score">${match.overall_score.toFixed(1)}</div>
+                            <div class="match-score overall-score">${match.overall_score.toFixed(1)}</div>
                             <div class="match-title">${escapeHtml(match.title)}</div>
                             <div class="match-company">${escapeHtml(match.company)}</div>
                         </div>
                         <div class="match-body">
                             <div class="match-meta">
                                 <div class="meta-item">
-                                    <span>${match.is_remote ? 'Remote' : escapeHtml(match.location)}</span>
+                                    <span>${match.is_remote ? 'Remote' : escapeHtml(match.location || '')}</span>
                                 </div>
                                 <div class="meta-item">
-                                    <span>${match.match_type === 'with_preferences' ? 'With Preferences' : 'Requirements Only'}</span>
+                                    <span>${match.match_type === 'with_preferences' ? 'Preferences' : 'Requirements'}</span>
                                 </div>
                             </div>
+
+                            ${hasFitWant && showWantScore ? `
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px;">
+                                    <div class="match-score fit-score" style="font-size: 1em; padding: 8px 12px;">
+                                        Fit: ${match.fit_score.toFixed(1)}
+                                    </div>
+                                    <div class="match-score want-score" style="font-size: 1em; padding: 8px 12px;">
+                                        Want: ${match.want_score.toFixed(1)}
+                                    </div>
+                                </div>
+                            ` : ''}
+
                             <div class="coverage-bar">
                                 <div class="coverage-fill" style="width: ${match.overall_score}%"></div>
                             </div>
                             <div class="score-breakdown">
                                 <div class="score-item">
-                                    <span class="score-label">Base Score</span>
+                                    <span class="score-label">Base</span>
                                     <span class="score-value">${match.base_score.toFixed(1)}</span>
                                 </div>
                                 <div class="score-item">
@@ -552,11 +865,12 @@
                             </div>
                         </div>
                     </div>
-                `).join('');
-                
-            } catch (error) {
-                container.innerHTML = '<div class="error">Failed to load matches: ' + escapeHtml(error.message) + '</div>';
-            }
+                `;
+            }).join('');
+        }
+
+        function renderMatches() {
+            applyFiltersAndSort();
         }
         
         async function showDetails(matchId) {
@@ -606,10 +920,61 @@
                 }
                 
                 const penaltyDetailsHtml = formatPenaltyDetails(match.penalty_details);
-                
+
+                const hasFitWant = match.fit_score !== undefined && match.fit_score !== null;
+
                 document.getElementById('modalBody').innerHTML = `
                     <div style="margin-bottom: 20px;">
                         <h3 style="margin-bottom: 15px;">Match Score: ${match.overall_score.toFixed(1)}/100</h3>
+
+                        ${hasFitWant ? `
+                            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
+                                <div style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); color: white; padding: 15px; border-radius: 12px; text-align: center;">
+                                    <div style="font-size: 2em; font-weight: bold;">${match.fit_score.toFixed(1)}</div>
+                                    <div style="font-size: 0.9em; opacity: 0.9;">Fit Score</div>
+                                    <div style="font-size: 0.8em; opacity: 0.7; margin-top: 5px;">Can do the job</div>
+                                </div>
+                                <div style="background: linear-gradient(135deg, #4CAF50 0%, #388E3C 100%); color: white; padding: 15px; border-radius: 12px; text-align: center;">
+                                    <div style="font-size: 2em; font-weight: bold;">${match.want_score.toFixed(1)}</div>
+                                    <div style="font-size: 0.9em; opacity: 0.9;">Want Score</div>
+                                    <div style="font-size: 0.8em; opacity: 0.7; margin-top: 5px;">Matches what you want</div>
+                                </div>
+                                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 12px; text-align: center;">
+                                    <div style="font-size: 2em; font-weight: bold;">${match.overall_score.toFixed(1)}</div>
+                                    <div style="font-size: 0.9em; opacity: 0.9;">Overall Score</div>
+                                    <div style="font-size: 0.8em; opacity: 0.7; margin-top: 5px;">${(match.fit_weight * 100).toFixed(0)}% Fit + ${(match.want_weight * 100).toFixed(0)}% Want</div>
+                                </div>
+                            </div>
+
+                            ${match.fit_components ? `
+                                <div style="margin-bottom: 20px; padding: 15px; background: #f5f5f5; border-radius: 8px;">
+                                    <h4 style="margin-bottom: 10px;">Fit Components</h4>
+                                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 0.9em;">
+                                        <div>Job Similarity: <strong>${((match.fit_components.job_similarity || 0) * 100).toFixed(1)}%</strong></div>
+                                        <div>Required Coverage: <strong>${((match.fit_components.required_coverage || 0) * 100).toFixed(1)}%</strong></div>
+                                        <div>Preferred Coverage: <strong>${((match.fit_components.preferred_coverage || 0) * 100).toFixed(1)}%</strong></div>
+                                        <div>Penalties: <strong style="color: #f44336;">-${(match.fit_components.fit_penalties || 0).toFixed(1)}</strong></div>
+                                    </div>
+                                </div>
+                            ` : ''}
+
+                            ${match.want_components ? `
+                                <div style="margin-bottom: 20px; padding: 15px; background: #e8f5e9; border-radius: 8px;">
+                                    <h4 style="margin-bottom: 10px;">Want Components (Top Facets)</h4>
+                                    ${match.want_components.facet_contributions ? Object.entries(match.want_components.facet_contributions)
+                                        .filter(([_, v]) => v && v.contribution !== undefined)
+                                        .sort((a, b) => b[1].contribution - a[1].contribution)
+                                        .slice(0, 5)
+                                        .map(([key, v]) => `
+                                            <div style="display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 0.9em;">
+                                                <span>${key.replace(/_/g, ' ')}</span>
+                                                <span><strong>${(v.contribution * 100).toFixed(1)}%</strong></span>
+                                            </div>
+                                        `).join('') : ''}
+                                </div>
+                            ` : ''}
+                        ` : ''}
+
                         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px;">
                             <div>
                                 <strong>Base Score:</strong> ${match.base_score.toFixed(1)}

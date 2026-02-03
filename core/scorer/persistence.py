@@ -44,7 +44,6 @@ def save_match_to_db(
     """
     job = scored_match.job
 
-    # Check if match already exists
     existing_stmt = select(JobMatch).where(
         JobMatch.job_post_id == job.id,
         JobMatch.resume_fingerprint == scored_match.resume_fingerprint
@@ -52,11 +51,16 @@ def save_match_to_db(
     existing = repo.db.execute(existing_stmt).scalar_one_or_none()
 
     if existing:
-        # Update existing match with new scores
         match_record = existing
         match_record.status = 'active'
         match_record.job_similarity = _to_float(scored_match.job_similarity)
+        match_record.fit_score = _to_float(scored_match.fit_score)
+        match_record.want_score = _to_float(scored_match.want_score)
         match_record.overall_score = _to_float(scored_match.overall_score)
+        match_record.fit_components = scored_match.fit_components
+        match_record.want_components = scored_match.want_components
+        match_record.fit_weight = getattr(scored_match, 'fit_weight', 0.7)
+        match_record.want_weight = getattr(scored_match, 'want_weight', 0.3)
         match_record.base_score = _to_float(scored_match.base_score)
         match_record.penalties = _to_float(scored_match.penalties)
         match_record.penalty_details = {
@@ -72,14 +76,18 @@ def save_match_to_db(
         match_record.preferences_file_hash = preferences_file_hash
         match_record.job_content_hash = job.content_hash
         match_record.calculated_at = func.now()
-        # Preserve notified status on update
     else:
-        # Create new match
         match_record = JobMatch(
             job_post_id=job.id,
             resume_fingerprint=scored_match.resume_fingerprint,
             job_similarity=_to_float(scored_match.job_similarity),
+            fit_score=_to_float(scored_match.fit_score),
+            want_score=_to_float(scored_match.want_score),
             overall_score=_to_float(scored_match.overall_score),
+            fit_components=scored_match.fit_components,
+            want_components=scored_match.want_components,
+            fit_weight=getattr(scored_match, 'fit_weight', 0.7),
+            want_weight=getattr(scored_match, 'want_weight', 0.3),
             base_score=_to_float(scored_match.base_score),
             penalties=_to_float(scored_match.penalties),
             penalty_details={
@@ -101,7 +109,6 @@ def save_match_to_db(
 
     repo.db.flush()
 
-    # Delete old requirement matches if updating
     if existing:
         repo.db.execute(
             delete(JobMatchRequirement).where(
@@ -109,7 +116,6 @@ def save_match_to_db(
             )
         )
 
-    # Create requirement match records for matched requirements
     for req_match in scored_match.matched_requirements:
         jmr = JobMatchRequirement(
             job_match_id=match_record.id,
@@ -123,7 +129,6 @@ def save_match_to_db(
         )
         repo.db.add(jmr)
     
-    # Create requirement match records for missing requirements
     for req_match in scored_match.missing_requirements:
         jmr = JobMatchRequirement(
             job_match_id=match_record.id,
@@ -139,8 +144,6 @@ def save_match_to_db(
 
     repo.db.commit()
 
-    logger.info(f"Saved match for job {job.id}: score={scored_match.overall_score:.1f} "
-               f"(base={scored_match.base_score:.1f}, boost={scored_match.preferences_boost:.1f}, "
-               f"penalties={scored_match.penalties:.1f})")
+    logger.info(f"Saved match for job {job.id}: fit={scored_match.fit_score:.1f}, want={scored_match.want_score:.1f}, overall={scored_match.overall_score:.1f}")
 
     return match_record
