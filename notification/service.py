@@ -190,7 +190,7 @@ class NotificationService:
         # Queue or process immediately
         if self.async_mode:
             # Add retry policy for transient failures
-            retry_policy = Retry(max=3, interval=[5, 10, 20])  # Retry 3 times with increasing delays
+            retry_policy = Retry(max=3, interval=[30, 60, 120])  # Retry 3 times with increasing delays
             job = self.queue.enqueue(
                 process_notification_task,
                 notification_data,

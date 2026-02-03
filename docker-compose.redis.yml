@@ -1,16 +1,39 @@
 version: '3.8'
 
 services:
-  redis:
+  redis-cache:
     image: redis:7-alpine
-    container_name: jobscout-redis
+    container_name: jobscout-redis-cache
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - redis_cache_data:/data
+    environment:
+      REDIS_PASSWORD: ${REDIS_CACHE_PASSWORD}
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --requirepass $$REDIS_PASSWORD
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "$$REDIS_PASSWORD", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis-queue:
+    image: redis:7-alpine
+    container_name: jobscout-redis-queue
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
-      - redis_data:/data
+      - redis_queue_data:/data
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
-    command: redis-server --appendonly yes --requirepass $$REDIS_PASSWORD
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass $$REDIS_PASSWORD
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "$$REDIS_PASSWORD", "ping"]
       interval: 5s
@@ -18,4 +41,5 @@ services:
       retries: 5
 
 volumes:
-  redis_data:
+  redis_cache_data:
+  redis_queue_data:

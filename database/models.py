@@ -60,6 +60,7 @@ class JobPost(Base):
     description = Column(Text)
     skills_raw = Column(Text) # CSV or raw string
     raw_payload = Column(JSONB, nullable=False, default={})
+    content_hash = Column(Text)  # Hash of description for content change detection
     
     # Extended Company/Job Info
     emails = Column(Text)
@@ -91,6 +92,7 @@ class JobPost(Base):
         Index('idx_job_post_company', 'company'),
         Index('idx_job_post_remote', 'is_remote'),
         Index('idx_job_post_tenant', 'tenant_id'),
+        Index('idx_job_post_content_hash', 'content_hash'),
         # HNSW index for vector similarity search on summary_embedding (DR-1)
         Index('idx_job_post_summary_embedding_hnsw', 'summary_embedding', postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}, postgresql_ops={'summary_embedding': 'vector_cosine_ops'}),
     )
@@ -130,6 +132,10 @@ class JobRequirementUnit(Base):
     tags = Column(JSONB, nullable=False, default={})
     ordinal = Column(Integer)
     
+    # Experience requirement (parsed from text like "5+ years Python")
+    min_years = Column(Integer)  # Minimum years required
+    years_context = Column(Text)  # What the years refer to (e.g., "Python", "total")
+    
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
 
     job_post = relationship("JobPost", back_populates="requirements")
@@ -153,6 +159,38 @@ class JobRequirementUnitEmbedding(Base):
         Index('jru_embedding_hnsw', 'embedding', postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}, postgresql_ops={'embedding': 'vector_cosine_ops'}),
     )
 
+class ResumeSectionEmbedding(Base):
+    """
+    Stores embeddings for individual resume sections.
+    
+    Each resume is broken down into sections (experience, projects, skills, summary)
+    and each section gets its own embedding for granular matching against job requirements.
+    """
+    __tablename__ = 'resume_section_embedding'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    resume_fingerprint = Column(Text, nullable=False, index=True)  # Links to structured_resume
+    
+    # Section identification
+    section_type = Column(Text, nullable=False)  # experience|project|skill|summary|education
+    section_index = Column(Integer, nullable=False)  # Index within section type (0, 1, 2...)
+    
+    # Source text that was embedded
+    source_text = Column(Text, nullable=False)  # The text that was embedded
+    source_data = Column(JSONB, nullable=False)  # Full structured data for this section
+    
+    # Embedding
+    embedding = Column(Vector(1024), nullable=False)
+    
+    # Metadata
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    
+    __table_args__ = (
+        # Composite index for retrieving all sections of a resume
+        Index('idx_rse_resume', 'resume_fingerprint', 'section_type', 'section_index'),
+        # HNSW index for similarity search
+        Index('idx_rse_embedding_hnsw', 'embedding', postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}, postgresql_ops={'embedding': 'vector_cosine_ops'}),
+    )
 
 class JobMatch(Base):
     """
@@ -172,6 +210,9 @@ class JobMatch(Base):
     # Resume identification for invalidation
     resume_fingerprint = Column(Text, nullable=False)  # Hash of resume content
     resume_version = Column(Text, nullable=True)  # Optional version identifier
+    
+    # Job content identification for invalidation
+    job_content_hash = Column(Text, nullable=True)  # Hash of job content at match time
     
     # Job-level matching (JD alignment)
     job_similarity = Column(Numeric(3, 2))  # Overall JD similarity score (0.00-1.00)
@@ -253,6 +294,43 @@ class JobMatchRequirement(Base):
         Index('idx_jmr_match', 'job_match_id'),
         Index('idx_jmr_similarity', 'similarity_score'),
         Index('idx_jmr_covered', 'is_covered'),
+    )
+
+
+class StructuredResume(Base):
+    """
+    Stores structured resume extraction results.
+    
+    Contains AI-extracted structured data from resume with date-based
+    experience calculations for accurate years-of-experience validation.
+    """
+    __tablename__ = 'structured_resume'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    resume_fingerprint = Column(Text, nullable=False, unique=True, index=True)  # Hash of resume content
+    
+    # Raw extraction result
+    extracted_data = Column(JSONB, nullable=False)  # Full structured extraction
+    
+    # Calculated experience metrics
+    calculated_total_years = Column(Numeric(4, 1))  # Sum of all experience periods from dates
+    claimed_total_years = Column(Numeric(4, 1))  # From summary section if stated
+    experience_validated = Column(Boolean, default=False)  # Whether claim matches calculation
+    validation_message = Column(Text)  # Details of validation result
+    
+    # Extraction metadata
+    extraction_confidence = Column(Numeric(3, 2))  # 0.00-1.00
+    extraction_warnings = Column(JSONB, default=[])  # List of warning messages
+    
+    # Timestamps
+    extracted_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"), onupdate=sql_text("timezone('UTC', now())"))
+
+    __table_args__ = (
+        # Index for finding resumes by fingerprint
+        Index('idx_structured_resume_fingerprint', 'resume_fingerprint'),
+        # Index for experience queries
+        Index('idx_structured_resume_years', 'calculated_total_years'),
     )
 
 

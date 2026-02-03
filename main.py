@@ -12,11 +12,12 @@ from typing import Optional
 
 from core.config_loader import load_config
 from core.app_context import AppContext
-from core.matcher_service import MatcherService
-from core.scorer_service import ScoringService
+from core.matcher import MatcherService
+from core.scorer import ScoringService
 from database.database import db_session_scope
 from database.init_db import init_db
 from database.models import generate_resume_fingerprint, generate_preferences_fingerprint
+from core.job_cache import init_job_cache, get_job_cache
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +176,35 @@ def run_matching_pipeline(ctx: AppContext, stop_event: threading.Event) -> None:
     )
 
     evidence_units = matcher.extract_resume_evidence(resume_data)
+    
+    # NEW: Extract comprehensive structured resume profile
+    structured_profile = matcher.extract_structured_resume(resume_data)
+    if structured_profile:
+        years_msg = f"Total experience: {structured_profile.calculated_total_years} years"
+        if structured_profile.claimed_total_years:
+            years_msg += f" (claimed: {structured_profile.claimed_total_years})"
+        logger.info(years_msg)
+        
+        # Save structured resume to database for later retrieval during scoring
+        is_valid, validation_msg = structured_profile.validate_experience_claim()
+        ctx.repo.save_structured_resume(
+            resume_fingerprint=resume_fingerprint,
+            extracted_data=structured_profile.raw_data,
+            calculated_total_years=structured_profile.calculated_total_years,
+            claimed_total_years=structured_profile.claimed_total_years,
+            experience_validated=is_valid,
+            validation_message=validation_msg,
+            extraction_confidence=structured_profile.raw_data.get('extraction', {}).get('confidence'),
+            extraction_warnings=structured_profile.raw_data.get('extraction', {}).get('warnings', [])
+        )
+        logger.info(f"Saved structured resume to database")
+    
+    # Legacy: Also extract years from individual evidence units (for backward compatibility)
+    matcher.extract_years_for_evidence(evidence_units)
+    units_with_years = [u for u in evidence_units if u.years_value is not None]
+    total_years_units = [u for u in units_with_years if u.is_total_years_claim]
+    logger.info(f"Also extracted years from {len(units_with_years)} evidence units ({len(total_years_units)} total claims)")
+    
     matcher.embed_evidence_units(evidence_units)
 
     step_elapsed = time.time() - step_start
@@ -205,7 +235,8 @@ def run_matching_pipeline(ctx: AppContext, stop_event: threading.Event) -> None:
         invalidated_total = 0
         for job in jobs_to_match:
             existing_match = ctx.repo.get_existing_match(job.id, resume_fingerprint)
-            if existing_match and existing_match.calculated_at < job.last_seen_at:
+            # Only invalidate if job content actually changed (via content_hash comparison)
+            if existing_match and existing_match.job_content_hash != job.content_hash:
                 count = ctx.repo.invalidate_matches_for_job(job.id, "Job content updated")
                 invalidated_total += count
         if invalidated_total > 0:
@@ -387,6 +418,18 @@ def run_internal_sequential_cycle(mode: str = 'all', stop_event: threading.Event
         etl_ctx = None
         with db_session_scope() as session:
             etl_ctx = AppContext.build(config, session)
+            # Initialize job cache (separate from notification Redis)
+            if config.cache and config.cache.enabled:
+                init_job_cache(
+                    redis_url=config.cache.redis_url,
+                    password=config.cache.password
+                )
+                cache = get_job_cache()
+                if cache and cache.is_available:
+                    stats = cache.get_cache_stats()
+                    logger.info(f"Job cache initialized: {stats.get('ttl_human', '2 weeks')} TTL")
+                else:
+                    logger.warning("Job cache enabled but Redis unavailable")
             run_etl_pipeline(etl_ctx, stop_event)
             if not stop_event.is_set():
                 etl_ctx.orchestrator.unload_models()
@@ -406,6 +449,18 @@ def run_internal_sequential_cycle(mode: str = 'all', stop_event: threading.Event
         matching_ctx = None
         with db_session_scope() as session:
             matching_ctx = AppContext.build(config, session)
+            # Initialize job cache (separate from notification Redis)
+            if config.cache and config.cache.enabled:
+                init_job_cache(
+                    redis_url=config.cache.redis_url,
+                    password=config.cache.password
+                )
+                cache = get_job_cache()
+                if cache and cache.is_available:
+                    stats = cache.get_cache_stats()
+                    logger.info(f"Job cache initialized: {stats.get('ttl_human', '2 weeks')} TTL")
+                else:
+                    logger.warning("Job cache enabled but Redis unavailable")
             run_matching_pipeline(matching_ctx, stop_event)
             if not stop_event.is_set():
                 matching_ctx.orchestrator.unload_models()

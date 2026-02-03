@@ -103,6 +103,43 @@ class RankingConfig(BaseModel):
     strict: StrictModeConfig = Field(default_factory=StrictModeConfig)
 
 
+class PreferenceWeights(BaseModel):
+    """Weights for preference alignment scoring."""
+    location: float = 0.35
+    company_size: float = 0.15
+    industry: float = 0.25
+    role: float = 0.25
+
+
+class Stage1EmbeddingConfig(BaseModel):
+    """Configuration for Stage-1 resume embedding generation."""
+    
+    # Embedding mode: text concatenation vs pooled REU embeddings
+    mode: Literal["text", "pooled_reu"] = "pooled_reu"
+    
+    # Text mode: evidence slice limit (legacy, for backward compat)
+    text_evidence_slice_limit: int = 10
+    
+    # Embedding dimension (fallback if cannot be inferred from embeddings)
+    embedding_dim: int = 1024
+    
+    # Pooled mode: weights for different evidence sections
+    section_weights: Dict[str, float] = Field(default_factory=lambda: {
+        "summary": 3.0,
+        "skills": 2.0,
+        "experience": 1.5,
+        "projects": 0.5,
+        "education": 0.0
+    })
+    
+    # Pooling method
+    pooling_method: Literal["mean", "weighted_mean"] = "weighted_mean"
+    
+    # Include/exclude settings
+    include_projects: bool = False
+    include_education: bool = False
+
+
 class MatcherConfig(BaseModel):
     """
     Configuration for the MatcherService (Stage 1: Vector Retrieval).
@@ -116,6 +153,12 @@ class MatcherConfig(BaseModel):
     embedding_dimensions: int = 1024
     batch_size: int = 100  # Number of jobs to process per batch
     include_job_level_matching: bool = True  # Also match at job summary level
+    
+    # NEW: Stage-1 embedding configuration
+    stage1_embedding: Stage1EmbeddingConfig = Field(default_factory=Stage1EmbeddingConfig)
+    
+    # NEW: Preference weights (was hard-coded in matcher_service)
+    preference_weights: PreferenceWeights = Field(default_factory=PreferenceWeights)
     
     # Ranking mode configuration for two-stage pipeline
     ranking: RankingConfig = Field(default_factory=RankingConfig)
@@ -136,6 +179,9 @@ class ScorerConfig(BaseModel):
     penalty_location_mismatch: float = 10.0
     penalty_seniority_mismatch: float = 10.0
     penalty_compensation_mismatch: float = 10.0
+    
+    # Boost amounts
+    preferences_boost_max: float = 15.0
     
     # User preferences
     wants_remote: bool = True

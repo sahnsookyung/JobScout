@@ -99,3 +99,270 @@ EXTRACTION_SCHEMA = {
     "required": ["thought_process", "requirements", "tech_stack"],
     "additionalProperties": False
 }
+
+
+"""
+Comprehensive Resume Extraction Schema (resume.v1)
+
+Structured extraction of resume data with full type information.
+Supports date-based experience calculation and cross-validation.
+
+JSON Schema Draft 2020-12
+"""
+
+RESUME_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://jobscout.ai/schemas/resume.v1.json",
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["schema_version", "profile"],
+    
+    "$defs": {
+        "YYYY_MM_Date": {
+            "type": ["string", "null"],
+            "description": "Date in YYYY-MM format",
+            "pattern": "^[0-9]{4}-[0-9]{2}$"
+        },
+        "NullableString": {
+            "type": ["string", "null"]
+        },
+        "Link": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["url"],
+            "properties": {
+                "platform": {"$ref": "#/$defs/NullableString"},
+                "label": {"$ref": "#/$defs/NullableString"},
+                "url": {"type": "string"}
+            }
+        },
+        "StringArray": {
+            "type": "array",
+            "items": {"type": "string"}
+        },
+        "ImpactItem": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "metric": {"$ref": "#/$defs/NullableString"},
+                "value": {"type": ["number", "null"]},
+                "unit": {"$ref": "#/$defs/NullableString"},
+                "description": {"$ref": "#/$defs/NullableString"}
+            }
+        }
+    },
+    
+    "properties": {
+        "schema_version": {
+            "type": "string",
+            "enum": ["resume.v1"],
+            "description": "Schema version identifier."
+        },
+        
+        "document": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "source": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "filename": {"$ref": "#/$defs/NullableString"},
+                        "url": {"$ref": "#/$defs/NullableString"},
+                        "content_type": {
+                            "type": "string",
+                            "enum": ["application/pdf", "text/html", "text/plain", "other"]
+                        },
+                        "language": {"$ref": "#/$defs/NullableString"}
+                    }
+                },
+                "sections": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["type", "items"],
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["summary", "experience", "education", "skills", "projects", "certifications", "awards", "publications", "volunteering", "languages", "links", "other"]
+                            },
+                            "title": {"$ref": "#/$defs/NullableString"},
+                            "order": {"type": "integer"},
+                            "raw_text": {"$ref": "#/$defs/NullableString"},
+                            "items": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "company": {"$ref": "#/$defs/NullableString"},
+                                        "role": {"$ref": "#/$defs/NullableString"},
+                                        "period": {"$ref": "#/$defs/NullableString"},
+                                        "description": {"$ref": "#/$defs/NullableString"},
+                                        "highlights": {"$ref": "#/$defs/StringArray"},
+                                        "institution": {"$ref": "#/$defs/NullableString"},
+                                        "degree": {"$ref": "#/$defs/NullableString"},
+                                        "field_of_study": {"$ref": "#/$defs/NullableString"},
+                                        "skills": {"$ref": "#/$defs/StringArray"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        
+        "profile": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["experience"],
+            "properties": {
+                "person": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "full_name": {"$ref": "#/$defs/NullableString"},
+                        "headline": {"$ref": "#/$defs/NullableString"},
+                        "location": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "city": {"$ref": "#/$defs/NullableString"},
+                                "region": {"$ref": "#/$defs/NullableString"},
+                                "country": {"$ref": "#/$defs/NullableString"}
+                            }
+                        },
+                        "emails": {"$ref": "#/$defs/StringArray"},
+                        "phones": {"$ref": "#/$defs/StringArray"},
+                        "links": {
+                            "type": "array",
+                            "items": {"$ref": "#/$defs/Link"}
+                        }
+                    }
+                },
+                
+                "summary": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "text": {"$ref": "#/$defs/NullableString"},
+                        "claimed_total_experience_years": {"type": ["number", "null"]},
+                        "domain_focus": {"$ref": "#/$defs/StringArray"}
+                    }
+                },
+                
+                "experience": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["company", "title"],
+                        "properties": {
+                            "company": {"type": "string"},
+                            "team": {"$ref": "#/$defs/NullableString"},
+                            "title": {"type": "string"},
+                            "employment_type": {
+                                "type": ["string", "null"],
+                                "enum": ["full_time", "part_time", "contract", "internship", "other", None]
+                            },
+                            "location": {"$ref": "#/$defs/NullableString"},
+                            "start_date": {"$ref": "#/$defs/YYYY_MM_Date"},
+                            "end_date": {"$ref": "#/$defs/YYYY_MM_Date"},
+                            "is_current": {"type": ["boolean", "null"]},
+                            "description": {"$ref": "#/$defs/NullableString"},
+                            "highlights": {"$ref": "#/$defs/StringArray"},
+                            "tech": {"$ref": "#/$defs/StringArray"},
+                            "impact": {
+                                "type": "array",
+                                "items": {"$ref": "#/$defs/ImpactItem"}
+                            }
+                        }
+                    }
+                },
+                
+                "projects": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "name": {"$ref": "#/$defs/NullableString"},
+                            "description": {"$ref": "#/$defs/NullableString"},
+                            "highlights": {"$ref": "#/$defs/StringArray"},
+                            "links": {
+                                "type": "array",
+                                "items": {"$ref": "#/$defs/Link"}
+                            },
+                            "tech": {"$ref": "#/$defs/StringArray"},
+                            "start_date": {"$ref": "#/$defs/YYYY_MM_Date"},
+                            "end_date": {"$ref": "#/$defs/YYYY_MM_Date"}
+                        }
+                    }
+                },
+                
+                "education": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["institution"],
+                        "properties": {
+                            "institution": {"type": "string"},
+                            "degree": {"$ref": "#/$defs/NullableString"},
+                            "field_of_study": {"$ref": "#/$defs/NullableString"},
+                            "start_year": {"type": ["integer", "null"]},
+                            "end_year": {"type": ["integer", "null"]},
+                            "highlights": {"$ref": "#/$defs/StringArray"}
+                        }
+                    }
+                },
+                
+                "skills": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "groups": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": ["name", "skills"],
+                                "properties": {
+                                    "name": {
+                                        "type": "string",
+                                        "enum": ["languages", "backend", "frontend", "cloud", "devops", "data", "ml", "other"]
+                                    },
+                                    "skills": {"$ref": "#/$defs/StringArray"}
+                                }
+                            }
+                        },
+                        "all": {"$ref": "#/$defs/StringArray"}
+                    }
+                }
+            }
+        },
+        
+        "extraction": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "confidence": {"type": ["number", "null"]},
+                "warnings": {"$ref": "#/$defs/StringArray"},
+                "provenance": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "field": {"type": "string"},
+                            "source_section_index": {"type": ["integer", "null"]},
+                            "source_text": {"$ref": "#/$defs/NullableString"}
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

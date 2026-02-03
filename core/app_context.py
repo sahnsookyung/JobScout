@@ -1,5 +1,3 @@
-"""Application Context Container - SOLID-lite dependency injection."""
-
 from dataclasses import dataclass
 from typing import Optional
 

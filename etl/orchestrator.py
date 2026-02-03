@@ -2,7 +2,7 @@ from typing import Dict, Any, List
 import time
 import logging
 from database.repository import JobRepository
-from core.interfaces import LLMProvider
+from core.llm.interfaces import LLMProvider
 from core.utils import JobFingerprinter
 from etl.schemas import EXTRACTION_SCHEMA
 

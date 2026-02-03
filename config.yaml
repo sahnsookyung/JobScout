@@ -70,13 +70,17 @@ matching:
     # Scoring weights
     weight_required: 0.7
     weight_preferred: 0.3
-    
+
     # Penalty amounts
     penalty_missing_required: 15.0
     penalty_location_mismatch: 10.0
     penalty_seniority_mismatch: 10.0
     penalty_compensation_mismatch: 10.0
-    
+    penalty_experience_shortfall: 15.0
+
+    # Preferences boost
+    preferences_boost_max: 15.0
+
     # User preferences for scoring
     wants_remote: true
     # min_salary: 50000
@@ -148,14 +152,14 @@ schedule:
 scrapers:
   - site_type: ["tokyodev"]
     search_term: ""
-    results_wanted: 1
+    results_wanted: 30
     options:
       japanese_requirements: ["none"]
       seniorities: ["intern", "junior", "intermediate"]
       
   - site_type: ["japandev"]
     search_term: ""
-    results_wanted: 1
+    results_wanted: 30
     options:
       japanese_levels: ["japanese_level_not_required"]
       seniorities: ["seniority_level_junior", "seniority_level_mid_level"]
@@ -165,19 +169,19 @@ scrapers:
     search_term: "software engineer"
     location: "Tokyo"
     country: "Japan"
-    results_wanted: 1
+    results_wanted: 30
     hours_old: 168 # 24 * 7
   
   - site_type: ["glassdoor"]
     search_term: "software engineer"
     location: "Tokyo"
-    results_wanted: 1
+    results_wanted: 30
     hours_old: 168
     request_timeout: 300 # 5 mins
 
   - site_type: ["linkedin"]
     search_term: "software engineer"
     location: "Tokyo"
-    results_wanted: 1
+    results_wanted: 30
     hours_old: 168
     linkedin_fetch_description: True
