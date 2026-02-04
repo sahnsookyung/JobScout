@@ -60,11 +60,15 @@ class TestScoringService(unittest.TestCase):
 
     def test_score_matches_sorting(self):
         """Test that multiple matches are sorted by score."""
-        # Create mock requirements
+        from unittest.mock import Mock, MagicMock
+        from database.models import JobPost
+
         mock_evidence = Mock()
         mock_evidence.text = "Test evidence"
         mock_req1 = Mock(spec=RequirementMatchResult)
         mock_req1.requirement = Mock(req_type='required', text="Python experience")
+        mock_evidence = Mock()
+        mock_evidence.text = "Test evidence"
         mock_req1.evidence = mock_evidence
         mock_req1.is_covered = True
 
@@ -73,7 +77,6 @@ class TestScoringService(unittest.TestCase):
         mock_req2.evidence = mock_evidence
         mock_req2.is_covered = True
 
-        # Create mock jobs
         job1 = MagicMock(spec=JobPost)
         job1.id = "job-1"
         job1.title = "Engineer 1"
@@ -82,7 +85,6 @@ class TestScoringService(unittest.TestCase):
         job2.id = "job-2"
         job2.title = "Engineer 2"
 
-        # Create mock preliminary matches
         prelim1 = Mock(spec=JobMatchPreliminary)
         prelim1.job = job1
         prelim1.job_similarity = 0.7
@@ -99,16 +101,14 @@ class TestScoringService(unittest.TestCase):
         prelim2.missing_requirements = []
         prelim2.preferences_alignment = None
 
-        # Mock database
-        self.repo.db.execute.return_value.scalar_one_or_none.return_value = None
+        self.repo.db.execute.return_value.fetchall.return_value = []
+        self.repo.db.execute.return_value.scalars.return_value.all.return_value = []
 
-        # Score matches
         scored = self.scorer.score_matches([prelim1, prelim2])
 
-        # Verify sorting (higher similarity should have higher score)
         self.assertEqual(len(scored), 2)
-        self.assertGreater(scored[0].overall_score, scored[1].overall_score)  # job-2 should have higher score
-        self.assertEqual(scored[0].job.id, "job-2")  # Higher similarity
+        self.assertGreater(scored[0].overall_score, scored[1].overall_score)
+        self.assertEqual(scored[0].job.id, "job-2")
         self.assertEqual(scored[1].job.id, "job-1")
 
 

@@ -24,6 +24,21 @@ def _to_float(value):
     return float(value)
 
 
+def _to_native_types(obj):
+    """Recursively convert numpy types to native Python types for JSON serialization."""
+    if obj is None:
+        return None
+    if hasattr(obj, 'tolist'):  # numpy array or matrix (check before scalars)
+        return obj.tolist()
+    if hasattr(obj, 'item'):  # numpy scalar (float32, int64, etc.)
+        return obj.item()
+    if isinstance(obj, dict):
+        return {k: _to_native_types(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_native_types(item) for item in obj]
+    return obj
+
+
 def save_match_to_db(
     scored_match: ScoredJobMatch,
     repo,
@@ -57,8 +72,8 @@ def save_match_to_db(
         match_record.fit_score = _to_float(scored_match.fit_score)
         match_record.want_score = _to_float(scored_match.want_score)
         match_record.overall_score = _to_float(scored_match.overall_score)
-        match_record.fit_components = scored_match.fit_components
-        match_record.want_components = scored_match.want_components
+        match_record.fit_components = _to_native_types(scored_match.fit_components)
+        match_record.want_components = _to_native_types(scored_match.want_components)
         match_record.fit_weight = getattr(scored_match, 'fit_weight', 0.7)
         match_record.want_weight = getattr(scored_match, 'want_weight', 0.3)
         match_record.base_score = _to_float(scored_match.base_score)
@@ -68,8 +83,8 @@ def save_match_to_db(
             'total': _to_float(scored_match.penalties),
             'preferences_boost': _to_float(scored_match.preferences_boost)
         }
-        match_record.required_coverage = _to_float(scored_match.required_coverage)
-        match_record.preferred_coverage = _to_float(scored_match.preferred_coverage)
+        match_record.required_coverage = _to_float(scored_match.jd_required_coverage)
+        match_record.preferred_coverage = _to_float(scored_match.jd_preferences_coverage)
         match_record.total_requirements = len(scored_match.matched_requirements) + len(scored_match.missing_requirements)
         match_record.matched_requirements_count = len(scored_match.matched_requirements)
         match_record.match_type = scored_match.match_type
@@ -84,8 +99,8 @@ def save_match_to_db(
             fit_score=_to_float(scored_match.fit_score),
             want_score=_to_float(scored_match.want_score),
             overall_score=_to_float(scored_match.overall_score),
-            fit_components=scored_match.fit_components,
-            want_components=scored_match.want_components,
+            fit_components=_to_native_types(scored_match.fit_components),
+            want_components=_to_native_types(scored_match.want_components),
             fit_weight=getattr(scored_match, 'fit_weight', 0.7),
             want_weight=getattr(scored_match, 'want_weight', 0.3),
             base_score=_to_float(scored_match.base_score),
@@ -95,8 +110,8 @@ def save_match_to_db(
                 'total': _to_float(scored_match.penalties),
                 'preferences_boost': _to_float(scored_match.preferences_boost)
             },
-            required_coverage=_to_float(scored_match.required_coverage),
-            preferred_coverage=_to_float(scored_match.preferred_coverage),
+            required_coverage=_to_float(scored_match.jd_required_coverage),
+            preferred_coverage=_to_float(scored_match.jd_preferences_coverage),
             total_requirements=len(scored_match.matched_requirements) + len(scored_match.missing_requirements),
             matched_requirements_count=len(scored_match.matched_requirements),
             match_type=scored_match.match_type,

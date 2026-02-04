@@ -6,6 +6,9 @@ Penalty functions:
 - calculate_fit_penalties: Capability-related penalties (missing skills, seniority, compensation, experience)
 - calculate_want_penalties: Preference-related penalties (currently unused - structured prefs are display-time filters)
 - calculate_penalties: Legacy function for backward compatibility
+
+NOTE: This module contains pure calculation logic. DB access should happen in the calling layer
+and pass pre-fetched data via parameters.
 """
 
 from typing import List, Dict, Any, Optional, Tuple
@@ -13,7 +16,6 @@ import logging
 import re
 
 from database.models import JobPost
-from database.repository import JobRepository
 from core.config_loader import ScorerConfig
 from core.matcher import RequirementMatchResult, PreferencesAlignmentScore
 
@@ -25,8 +27,8 @@ def calculate_fit_penalties(
     matched_requirements: List[RequirementMatchResult],
     missing_requirements: List[RequirementMatchResult],
     config: ScorerConfig,
-    resume_fingerprint: Optional[str] = None,
-    repo: Optional[JobRepository] = None
+    candidate_total_years: Optional[float] = None,
+    experience_sections: Optional[List[Dict[str, Any]]] = None
 ) -> Tuple[float, List[Dict[str, Any]]]:
     """
     Calculate capability-related penalties only.
@@ -45,8 +47,8 @@ def calculate_fit_penalties(
         matched_requirements: List of matched requirements
         missing_requirements: List of missing requirements
         config: ScorerConfig with penalty settings
-        resume_fingerprint: Optional resume fingerprint for experience section matching
-        repo: Optional JobRepository for database access
+        candidate_total_years: Deprecated - kept for API compatibility, not currently used
+        experience_sections: Pre-fetched experience sections (list of dicts with source_data, source_text, etc.)
 
     Returns: (total_penalties, penalty_details)
     """
@@ -93,16 +95,7 @@ def calculate_fit_penalties(
     experience_mismatch_details = []
     penalized_requirements = set()
 
-    if resume_fingerprint and repo:
-        from database.models import ResumeSectionEmbedding
-        from sqlalchemy import select
-
-        stmt = select(ResumeSectionEmbedding).where(
-            ResumeSectionEmbedding.resume_fingerprint == resume_fingerprint,
-            ResumeSectionEmbedding.section_type == 'experience'
-        )
-        experience_sections = repo.db.execute(stmt).scalars().all()
-
+    if experience_sections:
         for req in matched_requirements:
             if not req.evidence or not req.is_covered:
                 continue
@@ -114,8 +107,9 @@ def calculate_fit_penalties(
             if req_years and experience_sections:
                 best_exp_years = 0.0
                 for exp_section in experience_sections:
-                    if exp_section.embedding:
-                        exp_years = exp_section.source_data.get('years_value', 0.0) if 'years_value' in exp_section.source_data else 0.0
+                    if exp_section.get('has_embedding', False):
+                        source_data = exp_section.get('source_data', {})
+                        exp_years = source_data.get('years_value', 0.0)
                         best_exp_years = max(best_exp_years, exp_years)
 
                 if req_years > best_exp_years and req.requirement.id not in penalized_requirements:
@@ -141,31 +135,22 @@ def calculate_fit_penalties(
     experience_mismatch_penalty2 = 0.0
     experience_mismatch_details2 = []
 
-    if resume_fingerprint and repo:
-        from database.models import ResumeSectionEmbedding
-        from sqlalchemy import select
-
-        stmt = select(ResumeSectionEmbedding).where(
-            ResumeSectionEmbedding.resume_fingerprint == resume_fingerprint,
-            ResumeSectionEmbedding.section_type == 'experience'
-        )
-        experience_sections2 = repo.db.execute(stmt).scalars().all()
-
+    if experience_sections:
         for req in matched_requirements:
             req_text_lower = req.requirement.text.lower() if req.requirement.text else ''
 
             years_keywords = ['years', 'year', 'experience', 'exp', 'yrs', 'yr']
             has_years_keyword = any(keyword in req_text_lower for keyword in years_keywords)
 
-            if has_years_keyword and experience_sections2:
+            if has_years_keyword and experience_sections:
                 section_scores = []
-                for exp_section in experience_sections2:
-                    if exp_section.embedding:
+                for exp_section in experience_sections:
+                    if exp_section.get('has_embedding', False):
                         section_scores.append({
                             'similarity': 0.5,
-                            'section_type': exp_section.section_type,
-                            'section_index': exp_section.section_index,
-                            'source_text': exp_section.source_text
+                            'section_type': exp_section['section_type'],
+                            'section_index': exp_section['section_index'],
+                            'source_text': exp_section['source_text']
                         })
 
                 if section_scores:
@@ -254,29 +239,35 @@ def calculate_want_penalties(
 
 def calculate_penalties(
     job: JobPost,
-    required_coverage: float,
     matched_requirements: List[RequirementMatchResult],
     missing_requirements: List[RequirementMatchResult],
     config: ScorerConfig,
     preferences_alignment: Optional[PreferencesAlignmentScore] = None,
-    resume_fingerprint: Optional[str] = None,
-    repo: Optional[JobRepository] = None
+    candidate_total_years: Optional[float] = None,
+    experience_sections: Optional[List[Dict[str, Any]]] = None
 ) -> Tuple[float, List[Dict[str, Any]]]:
     """
-    Legacy function for backward compatibility.
-
-    Calculates total penalties including:
+    Calculate total penalties including:
     - Capability penalties from calculate_fit_penalties
     - Location mismatch penalty (kept for backward compatibility)
     - Industry/role penalties (kept for backward compatibility)
+
+    Args:
+        job: Job post being scored
+        matched_requirements: List of matched requirements
+        missing_requirements: List of missing requirements
+        config: ScorerConfig with penalty settings
+        preferences_alignment: Optional preferences alignment score
+        candidate_total_years: Pre-fetched total years of experience
+        experience_sections: Pre-fetched experience sections (list of dicts)
     """
     penalties, penalty_details = calculate_fit_penalties(
         job=job,
         matched_requirements=matched_requirements,
         missing_requirements=missing_requirements,
         config=config,
-        resume_fingerprint=resume_fingerprint,
-        repo=repo
+        candidate_total_years=candidate_total_years,
+        experience_sections=experience_sections
     )
 
     if preferences_alignment:

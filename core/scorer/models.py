@@ -24,8 +24,8 @@ class ScoredJobMatch:
     base_score: float = 0.0
     preferences_boost: float = 0.0
     penalties: float = 0.0
-    required_coverage: float = 0.0
-    preferred_coverage: float = 0.0
+    jd_required_coverage: float = 0.0
+    jd_preferences_coverage: float = 0.0
     job_similarity: float = 0.0
     preferences_alignment: Optional['PreferencesAlignmentScore'] = None
     penalty_details: List[Dict[str, Any]] = field(default_factory=list)
@@ -33,5 +33,4 @@ class ScoredJobMatch:
     missing_requirements: List['RequirementMatchResult'] = field(default_factory=list)
     resume_fingerprint: str = ""
     match_type: str = "requirements_only"
-    ranking_mode: str = "discovery"
-    score_components: Optional[Dict[str, Any]] = field(default_factory=dict)
+    policy_applied: Optional[Dict[str, Any]] = None

@@ -34,7 +34,7 @@ class TestPenaltyCalculations(unittest.TestCase):
         job.job_level = None
 
         penalties_score, details = penalties.calculate_penalties(
-            job, 0.5, [], [], self.scorer_config
+            job, [], [], self.scorer_config
         )
 
         # Should have location penalty (config wants remote)
@@ -57,7 +57,7 @@ class TestPenaltyCalculations(unittest.TestCase):
         job.job_level = None
 
         penalties_score, details = penalties.calculate_penalties(
-            job, 0.5, [], [], self.scorer_config
+            job, [], [], self.scorer_config
         )
 
         # Should not have location penalty
@@ -79,7 +79,7 @@ class TestPenaltyCalculations(unittest.TestCase):
         job.job_level = None
 
         penalties_score, details = penalties.calculate_penalties(
-            job, 0.5, [], [], self.scorer_config
+            job, [], [], self.scorer_config
         )
 
         # Should have salary/penalty_compensation_mismatch penalty (not 'salary_too_low')

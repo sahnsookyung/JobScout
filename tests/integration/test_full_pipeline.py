@@ -420,9 +420,12 @@ class TestFullPipelineIntegration(unittest.TestCase):
         if not hasattr(type(self), 'test_preliminary_matches'):
             self.skipTest("Preliminary matches not available")
         
-        # Score matches
+        from core.config_loader import ResultPolicy
+        result_policy = ResultPolicy()
+        
         scored_matches = self.scorer.score_matches(
             preliminary_matches=self.test_preliminary_matches,
+            result_policy=result_policy,
             match_type="requirements_only"
         )
         

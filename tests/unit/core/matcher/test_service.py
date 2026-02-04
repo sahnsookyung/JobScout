@@ -162,41 +162,24 @@ class TestMultiEmbeddingMatching:
         from core.matcher import RequirementMatchResult
         from database.models import JobPost
         
-        # Job requires 5 years
         req = sample_job_requirement(min_years=5)
         
-        # Create a mock matches list with this requirement
         req_match = Mock(spec=RequirementMatchResult)
         req_match.requirement = req
         req_match.evidence = "Some evidence"
         req_match.is_covered = True
-        # Ensure it has the structure expected by penalties.py
         req_match.requirement_row = req.requirement_row
         
-        # Resume has experience section with 3 years
-        from types import SimpleNamespace
-        section = SimpleNamespace(
-            id="exp-1",
-            resume_fingerprint="resume-123",
-            section_type="experience",
-            section_index=0,
-            source_text="Company A - Engineer (3 years)",
-            source_data={"company": "Company A", "title": "Engineer", "years_value": 3.0},
-            embedding=[0.6, 0.4, 0.1]
-        )
+        section = {
+            "id": "exp-1",
+            "resume_fingerprint": "resume-123",
+            "section_type": "experience",
+            "section_index": 0,
+            "source_text": "Company A - Engineer (3 years)",
+            "source_data": {"company": "Company A", "title": "Engineer", "years_value": 3.0},
+            "has_embedding": True,
+        }
         
-        # Mock repository
-        repo = Mock(spec=JobRepository)
-        repo.db = Mock()
-        
-        row = Mock()
-        row.ResumeSectionEmbedding = section
-        row.distance = 0.1
-        repo.db.execute.return_value.scalars.return_value.all.return_value = [section]
-        # Wait, calculate_penalties uses scalars().all() -> returns objects (ResumeSectionEmbedding)
-        # So mocking scalars().all() to return [section] is correct if section is the ResumeSectionEmbedding object/mock
-        
-        # We need a dummy JobPost
         job = Mock(spec=JobPost)
         job.location_text = "Remote"
         job.is_remote = True
@@ -212,24 +195,18 @@ class TestMultiEmbeddingMatching:
         config.min_salary = None
         config.wants_remote = False
         
-        # Simulate penalty calculation
         _, details = penalties.calculate_penalties(
             job=job,
-            required_coverage=1.0,
             matched_requirements=[req_match],
             missing_requirements=[],
             config=config,
-            resume_fingerprint="resume-123",
-            repo=repo
+            candidate_total_years=3.0,
+            experience_sections=[section]
         )
         
-        # Check for experience_years_mismatch penalty in the details
         exp_penalties = [d for d in details if d['type'] == 'experience_years_mismatch']
         assert len(exp_penalties) > 0
         assert exp_penalties[0]['amount'] > 0
-        # 5 years required - 3 years actual = 2 years shortfall. * 10.0 penalty = 20.0
-        # Or checking min(shortfall * 10, max)
-        # Verify specific penalty amount: 2 years shortfall * 10.0 = 20.0
         assert exp_penalties[0]['amount'] == 20.0
     
     def test_04_extract_structured_resume_returns_ai_data(self):

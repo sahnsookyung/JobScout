@@ -440,26 +440,27 @@
 
         .weight-editor {
             background: white;
-            padding: 20px;
+            padding: 15px;
             border-radius: 12px;
-            margin-bottom: 20px;
+            margin-bottom: 15px;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
 
         .weight-editor h3 {
-            margin-bottom: 15px;
+            margin-bottom: 10px;
             color: #333;
+            font-size: 1em;
         }
 
         .weight-slider {
-            margin-bottom: 20px;
+            margin-bottom: 8px;
         }
 
         .weight-labels {
             display: flex;
             justify-content: space-between;
-            margin-top: 5px;
-            font-size: 0.85em;
+            margin-top: 2px;
+            font-size: 0.75em;
             color: #666;
         }
 
@@ -476,6 +477,91 @@
             padding: 4px 10px;
             border-radius: 12px;
             font-size: 0.8em;
+        }
+
+        .tooltip {
+            position: relative;
+            display: inline-block;
+            cursor: help;
+        }
+
+        .tooltip .tooltip-text {
+            visibility: hidden;
+            width: 200px;
+            background-color: #333;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 8px 12px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -100px;
+            opacity: 0;
+            transition: opacity 0.2s;
+            font-size: 0.8em;
+            font-weight: normal;
+        }
+
+        .tooltip .tooltip-text::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #333 transparent transparent transparent;
+        }
+
+        .tooltip:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        .compact-controls {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: flex-start;
+        }
+
+        .compact-section {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .compact-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+
+        .compact-row label {
+            font-size: 0.85em;
+            color: #666;
+            min-width: 70px;
+        }
+
+        .compact-row input[type="range"] {
+            flex: 1;
+            margin: 0;
+        }
+
+        .compact-row select {
+            padding: 4px 8px;
+            font-size: 0.85em;
+            min-width: 100px;
+        }
+
+        .compact-value {
+            font-size: 0.85em;
+            font-weight: 600;
+            color: #333;
+            min-width: 30px;
+            text-align: right;
         }
 
         .sort-options {
@@ -519,39 +605,6 @@
         
         <div class="filters">
             <div class="filter-group">
-                <label for="minScore">Min Overall</label>
-                <select id="minScore">
-                    <option value="0">All Jobs</option>
-                    <option value="30">30+</option>
-                    <option value="50">50+</option>
-                    <option value="70">70+</option>
-                    <option value="80">80+</option>
-                </select>
-            </div>
-
-            <div class="filter-group">
-                <label for="minFitScore">Min Fit</label>
-                <select id="minFitScore">
-                    <option value="0">Any</option>
-                    <option value="30">30+</option>
-                    <option value="50">50+</option>
-                    <option value="70">70+</option>
-                    <option value="80">80+</option>
-                </select>
-            </div>
-
-            <div class="filter-group">
-                <label for="minWantScore">Min Want</label>
-                <select id="minWantScore">
-                    <option value="0">Any</option>
-                    <option value="30">30+</option>
-                    <option value="50">50+</option>
-                    <option value="70">70+</option>
-                    <option value="80">80+</option>
-                </select>
-            </div>
-
-            <div class="filter-group">
                 <label for="status">Status</label>
                 <select id="status">
                     <option value="active" selected>Active</option>
@@ -580,26 +633,58 @@
             <button id="refreshBtn">Refresh</button>
         </div>
 
-        <!-- Weight Editor -->
-        <div class="weight-editor" id="weightEditor">
-            <h3>Score Weighting</h3>
-            <div class="weight-slider">
-                <label>Fit Weight: <span id="fitWeightLabel">70%</span></label>
-                <input type="range" id="fitWeight" min="0" max="100" value="70" class="range-slider">
-                <div class="weight-labels">
-                    <span>0%</span>
-                    <span>100%</span>
+        <!-- Compact Controls -->
+        <div class="weight-editor" id="compactControls">
+            <div class="compact-controls">
+                <!-- Score Weighting -->
+                <div class="compact-section">
+                    <h3 style="margin-bottom: 8px; font-size: 0.95em;">
+                        Score Weighting
+                        <span class="tooltip">ⓘ
+                            <span class="tooltip-text">How Overall score is calculated: Overall = Fit×FitWeight + Want×WantWeight</span>
+                        </span>
+                    </h3>
+                    <div class="compact-row">
+                        <label>Fit</label>
+                        <input type="range" id="fitWeight" min="0" max="100" value="70">
+                        <span class="compact-value" id="fitWeightLabel">70%</span>
+                    </div>
+                    <div class="compact-row">
+                        <label>Want</label>
+                        <input type="range" id="wantWeight" min="0" max="100" value="30" disabled>
+                        <span class="compact-value" id="wantWeightLabel">30%</span>
+                    </div>
+                </div>
+
+                <!-- Result Policy -->
+                <div class="compact-section">
+                    <h3 style="margin-bottom: 8px; font-size: 0.95em;">
+                        Result Policy
+                        <span class="tooltip">ⓘ
+                            <span class="tooltip-text">Filter and limit results after scoring. Presets: Strict (high bar), Balanced (default), Discovery (show more).</span>
+                        </span>
+                    </h3>
+                    <div class="compact-row">
+                        <label>Preset</label>
+                        <select id="policyPreset" style="min-width: 110px;">
+                            <option value="strict">Strict</option>
+                            <option value="balanced" selected>Balanced</option>
+                            <option value="discovery">Discovery</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                    </div>
+                    <div class="compact-row">
+                        <label>Min Fit</label>
+                        <input type="range" id="minFit" min="0" max="100" value="55">
+                        <span class="compact-value" id="minFitLabel">55</span>
+                    </div>
+                    <div class="compact-row">
+                        <label>Top K</label>
+                        <input type="range" id="topK" min="1" max="200" value="50">
+                        <span class="compact-value" id="topKLabel">50</span>
+                    </div>
                 </div>
             </div>
-            <div class="weight-slider">
-                <label>Want Weight: <span id="wantWeightLabel">30%</span></label>
-                <input type="range" id="wantWeight" min="0" max="100" value="30" class="range-slider" readonly>
-                <div class="weight-labels">
-                    <span>0%</span>
-                    <span>100%</span>
-                </div>
-            </div>
-            <p style="font-size: 0.85em; color: #666;">Weights determine how Overall score is calculated: Overall = Fit×FitWeight + Want×WantWeight</p>
         </div>
         
         <div id="matches" class="matches-grid">
@@ -640,13 +725,10 @@
         // Initialize
         loadStats();
         loadScoringWeights();
-        loadMatches();
+        loadPolicy().then(() => loadMatches());
 
         // Event listeners
-        document.getElementById('minScore').addEventListener('change', applyFiltersAndSort);
-        document.getElementById('minFitScore').addEventListener('change', applyFiltersAndSort);
-        document.getElementById('minWantScore').addEventListener('change', applyFiltersAndSort);
-        document.getElementById('status').addEventListener('change', applyFiltersAndSort);
+        document.getElementById('status').addEventListener('change', loadMatches);
         document.getElementById('showWantScore').addEventListener('change', function(e) {
             showWantScore = e.target.checked;
             renderMatches();
@@ -661,8 +743,25 @@
             document.getElementById('wantWeight').value = wantWeight * 100;
             document.getElementById('fitWeightLabel').textContent = e.target.value + '%';
             document.getElementById('wantWeightLabel').textContent = (wantWeight * 100).toFixed(0) + '%';
-            applyFiltersAndSort();
+            renderMatches();
         });
+
+        // Policy control listeners
+        document.getElementById('policyPreset').addEventListener('change', function(e) {
+            if (e.target.value !== 'custom') {
+                applyPreset(e.target.value);
+            }
+        });
+        document.getElementById('minFit').addEventListener('input', function(e) {
+            document.getElementById('minFitLabel').textContent = e.target.value;
+            document.getElementById('policyPreset').value = 'custom';
+        });
+        document.getElementById('minFit').addEventListener('change', savePolicyAndReload);
+        document.getElementById('topK').addEventListener('input', function(e) {
+            document.getElementById('topKLabel').textContent = e.target.value;
+            document.getElementById('policyPreset').value = 'custom';
+        });
+        document.getElementById('topK').addEventListener('change', savePolicyAndReload);
 
         // Sort button listeners
         document.querySelectorAll('.sort-btn').forEach(btn => {
@@ -696,6 +795,71 @@
                 }
             } catch (error) {
                 console.log('Could not load scoring weights');
+            }
+        }
+
+        async function loadPolicy() {
+            try {
+                const response = await fetch('/api/v1/policy');
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('minFit').value = data.min_fit;
+                    document.getElementById('minFitLabel').textContent = data.min_fit;
+                    document.getElementById('topK').value = data.top_k;
+                    document.getElementById('topKLabel').textContent = data.top_k;
+                    document.getElementById('policyPreset').value = 'custom';
+                }
+            } catch (error) {
+                console.log('Could not load policy');
+            }
+        }
+
+        async function applyPreset(presetName) {
+            try {
+                const response = await fetch('/api/v1/policy/preset/' + encodeURIComponent(presetName), {
+                    method: 'POST'
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('minFit').value = data.min_fit;
+                    document.getElementById('minFitLabel').textContent = data.min_fit;
+                    document.getElementById('topK').value = data.top_k;
+                    document.getElementById('topKLabel').textContent = data.top_k;
+                    loadMatches();
+                }
+            } catch (error) {
+                console.log('Could not apply preset');
+            }
+        }
+
+        async function savePolicy() {
+            const minFit = parseFloat(document.getElementById('minFit').value);
+            const topK = parseInt(document.getElementById('topK').value);
+
+            try {
+                const response = await fetch('/api/v1/policy', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        min_fit: minFit,
+                        top_k: topK,
+                        min_jd_required_coverage: null
+                    })
+                });
+                if (response.ok) {
+                    document.getElementById('policyPreset').value = 'custom';
+                    return true;
+                }
+            } catch (error) {
+                console.log('Could not save policy');
+            }
+            return false;
+        }
+
+        async function savePolicyAndReload() {
+            const saved = await savePolicy();
+            if (saved) {
+                loadMatches();
             }
         }
         
@@ -740,14 +904,13 @@
         }
         
         async function loadMatches() {
-            const minScore = document.getElementById('minScore').value;
             const status = document.getElementById('status').value;
 
             const container = document.getElementById('matches');
             container.innerHTML = '<div class="loading">Loading matches...</div>';
 
             try {
-                const response = await fetch('/api/matches?min_score=' + encodeURIComponent(minScore) + '&status=' + encodeURIComponent(status));
+                const response = await fetch('/api/matches?status=' + encodeURIComponent(status));
                 if (!response.ok) {
                     const errorText = await response.text();
                     container.innerHTML = '<div class="error">HTTP ' + escapeHtml(response.status) + ': ' + escapeHtml(response.statusText) + '</div>';
@@ -761,22 +924,19 @@
                 }
 
                 allMatches = data.matches || [];
-                applyFiltersAndSort();
+                renderMatches();
 
             } catch (error) {
                 container.innerHTML = '<div class="error">Failed to load matches: ' + escapeHtml(error.message) + '</div>';
             }
         }
 
-        function applyFiltersAndSort() {
-            const minFitScore = parseFloat(document.getElementById('minFitScore').value) || 0;
-            const minWantScore = parseFloat(document.getElementById('minWantScore').value) || 0;
+        function renderMatches() {
+            applyFiltersAndSort();
+        }
 
-            let filtered = allMatches.filter(match => {
-                if (minFitScore > 0 && (match.fit_score || 0) < minFitScore) return false;
-                if (minWantScore > 0 && (match.want_score || 0) < minWantScore) return false;
-                return true;
-            });
+        function applyFiltersAndSort() {
+            let filtered = allMatches;
 
             filtered.sort((a, b) => {
                 let scoreA, scoreB;

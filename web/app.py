@@ -36,6 +36,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from decimal import Decimal
 
 from database.models import JobMatch, JobPost, JobMatchRequirement
+from core.config_loader import ResultPolicy
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -218,6 +219,90 @@ class ScoringWeightsResponse(BaseModel):
     facet_weights: Dict[str, float]
 
 
+class PolicyResponse(BaseModel):
+    """Response containing result policy configuration."""
+    min_fit: float
+    top_k: int
+    min_jd_required_coverage: Optional[float] = None
+
+
+POLICY_PRESETS = {
+    "strict": ResultPolicy(min_fit=70.0, min_jd_required_coverage=0.80, top_k=25),
+    "balanced": ResultPolicy(min_fit=55.0, min_jd_required_coverage=0.60, top_k=50),
+    "discovery": ResultPolicy(min_fit=40.0, min_jd_required_coverage=None, top_k=100),
+}
+
+_default_policy = POLICY_PRESETS["balanced"]
+
+
+def get_current_policy() -> ResultPolicy:
+    """Get the current result policy from database or fall back to default.
+
+    Returns:
+        ResultPolicy: The active policy, loaded from DB if available, otherwise default.
+    """
+    try:
+        from database.models import AppSettings
+        setting = db_session_scope().__enter__().query(AppSettings).filter(AppSettings.key == 'result_policy').first()
+        if setting and setting.value:
+            import json
+            data = json.loads(setting.value)
+            return ResultPolicy(
+                min_fit=data.get('min_fit', _default_policy.min_fit),
+                top_k=data.get('top_k', _default_policy.top_k),
+                min_jd_required_coverage=data.get('min_jd_required_coverage', _default_policy.min_jd_required_coverage)
+            )
+    except Exception:
+        pass
+    return _default_policy
+
+
+def set_current_policy(policy: ResultPolicy) -> None:
+    """Save the current result policy to the database.
+
+    Args:
+        policy: The ResultPolicy to persist.
+    """
+    try:
+        from database.models import AppSettings
+        import json
+        session = db_session_scope().__enter__()
+        setting = session.query(AppSettings).filter(AppSettings.key == 'result_policy').first()
+        value = json.dumps({
+            'min_fit': policy.min_fit,
+            'top_k': policy.top_k,
+            'min_jd_required_coverage': policy.min_jd_required_coverage
+        })
+        if setting:
+            setting.value = value
+        else:
+            setting = AppSettings(key='result_policy', value=value)
+            session.add(setting)
+        session.commit()
+    except Exception:
+        pass
+
+
+def db_session_scope():
+    """Create a database session scope for helper functions."""
+    from contextlib import contextmanager
+    @contextmanager
+    def scope():
+        db = SessionLocal()
+        try:
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+    return scope
+
+
+_current_policy = get_current_policy()
+
+
 # Helper functions
 
 def decimal_to_float(val):
@@ -244,17 +329,26 @@ def read_root():
 
 @app.get("/api/matches", response_model=MatchesResponse, tags=["matches"])
 def get_matches(
-    min_score: float = Query(default=0, ge=0, le=100, description="Minimum match score to include"),
     status: str = Query(default="active", description="Match status: active, stale, or all"),
-    limit: int = Query(default=50, ge=1, le=1000, description="Maximum number of results"),
+    min_fit: float = Query(default=None, ge=0, le=100, description="Minimum fit score filter"),
+    top_k: int = Query(default=None, ge=1, le=500, description="Maximum results to return"),
     db: Session = Depends(get_db)
 ):
     """
-    Get a list of job matches with optional filtering.
+    Get a list of job matches filtered by result policy.
     
+    Uses the current in-memory policy settings by default:
+    - min_fit: Minimum fit score to include
+    - top_k: Maximum number of results to return
+    
+    Both can be overridden via query parameters.
     Returns matches sorted by overall score (highest first).
     """
     try:
+        # Use policy defaults, allow override via query params
+        effective_min_fit = min_fit if min_fit is not None else _current_policy.min_fit
+        effective_top_k = top_k if top_k is not None else _current_policy.top_k
+        
         # Build query
         query = db.query(JobMatch)
         
@@ -262,8 +356,8 @@ def get_matches(
             query = query.filter(JobMatch.status == status)
         
         matches = query.filter(
-            JobMatch.overall_score >= min_score
-        ).order_by(desc(JobMatch.overall_score)).limit(limit).all()
+            (JobMatch.fit_score >= effective_min_fit) | (JobMatch.fit_score.is_(None))
+        ).order_by(desc(JobMatch.overall_score)).limit(effective_top_k).all()
         
         # Batch load all related JobPost records to avoid N+1 queries
         job_ids = [match.job_post_id for match in matches]
@@ -449,6 +543,75 @@ def get_scoring_weights():
             'tech_stack': 0.10,
             'visa_sponsorship': 0.10
         })
+    )
+
+
+@app.get("/api/v1/policy", response_model=PolicyResponse, tags=["policy"])
+def get_policy():
+    """
+    Get current result policy configuration.
+
+    Returns the in-memory policy settings for filtering and truncating results.
+    """
+    return PolicyResponse(
+        min_fit=_current_policy.min_fit,
+        top_k=_current_policy.top_k,
+        min_jd_required_coverage=_current_policy.min_jd_required_coverage
+    )
+
+
+@app.put("/api/v1/policy", response_model=PolicyResponse, tags=["policy"])
+def update_policy(policy: PolicyResponse):
+    """
+    Update result policy configuration.
+
+    Updates persisted policy settings. Changes are stored in the database.
+
+    - min_fit: Minimum fit score (0-100) to include in results
+    - top_k: Maximum number of results to return (1-500)
+    - min_jd_required_coverage: Minimum job description coverage (0-1), or null to disable
+    """
+    coverage = policy.min_jd_required_coverage
+    if coverage is not None:
+        coverage = min(1.0, max(0.0, coverage))
+    new_policy = ResultPolicy(
+        min_fit=min(100, max(0, policy.min_fit)),
+        top_k=min(500, max(1, policy.top_k)),
+        min_jd_required_coverage=coverage
+    )
+    set_current_policy(new_policy)
+    global _current_policy
+    _current_policy = new_policy
+    return PolicyResponse(
+        min_fit=_current_policy.min_fit,
+        top_k=_current_policy.top_k,
+        min_jd_required_coverage=_current_policy.min_jd_required_coverage
+    )
+
+
+@app.post("/api/v1/policy/preset/{preset_name}", response_model=PolicyResponse, tags=["policy"])
+def apply_preset(preset_name: str):
+    """
+    Apply a result policy preset.
+
+    Presets:
+    - strict: min_fit=70, min_required_coverage=0.80, top_k=25
+    - balanced: min_fit=55, min_required_coverage=0.60, top_k=50
+    - discovery: min_fit=40, min_required_coverage=null, top_k=100
+    """
+    global _current_policy
+    preset_name = preset_name.lower()
+    if preset_name not in POLICY_PRESETS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid preset. Valid options: {', '.join(POLICY_PRESETS.keys())}"
+        )
+    _current_policy = POLICY_PRESETS[preset_name]
+    set_current_policy(_current_policy)
+    return PolicyResponse(
+        min_fit=_current_policy.min_fit,
+        top_k=_current_policy.top_k,
+        min_jd_required_coverage=_current_policy.min_jd_required_coverage
     )
 
 

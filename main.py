@@ -299,16 +299,18 @@ def run_matching_pipeline(ctx: AppContext, stop_event: threading.Event) -> None:
             if job_id not in job_facet_embeddings_map:
                 job_facet_embeddings_map[job_id] = ctx.repo.get_job_facet_embeddings(preliminary.job.id)
 
-        scored_matches = scorer.score_matches_fit_want(
+        scored_matches = scorer.score_matches(
             preliminary_matches=preliminary_matches,
+            result_policy=matching_config.result_policy,
             user_want_embeddings=user_want_embeddings,
             job_facet_embeddings_map=job_facet_embeddings_map,
             match_type=matching_config.mode
         )
     else:
-        logger.info("=== No user wants configured, using legacy scoring ===")
+        logger.info("=== Using Fit-only scoring ===")
         scored_matches = scorer.score_matches(
             preliminary_matches=preliminary_matches,
+            result_policy=matching_config.result_policy,
             match_type=matching_config.mode
         )
 
@@ -319,10 +321,7 @@ def run_matching_pipeline(ctx: AppContext, stop_event: threading.Event) -> None:
         logger.info("Top 5 Matches:")
         for i, match in enumerate(scored_matches[:5], 1):
             job = match.job
-            if hasattr(match, 'fit_score') and hasattr(match, 'want_score'):
-                logger.info(f"  {i}. {job.title} @ {job.company}: overall={match.overall_score:.1f}/100 (fit={match.fit_score:.1f}, want={match.want_score:.1f})")
-            else:
-                logger.info(f"  {i}. {job.title} @ {job.company}: {match.overall_score:.1f}/100")
+            logger.info(f"  {i}. {job.title} @ {job.company}: overall={match.overall_score:.1f}/100 (fit={match.fit_score:.1f}, want={match.want_score:.1f})")
 
     if stop_event.is_set():
         return

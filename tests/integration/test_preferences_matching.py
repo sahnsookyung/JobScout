@@ -378,7 +378,9 @@ class TestPreferencesMatching(unittest.TestCase):
         
         # Test penalties from alignment
         penalties_score, details = penalties.calculate_penalties(
-            job, 1.0, [], [], self.scorer_config, alignment, repo=self.scorer.repo
+            job, [], [], self.scorer_config, alignment,
+            candidate_total_years=None,
+            experience_sections=None
         )
         
         # Should have industry and role penalties
@@ -440,7 +442,8 @@ class TestPreferencesMatching(unittest.TestCase):
         self.assertIsNotNone(preliminary.preferences_alignment)
         self.assertGreater(preliminary.preferences_alignment.overall_score, 0.8)
         
-        # Score with preferences
+        # Score with preferences - preferences_boost is now always 0.0 in unified scoring
+        # Want score is computed separately instead
         scored = self.scorer.score_preliminary_match(
             preliminary,
             match_type="with_preferences"
@@ -448,11 +451,11 @@ class TestPreferencesMatching(unittest.TestCase):
         
         self.assertIsNotNone(scored)
         self.assertEqual(scored.match_type, "with_preferences")
-        self.assertGreater(scored.preferences_boost, 0)
+        self.assertEqual(scored.preferences_boost, 0.0)
         
         print(f"  ✓ Overall score: {scored.overall_score:.1f}")
-        print(f"  ✓ Base score: {scored.base_score:.1f}")
-        print(f"  ✓ Preferences boost: +{scored.preferences_boost:.1f}")
+        print(f"  ✓ Fit score: {scored.fit_score:.1f}")
+        print(f"  ✓ Want score: {scored.want_score:.1f}")
         print(f"  ✓ Penalties: {scored.penalties:.1f}")
         print(f"  ✓ Match type: {scored.match_type}")
     
@@ -466,9 +469,9 @@ class TestPreferencesMatching(unittest.TestCase):
         
         # Create perfect match job
         job = MagicMock()
-        job.id = "job-456"
+        job.id = "job-test"
         job.title = "Software Engineer"
-        job.company = "PerfectCorp"
+        job.company = "TechCorp"
         job.location_text = "Remote"
         job.is_remote = True
         job.company_num_employees = "100"
@@ -478,7 +481,7 @@ class TestPreferencesMatching(unittest.TestCase):
         job.salary_max = 10000000
         job.requirements = []
         
-        # Match without preferences
+        # Match without preferences - fit score only
         preliminary_no_prefs = self.matcher.match_resume_to_job(
             evidence_units, job, "fp1", preferences=None
         )
@@ -486,7 +489,8 @@ class TestPreferencesMatching(unittest.TestCase):
             preliminary_no_prefs, "requirements_only"
         )
         
-        # Match with preferences
+        # Match with preferences - unified scoring still uses fit score only in this call
+        # since we're not passing user_want_embeddings
         preliminary_with_prefs = self.matcher.match_resume_to_job(
             evidence_units, job, "fp2", preferences=self.sample_preferences
         )
@@ -494,16 +498,17 @@ class TestPreferencesMatching(unittest.TestCase):
             preliminary_with_prefs, "with_preferences"
         )
         
-        # With preferences should have higher score due to boost
-        self.assertGreater(
+        # Without user_want_embeddings, both should have same overall (fit score)
+        # The difference is in preferences_alignment being present or not
+        self.assertEqual(
             scored_with_prefs.overall_score,
             scored_no_prefs.overall_score,
-            "Perfect preferences match should score higher"
+            "Without want embeddings, overall scores should be equal"
         )
         
         print(f"  ✓ Without preferences: {scored_no_prefs.overall_score:.1f}")
         print(f"  ✓ With preferences: {scored_with_prefs.overall_score:.1f}")
-        print(f"  ✓ Difference: +{scored_with_prefs.overall_score - scored_no_prefs.overall_score:.1f}")
+        print(f"  ✓ Both use fit score only (want embeddings not provided)")
 
 
 if __name__ == '__main__':
