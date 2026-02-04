@@ -21,7 +21,7 @@ def calculate_requirement_similarity_with_resume_sections(
     resume_fingerprint: str,
     repo: JobRepository,
     section_types: Optional[List[str]] = None,
-    top_k: int = 5
+    top_k: int = 10
 ) -> Tuple[float, Dict[str, Any]]:
     """
     Calculate similarity between job requirement and resume sections using multi-embedding matching.

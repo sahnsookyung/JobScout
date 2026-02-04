@@ -36,6 +36,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from decimal import Decimal
 
 from database.models import JobMatch, JobPost, JobMatchRequirement
+from database.database import db_session_scope
 from core.config_loader import ResultPolicy
 
 # Configure logging
@@ -281,23 +282,6 @@ def set_current_policy(policy: ResultPolicy) -> None:
         session.commit()
     except Exception:
         pass
-
-
-def db_session_scope():
-    """Create a database session scope for helper functions."""
-    from contextlib import contextmanager
-    @contextmanager
-    def scope():
-        db = SessionLocal()
-        try:
-            yield db
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            db.close()
-    return scope
 
 
 _current_policy = get_current_policy()

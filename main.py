@@ -248,12 +248,17 @@ def run_matching_pipeline(ctx: AppContext, stop_event: threading.Event) -> None:
 
     if matching_config.invalidate_on_job_change:
         invalidated_total = 0
+        jobs_needing_invalidation = []
         for job in jobs_to_match:
             existing_match = ctx.repo.get_existing_match(job.id, resume_fingerprint)
-            # Only invalidate if job content actually changed (via content_hash comparison)
             if existing_match and existing_match.job_content_hash != job.content_hash:
-                count = ctx.repo.invalidate_matches_for_job(job.id, "Job content updated")
-                invalidated_total += count
+                jobs_needing_invalidation.append(job.id)
+
+        if jobs_needing_invalidation:
+            invalidated_total = ctx.repo.match.batch_invalidate_matches_for_jobs(
+                jobs_needing_invalidation, "Job content updated"
+            )
+
         if invalidated_total > 0:
             logger.info(f"Invalidated {invalidated_total} stale matches for job updates")
 

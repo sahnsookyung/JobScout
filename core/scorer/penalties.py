@@ -21,6 +21,95 @@ from core.matcher import RequirementMatchResult
 
 logger = logging.getLogger(__name__)
 
+_YEARS_PATTERNS = [
+    r'(\d+)\+?\s*(?:years?|yrs?|exp|experience)',
+    r'(\d+)\s*-\s*(?:years?|yrs?|exp|experience)',
+    r'over\s+(\d+)\s*years'
+]
+
+_YEARS_KEYWORDS = ['years', 'year', 'experience', 'exp', 'yrs', 'yr']
+
+
+def _calculate_experience_penalty(
+    matched_requirements: List[RequirementMatchResult],
+    experience_sections: Optional[List[Dict[str, Any]]],
+    config: ScorerConfig,
+    penalized_requirements: set
+) -> Tuple[float, List[Dict[str, Any]]]:
+    """
+    Calculate experience mismatch penalty by comparing required years to resume experience.
+
+    Uses two strategies:
+    1. Extract years_value from source_data if available
+    2. Parse source_text with regex patterns as fallback
+
+    Args:
+        matched_requirements: List of matched requirements
+        experience_sections: Pre-fetched experience sections
+        config: ScorerConfig with penalty settings
+        penalized_requirements: Set of already-penalized requirement IDs
+
+    Returns:
+        Tuple of (total_penalty, penalty_details_list)
+    """
+    penalty = 0.0
+    penalty_details = []
+
+    if not experience_sections:
+        return penalty, penalty_details
+
+    for req in matched_requirements:
+        if not req.evidence or not req.is_covered:
+            continue
+
+        req_row = getattr(req, 'requirement_row', None)
+        unit = getattr(req_row, 'unit', None) if req_row else None
+        req_years = getattr(unit, 'min_years', None) if unit else None
+
+        if not req_years:
+            continue
+
+        best_exp_years = 0.0
+        best_exp_source = ""
+
+        for exp_section in experience_sections:
+            if not exp_section.get('has_embedding', False):
+                continue
+
+            source_data = exp_section.get('source_data', {})
+            exp_years_from_data = source_data.get('years_value')
+
+            if exp_years_from_data is not None and exp_years_from_data > best_exp_years:
+                best_exp_years = exp_years_from_data
+                best_exp_source = exp_section.get('source_text', '')
+
+            if best_exp_years == 0.0:
+                for pattern in _YEARS_PATTERNS:
+                    match = re.search(pattern, exp_section.get('source_text', '').lower())
+                    if match:
+                        extracted_years = float(match.group(1))
+                        if extracted_years > best_exp_years:
+                            best_exp_years = extracted_years
+                            best_exp_source = exp_section.get('source_text', '')
+                        break
+
+        if req_years > best_exp_years and req.requirement.id not in penalized_requirements:
+            shortfall = req_years - best_exp_years
+            penalty_amount = min(
+                shortfall * config.penalty_experience_shortfall,
+                config.penalty_experience_shortfall * 3
+            )
+            penalty += penalty_amount
+            penalty_details.append({
+                'type': 'experience_years_mismatch',
+                'amount': penalty_amount,
+                'reason': f"Best experience section has {best_exp_years} years, requires {req_years}",
+                'requirement_text': req.requirement.text
+            })
+            penalized_requirements.add(req.requirement.id)
+
+    return penalty, penalty_details
+
 
 def calculate_fit_penalties(
     job: JobPost,
@@ -91,112 +180,14 @@ def calculate_fit_penalties(
                 'details': f"Job level: {job.job_level}, Target: {config.target_seniority}"
             })
 
-    experience_mismatch_penalty = 0.0
-    experience_mismatch_details = []
     penalized_requirements = set()
-
-    if experience_sections:
-        for req in matched_requirements:
-            if not req.evidence or not req.is_covered:
-                continue
-
-            req_row = getattr(req, 'requirement_row', None)
-            unit = getattr(req_row, 'unit', None) if req_row else None
-            req_years = getattr(unit, 'min_years', None) if unit else None
-
-            if req_years and experience_sections:
-                best_exp_years = 0.0
-                for exp_section in experience_sections:
-                    if exp_section.get('has_embedding', False):
-                        source_data = exp_section.get('source_data', {})
-                        exp_years = source_data.get('years_value', 0.0)
-                        best_exp_years = max(best_exp_years, exp_years)
-
-                if req_years > best_exp_years and req.requirement.id not in penalized_requirements:
-                    shortfall = req_years - best_exp_years
-                    penalty_amount = min(
-                        shortfall * config.penalty_experience_shortfall,
-                        config.penalty_experience_shortfall * 3
-                    )
-                    experience_mismatch_penalty += penalty_amount
-                    experience_mismatch_details.append({
-                        'type': 'experience_years_mismatch',
-                        'amount': penalty_amount,
-                        'reason': f"Best experience section has {best_exp_years} years, requires {req_years}",
-                        'requirement_text': req.requirement.text
-                    })
-                    penalized_requirements.add(req.requirement.id)
+    experience_mismatch_penalty, experience_mismatch_details = _calculate_experience_penalty(
+        matched_requirements, experience_sections, config, penalized_requirements
+    )
 
     if experience_mismatch_penalty > 0:
         penalties += experience_mismatch_penalty
-        for detail in experience_mismatch_details:
-            penalty_details.append(detail)
-
-    experience_mismatch_penalty2 = 0.0
-    experience_mismatch_details2 = []
-
-    if experience_sections:
-        for req in matched_requirements:
-            req_text_lower = req.requirement.text.lower() if req.requirement.text else ''
-
-            years_keywords = ['years', 'year', 'experience', 'exp', 'yrs', 'yr']
-            has_years_keyword = any(keyword in req_text_lower for keyword in years_keywords)
-
-            if has_years_keyword and experience_sections:
-                section_scores = []
-                for exp_section in experience_sections:
-                    if exp_section.get('has_embedding', False):
-                        section_scores.append({
-                            'similarity': 0.5,
-                            'section_type': exp_section['section_type'],
-                            'section_index': exp_section['section_index'],
-                            'source_text': exp_section['source_text']
-                        })
-
-                if section_scores:
-                    best_match = max(section_scores, key=lambda x: x['similarity'])
-
-                    best_exp_years = None
-                    best_exp_source = best_match['source_text']
-
-                    years_patterns = [
-                        r'(\d+)\+?\s*(?:years?|yrs?|exp|experience)',
-                        r'(\d+)\s*-\s*(?:years?|yrs?|exp|experience)',
-                        r'over\s+(\d+)\s*years'
-                    ]
-
-                    for pattern in years_patterns:
-                        match = re.search(pattern, best_exp_source.lower())
-                        if match:
-                            best_exp_years = float(match.group(1))
-                            break
-
-                    req_row = getattr(req, 'requirement_row', None)
-                    unit = getattr(req_row, 'unit', None) if req_row else None
-                    req_years = getattr(unit, 'min_years', None) if unit else None
-
-                    if req_years and best_exp_years and req.requirement.id not in penalized_requirements:
-                        shortfall = req_years - best_exp_years
-                        if shortfall > 0:
-                            penalty_amount = min(
-                                shortfall * config.penalty_experience_shortfall,
-                                config.penalty_experience_shortfall * 3
-                            )
-                            experience_mismatch_penalty2 += penalty_amount
-                            experience_mismatch_details2.append({
-                                'type': 'experience_years_mismatch',
-                                'amount': penalty_amount,
-                                'reason': f"Best exp section has {best_exp_years} years, requires {req_years}",
-                                'best_section': best_match['source_text'],
-                                'best_section_similarity': best_match['similarity'],
-                                'requirement_text': req.requirement.text
-                            })
-                            penalized_requirements.add(req.requirement.id)
-
-    if experience_mismatch_penalty2 > 0:
-        penalties += experience_mismatch_penalty2
-        for detail in experience_mismatch_details2:
-            penalty_details.append(detail)
+        penalty_details.extend(experience_mismatch_details)
 
     if config.min_salary and job.salary_max:
         try:

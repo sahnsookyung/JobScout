@@ -104,15 +104,21 @@ matching:
 notifications:
   # Set to true to enable notifications (disabled by default)
   enabled: true
-  
+
   # Base URL for links in notifications (e.g., to view matches in dashboard)
   base_url: "http://localhost:8080"  # Uses web.port from above
-  
+
   # Unique user identifier for notifications
   # user_id: "your_user_id"
-  
+
   # Only notify for matches above this score (0-100)
   min_score_threshold: 70.0
+
+  # Priority thresholds for notifications (score 0-100)
+  priority:
+    high: 80  # Score >= 80 is HIGH priority
+    normal: 60  # Score >= 60 is NORMAL priority
+    low: 0  # Score < 60 is LOW priority
   
   # Notification triggers
   notify_on_new_match: true        # When a high-scoring match is found

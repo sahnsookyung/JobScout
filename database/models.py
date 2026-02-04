@@ -445,23 +445,38 @@ class NotificationTracker(Base):
     )
 
 
+class FingerprintGenerator:
+    """Utility class for generating fingerprints from data using SHA-256."""
+
+    @staticmethod
+    def generate(data: Dict[str, Any]) -> str:
+        """
+        Generate a fingerprint from data using SHA-256 hash of normalized JSON.
+
+        Args:
+            data: Dictionary to generate fingerprint for
+
+        Returns:
+            First 32 characters of SHA-256 hash
+        """
+        normalized = json.dumps(data, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:32]
+
+
 def generate_resume_fingerprint(resume_data: Dict[str, Any]) -> str:
     """
     Generate a fingerprint for a resume to track changes.
-    
+
     Uses SHA-256 hash of normalized resume JSON.
     """
-    # Normalize by sorting keys and converting to canonical JSON
-    normalized = json.dumps(resume_data, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:32]
+    return FingerprintGenerator.generate(resume_data)
 
 
 def generate_preferences_fingerprint(preferences_data: Dict[str, Any]) -> str:
     """
     Generate a fingerprint for preferences file.
     """
-    normalized = json.dumps(preferences_data, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:32]
+    return FingerprintGenerator.generate(preferences_data)
 
 
 class AppSettings(Base):

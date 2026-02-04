@@ -26,6 +26,7 @@ Usage:
 
 import os
 import logging
+import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any
 from enum import Enum
@@ -40,6 +41,7 @@ try:
 except ImportError:
     RQ_AVAILABLE = False
 
+from database.database import db_session_scope
 from database.repository import JobRepository
 from notification.channels import NotificationChannelFactory
 from notification.tracker import NotificationTrackerService, NotificationEvent
@@ -72,34 +74,40 @@ class NotificationService:
         redis_url: Optional[str] = None,
         skip_dedup: bool = False,
         base_url: Optional[str] = None,
-        use_async_queue: bool = True
+        use_async_queue: bool = True,
+        priority_high: int = 80,
+        priority_normal: int = 60
     ):
         """
         Initialize notification service.
-        
+
         Args:
             repo: Repository for database operations
             redis_url: Redis connection URL
             skip_dedup: If True, disable deduplication (for testing)
             base_url: Base URL for links in notifications (injected from config)
             use_async_queue: Whether to use async queue or sync mode
+            priority_high: Score threshold for HIGH priority (default: 80)
+            priority_normal: Score threshold for NORMAL priority (default: 60)
         """
         self.repo = repo
         self.skip_dedup = skip_dedup
-        
+        self._priority_high = priority_high
+        self._priority_normal = priority_normal
+
         # Initialize deduplication tracker
         self.tracker = NotificationTrackerService(repo)
-        
+
         # Initialize Redis Queue
         self.redis_url = redis_url or os.environ.get(
             'REDIS_URL',
             'redis://localhost:6379/0'
         )
-        
+
         # Base URL injected from config (no direct config.yaml read)
         # Falls back to environment variable or default
         self.base_url = base_url or os.environ.get('BASE_URL', 'http://localhost:8080')
-        
+
         # Store the preferred mode from config
         self._use_async_queue = use_async_queue
         
@@ -235,11 +243,11 @@ class NotificationService:
         """
         if channels is None:
             channels = ['email']
-        
-        # Determine priority
-        if score >= 80:
+
+        # Determine priority using configurable thresholds
+        if score >= self._priority_high:
             priority = NotificationPriority.HIGH
-        elif score >= 60:
+        elif score >= self._priority_normal:
             priority = NotificationPriority.NORMAL
         else:
             priority = NotificationPriority.LOW
@@ -273,7 +281,7 @@ JobScout
                     body=body,
                     user_id=user_id,
                     job_match_id=match_id,
-                    event_type="new_high_score_match" if score >= 60 else "new_match",
+                    event_type="new_high_score_match" if score >= self._priority_normal else "new_match",
                     priority=priority,
                     metadata={
                         'job_title': job_title,
@@ -392,16 +400,12 @@ JobScout
 def process_notification_task(notification_data: Dict[str, Any]) -> str:
     """
     Process a notification (called by RQ worker).
-    
+
     This function:
     1. Gets the appropriate channel
     2. Sends the notification
     3. Records the result in the tracker
     """
-    import uuid
-    from database.database import db_session_scope
-    from database.repository import JobRepository
-    
     notification_id = str(uuid.uuid4())
     
     channel_type = notification_data['channel_type']
@@ -450,16 +454,16 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
             logger.error(f"Notification {notification_id} failed to send")
         
         return notification_id
-        
+
     except Exception as e:
-        logger.error(f"Failed to process notification {notification_id}: {e}")
-        
+        logger.error(f"Failed to process notification {notification_id}: {e}", exc_info=True)
+
         # Record failure
         try:
             with db_session_scope() as session:
                 repo = JobRepository(session)
                 tracker = NotificationTrackerService(repo)
-                
+
                 tracker.record_notification(
                     user_id=user_id,
                     job_match_id=job_match_id,
@@ -474,7 +478,7 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
                     metadata=metadata,
                     allow_resend=allow_resend
                 )
-        except Exception as e:
-            logger.error(f"Failed to record notification failure: {e}")
-        
+        except Exception as record_error:
+            logger.error(f"Failed to record notification failure: {record_error}", exc_info=True)
+
         raise
