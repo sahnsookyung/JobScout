@@ -10,7 +10,7 @@ from sqlalchemy import select, delete, func
 from database.models import (
     JobPost, JobPostSource,
     JobRequirementUnit, JobRequirementUnitEmbedding,
-    JobFacetEmbedding
+    JobFacetEmbedding, JobBenefit
 )
 from database.repositories.base import BaseRepository
 
@@ -164,6 +164,30 @@ class JobPostRepository(BaseRepository):
 
         self.db.flush()
 
+    def save_benefits(self, job_post: JobPost, benefits: List[Dict[str, Any]]) -> None:
+        category_mapping = {
+            'health_insurance': 'health_insurance',
+            'pension': 'pension',
+            'pto': 'pto',
+            'remote_work': 'remote_work',
+            'parental_leave': 'parental_leave',
+            'learning_budget': 'learning_budget',
+            'equipment': 'equipment',
+            'wellness': 'wellness',
+            'other': 'other'
+        }
+
+        for benefit in benefits:
+            jb = JobBenefit(
+                job_post_id=job_post.id,
+                category=category_mapping.get(benefit.get('category', 'other'), 'other'),
+                text=benefit.get('text', ''),
+                ordinal=benefit.get('ordinal', 0)
+            )
+            self.db.add(jb)
+
+        self.db.flush()
+
     def update_job_metadata(self, job_post: JobPost, metadata: Dict[str, Any]) -> None:
         job_post.min_years_experience = metadata.get('min_years_experience')
         job_post.requires_degree = metadata.get('requires_degree')
@@ -214,6 +238,10 @@ class JobPostRepository(BaseRepository):
             JobRequirementUnitEmbedding.job_requirement_unit_id == None
         ).limit(limit)
         return self.db.execute(stmt).scalars().all()
+
+    def get_requirement_by_id(self, req_id: Any) -> Optional[JobRequirementUnit]:
+        stmt = select(JobRequirementUnit).where(JobRequirementUnit.id == req_id)
+        return self.db.execute(stmt).scalar_one_or_none()
 
     def save_job_embedding(self, job_post: JobPost, embedding: List[float]) -> None:
         job_post.summary_embedding = embedding

@@ -158,7 +158,7 @@ from etl.orchestrator import JobETLOrchestrator
 ```
 core/           - AI service interfaces, matcher, scorer, config
 database/       - SQLAlchemy models, repository, database connection
-etl/            - Extract-Transform-Load orchestrator, schemas
+etl/            - Extract-Transform-Load orchestrator, schemas, resume profiler
 notification/   - Notification channels, tracker, service, worker
 web/            - FastAPI web interface
 tests/          - All tests (unit + integration)

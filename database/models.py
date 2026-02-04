@@ -84,6 +84,7 @@ class JobPost(Base):
     # Relationships
     sources = relationship("JobPostSource", back_populates="job_post", cascade="all, delete-orphan")
     requirements = relationship("JobRequirementUnit", back_populates="job_post", cascade="all, delete-orphan")
+    benefits = relationship("JobBenefit", back_populates="job_post", cascade="all, delete-orphan")
     matches = relationship("JobMatch", back_populates="job_post", cascade="all, delete-orphan")
 
     __table_args__ = (
@@ -159,6 +160,25 @@ class JobRequirementUnitEmbedding(Base):
         Index('jru_embedding_hnsw', 'embedding', postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}, postgresql_ops={'embedding': 'vector_cosine_ops'}),
     )
 
+class JobBenefit(Base):
+    __tablename__ = 'job_benefit'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_post_id = Column(UUID(as_uuid=True), ForeignKey('job_post.id', ondelete='CASCADE'), nullable=False)
+
+    category = Column(Text, nullable=False)
+    text = Column(Text, nullable=False)
+    ordinal = Column(Integer)
+
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+
+    job_post = relationship("JobPost", back_populates="benefits")
+
+    __table_args__ = (
+        Index('idx_jb_job', 'job_post_id'),
+        Index('idx_jb_category', 'category'),
+    )
+
 class ResumeSectionEmbedding(Base):
     """
     Stores embeddings for individual resume sections.
@@ -191,6 +211,32 @@ class ResumeSectionEmbedding(Base):
         # HNSW index for similarity search
         Index('idx_rse_embedding_hnsw', 'embedding', postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}, postgresql_ops={'embedding': 'vector_cosine_ops'}),
     )
+
+class ResumeEvidenceUnitEmbedding(Base):
+    """
+    Stores embeddings for individual resume evidence units.
+
+    Each evidence unit (description, highlight from resume) gets its own
+    embedding for fine-grained matching against job requirements.
+    """
+    __tablename__ = 'resume_evidence_unit_embedding'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    resume_fingerprint = Column(Text, nullable=False, index=True)
+
+    evidence_unit_id = Column(Text, nullable=False)  # Links to ResumeEvidenceUnit.id
+    source_text = Column(Text, nullable=False)
+
+    embedding = Column(Vector(1024), nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+
+    __table_args__ = (
+        Index('idx_rfue_fingerprint', 'resume_fingerprint'),
+        Index('idx_rfue_embedding_hnsw', 'embedding', postgresql_using='hnsw',
+              postgresql_with={'m': 16, 'ef_construction': 64},
+              postgresql_ops={'embedding': 'vector_cosine_ops'}),
+    )
+
 
 class JobFacetEmbedding(Base):
     """

@@ -36,6 +36,7 @@ class LlmConfig(BaseModel):
 
 class EtlConfig(BaseModel):
     llm: Optional[LlmConfig] = LlmConfig()
+    resume_file: Optional[str] = None  # Path to resume JSON file for ETL processing
 
 
 class ResultPolicy(BaseModel):
@@ -56,35 +57,6 @@ class PreferenceWeights(BaseModel):
     role: float = 0.25
 
 
-class Stage1EmbeddingConfig(BaseModel):
-    """Configuration for Stage-1 resume embedding generation."""
-    
-    # Embedding mode: text concatenation vs pooled REU embeddings
-    mode: Literal["text", "pooled_reu"] = "pooled_reu"
-    
-    # Text mode: evidence slice limit (legacy, for backward compat)
-    text_evidence_slice_limit: int = 10
-    
-    # Embedding dimension (fallback if cannot be inferred from embeddings)
-    embedding_dim: int = 1024
-    
-    # Pooled mode: weights for different evidence sections
-    section_weights: Dict[str, float] = Field(default_factory=lambda: {
-        "summary": 3.0,
-        "skills": 2.0,
-        "experience": 1.5,
-        "projects": 0.5,
-        "education": 0.0
-    })
-    
-    # Pooling method
-    pooling_method: Literal["mean", "weighted_mean"] = "weighted_mean"
-    
-    # Include/exclude settings
-    include_projects: bool = False
-    include_education: bool = False
-
-
 class MatcherConfig(BaseModel):
     """
     Configuration for the MatcherService (Stage 1: Vector Retrieval).
@@ -93,14 +65,8 @@ class MatcherConfig(BaseModel):
     """
     enabled: bool = True
     similarity_threshold: float = 0.5  # Minimum similarity for a match
-    top_k_requirements: int = 3  # Number of best matches to consider per requirement
-    embedding_model: Optional[str] = None  # Uses ETL model if not specified
-    embedding_dimensions: int = 1024
     batch_size: int = 100  # Number of jobs to process per batch
     include_job_level_matching: bool = True  # Also match at job summary level
-    
-    # Stage-1 embedding configuration
-    stage1_embedding: Stage1EmbeddingConfig = Field(default_factory=Stage1EmbeddingConfig)
     
     # Preference weights (was hard-coded in matcher_service)
     preference_weights: PreferenceWeights = Field(default_factory=PreferenceWeights)

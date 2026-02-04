@@ -5,7 +5,7 @@ import ast
 from database.database import db_session_scope
 from database.repository import JobRepository
 from core.llm.openai_service import OpenAIService
-from etl.orchestrator import JobETLOrchestrator
+from etl.orchestrator import JobETLService
 from database.models import JobPost, JobRequirementUnit
 
 # Configure logging
@@ -43,8 +43,8 @@ def run_test():
             }
         }
         ai_service = OpenAIService(**llm_config)
-        orchestrator = JobETLOrchestrator(repo, ai_service)
-        
+        etl_service = JobETLService(ai_service=ai_service)
+
         for entry in data:
             site = entry.get('site')
             # The JSON structure has site as a string list representation "['tokyodev']" or list.
@@ -61,13 +61,13 @@ def run_test():
             if site is None:
                 logger.warning("Skipping entry with invalid site")
                 continue
-            
+
             result_data = entry.get('result', {}).get('data', [])
             logger.info(f"Processing {len(result_data)} jobs for site {site}")
-            
+
             for job in result_data:
-                # Use orchestrator to process incoming job
-                orchestrator.process_incoming_job(job, str(site))
+                # Use ETL service to process incoming job (repo passed directly)
+                etl_service.ingest_one(repo, job, str(site))
         
         # 4. Verify Insertion
         job_count = session.query(JobPost).count()

@@ -11,7 +11,8 @@ from typing import Dict, Any
 from unittest.mock import MagicMock
 
 from core.config_loader import load_config, MatcherConfig
-from core.matcher import MatcherService, ResumeEvidenceUnit
+from core.matcher import MatcherService
+from etl.resume import ResumeEvidenceUnit
 from tests.mocks.matcher_mocks import MockMatcherService
 from database.models import generate_resume_fingerprint
 

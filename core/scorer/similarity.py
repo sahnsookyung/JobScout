@@ -16,6 +16,19 @@ from sqlalchemy import select
 logger = logging.getLogger(__name__)
 
 
+def cosine_similarity_from_distance(cosine_distance: float) -> float:
+    """pgvector cosine distance -> cosine similarity."""
+    return 1.0 - float(cosine_distance)
+
+
+def normalize_cosine_similarity(cosine_similarity: float) -> float:
+    """
+    Map cosine similarity from [-1, 1] to [0, 1].
+    """
+    x = (float(cosine_similarity) + 1.0) / 2.0
+    return 0.0 if x < 0.0 else 1.0 if x > 1.0 else x
+
+
 def calculate_requirement_similarity_with_resume_sections(
     job_requirement: Any,
     resume_fingerprint: str,

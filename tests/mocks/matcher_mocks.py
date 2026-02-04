@@ -10,9 +10,12 @@ import random
 import math
 
 from core.llm.interfaces import LLMProvider
+from etl.resume import (
+    ResumeEvidenceUnit,
+    StructuredResumeProfile,
+)
 from core.matcher.models import (
-    ResumeEvidenceUnit, StructuredResumeProfile,
-    JobMatchPreliminary, PreferencesAlignmentScore, RequirementMatchResult
+    JobMatchPreliminary, RequirementMatchResult
 )
 from database.models import JobPost, JobRequirementUnit
 
@@ -182,7 +185,6 @@ class MockMatcherService:
             match = JobMatchPreliminary(
                 job=job,
                 job_similarity=0.7,
-                preferences_alignment=None,
                 requirement_matches=[],
                 missing_requirements=[],
                 resume_fingerprint="mock-fingerprint"
@@ -205,7 +207,6 @@ class MockMatcherService:
         return JobMatchPreliminary(
             job=job,
             job_similarity=0.7,
-            preferences_alignment=None,
             requirement_matches=matched_requirements,
             missing_requirements=missing_requirements,
             resume_fingerprint=resume_fingerprint

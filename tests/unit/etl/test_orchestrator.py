@@ -1,15 +1,16 @@
 import unittest
 from unittest.mock import MagicMock
 import json
-from etl.orchestrator import JobETLOrchestrator
+from etl.orchestrator import JobETLService
 from core.llm.openai_service import OpenAIService
 from database.repository import JobRepository
+
 
 class TestETLRefactor(unittest.TestCase):
     def setUp(self):
         self.mock_repo = MagicMock(spec=JobRepository)
         self.mock_ai = MagicMock(spec=OpenAIService)
-        self.orchestrator = JobETLOrchestrator(repo=self.mock_repo, ai_service=self.mock_ai)
+        self.service = JobETLService(ai_service=self.mock_ai)
 
     def test_extract_structured_data_service(self):
         # Test OpenAIService independently
@@ -54,18 +55,19 @@ class TestETLRefactor(unittest.TestCase):
         self.assertIn('response_format', call_kwargs)
         self.assertEqual(call_kwargs['response_format']['type'], 'json_schema')
 
-    def test_orchestrator_flow(self):
-        # Test Orchestrator flow
+    def test_service_ingest_flow(self):
+        # Test JobETLService ingest flow
         job_data = {"title": "Engineer", "company_name": "Tech Corp", "location": "Remote"}
-        
+
         # Setup repo mock returns
         self.mock_repo.get_by_fingerprint.return_value = None
         mock_post = MagicMock()
         mock_post.id = "123"
         self.mock_repo.create_job_post.return_value = mock_post
-        
-        self.orchestrator.process_incoming_job(job_data, "site_x")
-        
+
+        # Call ingest_one with repo as parameter
+        self.service.ingest_one(self.mock_repo, job_data, "site_x")
+
         # Verify repo calls
         self.mock_repo.create_job_post.assert_called_once()
         self.mock_repo.get_or_create_source.assert_called_once_with("123", "site_x", job_data)

@@ -81,12 +81,13 @@ from sqlalchemy.orm import sessionmaker
 
 from database.models import Base, JobPost, JobRequirementUnit, JobMatch
 from database.repository import JobRepository
-from core.matcher import MatcherService, ResumeEvidenceUnit
+from core.matcher import MatcherService
+from etl.resume import ResumeProfiler, ResumeEvidenceUnit
 from core.config_loader import MatcherConfig, ScorerConfig
 from core.llm.interfaces import LLMProvider
 from core.scorer import ScoringService, persistence
 from notification import NotificationService
-from etl.orchestrator import JobETLOrchestrator
+from etl.orchestrator import JobETLService
 
 
 class MockAIService(LLMProvider):
@@ -177,16 +178,19 @@ class TestFullPipelineIntegration(unittest.TestCase):
         # AI Service (mock for speed, but use real embeddings)
         cls.mock_ai = MockAIService()
         
-        # ETL Orchestrator
-        cls.orchestrator = JobETLOrchestrator(cls.repo, cls.mock_ai)
-        
+        # ETL Service (repo passed per-operation in UoW)
+        cls.etl_service = JobETLService(ai_service=cls.mock_ai)
+
+        # Resume Profiler
+        cls.resume_profiler = ResumeProfiler(ai_service=cls.mock_ai)
+
         # Matching Service
         cls.matcher_config = MatcherConfig(
             similarity_threshold=0.5,
             top_k_requirements=3,
             include_job_level_matching=True
         )
-        cls.matcher = MatcherService(cls.repo, cls.mock_ai, cls.matcher_config)
+        cls.matcher = MatcherService(cls.repo, cls.resume_profiler, cls.matcher_config)
         
         # Scoring Service
         cls.scorer_config = ScorerConfig(
@@ -378,18 +382,18 @@ class TestFullPipelineIntegration(unittest.TestCase):
     def test_02_extract_resume_evidence(self):
         """Step 2: Extract evidence units from resume."""
         print("\n[Step 2] Resume Evidence Extraction...")
-        
-        # Use matcher to extract evidence
-        evidence_units = self.matcher.extract_resume_evidence(self.resume_data)
-        
+
+        # Use resume_profiler to extract evidence
+        evidence_units = self.resume_profiler.extract_resume_evidence(self.resume_data)
+
         self.assertGreater(len(evidence_units), 0)
         print(f"  ✓ Extracted {len(evidence_units)} evidence units from resume")
-        
+
         # Verify evidence has text content (embeddings are generated lazily during matching)
         for evidence in evidence_units:
             self.assertIsNotNone(evidence.text)
             self.assertGreater(len(evidence.text), 0)
-        
+
         print(f"  ✓ All evidence units have text content")
         # Store as class attribute to persist across test instances
         self.test_evidence = evidence_units
@@ -402,10 +406,10 @@ class TestFullPipelineIntegration(unittest.TestCase):
         jobs = self.session.query(JobPost).filter(
             JobPost.canonical_fingerprint.like("test-pipeline-%")
         ).all()
-        
+
         # Extract evidence if not done
         if not hasattr(type(self), 'test_evidence'):
-            type(self).test_evidence = self.matcher.extract_resume_evidence(self.resume_data)
+            type(self).test_evidence = self.resume_profiler.extract_resume_evidence(self.resume_data)
         
         # Run matching
         preliminary_matches = self.matcher.match_resume_to_jobs(

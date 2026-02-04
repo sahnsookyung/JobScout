@@ -80,6 +80,9 @@ class JobRepository:
     def save_requirements(self, job_post: JobPost, requirements: List[dict]) -> None:
         return self.job_post.save_requirements(job_post, requirements)
 
+    def save_benefits(self, job_post: JobPost, benefits: List[dict]) -> None:
+        return self.job_post.save_benefits(job_post, benefits)
+
     def update_job_metadata(self, job_post: JobPost, metadata: dict) -> None:
         return self.job_post.update_job_metadata(job_post, metadata)
 
@@ -91,6 +94,9 @@ class JobRepository:
 
     def get_unembedded_requirements(self, limit: int = 1000) -> list:
         return self.job_post.get_unembedded_requirements(limit)
+
+    def get_requirement_by_id(self, req_id: Any) -> Any:
+        return self.job_post.get_requirement_by_id(req_id)
 
     def save_job_embedding(self, job_post: JobPost, embedding: List[float]) -> None:
         return self.job_post.save_job_embedding(job_post, embedding)
@@ -236,3 +242,26 @@ class JobRepository:
         resume_fingerprint: Optional[str] = None
     ) -> List[List[float]]:
         return self.resume.get_user_wants_embeddings(user_id, resume_fingerprint)
+
+    def save_evidence_unit_embeddings(
+        self,
+        resume_fingerprint: str,
+        evidence_units: List[dict]
+    ) -> list:
+        return self.resume.save_evidence_unit_embeddings(resume_fingerprint, evidence_units)
+
+    def get_evidence_unit_embeddings(
+        self,
+        resume_fingerprint: str
+    ) -> list:
+        return self.resume.get_evidence_unit_embeddings(resume_fingerprint)
+
+    def find_best_evidence_for_requirement(
+        self,
+        requirement_embedding: List[float],
+        resume_fingerprint: str,
+        top_k: int = 5
+    ) -> list:
+        return self.resume.find_best_evidence_for_requirement(
+            requirement_embedding, resume_fingerprint, top_k
+        )

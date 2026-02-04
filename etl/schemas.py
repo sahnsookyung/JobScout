@@ -69,7 +69,7 @@ EXTRACTION_SCHEMA = {
                 "properties": {
                     "req_type": {
                         "type": "string",
-                        "enum": ["must_have", "nice_to_have", "responsibility", "benefit"]
+                        "enum": ["must_have", "nice_to_have", "responsibility"]
                     },
                     "category": {
                         "type": "string", 
@@ -92,6 +92,30 @@ EXTRACTION_SCHEMA = {
                     }
                 },
                 "required": ["req_type", "category", "text"],
+                "additionalProperties": False
+            }
+        },
+
+        # --- BENEFITS ---
+        "benefits": {
+            "type": "array",
+            "description": "Job perks and benefits offered by the company.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "enum": ["health_insurance", "pension", "pto", "remote_work",
+                                 "parental_leave", "learning_budget", "equipment",
+                                 "wellness", "other"],
+                        "description": "Type of benefit offered."
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Description of the benefit."
+                    }
+                },
+                "required": ["category", "text"],
                 "additionalProperties": False
             }
         }

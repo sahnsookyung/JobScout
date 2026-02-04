@@ -122,7 +122,7 @@ scrapers: []
         preliminary = JobMatchPreliminary(
             job=job,
             job_similarity=0.75,
-            preferences_alignment=None,
+            
             requirement_matches=[req_match],
             missing_requirements=[],
             resume_fingerprint="test_fp"
@@ -174,7 +174,7 @@ class TestBatchPrefetch(unittest.TestCase):
             preliminary = JobMatchPreliminary(
                 job=job,
                 job_similarity=0.75,
-                preferences_alignment=None,
+                
                 requirement_matches=[req_match],
                 missing_requirements=[],
                 resume_fingerprint=f"fp_{i}"
@@ -214,7 +214,7 @@ class TestBatchPrefetch(unittest.TestCase):
             JobMatchPreliminary(
                 job=MagicMock(id="job-1"),
                 job_similarity=0.75,
-                preferences_alignment=None,
+                
                 requirement_matches=[],
                 missing_requirements=[],
                 resume_fingerprint=None
@@ -325,7 +325,7 @@ class TestScoreEquivalence(unittest.TestCase):
         preliminary = JobMatchPreliminary(
             job=job,
             job_similarity=0.80,
-            preferences_alignment=None,
+            
             requirement_matches=[req_match],
             missing_requirements=[],
             resume_fingerprint="test-fp-123"
@@ -439,7 +439,7 @@ class TestScoreEquivalence(unittest.TestCase):
             preliminary = JobMatchPreliminary(
                 job=job,
                 job_similarity=similarity,
-                preferences_alignment=None,
+                
                 requirement_matches=[req_match],
                 missing_requirements=[],
                 resume_fingerprint=None
@@ -496,7 +496,7 @@ class TestResultPolicy(unittest.TestCase):
             preliminary = JobMatchPreliminary(
                 job=job,
                 job_similarity=0.8,
-                preferences_alignment=None,
+                
                 requirement_matches=[req_match],
                 missing_requirements=[],
                 resume_fingerprint=None
@@ -545,7 +545,7 @@ class TestResultPolicy(unittest.TestCase):
             preliminary = JobMatchPreliminary(
                 job=job,
                 job_similarity=0.8,
-                preferences_alignment=None,
+                
                 requirement_matches=[req_match],
                 missing_requirements=[],
                 resume_fingerprint=None

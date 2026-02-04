@@ -3,9 +3,9 @@
 import pytest
 from unittest.mock import Mock, MagicMock
 
-from core.matcher.resume_profiler import ResumeProfiler
-from core.matcher.embedding_store import InMemoryEmbeddingStore, JobRepositoryAdapter
-from core.matcher.models import ResumeEvidenceUnit
+from etl.resume import ResumeProfiler
+from etl.resume.embedding_store import InMemoryEmbeddingStore, JobRepositoryAdapter
+from etl.resume.models import ResumeEvidenceUnit
 
 
 class TestResumeProfilerProfiling:

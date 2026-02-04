@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock, MagicMock
 from core.scorer import ScoringService
 from core.config_loader import ScorerConfig
-from core.matcher import JobMatchPreliminary, PreferencesAlignmentScore, RequirementMatchResult
+from core.matcher import JobMatchPreliminary, RequirementMatchResult
 from database.models import JobPost
 
 

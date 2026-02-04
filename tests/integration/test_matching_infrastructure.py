@@ -24,7 +24,8 @@ import pytest
 
 # Core services (no DB needed)
 from core.config_loader import load_config, MatchingConfig, MatcherConfig, ScorerConfig
-from core.matcher import MatcherService, ResumeEvidenceUnit
+from core.matcher import MatcherService
+from etl.resume import ResumeEvidenceUnit
 from tests.mocks.matcher_mocks import MockMatcherService
 from core.scorer import ScoringService
 from core.scorer import persistence

@@ -8,7 +8,7 @@ and is matched individually against job requirements.
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 
-from core.matcher.resume_profiler import ResumeProfiler
+from etl.resume import ResumeProfiler
 from core.scorer import ScoringService, ScoredJobMatch
 from core.scorer.similarity import calculate_requirement_similarity_with_resume_sections
 from database.models import (
@@ -211,7 +211,7 @@ class TestMultiEmbeddingMatching:
     
     def test_04_extract_structured_resume_returns_ai_data(self):
         """Test that ResumeProfiler passes through AI-extracted data."""
-        from core.matcher import ResumeProfiler
+        from etl.resume import ResumeProfiler
         
         experience = {
             "company": "Google",

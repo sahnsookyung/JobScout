@@ -27,7 +27,6 @@ class ScoredJobMatch:
     jd_required_coverage: float = 0.0
     jd_preferences_coverage: float = 0.0
     job_similarity: float = 0.0
-    preferences_alignment: Optional['PreferencesAlignmentScore'] = None
     penalty_details: List[Dict[str, Any]] = field(default_factory=list)
     matched_requirements: List['RequirementMatchResult'] = field(default_factory=list)
     missing_requirements: List['RequirementMatchResult'] = field(default_factory=list)

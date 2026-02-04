@@ -2,7 +2,7 @@ import logging
 from typing import List, Optional, Dict, Any
 from sqlalchemy import select, delete
 
-from database.models import StructuredResume, ResumeSectionEmbedding, UserWants
+from database.models import StructuredResume, ResumeSectionEmbedding, ResumeEvidenceUnitEmbedding, UserWants
 from database.repositories.base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -95,6 +95,74 @@ class ResumeRepository(BaseRepository):
         )
 
         return self.db.execute(stmt).scalars().all()
+
+    def save_evidence_unit_embeddings(
+        self,
+        resume_fingerprint: str,
+        evidence_units: List[Dict[str, Any]]
+    ) -> List[ResumeEvidenceUnitEmbedding]:
+        self.db.execute(
+            delete(ResumeEvidenceUnitEmbedding).where(
+                ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint
+            )
+        )
+
+        records = []
+        for unit in evidence_units:
+            record = ResumeEvidenceUnitEmbedding(
+                resume_fingerprint=resume_fingerprint,
+                evidence_unit_id=unit['evidence_unit_id'],
+                source_text=unit['source_text'],
+                embedding=unit['embedding']
+            )
+            self.db.add(record)
+            records.append(record)
+
+        self.db.flush()
+        return records
+
+    def get_evidence_unit_embeddings(
+        self,
+        resume_fingerprint: str
+    ) -> List[ResumeEvidenceUnitEmbedding]:
+        stmt = select(ResumeEvidenceUnitEmbedding).where(
+            ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint
+        )
+        return self.db.execute(stmt).scalars().all()
+
+    def get_structured_resume_by_fingerprint(
+        self,
+        resume_fingerprint: str
+    ) -> Optional[StructuredResume]:
+        """Get structured resume by fingerprint.
+
+        Args:
+            resume_fingerprint: Resume fingerprint to look up
+
+        Returns:
+            StructuredResume if found, None otherwise
+        """
+        stmt = select(StructuredResume).where(
+            StructuredResume.resume_fingerprint == resume_fingerprint
+        )
+        return self.db.execute(stmt).scalar_one_or_none()
+
+    def find_best_evidence_for_requirement(
+        self,
+        requirement_embedding: List[float],
+        resume_fingerprint: str,
+        top_k: int = 5
+    ) -> List[tuple[ResumeEvidenceUnitEmbedding, float]]:
+        distance_expr = ResumeEvidenceUnitEmbedding.embedding.cosine_distance(
+            requirement_embedding
+        ).label("distance")
+
+        stmt = select(ResumeEvidenceUnitEmbedding, distance_expr).where(
+            ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint
+        ).order_by(distance_expr).limit(top_k)
+
+        rows = self.db.execute(stmt).all()
+        return [(row.ResumeEvidenceUnitEmbedding, float(row.distance)) for row in rows]
 
     def save_user_wants(
         self,

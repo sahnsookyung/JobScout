@@ -251,7 +251,6 @@ class ScoringService:
             jd_required_coverage=jd_required_coverage,
             jd_preferences_coverage=jd_preferences_coverage,
             job_similarity=preliminary.job_similarity,
-            preferences_alignment=preliminary.preferences_alignment,
             penalty_details=penalty_details,
             matched_requirements=preliminary.requirement_matches,
             missing_requirements=preliminary.missing_requirements,

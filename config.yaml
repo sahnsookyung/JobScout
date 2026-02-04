@@ -58,9 +58,6 @@ matching:
   matcher:
     enabled: true
     similarity_threshold: 0.5
-    top_k_requirements: 3
-    # embedding_model: null  # Uses ETL embedding model if not specified
-    embedding_dimensions: 1024
     batch_size: 100
     include_job_level_matching: true  # Also match at job summary level
   
@@ -112,7 +109,7 @@ notifications:
   # user_id: "your_user_id"
 
   # Only notify for matches above this score (0-100)
-  min_score_threshold: 70.0
+  min_score_threshold: 60.0
 
   # Priority thresholds for notifications (score 0-100)
   priority:

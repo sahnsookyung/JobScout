@@ -63,7 +63,8 @@ from database.models import (
     Base, JobPost, JobRequirementUnit, JobRequirementUnitEmbedding
 )
 from database.repository import JobRepository
-from core.matcher import MatcherService, ResumeEvidenceUnit
+from core.matcher import MatcherService
+from etl.resume import ResumeProfiler, ResumeEvidenceUnit
 from core.config_loader import MatcherConfig
 from core.llm.interfaces import LLMProvider
 
@@ -132,16 +133,17 @@ class TestMatcherRealEmbeddings(unittest.TestCase):
         
         # Mock AI service
         cls.mock_ai = MockAIService()
-        
+
+        # Create ResumeProfiler
+        cls.resume_profiler = ResumeProfiler(ai_service=cls.mock_ai)
+
         # Create matcher
         cls.config = MatcherConfig(
             similarity_threshold=0.5,
-            top_k_requirements=3,
             batch_size=10,
-            include_job_level_matching=True,
-            embedding_dimensions=1024
+            include_job_level_matching=True
         )
-        cls.matcher = MatcherService(cls.repo, cls.mock_ai, cls.config)
+        cls.matcher = MatcherService(cls.repo, cls.resume_profiler, cls.config)
         
         # Create test data
         cls._create_test_data()
@@ -342,20 +344,6 @@ class TestMatcherRealEmbeddings(unittest.TestCase):
                 self.fail(f"Numpy array boolean error: {e}")
             else:
                 raise
-    
-    def test_05_similarity_calculation_with_numpy_arrays(self):
-        """Test similarity calculation works with real numpy arrays."""
-        print("\n[Test 5] Similarity calculation with numpy arrays...")
-        
-        vec1 = np.random.randn(1024).tolist()
-        vec2 = np.random.randn(1024).tolist()
-        
-        similarity = self.matcher.calculate_similarity(vec1, vec2)
-        
-        self.assertIsInstance(similarity, (float, np.floating))
-        self.assertGreaterEqual(similarity, -1.0)
-        self.assertLessEqual(similarity, 1.0)
-        print(f"  ✓ Similarity calculated: {similarity:.3f}")
 
 
 if __name__ == '__main__':
