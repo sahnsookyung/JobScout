@@ -17,7 +17,7 @@ import re
 
 from database.models import JobPost
 from core.config_loader import ScorerConfig
-from core.matcher import RequirementMatchResult, PreferencesAlignmentScore
+from core.matcher import RequirementMatchResult
 
 logger = logging.getLogger(__name__)
 
@@ -215,49 +215,22 @@ def calculate_fit_penalties(
     return penalties, penalty_details
 
 
-def calculate_want_penalties(
-    job: JobPost,
-    config: ScorerConfig,
-    preferences_alignment: Optional[PreferencesAlignmentScore] = None
-) -> Tuple[float, List[Dict[str, Any]]]:
-    """
-    Calculate preference-related penalties.
-
-    NOTE: Currently returns empty. Structured preferences (location, industry, role)
-    are used as DISPLAY-TIME HARD FILTERS, not penalties. This function exists
-    for future extensibility if we want preference mismatches to contribute to Want score.
-
-    Args:
-        job: Job post being scored
-        config: ScorerConfig with penalty settings
-        preferences_alignment: Optional preferences alignment score
-
-    Returns: (total_penalties, penalty_details)
-    """
-    return 0.0, []
-
-
 def calculate_penalties(
     job: JobPost,
     matched_requirements: List[RequirementMatchResult],
     missing_requirements: List[RequirementMatchResult],
     config: ScorerConfig,
-    preferences_alignment: Optional[PreferencesAlignmentScore] = None,
     candidate_total_years: Optional[float] = None,
     experience_sections: Optional[List[Dict[str, Any]]] = None
 ) -> Tuple[float, List[Dict[str, Any]]]:
     """
-    Calculate total penalties including:
-    - Capability penalties from calculate_fit_penalties
-    - Location mismatch penalty (kept for backward compatibility)
-    - Industry/role penalties (kept for backward compatibility)
-
+    Calculate total penalties from capability mismatches.
+    
     Args:
         job: Job post being scored
         matched_requirements: List of matched requirements
         missing_requirements: List of missing requirements
         config: ScorerConfig with penalty settings
-        preferences_alignment: Optional preferences alignment score
         candidate_total_years: Pre-fetched total years of experience
         experience_sections: Pre-fetched experience sections (list of dicts)
     """
@@ -270,36 +243,7 @@ def calculate_penalties(
         experience_sections=experience_sections
     )
 
-    if preferences_alignment:
-        if preferences_alignment.location_match < 0.5:
-            penalties += config.penalty_location_mismatch
-            penalty_details.append({
-                'type': 'location_mismatch',
-                'amount': config.penalty_location_mismatch,
-                'reason': "Poor location match",
-                'details': preferences_alignment.details.get('location', {})
-            })
-
-        if preferences_alignment.industry_match == 0.0:
-            penalty_amount = 10.0
-            penalties += penalty_amount
-            penalty_details.append({
-                'type': 'industry_mismatch',
-                'amount': penalty_amount,
-                'reason': "Job in avoided industry",
-                'details': preferences_alignment.details.get('industry', {})
-            })
-
-        if preferences_alignment.role_match == 0.0:
-            penalty_amount = 10.0
-            penalties += penalty_amount
-            penalty_details.append({
-                'type': 'role_mismatch',
-                'amount': penalty_amount,
-                'reason': "Job title matches avoided role",
-                'details': preferences_alignment.details.get('role', {})
-            })
-    elif config.wants_remote and not job.is_remote:
+    if config.wants_remote and not job.is_remote:
         penalties += config.penalty_location_mismatch
         penalty_details.append({
             'type': 'location_mismatch',

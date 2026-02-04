@@ -5,6 +5,7 @@ from database.repository import JobRepository
 from core.llm.interfaces import LLMProvider
 from core.utils import JobFingerprinter
 from etl.schemas import EXTRACTION_SCHEMA
+from core.scorer.want_score import FACET_KEYS
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,55 @@ class JobETLOrchestrator:
                 self.repo.rollback()
 
         logger.info(f"Extraction batch completed: {success_count}/{len(jobs)} jobs in {time.time() - batch_start:.2f}s")
+    
+    def run_facet_extraction_batch(self, limit: int = 100):
+        """
+        Step 3: Extract job facets for Want score matching.
+        
+        Extracts per-facet text from job descriptions and generates embeddings
+        for each of the 7 facets used in Want score calculation.
+        """
+        batch_start = time.time()
+        logger.info("Starting facet extraction batch...")
+        
+        jobs = self.repo.get_jobs_needing_facet_extraction(limit)
+        logger.info(f"Found {len(jobs)} jobs needing facet extraction")
+        
+        success_count = 0
+        for job in jobs:
+            job_start = time.time()
+            try:
+                logger.info(f"Extracting facets for job {job.id}: {job.title}")
+                
+                facets = self.ai.extract_job_facets(job.description)
+                
+                facet_embeddings = {}
+                for facet_key in FACET_KEYS:
+                    facet_text = facets.get(facet_key, "")
+                    if facet_text:
+                        embedding = self.ai.generate_embedding(facet_text)
+                        facet_embeddings[facet_key] = embedding
+                        self.repo.save_job_facet_embedding(
+                            job.id, facet_key, facet_text, embedding
+                        )
+                    else:
+                        logger.debug(f"Empty facet '{facet_key}' for job {job.id}")
+                
+                if facet_embeddings:
+                    logger.info(f"Saved {len(facet_embeddings)} facet embeddings for job {job.id}")
+                else:
+                    logger.warning(f"No facet embeddings saved for job {job.id}")
+                
+                self.repo.commit()
+                success_count += 1
+                
+                logger.info(f"Job {job.id} facet extraction completed in {time.time() - job_start:.2f}s")
+                
+            except Exception as e:
+                logger.error(f"Failed facet extraction for job {job.id}: {e}")
+                self.repo.rollback()
+        
+        logger.info(f"Facet extraction batch completed: {success_count}/{len(jobs)} jobs in {time.time() - batch_start:.2f}s")
 
     def run_embedding_batch(self, limit: int = 100):
         """

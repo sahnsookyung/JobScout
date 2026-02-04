@@ -135,13 +135,10 @@ def run_etl_pipeline(ctx: AppContext, stop_event: threading.Event) -> None:
     logger.info(f"ETL Step 2 completed: Extraction batch finished in {step_elapsed:.2f}s")
 
     step_start = time.time()
-    logger.info("=== ETL STEP 3: Unloading Extraction Model ===")
-    ctx.orchestrator.unload_models()
+    logger.info("=== ETL STEP 3: Running Facet Extraction Batch ===")
+    ctx.orchestrator.run_facet_extraction_batch(limit=100)
     step_elapsed = time.time() - step_start
-    logger.info(f"ETL Step 3 completed: Model unloaded in {step_elapsed:.2f}s")
-
-    if stop_event.is_set():
-        return
+    logger.info(f"ETL Step 3 completed: Facet extraction batch finished in {step_elapsed:.2f}s")
 
     step_start = time.time()
     logger.info("=== ETL STEP 4: Running Embedding Batch ===")

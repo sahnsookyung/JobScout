@@ -78,6 +78,18 @@ class MockAIService(LLMProvider):
     def generate_embedding(self, text: str) -> List[float]:
         """Generate a random embedding for testing."""
         return np.random.randn(1024).tolist()
+    
+    def extract_job_facets(self, text: str) -> Dict[str, str]:
+        """Mock facet extraction."""
+        return {
+            "remote_flexibility": "Remote work available",
+            "compensation": "Competitive salary",
+            "learning_growth": "Learning budget provided",
+            "company_culture": "Great team culture",
+            "work_life_balance": "Good work-life balance",
+            "tech_stack": "Python, PostgreSQL, AWS",
+            "visa_sponsorship": "Visa sponsorship available"
+        }
 
 
 class TestMatcherRealEmbeddings(unittest.TestCase):

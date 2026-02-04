@@ -101,7 +101,7 @@ EXTRACTION_SCHEMA = {
 }
 
 
-FACET_EXTRACTION_SCHEMA = {
+FACET_EXTRACTION_SCHEMA_FOR_WANTS = {
     "type": "object",
     "description": "Extract per-facet text for embedding-based Want scoring.",
     "properties": {

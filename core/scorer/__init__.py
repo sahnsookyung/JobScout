@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Scoring Module - Stage 2: Rule-based Scoring with Preferences Support.
+Scoring Module - Stage 2: Rule-based Scoring.
 
 Public API:
 - ScoringService: Main scoring service orchestrator
@@ -13,7 +13,6 @@ into focused, single-responsibility modules:
 - coverage.py: Coverage calculations (required/preferred coverage)
 - scoring_modes.py: Discovery and strict mode scoring formulas
 - similarity.py: Multi-embedding similarity matching
-- preferences.py: Preferences boost calculation
 - penalties.py: Penalty calculations (location, seniority, compensation, experience)
 - persistence.py: Database operations (save_match_to_db)
 - service.py: ScoringService orchestrator

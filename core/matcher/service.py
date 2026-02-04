@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
 """
-Matcher Service - Stage 1: Vector Retrieval with Preferences Support.
+Matcher Service - Stage 1: Vector Retrieval.
 
 Performs two-level matching:
-1. Job-level: Resume vs JobPost.summary_embedding (JD alignment) + Preferences alignment
+1. Job-level: Resume vs JobPost.summary_embedding (JD alignment)
 2. Requirement-level: Resume Evidence Units (REUs) vs JobRequirementUnit embeddings
-
-Supports preferences-based matching for:
-- Location preferences
-- Company size preferences
-- Industry preferences
-- Role type preferences
 
 Designed to be microservice-ready and can run independently
 of the ScoringService.
@@ -27,7 +21,6 @@ from core.matcher.models import (
     PreferencesAlignmentScore
 )
 from core.matcher.requirement_matcher import RequirementMatcher
-from core.matcher.preference_matcher import PreferenceMatcher
 from core.matcher.similarity import SimilarityCalculator
 
 logger = logging.getLogger(__name__)
@@ -67,9 +60,6 @@ class MatcherService:
             similarity_calc=self.similarity_calc,
             similarity_threshold=config.similarity_threshold
         )
-        self.preference_matcher = PreferenceMatcher(
-            weights=config.preference_weights
-        )
     
     def match_resume_to_job(
         self,
@@ -97,11 +87,6 @@ class MatcherService:
             resume_embedding = self.ai.generate_embedding(resume_text)
             job_similarity = self.similarity_calc.calculate(resume_embedding, job.summary_embedding)
         
-        # Preferences alignment (if preferences provided)
-        preferences_alignment = None
-        if preferences:
-            preferences_alignment = self.preference_matcher.calculate_alignment(job, preferences)
-        
         # Requirement-level matching using RequirementMatcher
         matched_requirements, missing_requirements = self.requirement_matcher.match_requirements(
             evidence_units, job.requirements
@@ -110,7 +95,7 @@ class MatcherService:
         return JobMatchPreliminary(
             job=job,
             job_similarity=job_similarity,
-            preferences_alignment=preferences_alignment,
+            preferences_alignment=None,
             requirement_matches=matched_requirements,
             missing_requirements=missing_requirements,
             resume_fingerprint=resume_fingerprint
@@ -144,14 +129,7 @@ class MatcherService:
             )
             results.append(preliminary)
         
-        # Sort by combined score (job_similarity + preferences_alignment)
-        def combined_score(p: JobMatchPreliminary) -> float:
-            base = p.job_similarity
-            if p.preferences_alignment:
-                base += p.preferences_alignment.overall_score
-            return base
-        
-        results.sort(key=combined_score, reverse=True)
+        results.sort(key=lambda p: p.job_similarity, reverse=True)
         return results
     
     def match_resume_two_stage(
@@ -215,14 +193,7 @@ class MatcherService:
             )
             results.append(preliminary)
         
-        # Sort by combined score
-        def combined_score(p: JobMatchPreliminary) -> float:
-            base = p.job_similarity
-            if p.preferences_alignment:
-                base += p.preferences_alignment.overall_score
-            return base
-        
-        results.sort(key=combined_score, reverse=True)
+        results.sort(key=lambda p: p.job_similarity, reverse=True)
         
         return results
     

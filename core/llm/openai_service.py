@@ -9,6 +9,7 @@ import logging
 import copy
 from openai import OpenAI
 from core.llm.interfaces import LLMProvider
+from etl.schemas import FACET_EXTRACTION_SCHEMA_FOR_WANTS
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,47 @@ class OpenAIService(LLMProvider):
             return response.data[0].embedding
         except Exception as e:
             logger.error(f"Embedding failed: {e}")
+            raise
+    
+    def extract_job_facets(self, text: str) -> Dict[str, str]:
+        """
+        Extract per-facet text from job description using FACET_EXTRACTION_SCHEMA_FOR_WANTS.
+        
+        Returns a dictionary with keys:
+        - remote_flexibility
+        - compensation
+        - learning_growth
+        - company_culture
+        - work_life_balance
+        - tech_stack
+        - visa_sponsorship
+        """
+        try:
+            response = self.client.chat.completions.create(
+                model=self.extraction_model,
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that extracts job facet information from descriptions."},
+                    {"role": "user", "content": f"Extract facet information from the job description below.\n\nDescription:\n{text}"}
+                ],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "facet_extraction",
+                        "schema": FACET_EXTRACTION_SCHEMA_FOR_WANTS,
+                        "strict": False
+                    }
+                }
+            )
+            
+            content = response.choices[0].message.content
+            data = json.loads(content)
+            
+            logger.debug(f"Extracted facets: {list(data.keys())}")
+            
+            return data
+        
+        except Exception as e:
+            logger.error(f"Facet extraction failed: {e}")
             raise
 
     def unload_model(self, model_name: str):

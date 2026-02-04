@@ -24,7 +24,7 @@ from core.config_loader import ScorerConfig, ResultPolicy
 from core.matcher import JobMatchPreliminary
 
 from core.scorer.models import ScoredJobMatch
-from core.scorer import coverage, preferences
+from core.scorer import coverage
 from core.scorer import penalties as penalty_calculations
 from core.scorer import fit_score, want_score
 
