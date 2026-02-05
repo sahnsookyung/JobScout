@@ -206,38 +206,75 @@ class TestFullPipelineIntegration(unittest.TestCase):
         else:
             cls.notification_service = None
         
-        # Test resume data
+        # Test resume data - new schema format
         cls.resume_data = {
-            "name": "Integration Test User",
-            "title": "Senior Python Developer",
-            "email": "test@example.com",
-            "sections": [
-                {
-                    "title": "Technical Skills",
-                    "items": [
+            "profile": {
+                "summary": {
+                    "text": "Senior Python Developer with 8+ years experience building scalable web applications and microservices. Expert in Python, Django, FastAPI, and cloud technologies.",
+                    "total_experience_years": 8.0
+                },
+                "experience": [
+                    {
+                        "company": "TechCorp Japan",
+                        "title": "Senior Python Engineer",
+                        "start_date": {"text": "2020-01", "year": 2020, "month": 1, "precision": "month"},
+                        "end_date": {"text": "2024-01", "year": 2024, "month": 1, "precision": "month"},
+                        "is_current": False,
+                        "description": "Built microservices with Python and AWS. Improved performance by 40%. Mentored junior developers.",
+                        "tech_keywords": ["Python", "AWS", "Microservices", "Django"]
+                    }
+                ],
+                "projects": {
+                    "description": "Led development of ML pipeline for data processing. Built internal tools with FastAPI."
+                },
+                "education": [
+                    {
+                        "degree": "Bachelor of Science",
+                        "field_of_study": "Computer Science",
+                        "description": "Graduated with honors, GPA 3.8/4.0"
+                    }
+                ],
+                "skills": {
+                    "groups": [
                         {
-                            "description": "Python, Django, FastAPI, Flask, SQLAlchemy",
-                            "highlights": ["8+ years experience", "Led Python team of 5"]
+                            "group_name": "Programming Languages",
+                            "items": [
+                                {"name": "Python", "kind": "language", "proficiency": "expert", "years_experience": 8.0},
+                                {"name": "Go", "kind": "language", "proficiency": "intermediate", "years_experience": 3.0}
+                            ]
                         },
                         {
-                            "description": "AWS, Docker, Kubernetes, CI/CD",
-                            "highlights": ["AWS Certified", "DevOps practices"]
+                            "group_name": "Cloud & DevOps",
+                            "items": [
+                                {"name": "AWS", "kind": "cloud", "proficiency": "expert", "years_experience": 6.0},
+                                {"name": "Docker", "kind": "tool", "proficiency": "proficient", "years_experience": 5.0},
+                                {"name": "Kubernetes", "kind": "tool", "proficiency": "intermediate", "years_experience": 3.0}
+                            ]
                         }
+                    ],
+                    "all": [
+                        {"name": "Python", "kind": "language", "proficiency": "expert", "years_experience": 8.0},
+                        {"name": "AWS", "kind": "cloud", "proficiency": "expert", "years_experience": 6.0},
+                        {"name": "Docker", "kind": "tool", "proficiency": "proficient", "years_experience": 5.0}
                     ]
                 },
-                {
-                    "title": "Work Experience",
-                    "items": [
-                        {
-                            "company": "TechCorp Japan",
-                            "role": "Senior Python Engineer",
-                            "period": "2020-2024",
-                            "description": "Built microservices with Python and AWS",
-                            "highlights": ["Improved performance by 40%", "Mentored juniors"]
-                        }
-                    ]
-                }
-            ]
+                "certifications": [
+                    {
+                        "name": "AWS Solutions Architect",
+                        "issuer": "Amazon Web Services",
+                        "issued_year": 2022,
+                        "expires_year": 2025
+                    }
+                ],
+                "languages": [
+                    {"language": "English", "proficiency": "native"},
+                    {"language": "Japanese", "proficiency": "conversational"}
+                ]
+            },
+            "extraction": {
+                "confidence": 0.95,
+                "warnings": []
+            }
         }
         
         # Create test jobs
@@ -383,8 +420,12 @@ class TestFullPipelineIntegration(unittest.TestCase):
         """Step 2: Extract evidence units from resume."""
         print("\n[Step 2] Resume Evidence Extraction...")
 
-        # Use resume_profiler to extract evidence
-        evidence_units = self.resume_profiler.extract_resume_evidence(self.resume_data)
+        # Parse resume data into Pydantic model
+        from etl.schema_models import ResumeSchema
+        resume = ResumeSchema.model_validate(self.resume_data)
+        
+        # Use resume_profiler to extract evidence from the profile
+        evidence_units = self.resume_profiler.extract_resume_evidence(resume.profile)
 
         self.assertGreater(len(evidence_units), 0)
         print(f"  ✓ Extracted {len(evidence_units)} evidence units from resume")
@@ -396,7 +437,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
 
         print(f"  ✓ All evidence units have text content")
         # Store as class attribute to persist across test instances
-        self.test_evidence = evidence_units
+        type(self).test_evidence = evidence_units
     
     def test_03_matcher_service(self):
         """Step 3: Run matching service with real embeddings."""
@@ -409,7 +450,9 @@ class TestFullPipelineIntegration(unittest.TestCase):
 
         # Extract evidence if not done
         if not hasattr(type(self), 'test_evidence'):
-            type(self).test_evidence = self.resume_profiler.extract_resume_evidence(self.resume_data)
+            from etl.schema_models import ResumeSchema
+            resume = ResumeSchema.model_validate(self.resume_data)
+            type(self).test_evidence = self.resume_profiler.extract_resume_evidence(resume.profile)
         
         # Run matching
         preliminary_matches = self.matcher.match_resume_to_jobs(

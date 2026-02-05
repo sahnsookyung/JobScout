@@ -5,8 +5,7 @@ Resume Profiler - Extract and profile resume data.
 Handles:
 1. Structured resume extraction using AI
 2. Resume evidence unit extraction
-3. Years of experience extraction and validation
-4. Section embedding generation
+3. Section embedding generation
 
 This separates resume profiling concerns from job matching logic.
 """
@@ -16,13 +15,18 @@ import json
 
 from database.models import generate_resume_fingerprint
 from core.llm.interfaces import LLMProvider
-from etl.resume.models import (
-    ResumeEvidenceUnit,
-    StructuredResumeProfile,
+from etl.resume.models import ResumeEvidenceUnit
+from etl.resume.embedding_store import (
+    ResumeSectionEmbeddingStore,
+    ResumeEvidenceUnitEmbeddingStore,
 )
-from etl.resume.years_extractor import YearsExtractor
-from etl.resume.embedding_store import ResumeSectionEmbeddingStore
-from etl.schemas import RESUME_SCHEMA
+from etl.schema_models import (
+    RESUME_SCHEMA,
+    ResumeSchema,
+    Profile,
+    ExperienceItem,
+    SkillItem,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +46,7 @@ class ResumeProfiler:
     def __init__(
         self,
         ai_service: LLMProvider,
-        store: Optional[ResumeSectionEmbeddingStore] = None
+        store: Optional[ResumeSectionEmbeddingStore | ResumeEvidenceUnitEmbeddingStore] = None
     ):
         """
         Initialize resume profiler.
@@ -53,23 +57,22 @@ class ResumeProfiler:
         """
         self.ai = ai_service
         self.store = store
-        self.years_extractor = YearsExtractor(ai_service)
 
     def extract_structured_resume(
         self,
         resume_data: Dict[str, Any]
-    ) -> Optional[StructuredResumeProfile]:
+    ) -> Optional[ResumeSchema]:
         """
         Extract comprehensive structured resume data using AI.
 
-        Uses RESUME_FULL_SCHEMA to extract work history with dates,
-        skills, education, and calculates total years of experience.
+        Uses RESUME_SCHEMA to extract work history with dates,
+        skills, education, and captures claimed years of experience.
 
         Args:
             resume_data: Raw resume JSON data
 
         Returns:
-            StructuredResumeProfile with calculated experience, or None if extraction fails
+            ResumeSchema Pydantic model with structured data, or None if extraction fails
         """
         try:
             resume_text = json.dumps(resume_data, indent=2)
@@ -83,23 +86,15 @@ class ResumeProfiler:
                 logger.warning("Failed to extract structured resume data")
                 return None
 
-            profile_data = extraction_result['profile']
-
-            profile = StructuredResumeProfile(
-                raw_data=extraction_result,
-                experience_entries=profile_data.get('experience', []),
-                claimed_total_years=profile_data.get('summary', {}).get('claimed_total_experience_years')
+            # Validate and parse with Pydantic
+            resume = ResumeSchema.model_validate(extraction_result)
+            
+            logger.info(
+                f"Extracted resume with {len(resume.profile.experience)} experience entries, "
+                f"claimed {resume.claimed_total_years or 'unknown'} years experience"
             )
 
-            profile.calculated_total_years = profile.calculate_experience_from_dates()
-
-            is_valid, validation_msg = profile.validate_experience_claim()
-            if not is_valid:
-                logger.warning(f"Resume experience claim validation failed: {validation_msg}")
-            else:
-                logger.info(f"Resume experience: {validation_msg}")
-
-            return profile
+            return resume
 
         except Exception as e:
             logger.error(f"Error extracting structured resume: {e}")
@@ -107,48 +102,72 @@ class ResumeProfiler:
 
     def extract_resume_evidence(
         self,
-        resume_data: Dict[str, Any]
+        profile: Profile
     ) -> List[ResumeEvidenceUnit]:
         """
-        Extract Resume Evidence Units from resume JSON.
+        Extract Resume Evidence Units from structured profile.
 
-        Parses resume sections and creates evidence units from
-        descriptions and highlights.
+        Creates evidence units from:
+        - Experience descriptions
+        - Individual skills with metadata
+
+        Args:
+            profile: Structured resume profile from extraction
+
+        Returns:
+            List of ResumeEvidenceUnit objects
         """
         evidence_units = []
         unit_id = 0
 
-        for section in resume_data.get('sections', []):
-            section_title = section.get('title', '')
+        # Extract from experience descriptions
+        for idx, exp in enumerate(profile.experience):
+            if exp.description:
+                evidence_units.append(ResumeEvidenceUnit(
+                    id=f"reu_{unit_id}",
+                    text=exp.description,
+                    source_section="Experience",
+                    tags={
+                        'company': exp.company or '',
+                        'title': exp.title or '',
+                        'index': idx,
+                        'type': 'description',
+                        'is_current': exp.is_current
+                    }
+                ))
+                unit_id += 1
 
-            for item in section.get('items', []):
-                if item.get('description'):
-                    evidence_units.append(ResumeEvidenceUnit(
-                        id=f"reu_{unit_id}",
-                        text=item['description'],
-                        source_section=section_title,
-                        tags={
-                            'company': item.get('company', ''),
-                            'role': item.get('role', ''),
-                            'period': item.get('period', ''),
-                            'type': 'description'
-                        }
-                    ))
-                    unit_id += 1
+            # Also extract from tech keywords as individual evidence
+            for tech in exp.tech_keywords:
+                evidence_units.append(ResumeEvidenceUnit(
+                    id=f"reu_{unit_id}",
+                    text=f"Experience with {tech}",
+                    source_section="Experience",
+                    tags={
+                        'company': exp.company or '',
+                        'title': exp.title or '',
+                        'technology': tech,
+                        'type': 'tech_keyword'
+                    }
+                ))
+                unit_id += 1
 
-                for highlight in item.get('highlights', []):
-                    if highlight and not highlight.startswith('<'):
-                        evidence_units.append(ResumeEvidenceUnit(
-                            id=f"reu_{unit_id}",
-                            text=highlight,
-                            source_section=section_title,
-                            tags={
-                                'company': item.get('company', ''),
-                                'role': item.get('role', ''),
-                                'type': 'highlight'
-                            }
-                        ))
-                        unit_id += 1
+        # Extract from skills
+        for skill in profile.skills.all:
+            if skill.name:
+                evidence_units.append(ResumeEvidenceUnit(
+                    id=f"reu_{unit_id}",
+                    text=skill.to_embedding_text() or skill.name,
+                    source_section="Skills",
+                    tags={
+                        'skill': skill.name,
+                        'kind': skill.kind or '',
+                        'proficiency': skill.proficiency or '',
+                        'years_experience': skill.years_experience,
+                        'type': 'skill'
+                    }
+                ))
+                unit_id += 1
 
         logger.info(f"Extracted {len(evidence_units)} evidence units from resume")
         return evidence_units
@@ -161,37 +180,6 @@ class ResumeProfiler:
         for unit in evidence_units:
             if unit.embedding is None:
                 unit.embedding = self.ai.generate_embedding(unit.text)
-
-    def extract_years_from_evidence(
-        self,
-        evidence_units: List[ResumeEvidenceUnit]
-    ) -> None:
-        """
-        Extract years values from evidence units using regex + AI.
-
-        Modifies evidence units in-place with years_value, years_context,
-        and is_total_years_claim fields.
-        """
-        for unit in evidence_units:
-            try:
-                years_value, years_context, is_total = self.years_extractor.extract_from_text(
-                    unit.text
-                )
-
-                if years_value is not None:
-                    unit.years_value = years_value
-                    unit.years_context = years_context
-                    unit.is_total_years_claim = is_total
-
-                    if is_total:
-                        logger.debug(
-                            f"Extracted years from evidence {unit.id}: "
-                            f"{unit.years_value} years of {unit.years_context} "
-                            f"(total={unit.is_total_years_claim})"
-                        )
-
-            except Exception as e:
-                logger.warning(f"Failed to extract years from evidence {unit.id}: {e}")
 
     def save_evidence_unit_embeddings(
         self,
@@ -230,81 +218,58 @@ class ResumeProfiler:
     def save_resume_section_embeddings(
         self,
         resume_fingerprint: str,
-        profile: StructuredResumeProfile
+        resume: ResumeSchema
     ) -> List[Dict[str, Any]]:
         """
         Generate embeddings for individual resume sections.
 
-        Creates embeddings for experience, projects, skills, and summary
+        Creates embeddings for experience, skills, and summary
         to enable granular matching against job requirements.
 
         If store is configured, persists the embeddings.
+
+        Args:
+            resume_fingerprint: Unique identifier for the resume
+            resume: Parsed ResumeSchema with structured data
 
         Returns:
             List of section dictionaries with embedding data (persistence payload)
         """
         sections_to_embed = []
-        profile_data = profile.raw_data.get('profile', {})
+        profile = resume.profile
 
-        for idx, experience in enumerate(profile_data.get('experience', [])):
-            if not experience:
-                continue
-            source_text = f"{experience.get('company', '')} - {experience.get('title', '')}"
-            if experience.get('description'):
-                source_text += f": {experience['description']}"
-            if experience.get('highlights'):
-                source_text += f" | {' | '.join(experience['highlights'][:3])}"
+        # Experience sections
+        for idx, exp in enumerate(profile.experience):
+            source_text = exp.to_embedding_text()
+            if source_text:
+                sections_to_embed.append({
+                    'section_type': 'experience',
+                    'section_index': idx,
+                    'source_text': source_text,
+                    'source_data': exp.model_dump()
+                })
 
+        # Skills section
+        skills_text = profile.skills.to_embedding_text()
+        if skills_text:
             sections_to_embed.append({
-                'section_type': 'experience',
-                'section_index': idx,
-                'source_text': source_text,
-                'source_data': experience
+                'section_type': 'skills',
+                'section_index': 0,
+                'source_text': skills_text,
+                'source_data': profile.skills.model_dump()
             })
 
-        for idx, project in enumerate(profile_data.get('projects', [])):
-            if not project:
-                continue
-            source_text = project.get('name', 'Project')
-            if project.get('description'):
-                source_text += f": {project['description']}"
-            if project.get('highlights'):
-                source_text += f" | {' | '.join(project['highlights'][:3])}"
-
-            sections_to_embed.append({
-                'section_type': 'project',
-                'section_index': idx,
-                'source_text': source_text,
-                'source_data': project
-            })
-
-        for idx, skill_group in enumerate(profile_data.get('skills', {}).get('groups', [])):
-            if not skill_group:
-                continue
-            skills_list = skill_group.get('skills', [])
-            skill_name = skill_group.get('name', 'Skills')
-            source_text = f"{skill_name}: {', '.join(skills_list[:5])}"
-
-            sections_to_embed.append({
-                'section_type': 'skill',
-                'section_index': idx,
-                'source_text': source_text,
-                'source_data': skill_group
-            })
-
-        summary = profile_data.get('summary', {})
-        if summary:
-            source_text = summary.get('headline', '')
-            if summary.get('objective'):
-                source_text += f" | {summary['objective']}"
-
+        # Summary section
+        summary = profile.summary
+        if summary.text:
             sections_to_embed.append({
                 'section_type': 'summary',
                 'section_index': 0,
-                'source_text': source_text,
-                'source_data': summary
+                'source_text': summary.text,
+                'source_data': summary.model_dump()
             })
 
+        # Generate embeddings
         sections_with_embeddings = []
         for section in sections_to_embed:
             embedding = self.ai.generate_embedding(section['source_text'])
@@ -313,6 +278,7 @@ class ResumeProfiler:
                 'embedding': embedding
             })
 
+        # Persist if store available
         if self.store and sections_with_embeddings:
             self.store.save_resume_section_embeddings(
                 resume_fingerprint=resume_fingerprint,
@@ -328,34 +294,39 @@ class ResumeProfiler:
     def profile_resume(
         self,
         resume_data: Dict[str, Any]
-    ) -> tuple[Optional[StructuredResumeProfile], List[ResumeEvidenceUnit], List[Dict[str, Any]]]:
+    ) -> tuple[Optional[ResumeSchema], List[ResumeEvidenceUnit], List[Dict[str, Any]]]:
         """
         Complete resume profiling pipeline.
 
-        Extracts structured profile, evidence units, years, and embeddings.
+        Extracts structured profile, evidence units, and embeddings.
 
         Note: Persistence to database only occurs if a store was provided
         to the constructor. Otherwise, the persistence payload is returned
         for the caller to handle.
 
         Returns:
-            Tuple of (StructuredResumeProfile or None, List[ResumeEvidenceUnit], persistence_payload)
+            Tuple of (ResumeSchema or None, List[ResumeEvidenceUnit], persistence_payload)
             where persistence_payload is a list of section dicts with embeddings (empty if no profile)
         """
         resume_fingerprint = generate_resume_fingerprint(resume_data)
 
-        profile = self.extract_structured_resume(resume_data)
+        # Extract structured resume
+        resume = self.extract_structured_resume(resume_data)
 
-        evidence_units = self.extract_resume_evidence(resume_data)
+        # Extract evidence units from structured profile
+        evidence_units = []
+        if resume:
+            evidence_units = self.extract_resume_evidence(resume.profile)
 
-        self.extract_years_from_evidence(evidence_units)
-
+        # Generate embeddings for evidence units
         self.embed_evidence_units(evidence_units)
 
+        # Persist evidence unit embeddings
         self.save_evidence_unit_embeddings(resume_fingerprint, evidence_units)
 
+        # Generate and persist section embeddings
         persistence_payload = []
-        if profile:
-            persistence_payload = self.save_resume_section_embeddings(resume_fingerprint, profile)
+        if resume:
+            persistence_payload = self.save_resume_section_embeddings(resume_fingerprint, resume)
 
-        return profile, evidence_units, persistence_payload
+        return resume, evidence_units, persistence_payload

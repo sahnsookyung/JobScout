@@ -9,7 +9,7 @@ import logging
 import copy
 from openai import OpenAI
 from core.llm.interfaces import LLMProvider
-from etl.schemas import FACET_EXTRACTION_SCHEMA_FOR_WANTS
+from etl.schema_models import FACET_EXTRACTION_SCHEMA_FOR_WANTS, FacetExtraction
 
 logger = logging.getLogger(__name__)
 

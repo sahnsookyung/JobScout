@@ -45,7 +45,7 @@ def _prefetch_candidate_data(
         db: SQLAlchemy session or connection
 
     Returns:
-        Dict mapping resume_fingerprint -> {'calculated_total_years': Optional[float]}
+        Dict mapping resume_fingerprint -> {'total_experience_years': Optional[float]}
     """
     fingerprints = {
         pm.resume_fingerprint
@@ -58,14 +58,14 @@ def _prefetch_candidate_data(
     stmt = (
         select(
             StructuredResume.resume_fingerprint,
-            StructuredResume.calculated_total_years
+            StructuredResume.total_experience_years
         )
         .where(StructuredResume.resume_fingerprint.in_(fingerprints))
     )
     rows = db.execute(stmt).fetchall()
 
     return {
-        fp: {'calculated_total_years': float(years) if years is not None else None}
+        fp: {'total_experience_years': float(years) if years is not None else None}
         for fp, years in rows
     }
 
@@ -181,7 +181,7 @@ class ScoringService:
         Args:
             preliminary: Preliminary match from MatcherService
             match_type: Type of match being performed
-            candidate_data: Pre-fetched candidate data (calculated_total_years)
+            candidate_data: Pre-fetched candidate data (total_experience_years)
             experience_sections: Pre-fetched experience sections for penalties
             user_want_embeddings: Optional user want embeddings for Want score
             job_facet_embeddings: Optional job facet embeddings for Want score
@@ -199,7 +199,7 @@ class ScoringService:
 
         candidate_total_years = None
         if candidate_data:
-            candidate_total_years = candidate_data.get('calculated_total_years')
+            candidate_total_years = candidate_data.get('total_experience_years')
             if candidate_total_years:
                 logger.debug(f"Candidate has {candidate_total_years:.1f} years of experience")
 

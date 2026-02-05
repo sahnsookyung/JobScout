@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
 """
-Test Matcher Models.
+Test Resume Models.
 
-Tests the dataclasses in core/matcher/models.py and etl/resume/models.py.
+Tests the dataclasses in etl/resume/models.py.
 """
 import unittest
-from datetime import datetime, date
-from etl.resume import (
-    ResumeEvidenceUnit,
-    StructuredResumeProfile,
-)
+from etl.resume import ResumeEvidenceUnit
 from core.matcher.models import (
     RequirementMatchResult,
     JobMatchPreliminary
@@ -51,72 +47,6 @@ class TestResumeEvidenceUnit(unittest.TestCase):
         self.assertEqual(unit.tags["role"], "Engineering Manager")
         self.assertEqual(unit.years_value, 3.0)
         self.assertEqual(len(unit.embedding), 1024)
-
-
-class TestStructuredResumeProfile(unittest.TestCase):
-    """Test StructuredResumeProfile dataclass."""
-
-    def test_basic_creation(self):
-        """Test creating a basic profile."""
-        profile = StructuredResumeProfile(
-            raw_data={"skills": ["Python", "SQL"]}
-        )
-
-        self.assertEqual(profile.raw_data["skills"], ["Python", "SQL"])
-        self.assertIsNone(profile.calculated_total_years)
-
-    def test_calculate_experience_from_dates(self):
-        """Test calculating experience from date ranges."""
-        profile = StructuredResumeProfile(
-            raw_data={},
-            experience_entries=[
-                {"start_date": "2020-01", "end_date": "2022-12", "is_current": False},
-                {"start_date": "2022-01", "end_date": "2024-06", "is_current": True}
-            ]
-        )
-
-        years = profile.calculate_experience_from_dates()
-
-        self.assertGreater(years, 4.0)  # At least 4 years
-
-    def test_validate_experience_claim_valid(self):
-        """Test validating a plausible experience claim."""
-        profile = StructuredResumeProfile(
-            raw_data={},
-            calculated_total_years=5.0,
-            claimed_total_years=5.5,
-            experience_entries=[{"start_date": "2019-01", "end_date": "2024-01"}]
-        )
-
-        is_valid, message = profile.validate_experience_claim()
-
-        self.assertTrue(is_valid)
-
-    def test_validate_experience_claim_suspicious(self):
-        """Test detecting a suspicious experience claim."""
-        profile = StructuredResumeProfile(
-            raw_data={},
-            calculated_total_years=2.0,
-            claimed_total_years=10.0,
-            experience_entries=[{"start_date": "2022-01", "end_date": "2024-01"}]
-        )
-
-        is_valid, message = profile.validate_experience_claim()
-
-        self.assertFalse(is_valid)
-        self.assertIn("suspicious", message.lower())
-
-    def test_validate_experience_claim_no_claim(self):
-        """Test when no explicit claim was made."""
-        profile = StructuredResumeProfile(
-            raw_data={},
-            calculated_total_years=5.0,
-            claimed_total_years=None
-        )
-
-        is_valid, message = profile.validate_experience_claim()
-
-        self.assertTrue(is_valid)
 
 
 class TestRequirementMatchResult(unittest.TestCase):

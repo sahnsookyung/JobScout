@@ -169,14 +169,14 @@ schedule:
 scrapers:
   - site_type: ["tokyodev"]
     search_term: ""
-    results_wanted: 30
+    results_wanted: 5
     options:
       japanese_requirements: ["none"]
       seniorities: ["intern", "junior", "intermediate"]
       
   - site_type: ["japandev"]
     search_term: ""
-    results_wanted: 30
+    results_wanted: 5
     options:
       japanese_levels: ["japanese_level_not_required"]
       seniorities: ["seniority_level_junior", "seniority_level_mid_level"]
@@ -186,19 +186,19 @@ scrapers:
     search_term: "software engineer"
     location: "Tokyo"
     country: "Japan"
-    results_wanted: 30
+    results_wanted: 5
     hours_old: 168 # 24 * 7
   
   - site_type: ["glassdoor"]
     search_term: "software engineer"
     location: "Tokyo"
-    results_wanted: 30
+    results_wanted: 5
     hours_old: 168
     request_timeout: 300 # 5 mins
 
   - site_type: ["linkedin"]
     search_term: "software engineer"
     location: "Tokyo"
-    results_wanted: 30
+    results_wanted: 5
     hours_old: 168
     linkedin_fetch_description: True

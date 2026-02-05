@@ -17,30 +17,41 @@ class TestResumeProfilerProfiling:
         mock = Mock()
         mock.extract_structured_data.return_value = {
             "profile": {
+                "summary": {
+                    "text": "Software Engineer with 5 years experience building scalable systems",
+                    "total_experience_years": 5.0
+                },
                 "experience": [
                     {
                         "company": "TechCorp",
                         "title": "Software Engineer",
-                        "years": 3,
+                        "start_date": {"text": "2020-01", "year": 2020, "month": 1, "precision": "month"},
+                        "end_date": {"text": "2023-01", "year": 2023, "month": 1, "precision": "month"},
+                        "is_current": False,
                         "description": "Built Python services",
-                        "highlights": ["Deployed to AWS", "Mentored juniors"]
+                        "tech_keywords": ["Python", "AWS"]
                     }
                 ],
-                "projects": [
-                    {
-                        "name": "ML Pipeline",
-                        "description": "Built ML pipeline"
-                    }
-                ],
+                "projects": {
+                    "description": "Built ML pipeline"
+                },
+                "education": [],
                 "skills": {
                     "groups": [
-                        {"name": "backend", "skills": ["Python", "Go"]}
+                        {"group_name": "backend", "items": [
+                            {"name": "Python", "kind": "language", "proficiency": "expert", "years_experience": 5.0}
+                        ]}
+                    ],
+                    "all": [
+                        {"name": "Python", "kind": "language", "proficiency": "expert", "years_experience": 5.0}
                     ]
                 },
-                "summary": {
-                    "headline": "Software Engineer",
-                    "objective": "Build scalable systems"
-                }
+                "certifications": [],
+                "languages": []
+            },
+            "extraction": {
+                "confidence": 0.95,
+                "warnings": []
             }
         }
         mock.generate_embedding.return_value = [0.1, 0.2, 0.3] * 341

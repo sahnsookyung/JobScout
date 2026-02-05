@@ -10,10 +10,7 @@ import random
 import math
 
 from core.llm.interfaces import LLMProvider
-from etl.resume import (
-    ResumeEvidenceUnit,
-    StructuredResumeProfile,
-)
+from etl.resume import ResumeEvidenceUnit
 from core.matcher.models import (
     JobMatchPreliminary, RequirementMatchResult
 )

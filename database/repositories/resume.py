@@ -13,10 +13,7 @@ class ResumeRepository(BaseRepository):
         self,
         resume_fingerprint: str,
         extracted_data: Dict[str, Any],
-        calculated_total_years: Optional[float],
-        claimed_total_years: Optional[float],
-        experience_validated: bool,
-        validation_message: str,
+        total_experience_years: Optional[float] = None,
         extraction_confidence: Optional[float] = None,
         extraction_warnings: Optional[List[str]] = None
     ) -> StructuredResume:
@@ -27,10 +24,7 @@ class ResumeRepository(BaseRepository):
 
         if existing:
             existing.extracted_data = extracted_data
-            existing.calculated_total_years = calculated_total_years
-            existing.claimed_total_years = claimed_total_years
-            existing.experience_validated = experience_validated
-            existing.validation_message = validation_message
+            existing.total_experience_years = total_experience_years
             existing.extraction_confidence = extraction_confidence
             existing.extraction_warnings = extraction_warnings or []
             resume_record = existing
@@ -38,10 +32,7 @@ class ResumeRepository(BaseRepository):
             resume_record = StructuredResume(
                 resume_fingerprint=resume_fingerprint,
                 extracted_data=extracted_data,
-                calculated_total_years=calculated_total_years,
-                claimed_total_years=claimed_total_years,
-                experience_validated=experience_validated,
-                validation_message=validation_message,
+                total_experience_years=total_experience_years,
                 extraction_confidence=extraction_confidence,
                 extraction_warnings=extraction_warnings or []
             )

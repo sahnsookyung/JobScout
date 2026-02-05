@@ -199,9 +199,9 @@ class TestBatchPrefetch(unittest.TestCase):
         self.assertEqual(mock_db.execute.call_count, 1,
             f"Expected 1 query, got {mock_db.execute.call_count}")
         self.assertEqual(len(result), 3)
-        self.assertEqual(result["fp_0"]["calculated_total_years"], 5.0)
-        self.assertEqual(result["fp_1"]["calculated_total_years"], 3.5)
-        self.assertEqual(result["fp_5"]["calculated_total_years"], 7.0)
+        self.assertEqual(result["fp_0"]["total_experience_years"], 5.0)
+        self.assertEqual(result["fp_1"]["total_experience_years"], 3.5)
+        self.assertEqual(result["fp_5"]["total_experience_years"], 7.0)
 
         print(f"  ✓ Single query executed for {len(matches)} matches")
         print(f"  ✓ Retrieved {len(result)} candidate records")
@@ -332,7 +332,7 @@ class TestScoreEquivalence(unittest.TestCase):
         )
 
         candidate_data = {
-            "calculated_total_years": 6.0
+            "total_experience_years": 6.0
         }
 
         experience_sections = [

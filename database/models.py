@@ -403,8 +403,8 @@ class StructuredResume(Base):
     """
     Stores structured resume extraction results.
     
-    Contains AI-extracted structured data from resume with date-based
-    experience calculations for accurate years-of-experience validation.
+    Contains AI-extracted structured data from resume with claimed
+    years of experience from the summary section.
     """
     __tablename__ = 'structured_resume'
 
@@ -414,11 +414,8 @@ class StructuredResume(Base):
     # Raw extraction result
     extracted_data = Column(JSONB, nullable=False)  # Full structured extraction
     
-    # Calculated experience metrics
-    calculated_total_years = Column(Numeric(4, 1))  # Sum of all experience periods from dates
-    claimed_total_years = Column(Numeric(4, 1))  # From summary section if stated
-    experience_validated = Column(Boolean, default=False)  # Whether claim matches calculation
-    validation_message = Column(Text)  # Details of validation result
+    # Experience (claimed by candidate from summary section)
+    total_experience_years = Column(Numeric(4, 1))  # From profile.summary.total_experience_years
     
     # Extraction metadata
     extraction_confidence = Column(Numeric(3, 2))  # 0.00-1.00
@@ -432,7 +429,7 @@ class StructuredResume(Base):
         # Index for finding resumes by fingerprint
         Index('idx_structured_resume_fingerprint', 'resume_fingerprint'),
         # Index for experience queries
-        Index('idx_structured_resume_years', 'calculated_total_years'),
+        Index('idx_structured_resume_years', 'total_experience_years'),
     )
 
 

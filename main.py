@@ -19,7 +19,7 @@ from etl.resume import ResumeProfiler, ResumeEvidenceUnit
 from database.uow import job_uow
 from database.init_db import init_db
 from database.models import generate_resume_fingerprint, generate_preferences_fingerprint
-from core.cache.job_cache import init_job_cache, get_job_cache
+
 
 logger = logging.getLogger(__name__)
 
@@ -343,7 +343,7 @@ def run_matching_pipeline(ctx: AppContext, stop_event: threading.Event, resume_c
             return
 
         logger.info(f"Loaded resume from database (fingerprint: {resume_fingerprint[:16]}...)")
-        logger.info(f"Resume experience: {structured_resume.calculated_total_years} years")
+        logger.info(f"Resume experience: {structured_resume.total_experience_years} years")
 
         # Load evidence unit embeddings for matching
         evidence_unit_embeddings = repo.resume.get_evidence_unit_embeddings(resume_fingerprint)
@@ -664,19 +664,6 @@ def run_internal_sequential_cycle(mode: str = 'all', stop_event: threading.Event
 
     # Build context once - no DB session attached
     ctx = AppContext.build(config)
-
-    # Initialize job cache (separate from notification Redis)
-    if hasattr(config, 'cache') and config.cache and config.cache.enabled:
-        init_job_cache(
-            redis_url=config.cache.redis_url,
-            password=config.cache.password
-        )
-        cache = get_job_cache()
-        if cache and cache.is_available:
-            stats = cache.get_cache_stats()
-            logger.info(f"Job cache initialized: {stats.get('ttl_human', '2 weeks')} TTL")
-        else:
-            logger.warning("Job cache enabled but Redis unavailable")
 
     # ETL Phase
     if mode in ('etl', 'all'):

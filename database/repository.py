@@ -150,17 +150,16 @@ class JobRepository:
         self,
         resume_fingerprint: str,
         extracted_data: dict,
-        calculated_total_years: Optional[float],
-        claimed_total_years: Optional[float],
-        experience_validated: bool,
-        validation_message: str,
+        total_experience_years: Optional[float] = None,
         extraction_confidence: Optional[float] = None,
         extraction_warnings: Optional[list] = None
     ) -> Any:
         return self.resume.save_structured_resume(
-            resume_fingerprint, extracted_data, calculated_total_years,
-            claimed_total_years, experience_validated, validation_message,
-            extraction_confidence, extraction_warnings
+            resume_fingerprint=resume_fingerprint,
+            extracted_data=extracted_data,
+            total_experience_years=total_experience_years,
+            extraction_confidence=extraction_confidence,
+            extraction_warnings=extraction_warnings
         )
 
     def save_resume_section_embeddings(
