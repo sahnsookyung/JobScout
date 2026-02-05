@@ -434,7 +434,6 @@ def run_matching_pipeline(ctx: AppContext, stop_event: threading.Event, resume_c
         preliminary_matches = matcher.match_resume_two_stage(
             resume_data=resume_data if resume_data else {},
             preferences=preferences_data,
-            require_remote=matching_config.require_remote if hasattr(matching_config, 'require_remote') else None
         )
 
     step_elapsed = time.time() - step_start

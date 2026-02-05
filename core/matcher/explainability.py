@@ -16,7 +16,7 @@ Uses ResumeSectionEmbedding for coarse-grained section-level matching:
 from typing import List, Dict, Any, Optional, Tuple
 import logging
 
-from database.models import JobRequirementUnit, ResumeSectionEmbedding
+from database.models import JobRequirementUnit
 from database.repository import JobRepository
 
 logger = logging.getLogger(__name__)

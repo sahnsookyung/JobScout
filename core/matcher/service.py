@@ -124,7 +124,6 @@ class MatcherService:
         resume_data: Dict[str, Any],
         preferences: Optional[Dict[str, Any]] = None,
         tenant_id: Optional[Any] = None,
-        require_remote: Optional[bool] = None
     ) -> List[JobMatchPreliminary]:
         """
         Two-stage matching pipeline: retrieve candidates -> compute preliminaries.
@@ -136,7 +135,6 @@ class MatcherService:
             resume_data: Full resume data
             preferences: Optional user preferences for enhanced matching
             tenant_id: Optional tenant filter for Stage 1
-            require_remote: Optional remote-only filter for Stage 1
 
         Returns:
             List of preliminary matches for top-K candidates
