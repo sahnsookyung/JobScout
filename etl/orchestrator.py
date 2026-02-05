@@ -6,6 +6,7 @@ import os
 from database.repository import JobRepository
 from core.llm.interfaces import LLMProvider
 from core.utils import JobFingerprinter
+from pydantic import ValidationError
 from etl.schema_models import EXTRACTION_SCHEMA, JobExtraction
 from core.scorer.want_score import FACET_KEYS
 from database.models import generate_resume_fingerprint
@@ -78,7 +79,7 @@ class JobETLService:
             try:
                 job_extraction = JobExtraction.model_validate(extraction_result)
                 data = job_extraction.model_dump()
-            except Exception as e:
+            except ValidationError as e:
                 logger.error(f"Failed to validate job extraction: {e}")
                 data = extraction_result
         else:
@@ -242,8 +243,8 @@ class JobETLService:
                 resume_fingerprint=fingerprint,
                 extracted_data=resume.model_dump(),
                 total_experience_years=resume.claimed_total_years,
-                extraction_confidence=resume.extraction.confidence,
-                extraction_warnings=resume.extraction.warnings
+                extraction_confidence=resume.extraction.confidence if resume.extraction else None,
+                extraction_warnings=resume.extraction.warnings if resume.extraction else []
             )
             logger.info(f"Saved structured resume to database")
 
@@ -265,8 +266,9 @@ class JobETLService:
                 repo.save_resume_section_embeddings(fingerprint, sections)
                 logger.info(f"Saved {len(sections)} evidence unit embeddings")
 
-        units_with_years = [u for u in evidence_units if u.years_value is not None]
-        logger.info(f"Extracted years from {len(units_with_years)} evidence units")
+        if evidence_units:
+            units_with_years = [u for u in evidence_units if u.years_value is not None]
+            logger.info(f"Extracted years from {len(units_with_years)} evidence units")
 
     def unload_models(self):
         """Helper to unload models if the provider supports it."""

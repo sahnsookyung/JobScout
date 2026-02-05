@@ -24,8 +24,6 @@ from etl.schema_models import (
     RESUME_SCHEMA,
     ResumeSchema,
     Profile,
-    ExperienceItem,
-    SkillItem,
 )
 
 logger = logging.getLogger(__name__)
@@ -155,9 +153,16 @@ class ResumeProfiler:
         # Extract from skills
         for skill in profile.skills.all:
             if skill.name:
+                # Compute embedding text and clean whitespace
+                text = skill.to_embedding_text()
+                if not text or not text.strip():
+                    text = skill.name
+                else:
+                    text = text.strip()
+                
                 evidence_units.append(ResumeEvidenceUnit(
                     id=f"reu_{unit_id}",
-                    text=skill.to_embedding_text() or skill.name,
+                    text=text,
                     source_section="Skills",
                     tags={
                         'skill': skill.name,
@@ -261,7 +266,7 @@ class ResumeProfiler:
 
         # Summary section
         summary = profile.summary
-        if summary.text:
+        if summary and summary.text:
             sections_to_embed.append({
                 'section_type': 'summary',
                 'section_index': 0,

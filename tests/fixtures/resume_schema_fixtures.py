@@ -185,12 +185,17 @@ VALID_MINIMAL_RESUME = {
 # ============================================================================
 
 def make_invalid_resume(modifications: dict) -> dict:
-    """Helper to create invalid resume from valid base."""
+    """Helper to create invalid resume from valid base.
+    
+    Note: This performs a deep merge. For list fields like 'experience',
+    it will replace the entire list. To test individual items in a list,
+    use direct fixture definitions instead of this helper.
+    """
     invalid = copy.deepcopy(VALID_RESUME)
     
     def deep_update(d, u):
         for k, v in u.items():
-            if isinstance(v, dict) and k in d:
+            if isinstance(v, dict) and k in d and isinstance(d[k], dict):
                 deep_update(d[k], v)
             else:
                 d[k] = v
@@ -249,17 +254,28 @@ INVALID_MISSING_EXPERIENCE_FIELDS = make_invalid_resume({
 })
 
 
-# Invalid date precision (not in enum)
+# Invalid date precision (not in enum) - complete experience item with invalid precision
 INVALID_DATE_PRECISION = make_invalid_resume({
     "profile": {
         "experience": [
             {
+                "company": "Google",
+                "title": "Senior Engineer",
                 "start_date": {
                     "text": "2020-01",
                     "year": 2020,
                     "month": 1,
                     "precision": "day"  # Invalid - should be "unknown", "year", or "month"
-                }
+                },
+                "end_date": {
+                    "text": "2023-12",
+                    "year": 2023,
+                    "month": 12,
+                    "precision": "month"
+                },
+                "is_current": False,
+                "description": "Built distributed systems",
+                "tech_keywords": ["Python"]
             }
         ]
     }
@@ -282,14 +298,29 @@ INVALID_EXTRA_TOP_LEVEL = {
 }
 
 
-# Extra properties in nested object
+# Extra properties in nested object - complete experience item with extra field
 INVALID_EXTRA_IN_EXPERIENCE = make_invalid_resume({
     "profile": {
         "experience": [
             {
                 "company": "Google",
-                "title": "Engineer",
-                "extra_field": "not allowed"  # Extra property
+                "title": "Senior Engineer",
+                "start_date": {
+                    "text": "2020-01",
+                    "year": 2020,
+                    "month": 1,
+                    "precision": "month"
+                },
+                "end_date": {
+                    "text": "2023-12",
+                    "year": 2023,
+                    "month": 12,
+                    "precision": "month"
+                },
+                "is_current": False,
+                "description": "Built distributed systems",
+                "tech_keywords": ["Python"],
+                "extra_field": "not allowed"  # Extra property - this should trigger validation error
             }
         ]
     }
@@ -315,12 +346,28 @@ INVALID_WRONG_TYPE_PROJECTS = make_invalid_resume({
 })
 
 
-# Invalid type in tech_keywords (should be strings)
+# Invalid type in tech_keywords (should be strings) - complete experience item with invalid tech_keywords
 INVALID_TECH_KEYWORDS_TYPE = make_invalid_resume({
     "profile": {
         "experience": [
             {
-                "tech_keywords": ["Python", 123, "Java"]  # 123 is not a string
+                "company": "Google",
+                "title": "Senior Engineer",
+                "start_date": {
+                    "text": "2020-01",
+                    "year": 2020,
+                    "month": 1,
+                    "precision": "month"
+                },
+                "end_date": {
+                    "text": "2023-12",
+                    "year": 2023,
+                    "month": 12,
+                    "precision": "month"
+                },
+                "is_current": False,
+                "description": "Built distributed systems",
+                "tech_keywords": ["Python", 123, "Java"]  # 123 is not a string - should trigger validation error
             }
         ]
     }

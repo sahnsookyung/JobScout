@@ -202,11 +202,9 @@ class JobRequirement(BaseModel):
     )
     text: str = Field(description="The requirement text, cleaned and normalized")
     related_skills: List[str] = Field(
-        default_factory=list,
         description="Specific skills mentioned in this requirement"
     )
     proficiency: Optional[str] = Field(
-        default=None,
         description="Required proficiency level (basic, proficient, expert, unspecified)"
     )
 
@@ -232,45 +230,35 @@ class JobExtraction(BaseModel):
     )
     job_summary: str = Field(description="One-sentence summary of the role")
     seniority_level: Optional[str] = Field(
-        default=None,
         description="Inferred seniority (Intern, Junior, Mid-Level, Senior, Staff/Principal, Lead/Manager, Unspecified)"
     )
     remote_policy: Optional[str] = Field(
-        default=None,
         description="Remote work policy (On-site, Hybrid, Remote (Local), Remote (Global), Unspecified)"
     )
     visa_sponsorship_available: Optional[bool] = Field(
-        default=None,
         description="Whether visa sponsorship is offered"
     )
     min_years_experience: Optional[int] = Field(
-        default=None,
         description="Minimum years of experience required"
     )
     requires_degree: Optional[bool] = Field(
-        default=None,
         description="Whether a degree is a hard requirement"
     )
     security_clearance: Optional[bool] = Field(
-        default=None,
         description="Whether security clearance is required"
     )
-    salary_min: Optional[float] = Field(default=None, description="Minimum salary if mentioned")
-    salary_max: Optional[float] = Field(default=None, description="Maximum salary if mentioned")
+    salary_min: Optional[float] = Field(description="Minimum salary if mentioned")
+    salary_max: Optional[float] = Field(description="Maximum salary if mentioned")
     currency: Optional[str] = Field(
-        default=None,
         description="Currency code (USD, JPY, EUR, etc.)"
     )
     tech_stack: List[str] = Field(
-        default_factory=list,
         description="List of technologies, languages, and frameworks mentioned"
     )
     requirements: List[JobRequirement] = Field(
-        default_factory=list,
         description="Detailed requirements and responsibilities"
     )
     benefits: List[JobBenefit] = Field(
-        default_factory=list,
         description="Job benefits and perks"
     )
 

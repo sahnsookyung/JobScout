@@ -3,6 +3,7 @@ Tests for RESUME_SCHEMA validation using Pydantic models.
 
 Validates that the schema correctly accepts valid resumes and rejects invalid ones.
 """
+import copy
 import pytest
 from pydantic import ValidationError
 
@@ -71,17 +72,19 @@ class TestResumeSchemaValidation:
 
     def test_06_missing_summary_text_fails(self):
         """Missing summary.text field should fail validation."""
-        # Note: Since all fields are Optional (can be null), missing a field
-        # in the JSON schema sense is different from having it be None
-        # In Pydantic v2, if a field is Optional without a default, it must be present but can be None
-        # Our current implementation requires fields to be present, so this test passes
-        # but the error might be about a different missing field (like total_experience_years)
         with pytest.raises(ValidationError) as exc_info:
             ResumeSchema.model_validate(INVALID_MISSING_SUMMARY_TEXT)
         
-        # Should fail because summary is missing required fields
-        error_str = str(exc_info.value)
-        assert any(field in error_str for field in ["text", "total_experience_years"])
+        # Check that there is an error specifically for summary.text
+        errors = exc_info.value.errors()
+        text_error_found = False
+        for error in errors:
+            loc = error.get("loc", ())
+            if "text" in loc and "summary" in loc:
+                text_error_found = True
+                break
+        
+        assert text_error_found, f"Expected error for summary.text, got errors: {errors}"
 
     def test_07_missing_experience_fields_fails(self):
         """Missing required experience fields should fail validation."""
@@ -202,10 +205,8 @@ class TestExperienceItem:
 
     def test_partial_date_validation(self):
         """PartialDate should validate precision enum."""
-        from typing import Literal
-        
         # Valid precisions
-        valid_precisions: list[Literal["unknown", "year", "month"]] = ["unknown", "year", "month"]
+        valid_precisions = ["unknown", "year", "month"]
         for precision in valid_precisions:
             date = PartialDate(text=None, year=2020, month=1, precision=precision)
             assert date.precision == precision
@@ -263,13 +264,13 @@ class TestGeneratedSchema:
         assert "name" in schema
         assert schema["name"] == "resume_schema_v1.0"
         assert "strict" in schema
-        assert schema["strict"] == True
+        assert schema["strict"] is True
         assert "schema" in schema
 
     def test_schema_has_additional_properties_false(self):
         """Generated schema should have additionalProperties: false at root."""
         inner_schema = RESUME_SCHEMA["schema"]
-        assert inner_schema.get("additionalProperties") == False
+        assert inner_schema.get("additionalProperties") is False
 
     def test_schema_has_required_fields(self):
         """Generated schema should list required fields."""
@@ -289,7 +290,7 @@ class TestGeneratedSchema:
         profile = inner_schema["$defs"]["Profile"]
         
         # Profile should have additionalProperties: false
-        assert profile.get("additionalProperties") == False
+        assert profile.get("additionalProperties") is False
         
         # Profile should require summary and experience
         assert "summary" in profile["required"]
@@ -301,7 +302,6 @@ class TestEdgeCases:
 
     def test_confidence_range_validation(self):
         """Confidence should be between 0.0 and 1.0."""
-        import copy
         valid_resume = copy.deepcopy(VALID_RESUME)
         
         # Valid confidence values
@@ -318,7 +318,6 @@ class TestEdgeCases:
 
     def test_empty_arrays_valid(self):
         """Empty arrays should be valid for list fields."""
-        import copy
         resume_data = copy.deepcopy(VALID_RESUME)
         resume_data["profile"]["experience"] = []
         resume_data["profile"]["skills"]["groups"] = []
@@ -330,7 +329,6 @@ class TestEdgeCases:
 
     def test_nullable_fields_accept_null(self):
         """Fields marked as Optional should accept null."""
-        import copy
         resume_data = copy.deepcopy(VALID_RESUME)
         resume_data["profile"]["experience"][0]["company"] = None
         resume_data["profile"]["experience"][0]["title"] = None

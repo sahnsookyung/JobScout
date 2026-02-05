@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-Test Resume Models.
+Test Resume Models and Matcher Models.
 
-Tests the dataclasses in etl/resume/models.py.
+Tests the dataclasses in etl/resume/models.py and core/matcher/models.py:
+- ResumeEvidenceUnit from etl/resume/models.py
+- RequirementMatchResult from core/matcher/models.py  
+- JobMatchPreliminary from core/matcher/models.py
 """
 import unittest
 from etl.resume import ResumeEvidenceUnit
@@ -46,6 +49,7 @@ class TestResumeEvidenceUnit(unittest.TestCase):
         self.assertEqual(unit.id, "reu_002")
         self.assertEqual(unit.tags["role"], "Engineering Manager")
         self.assertEqual(unit.years_value, 3.0)
+        assert unit.embedding is not None
         self.assertEqual(len(unit.embedding), 1024)
 
 

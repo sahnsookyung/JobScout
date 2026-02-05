@@ -54,7 +54,7 @@ class TestResumeProfilerProfiling:
                 "warnings": []
             }
         }
-        mock.generate_embedding.return_value = [0.1, 0.2, 0.3] * 341
+        mock.generate_embedding.return_value = [0.1] * 1024
         return mock
     
     @pytest.fixture
@@ -230,7 +230,14 @@ class TestInMemoryEmbeddingStore:
         """Test clearing storage."""
         store = InMemoryEmbeddingStore()
         
-        store.save_resume_section_embeddings("resume-123", [{"section_type": "skills"}])
+        store.save_resume_section_embeddings("resume-123", [
+            {
+                "section_type": "skills",
+                "section_index": 0,
+                "embedding": [0.1] * 1024,
+                "source_text": "Python, Go"
+            }
+        ])
         store.clear()
         
         retrieved = store.get_resume_section_embeddings("resume-123")

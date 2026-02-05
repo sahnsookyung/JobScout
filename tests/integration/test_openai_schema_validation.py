@@ -193,6 +193,36 @@ class TestOpenAIStrictRequirements:
                     )
                 )
             
+            # Recurse into anyOf
+            if "anyOf" in schema:
+                for i, sub_schema in enumerate(schema["anyOf"]):
+                    errors.extend(
+                        self._check_all_fields_required(
+                            sub_schema,
+                            f"{path}.anyOf[{i}]"
+                        )
+                    )
+            
+            # Recurse into allOf
+            if "allOf" in schema:
+                for i, sub_schema in enumerate(schema["allOf"]):
+                    errors.extend(
+                        self._check_all_fields_required(
+                            sub_schema,
+                            f"{path}.allOf[{i}]"
+                        )
+                    )
+            
+            # Recurse into oneOf
+            if "oneOf" in schema:
+                for i, sub_schema in enumerate(schema["oneOf"]):
+                    errors.extend(
+                        self._check_all_fields_required(
+                            sub_schema,
+                            f"{path}.oneOf[{i}]"
+                        )
+                    )
+            
             # Recurse into $defs
             if "$defs" in schema:
                 for def_name, def_schema in schema["$defs"].items():
@@ -208,6 +238,38 @@ class TestOpenAIStrictRequirements:
     def test_resume_schema_all_fields_required(self):
         """All properties must be listed in required array for strict mode."""
         inner_schema = RESUME_SCHEMA["schema"]
+        errors = self._check_all_fields_required(inner_schema)
+        
+        if errors:
+            pytest.fail(f"Missing required fields:\n" + "\n".join(errors))
+
+    def test_job_extraction_schema_has_no_defaults(self):
+        """EXTRACTION_SCHEMA should have no default values."""
+        inner_schema = EXTRACTION_SCHEMA["schema"]
+        errors = self._check_no_default_values(inner_schema)
+        
+        if errors:
+            pytest.fail(f"Default values found:\n" + "\n".join(errors))
+
+    def test_job_extraction_schema_all_fields_required(self):
+        """All properties in EXTRACTION_SCHEMA must be listed in required array."""
+        inner_schema = EXTRACTION_SCHEMA["schema"]
+        errors = self._check_all_fields_required(inner_schema)
+        
+        if errors:
+            pytest.fail(f"Missing required fields:\n" + "\n".join(errors))
+
+    def test_facet_schema_has_no_defaults(self):
+        """FACET_EXTRACTION_SCHEMA_FOR_WANTS should have no default values."""
+        inner_schema = FACET_EXTRACTION_SCHEMA_FOR_WANTS["schema"]
+        errors = self._check_no_default_values(inner_schema)
+        
+        if errors:
+            pytest.fail(f"Default values found:\n" + "\n".join(errors))
+
+    def test_facet_schema_all_fields_required(self):
+        """All properties in FACET_EXTRACTION_SCHEMA_FOR_WANTS must be listed in required array."""
+        inner_schema = FACET_EXTRACTION_SCHEMA_FOR_WANTS["schema"]
         errors = self._check_all_fields_required(inner_schema)
         
         if errors:
@@ -336,12 +398,9 @@ class TestSchemaDocumentation:
                                 errors.extend(check_descriptions(prop_schema, f"{path}.{prop_name}"))
             return errors
         
-        # Note: We allow some fields to not have descriptions for now
-        # This test documents current state
+        # This test enforces that all fields have descriptions
         errors = check_descriptions(inner_schema)
-        # Just print warnings, don't fail
-        if errors:
-            print(f"\nFields without descriptions: {len(errors)}")
+        assert not errors, f"Fields without descriptions: {errors}"
 
 
 if __name__ == "__main__":

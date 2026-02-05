@@ -83,6 +83,7 @@ from database.models import Base, JobPost, JobRequirementUnit, JobMatch
 from database.repository import JobRepository
 from core.matcher import MatcherService
 from etl.resume import ResumeProfiler, ResumeEvidenceUnit
+from etl.schema_models import ResumeSchema
 from core.config_loader import MatcherConfig, ScorerConfig
 from core.llm.interfaces import LLMProvider
 from core.scorer import ScoringService, persistence
