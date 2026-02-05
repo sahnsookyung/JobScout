@@ -59,7 +59,6 @@ matching:
     enabled: true
     similarity_threshold: 0.5
     batch_size: 100
-    include_job_level_matching: true  # Also match at job summary level
   
   # Stage 2: Scorer Service (Rule-based Scoring)
   scorer:

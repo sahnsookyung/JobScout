@@ -146,6 +146,9 @@ class JobRepository:
     def mark_job_facets_extracted(self, job_post_id: Any) -> None:
         return self.job_post.mark_job_facets_extracted(job_post_id)
 
+    def get_resume_summary_embedding(self, resume_fingerprint: str) -> Optional[List[float]]:
+        return self.resume.get_resume_summary_embedding(resume_fingerprint)
+
     def save_structured_resume(
         self,
         resume_fingerprint: str,

@@ -11,8 +11,6 @@ into focused, single-responsibility modules:
 
 - models.py: Data structures (ScoredJobMatch)
 - coverage.py: Coverage calculations (required/preferred coverage)
-- scoring_modes.py: Discovery and strict mode scoring formulas
-- similarity.py: Multi-embedding similarity matching
 - penalties.py: Penalty calculations (location, seniority, compensation, experience)
 - persistence.py: Database operations (save_match_to_db)
 - service.py: ScoringService orchestrator

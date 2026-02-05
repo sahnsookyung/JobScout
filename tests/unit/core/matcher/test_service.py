@@ -10,7 +10,6 @@ from unittest.mock import Mock, patch, MagicMock
 
 from etl.resume import ResumeProfiler
 from core.scorer import ScoringService, ScoredJobMatch
-from core.scorer.similarity import calculate_requirement_similarity_with_resume_sections
 from database.models import (
     JobPost,
     JobRequirementUnit,
@@ -121,23 +120,26 @@ class TestMultiEmbeddingMatching:
     
     def test_02_requirement_section_similarity(self, sample_job_requirement, sample_resume_sections):
         """Test similarity calculation between requirement and resume sections."""
-        # Mock repository
-        repo = Mock(spec=JobRepository)
-        repo.db = Mock()
+        from core.matcher.explainability import calculate_requirement_similarity_with_resume_sections
+        from unittest.mock import Mock, MagicMock
         
-        # Create mock result rows
-        # Each row needs .ResumeSectionEmbedding and .distance attributes
-        mock_rows = []
+        # Create proper mock sections with cosine_distance method
+        mock_sections = []
         for s in sample_resume_sections:
             if s.section_type == 'experience':
-                row = Mock()
-                row.ResumeSectionEmbedding = s
-                row.distance = 0.1  # similarity = 0.9
-                mock_rows.append(row)
+                mock_section = Mock()
+                mock_section.section_type = s.section_type
+                mock_section.section_index = s.section_index
+                mock_section.source_text = s.source_text
+                mock_section.embedding = Mock()
+                mock_section.embedding.cosine_distance = Mock(return_value=0.1)  # similarity = 0.9
+                mock_sections.append(mock_section)
         
-        repo.db.execute.return_value.all.return_value = mock_rows
+        # Mock repository - need to mock the resume sub-repo
+        repo = Mock(spec=JobRepository)
+        repo.resume = Mock()
+        repo.resume.get_resume_section_embeddings = Mock(return_value=mock_sections)
         
-        # Use factory fixture
         job_req = sample_job_requirement()
         
         # Simulate similarity calculation
@@ -152,9 +154,9 @@ class TestMultiEmbeddingMatching:
         # Verify similarity score
         assert sim_score > 0
         assert 'similarity' in details
-        assert 'best_section_type' in details
+        assert 'best_section' in details
         # The mock returns experience sections
-        assert details['best_section_type'] == 'experience'
+        assert details['best_section'] == 'experience'
     
     def test_03_experience_mismatch_penalty(self, sample_job_requirement, sample_resume_sections):
         """Test penalty when experience section has less years than required."""

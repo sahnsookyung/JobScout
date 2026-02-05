@@ -614,6 +614,14 @@
             </div>
 
             <div class="filter-group">
+                <label>Remote Only</label>
+                <label class="toggle">
+                    <input type="checkbox" id="remoteOnly">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+
+            <div class="filter-group">
                 <label>Show Want Score</label>
                 <label class="toggle">
                     <input type="checkbox" id="showWantScore" checked>
@@ -729,6 +737,7 @@
 
         // Event listeners
         document.getElementById('status').addEventListener('change', loadMatches);
+        document.getElementById('remoteOnly').addEventListener('change', loadMatches);
         document.getElementById('showWantScore').addEventListener('change', function(e) {
             showWantScore = e.target.checked;
             renderMatches();
@@ -905,12 +914,17 @@
         
         async function loadMatches() {
             const status = document.getElementById('status').value;
+            const remoteOnly = document.getElementById('remoteOnly').checked;
 
             const container = document.getElementById('matches');
             container.innerHTML = '<div class="loading">Loading matches...</div>';
 
             try {
-                const response = await fetch('/api/matches?status=' + encodeURIComponent(status));
+                let url = '/api/matches?status=' + encodeURIComponent(status);
+                if (remoteOnly) {
+                    url += '&remote_only=true';
+                }
+                const response = await fetch(url);
                 if (!response.ok) {
                     const errorText = await response.text();
                     container.innerHTML = '<div class="error">HTTP ' + escapeHtml(response.status) + ': ' + escapeHtml(response.statusText) + '</div>';
@@ -1194,14 +1208,96 @@
                                 </ul>
                             </div>
                         ` : ''}
+                        
+                        <div id="explanationSection" style="margin-bottom: 20px; display: none;">
+                            <!-- Explanation content loaded via API -->
+                        </div>
                     </div>
                 `;
+                
+                // Fetch and display explanation
+                fetch('/api/matches/' + encodeURIComponent(matchId) + '/explanation')
+                    .then(response => {
+                        if (!response.ok) {
+                            console.log('Explanation request failed:', response.status);
+                            return null;
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (data && data.success && data.explanation) {
+                            renderExplanation(data.explanation);
+                        }
+                    })
+                    .catch(err => console.log('Explanation not available:', err));
                 
                 document.getElementById('modal').classList.add('active');
                 
             } catch (error) {
                 alert('Failed to load details: ' + error.message);
             }
+        }
+        
+        function renderExplanation(explanation) {
+            const section = document.getElementById('explanationSection');
+            if (!explanation || !explanation.section_summary) {
+                section.style.display = 'none';
+                return;
+            }
+            
+            // Section scores
+            let sectionHtml = `
+                <h4 style="margin-bottom: 10px;">📊 Match Breakdown by Resume Section</h4>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 20px;">
+            `;
+            
+            for (const [sectionType, data] of Object.entries(explanation.section_summary)) {
+                const rawScore = data.avg_similarity || 0;
+                const score = (rawScore * 100).toFixed(0);
+                const color = score >= 70 ? '#4caf50' : score >= 50 ? '#ff9800' : '#f44336';
+                sectionHtml += `
+                    <div style="padding: 12px; background: #f5f5f5; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 1.5em; font-weight: bold; color: ${color};">${score}%</div>
+                        <div style="font-size: 0.85em; text-transform: capitalize;">${escapeHtml(sectionType)}</div>
+                    </div>
+                `;
+            }
+            sectionHtml += '</div>';
+            
+            // Strengths
+            if (explanation.strengths && explanation.strengths.length > 0) {
+                sectionHtml += `
+                    <div style="margin-bottom: 15px; padding: 12px; background: #e8f5e9; border-radius: 8px;">
+                        <strong style="color: #2e7d32;">💪 Strengths</strong>
+                        <ul style="margin-top: 8px; margin-bottom: 0; padding-left: 20px;">
+                            ${explanation.strengths.map(s => `
+                                <li style="margin-bottom: 5px;">
+                                    <strong style="text-transform: capitalize;">${escapeHtml(s.section)}</strong>: ${(s.score * 100).toFixed(0)}% match
+                                </li>
+                            `).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+            
+            // Gaps
+            if (explanation.gaps && explanation.gaps.length > 0) {
+                sectionHtml += `
+                    <div style="margin-bottom: 15px; padding: 12px; background: #fff3e0; border-radius: 8px;">
+                        <strong style="color: #e65100;">⚠️ Areas to Improve</strong>
+                        <ul style="margin-top: 8px; margin-bottom: 0; padding-left: 20px;">
+                            ${explanation.gaps.map(g => `
+                                <li style="margin-bottom: 5px;">
+                                    <strong style="text-transform: capitalize;">${escapeHtml(g.section)}</strong>: ${(g.avg_score * 100).toFixed(0)}% avg - consider adding relevant content
+                                </li>
+                            `).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+            
+            section.innerHTML = sectionHtml;
+            section.style.display = 'block';
         }
         
         function closeModal() {

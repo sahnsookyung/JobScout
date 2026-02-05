@@ -73,6 +73,15 @@ class ResumeRepository(BaseRepository):
         resume_fingerprint: str,
         section_type: Optional[str] = None
     ) -> List[ResumeSectionEmbedding]:
+        """Get resume section embeddings for a fingerprint.
+
+        Args:
+            resume_fingerprint: The resume fingerprint
+            section_type: Optional filter for specific section type
+
+        Returns:
+            List of ResumeSectionEmbedding objects
+        """
         stmt = select(ResumeSectionEmbedding).where(
             ResumeSectionEmbedding.resume_fingerprint == resume_fingerprint
         )
@@ -120,6 +129,23 @@ class ResumeRepository(BaseRepository):
             ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint
         )
         return self.db.execute(stmt).scalars().all()
+
+    def get_resume_summary_embedding(
+        self,
+        resume_fingerprint: str
+    ) -> Optional[List[float]]:
+        """Get the summary section embedding for a resume.
+        
+        Args:
+            resume_fingerprint: The resume fingerprint
+            
+        Returns:
+            List of floats (embedding) or None if not found
+        """
+        sections = self.get_resume_section_embeddings(resume_fingerprint, section_type='summary')
+        if sections and sections[0].embedding:
+            return list(sections[0].embedding)
+        return None
 
     def get_structured_resume_by_fingerprint(
         self,

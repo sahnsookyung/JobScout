@@ -28,6 +28,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from fastapi import FastAPI, HTTPException, Query, Depends
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -83,28 +84,7 @@ app = FastAPI(
 
 class MatchSummary(BaseModel):
     """Summary of a job match."""
-    match_id: str
-    job_id: Optional[str]
-    title: str
-    company: str
-    location: Optional[str]
-    is_remote: Optional[bool]
-
-    # New: Explicit Fit/Want/Overall scores
-    fit_score: Optional[float] = Field(None, ge=0, le=100)
-    want_score: Optional[float] = Field(None, ge=0, le=100)
-    overall_score: float = Field(ge=0, le=100)
-
-    # Legacy fields for backward compatibility
-    base_score: float = Field(ge=0, le=100)
-    penalties: float = Field(ge=0)
-    required_coverage: float = Field(ge=0, le=1)
-    preferred_coverage: float = Field(ge=0, le=1)
-    match_type: str
-    created_at: Optional[str]
-    calculated_at: Optional[str]
-
-    class Config:
+    model_config = ConfigDict(
         json_schema_extra = {
             "example": {
                 "match_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -125,6 +105,28 @@ class MatchSummary(BaseModel):
                 "calculated_at": "2026-02-01T12:00:00"
             }
         }
+    )
+
+    match_id: str
+    job_id: Optional[str]
+    title: str
+    company: str
+    location: Optional[str]
+    is_remote: Optional[bool]
+
+    # New: Explicit Fit/Want/Overall scores
+    fit_score: Optional[float] = Field(None, ge=0, le=100)
+    want_score: Optional[float] = Field(None, ge=0, le=100)
+    overall_score: float = Field(ge=0, le=100)
+
+    # Legacy fields for backward compatibility
+    base_score: float = Field(ge=0, le=100)
+    penalties: float = Field(ge=0)
+    required_coverage: float = Field(ge=0, le=1)
+    preferred_coverage: float = Field(ge=0, le=1)
+    match_type: str
+    created_at: Optional[str]
+    calculated_at: Optional[str]
 
 
 class RequirementDetail(BaseModel):
@@ -316,6 +318,7 @@ def get_matches(
     status: str = Query(default="active", description="Match status: active, stale, or all"),
     min_fit: float = Query(default=None, ge=0, le=100, description="Minimum fit score filter"),
     top_k: int = Query(default=None, ge=1, le=500, description="Maximum results to return"),
+    remote_only: bool = Query(default=False, description="Filter to remote jobs only"),
     db: Session = Depends(get_db)
 ):
     """
@@ -329,11 +332,9 @@ def get_matches(
     Returns matches sorted by overall score (highest first).
     """
     try:
-        # Use policy defaults, allow override via query params
         effective_min_fit = min_fit if min_fit is not None else _current_policy.min_fit
         effective_top_k = top_k if top_k is not None else _current_policy.top_k
         
-        # Build query
         query = db.query(JobMatch)
         
         if status != "all":
@@ -342,6 +343,15 @@ def get_matches(
         matches = query.filter(
             (JobMatch.fit_score >= effective_min_fit) | (JobMatch.fit_score.is_(None))
         ).order_by(desc(JobMatch.overall_score)).limit(effective_top_k).all()
+        
+        if remote_only:
+            job_ids = [match.job_post_id for match in matches]
+            remote_jobs = db.query(JobPost).filter(
+                JobPost.id.in_(job_ids),
+                JobPost.is_remote == True
+            ).all() if job_ids else []
+            remote_job_ids = {job.id for job in remote_jobs}
+            matches = [m for m in matches if m.job_post_id in remote_job_ids]
         
         # Batch load all related JobPost records to avoid N+1 queries
         job_ids = [match.job_post_id for match in matches]
@@ -464,6 +474,54 @@ def get_match_details(match_id: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.exception("Error fetching match details")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/matches/{match_id}/explanation", tags=["matches"])
+def get_match_explanation(match_id: str, db: Session = Depends(get_db)):
+    """
+    Get explainability details for a specific match.
+    
+    Shows which resume sections matched which job requirements,
+    enabling explainable match scores and actionable feedback.
+    """
+    try:
+        from core.matcher.explainability import explain_match
+        
+        match = db.query(JobMatch).get(match_id)
+        if not match:
+            raise HTTPException(status_code=404, detail="Match not found")
+        
+        if not match.resume_fingerprint:
+            raise HTTPException(status_code=400, detail="Match has no resume fingerprint")
+        
+        job = db.query(JobPost).get(match.job_post_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        # Eager load requirements to avoid lazy loading issues
+        if not hasattr(job, 'requirements') or not job.requirements:
+            return {"success": True, "explanation": None, "message": "Job has no requirements"}
+        
+        from database.repository import JobRepository
+        repo = JobRepository(db)
+        
+        explanation = explain_match(
+            job_requirements=job.requirements,
+            resume_fingerprint=match.resume_fingerprint,
+            repo=repo
+        )
+        
+        return {
+            "success": True,
+            "match_id": match_id,
+            "explanation": explanation
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error fetching match explanation")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

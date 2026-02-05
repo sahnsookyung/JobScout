@@ -66,7 +66,6 @@ class MatcherConfig(BaseModel):
     enabled: bool = True
     similarity_threshold: float = 0.5  # Minimum similarity for a match
     batch_size: int = 100  # Number of jobs to process per batch
-    include_job_level_matching: bool = True  # Also match at job summary level
     
     # Preference weights (was hard-coded in matcher_service)
     preference_weights: PreferenceWeights = Field(default_factory=PreferenceWeights)

@@ -399,8 +399,21 @@ def run_matching_pipeline(ctx: AppContext, stop_event: threading.Event, resume_c
             logger.info(f"Loaded preferences with hash: {preferences_file_hash[:16]}...")
 
     with job_uow() as repo:
-        jobs_to_match = matcher.get_jobs_for_matching(limit=matching_config.matcher.batch_size)
-        logger.info(f"Found {len(jobs_to_match)} jobs ready for matching")
+        # Stage 1: Get top jobs by summary embedding similarity
+        logger.info("Finding relevant jobs using resume summary embedding...")
+        
+        resume_embedding = repo.get_resume_summary_embedding(resume_fingerprint)
+        if resume_embedding:
+            jobs_to_match = repo.get_top_jobs_by_summary_embedding(
+                resume_embedding=resume_embedding,
+                limit=matching_config.matcher.batch_size
+            )
+            jobs_to_match = jobs_to_match or []
+            logger.info(f"Found {len(jobs_to_match)} jobs via vector similarity")
+        else:
+            # Fallback: Get all embedded jobs if no summary embedding
+            jobs_to_match = repo.get_jobs_for_matching(limit=matching_config.matcher.batch_size)
+            logger.warning(f"No summary embedding found, using fallback: {len(jobs_to_match)} jobs")
 
         if matching_config.invalidate_on_job_change:
             invalidated_total = 0

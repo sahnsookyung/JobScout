@@ -149,7 +149,18 @@ class MatcherService:
 
         resume_fingerprint = generate_resume_fingerprint(resume_data)
 
-        candidate_jobs = self.repo.get_jobs_for_matching(limit=100)
+        # Stage 1: Get top jobs by summary embedding similarity
+        resume_embedding = self.repo.get_resume_summary_embedding(resume_fingerprint)
+        if resume_embedding:
+            candidate_jobs = self.repo.get_top_jobs_by_summary_embedding(
+                resume_embedding=resume_embedding,
+                limit=self.config.batch_size
+            )
+            logger.debug(f"Stage 1: Retrieved {len(candidate_jobs)} candidates via vector similarity")
+        else:
+            # Fallback: Get all embedded jobs if no summary embedding
+            candidate_jobs = self.repo.get_jobs_for_matching(limit=self.config.batch_size)
+            logger.warning(f"Stage 1: No summary embedding, using fallback ({len(candidate_jobs)} jobs)")
 
         if not candidate_jobs:
             logger.warning("No matching candidates found in Stage 1")
@@ -174,13 +185,9 @@ class MatcherService:
     ) -> List[JobPost]:
         """
         Fetch jobs that are ready for matching.
-
-        Jobs must have been extracted (have requirements) and embedded.
-
-        Args:
-            limit: Maximum number of jobs to return
-
-        Returns:
-            List of JobPost objects ready for matching
+        
+        TODO: This method is deprecated. Use get_top_jobs_by_summary_embedding() instead
+        which uses vector similarity for Stage 1 filtering.
         """
+        # TODO: Use get_top_jobs_by_summary_embedding() with resume embedding
         return self.repo.get_jobs_for_matching(limit=limit)
