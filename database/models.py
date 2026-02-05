@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional
 
 from sqlalchemy import (
     Column, Integer, String, Boolean, Numeric, Text, ForeignKey, TIMESTAMP,
-    Date, func, UniqueConstraint, Index, DateTime, Float
+    Date, func, UniqueConstraint, Index
 )
 from sqlalchemy.sql import text as sql_text
 from sqlalchemy.orm import relationship, declarative_base

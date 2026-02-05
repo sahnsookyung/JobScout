@@ -547,43 +547,6 @@ class NotificationChannelFactory:
             logger.error(f"Failed to load custom channel from module {module_path}: {e}")
     
     @classmethod
-    def load_channels_from_config(cls, custom_channels: list):
-        """
-        Load custom channels from configuration.
-        
-        Args:
-            custom_channels: List of dicts with 'name', 'module', 'class' keys
-        """
-        for channel_config in custom_channels:
-            try:
-                name = channel_config.get('name')
-                module_path = channel_config.get('module')
-                class_name = channel_config.get('class')
-                
-                if not all([name, module_path, class_name]):
-                    logger.warning(f"Invalid custom channel config: {channel_config}")
-                    continue
-                
-                # Import the module
-                import importlib
-                module = importlib.import_module(module_path)
-                
-                # Get the class
-                channel_class = getattr(module, class_name)
-                
-                # Validate it's a proper channel
-                if not issubclass(channel_class, NotificationChannel):
-                    logger.warning(f"Class {class_name} does not extend NotificationChannel")
-                    continue
-                
-                # Register with the specified name
-                cls._channels[name.lower()] = channel_class
-                logger.info(f"Loaded custom channel '{name}' from {module_path}.{class_name}")
-                
-            except Exception as e:
-                logger.error(f"Failed to load custom channel from config: {e}")
-    
-    @classmethod
     def get_channel(cls, channel_type: str) -> NotificationChannel:
         """
         Get a notification channel instance by type.
@@ -630,17 +593,3 @@ class NotificationChannelFactory:
         """List all available channel types."""
         cls._load_custom_channels()
         return list(cls._channels.keys())
-    
-    @classmethod
-    def get_configured_channels(cls) -> list:
-        """List channels that are properly configured."""
-        cls._load_custom_channels()
-        configured = []
-        for channel_type in cls._channels.keys():
-            try:
-                channel = cls.get_channel(channel_type)
-                if channel.validate_config():
-                    configured.append(channel_type)
-            except Exception as e:
-                logger.debug(f"Channel {channel_type} not properly configured: {e}")
-        return configured

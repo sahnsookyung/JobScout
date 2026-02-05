@@ -359,44 +359,6 @@ class NotificationTrackerService:
         if commit:
             self.repo.db.commit()
         return tracker
-    
-    def get_notification_history(
-        self,
-        user_id: str,
-        limit: int = 50,
-        event_type: Optional[str] = None
-    ) -> list:
-        """Get notification history for a user."""
-        
-        stmt = select(NotificationTracker).where(
-            NotificationTracker.user_id == user_id
-        )
-        
-        if event_type:
-            stmt = stmt.where(NotificationTracker.event_type == event_type)
-        
-        stmt = stmt.order_by(desc(NotificationTracker.last_sent_at)).limit(limit)
-        
-        return self.repo.db.execute(stmt).scalars().all()
-    
-    def clear_old_notifications(self, days: int = 30) -> int:
-        """Clear notification history older than specified days."""
-        
-        if days < 1:
-            raise ValueError("days must be >= 1")
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        
-        stmt = delete(NotificationTracker).where(
-            NotificationTracker.last_sent_at < cutoff
-        )
-        
-        result = self.repo.db.execute(stmt)
-        self.repo.db.commit()
-        
-        deleted_count = result.rowcount
-        logger.info(f"Cleared {deleted_count} old notification records")
-        
-        return deleted_count
 
 
 # Convenience function for quick dedup check

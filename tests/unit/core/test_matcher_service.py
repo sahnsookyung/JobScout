@@ -125,9 +125,9 @@ scrapers: []
         print(f"  ✓ Mock matcher initialized successfully")
         print(f"  ✓ Similarity threshold: {self.matcher.similarity_threshold}")
 
-    def test_03_mock_match_resume_to_jobs(self):
-        """Test MockMatcherService match_resume_to_jobs."""
-        print("\n🔍 UNIT Test 3: Mock Job Matching")
+    def test_03_mock_match_resume_two_stage(self):
+        """Test MockMatcherService match_resume_two_stage."""
+        print("\n🔍 UNIT Test 3: Mock Two-Stage Job Matching")
 
         # Add some mock jobs to the repository
         from database.models import JobPost
@@ -138,14 +138,14 @@ scrapers: []
         mock_job.title = "Software Engineer"
         self.matcher.repo.jobs["test-job-1"] = mock_job
 
-        # Match resume to jobs
-        matches = self.matcher.match_resume_to_jobs(self.resume_data, limit=10)
+        # Run two-stage matching
+        matches = self.matcher.match_resume_two_stage(self.resume_data)
 
         # Should return mock matches
         self.assertIsInstance(matches, list)
 
         print(f"  ✓ Found {len(matches)} mock matches")
-        print(f"  ✓ Mock matching works correctly")
+        print(f"  ✓ Two-stage matching works correctly")
 
     def test_04_resume_fingerprint_generation(self):
         """Test resume fingerprint generation."""

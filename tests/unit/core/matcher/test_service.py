@@ -197,7 +197,7 @@ class TestMultiEmbeddingMatching:
         config.min_salary = None
         config.wants_remote = False
         
-        _, details = penalties.calculate_penalties(
+        _, details = penalties.calculate_fit_penalties(
             job=job,
             matched_requirements=[req_match],
             missing_requirements=[],

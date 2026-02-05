@@ -35,27 +35,3 @@ def calculate_coverage(
     preferred_coverage = preferred_covered / preferred_total if preferred_total > 0 else 0.0
 
     return required_coverage, preferred_coverage
-
-
-def calculate_base_score(
-    required_coverage: float,
-    preferred_coverage: float,
-    config: ScorerConfig
-) -> float:
-    """
-    Calculate base score before penalties and preferences boost.
-
-    Formula: 100 * (w_req * RequiredCoverage + w_pref * PreferredCoverage)
-
-    Args:
-        required_coverage: Fraction of required requirements covered (0.0-1.0)
-        preferred_coverage: Fraction of preferred requirements covered (0.0-1.0)
-        config: ScorerConfig with weight settings
-
-    Returns:
-        Base score (0.0-100.0)
-    """
-    return 100 * (
-        config.weight_required * required_coverage +
-        config.weight_preferred * preferred_coverage
-    )

@@ -359,7 +359,7 @@ JobScout
         
         Args:
             user_id: The user ID to look up preferences for
-            channel: The notification channel type (email, discord, telegram, slack)
+            channel: The notification channel type (email, discord, telegram)
             
         Returns:
             The recipient address/URL/ID for the specified channel
@@ -367,17 +367,12 @@ JobScout
         Raises:
             ValueError: If the channel type is not supported
         """
-        # In production, fetch from user preferences using user_id
-        # For now, use environment variables or defaults
-        
         if channel == 'email':
             return os.environ.get('NOTIFICATION_EMAIL', 'user@example.com')
         elif channel == 'discord':
             return os.environ.get('DISCORD_WEBHOOK_URL', '')
         elif channel == 'telegram':
             return os.environ.get('TELEGRAM_CHAT_ID', '')
-        elif channel == 'slack':
-            return os.environ.get('SLACK_WEBHOOK_URL', '')
         else:
             raise ValueError(f"Unsupported channel type: {channel}")
 

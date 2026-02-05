@@ -4,8 +4,6 @@ Penalty Calculations - Calculate penalties for various mismatches.
 
 Penalty functions:
 - calculate_fit_penalties: Capability-related penalties (missing skills, seniority, compensation, experience)
-- calculate_want_penalties: Preference-related penalties (currently unused - structured prefs are display-time filters)
-- calculate_penalties: Legacy function for backward compatibility
 
 NOTE: This module contains pure calculation logic. DB access should happen in the calling layer
 and pass pre-fetched data via parameters.
@@ -202,45 +200,5 @@ def calculate_fit_penalties(
                 })
         except (ValueError, TypeError):
             pass
-
-    return penalties, penalty_details
-
-
-def calculate_penalties(
-    job: JobPost,
-    matched_requirements: List[RequirementMatchResult],
-    missing_requirements: List[RequirementMatchResult],
-    config: ScorerConfig,
-    candidate_total_years: Optional[float] = None,
-    experience_sections: Optional[List[Dict[str, Any]]] = None
-) -> Tuple[float, List[Dict[str, Any]]]:
-    """
-    Calculate total penalties from capability mismatches.
-    
-    Args:
-        job: Job post being scored
-        matched_requirements: List of matched requirements
-        missing_requirements: List of missing requirements
-        config: ScorerConfig with penalty settings
-        candidate_total_years: Pre-fetched total years of experience
-        experience_sections: Pre-fetched experience sections (list of dicts)
-    """
-    penalties, penalty_details = calculate_fit_penalties(
-        job=job,
-        matched_requirements=matched_requirements,
-        missing_requirements=missing_requirements,
-        config=config,
-        candidate_total_years=candidate_total_years,
-        experience_sections=experience_sections
-    )
-
-    if config.wants_remote and not job.is_remote:
-        penalties += config.penalty_location_mismatch
-        penalty_details.append({
-            'type': 'location_mismatch',
-            'amount': config.penalty_location_mismatch,
-            'reason': "Job is not remote (user preference: remote)",
-            'details': f"Job location: {job.location_text}, remote={job.is_remote}"
-        })
 
     return penalties, penalty_details

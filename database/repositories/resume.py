@@ -143,7 +143,7 @@ class ResumeRepository(BaseRepository):
             List of floats (embedding) or None if not found
         """
         sections = self.get_resume_section_embeddings(resume_fingerprint, section_type='summary')
-        if sections and sections[0].embedding:
+        if sections and len(sections) > 0 and sections[0].embedding is not None:
             return list(sections[0].embedding)
         return None
 

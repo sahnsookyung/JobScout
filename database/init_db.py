@@ -1,5 +1,4 @@
 import logging
-import time
 from sqlalchemy import text
 from tenacity import retry, stop_after_attempt, wait_fixed
 from database.database import engine

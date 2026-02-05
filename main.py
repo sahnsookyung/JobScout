@@ -431,11 +431,10 @@ def run_matching_pipeline(ctx: AppContext, stop_event: threading.Event, resume_c
             if invalidated_total > 0:
                 logger.info(f"Invalidated {invalidated_total} stale matches for job updates")
 
-        preliminary_matches = matcher.match_resume_to_jobs(
-            evidence_units=evidence_units,
-            jobs=jobs_to_match,
+        preliminary_matches = matcher.match_resume_two_stage(
             resume_data=resume_data if resume_data else {},
-            preferences=preferences_data
+            preferences=preferences_data,
+            require_remote=matching_config.require_remote if hasattr(matching_config, 'require_remote') else None
         )
 
     step_elapsed = time.time() - step_start

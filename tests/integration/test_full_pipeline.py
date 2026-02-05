@@ -95,8 +95,17 @@ class MockAIService(LLMProvider):
     """Mock AI service that implements LLMProvider interface."""
 
     def extract_structured_data(self, text: str, schema: Dict) -> Dict[str, Any]:
-        """Mock structured data extraction."""
-        return {}
+        """Mock structured data extraction - returns valid data for both jobs and resumes."""
+        import json
+        try:
+            data = json.loads(text)
+        except:
+            return {"profile": {}, "extraction": {"confidence": 0.5, "warnings": []}}
+        
+        if "profile" in data:
+            return data
+        else:
+            return {}
 
     def generate_embedding(self, text: str) -> List[float]:
         """Generate a random embedding for testing."""
@@ -182,14 +191,14 @@ class TestFullPipelineIntegration(unittest.TestCase):
         # ETL Service (repo passed per-operation in UoW)
         cls.etl_service = JobETLService(ai_service=cls.mock_ai)
 
-        # Resume Profiler
-        cls.resume_profiler = ResumeProfiler(ai_service=cls.mock_ai)
+        # Resume Profiler - with store to save embeddings
+        from etl.resume.embedding_store import JobRepositoryAdapter
+        embedding_store = JobRepositoryAdapter(cls.repo)
+        cls.resume_profiler = ResumeProfiler(ai_service=cls.mock_ai, store=embedding_store)
 
         # Matching Service
         cls.matcher_config = MatcherConfig(
-            similarity_threshold=0.5,
-            top_k_requirements=3,
-            include_job_level_matching=True
+            similarity_threshold=0.5
         )
         cls.matcher = MatcherService(cls.repo, cls.resume_profiler, cls.matcher_config)
         
@@ -382,6 +391,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
                 first_seen_at=datetime.now(),
                 last_seen_at=datetime.now(),
                 status="active",
+                is_embedded=True,
                 summary_embedding=np.random.randn(1024),
                 raw_payload={
                     "source_site": "test-pipeline",
@@ -444,21 +454,15 @@ class TestFullPipelineIntegration(unittest.TestCase):
         """Step 3: Run matching service with real embeddings."""
         print("\n[Step 3] Matcher Service...")
         
-        # Get test jobs
-        jobs = self.session.query(JobPost).filter(
-            JobPost.canonical_fingerprint.like("test-pipeline-%")
-        ).all()
-
-        # Extract evidence if not done
-        if not hasattr(type(self), 'test_evidence'):
-            from etl.schema_models import ResumeSchema
-            resume = ResumeSchema.model_validate(self.resume_data)
-            type(self).test_evidence = self.resume_profiler.extract_resume_evidence(resume.profile)
+        # Profile resume to save embeddings (required for two-stage matching)
+        print("  Processing resume to create embeddings...")
+        profile, evidence_units, _ = self.resume_profiler.profile_resume(self.resume_data)
         
-        # Run matching
-        preliminary_matches = self.matcher.match_resume_to_jobs(
-            evidence_units=self.test_evidence,
-            jobs=jobs,
+        self.assertIsNotNone(profile, "Resume profiling should return a profile")
+        print(f"  ✓ Resume profiled successfully")
+        
+        # Run matching using two-stage pipeline
+        preliminary_matches = self.matcher.match_resume_two_stage(
             resume_data=self.resume_data
         )
         
