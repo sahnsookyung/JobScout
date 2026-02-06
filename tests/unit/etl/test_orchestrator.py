@@ -42,13 +42,16 @@ class TestETLRefactor(unittest.TestCase):
         
         service.client.chat.completions.create.return_value = mock_response
 
-        # Run extraction
-        result = service.extract_structured_data("Sample description", {"properties": {}})
+        # Run extraction with valid JSON schema
+        result = service.extract_structured_data(
+            "Sample description",
+            {"type": "object", "properties": {}}
+        )
 
         # Verify structural fields
         self.assertEqual(result['min_years_experience'], 5)
         self.assertEqual(result['requires_degree'], True)
-        self.assertEqual(result['thought_process'], "Analysis here")
+        self.assertEqual(result['thought_process'], 'Analysis here')
         
         # Verify call arguments
         call_kwargs = service.client.chat.completions.create.call_args[1]

@@ -143,8 +143,25 @@ class JobRepository:
     def get_job_facet_embeddings(self, job_post_id: Any) -> dict:
         return self.job_post.get_job_facet_embeddings(job_post_id)
 
-    def mark_job_facets_extracted(self, job_post_id: Any) -> None:
-        return self.job_post.mark_job_facets_extracted(job_post_id)
+    def mark_job_facets_extracted(self, job_post_id: Any, content_hash: str = None) -> None:
+        return self.job_post.mark_job_facets_extracted(job_post_id, content_hash)
+
+    def delete_all_facet_embeddings_for_job(self, job_post_id: Any) -> None:
+        return self.job_post.delete_all_facet_embeddings_for_job(job_post_id)
+
+    def get_and_claim_jobs_for_facet_extraction(
+        self,
+        limit: int = 100,
+        worker_id: str = "default",
+        claim_timeout_minutes: int = 30,
+        max_retries: int = 5
+    ) -> List[JobPost]:
+        return self.job_post.get_and_claim_jobs_for_facet_extraction(
+            limit, worker_id, claim_timeout_minutes, max_retries
+        )
+
+    def mark_job_facets_failed(self, job_post_id: Any, error: str = None) -> None:
+        return self.job_post.mark_job_facets_failed(job_post_id, error)
 
     def get_resume_summary_embedding(self, resume_fingerprint: str) -> Optional[List[float]]:
         return self.resume.get_resume_summary_embedding(resume_fingerprint)

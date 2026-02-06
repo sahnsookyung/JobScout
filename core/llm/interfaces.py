@@ -13,9 +13,13 @@ class LLMProvider(ABC):
     """
     
     @abstractmethod
-    def extract_structured_data(self, text: str, schema: Dict) -> Dict[str, Any]:
+    def extract_structured_data(self, text: str, schema_spec: Dict) -> Dict[str, Any]:
         """
         Extract structured JSON data from text adhering to a schema.
+
+        Args:
+            text: Text to extract from
+            schema_spec: Either a wrapped spec {'name', 'strict', 'schema'} or raw JSON schema
         """
         pass
 

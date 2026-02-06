@@ -45,6 +45,14 @@ class JobPost(Base):
     is_extracted = Column(Boolean, nullable=False, default=False)
     is_embedded = Column(Boolean, nullable=False, default=False)
 
+    # Facet Extraction State
+    facet_status = Column(Text, default='pending')  # pending|in_progress|done|failed|quarantined
+    facet_claimed_by = Column(Text)
+    facet_claimed_at = Column(TIMESTAMP(timezone=True))
+    facet_extraction_hash = Column(Text)
+    facet_retry_count = Column(Integer, default=0)
+    facet_last_error = Column(Text)
+
     # === Structural Fields (Metadata) ===
     job_type = Column(Text)
     job_level = Column(Text)
@@ -427,7 +435,7 @@ class StructuredResume(Base):
     extraction_warnings = Column(JSONB, default=[])  # List of warning messages
     
     # Timestamps
-    extracted_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"), onupdate=sql_text("timezone('UTC', now())"))
 
     __table_args__ = (

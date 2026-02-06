@@ -309,3 +309,11 @@ FACET_EXTRACTION_SCHEMA_FOR_WANTS = {
     "strict": True,
     "schema": FacetExtraction.model_json_schema()
 }
+
+
+# Convenience aliases for clarity (optional, for gradual migration)
+EXTRACTION_SCHEMA_SPEC = EXTRACTION_SCHEMA
+EXTRACTION_JSON_SCHEMA = EXTRACTION_SCHEMA["schema"]
+
+FACET_EXTRACTION_SCHEMA_SPEC = FACET_EXTRACTION_SCHEMA_FOR_WANTS
+FACET_EXTRACTION_JSON_SCHEMA = FACET_EXTRACTION_SCHEMA_FOR_WANTS["schema"]

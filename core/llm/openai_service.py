@@ -3,7 +3,7 @@ OpenAI Service - LLM implementation using OpenAI API.
 
 Provides structured data extraction and embedding generation.
 """
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 import json
 import logging
 import copy
@@ -12,6 +12,21 @@ from core.llm.interfaces import LLMProvider
 from etl.schema_models import FACET_EXTRACTION_SCHEMA_FOR_WANTS
 
 logger = logging.getLogger(__name__)
+
+
+def _unwrap_schema_spec(spec: Dict[str, Any]) -> Tuple[str, bool, Dict[str, Any]]:
+    """Unwrap a schema spec to extract name, strict flag, and raw JSON schema.
+
+    Args:
+        spec: Either a wrapped spec {'name': str, 'strict': bool, 'schema': {...}}
+              or a raw JSON schema dict
+
+    Returns:
+        Tuple of (name, strict, raw_schema)
+    """
+    if isinstance(spec, dict) and "schema" in spec and "name" in spec:
+        return spec.get("name", "extraction_response"), bool(spec.get("strict", False)), spec["schema"]
+    return "extraction_response", False, spec
 
 
 class OpenAIService(LLMProvider):
@@ -40,58 +55,48 @@ class OpenAIService(LLMProvider):
         self.embedding_model = self.model_config.get('embedding_model', 'qwen3-embedding:4b')
         self.embedding_dimensions = self.model_config.get('embedding_dimensions', 1024)
 
-    def extract_structured_data(self, text: str, base_schema: Dict) -> Dict[str, Any]:
-        """
-        Extracts structured data using the OpenAI JSON Schema mode.
-        
-        Injects a 'thought_process' field to encourage Chain-of-thought reasoning.
-        """
-        try:
-            runtime_schema = copy.deepcopy(base_schema)
-            
-            runtime_schema["properties"]["thought_process"] = {
-                "type": "string",
-                "description": "Step-by-step reasoning. Identify the tech stack, hard requirements vs nice-to-haves, and any ambiguities found in the text."
-            }
-            
-            if "required" not in runtime_schema:
-                runtime_schema["required"] = []
-            if "thought_process" not in runtime_schema["required"]:
-                runtime_schema["required"].insert(0, "thought_process")
-            
-            messages = [
-                {"role": "system", "content": "You are a helpful assistant that extracts structured data from job descriptions."},
-                {"role": "user", "content": f"Analyze the job description below. First, write your reasoning in the 'thought_process' field. Then, extract the job requirements into the requested JSON format.\n\nDescription:\n{text}"}
-            ]
-            
-            response = self.client.chat.completions.create(
-                model=self.extraction_model,
-                messages=messages,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "extraction_response",
-                        "schema": runtime_schema,
-                        "strict": False
-                    }
-                }
-            )
-            
-            content = response.choices[0].message.content
-            data = json.loads(content)
-            
-            thought_process = data.get('thought_process', 'No reasoning provided.')
-            logger.info("=" * 60)
-            logger.info(f"MODEL THINKING ({self.extraction_model}):")
-            logger.info("-" * 60)
-            logger.info(thought_process)
-            logger.info("-" * 60)
-            
-            return data
+    def extract_structured_data(self, text: str, schema_spec: Dict) -> Dict[str, Any]:
+        """Extract structured data using JSON Schema mode.
 
-        except Exception as e:
-            logger.error(f"LLM extraction failed: {e}")
-            raise
+        Args:
+            text: Text to extract from
+            schema_spec: Either a wrapped spec {'name', 'strict', 'schema'} or raw JSON schema
+        """
+        name, strict, raw_schema = _unwrap_schema_spec(schema_spec)
+        runtime_schema = copy.deepcopy(raw_schema)
+
+        if runtime_schema.get("type") != "object" or "properties" not in runtime_schema:
+            raise ValueError(f"Not a valid JSON Schema object. Top-level keys: {list(runtime_schema.keys())}")
+
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant that extracts structured data from job descriptions."},
+            {"role": "user", "content": f"Extract the data into the requested JSON format.\n\nDescription:\n{text}"},
+        ]
+
+        response = self.client.chat.completions.create(
+            model=self.extraction_model,
+            messages=messages,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": name,
+                    "schema": runtime_schema,
+                    "strict": strict,
+                },
+            },
+        )
+
+        content = response.choices[0].message.content
+        data = json.loads(content)
+
+        thought_process = data.get('thought_process', 'No reasoning provided.')
+        logger.info("=" * 60)
+        logger.info(f"MODEL THINKING ({self.extraction_model}):")
+        logger.info("-" * 60)
+        logger.info(thought_process)
+        logger.info("-" * 60)
+
+        return data
 
     def generate_embedding(self, text: str) -> List[float]:
         """Generate embedding vector for text."""
@@ -107,9 +112,8 @@ class OpenAIService(LLMProvider):
             raise
     
     def extract_job_facets(self, text: str) -> Dict[str, str]:
-        """
-        Extract per-facet text from job description using FACET_EXTRACTION_SCHEMA_FOR_WANTS.
-        
+        """Extract per-facet text from job description using FACET_EXTRACTION_SCHEMA_FOR_WANTS.
+
         Returns a dictionary with keys:
         - remote_flexibility
         - compensation
@@ -119,6 +123,11 @@ class OpenAIService(LLMProvider):
         - tech_stack
         - visa_sponsorship
         """
+        name, strict, raw_schema = _unwrap_schema_spec(FACET_EXTRACTION_SCHEMA_FOR_WANTS)
+
+        if raw_schema.get("type") != "object" or "properties" not in raw_schema:
+            raise ValueError(f"Not a valid JSON Schema object. Top-level keys: {list(raw_schema.keys())}")
+
         try:
             response = self.client.chat.completions.create(
                 model=self.extraction_model,
@@ -129,20 +138,20 @@ class OpenAIService(LLMProvider):
                 response_format={
                     "type": "json_schema",
                     "json_schema": {
-                        "name": "facet_extraction",
-                        "schema": FACET_EXTRACTION_SCHEMA_FOR_WANTS,
-                        "strict": False
+                        "name": name,
+                        "schema": raw_schema,
+                        "strict": strict,
                     }
                 }
             )
-            
+
             content = response.choices[0].message.content
             data = json.loads(content)
-            
+
             logger.debug(f"Extracted facets: {list(data.keys())}")
-            
+
             return data
-        
+
         except Exception as e:
             logger.error(f"Facet extraction failed: {e}")
             raise

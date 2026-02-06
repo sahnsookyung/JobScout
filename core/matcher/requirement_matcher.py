@@ -97,7 +97,7 @@ class RequirementMatcher:
                 text=best_row.source_text,
                 source_section=best_row.source_section or '',
                 tags=best_row.tags or {},
-                embedding=list(best_row.embedding) if best_row.embedding else None,
+                embedding=list(best_row.embedding) if best_row.embedding is not None else None,
                 years_value=best_row.years_value,
                 years_context=best_row.years_context,
                 is_total_years_claim=best_row.is_total_years_claim or False,

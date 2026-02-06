@@ -3,9 +3,12 @@ import json
 import hashlib
 import re
 from typing import List, Optional, Dict, Any, Tuple
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, text, update
+from sqlalchemy import and_, or_
+
+from sqlalchemy.dialects.postgresql import insert
 
 from database.models import (
     JobPost, JobPostSource,
@@ -317,27 +320,27 @@ class JobPostRepository(BaseRepository):
         embedding: List[float],
         content_hash: str
     ) -> JobFacetEmbedding:
-        existing_stmt = select(JobFacetEmbedding).where(
-            JobFacetEmbedding.job_post_id == job_post_id,
-            JobFacetEmbedding.facet_key == facet_key
+        stmt = insert(JobFacetEmbedding).values(
+            job_post_id=job_post_id,
+            facet_key=facet_key,
+            facet_text=facet_text,
+            embedding=embedding,
+            content_hash=content_hash
+        ).on_conflict_do_update(
+            index_elements=['job_post_id', 'facet_key'],
+            set_={
+                'facet_text': facet_text,
+                'embedding': embedding,
+                'content_hash': content_hash
+            }
         )
-        existing = self.db.execute(existing_stmt).scalar_one_or_none()
-
-        if existing:
-            existing.embedding = embedding
-            existing.facet_text = facet_text
-            existing.content_hash = content_hash
-            return existing
-        else:
-            facet_emb = JobFacetEmbedding(
-                job_post_id=job_post_id,
-                facet_key=facet_key,
-                facet_text=facet_text,
-                embedding=embedding,
-                content_hash=content_hash
+        self.db.execute(stmt)
+        return self.db.execute(
+            select(JobFacetEmbedding).where(
+                JobFacetEmbedding.job_post_id == job_post_id,
+                JobFacetEmbedding.facet_key == facet_key
             )
-            self.db.add(facet_emb)
-            return facet_emb
+        ).scalar_one_or_none()
 
     def get_job_facet_embeddings(self, job_post_id: Any) -> Dict[str, List[float]]:
         stmt = select(JobFacetEmbedding).where(
@@ -346,5 +349,97 @@ class JobPostRepository(BaseRepository):
         results = self.db.execute(stmt).scalars().all()
         return {r.facet_key: r.embedding for r in results}
 
-    def mark_job_facets_extracted(self, job_post_id: Any) -> None:
-        pass
+    def delete_all_facet_embeddings_for_job(self, job_post_id: Any) -> None:
+        self.db.execute(
+            delete(JobFacetEmbedding).where(
+                JobFacetEmbedding.job_post_id == job_post_id
+            )
+        )
+
+    def get_and_claim_jobs_for_facet_extraction(
+        self,
+        limit: int = 100,
+        worker_id: str = "default",
+        claim_timeout_minutes: int = 30,
+        max_retries: int = 5
+    ) -> List[JobPost]:
+        now = datetime.now(timezone.utc)
+        timeout_threshold = now - timedelta(minutes=claim_timeout_minutes)
+
+        self.db.execute(
+            update(JobPost).where(
+                and_(
+                    JobPost.facet_status == 'in_progress',
+                    JobPost.facet_claimed_at < timeout_threshold
+                )
+            ).values(facet_status='pending')
+        )
+
+        self.db.execute(
+            update(JobPost).where(
+                and_(
+                    JobPost.facet_status == 'pending',
+                    JobPost.facet_retry_count >= max_retries,
+                    JobPost.description.isnot(None)
+                )
+            ).values(facet_status='quarantined')
+        )
+
+        claim_stmt = (
+            text("""
+                WITH pending AS (
+                    SELECT id FROM job_post
+                    WHERE is_embedded = true
+                      AND facet_status = 'pending'
+                      AND description IS NOT NULL
+                      AND (facet_extraction_hash IS NULL OR facet_extraction_hash != content_hash)
+                      AND facet_retry_count < :max_retries
+                    ORDER BY id
+                    LIMIT :limit
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE job_post
+                SET facet_status = 'in_progress',
+                    facet_claimed_by = :worker_id,
+                    facet_claimed_at = :now,
+                    facet_retry_count = facet_retry_count + 1
+                WHERE id IN (SELECT id FROM pending)
+                RETURNING id
+            """)
+            .bindparams(max_retries=max_retries, worker_id=worker_id, now=now)
+        )
+
+        result = self.db.execute(claim_stmt)
+        claimed_ids = [row[0] for row in result.fetchall()]
+
+        if not claimed_ids:
+            return []
+
+        return self.db.execute(
+            select(JobPost).where(JobPost.id.in_(claimed_ids))
+        ).scalars().all()
+
+    def mark_job_facets_extracted(self, job_post_id: Any, content_hash: str) -> None:
+        self.db.execute(
+            update(JobPost)
+            .where(JobPost.id == job_post_id)
+            .values(
+                facet_status='done',
+                facet_extraction_hash=content_hash,
+                facet_claimed_by=None,
+                facet_claimed_at=None,
+                facet_last_error=None
+            )
+        )
+
+    def mark_job_facets_failed(self, job_post_id: Any, error: str = None) -> None:
+        self.db.execute(
+            update(JobPost)
+            .where(JobPost.id == job_post_id)
+            .values(
+                facet_status='pending',
+                facet_claimed_by=None,
+                facet_claimed_at=None,
+                facet_last_error=error
+            )
+        )

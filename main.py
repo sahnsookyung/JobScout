@@ -8,6 +8,7 @@ import os
 import json
 import argparse
 import threading
+import traceback
 from typing import Optional, List
 
 from core.config_loader import load_config
@@ -210,28 +211,36 @@ def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: i
 
 
 def _run_facet_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):
-    """Run facet extraction batch with per-job transactions."""
-    with job_uow() as repo:
-        job_ids = [j.id for j in repo.get_jobs_needing_facet_extraction(limit)]
+    """Run facet extraction batch with atomic claiming."""
+    worker_id = f"worker_{os.getpid()}"
+    processed = 0
 
-    logger.info(f"Found {len(job_ids)} jobs needing facet extraction")
+    while not stop_event.is_set():
+        with job_uow() as repo:
+            jobs = repo.get_and_claim_jobs_for_facet_extraction(limit, worker_id)
+            if not jobs:
+                break
+            job_ids = [j.id for j in jobs]
 
-    success_count = 0
-    for job_id in job_ids:
-        if stop_event.is_set():
-            break
-        try:
-            with job_uow() as repo:
-                job = repo.get_by_id(job_id)
-                if job is None:
-                    logger.warning(f"Job {job_id} not found, may have been deleted")
-                    continue
-                ctx.job_etl_service.extract_facets_one(repo, job)
-            success_count += 1
-        except Exception:
-            logger.exception("Failed facet extraction job_id=%s", job_id)
+        for job_id in job_ids:
+            if stop_event.is_set():
+                break
+            try:
+                with job_uow() as repo:
+                    job = repo.get_by_id(job_id)
+                    if job and job.facet_status == 'in_progress':
+                        ctx.job_etl_service.extract_facets_one(repo, job)
+                        processed += 1
+            except Exception:
+                error_msg = traceback.format_exc()
+                try:
+                    with job_uow() as repo:
+                        repo.mark_job_facets_failed(job_id, error_msg)
+                except:
+                    pass
+                logger.exception("Facet extraction error job_id=%s", job_id)
 
-    logger.info(f"Facet extraction batch completed: {success_count}/{len(job_ids)} jobs")
+    logger.info(f"Facet extraction batch completed: processed={processed}")
 
 
 def _run_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):

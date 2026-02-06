@@ -12,6 +12,8 @@ jobspy:
   url: "http://localhost:8000" 
 
 etl:
+  # Resume file path (relative to working directory or absolute)
+  resume_file: "resume.json"
   llm:
     # DEFAULT only. In Docker, this is overridden by ETL_LLM_BASE_URL env var.
     base_url: "http://localhost:11434/v1" # Use local installation of ollama over docker virtualization. Docker can't use GPU on Apple Silicon at time of writing. 
@@ -42,9 +44,6 @@ matching:
   enabled: true
   # Mode: requirements_only (default). "with_preferences" is deprecated.
   mode: "requirements_only"
-  
-  # Resume file path (relative to working directory or absolute)
-  resume_file: "resume.json"
   
   # User wants file for Want score (semantic matching via embeddings)
   # Free-text file, one want per line. Example wants.txt:

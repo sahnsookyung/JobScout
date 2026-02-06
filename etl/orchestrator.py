@@ -103,26 +103,33 @@ class JobETLService:
         """
         logger.info(f"Extracting facets for job {job.id}: {job.title}")
 
-        facets = self.ai.extract_job_facets(job.description)
+        try:
+            repo.delete_all_facet_embeddings_for_job(job.id)
 
-        facet_embeddings = {}
-        for facet_key in FACET_KEYS:
-            facet_text = facets.get(facet_key, "")
-            if facet_text:
-                embedding = self.ai.generate_embedding(facet_text)
-                facet_embeddings[facet_key] = embedding
-                # Pass content_hash from job - it should be set during ingest
-                content_hash = getattr(job, 'content_hash', None) or ''
-                repo.save_job_facet_embedding(
-                    job.id, facet_key, facet_text, embedding, content_hash
-                )
-            else:
-                logger.debug(f"Empty facet '{facet_key}' for job {job.id}")
+            facets = self.ai.extract_job_facets(job.description)
 
-        if facet_embeddings:
-            logger.info(f"Saved {len(facet_embeddings)} facet embeddings for job {job.id}")
-        else:
-            logger.warning(f"No facet embeddings saved for job {job.id}")
+            content_hash = job.content_hash or ''
+            saved_count = 0
+
+            for facet_key in FACET_KEYS:
+                facet_text = facets.get(facet_key, "")
+                if facet_text:
+                    embedding = self.ai.generate_embedding(facet_text)
+                    repo.save_job_facet_embedding(
+                        job.id, facet_key, facet_text, embedding, content_hash
+                    )
+                    saved_count += 1
+                else:
+                    logger.debug(f"Empty facet '{facet_key}' for job {job.id}")
+
+            logger.info(f"Saved {saved_count}/{len(FACET_KEYS)} facets for job {job.id}")
+
+            repo.mark_job_facets_extracted(job.id, content_hash)
+
+        except Exception as e:
+            repo.mark_job_facets_failed(job.id, str(e))
+            logger.error(f"Facet extraction failed for job {job.id}: {e}")
+            raise
 
     def embed_job_one(self, repo: JobRepository, job) -> None:
         """Generate embedding for a single job.
