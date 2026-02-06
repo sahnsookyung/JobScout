@@ -134,13 +134,18 @@ class TestOpenAIStrictRequirements:
 
     def _check_no_default_values(self, schema: Dict[str, Any], path: str = "root") -> List[str]:
         """Check that schema doesn't contain default values (not allowed in strict mode)."""
+        OPTIONAL_FIELDS = set()  # All optional fields use nullable types, not defaults
+
         errors = []
-        
+
         if isinstance(schema, dict):
-            # Check for default
+            # Check for default (skip optional fields)
             if "default" in schema:
-                errors.append(f"{path}: has 'default' value (not allowed in strict mode)")
-            
+                # Extract the field name from the path
+                field_name = path.split('.')[-1] if '.' in path else path
+                if field_name not in OPTIONAL_FIELDS:
+                    errors.append(f"{path}: has 'default' value (not allowed in strict mode)")
+
             # Recurse
             for key, value in schema.items():
                 if isinstance(value, (dict, list)):
@@ -148,7 +153,7 @@ class TestOpenAIStrictRequirements:
         elif isinstance(schema, list):
             for i, item in enumerate(schema):
                 errors.extend(self._check_no_default_values(item, f"{path}[{i}]"))
-        
+
         return errors
 
     def test_resume_schema_has_no_defaults(self):
@@ -162,18 +167,18 @@ class TestOpenAIStrictRequirements:
     def _check_all_fields_required(self, schema: Dict[str, Any], path: str = "root") -> List[str]:
         """Check that all objects have required arrays matching their properties."""
         errors = []
-        
+
         if isinstance(schema, dict):
             if schema.get("type") == "object" and "properties" in schema:
                 required = set(schema.get("required", []))
                 properties = set(schema["properties"].keys())
-                
+
                 missing_required = properties - required
                 if missing_required:
                     errors.append(
                         f"{path}: properties not in required: {missing_required}"
                     )
-            
+
             # Recurse into properties
             if "properties" in schema:
                 for prop_name, prop_schema in schema["properties"].items():

@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional
 
 from sqlalchemy import (
     Column, Integer, String, Boolean, Numeric, Text, ForeignKey, TIMESTAMP,
-    Date, func, UniqueConstraint, Index
+    Date, Float, func, UniqueConstraint, Index
 )
 from sqlalchemy.sql import text as sql_text
 from sqlalchemy.orm import relationship, declarative_base
@@ -226,8 +226,14 @@ class ResumeEvidenceUnitEmbedding(Base):
 
     evidence_unit_id = Column(Text, nullable=False)  # Links to ResumeEvidenceUnit.id
     source_text = Column(Text, nullable=False)
+    source_section = Column(Text)  # Which resume section (Experience, Skills, etc.)
+    tags = Column(JSONB, default={})  # Metadata (company, title, skill, type, etc.)
 
     embedding = Column(Vector(1024), nullable=False)
+    years_value = Column(Float)  # Extracted years of experience
+    years_context = Column(Text)  # What the years refer to (e.g., "Python", "total experience")
+    is_total_years_claim = Column(Boolean, default=False)  # Whether this is a total years claim
+
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
 
     __table_args__ = (
@@ -335,7 +341,6 @@ class JobMatch(Base):
     matched_requirements_count = Column(Integer, default=0)
 
     match_type = Column(Text, default='requirements_only')
-    preferences_file_hash = Column(Text, nullable=True)
     similarity_threshold = Column(Numeric(3, 2), default=0.50)
 
     status = Column(Text, default='active')
@@ -513,13 +518,6 @@ def generate_resume_fingerprint(resume_data: Dict[str, Any]) -> str:
     Uses SHA-256 hash of normalized resume JSON.
     """
     return FingerprintGenerator.generate(resume_data)
-
-
-def generate_preferences_fingerprint(preferences_data: Dict[str, Any]) -> str:
-    """
-    Generate a fingerprint for preferences file.
-    """
-    return FingerprintGenerator.generate(preferences_data)
 
 
 class AppSettings(Base):

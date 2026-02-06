@@ -143,7 +143,7 @@ class TestMatcherRealEmbeddings(unittest.TestCase):
             batch_size=10,
             include_job_level_matching=True
         )
-        cls.matcher = MatcherService(cls.repo, cls.resume_profiler, cls.config)
+        cls.matcher = MatcherService(cls.resume_profiler, cls.config)
         
         # Create test data
         cls._create_test_data()
@@ -329,11 +329,12 @@ class TestMatcherRealEmbeddings(unittest.TestCase):
         job = self.session.query(JobPost).filter_by(id=self.test_job_id).first()
         
         try:
+            from database.repository import JobRepository
+            repo = JobRepository(self.session)
             result = self.matcher.match_resume_to_job(
-                evidence_units=evidence_units,
+                repo=repo,
                 job=job,
                 resume_fingerprint="test-fingerprint-123",
-                preferences=None
             )
             
             self.assertIsNotNone(result)

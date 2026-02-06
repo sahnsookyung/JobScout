@@ -70,9 +70,7 @@ database:
 
 matching:
   enabled: true
-  mode: "with_preferences"
   resume_file: "test_resume.json"
-  preferences_file: "test_prefs.json"
 
   matcher:
     enabled: true
@@ -100,13 +98,11 @@ scrapers: []
             config = load_config(config_path)
 
             self.assertTrue(config.matching.enabled)
-            self.assertEqual(config.matching.mode, "with_preferences")
             self.assertEqual(config.matching.matcher.similarity_threshold, 0.6)
             self.assertEqual(config.matching.scorer.weight_required, 0.8)
 
             print(f"  ✓ Config loaded successfully")
             print(f"  ✓ Matching enabled: {config.matching.enabled}")
-            print(f"  ✓ Mode: {config.matching.mode}")
 
         finally:
             os.unlink(config_path)
@@ -139,7 +135,7 @@ scrapers: []
         self.matcher.repo.jobs["test-job-1"] = mock_job
 
         # Run two-stage matching
-        matches = self.matcher.match_resume_two_stage(self.resume_data)
+        matches = self.matcher.match_resume_two_stage(self.mock_repo, self.resume_data)
 
         # Should return mock matches
         self.assertIsInstance(matches, list)

@@ -37,6 +37,7 @@ VALID_RESUME = {
                 },
                 "is_current": False,
                 "description": "Built distributed systems handling millions of requests per day. Led team of 5 engineers.",
+                "years_value": None,
                 "tech_keywords": ["Python", "Kubernetes", "gRPC", "PostgreSQL"]
             },
             {
@@ -56,6 +57,7 @@ VALID_RESUME = {
                 },
                 "is_current": False,
                 "description": "Full-stack development using React and Node.js. Implemented CI/CD pipelines.",
+                "years_value": None,
                 "tech_keywords": ["React", "Node.js", "Docker", "AWS"]
             }
         ],
@@ -132,6 +134,7 @@ VALID_RESUME_WITH_NULLS = {
                 "end_date": None,
                 "is_current": None,
                 "description": None,
+                "years_value": None,
                 "tech_keywords": []
             }
         ],
@@ -246,7 +249,8 @@ INVALID_MISSING_EXPERIENCE_FIELDS = make_invalid_resume({
         "experience": [
             {
                 "company": "Google",
-                "title": "Engineer"
+                "title": "Engineer",
+                "years_value": None
                 # Missing required fields: start_date, end_date, is_current, description, tech_keywords
             }
         ]
@@ -275,6 +279,7 @@ INVALID_DATE_PRECISION = make_invalid_resume({
                 },
                 "is_current": False,
                 "description": "Built distributed systems",
+                "years_value": None,
                 "tech_keywords": ["Python"]
             }
         ]
@@ -319,6 +324,7 @@ INVALID_EXTRA_IN_EXPERIENCE = make_invalid_resume({
                 },
                 "is_current": False,
                 "description": "Built distributed systems",
+                "years_value": None,
                 "tech_keywords": ["Python"],
                 "extra_field": "not allowed"  # Extra property - this should trigger validation error
             }
@@ -367,6 +373,7 @@ INVALID_TECH_KEYWORDS_TYPE = make_invalid_resume({
                 },
                 "is_current": False,
                 "description": "Built distributed systems",
+                "years_value": None,
                 "tech_keywords": ["Python", 123, "Java"]  # 123 is not a string - should trigger validation error
             }
         ]

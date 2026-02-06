@@ -115,8 +115,9 @@ class TestConfigLoader(unittest.TestCase):
             with patch("os.path.exists", return_value=True):
                 config = load_config("dummy")
                 
-                # Notifications should be None when not specified
-                self.assertIsNone(config.notifications)
+                # Notifications should have default config when not specified (enabled=False by default)
+                self.assertIsNotNone(config.notifications)
+                self.assertFalse(config.notifications.enabled)
 
     def test_notification_config_partial(self):
         """Test loading partial notification configuration."""

@@ -327,7 +327,7 @@ class TestMatchingDatabase(unittest.TestCase):
         
         from database.models import generate_resume_fingerprint
         resume_fp = generate_resume_fingerprint(self.resume_data)
-        preliminary = matcher.match_resume_to_job(evidence_units, job, resume_fp)
+        preliminary = matcher.match_resume_to_job(self.repo, job, resume_fp)
         
         # Stage 2: Score
         scorer_config = ScorerConfig(wants_remote=True)

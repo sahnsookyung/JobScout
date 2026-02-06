@@ -13,6 +13,7 @@ from database.models import (
     JobFacetEmbedding, JobBenefit
 )
 from database.repositories.base import BaseRepository
+from core.utils import cosine_similarity_from_distance
 
 logger = logging.getLogger(__name__)
 
@@ -266,8 +267,10 @@ class JobPostRepository(BaseRepository):
         limit: int,
         tenant_id: Optional[Any] = None,
         require_remote: Optional[bool] = None
-    ) -> List[JobPost]:
-        stmt = select(JobPost).where(
+    ) -> List[Tuple[JobPost, float]]:
+        distance_expr = JobPost.summary_embedding.cosine_distance(resume_embedding).label("distance")
+
+        stmt = select(JobPost, distance_expr).where(
             JobPost.is_embedded == True,
             JobPost.summary_embedding != None
         )
@@ -278,9 +281,10 @@ class JobPostRepository(BaseRepository):
         if require_remote is not None:
             stmt = stmt.where(JobPost.is_remote == require_remote)
 
-        stmt = stmt.order_by(JobPost.summary_embedding.cosine_distance(resume_embedding)).limit(limit)
+        stmt = stmt.order_by(distance_expr).limit(limit)
 
-        return self.db.execute(stmt).scalars().all()
+        rows = self.db.execute(stmt).all()
+        return [(row[0], cosine_similarity_from_distance(row._mapping['distance'])) for row in rows]
 
     def get_jobs_for_matching(
         self,

@@ -1,5 +1,12 @@
 # Job Matching - Preferences File
 
+> ⚠️ **DEPRECATED**: The `preferences.json` system described below was never implemented.
+>
+> For user preference alignment, use **`user_wants_file`** instead:
+> - Create a `wants.txt` file with one want per line
+> - Add `user_wants_file: "wants.txt"` to `config.yaml`
+> - Uses semantic embedding matching via `want_score` (see below)
+
 This directory contains example preference files for the job matching pipeline.
 
 ## Quick Start

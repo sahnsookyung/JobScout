@@ -181,14 +181,3 @@ class JobRepositoryAdapter:
                 resume_fingerprint=resume_fingerprint,
                 evidence_units=evidence_units
             )
-
-    def get_evidence_unit_embeddings(
-        self,
-        resume_fingerprint: str
-    ) -> List[Dict[str, Any]]:
-        """Delegate to JobRepository.get_evidence_unit_embeddings."""
-        if hasattr(self._repo, 'get_evidence_unit_embeddings'):
-            return self._repo.get_evidence_unit_embeddings(
-                resume_fingerprint=resume_fingerprint
-            )
-        return []

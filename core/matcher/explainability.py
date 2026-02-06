@@ -18,13 +18,9 @@ import logging
 
 from database.models import JobRequirementUnit
 from database.repository import JobRepository
+from core.utils import cosine_similarity_from_distance
 
 logger = logging.getLogger(__name__)
-
-
-def cosine_similarity_from_distance(cosine_distance: float) -> float:
-    """pgvector cosine distance -> cosine similarity."""
-    return 1.0 - float(cosine_distance)
 
 
 def calculate_requirement_similarity_with_resume_sections(

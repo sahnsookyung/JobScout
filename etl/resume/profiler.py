@@ -131,12 +131,16 @@ class ResumeProfiler:
                         'index': idx,
                         'type': 'description',
                         'is_current': exp.is_current
-                    }
+                    },
+                    years_value=exp.years_value,
+                    years_context='experience_at_company' if exp.company else 'experience',
+                    is_total_years_claim=False,
                 ))
                 unit_id += 1
 
             # Also extract from tech keywords as individual evidence
             for tech in exp.tech_keywords:
+                description_lower = (exp.description or '').lower()
                 evidence_units.append(ResumeEvidenceUnit(
                     id=f"reu_{unit_id}",
                     text=f"Experience with {tech}",
@@ -146,7 +150,10 @@ class ResumeProfiler:
                         'title': exp.title or '',
                         'technology': tech,
                         'type': 'tech_keyword'
-                    }
+                    },
+                    years_value=exp.years_value if tech in description_lower else None,
+                    years_context=f'{tech}_experience' if tech in description_lower else None,
+                    is_total_years_claim=False,
                 ))
                 unit_id += 1
 
@@ -159,7 +166,7 @@ class ResumeProfiler:
                     text = skill.name
                 else:
                     text = text.strip()
-                
+
                 evidence_units.append(ResumeEvidenceUnit(
                     id=f"reu_{unit_id}",
                     text=text,
@@ -170,7 +177,10 @@ class ResumeProfiler:
                         'proficiency': skill.proficiency or '',
                         'years_experience': skill.years_experience,
                         'type': 'skill'
-                    }
+                    },
+                    years_value=skill.years_experience,
+                    years_context=f'{skill.name}_skill',
+                    is_total_years_claim=False,
                 ))
                 unit_id += 1
 
@@ -207,7 +217,12 @@ class ResumeProfiler:
                 units_with_embeddings.append({
                     'evidence_unit_id': unit.id,
                     'source_text': unit.text,
-                    'embedding': unit.embedding
+                    'source_section': unit.source_section,
+                    'tags': unit.tags,
+                    'embedding': unit.embedding,
+                    'years_value': unit.years_value,
+                    'years_context': unit.years_context,
+                    'is_total_years_claim': unit.is_total_years_claim,
                 })
 
         if units_with_embeddings and self.store:

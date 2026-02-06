@@ -40,13 +40,24 @@ etl:
 
 matching:
   enabled: true
-  # Mode: requirements_only (default) or with_preferences
+  # Mode: requirements_only (default). "with_preferences" is deprecated.
   mode: "requirements_only"
   
   # Resume file path (relative to working directory or absolute)
   resume_file: "resume.json"
   
-  # Preferences file (only used if mode == "with_preferences")
+  # User wants file for Want score (semantic matching via embeddings)
+  # Free-text file, one want per line. Example wants.txt:
+  #   I want remote work flexibility
+  #   Looking for Python and TypeScript roles
+  #   Company that values work-life balance
+  # The want_score calculates semantic similarity between your wants and job facets.
+  # Job facets are automatically extracted during ETL (remote_flexibility, compensation, etc.)
+  # user_wants_file: "wants.txt"
+  
+  # Preferences file (DEPRECATED - not implemented, use user_wants_file instead)
+  # The structured preferences.json system was never implemented.
+  # For user preference alignment, use user_wants_file for semantic matching.
   # preferences_file: "preferences.json"
   
   # Invalidation settings

@@ -1,5 +1,28 @@
 import hashlib
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def cosine_similarity_from_distance(distance: float) -> float:
+    """Convert pgvector cosine distance to cosine similarity, clipped to [0, 1].
+
+    pgvector cosine_distance returns values in range [0, 2], so similarity
+    can theoretically be in range [-1, 1]. In practice with normalized
+    embeddings, distance should be [0, 1] and similarity should be [0, 1].
+
+    Args:
+        distance: Cosine distance from pgvector
+
+    Returns:
+        Cosine similarity in range [0, 1]
+    """
+    similarity = 1.0 - float(distance)
+    if not (0.0 <= similarity <= 1.0):
+        logger.error(f"Similarity out of range: {similarity}, clipping to [0, 1]")
+        return max(0.0, min(1.0, similarity))
+    return similarity
 
 class JobFingerprinter:
     """

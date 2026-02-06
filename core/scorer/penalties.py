@@ -37,9 +37,10 @@ def _calculate_experience_penalty(
     """
     Calculate experience mismatch penalty by comparing required years to resume experience.
 
-    Uses two strategies:
-    1. Extract years_value from source_data if available
-    2. Parse source_text with regex patterns as fallback
+    Priority order for years extraction:
+    1. years_value from matched REU evidence (most accurate)
+    2. years_value from experience section source_data
+    3. Parse source_text with regex patterns (fallback)
 
     Args:
         matched_requirements: List of matched requirements
@@ -52,9 +53,6 @@ def _calculate_experience_penalty(
     """
     penalty = 0.0
     penalty_details = []
-
-    if not experience_sections:
-        return penalty, penalty_details
 
     for req in matched_requirements:
         if not req.evidence or not req.is_covered:
@@ -70,28 +68,36 @@ def _calculate_experience_penalty(
         best_exp_years = 0.0
         best_exp_source = ""
 
-        for exp_section in experience_sections:
-            if not exp_section.get('has_embedding', False):
-                continue
+        # Priority 1: Use years_value from matched REU evidence (most accurate)
+        evidence_years_value = getattr(req.evidence, 'years_value', None) if req.evidence else None
+        if evidence_years_value is not None:
+            best_exp_years = evidence_years_value
+            best_exp_source = getattr(req.evidence, 'text', '') if req.evidence else ''
+        elif experience_sections:
+            # Priority 2 & 3: Fall back to experience sections
+            for exp_section in experience_sections:
+                if not exp_section.get('has_embedding', False):
+                    continue
 
-            source_data = exp_section.get('source_data', {})
-            exp_years_from_data = source_data.get('years_value')
+                source_data = exp_section.get('source_data', {})
+                exp_years_from_data = source_data.get('years_value')
 
-            if exp_years_from_data is not None and exp_years_from_data > best_exp_years:
-                best_exp_years = exp_years_from_data
-                best_exp_source = exp_section.get('source_text', '')
+                if exp_years_from_data is not None and exp_years_from_data > best_exp_years:
+                    best_exp_years = exp_years_from_data
+                    best_exp_source = exp_section.get('source_text', '')
 
-            if best_exp_years == 0.0:
-                for pattern in _YEARS_PATTERNS:
-                    match = re.search(pattern, exp_section.get('source_text', '').lower())
-                    if match:
-                        extracted_years = float(match.group(1))
-                        if extracted_years > best_exp_years:
-                            best_exp_years = extracted_years
-                            best_exp_source = exp_section.get('source_text', '')
-                        break
+                # Priority 3: Regex fallback only when current section has no years_value
+                if exp_years_from_data is None:
+                    for pattern in _YEARS_PATTERNS:
+                        match = re.search(pattern, exp_section.get('source_text', '').lower())
+                        if match:
+                            extracted_years = float(match.group(1))
+                            if extracted_years > best_exp_years:
+                                best_exp_years = extracted_years
+                                best_exp_source = exp_section.get('source_text', '')
+                            break
 
-        if req_years > best_exp_years and req.requirement.id not in penalized_requirements:
+        if req_years > best_exp_years and req.requirement and req.requirement.id not in penalized_requirements:
             shortfall = req_years - best_exp_years
             penalty_amount = min(
                 shortfall * config.penalty_experience_shortfall,
@@ -101,7 +107,7 @@ def _calculate_experience_penalty(
             penalty_details.append({
                 'type': 'experience_years_mismatch',
                 'amount': penalty_amount,
-                'reason': f"Best experience section has {best_exp_years} years, requires {req_years}",
+                'reason': f"Best experience has {best_exp_years} years, requires {req_years}",
                 'requirement_text': req.requirement.text
             })
             penalized_requirements.add(req.requirement.id)

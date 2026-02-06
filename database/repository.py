@@ -1,4 +1,4 @@
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Tuple
 from sqlalchemy.orm import Session
 
 from database.models import JobPost, JobMatch
@@ -113,7 +113,7 @@ class JobRepository:
         limit: int,
         tenant_id: Optional[Any] = None,
         require_remote: Optional[bool] = None
-    ) -> List[JobPost]:
+    ) -> List[Tuple[JobPost, float]]:
         return self.job_post.get_top_jobs_by_summary_embedding(
             resume_embedding, limit, tenant_id, require_remote
         )
@@ -251,12 +251,6 @@ class JobRepository:
         evidence_units: List[dict]
     ) -> list:
         return self.resume.save_evidence_unit_embeddings(resume_fingerprint, evidence_units)
-
-    def get_evidence_unit_embeddings(
-        self,
-        resume_fingerprint: str
-    ) -> list:
-        return self.resume.get_evidence_unit_embeddings(resume_fingerprint)
 
     def find_best_evidence_for_requirement(
         self,

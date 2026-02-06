@@ -1,9 +1,10 @@
 import logging
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from sqlalchemy import select, delete
 
 from database.models import StructuredResume, ResumeSectionEmbedding, ResumeEvidenceUnitEmbedding, UserWants
 from database.repositories.base import BaseRepository
+from core.utils import cosine_similarity_from_distance
 
 logger = logging.getLogger(__name__)
 
@@ -113,22 +114,18 @@ class ResumeRepository(BaseRepository):
                 resume_fingerprint=resume_fingerprint,
                 evidence_unit_id=unit['evidence_unit_id'],
                 source_text=unit['source_text'],
-                embedding=unit['embedding']
+                source_section=unit.get('source_section'),
+                tags=unit.get('tags', {}),
+                embedding=unit['embedding'],
+                years_value=unit.get('years_value'),
+                years_context=unit.get('years_context'),
+                is_total_years_claim=unit.get('is_total_years_claim', False),
             )
             self.db.add(record)
             records.append(record)
 
         self.db.flush()
         return records
-
-    def get_evidence_unit_embeddings(
-        self,
-        resume_fingerprint: str
-    ) -> List[ResumeEvidenceUnitEmbedding]:
-        stmt = select(ResumeEvidenceUnitEmbedding).where(
-            ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint
-        )
-        return self.db.execute(stmt).scalars().all()
 
     def get_resume_summary_embedding(
         self,
@@ -164,12 +161,28 @@ class ResumeRepository(BaseRepository):
         )
         return self.db.execute(stmt).scalar_one_or_none()
 
+    def get_latest_stored_resume_fingerprint(self) -> Optional[str]:
+        """Get fingerprint of the most recently stored resume.
+
+        Queries the StructuredResume table ordered by created_at timestamp
+        to find the most recently processed resume.
+
+        Returns:
+            Resume fingerprint string, or None if no resumes exist in database.
+        """
+        stmt = select(StructuredResume.resume_fingerprint).order_by(
+            StructuredResume.created_at.desc()
+        ).limit(1)
+
+        result = self.db.execute(stmt).scalar_one_or_none()
+        return result
+
     def find_best_evidence_for_requirement(
         self,
         requirement_embedding: List[float],
         resume_fingerprint: str,
         top_k: int = 5
-    ) -> List[tuple[ResumeEvidenceUnitEmbedding, float]]:
+    ) -> List[Tuple[ResumeEvidenceUnitEmbedding, float]]:
         distance_expr = ResumeEvidenceUnitEmbedding.embedding.cosine_distance(
             requirement_embedding
         ).label("distance")
@@ -179,7 +192,7 @@ class ResumeRepository(BaseRepository):
         ).order_by(distance_expr).limit(top_k)
 
         rows = self.db.execute(stmt).all()
-        return [(row.ResumeEvidenceUnitEmbedding, float(row.distance)) for row in rows]
+        return [(row[0], cosine_similarity_from_distance(row._mapping['distance'])) for row in rows]
 
     def save_user_wants(
         self,

@@ -90,7 +90,7 @@ class TestResumeSchemaValidation:
         """Missing required experience fields should fail validation."""
         with pytest.raises(ValidationError) as exc_info:
             ResumeSchema.model_validate(INVALID_MISSING_EXPERIENCE_FIELDS)
-        
+
         # Should mention one of the missing required fields
         error_str = str(exc_info.value)
         assert any(field in error_str for field in ["start_date", "end_date", "is_current", "description", "tech_keywords"])
@@ -173,6 +173,7 @@ class TestExperienceItem:
             end_date=None,
             is_current=False,
             description="Built systems",
+            years_value=None,
             tech_keywords=["Python"]
         )
         assert exp.to_embedding_text() == "Google - Senior Engineer - Built systems"
@@ -186,6 +187,7 @@ class TestExperienceItem:
             end_date=None,
             is_current=False,
             description="Built systems",
+            years_value=None,
             tech_keywords=[]
         )
         assert exp.to_embedding_text() == "Google - Built systems"
@@ -199,6 +201,7 @@ class TestExperienceItem:
             end_date=None,
             is_current=None,
             description=None,
+            years_value=None,
             tech_keywords=[]
         )
         assert exp.to_embedding_text() == ""

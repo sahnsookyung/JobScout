@@ -124,27 +124,26 @@ class ScorerConfig(BaseModel):
 class MatchingConfig(BaseModel):
     """
     Top-level matching configuration.
-    
-    Supports two modes:
-    - requirements_only: Match resume to job requirements only
-    - with_preferences: Also match job to user preferences
     """
     enabled: bool = True
-    mode: str = "requirements_only"  # requirements_only|with_preferences
-    
+
     # Resume file path (relative to config or absolute)
     resume_file: str = "resume.json"
-    
-    # Preferences file (only used if mode == "with_preferences")
-    preferences_file: Optional[str] = None  # e.g., "preferences.json"
-    
+
+    # User wants file for Want score (semantic matching via embeddings)
+    # Free-text file, one want per line. Example:
+    #   I want remote work flexibility
+    #   Looking for Python and TypeScript roles
+    #   Company that values work-life balance
+    user_wants_file: Optional[str] = None  # e.g., "wants.txt"
+
     # Sub-service configs (can be updated independently)
     matcher: MatcherConfig = MatcherConfig()
     scorer: ScorerConfig = ScorerConfig()
-    
+
     # Result policy for post-scoring filtering and truncation
     result_policy: ResultPolicy = Field(default_factory=ResultPolicy)
-    
+
     # Invalidation settings
     invalidate_on_job_change: bool = True
     invalidate_on_resume_change: bool = True
@@ -190,9 +189,9 @@ class AppConfig(BaseModel):
     jobspy: Optional[JobSpyConfig] = None
     etl: Optional[EtlConfig] = EtlConfig()
     matching: Optional[MatchingConfig] = MatchingConfig()
-    notifications: Optional[NotificationConfig] = None
+    notifications: Optional[NotificationConfig] = NotificationConfig()
     schedule: ScheduleConfig
-    scrapers: List[ScraperConfig]
+    scrapers: List[ScraperConfig] = Field(default_factory=list)
 
 def load_config(config_path: str = "config.yaml") -> AppConfig:
     # If not found at relative path (e.g. running from root), try absolute or adjusted path

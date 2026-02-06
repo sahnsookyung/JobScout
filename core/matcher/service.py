@@ -9,8 +9,9 @@ Performs two-level matching:
 Designed to be microservice-ready and can run independently
 of the ScoringService.
 """
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import logging
+import warnings
 
 from database.repository import JobRepository
 from database.models import JobPost, generate_resume_fingerprint
@@ -37,7 +38,6 @@ class MatcherService:
 
     def __init__(
         self,
-        repo: JobRepository,
         resume_profiler: ResumeProfiler,
         config: MatcherConfig
     ):
@@ -45,84 +45,50 @@ class MatcherService:
         Initialize matcher service with dependencies.
 
         Args:
-            repo: JobRepository for DB operations
             resume_profiler: ResumeProfiler for extraction and embedding
             config: MatcherConfig with matching parameters
         """
-        self.repo = repo
         self.resume_profiler = resume_profiler
         self.config = config
         self.requirement_matcher = RequirementMatcher(
-            repo=repo,
             similarity_threshold=config.similarity_threshold
         )
 
     def match_resume_to_job(
         self,
-        evidence_units: List['ResumeEvidenceUnit'],
+        repo: JobRepository,
         job: JobPost,
         resume_fingerprint: str,
-        preferences: Optional[Dict[str, Any]] = None
+        job_similarity: float = 0.0,
     ) -> JobMatchPreliminary:
         """
         Match resume to a single job at both levels.
 
         Args:
-            evidence_units: Extracted resume evidence
+            repo: JobRepository for DB operations
             job: Job to match against
             resume_fingerprint: Fingerprint for tracking
-            preferences: Optional preferences for enhanced matching
+            job_similarity: Pre-computed job-level similarity (from summary embedding)
 
         Returns:
             JobMatchPreliminary with all similarities computed
         """
         matched_requirements, missing_requirements = self.requirement_matcher.match_requirements(
-            evidence_units, job.requirements, resume_fingerprint
+            repo, job.requirements, resume_fingerprint
         )
 
         return JobMatchPreliminary(
             job=job,
-            job_similarity=0.0,
+            job_similarity=job_similarity,
             requirement_matches=matched_requirements,
             missing_requirements=missing_requirements,
             resume_fingerprint=resume_fingerprint
         )
 
-    def match_resume_to_jobs(
-        self,
-        evidence_units: List['ResumeEvidenceUnit'],
-        jobs: List[JobPost],
-        resume_data: Dict[str, Any],
-        preferences: Optional[Dict[str, Any]] = None
-    ) -> List[JobMatchPreliminary]:
-        """
-        Match resume to multiple jobs.
-
-        Args:
-            evidence_units: Extracted resume evidence
-            jobs: Jobs to match against
-            resume_data: Full resume data
-            preferences: Optional preferences for enhanced matching
-
-        Returns:
-            List of preliminary matches for all jobs, sorted by combined score
-        """
-        resume_fingerprint = generate_resume_fingerprint(resume_data)
-
-        results = []
-        for job in jobs:
-            preliminary = self.match_resume_to_job(
-                evidence_units, job, resume_fingerprint, preferences
-            )
-            results.append(preliminary)
-
-        results.sort(key=lambda p: p.job_similarity, reverse=True)
-        return results
-
     def match_resume_two_stage(
         self,
+        repo: JobRepository,
         resume_data: Dict[str, Any],
-        preferences: Optional[Dict[str, Any]] = None,
         tenant_id: Optional[Any] = None,
     ) -> List[JobMatchPreliminary]:
         """
@@ -132,8 +98,8 @@ class MatcherService:
         Stage 2: Compute requirement-level matching only on retrieved candidates
 
         Args:
+            repo: JobRepository for DB operations
             resume_data: Full resume data
-            preferences: Optional user preferences for enhanced matching
             tenant_id: Optional tenant filter for Stage 1
 
         Returns:
@@ -147,31 +113,37 @@ class MatcherService:
 
         resume_fingerprint = generate_resume_fingerprint(resume_data)
 
-        # Stage 1: Get top jobs by summary embedding similarity
-        resume_embedding = self.repo.get_resume_summary_embedding(resume_fingerprint)
+        results: List[JobMatchPreliminary] = []
+
+        resume_embedding = repo.get_resume_summary_embedding(resume_fingerprint)
         if resume_embedding:
-            candidate_jobs = self.repo.get_top_jobs_by_summary_embedding(
+            job_similarity_pairs: List[Tuple[JobPost, float]] = repo.get_top_jobs_by_summary_embedding(
                 resume_embedding=resume_embedding,
-                limit=self.config.batch_size
+                limit=self.config.batch_size,
+                tenant_id=tenant_id
             )
-            logger.debug(f"Stage 1: Retrieved {len(candidate_jobs)} candidates via vector similarity")
+            logger.debug(f"Stage 1: Retrieved {len(job_similarity_pairs)} candidates via vector similarity")
+
+            for job, job_similarity in job_similarity_pairs:
+                preliminary = self.match_resume_to_job(
+                    repo, job, resume_fingerprint, job_similarity
+                )
+                results.append(preliminary)
         else:
-            # Fallback: Get all embedded jobs if no summary embedding
-            candidate_jobs = self.repo.get_jobs_for_matching(limit=self.config.batch_size)
+            candidate_jobs: List[JobPost] = repo.get_jobs_for_matching(limit=self.config.batch_size)
             logger.warning(f"Stage 1: No summary embedding, using fallback ({len(candidate_jobs)} jobs)")
 
-        if not candidate_jobs:
+            for job in candidate_jobs:
+                preliminary = self.match_resume_to_job(
+                    repo, job, resume_fingerprint, job_similarity=0.0
+                )
+                results.append(preliminary)
+
+        if not results:
             logger.warning("No matching candidates found in Stage 1")
             return []
 
-        logger.debug(f"Stage 1: Retrieved {len(candidate_jobs)} candidates")
-
-        results = []
-        for job in candidate_jobs:
-            preliminary = self.match_resume_to_job(
-                evidence_units, job, resume_fingerprint, preferences
-            )
-            results.append(preliminary)
+        logger.debug(f"Stage 1: Retrieved {len(results)} candidates")
 
         results.sort(key=lambda p: p.job_similarity, reverse=True)
 
@@ -179,13 +151,23 @@ class MatcherService:
 
     def get_jobs_for_matching(
         self,
+        repo: JobRepository,
         limit: Optional[int] = None
     ) -> List[JobPost]:
         """
         Fetch jobs that are ready for matching.
-        
-        TODO: This method is deprecated. Use get_top_jobs_by_summary_embedding() instead
+
+        Deprecated: Use get_top_jobs_by_summary_embedding() instead
         which uses vector similarity for Stage 1 filtering.
+
+        Args:
+            repo: JobRepository for DB operations
+            limit: Maximum number of jobs to fetch
         """
-        # TODO: Use get_top_jobs_by_summary_embedding() with resume embedding
-        return self.repo.get_jobs_for_matching(limit=limit)
+        warnings.warn(
+            "get_jobs_for_matching() is deprecated. "
+            "Use get_top_jobs_by_summary_embedding() instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        return repo.get_jobs_for_matching(limit=limit)

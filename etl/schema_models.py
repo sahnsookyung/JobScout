@@ -31,15 +31,16 @@ class PartialDate(BaseModel):
 class ExperienceItem(BaseModel):
     """A single work experience entry."""
     model_config = ConfigDict(extra='forbid')
-    
+
     company: Optional[str] = Field(description="Company or organization name")
     title: Optional[str] = Field(description="Job title or role")
     start_date: Optional[PartialDate] = Field(description="Start date of employment")
     end_date: Optional[PartialDate] = Field(description="End date of employment (null if current)")
     is_current: Optional[bool] = Field(description="Whether this is the current position")
     description: Optional[str] = Field(description="Job description or responsibilities")
+    years_value: Optional[float] = Field(description="Years of experience gained at this position (extracted from description)")
     tech_keywords: List[str] = Field(description="Technologies, tools, and frameworks mentioned")
-    
+
     def to_embedding_text(self) -> str:
         """Generate text representation for embedding."""
         parts = []

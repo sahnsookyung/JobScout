@@ -192,14 +192,14 @@ class MockMatcherService:
     
     def match_resume_two_stage(
         self,
+        repo: Any,
         resume_data: Dict[str, Any],
-        preferences: Optional[Dict[str, Any]] = None,
         tenant_id: Optional[Any] = None,
         require_remote: Optional[bool] = None
     ) -> List[JobMatchPreliminary]:
         """Mock two-stage matching - filters jobs then matches."""
         matches = []
-        
+
         for job in self.repo.jobs.values():
             match = JobMatchPreliminary(
                 job=job,
@@ -209,20 +209,19 @@ class MockMatcherService:
                 resume_fingerprint="mock-fingerprint"
             )
             matches.append(match)
-        
+
         return matches
     
     def match_resume_to_job(
         self,
-        evidence_units: List[ResumeEvidenceUnit],
+        repo: Any,
         job: JobPost,
         resume_fingerprint: str,
-        preferences: Optional[Dict[str, Any]] = None
     ) -> JobMatchPreliminary:
         """Mock match resume to a single job."""
         matched_requirements = []
         missing_requirements = []
-        
+
         return JobMatchPreliminary(
             job=job,
             job_similarity=0.7,

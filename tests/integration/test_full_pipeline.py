@@ -200,7 +200,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
         cls.matcher_config = MatcherConfig(
             similarity_threshold=0.5
         )
-        cls.matcher = MatcherService(cls.repo, cls.resume_profiler, cls.matcher_config)
+        cls.matcher = MatcherService(cls.resume_profiler, cls.matcher_config)
         
         # Scoring Service
         cls.scorer_config = ScorerConfig(
@@ -231,6 +231,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
                         "end_date": {"text": "2024-01", "year": 2024, "month": 1, "precision": "month"},
                         "is_current": False,
                         "description": "Built microservices with Python and AWS. Improved performance by 40%. Mentored junior developers.",
+                        "years_value": None,
                         "tech_keywords": ["Python", "AWS", "Microservices", "Django"]
                     }
                 ],
@@ -463,6 +464,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
         
         # Run matching using two-stage pipeline
         preliminary_matches = self.matcher.match_resume_two_stage(
+            repo=self.repo,
             resume_data=self.resume_data
         )
         
@@ -521,7 +523,6 @@ class TestFullPipelineIntegration(unittest.TestCase):
             match_record = persistence.save_match_to_db(
                 scored_match=scored_match,
                 repo=self.repo,
-                preferences_file_hash=fingerprint
             )
             if match_record is not None:
                 saved_count += 1
@@ -533,9 +534,12 @@ class TestFullPipelineIntegration(unittest.TestCase):
         # Rollback to end current transaction and start fresh to see committed data
         self.session.rollback()
         
-        # Verify in DB - query by preferences_file_hash which stores our test fingerprint
+        # Verify in DB - query by all jobs in test set and resume fingerprint
+        job_ids = [m.job.id for m in type(self).test_scored_matches]
+        fingerprint = type(self).test_scored_matches[0].resume_fingerprint
         db_matches = self.session.query(JobMatch).filter(
-            JobMatch.preferences_file_hash == fingerprint
+            JobMatch.job_post_id.in_(job_ids),
+            JobMatch.resume_fingerprint == fingerprint
         ).all()
         
         self.assertEqual(len(db_matches), saved_count)
@@ -572,8 +576,8 @@ class TestFullPipelineIntegration(unittest.TestCase):
         for scored_match in high_score_matches:
             # Get match record from DB
             db_match = self.session.query(JobMatch).filter(
-                JobMatch.preferences_file_hash == self.test_fingerprint,
-                JobMatch.job_post_id == scored_match.job.id
+                JobMatch.job_post_id == scored_match.job.id,
+                JobMatch.resume_fingerprint == scored_match.resume_fingerprint
             ).first()
             
             # Check if match exists and has an ID
@@ -616,9 +620,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
             JobPost.canonical_fingerprint.like("test-pipeline-%")
         ).count()
         
-        matches = self.session.query(JobMatch).filter(
-            JobMatch.preferences_file_hash.like("test-pipeline-%")
-        ).count()
+        matches = self.session.query(JobMatch).count()
         
         print(f"\n  📊 Pipeline Results:")
         print(f"     - Jobs processed: {jobs}")

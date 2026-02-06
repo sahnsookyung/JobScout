@@ -29,6 +29,7 @@ class TestResumeProfilerProfiling:
                         "end_date": {"text": "2023-01", "year": 2023, "month": 1, "precision": "month"},
                         "is_current": False,
                         "description": "Built Python services",
+                        "years_value": None,
                         "tech_keywords": ["Python", "AWS"]
                     }
                 ],

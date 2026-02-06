@@ -41,9 +41,7 @@ database:
 
 matching:
   enabled: true
-  mode: "with_preferences"
   resume_file: "test_resume.json"
-  preferences_file: "test_prefs.json"
 
   matcher:
     enabled: true

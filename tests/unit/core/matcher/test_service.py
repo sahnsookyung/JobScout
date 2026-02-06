@@ -168,7 +168,9 @@ class TestMultiEmbeddingMatching:
         
         req_match = Mock(spec=RequirementMatchResult)
         req_match.requirement = req
-        req_match.evidence = "Some evidence"
+        req_match.evidence = Mock()
+        req_match.evidence.years_value = None  # Priority 2: falls back to experience sections
+        req_match.evidence.text = "Python development"
         req_match.is_covered = True
         req_match.requirement_row = req.requirement_row
         
