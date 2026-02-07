@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import json
 
 from core.llm.openai_service import OpenAIService, _unwrap_schema_spec
-from etl.schema_models import EXTRACTION_SCHEMA, FACET_EXTRACTION_SCHEMA_FOR_WANTS
+from core.llm.schema_models import EXTRACTION_SCHEMA, FACET_EXTRACTION_SCHEMA_FOR_WANTS
 
 
 class TestUnwrapSchemaSpec:
@@ -119,7 +119,7 @@ class TestExtractStructuredData:
 
 
 class TestExtractJobFacets:
-    """Tests for extract_job_facets method."""
+    """Tests for extract_facet_data method."""
 
     @pytest.fixture
     def service(self):
@@ -139,7 +139,7 @@ class TestExtractJobFacets:
 
     def test_facets_extraction_sends_unwrapped_schema(self, service):
         """Facet extraction should use unwrapped schema, not wrapper."""
-        service.extract_job_facets("test text")
+        service.extract_facet_data("test text")
 
         call_kwargs = service.client.chat.completions.create.call_args[1]
         json_schema = call_kwargs['response_format']['json_schema']
@@ -150,7 +150,7 @@ class TestExtractJobFacets:
 
     def test_facets_preserves_strict_setting(self, service):
         """Strict setting should be preserved from FACET_EXTRACTION_SCHEMA_FOR_WANTS."""
-        service.extract_job_facets("test text")
+        service.extract_facet_data("test text")
 
         call_kwargs = service.client.chat.completions.create.call_args[1]
         assert call_kwargs['response_format']['json_schema']['strict'] is True

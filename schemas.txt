@@ -99,6 +99,30 @@ Strict Mode: True
             "description": "Field or major",
             "title": "Field Of Study"
           },
+          "institution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "School, university, or institution name",
+            "title": "Institution"
+          },
+          "graduation_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Year of graduation or completion",
+            "title": "Graduation Year"
+          },
           "description": {
             "anyOf": [
               {
@@ -115,6 +139,8 @@ Strict Mode: True
         "required": [
           "degree",
           "field_of_study",
+          "institution",
+          "graduation_year",
           "description"
         ],
         "title": "EducationItem",
@@ -419,10 +445,22 @@ Strict Mode: True
         "title": "Profile",
         "type": "object"
       },
-      "Projects": {
+      "ProjectItem": {
         "additionalProperties": false,
-        "description": "Projects section of a resume.",
+        "description": "A single project entry.",
         "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Project name or title",
+            "title": "Name"
+          },
           "description": {
             "anyOf": [
               {
@@ -432,12 +470,66 @@ Strict Mode: True
                 "type": "null"
               }
             ],
-            "description": "Description of key projects",
+            "description": "Project description and accomplishments",
             "title": "Description"
+          },
+          "technologies": {
+            "description": "Technologies and tools used",
+            "items": {
+              "type": "string"
+            },
+            "title": "Technologies",
+            "type": "array"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Project URL (GitHub, demo, etc.)",
+            "title": "Url"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PartialDate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Project date or time period"
           }
         },
         "required": [
-          "description"
+          "name",
+          "description",
+          "technologies",
+          "url",
+          "date"
+        ],
+        "title": "ProjectItem",
+        "type": "object"
+      },
+      "Projects": {
+        "additionalProperties": false,
+        "description": "Notable projects from resume.",
+        "properties": {
+          "items": {
+            "description": "List of individual projects",
+            "items": {
+              "$ref": "#/$defs/ProjectItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
         ],
         "title": "Projects",
         "type": "object"

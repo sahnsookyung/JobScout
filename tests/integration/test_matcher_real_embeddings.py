@@ -24,7 +24,7 @@ import sys
 import os
 import numpy as np
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # Check if we should run with Docker containers
 USE_DOCKER = os.environ.get('USE_DOCKER_CONTAINERS', '1') == '1'
@@ -72,15 +72,19 @@ from core.llm.interfaces import LLMProvider
 class MockAIService(LLMProvider):
     """Mock AI service that implements LLMProvider interface."""
     
-    def extract_structured_data(self, text: str, schema: Dict) -> Dict[str, Any]:
+    def extract_structured_data(self, text: str, schema_spec: Dict, system_prompt: Optional[str] = None, user_message: Optional[str] = None) -> Dict[str, Any]:
         """Mock structured data extraction."""
         return {}
     
-    def generate_embedding(self, text: str) -> List[float]:
-        """Generate a random embedding for testing."""
-        return np.random.randn(1024).tolist()
+    def extract_resume_data(self, text: str) -> Dict[str, Any]:
+        """Mock resume data extraction."""
+        return {"profile": {}, "extraction": {"confidence": 0.5, "warnings": []}}
     
-    def extract_job_facets(self, text: str) -> Dict[str, str]:
+    def extract_requirements_data(self, text: str) -> Dict[str, Any]:
+        """Mock requirements data extraction."""
+        return {"required": [], "preferred": []}
+    
+    def extract_facet_data(self, text: str) -> Dict[str, str]:
         """Mock facet extraction."""
         return {
             "remote_flexibility": "Remote work available",
@@ -91,6 +95,10 @@ class MockAIService(LLMProvider):
             "tech_stack": "Python, PostgreSQL, AWS",
             "visa_sponsorship": "Visa sponsorship available"
         }
+    
+    def generate_embedding(self, text: str) -> List[float]:
+        """Generate a random embedding for testing."""
+        return np.random.randn(1024).tolist()
 
 
 class TestMatcherRealEmbeddings(unittest.TestCase):

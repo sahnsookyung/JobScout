@@ -4,37 +4,58 @@ LLM Provider Interface - Abstract base for AI service providers.
 This module defines the interface for LLM services (OpenAI, Ollama, Anthropic, etc.).
 """
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 
 class LLMProvider(ABC):
     """
     Abstract Interface for AI Service Providers (OpenAI, Ollama, Anthropic, etc.).
     """
-    
+
     @abstractmethod
-    def extract_structured_data(self, text: str, schema_spec: Dict) -> Dict[str, Any]:
+    def extract_structured_data(
+        self,
+        text: str,
+        schema_spec: Dict,
+        system_prompt: Optional[str] = None,
+        user_message: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Extract structured JSON data from text adhering to a schema.
 
         Args:
             text: Text to extract from
             schema_spec: Either a wrapped spec {'name', 'strict', 'schema'} or raw JSON schema
+            system_prompt: Optional custom system prompt. If None, uses default.
+            user_message: Optional custom user message. If None, uses default.
         """
         pass
 
     @abstractmethod
-    def generate_embedding(self, text: str) -> List[float]:
+    def extract_resume_data(self, text: str) -> Dict[str, Any]:
         """
-        Generate a vector embedding for the given text.
+        Extract structured data from resumes using specialized instructions.
+
+        Args:
+            text: Resume text to extract from
         """
         pass
-    
+
     @abstractmethod
-    def extract_job_facets(self, text: str) -> Dict[str, str]:
+    def extract_requirements_data(self, text: str) -> Dict[str, Any]:
+        """
+        Extract structured qualification requirements from job descriptions.
+
+        Args:
+            text: Job description text
+        """
+        pass
+
+    @abstractmethod
+    def extract_facet_data(self, text: str) -> Dict[str, str]:
         """
         Extract per-facet text from job description for Want score matching.
-        
+
         Returns a dictionary with keys:
         - remote_flexibility: Text about remote work, WFH policies
         - compensation: Text about salary, bonuses, equity, benefits
@@ -43,5 +64,12 @@ class LLMProvider(ABC):
         - work_life_balance: Text about working hours, PTO, burnout prevention
         - tech_stack: Text about technologies, tools, frameworks used
         - visa_sponsorship: Text about visa and relocation details
+        """
+        pass
+
+    @abstractmethod
+    def generate_embedding(self, text: str) -> List[float]:
+        """
+        Generate a vector embedding for the given text.
         """
         pass

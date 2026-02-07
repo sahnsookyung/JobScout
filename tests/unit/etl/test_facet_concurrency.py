@@ -89,20 +89,20 @@ class TestFacetClaiming(unittest.TestCase):
         claimed_by_worker_1 = set()
         claimed_by_worker_2 = set()
         
-        def worker_claim(worker_id, claimed_set):
+        def worker_claim(worker_id, job_index, claimed_set):
             mock_db = MagicMock()
-            mock_db.execute.return_value.fetchall.return_value = [(job_ids[0],)]
+            mock_db.execute.return_value.fetchall.return_value = [(job_ids[job_index],)]
             mock_db.execute.return_value.rowcount = 1
             mock_db.execute.return_value.scalars.return_value.all.return_value = [
-                MagicMock(id=job_ids[0])
+                MagicMock(id=job_ids[job_index])
             ]
             
             repo = JobPostRepository(mock_db)
             jobs = repo.get_and_claim_jobs_for_facet_extraction(limit=5, worker_id=worker_id)
             claimed_set.update([j.id for j in jobs])
         
-        t1 = threading.Thread(target=worker_claim, args=('worker_1', claimed_by_worker_1))
-        t2 = threading.Thread(target=worker_claim, args=('worker_2', claimed_by_worker_2))
+        t1 = threading.Thread(target=worker_claim, args=('worker_1', 0, claimed_by_worker_1))
+        t2 = threading.Thread(target=worker_claim, args=('worker_2', 1, claimed_by_worker_2))
         
         t1.start()
         t2.start()
@@ -111,6 +111,7 @@ class TestFacetClaiming(unittest.TestCase):
         
         self.assertEqual(len(claimed_by_worker_1), 1)
         self.assertEqual(len(claimed_by_worker_2), 1)
+        self.assertTrue(claimed_by_worker_1.isdisjoint(claimed_by_worker_2))
 
     def test_claiming_respects_limit(self):
         """Claiming should not exceed the limit parameter."""
@@ -190,7 +191,7 @@ class TestExtractFacetsOneIntegration(unittest.TestCase):
         
         mock_repo = MagicMock()
         mock_ai = MagicMock()
-        mock_ai.extract_job_facets.return_value = {
+        mock_ai.extract_facet_data.return_value = {
             'remote_flexibility': 'Remote work',
             'compensation': '$100k',
         }
@@ -212,7 +213,7 @@ class TestExtractFacetsOneIntegration(unittest.TestCase):
         
         mock_repo = MagicMock()
         mock_ai = MagicMock()
-        mock_ai.extract_job_facets.return_value = {'remote_flexibility': 'Remote'}
+        mock_ai.extract_facet_data.return_value = {'remote_flexibility': 'Remote'}
         mock_ai.generate_embedding.return_value = [0.1] * 1024
         
         mock_job = MagicMock()
@@ -231,7 +232,7 @@ class TestExtractFacetsOneIntegration(unittest.TestCase):
         
         mock_repo = MagicMock()
         mock_ai = MagicMock()
-        mock_ai.extract_job_facets.side_effect = Exception("LLM failure")
+        mock_ai.extract_facet_data.side_effect = Exception("LLM failure")
         
         mock_job = MagicMock()
         mock_job.id = uuid.uuid4()
@@ -250,7 +251,7 @@ class TestExtractFacetsOneIntegration(unittest.TestCase):
         
         mock_repo = MagicMock()
         mock_ai = MagicMock()
-        mock_ai.extract_job_facets.return_value = {}  # All facets empty
+        mock_ai.extract_facet_data.return_value = {}  # All facets empty
         
         mock_job = MagicMock()
         mock_job.id = uuid.uuid4()
@@ -272,7 +273,7 @@ class TestBatchRunnerFailureHandling(unittest.TestCase):
         
         mock_repo = MagicMock()
         mock_ai = MagicMock()
-        mock_ai.extract_job_facets.side_effect = Exception("LLM failed")
+        mock_ai.extract_facet_data.side_effect = Exception("LLM failed")
         
         mock_job = MagicMock()
         mock_job.id = uuid.uuid4()

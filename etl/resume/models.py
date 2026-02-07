@@ -2,7 +2,7 @@
 """
 Resume Models - Data structures for resume extraction and profiling.
 
-Note: Structured resume data now uses Pydantic models from etl.schema_models.
+Note: Structured resume data now uses Pydantic models from core.llm.schema_models.
 This file contains only internal data structures not derived from JSON schemas.
 """
 

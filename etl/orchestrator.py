@@ -7,7 +7,7 @@ from database.repository import JobRepository
 from core.llm.interfaces import LLMProvider
 from core.utils import JobFingerprinter
 from pydantic import ValidationError
-from etl.schema_models import EXTRACTION_SCHEMA, JobExtraction
+from core.llm.schema_models import JobExtraction
 from core.scorer.want_score import FACET_KEYS
 from database.models import generate_resume_fingerprint
 from etl.resume import ResumeProfiler
@@ -72,7 +72,7 @@ class JobETLService:
         """
         logger.info(f"Extracting for job {job.id}: {job.title}")
 
-        extraction_result = self.ai.extract_structured_data(job.description, EXTRACTION_SCHEMA)
+        extraction_result = self.ai.extract_requirements_data(job.description)
         
         # Validate with Pydantic model
         if extraction_result:
@@ -106,7 +106,7 @@ class JobETLService:
         try:
             repo.delete_all_facet_embeddings_for_job(job.id)
 
-            facets = self.ai.extract_job_facets(job.description)
+            facets = self.ai.extract_facet_data(job.description)
 
             content_hash = job.content_hash or ''
             saved_count = 0

@@ -59,6 +59,8 @@ class EducationItem(BaseModel):
     
     degree: Optional[str] = Field(description="Degree earned (e.g., 'Bachelor of Science')")
     field_of_study: Optional[str] = Field(description="Field or major")
+    institution: Optional[str] = Field(description="School, university, or institution name")
+    graduation_year: Optional[int] = Field(description="Year of graduation or completion")
     description: Optional[str] = Field(description="Additional details about education")
 
 
@@ -122,11 +124,22 @@ class LanguageItem(BaseModel):
     proficiency: Optional[str] = Field(description="Proficiency level (e.g., 'native', 'fluent', 'conversational')")
 
 
-class Projects(BaseModel):
-    """Projects section of a resume."""
+class ProjectItem(BaseModel):
+    """A single project entry."""
     model_config = ConfigDict(extra='forbid')
     
-    description: Optional[str] = Field(description="Description of key projects")
+    name: Optional[str] = Field(description="Project name or title")
+    description: Optional[str] = Field(description="Project description and accomplishments")
+    technologies: List[str] = Field(description="Technologies and tools used")
+    url: Optional[str] = Field(description="Project URL (GitHub, demo, etc.)")
+    date: Optional[PartialDate] = Field(description="Project date or time period")
+
+
+class Projects(BaseModel):
+    """Notable projects from resume."""
+    model_config = ConfigDict(extra='forbid')
+    
+    items: List[ProjectItem] = Field(description="List of individual projects")
 
 
 class Summary(BaseModel):
@@ -314,6 +327,9 @@ FACET_EXTRACTION_SCHEMA_FOR_WANTS = {
 # Convenience aliases for clarity (optional, for gradual migration)
 EXTRACTION_SCHEMA_SPEC = EXTRACTION_SCHEMA
 EXTRACTION_JSON_SCHEMA = EXTRACTION_SCHEMA["schema"]
+
+RESUME_SCHEMA_SPEC = RESUME_SCHEMA
+RESUME_JSON_SCHEMA = RESUME_SCHEMA["schema"]
 
 FACET_EXTRACTION_SCHEMA_SPEC = FACET_EXTRACTION_SCHEMA_FOR_WANTS
 FACET_EXTRACTION_JSON_SCHEMA = FACET_EXTRACTION_SCHEMA_FOR_WANTS["schema"]

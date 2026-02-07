@@ -723,6 +723,12 @@
             return div.innerHTML;
         }
 
+        // Safe number formatting with null check
+        function formatScore(value, decimals = 1) {
+            if (value === null || value === undefined) return '-';
+            return Number(value).toFixed(decimals);
+        }
+
         // State
         let allMatches = [];
         let currentSort = 'overall';
@@ -991,7 +997,7 @@
                 return `
                     <div class="match-card" data-match-id="${escapeHtml(match.match_id)}">
                         <div class="match-header" style="position: relative;">
-                            <div class="match-score overall-score">${match.overall_score.toFixed(1)}</div>
+                            <div class="match-score overall-score">${formatScore(match.overall_score)}</div>
                             <div class="match-title">${escapeHtml(match.title)}</div>
                             <div class="match-company">${escapeHtml(match.company)}</div>
                         </div>
@@ -1008,33 +1014,33 @@
                             ${hasFitWant && showWantScore ? `
                                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px;">
                                     <div class="match-score fit-score" style="font-size: 1em; padding: 8px 12px;">
-                                        Fit: ${match.fit_score.toFixed(1)}
+                                        Fit: ${formatScore(match.fit_score)}
                                     </div>
                                     <div class="match-score want-score" style="font-size: 1em; padding: 8px 12px;">
-                                        Want: ${match.want_score.toFixed(1)}
+                                        Want: ${formatScore(match.want_score)}
                                     </div>
                                 </div>
                             ` : ''}
 
                             <div class="coverage-bar">
-                                <div class="coverage-fill" style="width: ${match.overall_score}%"></div>
+                                <div class="coverage-fill" style="width: ${formatScore(match.overall_score, 0)}%"></div>
                             </div>
                             <div class="score-breakdown">
                                 <div class="score-item">
                                     <span class="score-label">Base</span>
-                                    <span class="score-value">${match.base_score.toFixed(1)}</span>
+                                    <span class="score-value">${formatScore(match.base_score)}</span>
                                 </div>
                                 <div class="score-item">
                                     <span class="score-label">Penalties</span>
-                                    <span class="score-value" style="color: #f44336">-${match.penalties.toFixed(1)}</span>
+                                    <span class="score-value" style="color: #f44336">-${formatScore(match.penalties)}</span>
                                 </div>
                                 <div class="score-item">
                                     <span class="score-label">Required</span>
-                                    <span class="score-value">${(match.required_coverage * 100).toFixed(0)}%</span>
+                                    <span class="score-value">${formatScore(match.required_coverage * 100, 0)}%</span>
                                 </div>
                                 <div class="score-item">
                                     <span class="score-label">Preferred</span>
-                                    <span class="score-value">${(match.preferred_coverage * 100).toFixed(0)}%</span>
+                                    <span class="score-value">${formatScore(match.preferred_coverage * 100, 0)}%</span>
                                 </div>
                             </div>
                         </div>
@@ -1080,7 +1086,7 @@
                     return details.details.map(p => `
                         <li class="requirement-item requirement-uncovered">
                             <strong style="color: #f44336;">${escapeHtml(p.reason || p.type)}:</strong> 
-                            <span style="color: #f44336; font-weight: bold;">-${p.amount.toFixed(1)}</span><br>
+                            <span style="color: #f44336; font-weight: bold;">-${formatScore(p.amount)}</span><br>
                             ${p.details ? '<small style="color: #666;">' + escapeHtml(typeof p.details === 'object' ? JSON.stringify(p.details).slice(0, 100) : p.details.toString().slice(0, 100)) + '</small>' : ''}
                         </li>
                     `).join('');
@@ -1099,22 +1105,22 @@
 
                 document.getElementById('modalBody').innerHTML = `
                     <div style="margin-bottom: 20px;">
-                        <h3 style="margin-bottom: 15px;">Match Score: ${match.overall_score.toFixed(1)}/100</h3>
+                        <h3 style="margin-bottom: 15px;">Match Score: ${formatScore(match.overall_score)}/100</h3>
 
                         ${hasFitWant ? `
                             <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
                                 <div style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); color: white; padding: 15px; border-radius: 12px; text-align: center;">
-                                    <div style="font-size: 2em; font-weight: bold;">${match.fit_score.toFixed(1)}</div>
+                                    <div style="font-size: 2em; font-weight: bold;">${formatScore(match.fit_score)}</div>
                                     <div style="font-size: 0.9em; opacity: 0.9;">Fit Score</div>
                                     <div style="font-size: 0.8em; opacity: 0.7; margin-top: 5px;">Can do the job</div>
                                 </div>
                                 <div style="background: linear-gradient(135deg, #4CAF50 0%, #388E3C 100%); color: white; padding: 15px; border-radius: 12px; text-align: center;">
-                                    <div style="font-size: 2em; font-weight: bold;">${match.want_score.toFixed(1)}</div>
+                                    <div style="font-size: 2em; font-weight: bold;">${formatScore(match.want_score)}</div>
                                     <div style="font-size: 0.9em; opacity: 0.9;">Want Score</div>
                                     <div style="font-size: 0.8em; opacity: 0.7; margin-top: 5px;">Matches what you want</div>
                                 </div>
                                 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 12px; text-align: center;">
-                                    <div style="font-size: 2em; font-weight: bold;">${match.overall_score.toFixed(1)}</div>
+                                    <div style="font-size: 2em; font-weight: bold;">${formatScore(match.overall_score)}</div>
                                     <div style="font-size: 0.9em; opacity: 0.9;">Overall Score</div>
                                     <div style="font-size: 0.8em; opacity: 0.7; margin-top: 5px;">${(match.fit_weight * 100).toFixed(0)}% Fit + ${(match.want_weight * 100).toFixed(0)}% Want</div>
                                 </div>
@@ -1151,16 +1157,16 @@
 
                         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px;">
                             <div>
-                                <strong>Base Score:</strong> ${match.base_score.toFixed(1)}
+                                <strong>Base Score:</strong> ${formatScore(match.base_score)}
                             </div>
                             <div>
-                                <strong>Penalties:</strong> <span style="color: #f44336">-${match.penalties.toFixed(1)}</span>
+                                <strong>Penalties:</strong> <span style="color: #f44336">-${formatScore(match.penalties)}</span>
                             </div>
                             <div>
-                                <strong>Required Coverage:</strong> ${(match.required_coverage * 100).toFixed(0)}%
+                                <strong>Required Coverage:</strong> ${formatScore(match.required_coverage * 100, 0)}%
                             </div>
                             <div>
-                                <strong>Preferred Coverage:</strong> ${(match.preferred_coverage * 100).toFixed(0)}%
+                                <strong>Preferred Coverage:</strong> ${formatScore(match.preferred_coverage * 100, 0)}%
                             </div>
                         </div>
                         
@@ -1181,31 +1187,31 @@
                         ` : ''}
                         
                         <div style="margin-bottom: 20px;">
-                            <h4 style="margin-bottom: 10px;">Covered Requirements (${covered.length})</h4>
-                            <ul class="requirements-list">
-                                ${covered.map(r => `
-                                    <li class="requirement-item requirement-covered">
-                                        <strong>${escapeHtml(r.req_type.toUpperCase())}:</strong> ${escapeHtml(r.requirement_id)}<br>
-                                        ${r.evidence_text ? '<small style="color: #666;">Matched with: "' + escapeHtml(r.evidence_text.substring(0, 100)) + '..."</small>' : ''}
-                                        <div style="margin-top: 5px; font-size: 0.9em; color: #4caf50;">
-                                            Similarity: ${(r.similarity_score * 100).toFixed(1)}%
-                                        </div>
-                                    </li>
-                                `).join('')}
-                            </ul>
+                            <h4 style="margin-bottom: 10px; font-weight: bold;">Covered Requirements (${covered.length})</h4>
+                        <ul class="requirements-list">
+                            ${covered.map(r => `
+                                <li class="requirement-item requirement-covered">
+                                    <strong>${escapeHtml(r.req_type.toUpperCase())}:</strong> ${escapeHtml(r.requirement_id)}<br>
+                                    ${r.evidence_text ? '<small style="color: #666;">Matched with: "' + escapeHtml(r.evidence_text.substring(0, 100)) + '..."</small>' : ''}
+                                    <div style="margin-top: 5px; font-size: 0.9em; color: #4caf50;">
+                                        Similarity: ${formatScore(r.similarity_score * 100, 0)}%
+                                    </div>
+                                </li>
+                            `).join('')}
+                        </ul>
                         </div>
                         
                         ${uncovered.length > 0 ? `
                             <div>
-                                <h4 style="margin-bottom: 10px; color: #f44336;">Missing Requirements (${uncovered.length})</h4>
-                                <ul class="requirements-list">
-                                    ${uncovered.map(r => `
-                                        <li class="requirement-item requirement-uncovered">
-                                            <strong>${escapeHtml(r.req_type.toUpperCase())}:</strong> ${escapeHtml(r.requirement_id)}<br>
-                                            <small style="color: #999;">Best similarity: ${(r.similarity_score * 100).toFixed(1)}%</small>
-                                        </li>
-                                    `).join('')}
-                                </ul>
+                                <h4 style="margin-bottom: 10px; font-weight: bold; color: #f44336;">Missing Requirements (${uncovered.length})</h4>
+                            <ul class="requirements-list">
+                                ${uncovered.map(r => `
+                                    <li class="requirement-item requirement-uncovered">
+                                        <strong>${escapeHtml(r.req_type.toUpperCase())}:</strong> ${escapeHtml(r.requirement_id)}<br>
+                                        <small style="color: #999;">Best similarity: ${formatScore(r.similarity_score * 100, 0)}%</small>
+                                    </li>
+                                `).join('')}
+                            </ul>
                             </div>
                         ` : ''}
                         
@@ -1253,7 +1259,7 @@
             
             for (const [sectionType, data] of Object.entries(explanation.section_summary)) {
                 const rawScore = data.avg_similarity || 0;
-                const score = (rawScore * 100).toFixed(0);
+                const score = formatScore(rawScore * 100, 0);
                 const color = score >= 70 ? '#4caf50' : score >= 50 ? '#ff9800' : '#f44336';
                 sectionHtml += `
                     <div style="padding: 12px; background: #f5f5f5; border-radius: 8px; text-align: center;">
@@ -1272,7 +1278,7 @@
                         <ul style="margin-top: 8px; margin-bottom: 0; padding-left: 20px;">
                             ${explanation.strengths.map(s => `
                                 <li style="margin-bottom: 5px;">
-                                    <strong style="text-transform: capitalize;">${escapeHtml(s.section)}</strong>: ${(s.score * 100).toFixed(0)}% match
+                                    <strong style="text-transform: capitalize;">${escapeHtml(s.section)}</strong>: ${formatScore(s.score * 100, 0)}% match
                                 </li>
                             `).join('')}
                         </ul>
@@ -1288,7 +1294,7 @@
                         <ul style="margin-top: 8px; margin-bottom: 0; padding-left: 20px;">
                             ${explanation.gaps.map(g => `
                                 <li style="margin-bottom: 5px;">
-                                    <strong style="text-transform: capitalize;">${escapeHtml(g.section)}</strong>: ${(g.avg_score * 100).toFixed(0)}% avg - consider adding relevant content
+                                    <strong style="text-transform: capitalize;">${escapeHtml(g.section)}</strong>: ${formatScore(g.avg_score * 100, 0)}% avg - consider adding relevant content
                                 </li>
                             `).join('')}
                         </ul>

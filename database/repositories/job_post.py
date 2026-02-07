@@ -406,7 +406,7 @@ class JobPostRepository(BaseRepository):
                 WHERE id IN (SELECT id FROM pending)
                 RETURNING id
             """)
-            .bindparams(max_retries=max_retries, worker_id=worker_id, now=now)
+            .bindparams(max_retries=max_retries, worker_id=worker_id, now=now, limit=limit)
         )
 
         result = self.db.execute(claim_stmt)

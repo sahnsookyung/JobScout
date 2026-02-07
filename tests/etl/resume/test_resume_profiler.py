@@ -15,7 +15,7 @@ class TestResumeProfilerProfiling:
     def mock_ai_service(self):
         """Create a mock AI service."""
         mock = Mock()
-        mock.extract_structured_data.return_value = {
+        mock.extract_resume_data.return_value = {
             "profile": {
                 "summary": {
                     "text": "Software Engineer with 5 years experience building scalable systems",
@@ -34,7 +34,15 @@ class TestResumeProfilerProfiling:
                     }
                 ],
                 "projects": {
-                    "description": "Built ML pipeline"
+                    "items": [
+                        {
+                            "name": "ML Pipeline",
+                            "description": "Built ML pipeline",
+                            "technologies": ["Python", "TensorFlow"],
+                            "url": None,
+                            "date": None
+                        }
+                    ]
                 },
                 "education": [],
                 "skills": {
@@ -112,7 +120,7 @@ class TestResumeProfilerProfiling:
         profiler.profile_resume(sample_resume_data)
         
         # AI service should not be called for section embeddings (no store)
-        # extract_structured_data is called, but save_resume_section_embeddings won't persist
+        # extract_resume_data is called, but save_resume_section_embeddings won't persist
         # without a store configured
         mock_ai_service.generate_embedding.assert_called()
     

@@ -236,8 +236,8 @@ def _run_facet_extraction_batch(ctx: AppContext, stop_event: threading.Event, li
                 try:
                     with job_uow() as repo:
                         repo.mark_job_facets_failed(job_id, error_msg)
-                except:
-                    pass
+                except Exception as mark_err:
+                    logger.warning("Failed to mark job %s facets as failed: %s", job_id, mark_err)
                 logger.exception("Facet extraction error job_id=%s", job_id)
 
     logger.info(f"Facet extraction batch completed: processed={processed}")

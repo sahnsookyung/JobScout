@@ -15,7 +15,7 @@ import json
 import pytest
 from typing import Dict, Any, List
 
-from etl.schema_models import (
+from core.llm.schema_models import (
     RESUME_SCHEMA,
     EXTRACTION_SCHEMA,
     FACET_EXTRACTION_SCHEMA_FOR_WANTS,

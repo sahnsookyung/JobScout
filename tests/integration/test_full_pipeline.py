@@ -31,7 +31,7 @@ import time
 import uuid
 import numpy as np
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from unittest.mock import patch
 
 # Check if we should run with Docker containers
@@ -83,7 +83,7 @@ from database.models import Base, JobPost, JobRequirementUnit, JobMatch
 from database.repository import JobRepository
 from core.matcher import MatcherService
 from etl.resume import ResumeProfiler, ResumeEvidenceUnit
-from etl.schema_models import ResumeSchema
+from core.llm.schema_models import ResumeSchema
 from core.config_loader import MatcherConfig, ScorerConfig
 from core.llm.interfaces import LLMProvider
 from core.scorer import ScoringService, persistence
@@ -94,7 +94,7 @@ from etl.orchestrator import JobETLService
 class MockAIService(LLMProvider):
     """Mock AI service that implements LLMProvider interface."""
 
-    def extract_structured_data(self, text: str, schema: Dict) -> Dict[str, Any]:
+    def extract_structured_data(self, text: str, schema_spec: Dict, system_prompt: Optional[str] = None, user_message: Optional[str] = None) -> Dict[str, Any]:
         """Mock structured data extraction - returns valid data for both jobs and resumes."""
         import json
         try:
@@ -107,11 +107,24 @@ class MockAIService(LLMProvider):
         else:
             return {}
 
-    def generate_embedding(self, text: str) -> List[float]:
-        """Generate a random embedding for testing."""
-        return np.random.randn(1024).tolist()
-    
-    def extract_job_facets(self, text: str) -> Dict[str, str]:
+    def extract_resume_data(self, text: str) -> Dict[str, Any]:
+        """Mock resume data extraction."""
+        import json
+        try:
+            data = json.loads(text)
+        except:
+            return {"profile": {}, "extraction": {"confidence": 0.5, "warnings": []}}
+        
+        if "profile" in data:
+            return data
+        else:
+            return {}
+
+    def extract_requirements_data(self, text: str) -> Dict[str, Any]:
+        """Mock requirements data extraction."""
+        return {"required": [], "preferred": []}
+
+    def extract_facet_data(self, text: str) -> Dict[str, str]:
         """Mock facet extraction."""
         return {
             "remote_flexibility": "Remote work available",
@@ -122,6 +135,10 @@ class MockAIService(LLMProvider):
             "tech_stack": "Python, PostgreSQL, AWS",
             "visa_sponsorship": "Visa sponsorship available"
         }
+
+    def generate_embedding(self, text: str) -> List[float]:
+        """Generate a random embedding for testing."""
+        return np.random.randn(1024).tolist()
 
 
 @unittest.skipIf(not RUN_TESTS, "Docker not available and TEST_DATABASE_URL not set")
@@ -236,12 +253,22 @@ class TestFullPipelineIntegration(unittest.TestCase):
                     }
                 ],
                 "projects": {
-                    "description": "Led development of ML pipeline for data processing. Built internal tools with FastAPI."
+                    "items": [
+                        {
+                            "name": "ML Pipeline",
+                            "description": "Led development of ML pipeline for data processing. Built internal tools with FastAPI.",
+                            "technologies": ["Python", "FastAPI", "TensorFlow"],
+                            "url": None,
+                            "date": None
+                        }
+                    ]
                 },
                 "education": [
                     {
+                        "institution": "Stanford University",
                         "degree": "Bachelor of Science",
                         "field_of_study": "Computer Science",
+                        "graduation_year": 2016,
                         "description": "Graduated with honors, GPA 3.8/4.0"
                     }
                 ],
@@ -433,7 +460,6 @@ class TestFullPipelineIntegration(unittest.TestCase):
         print("\n[Step 2] Resume Evidence Extraction...")
 
         # Parse resume data into Pydantic model
-        from etl.schema_models import ResumeSchema
         resume = ResumeSchema.model_validate(self.resume_data)
         
         # Use resume_profiler to extract evidence from the profile

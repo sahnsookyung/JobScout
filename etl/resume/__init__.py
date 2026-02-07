@@ -7,12 +7,11 @@ Handles:
 - Resume evidence unit extraction
 - Section embedding generation
 
-Note: Structured resume data uses Pydantic models from etl.schema_models.
+Note: Structured resume data uses Pydantic models from core.llm.schema_models.
 """
-
+from core.llm.schema_models import ResumeSchema
 from etl.resume.profiler import ResumeProfiler
 from etl.resume.models import ResumeEvidenceUnit
-from etl.schema_models import ResumeSchema
 
 __all__ = [
     'ResumeProfiler',

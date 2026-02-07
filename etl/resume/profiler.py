@@ -20,8 +20,7 @@ from etl.resume.embedding_store import (
     ResumeSectionEmbeddingStore,
     ResumeEvidenceUnitEmbeddingStore,
 )
-from etl.schema_models import (
-    RESUME_SCHEMA,
+from core.llm.schema_models import (
     ResumeSchema,
     Profile,
 )
@@ -75,10 +74,7 @@ class ResumeProfiler:
         try:
             resume_text = json.dumps(resume_data, indent=2)
 
-            extraction_result = self.ai.extract_structured_data(
-                resume_text,
-                RESUME_SCHEMA
-            )
+            extraction_result = self.ai.extract_resume_data(resume_text)
 
             if not extraction_result or 'profile' not in extraction_result:
                 logger.warning("Failed to extract structured resume data")

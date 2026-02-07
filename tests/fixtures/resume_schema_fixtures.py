@@ -62,12 +62,34 @@ VALID_RESUME = {
             }
         ],
         "projects": {
-            "description": "Contributed to open-source projects. Built personal portfolio site with Next.js."
+            "items": [
+                {
+                    "name": "Open Source Contribution",
+                    "description": "Contributed to open-source projects.",
+                    "technologies": ["Python", "Git"],
+                    "url": "https://github.com/example/contribution",
+                    "date": {
+                        "text": "2023",
+                        "year": 2023,
+                        "month": None,
+                        "precision": "year"
+                    }
+                },
+                {
+                    "name": "Personal Portfolio",
+                    "description": "Built personal portfolio site with Next.js.",
+                    "technologies": ["Next.js", "React", "TypeScript"],
+                    "url": "https://example.com",
+                    "date": None
+                }
+            ]
         },
         "education": [
             {
                 "degree": "Bachelor of Science",
                 "field_of_study": "Computer Science",
+                "institution": "Stanford University",
+                "graduation_year": 2018,
                 "description": "Graduated with honors. GPA 3.8/4.0."
             }
         ],
@@ -139,12 +161,14 @@ VALID_RESUME_WITH_NULLS = {
             }
         ],
         "projects": {
-            "description": None
+            "items": []
         },
         "education": [
             {
                 "degree": None,
                 "field_of_study": None,
+                "institution": None,
+                "graduation_year": None,
                 "description": None
             }
         ],
@@ -170,7 +194,7 @@ VALID_MINIMAL_RESUME = {
             "total_experience_years": None
         },
         "experience": [],
-        "projects": {"description": None},
+        "projects": {"items": []},
         "education": [],
         "skills": {"groups": [], "all": []},
         "certifications": [],
@@ -233,7 +257,25 @@ INVALID_MISSING_SUMMARY_TEXT = {
             # Missing "text"
         },
         "experience": [],
-        "projects": {"description": None},
+        "projects": {"items": []},
+        "education": [],
+        "skills": {"groups": [], "all": []},
+        "certifications": [],
+        "languages": []
+    },
+    "extraction": {"confidence": 0.95, "warnings": []}
+}
+
+
+# Missing required field in summary
+INVALID_MISSING_SUMMARY_TEXT = {
+    "profile": {
+        "summary": {
+            "total_experience_years": 5.0
+            # Missing "text"
+        },
+        "experience": [],
+        "projects": {"items": []},
         "education": [],
         "skills": {"groups": [], "all": []},
         "certifications": [],
@@ -292,7 +334,7 @@ INVALID_EXTRA_TOP_LEVEL = {
     "profile": {
         "summary": {"text": "Test", "total_experience_years": 5.0},
         "experience": [],
-        "projects": {"description": None},
+        "projects": {"items": []},
         "education": [],
         "skills": {"groups": [], "all": []},
         "certifications": [],
@@ -347,7 +389,7 @@ INVALID_WRONG_TYPE_YEARS = make_invalid_resume({
 # Wrong type (array instead of object for projects)
 INVALID_WRONG_TYPE_PROJECTS = make_invalid_resume({
     "profile": {
-        "projects": ["project1", "project2"]  # Should be object with description field
+        "projects": ["project1", "project2"]  # Should be object with items field
     }
 })
 

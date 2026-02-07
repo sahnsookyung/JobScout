@@ -7,7 +7,7 @@ import copy
 import pytest
 from pydantic import ValidationError
 
-from etl.schema_models import (
+from core.llm.schema_models import (
     RESUME_SCHEMA,
     ResumeSchema,
     ExperienceItem,
