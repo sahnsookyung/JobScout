@@ -382,6 +382,7 @@ def run_matching_pipeline(ctx: AppContext, stop_event: threading.Event) -> None:
         step_start = time.time()
         logger.info("=== MATCHING STEP 7: Running MatcherService (Vector Retrieval) ===")
 
+        # Retrieve top jobs based on cosine distance with resume summary embedding. This is the preliminary list that is worth performing further computations on.
         preliminary_matches = matcher.match_resume_two_stage(
             repo=repo,
             resume_data=resume_data,
@@ -399,7 +400,7 @@ def run_matching_pipeline(ctx: AppContext, stop_event: threading.Event) -> None:
         scorer = ScoringService(repo=repo, config=matching_config.scorer)
 
         if user_want_embeddings:
-            logger.info("=== Using Fit/Want scoring with user wants embeddings ===")
+            logger.info("=== Using Fit/Want scoring with 'user wants' embeddings ===")
             for preliminary in preliminary_matches:
                 job_id = str(preliminary.job.id)
                 if job_id not in job_facet_embeddings_map:

@@ -212,63 +212,6 @@ class MockMatcherService:
 
         return matches
     
-    def match_resume_to_job(
-        self,
-        repo: Any,
-        job: JobPost,
-        resume_fingerprint: str,
-    ) -> JobMatchPreliminary:
-        """Mock match resume to a single job."""
-        matched_requirements = []
-        missing_requirements = []
-
-        return JobMatchPreliminary(
-            job=job,
-            job_similarity=0.7,
-            requirement_matches=matched_requirements,
-            missing_requirements=missing_requirements,
-            resume_fingerprint=resume_fingerprint
-        )
-    
-    def extract_resume_evidence(
-        self,
-        resume_data: Dict[str, Any]
-    ) -> List[ResumeEvidenceUnit]:
-        """Mock extract resume evidence from resume data."""
-        evidence_units = []
-        
-        for section_idx, section in enumerate(resume_data.get('sections', [])):
-            section_title = section.get('title', '')
-            
-            for item_idx, item in enumerate(section.get('items', [])):
-                if item.get('description'):
-                    evidence_units.append(ResumeEvidenceUnit(
-                        id=f"reu_{len(evidence_units)}",
-                        text=item['description'],
-                        source_section=section_title,
-                        tags={
-                            'company': item.get('company', ''),
-                            'role': item.get('role', ''),
-                            'period': item.get('period', ''),
-                            'type': 'description'
-                        }
-                    ))
-                
-                for highlight in item.get('highlights', []):
-                    if highlight and not highlight.startswith('<'):
-                        evidence_units.append(ResumeEvidenceUnit(
-                            id=f"reu_{len(evidence_units)}",
-                            text=highlight,
-                            source_section=section_title,
-                            tags={
-                                'company': item.get('company', ''),
-                                'role': item.get('role', ''),
-                                'type': 'highlight'
-                            }
-                        ))
-        
-        return evidence_units
-    
     def embed_evidence_units(
         self,
         evidence_units: List[ResumeEvidenceUnit]

@@ -5,7 +5,7 @@ Unit tests for Fit/Want scoring modules.
 
 import unittest
 import numpy as np
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 
 from core.scorer.fit_score import calculate_fit_score
 from core.scorer.want_score import calculate_want_score
@@ -71,12 +71,22 @@ class TestFitScore(unittest.TestCase):
             penalty_experience_shortfall=15.0
         )
 
+    def _make_match(self, req_type: str, similarity: float, weight: float = 1.0):
+        """Create a mock match object with req_type and similarity."""
+        mock = MagicMock()
+        mock.req_type = req_type
+        mock.weight = weight
+        mock.similarity = similarity
+        mock.requirement = mock
+        return mock
+
     def test_fit_score_capped_at_100(self):
         """Fit score should never exceed 100"""
+        matched = [self._make_match("required", 1.0, 1.0), self._make_match("preferred", 1.0, 1.0)]
         fit_score, components = calculate_fit_score(
             job_similarity=0.95,
-            required_coverage=0.95,
-            preferred_coverage=0.95,
+            matched_requirements=matched,
+            missing_requirements=[],
             fit_penalties=0,
             config=self.config
         )
@@ -84,10 +94,11 @@ class TestFitScore(unittest.TestCase):
 
     def test_fit_score_zero_penalties_perfect_match(self):
         """Perfect match with zero penalties should give high score"""
+        matched = [self._make_match("required", 1.0, 1.0), self._make_match("preferred", 1.0, 1.0)]
         fit_score, components = calculate_fit_score(
             job_similarity=1.0,
-            required_coverage=1.0,
-            preferred_coverage=1.0,
+            matched_requirements=matched,
+            missing_requirements=[],
             fit_penalties=0,
             config=self.config
         )
@@ -95,17 +106,19 @@ class TestFitScore(unittest.TestCase):
 
     def test_fit_score_with_missing_required(self):
         """Missing required skills should reduce fit score"""
+        matched = [self._make_match("required", 1.0, 1.0), self._make_match("preferred", 0.8, 1.0)]
         fit_score_no_missing, _ = calculate_fit_score(
             job_similarity=0.8,
-            required_coverage=1.0,
-            preferred_coverage=0.8,
+            matched_requirements=matched,
+            missing_requirements=[],
             fit_penalties=0,
             config=self.config
         )
+        matched_missing = [self._make_match("required", 0.5, 1.0), self._make_match("preferred", 0.8, 1.0)]
         fit_score_missing, _ = calculate_fit_score(
             job_similarity=0.8,
-            required_coverage=0.5,
-            preferred_coverage=0.8,
+            matched_requirements=matched_missing,
+            missing_requirements=[],
             fit_penalties=0,
             config=self.config
         )
@@ -113,10 +126,11 @@ class TestFitScore(unittest.TestCase):
 
     def test_fit_score_negative_penalties_clamped(self):
         """Negative fit penalties should not artificially inflate score"""
+        matched = [self._make_match("required", 0.5, 1.0), self._make_match("preferred", 0.5, 1.0)]
         fit_score, components = calculate_fit_score(
             job_similarity=0.5,
-            required_coverage=0.5,
-            preferred_coverage=0.5,
+            matched_requirements=matched,
+            missing_requirements=[],
             fit_penalties=-10,
             config=self.config
         )
@@ -125,10 +139,11 @@ class TestFitScore(unittest.TestCase):
 
     def test_fit_score_components_contain_expected_keys(self):
         """Fit score components should contain expected keys"""
+        matched = [self._make_match("required", 0.9, 1.0), self._make_match("preferred", 0.7, 1.0)]
         fit_score, components = calculate_fit_score(
             job_similarity=0.8,
-            required_coverage=0.9,
-            preferred_coverage=0.7,
+            matched_requirements=matched,
+            missing_requirements=[],
             fit_penalties=10,
             config=self.config
         )

@@ -289,21 +289,6 @@ class JobPostRepository(BaseRepository):
         rows = self.db.execute(stmt).all()
         return [(row[0], cosine_similarity_from_distance(row._mapping['distance'])) for row in rows]
 
-    def get_jobs_for_matching(
-        self,
-        limit: Optional[int] = None,
-        is_embedded: bool = True
-    ) -> List[JobPost]:
-        stmt = select(JobPost)
-
-        if is_embedded:
-            stmt = stmt.where(JobPost.is_embedded == True)
-
-        if limit is not None:
-            stmt = stmt.limit(limit)
-
-        return self.db.execute(stmt).scalars().all()
-
     def get_jobs_needing_facet_extraction(self, limit: int = 100) -> List[JobPost]:
         stmt = select(JobPost).where(
             JobPost.is_embedded == True

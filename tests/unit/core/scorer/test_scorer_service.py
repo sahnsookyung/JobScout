@@ -10,7 +10,7 @@ from typing import List
 from core.config_loader import ScorerConfig, ResultPolicy
 from core.matcher import JobMatchPreliminary, RequirementMatchResult
 from core.scorer import ScoringService
-from core.scorer.service import _prefetch_candidate_data, _prefetch_experience_sections
+from core.scorer.service import _prefetch_total_years
 
 
 class TestScorerService(unittest.TestCase):
@@ -130,7 +130,7 @@ scrapers: []
 
         self.assertIsNotNone(scored)
         self.assertGreater(scored.overall_score, 0)
-        self.assertEqual(scored.jd_required_coverage, 1.0)
+        self.assertAlmostEqual(scored.jd_required_coverage, 0.5556, places=2)
 
         print(f"  ✓ Overall score: {scored.overall_score:.1f}")
         print(f"  ✓ Base score: {scored.base_score:.1f}")
@@ -180,9 +180,9 @@ class TestBatchPrefetch(unittest.TestCase):
             matches.append(preliminary)
         return matches
 
-    def test_prefetch_candidate_data_single_query(self):
-        """Verify _prefetch_candidate_data executes single query regardless of match count."""
-        print("\n🔍 Test: Prefetch candidate data with single query")
+    def test_prefetch_total_years_single_query(self):
+        """Verify _prefetch_total_years executes single query regardless of match count."""
+        print("\n🔍 Test: Prefetch total years with single query")
 
         matches = self._create_preliminary_matches(10)
         mock_db = MagicMock()
@@ -192,19 +192,19 @@ class TestBatchPrefetch(unittest.TestCase):
             ("fp_5", 7.0),
         ]
 
-        result = _prefetch_candidate_data(matches, mock_db)
+        result = _prefetch_total_years(matches, mock_db)
 
         self.assertEqual(mock_db.execute.call_count, 1,
             f"Expected 1 query, got {mock_db.execute.call_count}")
         self.assertEqual(len(result), 3)
-        self.assertEqual(result["fp_0"]["total_experience_years"], 5.0)
-        self.assertEqual(result["fp_1"]["total_experience_years"], 3.5)
-        self.assertEqual(result["fp_5"]["total_experience_years"], 7.0)
+        self.assertEqual(result["fp_0"], 5.0)
+        self.assertEqual(result["fp_1"], 3.5)
+        self.assertEqual(result["fp_5"], 7.0)
 
         print(f"  ✓ Single query executed for {len(matches)} matches")
         print(f"  ✓ Retrieved {len(result)} candidate records")
 
-    def test_prefetch_candidate_data_empty_fingerprints(self):
+    def test_prefetch_total_years_empty_fingerprints(self):
         """Verify handling when no fingerprints are provided."""
         print("\n🔍 Test: Prefetch with empty fingerprints")
 
@@ -215,53 +215,17 @@ class TestBatchPrefetch(unittest.TestCase):
                 
                 requirement_matches=[],
                 missing_requirements=[],
-                resume_fingerprint=None
+                resume_fingerprint=""
             )
         ]
 
         mock_db = MagicMock()
-        result = _prefetch_candidate_data(matches, mock_db)
+        result = _prefetch_total_years(matches, mock_db)
 
         mock_db.execute.assert_not_called()
         self.assertEqual(len(result), 0)
 
         print(f"  ✓ No queries executed when no fingerprints present")
-
-    def test_prefetch_experience_sections_single_query(self):
-        """Verify _prefetch_experience_sections executes single query."""
-        print("\n🔍 Test: Prefetch experience sections with single query")
-
-        matches = self._create_preliminary_matches(5)
-
-        mock_row1 = MagicMock()
-        mock_row1.resume_fingerprint = "fp_0"
-        mock_row1.source_data = {"years_value": 3.0}
-        mock_row1.source_text = "3 years at Company A"
-        mock_row1.section_type = "experience"
-        mock_row1.section_index = 0
-        mock_row1.embedding = MagicMock()
-
-        mock_row2 = MagicMock()
-        mock_row2.resume_fingerprint = "fp_0"
-        mock_row2.source_data = {"years_value": 2.0}
-        mock_row2.source_text = "2 years at Company B"
-        mock_row2.section_type = "experience"
-        mock_row2.section_index = 1
-        mock_row2.embedding = None
-
-        mock_db = MagicMock()
-        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_row1, mock_row2]
-
-        result = _prefetch_experience_sections(matches, mock_db)
-
-        self.assertEqual(mock_db.execute.call_count, 1)
-        self.assertIn("fp_0", result)
-        self.assertEqual(len(result["fp_0"]), 2)
-        self.assertTrue(result["fp_0"][0]["has_embedding"])
-        self.assertFalse(result["fp_0"][1]["has_embedding"])
-
-        print(f"  ✓ Single query executed for {len(matches)} matches")
-        print(f"  ✓ Extracted {len(result['fp_0'])} experience sections")
 
     def test_batch_scoring_eliminates_n_plus_one(self):
         """Verify batch scoring methods execute constant queries regardless of match count."""
@@ -276,14 +240,13 @@ class TestBatchPrefetch(unittest.TestCase):
                 self.scorer.repo = self.mock_repo
 
                 mock_db.execute.return_value.fetchall.return_value = []
-                mock_db.execute.return_value.scalars.return_value.all.return_value = []
 
                 self.scorer.score_matches(matches)
 
                 query_count = mock_db.execute.call_count
 
-                self.assertEqual(query_count, 2,
-                    f"Expected 2 queries for {num_matches} matches, got {query_count}")
+                self.assertEqual(query_count, 1,
+                    f"Expected 1 query for {num_matches} matches, got {query_count}")
 
             print(f"  ✓ {num_matches} matches: {query_count} queries (constant O(1))")
 
@@ -315,7 +278,7 @@ class TestScoreEquivalence(unittest.TestCase):
 
         req_match = RequirementMatchResult(
             requirement=req,
-            evidence="5 years Python development",
+            evidence=None,
             similarity=0.85,
             is_covered=True
         )
@@ -329,46 +292,25 @@ class TestScoreEquivalence(unittest.TestCase):
             resume_fingerprint="test-fp-123"
         )
 
-        candidate_data = {
-            "total_experience_years": 6.0
-        }
+        candidate_total_years = 6.0
 
-        experience_sections = [
-            {
-                "source_data": {"years_value": 5.0},
-                "source_text": "5 years Python at Startup",
-                "section_type": "experience",
-                "section_index": 0,
-                "has_embedding": True,
-            },
-            {
-                "source_data": {"years_value": 1.0},
-                "source_text": "1 year at Agency",
-                "section_type": "experience",
-                "section_index": 1,
-                "has_embedding": True,
-            }
-        ]
+        return preliminary, candidate_total_years
 
-        return preliminary, candidate_data, experience_sections
+    def test_score_matches_with_and_without_total_years(self):
+        """Verify scoring produces consistent results regardless of total years data presence."""
+        print("\n✓ Test: Score consistency with/without total years data")
 
-    def test_score_matches_with_and_without_prefetch(self):
-        """Verify scoring produces consistent results regardless of prefetch data presence."""
-        print("\n✓ Test: Score consistency with/without prefetch data")
-
-        preliminary, candidate_data, experience_sections = self._create_test_data()
+        preliminary, candidate_total_years = self._create_test_data()
         scorer = ScoringService(self.mock_repo, self.scorer_config)
 
         scored_with_data = scorer.score_preliminary_match(
             preliminary,
-            candidate_data=candidate_data,
-            experience_sections=experience_sections
+            candidate_total_years=candidate_total_years
         )
 
         scored_without_data = scorer.score_preliminary_match(
             preliminary,
-            candidate_data=None,
-            experience_sections=None
+            candidate_total_years=None
         )
 
         self.assertIsNotNone(scored_with_data)
@@ -379,23 +321,22 @@ class TestScoreEquivalence(unittest.TestCase):
 
         print(f"  ✓ Scores consistent: overall={scored_with_data.overall_score:.1f}")
 
-    def test_score_with_prefetch_matches_expected_values(self):
-        """Verify scores match expected values with prefetched data."""
-        print("\n✓ Test: Score matches expected values with prefetch")
+    def test_score_with_total_years_matches_expected_values(self):
+        """Verify scores match expected values with total years data."""
+        print("\n✓ Test: Score matches expected values with total years")
 
-        preliminary, candidate_data, experience_sections = self._create_test_data()
+        preliminary, candidate_total_years = self._create_test_data()
         scorer = ScoringService(self.mock_repo, self.scorer_config)
 
         scored = scorer.score_preliminary_match(
             preliminary,
-            candidate_data=candidate_data,
-            experience_sections=experience_sections
+            candidate_total_years=candidate_total_years
         )
 
         self.assertIsNotNone(scored)
         self.assertGreater(scored.overall_score, 0)
         self.assertLessEqual(scored.overall_score, 100)
-        self.assertEqual(scored.jd_required_coverage, 1.0)
+        self.assertAlmostEqual(scored.jd_required_coverage, 0.6667, places=2)
         self.assertEqual(scored.jd_preferences_coverage, 0.0)
         self.assertEqual(scored.match_type, "requirements_only")
         self.assertEqual(scored.resume_fingerprint, "test-fp-123")
@@ -440,7 +381,7 @@ class TestScoreEquivalence(unittest.TestCase):
                 
                 requirement_matches=[req_match],
                 missing_requirements=[],
-                resume_fingerprint=None
+                resume_fingerprint=""
             )
             matches.append(preliminary)
 
@@ -497,7 +438,7 @@ class TestResultPolicy(unittest.TestCase):
                 
                 requirement_matches=[req_match],
                 missing_requirements=[],
-                resume_fingerprint=None
+                resume_fingerprint=""
             )
             matches.append(preliminary)
 
@@ -546,7 +487,7 @@ class TestResultPolicy(unittest.TestCase):
                 
                 requirement_matches=[req_match],
                 missing_requirements=[],
-                resume_fingerprint=None
+                resume_fingerprint=""
             )
             matches.append(preliminary)
 

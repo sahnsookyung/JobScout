@@ -118,13 +118,6 @@ class JobRepository:
             resume_embedding, limit, tenant_id, require_remote
         )
 
-    def get_jobs_for_matching(
-        self,
-        limit: Optional[int] = None,
-        is_embedded: bool = True
-    ) -> List[JobPost]:
-        return self.job_post.get_jobs_for_matching(limit, is_embedded)
-
     def get_jobs_needing_facet_extraction(self, limit: int = 100) -> List[JobPost]:
         return self.job_post.get_jobs_needing_facet_extraction(limit)
 
