@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useMatches } from '@/hooks/useMatches';
 import { MatchCard } from './MatchCard';
 import { MatchFilters } from './MatchFilters';
@@ -13,10 +13,20 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
     const [remoteOnly, setRemoteOnly] = useState(false);
     const [showWantScore, setShowWantScore] = useState(false);
     const [sortBy, setSortBy] = useState<SortBy>('overall');
+    const [showHidden, setShowHidden] = useState(() => {
+        const saved = localStorage.getItem('jobscout_show_hidden');
+        return saved === 'true';
+    });
+
+    // Persist showHidden preference
+    useEffect(() => {
+        localStorage.setItem('jobscout_show_hidden', showHidden.toString());
+    }, [showHidden]);
 
     const { data, isLoading, error, refetch } = useMatches({
         status,
         remote_only: remoteOnly,
+        show_hidden: showHidden,
     });
 
     // Client-side sorting
@@ -67,6 +77,8 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                 onShowWantScoreChange={setShowWantScore}
                 sortBy={sortBy}
                 onSortByChange={setSortBy}
+                showHidden={showHidden}
+                onShowHiddenChange={setShowHidden}
             />
 
             <div className="text-sm text-gray-600">

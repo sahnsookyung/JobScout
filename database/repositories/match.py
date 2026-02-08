@@ -1,6 +1,6 @@
 import logging
 from typing import List, Optional, Any
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from database.models import JobMatch
 from database.repositories.base import BaseRepository
@@ -111,3 +111,24 @@ class MatchRepository(BaseRepository):
             logger.info(f"Batch invalidated {count} matches for {len(job_ids)} jobs: {reason}")
 
         return count
+
+    def get_match_by_id(self, match_id: Any) -> Optional[JobMatch]:
+        """Get a match by its ID."""
+        stmt = select(JobMatch).where(JobMatch.id == match_id)
+        return self.db.execute(stmt).scalar_one_or_none()
+
+    def update_hidden_status(self, match_id: Any, is_hidden: bool) -> Optional[JobMatch]:
+        """Update the hidden status of a match. Returns the updated match or None if not found."""
+        match = self.get_match_by_id(match_id)
+        if match:
+            match.is_hidden = is_hidden
+            logger.info(f"Updated match {match_id} hidden status to {is_hidden}")
+        return match
+
+    def get_hidden_count(self, resume_fingerprint: str) -> int:
+        """Get count of hidden matches for a resume."""
+        stmt = select(func.count()).select_from(JobMatch).where(
+            JobMatch.resume_fingerprint == resume_fingerprint,
+            JobMatch.is_hidden.is_(True)
+        )
+        return self.db.execute(stmt).scalar() or 0

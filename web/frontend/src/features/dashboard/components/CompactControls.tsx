@@ -1,221 +1,160 @@
 import React from 'react';
-import { Play, TrendingUp, Zap, CheckCircle, XCircle, Loader } from 'lucide-react';
+import { TrendingUp, Zap, CheckCircle, XCircle, Loader } from 'lucide-react';
 import { usePipeline } from '@/hooks/usePipeline';
 import { useStats } from '@/hooks/useStats';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 
 export const CompactControls: React.FC = () => {
-    const { runPipeline, stopPipeline, isRunning, isStopping, status, clearTask } = usePipeline();
+    const { runPipeline, stopPipeline, isRunning, isStopping, status } = usePipeline();
     const { data: stats } = useStats();
 
-    const getStatusIcon = () => {
-        if (!status) return null;
+    const statusData = status as {
+        status: string;
+        step?: string;
+        saved_count?: number;
+        matches_count?: number;
+        execution_time?: number;
+        error?: string;
+    } | null | undefined;
 
-        switch (status.status) {
-            case 'pending':
-            case 'running':
-                return <Loader className="w-5 h-5 animate-spin text-blue-600" />;
-            case 'completed':
-                return <CheckCircle className="w-5 h-5 text-green-600" />;
-            case 'failed':
-                return <XCircle className="w-5 h-5 text-red-600" />;
-            default:
-                return null;
-        }
+    const hasStatus = statusData !== null && statusData !== undefined;
+    const isRunningStatus = hasStatus && statusData?.status === 'running';
+    const isCompletedStatus = hasStatus && statusData?.status === 'completed';
+    const isFailedStatus = hasStatus && statusData?.status === 'failed';
+
+    const getStepLabel = (step?: string): string => {
+        const labels: Record<string, string> = {
+            loading_resume: 'Loading Resume...',
+            vector_matching: 'Finding Potential Matches...',
+            scoring: 'Scoring Candidates...',
+            saving_results: 'Saving Results...',
+            notifying: 'Sending Notifications...',
+            initializing: 'Initializing...',
+        };
+        return step ? labels[step] || 'Processing...' : 'Initializing...';
     };
 
-    const getStatusBadge = () => {
-        if (!status) return null;
+    const formatTime = (time?: number): string => (time ?? 0).toFixed(2);
 
-        const variants = {
-            pending: 'default',
-            running: 'info',
-            completed: 'success',
-            failed: 'error',
-        } as const;
-
+    if (!hasStatus) {
         return (
-            <Badge variant={variants[status.status]} className="font-medium">
-                {status.status.toUpperCase()}
-            </Badge>
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div className="flex items-center gap-6">
+                        <StatItem
+                            icon={<TrendingUp className="w-5 h-5 text-blue-600" />}
+                            value={stats?.total_matches ?? 0}
+                            label="Total Matches"
+                            valueColor="text-gray-900"
+                        />
+                        <div className="hidden sm:block w-px h-12 bg-gray-200" />
+                        <div className="hidden sm:flex items-center gap-2">
+                            <StatItem
+                                icon={<TrendingUp className="w-5 h-5 text-green-600" />}
+                                value={stats?.active_matches ?? 0}
+                                label="Active"
+                                valueColor="text-green-900"
+                            />
+                        </div>
+                    </div>
+                    <Button onClick={() => runPipeline()} disabled={isRunning} isLoading={isRunning} className="bg-purple-600 hover:bg-purple-700">
+                        <Zap className="w-4 h-4 mr-2" />
+                        Run Matching
+                    </Button>
+                </div>
+            </div>
         );
-    };
+    }
 
     return (
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4">
             <div className="flex flex-wrap items-center justify-between gap-4">
-                {/* Stats Summary */}
                 <div className="flex items-center gap-6">
-                    <div className="flex items-center gap-2">
-                        <div className="p-2 bg-blue-100 rounded-lg">
-                            <TrendingUp className="w-5 h-5 text-blue-600" />
-                        </div>
-                        <div>
-                            <div className="text-2xl font-bold text-gray-900">
-                                {stats?.total_matches || 0}
-                            </div>
-                            <div className="text-xs text-gray-600">Total Matches</div>
-                        </div>
-                    </div>
-
+                    <StatItem
+                        icon={<TrendingUp className="w-5 h-5 text-blue-600" />}
+                        value={stats?.total_matches ?? 0}
+                        label="Total Matches"
+                        valueColor="text-gray-900"
+                    />
                     <div className="hidden sm:block w-px h-12 bg-gray-200" />
-
                     <div className="hidden sm:flex items-center gap-2">
-                        <div className="p-2 bg-green-100 rounded-lg">
-                            <TrendingUp className="w-5 h-5 text-green-600" />
-                        </div>
-                        <div>
-                            <div className="text-2xl font-bold text-green-900">
-                                {stats?.active_matches || 0}
-                            </div>
-                            <div className="text-xs text-gray-600">Active</div>
-                        </div>
-                    </div>
-
-                    {/* Score Distribution Pills */}
-                    <div className="hidden lg:flex items-center gap-2">
-                        <div className="w-px h-12 bg-gray-200" />
-                        <div className="flex gap-2">
-                            <div className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-medium">
-                                {stats?.score_distribution.excellent || 0} Excellent
-                            </div>
-                            <div className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
-                                {stats?.score_distribution.good || 0} Good
-                            </div>
-                            <div className="px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-sm font-medium">
-                                {stats?.score_distribution.average || 0} Average
-                            </div>
-                        </div>
+                        <StatItem
+                            icon={<TrendingUp className="w-5 h-5 text-green-600" />}
+                            value={stats?.active_matches ?? 0}
+                            label="Active"
+                            valueColor="text-green-900"
+                        />
                     </div>
                 </div>
 
-                {/* Pipeline Runner */}
                 <div className="flex items-center gap-3">
-                    {status && status.status === 'running' && (
+                    {isRunningStatus && (
                         <div className="flex items-center gap-2 text-sm text-blue-600">
                             <div className="animate-pulse w-2 h-2 bg-blue-600 rounded-full" />
-                            <span className="font-medium">
-                                {status.step === 'loading_resume' && 'Loading Resume...'}
-                                {status.step === 'vector_matching' && 'Finding Potential Matches...'}
-                                {status.step === 'scoring' && 'Scoring Candidates...'}
-                                {status.step === 'saving_results' && 'Saving Results...'}
-                                {status.step === 'notifying' && 'Sending Notifications...'}
-                                {(!status.step || status.step === 'initializing') && 'Initializing...'}
-                            </span>
+                            <span className="font-medium">{getStepLabel(statusData?.step)}</span>
                         </div>
                     )}
-
-                    {status && status.status === 'completed' && (
-                        <div className="flex items-center gap-2 text-sm text-green-600">
-                            <div className="w-2 h-2 bg-green-600 rounded-full" />
-                            <span className="font-medium">{status.saved_count} matches saved</span>
-                        </div>
+                    {isCompletedStatus && (
+                        <span className="text-sm text-green-600 font-medium">
+                            {statusData?.saved_count ?? 0} matches saved
+                        </span>
                     )}
-
-                    {status && status.status === 'running' ? (
-                        <Button
-                            onClick={() => stopPipeline()}
-                            disabled={isStopping}
-                            isLoading={isStopping}
-                            variant="secondary"
-                            className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
-                        >
-                            Stop
-                        </Button>
-                    ) : (
-                        <Button
-                            onClick={() => runPipeline()}
-                            disabled={isRunning}
-                            isLoading={isRunning}
-                            className="bg-purple-600 hover:bg-purple-700"
-                        >
-                            <Zap className="w-4 h-4 mr-2" />
-                            Run Matching
-                        </Button>
-                    )}
+                    <Button
+                        onClick={isRunningStatus ? () => stopPipeline() : () => runPipeline()}
+                        disabled={isRunningStatus ? isStopping : isRunning}
+                        isLoading={isRunningStatus ? isStopping : isRunning}
+                        variant={isRunningStatus ? 'secondary' : undefined}
+                        className={isRunningStatus ? 'border-red-200 text-red-700 hover:bg-red-50' : 'bg-purple-600 hover:bg-purple-700'}
+                    >
+                        {isRunningStatus ? 'Stop' : 'Run Matching'}
+                    </Button>
                 </div>
             </div>
 
-            {/* Detailed Status Panel */}
-            {status && (
-                <div className="mt-4 pt-4 border-t border-gray-200 space-y-3 bg-gray-50 p-4 rounded-lg">
-                    <div className="flex items-center gap-3">
-                        {getStatusIcon()}
-                        {getStatusBadge()}
-                    </div>
-
-                    {status.status === 'running' && (
-                        <div className="text-sm text-gray-600">
-                            <div className="flex items-center gap-2 mb-2">
-                                <div className="animate-pulse w-2 h-2 bg-blue-600 rounded-full" />
-                                <span className="font-medium">
-                                    {status.step === 'loading_resume' && 'Loading Resume...'}
-                                    {status.step === 'vector_matching' && 'Finding Potential Matches...'}
-                                    {status.step === 'scoring' && 'Scoring Candidates...'}
-                                    {status.step === 'saving_results' && 'Saving Results...'}
-                                    {status.step === 'notifying' && 'Sending Notifications...'}
-                                    {(!status.step || status.step === 'initializing') && 'Pipeline Running...'}
-                                </span>
-                            </div>
-                            <p className="text-xs text-gray-500">This may take a few minutes.</p>
-                        </div>
-                    )}
-
-                    {status.status === 'completed' && (
-                        <div className="text-sm space-y-2">
-                            <div className="text-green-700 font-semibold flex items-center gap-2">
-                                <CheckCircle className="w-4 h-4" />
-                                Pipeline completed successfully!
-                            </div>
-                            <div className="space-y-1 text-gray-700">
-                                <div className="flex justify-between">
-                                    <span>Matches found:</span>
-                                    <span className="font-bold">{status.matches_count || 0}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Saved to database:</span>
-                                    <span className="font-bold">{status.saved_count || 0}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Execution time:</span>
-                                    <span className="font-bold">{status.execution_time?.toFixed(2)}s</span>
-                                </div>
-                            </div>
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={clearTask}
-                                className="w-full mt-2"
-                            >
-                                Clear Status
-                            </Button>
-                        </div>
-                    )}
-
-                    {status.status === 'failed' && (
-                        <div className="text-sm space-y-2">
-                            <div className="text-red-700 font-semibold flex items-center gap-2">
-                                <XCircle className="w-4 h-4" />
-                                Pipeline failed
-                            </div>
-                            {status.error && (
-                                <div className="text-gray-700 bg-red-50 p-3 rounded border border-red-200 text-xs">
-                                    {status.error}
-                                </div>
-                            )}
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={clearTask}
-                                className="w-full mt-2"
-                            >
-                                Clear Status
-                            </Button>
-                        </div>
-                    )}
+            <div className="mt-4 pt-4 border-t border-gray-200 bg-gray-50 p-4 rounded-lg">
+                <div className="flex items-center gap-3 mb-3">
+                    {statusData?.status === 'running' && <Loader className="w-5 h-5 animate-spin text-blue-600" />}
+                    {statusData?.status === 'completed' && <CheckCircle className="w-5 h-5 text-green-600" />}
+                    {statusData?.status === 'failed' && <XCircle className="w-5 h-5 text-red-600" />}
+                    <Badge variant={statusData?.status === 'running' ? 'info' : statusData?.status === 'completed' ? 'success' : statusData?.status === 'failed' ? 'error' : 'default'}>
+                        {statusData?.status?.toUpperCase() ?? 'UNKNOWN'}
+                    </Badge>
                 </div>
-            )}
+
+                {isRunningStatus && (
+                    <div className="text-sm text-gray-600">
+                        <p className="font-medium">{getStepLabel(statusData?.step)}</p>
+                        <p className="text-xs text-gray-500 mt-1">This may take a few minutes.</p>
+                    </div>
+                )}
+
+                {isCompletedStatus && (
+                    <div className="text-sm space-y-1">
+                        <p className="text-green-700 font-semibold">Pipeline completed successfully!</p>
+                        <p className="text-gray-700">Found: {statusData?.matches_count ?? 0} | Saved: {statusData?.saved_count ?? 0} | Time: {formatTime(statusData?.execution_time)}s</p>
+                    </div>
+                )}
+
+                {isFailedStatus && (
+                    <div className="text-sm space-y-2">
+                        <p className="text-red-700 font-semibold">Pipeline failed</p>
+                        {statusData?.error && <p className="text-gray-700 bg-red-50 p-2 rounded text-xs">{statusData.error}</p>}
+                    </div>
+                )}
+            </div>
         </div>
     );
 };
+
+const StatItem: React.FC<{ icon: React.ReactNode; value: number; label: string; valueColor: string }> = ({
+    icon, value, label, valueColor
+}) => (
+    <div className="flex items-center gap-2">
+        <div className="p-2 bg-blue-100 rounded-lg">{icon}</div>
+        <div>
+            <div className={`text-2xl font-bold ${valueColor}`}>{value}</div>
+            <div className="text-xs text-gray-600">{label}</div>
+        </div>
+    </div>
+);

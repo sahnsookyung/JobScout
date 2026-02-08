@@ -1,60 +1,81 @@
-import { useState, useEffect } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { pipelineApi } from '@/services/pipelineApi';
+import React from 'react';
+import type { PipelineStatusResponse } from '@/types/api';
 
 export const usePipeline = () => {
-    const [taskId, setTaskId] = useState<string | null>(null);
+    const queryClient = useQueryClient();
 
-    // efficient check for active pipeline on mount
-    useEffect(() => {
-        const checkActive = async () => {
-            try {
-                const response = await pipelineApi.getActiveTask();
-                if (response.data) {
-                    setTaskId(response.data.task_id);
-                }
-            } catch (error) {
-                console.error("Failed to check active pipeline:", error);
-            }
-        };
-        checkActive();
-    }, []);
-
-    const runMutation = useMutation({
-        mutationFn: () => pipelineApi.runMatching(),
-        onSuccess: (response) => {
-            setTaskId(response.data.task_id);
-        },
-    });
-
-    const stopMutation = useMutation({
-        mutationFn: () => pipelineApi.stopMatching(),
-    });
-
-    const statusQuery = useQuery({
-        queryKey: ['pipeline-status', taskId],
+    const { data: activePipeline, isLoading } = useQuery<PipelineStatusResponse | null>({
+        queryKey: ['pipeline', 'active'],
         queryFn: async () => {
-            if (!taskId) throw new Error('No task ID');
-            const response = await pipelineApi.getStatus(taskId);
-            console.log('[usePipeline] Status update:', response.data);
-            return response.data;
+            try {
+                const response = await pipelineApi.getActivePipeline();
+                return response.data ?? null;
+            } catch {
+                return null;
+            }
         },
-        enabled: !!taskId,
+    });
+
+    const { data: status, refetch: refetchStatus } = useQuery<PipelineStatusResponse | null>({
+        queryKey: ['pipeline', 'status', activePipeline?.task_id],
+        queryFn: async () => {
+            if (!activePipeline?.task_id) return null;
+            try {
+                const response = await pipelineApi.getPipelineStatus(activePipeline.task_id);
+                return response.data ?? null;
+            } catch {
+                return null;
+            }
+        },
+        enabled: !!activePipeline?.task_id,
         refetchInterval: (data) => {
-            // Poll every 2 seconds while running, stop when completed/failed
-            if (data?.status === 'running' || data?.status === 'pending') {
+            const statusData = data as unknown as PipelineStatusResponse;
+            if (statusData?.status === 'running') {
                 return 2000;
             }
             return false;
         },
     });
 
+    const runPipelineMutation = useMutation({
+        mutationFn: () => pipelineApi.runMatching(),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['pipeline', 'active'] });
+            refetchStatus();
+        },
+    });
+
+    const stopPipelineMutation = useMutation({
+        mutationFn: () => pipelineApi.stopMatching(),
+        onSuccess: () => {
+            refetchStatus();
+        },
+    });
+
+    const clearTaskMutation = useMutation({
+        mutationFn: async () => {
+            // Just refetch to clear the status display
+            await refetchStatus();
+        },
+    });
+
+    React.useEffect(() => {
+        if (status?.status === 'completed' || status?.status === 'failed') {
+            queryClient.invalidateQueries({ queryKey: ['matches'] });
+            queryClient.invalidateQueries({ queryKey: ['stats'] });
+        }
+    }, [status?.status, queryClient]);
+
     return {
-        runPipeline: runMutation.mutate,
-        stopPipeline: stopMutation.mutate,
-        isRunning: runMutation.isPending,
-        isStopping: stopMutation.isPending,
-        status: statusQuery.data,
-        clearTask: () => setTaskId(null),
+        activePipeline,
+        status,
+        isLoading,
+        runPipeline: runPipelineMutation.mutate,
+        stopPipeline: stopPipelineMutation.mutate,
+        isRunning: status?.status === 'running',
+        isStopping: stopPipelineMutation.isPending,
+        clearTask: clearTaskMutation.mutate,
     };
 };

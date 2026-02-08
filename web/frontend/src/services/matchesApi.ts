@@ -11,6 +11,7 @@ export interface GetMatchesParams {
     min_fit?: number;
     top_k?: number;
     remote_only?: boolean;
+    show_hidden?: boolean;
 }
 
 export const matchesApi = {
@@ -24,4 +25,7 @@ export const matchesApi = {
         apiClient.get(`/matches/${matchId}/explanation`),
 
     getStats: () => apiClient.get<StatsResponse>('/stats'),
+
+    toggleHidden: (matchId: string) =>
+        apiClient.post<{ success: boolean; match_id: string; is_hidden: boolean }>(`/matches/${matchId}/hide`),
 };

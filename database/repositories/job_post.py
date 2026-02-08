@@ -103,7 +103,7 @@ class JobPostRepository(BaseRepository):
 
     def get_unextracted_jobs(self, limit: int = 100) -> List[JobPost]:
         stmt = select(JobPost).where(
-            JobPost.is_extracted == False,
+            JobPost.is_extracted.is_(False),
             JobPost.description != None
         ).limit(limit)
         return self.db.execute(stmt).scalars().all()
@@ -260,7 +260,7 @@ class JobPostRepository(BaseRepository):
 
     def get_embedded_jobs_for_matching(self, limit: int = 100) -> List[JobPost]:
         stmt = select(JobPost).where(
-            JobPost.is_embedded == True
+            JobPost.is_embedded.is_(True)
         ).limit(limit)
         return self.db.execute(stmt).scalars().all()
 
@@ -274,7 +274,7 @@ class JobPostRepository(BaseRepository):
         distance_expr = JobPost.summary_embedding.cosine_distance(resume_embedding).label("distance")
 
         stmt = select(JobPost, distance_expr).where(
-            JobPost.is_embedded == True,
+            JobPost.is_embedded.is_(True),
             JobPost.summary_embedding != None
         )
 
@@ -291,7 +291,7 @@ class JobPostRepository(BaseRepository):
 
     def get_jobs_needing_facet_extraction(self, limit: int = 100) -> List[JobPost]:
         stmt = select(JobPost).where(
-            JobPost.is_embedded == True
+            JobPost.is_embedded.is_(True)
         ).outerjoin(JobFacetEmbedding).where(
             JobFacetEmbedding.id == None
         ).limit(limit)

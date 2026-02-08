@@ -5,10 +5,10 @@ export const pipelineApi = {
     runMatching: () =>
         apiClient.post<PipelineTaskResponse>('/pipeline/run-matching'),
 
-    getStatus: (taskId: string) =>
+    getPipelineStatus: (taskId: string) =>
         apiClient.get<PipelineStatusResponse>(`/pipeline/status/${taskId}`),
 
-    getActiveTask: () =>
+    getActivePipeline: () =>
         apiClient.get<PipelineStatusResponse | null>('/pipeline/active'),
 
     stopMatching: () =>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MatchList } from '@/features/matches/components/MatchList';
 import { MatchDetailsModal } from '@/features/matches/components/MatchDetailsModal';
@@ -7,6 +7,7 @@ import { StatsPanel } from '@/features/stats/components/StatsPanel';
 import { CompactControls } from '@/features/dashboard/components/CompactControls';
 import { RefreshCw, Briefcase } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { ToastProvider } from '@/components/ui/Toast';
 
 const queryClient = new QueryClient({
     defaultOptions: {
@@ -84,6 +85,7 @@ function AppContent() {
 function App() {
     return (
         <QueryClientProvider client={queryClient}>
+            <ToastProvider />
             <AppContent />
         </QueryClientProvider>
     );

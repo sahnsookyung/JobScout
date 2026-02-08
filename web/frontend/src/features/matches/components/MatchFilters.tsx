@@ -11,6 +11,8 @@ interface MatchFiltersProps {
     onShowWantScoreChange: (value: boolean) => void;
     sortBy: SortBy;
     onSortByChange: (value: SortBy) => void;
+    showHidden: boolean;
+    onShowHiddenChange: (value: boolean) => void;
 }
 
 export const MatchFilters: React.FC<MatchFiltersProps> = ({
@@ -22,6 +24,8 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
     onShowWantScoreChange,
     sortBy,
     onSortByChange,
+    showHidden,
+    onShowHiddenChange,
 }) => {
     return (
         <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
@@ -81,6 +85,15 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
                             className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                         />
                         <span className="text-sm text-gray-700">Show Want Score</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={showHidden}
+                            onChange={(e) => onShowHiddenChange(e.target.checked)}
+                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        />
+                        <span className="text-sm text-gray-700">Show Hidden</span>
                     </label>
                 </div>
             </div>

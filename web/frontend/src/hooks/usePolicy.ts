@@ -18,6 +18,7 @@ export const usePolicy = () => {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['policy'] });
             queryClient.invalidateQueries({ queryKey: ['matches'] });
+            queryClient.invalidateQueries({ queryKey: ['stats'] });
         },
     });
 
@@ -26,6 +27,7 @@ export const usePolicy = () => {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['policy'] });
             queryClient.invalidateQueries({ queryKey: ['matches'] });
+            queryClient.invalidateQueries({ queryKey: ['stats'] });
         },
     });
 

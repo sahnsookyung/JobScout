@@ -354,6 +354,7 @@ class JobMatch(Base):
     status = Column(Text, default='active')
     invalidated_reason = Column(Text, nullable=True)
     notified = Column(Boolean, default=False)
+    is_hidden = Column(Boolean, default=False)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"), onupdate=sql_text("timezone('UTC', now())"))
     calculated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
@@ -369,6 +370,7 @@ class JobMatch(Base):
         Index('idx_job_match_want', 'want_score'),
         Index('idx_job_match_status', 'status'),
         Index('idx_job_match_notified', 'notified'),
+        Index('idx_job_match_hidden', 'is_hidden'),
         Index('idx_job_match_calculated', 'calculated_at'),
         Index('idx_job_match_created', 'created_at'),
     )

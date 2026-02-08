@@ -182,6 +182,8 @@ def save_match_to_db(
     if existing:
         match_record = existing
         match_record.status = 'active'
+        # Preserve user's hidden preference - don't reset on re-score
+        # is_hidden is intentionally NOT updated here
         match_record.job_similarity = _to_float(scores['job_similarity'])
         match_record.fit_score = _to_float(scores['fit_score'])
         match_record.want_score = _to_float(scores['want_score'])

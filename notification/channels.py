@@ -10,7 +10,7 @@ Provides extensible notification channel implementations following SOLID princip
 - Dependency Inversion: High-level modules depend on abstractions
 
 Usage:
-    from core.notification_channels import NotificationChannelFactory
+    from notification.channels import NotificationChannelFactory
     
     # Get channel by type
     channel = NotificationChannelFactory.get_channel('discord')
@@ -18,23 +18,22 @@ Usage:
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
+from datetime import datetime, timezone
 import logging
 import json
 import os
+import html
 
-# HTTP requests
 import requests
-
-# Email
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-
-# Security utilities
 import urllib.parse
 import ipaddress
 import socket
+
+from notification.message_builder import NotificationMessageBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +113,18 @@ def _validate_webhook_url(url: str) -> bool:
     except Exception as e:
         logger.error(f"URL validation error: {e}")
         return False
+
+
+def _sanitize_url(url: str) -> Optional[str]:
+    """Sanitize and validate URL, returning None if invalid."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ('http', 'https'):
+            return None
+        escaped = html.escape(url, quote=True)
+        return escaped
+    except Exception:
+        return None
 
 
 def _escape_html(text: str) -> str:
@@ -207,25 +218,127 @@ class EmailChannel(NotificationChannel):
             password = os.environ.get('SMTP_PASSWORD', '')
             from_email = os.environ.get('FROM_EMAIL', 'noreply@jobscout.app')
             
-            msg = MIMEMultipart()
-            msg['From'] = from_email
-            msg['To'] = recipient
-            msg['Subject'] = subject
-            msg.attach(MIMEText(body, 'plain'))
+            # Check for rich job notification content
+            job_contents = metadata.get('job_contents', [])
+            
+            if job_contents:
+                # Use HTML format for rich notifications
+                html_body = self._build_html_body(subject, job_contents, metadata)
+                msg = MIMEMultipart()
+                msg['From'] = from_email
+                msg['To'] = recipient
+                msg['Subject'] = subject
+                msg.attach(MIMEText(html_body, 'html', 'utf-8'))
+            else:
+                # Fallback to plain text
+                msg = MIMEMultipart()
+                msg['From'] = from_email
+                msg['To'] = recipient
+                msg['Subject'] = subject
+                msg.attach(MIMEText(body, 'plain'))
             
             with smtplib.SMTP(smtp_server, smtp_port) as server:
                 server.starttls()
                 server.login(username, password)
                 server.send_message(msg)
             
-            # Log with masked email for PII protection
             logger.info(f"Email sent to {_mask_email(recipient)}")
             return True
             
         except Exception as e:
-            # Log with masked email for PII protection
             logger.error(f"Failed to send email to {_mask_email(recipient)}: {e}")
             return False
+    
+    def _build_html_body(self, subject: str, job_contents: List[Dict], metadata: Dict) -> str:
+        """Build HTML email body for job notifications."""
+        safe_subject = html.escape(subject)
+        html_body = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+        .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px 8px 0 0; }}
+        .content {{ padding: 20px; background: #f9f9f9; }}
+        .job-card {{ background: white; padding: 15px; margin: 10px 0; border-radius: 8px; border-left: 4px solid #667eea; }}
+        .job-title {{ font-size: 18px; font-weight: bold; color: #667eea; margin-bottom: 10px; }}
+        .job-detail {{ margin: 5px 0; font-size: 14px; }}
+        .separator {{ border-top: 2px dashed #ddd; margin: 20px 0; }}
+        .footer {{ text-align: center; padding: 15px; color: #666; font-size: 12px; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{safe_subject}</h1>
+    </div>
+    <div class="content">
+"""
+        for i, job in enumerate(job_contents):
+            if i > 0:
+                html_body += '<div class="separator"></div>\n'
+            
+            job_info = job.get('job', {})
+            match_info = job.get('match', {})
+            req_info = job.get('requirements', {})
+            
+            title = html.escape(job_info.get('title', 'Unknown Position'))
+            company = html.escape(job_info.get('company', 'Unknown'))
+            location = html.escape(job_info.get('location', ''))
+            
+            html_body += f"""        <div class="job-card">
+            <div class="job-title">{title}</div>
+            <div class="job-detail"><strong>🏢 Company:</strong> {company}</div>
+"""
+            
+            if location:
+                html_body += f'            <div class="job-detail">📍 {location}</div>\n'
+            
+            if job_info.get('salary'):
+                salary = html.escape(job_info.get('salary', ''))
+                html_body += f'            <div class="job-detail">💰 {salary}</div>\n'
+            
+            if job_info.get('job_type') or job_info.get('job_level'):
+                job_type = html.escape(job_info.get('job_type', '') or '')
+                job_level = html.escape(job_info.get('job_level', '') or '')
+                details = [d for d in [job_type, job_level] if d]
+                html_body += f'            <div class="job-detail">📋 {" | ".join(details)}</div>\n'
+            
+            overall_score = match_info.get('overall_score', 0)
+            fit_score = match_info.get('fit_score', 0)
+            want_score = match_info.get('want_score')
+            
+            html_body += f"""
+            <div class="job-detail"><strong>📊 Match:</strong> {overall_score:.0f}%</div>
+            <div class="job-detail"><strong>🎯 Fit:</strong> {fit_score:.0f}%</div>
+"""
+            
+            if want_score:
+                html_body += f'            <div class="job-detail"><strong>💡 Want:</strong> {want_score:.0f}%</div>\n'
+            
+            total = req_info.get('total', 0)
+            matched = req_info.get('matched', 0)
+            html_body += f'            <div class="job-detail"><strong>✅ Requirements:</strong> {matched}/{total} matched</div>\n'
+            
+            apply_url = job.get('apply_url')
+            if apply_url:
+                safe_url = _sanitize_url(apply_url)
+                if safe_url:
+                    html_body += f'            <div class="job-detail"><strong>🔗 <a href="{safe_url}">Apply Here</a></strong></div>\n'
+            
+            match_id = metadata.get('match_id')
+            if match_id:
+                safe_match_id = html.escape(str(match_id), quote=True)
+                html_body += f'            <div class="job-detail"><strong>🔍 <a href="/api/matches/{safe_match_id}">View Details</a></strong></div>\n'
+            
+            html_body += "        </div>\n"
+        
+        html_body += """    </div>
+    <div class="footer">
+        <p>JobScout - AI-Powered Job Matching</p>
+    </div>
+</body>
+</html>"""
+        return html_body
 
 
 class DiscordChannel(NotificationChannel):
@@ -236,11 +349,9 @@ class DiscordChannel(NotificationChannel):
         return 'discord'
     
     def validate_config(self) -> bool:
-        # Can use global webhook or per-notification webhook in metadata
-        return True  # Always valid - webhook can be passed in metadata
+        return True
     
     def send(self, recipient: str, subject: str, body: str, metadata: Dict[str, Any]) -> bool:
-        # Get webhook URL from metadata or environment
         webhook_url = metadata.get('discord_webhook_url') or os.environ.get('DISCORD_WEBHOOK_URL', '')
         
         if not webhook_url:
@@ -248,44 +359,35 @@ class DiscordChannel(NotificationChannel):
             return False
         
         try:
-            # Discord webhook format
-            embed = {
-                'title': subject,
-                'description': body[:2000],  # Discord limit
-                'color': 0x00ff00 if 'match' in body.lower() else 0x0099ff,
-                'timestamp': metadata.get('created_at'),
-                'footer': {
-                    'text': 'JobScout Notification Service'
-                }
-            }
+            embeds: List[Dict[str, Any]] = []
             
-            # Add fields if available
-            fields = []
-            if 'score' in metadata:
-                fields.append({
-                    'name': 'Match Score',
-                    'value': f"{metadata['score']}/100",
-                    'inline': True
-                })
-            if metadata.get('company'):
-                fields.append({
-                    'name': 'Company',
-                    'value': metadata['company'],
-                    'inline': True
-                })
-            if fields:
-                embed['fields'] = fields
+            # Check for rich job notification content in metadata
+            job_contents = metadata.get('job_contents', [])
+            
+            if job_contents:
+                # Use rich embed format for job notifications
+                embeds = NotificationMessageBuilder.build_batch_embeds(job_contents)
+            else:
+                # Fallback to simple embed
+                embed = {
+                    'title': subject,
+                    'description': body[:2000],
+                    'color': 0x0099ff,
+                    'footer': {'text': 'JobScout Notifications'},
+                    'timestamp': metadata.get('created_at') or datetime.now(timezone.utc).isoformat(),
+                }
+                embeds = [embed]
             
             payload = {
                 'username': 'JobScout',
                 'avatar_url': 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
-                'embeds': [embed]
+                'embeds': embeds
             }
             
             response = requests.post(webhook_url, json=payload, timeout=30)
             response.raise_for_status()
             
-            logger.info(f"Discord message sent to webhook")
+            logger.info(f"Discord message sent ({len(embeds)} embed(s))")
             return True
             
         except Exception as e:
@@ -304,11 +406,6 @@ class TelegramChannel(NotificationChannel):
         return bool(os.environ.get('TELEGRAM_BOT_TOKEN'))
     
     def send(self, recipient: str, subject: str, body: str, metadata: Dict[str, Any]) -> bool:
-        """
-        Send Telegram message.
-        
-        Recipient should be a chat ID (e.g., @username or numeric ID).
-        """
         bot_token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
         
         if not bot_token:
@@ -316,15 +413,22 @@ class TelegramChannel(NotificationChannel):
             return False
         
         try:
-            # Telegram Bot API endpoint
             api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             
-            # Format message with HTML escaping to prevent injection
-            # Escape subject and body to ensure only our <b> tag is rendered as HTML
-            safe_subject = _escape_html(subject)
-            safe_body = _escape_html(body)
-            message = f"<b>{safe_subject}</b>\n\n{safe_body}"
+            # Check for rich job notification content
+            job_contents = metadata.get('job_contents', [])
+            
+            if job_contents:
+                # Build rich HTML message for multiple jobs
+                message = self._build_rich_message(subject, job_contents, metadata)
+            else:
+                # Fallback to simple message
+                safe_subject = _escape_html(subject)
+                safe_body = _escape_html(body)
+                message = f"<b>{safe_subject}</b>\n\n{safe_body}"
+            
             if len(message) > 4096:
+                # Truncate but keep structure
                 message = message[:4093] + "..."
             
             payload = {
@@ -346,6 +450,55 @@ class TelegramChannel(NotificationChannel):
         except Exception as e:
             logger.error(f"Failed to send Telegram message: {e}")
             return False
+    
+    def _build_rich_message(self, subject: str, job_contents: List[Dict], metadata: Dict) -> str:
+        """Build rich HTML message for Telegram."""
+        lines = [f"<b>{_escape_html(subject)}</b>\n"]
+        
+        for i, job in enumerate(job_contents):
+            if i > 0:
+                lines.append("\n" + "─" * 30 + "\n")
+            
+            job_info = job.get('job', {})
+            match_info = job.get('match', {})
+            req_info = job.get('requirements', {})
+            
+            lines.append(f"🎯 <b>{_escape_html(job_info.get('title', 'Unknown Position'))}</b>")
+            lines.append(f"🏢 {_escape_html(job_info.get('company', 'Unknown'))}")
+            
+            if job_info.get('location'):
+                lines.append(f"📍 {_escape_html(job_info.get('location'))}")
+            
+            if job_info.get('salary'):
+                lines.append(f"💰 {_escape_html(job_info.get('salary'))}")
+            
+            if job_info.get('job_type') or job_info.get('job_level'):
+                details = [_escape_html(d) for d in [job_info.get('job_type'), job_info.get('job_level')] if d]
+                lines.append(f"📋 {' | '.join(details)}")
+            
+            lines.append("")
+            lines.append(f"📊 <b>{match_info.get('overall_score', 0):.0f}%</b> Match")
+            lines.append(f"   Fit: {match_info.get('fit_score', 0):.0f}%")
+            
+            if match_info.get('want_score'):
+                lines.append(f"   Want: {match_info.get('want_score'):.0f}%")
+            
+            total = req_info.get('total', 0)
+            matched = req_info.get('matched', 0)
+            lines.append(f"✅ {matched}/{total} requirements matched")
+            
+            apply_url = job.get('apply_url')
+            if apply_url:
+                safe_url = _sanitize_url(apply_url)
+                if safe_url:
+                    lines.append(f"🔗 <a href=\"{safe_url}\">Apply Here</a>")
+            
+            match_id = metadata.get('match_id')
+            if match_id:
+                safe_match_id = _escape_html(str(match_id))
+                lines.append(f"🔍 <a href=\"/api/matches/{safe_match_id}\">View Details</a>")
+        
+        return "\n".join(lines)
 
 
 class WebhookChannel(NotificationChannel):
@@ -356,19 +509,13 @@ class WebhookChannel(NotificationChannel):
         return 'webhook'
     
     def validate_config(self) -> bool:
-        return True  # URL is passed per-notification
+        return True
     
     def send(self, recipient: str, subject: str, body: str, metadata: Dict[str, Any]) -> bool:
-        """
-        Send webhook POST request.
-        
-        Recipient is the webhook URL.
-        Body should be valid JSON string.
-        """
+        """Send webhook POST request."""
         try:
             webhook_url = recipient
             
-            # Validate URL to prevent SSRF
             if not _validate_webhook_url(webhook_url):
                 logger.error(f"Invalid or unsafe webhook URL: {webhook_url}")
                 return False
@@ -378,16 +525,39 @@ class WebhookChannel(NotificationChannel):
                 'User-Agent': 'JobScout-Notification-Service/1.0'
             }
             
-            # Parse body as JSON if possible
-            try:
-                payload = json.loads(body)
-            except json.JSONDecodeError:
-                # If not valid JSON, wrap it
+            # Check for rich job notification content
+            job_contents = metadata.get('job_contents', [])
+            
+            if job_contents:
+                # Rich payload with full job details
                 payload = {
+                    'type': 'job_notifications',
                     'subject': subject,
-                    'body': body,
-                    'metadata': metadata
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
+                    'jobs': [
+                        {
+                            'job': job.get('job', {}),
+                            'match': job.get('match', {}),
+                            'requirements': job.get('requirements', {}),
+                            'apply_url': job.get('apply_url'),
+                        }
+                        for job in job_contents
+                    ],
+                    'metadata': {
+                        'user_id': metadata.get('user_id'),
+                        'notification_type': metadata.get('notification_type'),
+                    }
                 }
+            else:
+                # Fallback to simple payload
+                try:
+                    payload = json.loads(body)
+                except json.JSONDecodeError:
+                    payload = {
+                        'subject': subject,
+                        'body': body,
+                        'metadata': metadata
+                    }
             
             response = requests.post(
                 webhook_url,
@@ -397,7 +567,6 @@ class WebhookChannel(NotificationChannel):
             )
             response.raise_for_status()
             
-            # Log without exposing full URL (might contain tokens)
             parsed = urllib.parse.urlparse(webhook_url)
             safe_url = f"{parsed.scheme}://{parsed.hostname}{parsed.path}"
             logger.info(f"Webhook sent to {safe_url}")

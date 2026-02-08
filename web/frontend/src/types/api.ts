@@ -14,6 +14,7 @@ export interface MatchSummary {
     required_coverage: number;
     preferred_coverage: number;
     match_type: string;
+    is_hidden: boolean;
     created_at: string | null;
     calculated_at: string | null;
 }
@@ -85,6 +86,9 @@ export interface StatsResponse {
     stats: {
         total_matches: number;
         active_matches: number;
+        hidden_count: number;
+        below_threshold_count: number;
+        min_fit_threshold: number;
         score_distribution: {
             excellent: number;
             good: number;
