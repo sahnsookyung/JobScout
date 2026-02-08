@@ -12,7 +12,8 @@ from unittest.mock import MagicMock
 
 from core.config_loader import load_config, MatcherConfig
 from core.matcher import MatcherService
-from etl.resume import ResumeEvidenceUnit
+from etl.resume import ResumeEvidenceUnit, ResumeProfiler
+from etl.resume.embedding_store import JobRepositoryAdapter
 from tests.mocks.matcher_mocks import MockMatcherService
 from database.models import generate_resume_fingerprint
 
@@ -163,6 +164,69 @@ scrapers: []
         print(f"  ✓ Fingerprint: {fp1[:16]}...")
         print(f"  ✓ Same data = same fingerprint")
         print(f"  ✓ Different data = different fingerprint")
+
+    def test_05_resume_profiler_requires_store_for_embedding_persistence(self):
+        """Test that ResumeProfiler requires a store to persist embeddings.
+
+        This test verifies the bug fix where MatcherService failed with
+        "No summary embedding found for resume" because ResumeProfiler
+        was created without a store, causing embeddings to be lost.
+        """
+        print("\n💾 UNIT Test 5: Resume Profiler Store Requirement")
+
+        # Test 1: ResumeProfiler without store has store=None
+        mock_ai = MagicMock()
+        profiler_without_store = ResumeProfiler(ai_service=mock_ai)
+        
+        # Verify store is None when not provided
+        self.assertIsNone(profiler_without_store.store)
+        print(f"  ✓ ResumeProfiler without store: store is None")
+
+        # Test 2: ResumeProfiler with store properly sets it
+        mock_repo = MagicMock()
+        adapter = JobRepositoryAdapter(mock_repo)
+        profiler_with_store = ResumeProfiler(
+            ai_service=mock_ai,
+            store=adapter
+        )
+        
+        # Verify store is set
+        self.assertIsNotNone(profiler_with_store.store)
+        self.assertIsInstance(profiler_with_store.store, JobRepositoryAdapter)
+        print(f"  ✓ ResumeProfiler with store: store is set to JobRepositoryAdapter")
+
+        # Test 3: MatcherService integration - requires store to work
+        config = MatcherConfig(similarity_threshold=0.5, batch_size=10)
+
+        # This would fail in real usage without store because
+        # get_resume_summary_embedding() returns None
+        matcher_without_store = MatcherService(
+            resume_profiler=ResumeProfiler(ai_service=mock_ai),
+            config=config
+        )
+
+        # Verify the matcher was created but won't work without store
+        self.assertIsNotNone(matcher_without_store)
+        self.assertIsNone(matcher_without_store.resume_profiler.store)
+
+        print(f"  ✓ MatcherService without store: store is None (will fail at runtime)")
+
+        # With store - proper setup
+        matcher_with_store = MatcherService(
+            resume_profiler=ResumeProfiler(
+                ai_service=mock_ai,
+                store=JobRepositoryAdapter(mock_repo)
+            ),
+            config=config
+        )
+
+        self.assertIsNotNone(matcher_with_store.resume_profiler.store)
+        print(f"  ✓ MatcherService with store: properly configured")
+
+        # Test 4: Verify the save methods exist on the adapter
+        self.assertTrue(hasattr(adapter, 'save_resume_section_embeddings'))
+        self.assertTrue(hasattr(adapter, 'save_evidence_unit_embeddings'))
+        print(f"  ✓ JobRepositoryAdapter has required save methods")
 
 
 if __name__ == '__main__':

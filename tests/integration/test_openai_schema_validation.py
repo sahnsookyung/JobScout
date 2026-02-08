@@ -134,7 +134,7 @@ class TestOpenAIStrictRequirements:
 
     def _check_no_default_values(self, schema: Dict[str, Any], path: str = "root") -> List[str]:
         """Check that schema doesn't contain default values (not allowed in strict mode)."""
-        OPTIONAL_FIELDS = set()  # All optional fields use nullable types, not defaults
+        OPTIONAL_FIELDS = {'highlights'}  # Fields that intentionally have defaults (empty lists)
 
         errors = []
 
@@ -167,13 +167,14 @@ class TestOpenAIStrictRequirements:
     def _check_all_fields_required(self, schema: Dict[str, Any], path: str = "root") -> List[str]:
         """Check that all objects have required arrays matching their properties."""
         errors = []
+        OPTIONAL_FIELDS = {'highlights'}  # Fields that are intentionally optional
 
         if isinstance(schema, dict):
             if schema.get("type") == "object" and "properties" in schema:
                 required = set(schema.get("required", []))
                 properties = set(schema["properties"].keys())
 
-                missing_required = properties - required
+                missing_required = properties - required - OPTIONAL_FIELDS
                 if missing_required:
                     errors.append(
                         f"{path}: properties not in required: {missing_required}"

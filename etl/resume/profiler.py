@@ -14,6 +14,7 @@ import logging
 import json
 
 from database.models import generate_resume_fingerprint
+import threading
 from core.llm.interfaces import LLMProvider
 from etl.resume.models import ResumeEvidenceUnit
 from etl.resume.embedding_store import (
@@ -134,6 +135,25 @@ class ResumeProfiler:
                 ))
                 unit_id += 1
 
+            if exp.highlights:
+                for highlight in exp.highlights:
+                    evidence_units.append(ResumeEvidenceUnit(
+                        id=f"reu_{unit_id}",
+                        text=highlight,
+                        source_section="Experience",
+                        tags={
+                            'company': exp.company or '',
+                            'title': exp.title or '',
+                            'index': idx,
+                            'type': 'highlight',
+                            'is_current': exp.is_current
+                        },
+                        years_value=None,  # Do not double count years from highlights
+                        years_context=None,
+                        is_total_years_claim=False,
+                    ))
+                    unit_id += 1
+
             # Also extract from tech keywords as individual evidence
             for tech in exp.tech_keywords:
                 description_lower = (exp.description or '').lower()
@@ -152,6 +172,84 @@ class ResumeProfiler:
                     is_total_years_claim=False,
                 ))
                 unit_id += 1
+
+        # Extract from projects (if available)
+        if profile.projects and profile.projects.items:
+            for idx, project in enumerate(profile.projects.items):
+                # Description
+                if project.description:
+                    evidence_units.append(ResumeEvidenceUnit(
+                        id=f"reu_{unit_id}",
+                        text=project.description,
+                        source_section="Projects",
+                        tags={
+                            'project': project.name or '',
+                            'index': idx,
+                            'type': 'description'
+                        },
+                        years_value=None,
+                        years_context=None,
+                        is_total_years_claim=False,
+                    ))
+                    unit_id += 1
+
+                # Highlights
+                if project.highlights:
+                    for highlight in project.highlights:
+                        evidence_units.append(ResumeEvidenceUnit(
+                            id=f"reu_{unit_id}",
+                            text=highlight,
+                            source_section="Projects",
+                            tags={
+                                'project': project.name or '',
+                                'index': idx,
+                                'type': 'highlight'
+                            },
+                            years_value=None,
+                            years_context=None,
+                            is_total_years_claim=False,
+                        ))
+                        unit_id += 1
+
+        # Extract from education (if available)
+        if profile.education:
+            for idx, edu in enumerate(profile.education):
+                # Description
+                if edu.description:
+                    evidence_units.append(ResumeEvidenceUnit(
+                        id=f"reu_{unit_id}",
+                        text=edu.description,
+                        source_section="Education",
+                        tags={
+                            'institution': edu.institution or '',
+                            'degree': edu.degree or '',
+                            'index': idx,
+                            'type': 'description'
+                        },
+                        years_value=None,
+                        years_context=None,
+                        is_total_years_claim=False,
+                    ))
+                    unit_id += 1
+
+                # Highlights
+                if edu.highlights:
+                    for highlight in edu.highlights:
+                        evidence_units.append(ResumeEvidenceUnit(
+                            id=f"reu_{unit_id}",
+                            text=highlight,
+                            source_section="Education",
+                            tags={
+                                'institution': edu.institution or '',
+                                'degree': edu.degree or '',
+                                'index': idx,
+                                'type': 'highlight'
+                            },
+                            years_value=None,
+                            years_context=None,
+                            is_total_years_claim=False,
+                        ))
+                        unit_id += 1
 
         # Extract from skills
         for skill in profile.skills.all:
@@ -309,7 +407,8 @@ class ResumeProfiler:
 
     def profile_resume(
         self,
-        resume_data: Dict[str, Any]
+        resume_data: Dict[str, Any],
+        stop_event: Optional[threading.Event] = None
     ) -> tuple[Optional[ResumeSchema], List[ResumeEvidenceUnit], List[Dict[str, Any]]]:
         """
         Complete resume profiling pipeline.
@@ -326,15 +425,25 @@ class ResumeProfiler:
         """
         resume_fingerprint = generate_resume_fingerprint(resume_data)
 
+        if stop_event and stop_event.is_set():
+            logger.info("Resume profiling stopped by user (before extraction)")
+            raise InterruptedError("Stopped by user")
+
         # Extract structured resume
         resume = self.extract_structured_resume(resume_data)
 
         # Extract evidence units from structured profile
         evidence_units = []
         if resume:
+            if stop_event and stop_event.is_set():
+                logger.info("Resume profiling stopped by user (before evidence)")
+                raise InterruptedError("Stopped by user")
             evidence_units = self.extract_resume_evidence(resume.profile)
 
         # Generate embeddings for evidence units
+        if stop_event and stop_event.is_set():
+            logger.info("Resume profiling stopped by user (before embedding)")
+            raise InterruptedError("Stopped by user")
         self.embed_evidence_units(evidence_units)
 
         # Persist evidence unit embeddings

@@ -18,13 +18,15 @@ Summary
 Experience (one item per role)
 - company, title: as stated.
 - start_date/end_date/is_current: parse from the stated period; “Present/Current” => end_date=null, is_current=true; otherwise is_current=false.
-- description: role description + bullets/highlights verbatim, joined with "\n".
+- description: role description/responsibilities.
+- highlights: key achievements, bullet points, or quantifiable results, verbatim. list of strings.
 - years_value: only if the resume explicitly states years for that role; else null.
 - tech_keywords: technologies/tools/frameworks explicitly mentioned in that experience entry only (not global skills); preserve original casing/spelling; dedupe exact matches.
 
 Projects (one item per project)
 - name: project title if present; if formatted “Title | Tech1, Tech2”, use the title portion as name.
-- description: project description + bullets verbatim, joined with "\n".
+- description: project context and goals.
+- highlights: key achievements or features, verbatim. list of strings.
 - technologies: explicit project tech list (prefer after “|”); otherwise extract only technologies explicitly mentioned in that project.
 - url: one canonical URL if present; if multiple, choose the most specific (e.g., repo URL over profile).
 - date: only if an explicit date/period is stated; else null.

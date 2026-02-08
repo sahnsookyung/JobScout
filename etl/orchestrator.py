@@ -122,7 +122,7 @@ class JobETLService:
                 else:
                     logger.debug(f"Empty facet '{facet_key}' for job {job.id}")
 
-            logger.info(f"Saved {saved_count}/{len(FACET_KEYS)} facets for job {job.id}")
+            logger.info(f"Saved {saved_count} facets for job {job.id}")
 
             repo.mark_job_facets_extracted(job.id, content_hash)
 

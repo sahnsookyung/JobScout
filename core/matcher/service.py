@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 import logging
+import threading
 
 from database.repository import JobRepository
 from database.models import JobPost, generate_resume_fingerprint
@@ -24,8 +25,9 @@ class MatcherService:
         repo: JobRepository,
         resume_data: Dict[str, Any],
         tenant_id: Optional[Any] = None,
+        stop_event: Optional[threading.Event] = None,
     ) -> List[JobMatchPreliminary]:
-        profile, evidence_units, _ = self.resume_profiler.profile_resume(resume_data)
+        profile, evidence_units, _ = self.resume_profiler.profile_resume(resume_data, stop_event=stop_event)
 
         if not evidence_units:
             logger.warning("No evidence units extracted from resume")
@@ -44,10 +46,12 @@ class MatcherService:
             logger.warning("No matching candidates found in Stage 1")
             return []
 
-        preliminaries = [
-            self._build_preliminary(repo, job, sim, resume_fingerprint)
-            for job, sim in job_similarity_pairs
-        ]
+        preliminaries = []
+        for job, sim in job_similarity_pairs:
+            if stop_event and stop_event.is_set():
+                logger.info("MatcherService stopped by user")
+                return []
+            preliminaries.append(self._build_preliminary(repo, job, sim, resume_fingerprint))
 
         preliminaries.sort(key=lambda p: p.job_similarity, reverse=True)
         return preliminaries

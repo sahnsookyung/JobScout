@@ -41,6 +41,8 @@ class ExperienceItem(BaseModel):
     years_value: Optional[float] = Field(description="Years of experience gained at this position (extracted from description)")
     tech_keywords: List[str] = Field(description="Technologies, tools, and frameworks mentioned")
 
+    highlights: List[str] = Field(default=[], description="Bullet points, key achievements, or highlights")
+
     def to_embedding_text(self) -> str:
         """Generate text representation for embedding."""
         parts = []
@@ -50,6 +52,8 @@ class ExperienceItem(BaseModel):
             parts.append(self.title)
         if self.description:
             parts.append(self.description)
+        if self.highlights:
+            parts.extend(self.highlights)
         return " - ".join(parts) if parts else ""
 
 
@@ -62,6 +66,7 @@ class EducationItem(BaseModel):
     institution: Optional[str] = Field(description="School, university, or institution name")
     graduation_year: Optional[int] = Field(description="Year of graduation or completion")
     description: Optional[str] = Field(description="Additional details about education")
+    highlights: List[str] = Field(default=[], description="Key achievements, honors, or highlights")
 
 
 class SkillItem(BaseModel):
@@ -133,6 +138,7 @@ class ProjectItem(BaseModel):
     technologies: List[str] = Field(description="Technologies and tools used")
     url: Optional[str] = Field(description="Project URL (GitHub, demo, etc.)")
     date: Optional[PartialDate] = Field(description="Project date or time period")
+    highlights: List[str] = Field(default=[], description="Key achievements or highlights")
 
 
 class Projects(BaseModel):

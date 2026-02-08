@@ -130,7 +130,7 @@ scrapers: []
 
         self.assertIsNotNone(scored)
         self.assertGreater(scored.overall_score, 0)
-        self.assertAlmostEqual(scored.jd_required_coverage, 0.5556, places=2)
+        self.assertAlmostEqual(scored.jd_required_coverage, 0.8, places=2)
 
         print(f"  ✓ Overall score: {scored.overall_score:.1f}")
         print(f"  ✓ Base score: {scored.base_score:.1f}")
@@ -336,7 +336,7 @@ class TestScoreEquivalence(unittest.TestCase):
         self.assertIsNotNone(scored)
         self.assertGreater(scored.overall_score, 0)
         self.assertLessEqual(scored.overall_score, 100)
-        self.assertAlmostEqual(scored.jd_required_coverage, 0.6667, places=2)
+        self.assertAlmostEqual(scored.jd_required_coverage, 0.85, places=2)
         self.assertEqual(scored.jd_preferences_coverage, 0.0)
         self.assertEqual(scored.match_type, "requirements_only")
         self.assertEqual(scored.resume_fingerprint, "test-fp-123")

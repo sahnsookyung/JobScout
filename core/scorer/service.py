@@ -1,5 +1,6 @@
 from typing import List, Optional, Dict, Any
 import logging
+import threading
 import numpy as np
 from sqlalchemy import select
 
@@ -44,20 +45,24 @@ class ScoringService:
         user_want_embeddings: Optional[List[np.ndarray]] = None,
         job_facet_embeddings_map: Optional[Dict[str, Dict[str, np.ndarray]]] = None,
         match_type: str = "requirements_only",
+        stop_event: Optional[threading.Event] = None,
     ) -> List[ScoredJobMatch]:
 
         years_by_fp = _prefetch_total_years(preliminary_matches, self.repo.db)
 
-        scored = [
-            self.score_preliminary_match(
+        scored = []
+        for pm in preliminary_matches:
+            if stop_event and stop_event.is_set():
+                logger.info("ScoringService stopped by user")
+                return []
+            
+            scored.append(self.score_preliminary_match(
                 preliminary=pm,
                 match_type=match_type,
                 candidate_total_years=years_by_fp.get(pm.resume_fingerprint),
                 user_want_embeddings=user_want_embeddings,
                 job_facet_embeddings=(job_facet_embeddings_map or {}).get(str(pm.job.id)),
-            )
-            for pm in preliminary_matches
-        ]
+            ))
 
         scored.sort(key=lambda x: x.overall_score, reverse=True)
 

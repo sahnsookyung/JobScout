@@ -123,7 +123,7 @@ class OpenAIService(LLMProvider):
         logger.info(f"MODEL THINKING ({self.extraction_model}):")
         logger.info("-" * 60)
         logger.info(thought_process)
-        logger.info("-" * 60)
+        logger.info("=" * 60)
 
         return data
 
@@ -147,7 +147,7 @@ class OpenAIService(LLMProvider):
         logger.info(f"RESUME EXTRACTION ({self.extraction_model}):")
         logger.info("-" * 60)
         logger.info(f"Extracted profile with {len(data.get('profile', {}).get('experience', []))} experience entries")
-        logger.info("-" * 60)
+        logger.info("=" * 60)
 
         return data
 
@@ -167,13 +167,11 @@ class OpenAIService(LLMProvider):
             user_message=f"<JOB_DESCRIPTION>\n{text}\n</JOB_DESCRIPTION>\n\nExtract all qualification requirements."
         )
 
-        required_count = len(data.get('required', []))
-        preferred_count = len(data.get('preferred', []))
         logger.info("=" * 60)
         logger.info(f"REQUIREMENTS EXTRACTION ({self.extraction_model}):")
         logger.info("-" * 60)
-        logger.info(f"Extracted {required_count} required, {preferred_count} preferred")
-        logger.info("-" * 60)
+        logger.info("extract_structured_data returned type=%s value=%r", type(data), data)
+        logger.info("=" * 60)
 
         return data
 

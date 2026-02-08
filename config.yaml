@@ -62,7 +62,7 @@ matching:
   # Invalidation settings
   invalidate_on_job_change: true
   invalidate_on_resume_change: true
-  recalculate_existing: false  # If true, recalculate matches even if they exist
+  recalculate_existing: true  # If true, recalculate matches even if they exist
   
   # Stage 1: Matcher Service (Vector Retrieval)
   matcher:

@@ -12,7 +12,10 @@ class TestMatchSummaryModel(unittest.TestCase):
 
     def test_match_summary_with_remote_true(self):
         """Test MatchSummary serialization with is_remote=True."""
-        from web.app import MatchSummary
+        import sys
+        import os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', 'web', 'backend'))
+        from app import MatchSummary
         
         summary = MatchSummary(
             match_id="123",
@@ -39,7 +42,10 @@ class TestMatchSummaryModel(unittest.TestCase):
 
     def test_match_summary_with_remote_false(self):
         """Test MatchSummary serialization with is_remote=False."""
-        from web.app import MatchSummary
+        import sys
+        import os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', 'web', 'backend'))
+        from app import MatchSummary
         
         summary = MatchSummary(
             match_id="123",
@@ -66,7 +72,10 @@ class TestMatchSummaryModel(unittest.TestCase):
 
     def test_match_summary_with_remote_null(self):
         """Test MatchSummary serialization with is_remote=None."""
-        from web.app import MatchSummary
+        import sys
+        import os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', 'web', 'backend'))
+        from app import MatchSummary
         
         summary = MatchSummary(
             match_id="123",

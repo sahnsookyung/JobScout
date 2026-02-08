@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Tunable defaults (v1.1)
 # ----------------------------
 # Similarity handling
-DEFAULT_REQ_SIMILARITY_THRESHOLD = 0.55  # in [0,1]
+DEFAULT_REQ_SIMILARITY_THRESHOLD = 0.6  # in [0,1]
 DEFAULT_SIMILARITY_CLAMP = True          # clamp all similarities + job_similarity to [0,1]
 
 # Core weights (unitless, must be >= 0)
@@ -32,10 +32,10 @@ DEFAULT_WEIGHT_REQUIRED = 0.60
 DEFAULT_JOB_SIMILARITY_WEIGHT = 0.30
 
 # Preferred bonus (fraction of 1; later multiplied by 100 into "points")
-DEFAULT_PREFERRED_BONUS_MAX_FRACTION = 0.08  # up to +8 points
+DEFAULT_PREFERRED_BONUS_MAX_FRACTION = 0.15  # up to +15 points
 
 # Missing required explicit penalty (in "points")
-DEFAULT_MISSING_REQUIRED_PENALTY_MAX = 40.0  # ratio-based component
+DEFAULT_MISSING_REQUIRED_PENALTY_MAX = 0.0  # ratio-based component
 DEFAULT_PER_MISSING_REQUIRED_PENALTY = 0.0   # per missing required (count-based)
 DEFAULT_MISSING_REQUIRED_PENALTY_CAP = 70.0  # 0 disables cap
 
@@ -147,19 +147,19 @@ def _as_match(obj: Any, *, default_similarity: float = 0.0) -> _AdaptedMatch:
     return _AdaptedMatch(similarity=sim_f, requirement=_as_requirement(obj))
 
 def _scaled_quality(sim: float, threshold: float, clamp_similarity: bool) -> float:
-    # Clamp first to avoid weird math if sim/threshold are out of range.
     if clamp_similarity:
         sim = _clamp01(sim)
     threshold = _clamp01(threshold)
-
+    
     if sim < threshold:
         return 0.0
+    
+    # NEW: Linear scaling that gives 0.6 quality at 0.6 threshold
+    return sim  # Simple approach
+    
+    # OR: Partial credit starting at threshold, this is harsher
+    # return threshold + (sim - threshold) * (1.0 - threshold)
 
-    # threshold == 1 means only perfect matches get credit.
-    if threshold >= 1.0:
-        return 1.0 if sim >= 1.0 else 0.0
-
-    return (sim - threshold) / (1.0 - threshold)  # in [0,1]
 
 def _quality_weighted_coverage(matches: List[_AdaptedMatch], total_weight: float, threshold: float, clamp_similarity: bool) -> Dict[str, float]:
     if total_weight <= 0:
@@ -249,8 +249,9 @@ def calculate_fit_score(
     missing_pref = [m for m in adapted_missing if m.requirement.req_type == "preferred"]
 
     # --- Totals (weight-aware; denominator includes missing, so missing reduces coverage) ---
-    total_required_weight = sum(m.requirement.weight for m in matched_req) + sum(m.requirement.weight for m in missing_req)
-    total_preferred_weight = sum(m.requirement.weight for m in matched_pref) + sum(m.requirement.weight for m in missing_pref)
+    total_required_weight = sum(m.requirement.weight for m in matched_req)
+    # Keep missing_req separate for explicit penalties only
+    total_preferred_weight = sum(m.requirement.weight for m in matched_pref)
 
     req_stats = _quality_weighted_coverage(matched_req, total_required_weight, threshold, clamp_similarity)
     pref_stats = _quality_weighted_coverage(matched_pref, total_preferred_weight, threshold, clamp_similarity)
