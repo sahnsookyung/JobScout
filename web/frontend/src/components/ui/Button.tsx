@@ -19,12 +19,12 @@ export const Button: React.FC<ButtonProps> = ({
     return (
         <button
             className={clsx(
-                'inline-flex items-center justify-center rounded-md font-medium transition-colors',
+                'inline-flex items-center justify-center rounded-xl font-medium transition-all duration-200',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
                 'disabled:pointer-events-none disabled:opacity-50',
                 {
-                    'bg-blue-600 text-white hover:bg-blue-700': variant === 'primary',
-                    'bg-gray-200 text-gray-900 hover:bg-gray-300': variant === 'secondary',
+                    'bg-blue-600 text-white hover:bg-blue-700 hover:shadow-lg': variant === 'primary',
+                    'bg-gray-200 text-gray-900 hover:bg-gray-300 hover:shadow-md': variant === 'secondary',
                     'hover:bg-gray-100 text-gray-700': variant === 'ghost',
                     'px-3 py-1.5 text-sm': size === 'sm',
                     'px-4 py-2 text-base': size === 'md',
@@ -33,6 +33,8 @@ export const Button: React.FC<ButtonProps> = ({
                 className
             )}
             disabled={disabled || isLoading}
+            aria-busy={isLoading}
+            aria-label={isLoading ? 'Loading...' : undefined}
             {...props}
         >
             {isLoading && (
@@ -41,6 +43,7 @@ export const Button: React.FC<ButtonProps> = ({
                     xmlns="http://www.w3.org/2000/svg"
                     fill="none"
                     viewBox="0 0 24 24"
+                    aria-hidden="true"
                 >
                     <circle
                         className="opacity-25"

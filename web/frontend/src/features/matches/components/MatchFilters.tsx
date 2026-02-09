@@ -1,6 +1,8 @@
+// MatchFilters.tsx
 import React from 'react';
 import type { MatchStatus, SortBy } from '@/types/api';
 import { MATCH_STATUSES, SORT_OPTIONS } from '@/utils/constants';
+import { Filter, SortDesc, Laptop, Eye, Star } from 'lucide-react';
 
 interface MatchFiltersProps {
     status: MatchStatus;
@@ -28,75 +30,107 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
     onShowHiddenChange,
 }) => {
     return (
-        <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                {/* Status Filter */}
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Status
-                    </label>
-                    <select
-                        value={status}
-                        onChange={(e) => onStatusChange(e.target.value as MatchStatus)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                        {MATCH_STATUSES.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                            </option>
-                        ))}
-                    </select>
-                </div>
+        <div className="relative bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 rounded-3xl overflow-hidden">
+            {/* Decorative background */}
+            <div className="absolute top-0 right-0 w-48 h-48 bg-blue-400/10 rounded-full blur-3xl" />
 
-                {/* Sort By */}
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Sort By
-                    </label>
-                    <select
-                        value={sortBy}
-                        onChange={(e) => onSortByChange(e.target.value as SortBy)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                        {SORT_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                            </option>
-                        ))}
-                    </select>
-                </div>
+            <div className="relative p-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {/* Status Filter */}
+                    <div>
+                        <label className="flex items-center gap-2 text-xs font-black text-gray-600 uppercase tracking-wider mb-3">
+                            <Filter className="w-4 h-4" aria-hidden="true" />
+                            Status
+                        </label>
+                        <select
+                            value={status}
+                            onChange={(e) => onStatusChange(e.target.value as MatchStatus)}
+                            className="w-full px-4 py-3 bg-white border-2 border-gray-200 rounded-xl font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-sm hover:shadow-md"
+                        >
+                            {MATCH_STATUSES.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
 
-                {/* Checkboxes */}
-                <div className="flex flex-col gap-2">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                            type="checkbox"
-                            checked={remoteOnly}
-                            onChange={(e) => onRemoteOnlyChange(e.target.checked)}
-                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                        />
-                        <span className="text-sm text-gray-700">Remote Only</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                            type="checkbox"
-                            checked={showWantScore}
-                            onChange={(e) => onShowWantScoreChange(e.target.checked)}
-                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                        />
-                        <span className="text-sm text-gray-700">Show Want Score</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                            type="checkbox"
-                            checked={showHidden}
-                            onChange={(e) => onShowHiddenChange(e.target.checked)}
-                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                        />
-                        <span className="text-sm text-gray-700">Show Hidden</span>
-                    </label>
+                    {/* Sort By */}
+                    <div>
+                        <label className="flex items-center gap-2 text-xs font-black text-gray-600 uppercase tracking-wider mb-3">
+                            <SortDesc className="w-4 h-4" aria-hidden="true" />
+                            Sort By
+                        </label>
+                        <select
+                            value={sortBy}
+                            onChange={(e) => onSortByChange(e.target.value as SortBy)}
+                            className="w-full px-4 py-3 bg-white border-2 border-gray-200 rounded-xl font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-sm hover:shadow-md"
+                        >
+                            {SORT_OPTIONS.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Toggle Options */}
+                    <div>
+                        <label className="text-xs font-black text-gray-600 uppercase tracking-wider mb-3 block">
+                            Display Options
+                        </label>
+                        <div className="space-y-2">
+                            <ToggleOption
+                                icon={<Laptop className="w-4 h-4" />}
+                                label="Remote Only"
+                                checked={remoteOnly}
+                                onChange={onRemoteOnlyChange}
+                            />
+                            <ToggleOption
+                                icon={<Star className="w-4 h-4" />}
+                                label="Show Want Score"
+                                checked={showWantScore}
+                                onChange={onShowWantScoreChange}
+                            />
+                            <ToggleOption
+                                icon={<Eye className="w-4 h-4" />}
+                                label="Show Hidden"
+                                checked={showHidden}
+                                onChange={onShowHiddenChange}
+                            />
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     );
 };
+
+interface ToggleOptionProps {
+    icon: React.ReactNode;
+    label: string;
+    checked: boolean;
+    onChange: (value: boolean) => void;
+}
+
+const ToggleOption: React.FC<ToggleOptionProps> = ({ icon, label, checked, onChange }) => (
+    <label className="flex items-center gap-3 cursor-pointer group">
+        <div className="relative">
+            <input
+                type="checkbox"
+                checked={checked}
+                onChange={(e) => onChange(e.target.checked)}
+                className="sr-only"
+            />
+            <div className={`w-11 h-6 rounded-full transition-all duration-200 ${checked ? 'bg-gradient-to-r from-blue-500 to-indigo-500' : 'bg-gray-300'
+                }`}>
+                <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-200 ${checked ? 'translate-x-5' : 'translate-x-0'
+                    }`} />
+            </div>
+        </div>
+        <div className="flex items-center gap-2 text-sm font-bold text-gray-700 group-hover:text-gray-900">
+            {icon}
+            <span>{label}</span>
+        </div>
+    </label>
+);

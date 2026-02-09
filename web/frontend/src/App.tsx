@@ -62,7 +62,7 @@ function AppContent() {
                 <div className="grid grid-cols-1 xl:grid-cols-[1fr_400px] gap-6">
                     {/* Panels: show first on small screens, right column on xl+ */}
                     <aside className="order-first xl:order-last space-y-6">
-                        <StatsPanel />
+                        {/* <StatsPanel /> */}
                         <PolicyPanel />
                     </aside>
 
