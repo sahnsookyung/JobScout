@@ -111,10 +111,10 @@ def test_cancellation():
             print(f"Final Status: {status}")
             if status == "failed":
                 print(f"Error: {status_data.get('error')}")
-                if "Stopped by user" in str(status_data.get('error')):
-                     print("SUCCESS: Pipeline stopped by user error found.")
+                if "Interrupted by system" in str(status_data.get('error')):
+                     print("SUCCESS: Pipeline interrupted by system error found.")
                 else:
-                     print("WARNING: Pipeline failed but not with 'Stopped by user' error.")
+                     print("WARNING: Pipeline failed but not with 'Interrupted by system' error.")
             else:
                 print("FAILURE: Pipeline completed instead of stopping.")
             break

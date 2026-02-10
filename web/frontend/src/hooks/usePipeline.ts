@@ -61,6 +61,13 @@ export const usePipeline = () => {
         },
     });
 
+    const uploadResumeMutation = useMutation({
+        mutationFn: (file: File) => pipelineApi.uploadResume(file),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['resume'] });
+        },
+    });
+
     React.useEffect(() => {
         if (status?.status === 'completed' || status?.status === 'failed') {
             queryClient.invalidateQueries({ queryKey: ['matches'] });
@@ -77,5 +84,7 @@ export const usePipeline = () => {
         isRunning: status?.status === 'running',
         isStopping: stopPipelineMutation.isPending,
         clearTask: clearTaskMutation.mutate,
+        uploadResume: uploadResumeMutation.mutate,
+        isUploading: uploadResumeMutation.isPending,
     };
 };

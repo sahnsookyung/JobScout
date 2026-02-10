@@ -426,8 +426,8 @@ class ResumeProfiler:
         resume_fingerprint = generate_resume_fingerprint(resume_data)
 
         if stop_event and stop_event.is_set():
-            logger.info("Resume profiling stopped by user (before extraction)")
-            raise InterruptedError("Stopped by user")
+            logger.info("Resume profiling interrupted (stop event set)")
+            raise InterruptedError("Interrupted by system")
 
         # Extract structured resume
         resume = self.extract_structured_resume(resume_data)
@@ -436,14 +436,14 @@ class ResumeProfiler:
         evidence_units = []
         if resume:
             if stop_event and stop_event.is_set():
-                logger.info("Resume profiling stopped by user (before evidence)")
-                raise InterruptedError("Stopped by user")
+                logger.info("Resume profiling interrupted (stop event set)")
+                raise InterruptedError("Interrupted by system")
             evidence_units = self.extract_resume_evidence(resume.profile)
 
         # Generate embeddings for evidence units
         if stop_event and stop_event.is_set():
-            logger.info("Resume profiling stopped by user (before embedding)")
-            raise InterruptedError("Stopped by user")
+            logger.info("Resume profiling interrupted (stop event set)")
+            raise InterruptedError("Interrupted by system")
         self.embed_evidence_units(evidence_units)
 
         # Persist evidence unit embeddings

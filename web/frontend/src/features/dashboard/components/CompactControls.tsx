@@ -1,15 +1,36 @@
 // CompactControls.tsx
-import React from 'react';
-import { TrendingUp, Zap, CheckCircle, XCircle, Loader, ArrowUpRight, Award } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { TrendingUp, Zap, CheckCircle, XCircle, Loader, ArrowUpRight, Award, FileUp } from 'lucide-react';
 import { usePipeline } from '@/hooks/usePipeline';
 import { useStats } from '@/hooks/useStats';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { toast } from 'sonner';
 
 
 export const CompactControls: React.FC = () => {
-    const { runPipeline, stopPipeline, isRunning, isStopping, status } = usePipeline();
+    const { runPipeline, stopPipeline, isRunning, isStopping, status, uploadResume, isUploading } = usePipeline();
     const { data: stats } = useStats();
+    const [resumeFilename, setResumeFilename] = useState<string | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const handleResumeUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        try {
+            await uploadResume(file);
+            setResumeFilename(file.name);
+            toast.success("Resume uploaded!");
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            toast.error(`Failed to upload resume: ${message}`);
+        } finally {
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
+        }
+    };
 
 
     const statusData = status as {
@@ -173,19 +194,49 @@ export const CompactControls: React.FC = () => {
                         </div>
 
 
-                        {/* Action Button - CENTERED TEXT & IMPROVED SIZING */}
-                        <button
-                            onClick={() => runPipeline()}
-                            disabled={isRunning}
-                            className="group relative px-8 py-5 sm:px-10 sm:py-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-2xl shadow-lg hover:shadow-2xl hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden lg:self-center"
-                        >
-                            <div className="absolute inset-0 bg-gradient-to-r from-blue-400 to-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
-                            <div className="relative flex items-center justify-center gap-2.5 sm:gap-3">
-                                <Zap className="w-5 h-5 sm:w-6 sm:h-6" />
-                                <span className="text-base sm:text-lg">Run Matching</span>
-                                <ArrowUpRight className="w-4 h-4 sm:w-5 sm:h-5 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
-                            </div>
-                        </button>
+                        {/* Action Buttons */}
+                        <div className="flex gap-3 lg:flex-col lg:w-sidebar-content">
+                            {/* Resume Upload Button - Secondary Style */}
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={isRunning || isUploading}
+                                className="w-full lg:w-auto px-6 py-4 border-2 border-gray-300 text-gray-700 font-semibold rounded-xl hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 min-w-[160px]"
+                            >
+                                {isUploading ? (
+                                    <Loader className="w-5 h-5 animate-spin" />
+                                ) : (
+                                    <FileUp className="w-5 h-5" />
+                                )}
+                                <span>{resumeFilename ? 'Update Resume' : 'Upload Resume'}</span>
+                                {resumeFilename && (
+                                    <span className="ml-2 text-xs opacity-70 truncate max-w-[120px]">
+                                        ({resumeFilename})
+                                    </span>
+                                )}
+                            </button>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept=".json"
+                                className="hidden"
+                                onChange={handleResumeUpload}
+                                data-testid="resume-file-input"
+                            />
+
+                            {/* Run Matching Button - Primary Style */}
+                            <button
+                                onClick={() => runPipeline()}
+                                disabled={isRunning}
+                                className="w-full lg:w-auto group relative px-8 py-5 sm:px-10 sm:py-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-2xl shadow-lg hover:shadow-2xl hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden"
+                            >
+                                <div className="absolute inset-0 bg-gradient-to-r from-blue-400 to-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                                <div className="relative flex items-center justify-center gap-2.5 sm:gap-3">
+                                    <Zap className="w-5 h-5 sm:w-6 sm:h-6" />
+                                    <span className="text-base sm:text-lg">Run Matching</span>
+                                    <ArrowUpRight className="w-4 h-4 sm:w-5 sm:h-5 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                                </div>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -284,26 +335,56 @@ export const CompactControls: React.FC = () => {
                     </div>
 
 
-                    {/* Action Section - ONLY BUTTON */}
+                    {/* Action Section */}
                     <div className="lg:self-center">
-                        <button
-                            onClick={isRunningStatus ? () => stopPipeline() : () => runPipeline()}
-                            disabled={isRunningStatus ? isStopping : isRunning}
-                            className={`group relative px-8 py-5 sm:px-10 sm:py-6 font-bold rounded-2xl shadow-lg hover:shadow-2xl hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-50 overflow-hidden lg:self-center w-full lg:w-auto lg:min-w-[280px] ${isRunningStatus
-                                ? 'bg-red-500 text-white hover:bg-red-600'
-                                : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white'
-                                }`}
-                        >
-                            <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 ${isRunningStatus ? 'bg-red-400' : 'bg-gradient-to-r from-blue-400 to-indigo-400'
-                                }`} />
-                            <div className="relative flex items-center justify-center gap-2.5 sm:gap-3">
-                                {!isRunningStatus && <Zap className="w-5 h-5 sm:w-6 sm:h-6" />}
-                                <span className="text-base sm:text-lg">{isRunningStatus ? 'Stop' : 'Run Matching'}</span>
-                                {!isRunningStatus && (
-                                    <ArrowUpRight className="w-4 h-4 sm:w-5 sm:h-5 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                        <div className="flex gap-3 lg:flex-col lg:w-sidebar-content">
+                            {/* Resume Upload Button - Secondary Style */}
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={isRunning || isUploading}
+                                className="w-full lg:w-auto px-6 py-4 border-2 border-gray-300 text-gray-700 font-semibold rounded-xl hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 min-w-[160px]"
+                            >
+                                {isUploading ? (
+                                    <Loader className="w-5 h-5 animate-spin" />
+                                ) : (
+                                    <FileUp className="w-5 h-5" />
                                 )}
-                            </div>
-                        </button>
+                                <span>{resumeFilename ? 'Update Resume' : 'Upload Resume'}</span>
+                                {resumeFilename && (
+                                    <span className="ml-2 text-xs opacity-70 truncate max-w-[120px]">
+                                        ({resumeFilename})
+                                    </span>
+                                )}
+                            </button>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept=".json"
+                                className="hidden"
+                                onChange={handleResumeUpload}
+                                data-testid="resume-file-input"
+                            />
+
+                            {/* Run/Stop Matching Button */}
+                            <button
+                                onClick={isRunningStatus ? () => stopPipeline() : () => runPipeline()}
+                                disabled={isRunningStatus ? isStopping : isRunning}
+                                className={`w-full lg:w-auto group relative px-8 py-5 sm:px-10 sm:py-6 font-bold rounded-2xl shadow-lg hover:shadow-2xl hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-50 overflow-hidden ${isRunningStatus
+                                    ? 'bg-red-500 text-white hover:bg-red-600'
+                                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white'
+                                    }`}
+                            >
+                                <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 ${isRunningStatus ? 'bg-red-400' : 'bg-gradient-to-r from-blue-400 to-indigo-400'
+                                    }`} />
+                                <div className="relative flex items-center justify-center gap-2.5 sm:gap-3">
+                                    {!isRunningStatus && <Zap className="w-5 h-5 sm:w-6 sm:h-6" />}
+                                    <span className="text-base sm:text-lg">{isRunningStatus ? 'Stop' : 'Run Matching'}</span>
+                                    {!isRunningStatus && (
+                                        <ArrowUpRight className="w-4 h-4 sm:w-5 sm:h-5 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                                    )}
+                                </div>
+                            </button>
+                        </div>
                     </div>
                 </div>
 

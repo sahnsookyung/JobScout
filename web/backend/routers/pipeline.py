@@ -3,7 +3,9 @@
 Pipeline endpoints - trigger and monitor matching pipeline.
 """
 
-from fastapi import APIRouter
+import json
+import os
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from typing import Optional
 
 from ..services.pipeline_service import get_pipeline_manager
@@ -133,4 +135,59 @@ def stop_matching_pipeline():
         success=True,
         task_id=task_id,
         message="Pipeline cancellation requested."
+    )
+
+
+@router.post("/upload-resume", response_model=PipelineTaskResponse)
+async def upload_resume_endpoint(file: UploadFile = File(...)):
+    """
+    Upload a resume JSON file.
+    Saves to configured resume file path and triggers ETL processing.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    if not file.filename or not file.filename.endswith('.json'):
+        raise HTTPException(status_code=400, detail="Only JSON files are allowed")
+
+    content = await file.read()
+
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File size exceeds 10MB limit")
+
+    try:
+        json.loads(content.decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON file: {str(e)}")
+
+    from core.config_loader import load_config
+    config = load_config()
+    resume_file = config.etl.resume_file if config.etl and config.etl.resume_file else "resume.json"
+    if not os.path.isabs(resume_file):
+        resume_file = os.path.join(os.getcwd(), resume_file)
+
+    try:
+        with open(resume_file, 'wb') as f:
+            f.write(content)
+    except IOError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+
+    fingerprint = None
+    try:
+        from database.uow import job_uow
+        from core.app_context import AppContext
+
+        full_config = load_config()
+        ctx = AppContext.build(full_config)
+
+        with job_uow() as repo:
+            changed, fp, _ = ctx.job_etl_service.process_resume(repo, resume_file)
+            fingerprint = fp
+    except Exception as e:
+        logger.error(f"ETL processing failed during resume upload: {e}")
+
+    return PipelineTaskResponse(
+        success=True,
+        task_id="",
+        message=f"Resume uploaded successfully{f' (fingerprint: {fingerprint[:16]}...)' if fingerprint else ''}"
     )

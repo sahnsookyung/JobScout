@@ -51,11 +51,11 @@ export const PolicyPanel: React.FC = () => {
     };
 
     if (isLoading) {
-        return <div className="animate-pulse bg-gradient-to-br from-gray-100 to-gray-200 h-64 rounded-3xl" />;
+        return <div className="animate-pulse bg-gradient-to-br from-gray-100 to-gray-200 h-64 rounded-3xl xl:max-w-sidebar" />;
     }
 
     return (
-        <div className="relative bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 rounded-3xl overflow-hidden">
+        <div className="relative bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 rounded-3xl overflow-hidden xl:max-w-sidebar">
             {/* Decorative Background */}
             <div className="absolute top-0 right-0 w-32 h-32 bg-blue-400/10 rounded-full blur-3xl" />
             <div className="absolute bottom-0 left-0 w-24 h-24 bg-indigo-400/10 rounded-full blur-3xl" />

@@ -13,4 +13,12 @@ export const pipelineApi = {
 
     stopMatching: () =>
         apiClient.post<PipelineTaskResponse>('/pipeline/stop'),
+
+    uploadResume: (file: File) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        return apiClient.post<PipelineTaskResponse>('/pipeline/upload-resume', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        });
+    },
 };

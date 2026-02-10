@@ -153,6 +153,7 @@ def _extract_scores(scored_match: Union[ScoredJobMatch, MatchResultDTO]):
 def save_match_to_db(
     scored_match: Union[ScoredJobMatch, MatchResultDTO],
     repo,
+    is_stale_replacement: bool = False,
 ) -> JobMatch:
     """
     Save scored match to database.
@@ -163,6 +164,8 @@ def save_match_to_db(
     Args:
         scored_match: ScoredJobMatch instance or MatchResultDTO with all match details
         repo: JobRepository instance for database access
+        is_stale_replacement: If True, creates new record instead of updating existing
+                              (used when job content changed and old match was marked stale)
 
     Returns:
         JobMatch record that was created or updated
@@ -179,7 +182,9 @@ def save_match_to_db(
     )
     existing = repo.db.execute(existing_stmt).scalar_one_or_none()
 
-    if existing:
+    # If we're replacing a stale match (job content changed), create new record
+    # Otherwise update existing record in place
+    if existing and not is_stale_replacement:
         match_record = existing
         match_record.status = 'active'
         # Preserve user's hidden preference - don't reset on re-score
@@ -230,7 +235,9 @@ def save_match_to_db(
 
     repo.db.flush()
 
-    if existing:
+    # Only delete requirements when updating existing record in place
+    # When creating new record (is_stale_replacement=True), old record stays with its requirements
+    if existing and not is_stale_replacement:
         repo.db.execute(
             delete(JobMatchRequirement).where(
                 JobMatchRequirement.job_match_id == match_record.id

@@ -53,7 +53,7 @@ class ScoringService:
         scored = []
         for pm in preliminary_matches:
             if stop_event and stop_event.is_set():
-                logger.info("ScoringService stopped by user")
+                logger.info("ScoringService interrupted")
                 return []
             
             scored.append(self.score_preliminary_match(

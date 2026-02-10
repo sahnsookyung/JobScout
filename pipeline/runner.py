@@ -222,7 +222,7 @@ def run_matching_pipeline(
                     matches_count=0,
                     saved_count=0,
                     notified_count=0,
-                    error="Stopped by user"
+                    error="Interrupted by system"
                 )
 
             if status_callback:
@@ -247,7 +247,7 @@ def run_matching_pipeline(
                     matches_count=0,
                     saved_count=0,
                     notified_count=0,
-                    error="Stopped by user"
+                    error="Interrupted by system"
                 )
 
             if status_callback:
@@ -364,7 +364,7 @@ def run_matching_pipeline(
                 matches_count=len(match_dtos),
                 saved_count=0,
                 notified_count=0,
-                error="Stopped by user"
+                error="Interrupted by system"
             )
 
         # Step 9: Save matches with per-match transactions
@@ -383,7 +383,7 @@ def run_matching_pipeline(
                 matches_count=len(match_dtos),
                 saved_count=saved_count,
                 notified_count=0,
-                error="Stopped by user before notifications"
+                error="Interrupted by system before notifications"
             )
 
         # Step 10: Send notifications (optional, only if notification service exists)
@@ -433,18 +433,32 @@ def _save_matches_batch(
             with job_uow() as repo:
                 existing = repo.get_existing_match(dto.job.id, resume_fingerprint)
                 
+                # Handle existing active matches
                 if existing and existing.status == 'active':
+                    # Job content changed → mark old as stale and create new match
+                    # (Preserves history: stale shows WHY it was replaced)
                     if existing.job_content_hash != dto.job.content_hash:
                         existing.status = 'stale'
                         existing.invalidated_reason = "Job content updated"
                         logger.info(f"Invalidated match for job {dto.job.id} due to content change")
+                        save_match_to_db(
+                            scored_match=dto,
+                            repo=repo,
+                            is_stale_replacement=True,  # Creates NEW record
+                        )
+                        saved_count += 1
+                        continue
+                    
+                    # Content unchanged → respect recalculate_existing flag
                     elif not matching_config.recalculate_existing:
                         logger.debug(f"Skipping existing match for job {dto.job.id}")
                         continue
 
+                # No existing match OR we need to update → save
                 save_match_to_db(
                     scored_match=dto,
                     repo=repo,
+                    is_stale_replacement=False,  # Updates existing or creates new
                 )
                 saved_count += 1
         except Exception:

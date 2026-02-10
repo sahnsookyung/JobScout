@@ -62,8 +62,8 @@ def test_precedence():
             status = status_resp.json()["status"]
             error = status_resp.json().get("error", "")
             
-            if status == "failed" and "Stopped by user" in error:
-                print("SUCCESS: Frontend pipeline was cancelled (Stopped by user).")
+            if status == "failed" and "Interrupted by system" in error:
+                print("SUCCESS: Frontend pipeline was cancelled (Interrupted by system).")
                 preempted = True
                 break
             

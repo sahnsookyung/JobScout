@@ -49,7 +49,7 @@ class MatcherService:
         preliminaries = []
         for job, sim in job_similarity_pairs:
             if stop_event and stop_event.is_set():
-                logger.info("MatcherService stopped by user")
+                logger.info("MatcherService interrupted")
                 return []
             preliminaries.append(self._build_preliminary(repo, job, sim, resume_fingerprint))
 
