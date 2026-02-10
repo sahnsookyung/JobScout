@@ -73,18 +73,9 @@ export const MatchCard: React.FC<MatchCardProps> = ({
                 }`}
             onClick={() => onSelect(match.match_id)}
         >
-            {/* Top Match Badge */}
-            {isHighScore && !match.is_hidden && (
-                <div className="absolute top-6 left-6">
-                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-yellow-400 to-orange-400 text-white rounded-lg font-black text-xs shadow-lg">
-                        <Award className="w-3.5 h-3.5" aria-hidden="true" />
-                        <span>Top Match</span>
-                    </div>
-                </div>
-            )}
-
-            {/* Score Badge - Inside top right */}
-            <div className="absolute top-6 right-6">
+            {/* Score Badge Container */}
+            <div className="absolute top-6 right-6 flex flex-col items-end gap-2">
+                {/* Score Badge */}
                 <div className={`w-20 h-20 rounded-xl bg-gradient-to-br shadow-md flex flex-col items-center justify-center ${isHighScore ? 'from-blue-500 via-indigo-500 to-purple-500' :
                     isMediumScore ? 'from-blue-400 to-indigo-400' :
                         'from-gray-400 to-gray-500'
@@ -96,10 +87,17 @@ export const MatchCard: React.FC<MatchCardProps> = ({
                         Score
                     </div>
                 </div>
+
+                {/* Top Match Badge - Now below score */}
+                {isHighScore && !match.is_hidden && (
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-yellow-400 to-orange-400 text-white rounded-lg font-black text-xs shadow-lg">
+                        <Award className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>Top Match</span>
+                    </div>
+                )}
             </div>
 
-
-            {/* Hide Button - Moved below score */}
+            {/* Hide Button */}
             <button
                 onClick={handleToggleHidden}
                 disabled={toggleHiddenMutation.isPending}
