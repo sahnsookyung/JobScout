@@ -91,3 +91,38 @@ def database_available(test_database):
 def test_db_url(test_database):
     """Get test database URL."""
     return test_database
+
+
+@pytest.fixture(autouse=True)
+def redirect_resume_files(monkeypatch, tmp_path):
+    """Redirect resume file writes from project root to temp directory during tests.
+
+    This fixture ensures tests don't pollute the project root directory with resume files.
+    Intercepts writes to:
+    - Relative paths that resolve to project root
+    - Absolute paths to project root (after config resolution)
+
+    Note: Uses closure over tmp_path to ensure each test/worker gets isolated temp directory.
+    """
+    import os
+    from pathlib import Path
+
+    _original_open = open
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    tests_dir = os.path.join(project_root, 'tests')
+
+    def patched_open(filename, mode='r', *args, **kwargs):
+        """Patch open() to redirect resume file writes from project root to temp."""
+        if mode.startswith('w') or mode.startswith('a') or mode.startswith('x'):
+            filename_str = str(filename) if isinstance(filename, (str, Path)) else None
+            if filename_str:
+                abs_path = os.path.abspath(filename_str)
+                in_project_root = abs_path.startswith(project_root) and not abs_path.startswith(tests_dir)
+
+                if in_project_root:
+                    new_path = str(tmp_path / os.path.basename(filename_str))
+                    return _original_open(new_path, mode, *args, **kwargs)
+
+        return _original_open(filename, mode, *args, **kwargs)
+
+    monkeypatch.setattr('builtins.open', patched_open)

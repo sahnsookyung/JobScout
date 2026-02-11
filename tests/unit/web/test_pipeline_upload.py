@@ -36,11 +36,14 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         }
         files = {'file': ('resume.json', json.dumps(sample_resume), 'application/json')}
 
-        with patch('core.config_loader.load_config') as mock_config:
-            mock_cfg = MagicMock()
-            mock_cfg.etl = MagicMock()
-            mock_cfg.etl.resume_file = "test_resume.json"
-            mock_config.return_value = mock_cfg
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_resume_path = os.path.join(tmp_dir, "test_resume.json")
+
+            with patch('core.config_loader.load_config') as mock_config:
+                mock_cfg = MagicMock()
+                mock_cfg.etl = MagicMock()
+                mock_cfg.etl.resume_file = temp_resume_path
+                mock_config.return_value = mock_cfg
 
             with patch('core.app_context.AppContext') as mock_context:
                 mock_ctx = MagicMock()
