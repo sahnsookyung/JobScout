@@ -1,8 +1,8 @@
 services:
-  # This is the API container
   jobspy-service:
-    # <--- THIS KEY BECOMES THE HOSTNAME
-    image: your-repo/jobspy-api:latest
+    # Job Fetching API Service
+    image: sahnsookyung/jobspy:latest
+    platform: linux/amd64 # only linux/amd64 version exists for now.
     ports:
       - "8000:8000"
 
@@ -15,7 +15,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -55,7 +55,7 @@ services:
     volumes:
       - ./api_responses.json:/app/api_responses.json # Mount for testing
       - ./config.yaml:/app/config.yaml
-      - ./main.py:/app/main.py:ro  # Only mount specific files for live reload
+      - ./main.py:/app/main.py:ro # Only mount specific files for live reload
       - ./core:/app/core:ro
       - ./database:/app/database:ro
       - ./etl:/app/etl:ro

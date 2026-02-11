@@ -1,17 +1,18 @@
 services:
-  jobspy-service:
-    platform: linux/amd64 # Top-level, overrides Dockerfile FROM --platform [web:17][web:34]
-    build:
-      context: /Users/sookyungahn/repos/JobSpy
-      dockerfile: Dockerfile
-    volumes:
-      - /Users/sookyungahn/repos/JobSpy:/app # Live reloads
-      - playwright_cache:/root/.cache/ms-playwright # Named vol for persistence [web:34]
-    environment:
-      - PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
-      - DEBUG=true
-    stdin_open: true
-    tty: true
+  # below is only for development purposes.
+  # jobspy-service:
+  #   platform: linux/amd64 # Top-level, overrides Dockerfile FROM --platform [web:17][web:34]
+  #   build:
+  #     context: /Users/sookyungahn/repos/JobSpy
+  #     dockerfile: Dockerfile
+  #   volumes:
+  #     - /Users/sookyungahn/repos/JobSpy:/app # Live reloads
+  #     - playwright_cache:/root/.cache/ms-playwright # Named vol for persistence [web:34]
+  #   environment:
+  #     - PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
+  #     - DEBUG=true
+  #   stdin_open: true
+  #   tty: true
 
   ollama:
     ports:
