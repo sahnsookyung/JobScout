@@ -1,7 +1,7 @@
 services:
   jobspy-service:
     # Job Fetching API Service
-    image: sahnsookyung/jobspy:latest
+    image: sahnsookyung/jobspy:1.0.1
     platform: linux/amd64 # only linux/amd64 version exists for now.
     ports:
       - "8000:8000"
