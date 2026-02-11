@@ -95,28 +95,28 @@ export const MatchCard: React.FC<MatchCardProps> = ({
                         <span>Top Match</span>
                     </div>
                 )}
-            </div>
 
-            {/* Hide Button */}
-            <button
-                onClick={handleToggleHidden}
-                disabled={toggleHiddenMutation.isPending}
-                className={`absolute top-28 right-6 p-2.5 rounded-xl transition-all duration-200 backdrop-blur-sm disabled:opacity-50 disabled:cursor-not-allowed ${match.is_hidden
-                    ? 'bg-gray-200/80 text-gray-600 hover:bg-gray-300/80'
-                    : 'bg-white/80 text-gray-600 hover:bg-white hover:shadow-lg'
-                    }`}
-                title={match.is_hidden ? 'Unhide this job' : 'Hide this job'}
-                aria-label={match.is_hidden ? 'Unhide this job' : 'Hide this job'}
-                aria-pressed={match.is_hidden}
-            >
-                {toggleHiddenMutation.isPending ? (
-                    <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                ) : match.is_hidden ? (
-                    <EyeOff className="w-4 h-4" />
-                ) : (
-                    <Eye className="w-4 h-4" />
-                )}
-            </button>
+                {/* Hide Button - positioned below the score badges */}
+                <button
+                    onClick={handleToggleHidden}
+                    disabled={toggleHiddenMutation.isPending}
+                    className={`mt-0.5 p-2.5 rounded-xl transition-all duration-200 backdrop-blur-sm disabled:opacity-50 disabled:cursor-not-allowed ${match.is_hidden
+                        ? 'bg-gray-200/80 text-gray-600 hover:bg-gray-300/80'
+                        : 'bg-white/80 text-gray-600 hover:bg-white hover:shadow-lg'
+                        }`}
+                    title={match.is_hidden ? 'Unhide this job' : 'Hide this job'}
+                    aria-label={match.is_hidden ? 'Unhide this job' : 'Hide this job'}
+                    aria-pressed={match.is_hidden}
+                >
+                    {toggleHiddenMutation.isPending ? (
+                        <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    ) : match.is_hidden ? (
+                        <EyeOff className="w-4 h-4" />
+                    ) : (
+                        <Eye className="w-4 h-4" />
+                    )}
+                </button>
+            </div>
 
             {/* Content */}
             <div className="pr-28">

@@ -1,5 +1,5 @@
 services:
-  # below is only for development purposes.
+  # below is only for development purposes. It assumes that JobSpy container is running on host machine (e.g. from a cloned JobSpy repository).
   # jobspy-service:
   #   platform: linux/amd64 # Top-level, overrides Dockerfile FROM --platform [web:17][web:34]
   #   build:
