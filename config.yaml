@@ -1,5 +1,5 @@
 database:
-  # DEFAULT only. In Docker, this is overridden by DATABASE_URL env var.
+  # PostgreSQL connection (can be overridden by DATABASE_URL env var)
   url: "postgresql://user:password@localhost:5432/jobscout"
 
 web:
@@ -8,16 +8,16 @@ web:
   port: 8080  # Changed from 5000 to avoid conflicts
 
 jobspy:
-  # DEFAULT only. In Docker, this is overridden by JOBSPY_URL env var.
+  # JobSpy scraping service URL (can be overridden by JOBSPY_URL env var)
   url: "http://localhost:8000" 
 
 etl:
-  # Resume file path (relative to working directory or absolute)
+  # Resume file path (relative or absolute)
   resume_file: "resume.json"
   llm:
-    # DEFAULT only. In Docker, this is overridden by ETL_LLM_BASE_URL env var.
-    base_url: "http://localhost:11434/v1" # Use local installation of ollama over docker virtualization. Docker can't use GPU on Apple Silicon at time of writing. 
-    api_key: "ollama" # Dummy key for local Ollama
+    # Ollama base URL (can be overridden by ETL_LLM_BASE_URL env var)
+    base_url: "http://localhost:11434/v1"
+    api_key: "ollama"  # Dummy key for local Ollama
     
     # Extraction
     extraction_url: "" # Not used for Ollama/OpenAI
@@ -42,27 +42,18 @@ etl:
 
 matching:
   enabled: true
-  # Mode: requirements_only (default). "with_preferences" is deprecated.
+  # Mode: requirements_only (default).
   mode: "requirements_only"
   
-  # User wants file for Want score (semantic matching via embeddings)
-  # Free-text file, one want per line. Example wants.txt:
-  #   I want remote work flexibility
-  #   Looking for Python and TypeScript roles
-  #   Company that values work-life balance
-  # The want_score calculates semantic similarity between your wants and job facets.
-  # Job facets are automatically extracted during ETL (remote_flexibility, compensation, etc.)
+  # User wants file (optional): Add your job preferences in natural language
+  # One want per line, e.g., "I want remote work", "Looking for Python roles"
+  # Enables semantic matching between your wants and job facets (remote_flexibility, compensation, etc.)
   # user_wants_file: "wants.txt"
-  
-  # Preferences file (DEPRECATED - not implemented, use user_wants_file instead)
-  # The structured preferences.json system was never implemented.
-  # For user preference alignment, use user_wants_file for semantic matching.
-  # preferences_file: "preferences.json"
   
   # Invalidation settings
   invalidate_on_job_change: true
   invalidate_on_resume_change: true
-  recalculate_existing: true  # If true, recalculate matches even if they exist
+  recalculate_existing: true  # If true, recalculate matches even if they exist. Very important to set to false for performance improvements (job, resume, scoring parameters being the same means the score should be the same).
   
   # Stage 1: Matcher Service (Vector Retrieval)
   matcher:
@@ -210,4 +201,4 @@ scrapers:
     location: "Tokyo"
     results_wanted: 5
     hours_old: 168
-    linkedin_fetch_description: True
+    linkedin_fetch_description: true

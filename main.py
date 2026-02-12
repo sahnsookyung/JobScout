@@ -45,9 +45,12 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 def setup_logging():
+    # Force logging configuration with timestamps
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        force=True  # Force reconfiguration of logging
     )
 
 
@@ -58,9 +61,13 @@ def load_resume_data(resume_file_path: str) -> Optional[dict]:
             return json.load(f)
     except FileNotFoundError:
         logger.error(f"Resume file not found: {resume_file_path}")
+        logger.error("→ Create one: cp resume.example.json " + resume_file_path)
+        logger.error("→ Or set path in config.yaml: etl.resume_file")
         return None
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in resume file: {e}")
+        logger.error(f"→ Validate JSON: python -m json.tool {resume_file_path}")
+        logger.error(f"→ Check line {e.lineno}, column {e.colno}")
         return None
 
 
@@ -75,6 +82,8 @@ def load_user_wants_data(wants_file_path: str) -> List[str]:
             return wants
     except FileNotFoundError:
         logger.warning(f"User wants file not found: {wants_file_path}")
+        logger.warning("→ Create one: cp wants.example.txt " + wants_file_path)
+        logger.warning("→ Add one preference per line in natural language")
         return []
     except Exception as e:
         logger.error(f"Error reading user wants file: {e}")
@@ -122,6 +131,8 @@ def run_etl_pipeline(ctx: AppContext, stop_event: threading.Event) -> None:
                 total_jobs_gathered += len(jobs)
         except Exception as e:
             logger.error(f"Error processing scraper {scraper_cfg.site_type}: {e}")
+            logger.error("→ Check if JobSpy service is running")
+            logger.error("→ Verify scraper configuration in config.yaml")
 
     step_elapsed = time.time() - step_start
     logger.info(f"ETL Step 1 completed: Gathered {total_jobs_gathered} jobs in {step_elapsed:.2f}s")

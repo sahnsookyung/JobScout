@@ -1,0 +1,98 @@
+{
+    "name": "Your Name",
+    "title": "Software Engineer",
+    "pdfUrl": "/path/to/your/resume.pdf",
+    "sections": [
+        {
+            "title": "Summary",
+            "items": [
+                {
+                    "company": "",
+                    "role": "",
+                    "period": "",
+                    "description": "Software engineer with X years of experience in backend development, cloud infrastructure, and distributed systems. Skilled in Python, Java, AWS, and Kubernetes.",
+                    "highlights": []
+                }
+            ]
+        },
+        {
+            "title": "Professional Experience",
+            "items": [
+                {
+                    "company": "Your Company",
+                    "role": "Software Engineer",
+                    "period": "2020 - Present",
+                    "description": "Built and maintained backend services for a high-traffic SaaS platform.",
+                    "highlights": [
+                        "Designed and deployed microservices handling 10M+ requests per day",
+                        "Reduced API latency by 40% through database query optimization",
+                        "Led migration from monolith to microservices architecture",
+                        "Implemented CI/CD pipelines reducing deployment time by 60%"
+                    ]
+                }
+            ]
+        },
+        {
+            "title": "Education",
+            "items": [
+                {
+                    "company": "University Name",
+                    "role": "B.S. in Computer Science",
+                    "period": "2016 - 2020",
+                    "description": "Bachelor's degree in Computer Science.",
+                    "highlights": [
+                        "Dean's List",
+                        "GPA: 3.8/4.0"
+                    ]
+                }
+            ]
+        },
+        {
+            "title": "Skills",
+            "items": [
+                {
+                    "company": "",
+                    "role": "",
+                    "period": "",
+                    "description": "Programming Languages: Python, Java, TypeScript, Go",
+                    "highlights": [
+                        "Backend: FastAPI, Spring Boot, Node.js, REST APIs, GraphQL",
+                        "Frontend: React, TypeScript, TailwindCSS",
+                        "Infrastructure: AWS (EC2, S3, Lambda, RDS), Kubernetes, Docker, Terraform",
+                        "Databases: PostgreSQL, MySQL, Redis, MongoDB",
+                        "Tools: Git, CI/CD (GitHub Actions, Jenkins), Monitoring (Prometheus, Grafana)"
+                    ]
+                }
+            ]
+        },
+        {
+            "title": "Projects",
+            "items": [
+                {
+                    "company": "",
+                    "role": "",
+                    "period": "",
+                    "description": "Your Project Name | Tech Stack",
+                    "highlights": [
+                        "<a href='https://github.com/yourusername/project' target='_blank'>github.com/yourusername/project</a>",
+                        "Brief description of what you built",
+                        "Key technical achievement or challenge solved",
+                        "Impact or results (metrics if possible)"
+                    ]
+                }
+            ]
+        }
+    ],
+    "links": [
+        {
+            "platform": "GitHub",
+            "url": "https://github.com/yourusername",
+            "icon": "github"
+        },
+        {
+            "platform": "LinkedIn",
+            "url": "https://www.linkedin.com/in/yourprofile",
+            "icon": "linkedin"
+        }
+    ]
+}

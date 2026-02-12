@@ -6,7 +6,7 @@
 #   ./start.sh --docker --backend --frontend    Start everything
 #   ./start.sh --backend                        Backend only
 #   ./start.sh --frontend                       Frontend only
-#   ./start.sh --docker --backend --frontend -b  Block and show all logs
+#   ./start.sh --docker --backend --frontend --block  Block and show all logs
 #   ./logs.sh -f                                Tail all logs in real-time
 #
 # Options:
@@ -19,7 +19,7 @@
 #
 # Examples:
 #   ./start.sh --docker --backend --frontend    Full stack
-#   ./start.sh --backend --frontend -b          Full stack, block and show logs
+#   ./start.sh --backend --frontend --block     Full stack, block and show logs
 #   ./start.sh --backend                        Backend only
 # =============================================================================
 
@@ -27,8 +27,8 @@ set -e
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="${SCRIPT_DIR}"
-LOGS_DIR="${PROJECT_ROOT}/logs"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"  # Go up 2 levels to project root
+LOGS_DIR="${SCRIPT_DIR}/logs"  # Logs stay in scripts/setup_local_env/logs
 BACKEND_PORT=8080
 FRONTEND_PORT=5173
 DOCKER_COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
@@ -291,9 +291,9 @@ print_summary() {
     echo -e "    ${YELLOW}tail -f ${LOGS_DIR}/frontend.log${NC}"
     echo ""
     echo "  Or use the logs script:"
-    echo -e "    ${YELLOW}./logs.sh -f${NC}   (follow all logs)"
-    echo "    ./logs.sh backend    (backend only)"
-    echo "    ./logs.sh frontend   (frontend only)"
+    echo -e "    ${YELLOW}./scripts/setup_local_env/logs.sh -f${NC}   (follow all logs)"
+    echo "    ./scripts/setup_local_env/logs.sh backend    (backend only)"
+    echo "    ./scripts/setup_local_env/logs.sh frontend   (frontend only)"
     echo ""
     echo "  To stop:"
     echo -e "    ${YELLOW}pkill -f 'uvicorn'${NC}   (backend)"

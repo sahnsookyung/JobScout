@@ -11,21 +11,45 @@ AI-powered job matching pipeline that scrapes, analyzes, and matches jobs to you
 
 ## Quick Start
 
-### Option 1: Use the Startup Scripts (Recommended)
+### Prerequisites
+
+- **Python 3.11+** and **uv** (package manager)
+- **Docker** (for PostgreSQL, Redis, Ollama)
+- **Node.js 18+** (for frontend)
+
+### First-Time Setup
 
 ```bash
-# Start everything (Docker + Backend + Frontend)
+# 1. Install dependencies
+uv sync --all-groups
+cd web/frontend && npm install && cd ../..
+
+# 2. Set up your configuration files
+cp resume.example.json resume.json
+cp .env.example .env
+# Edit resume.json with your actual resume data
+# Edit .env with your notification settings (e.g., Discord webhook)
+
+# 3. (Optional) Add your job preferences
+cp wants.example.txt wants.txt
+# Edit wants.txt - one preference per line in natural language
+# Then uncomment user_wants_file in config.yaml
+```
+
+### Start Everything
+
+```bash
+# Start Docker services + Backend + Frontend
 ./scripts/setup_local_env/start.sh --docker --backend --frontend
 
-# Start and block (show logs in terminal)
+# Or start with logs visible (blocks terminal):
 ./scripts/setup_local_env/start.sh --docker --backend --frontend --block
-
-# Backend only (skip frontend)
-./scripts/setup_local_env/start.sh --backend
-
-# Frontend only (skip backend)
-./scripts/setup_local_env/start.sh --frontend
 ```
+
+**Access the app:**
+- Frontend: http://localhost:5173
+- Backend API: http://localhost:8080
+- API Docs: http://localhost:8080/docs
 
 ### View Logs
 
@@ -39,10 +63,6 @@ AI-powered job matching pipeline that scrapes, analyzes, and matches jobs to you
 # Specific service logs
 ./scripts/setup_local_env/logs.sh backend    # Backend only
 ./scripts/setup_local_env/logs.sh frontend   # Frontend only
-./scripts/setup_local_env/logs.sh docker     # Docker services
-
-# Clear all logs
-./scripts/setup_local_env/logs.sh -c
 ```
 
 ## Manual Startup
@@ -142,6 +162,10 @@ jobscout/
     ├── backend/             # FastAPI backend
     └── frontend/            # React frontend
 ```
+
+## Screenshots
+
+_Coming soon: Dashboard screenshots and demo video_
 
 ## Dependencies
 

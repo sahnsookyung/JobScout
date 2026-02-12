@@ -170,6 +170,8 @@ def save_match_to_db(
     Returns:
         JobMatch record that was created or updated
     """
+    from sqlalchemy.exc import IntegrityError
+    
     job_data = _extract_job_data(scored_match)
     job_id = job_data['id']
     job_content_hash = job_data['content_hash']
@@ -233,7 +235,38 @@ def save_match_to_db(
         )
         repo.db.add(match_record)
 
-    repo.db.flush()
+    try:
+        repo.db.flush()
+    except IntegrityError:
+        # Race condition: another process created this match between our check and insert
+        # Rollback and refetch the existing match to update it instead
+        repo.db.rollback()
+        logger.warning(f"Race condition detected for job {job_id}, refetching existing match")
+        existing = repo.db.execute(existing_stmt).scalar_one_or_none()
+        if not existing:
+            # This shouldn't happen, but if it does, re-raise the original error
+            raise
+        match_record = existing
+        match_record.status = 'active'
+        match_record.job_similarity = _to_float(scores['job_similarity'])
+        match_record.fit_score = _to_float(scores['fit_score'])
+        match_record.want_score = _to_float(scores['want_score'])
+        match_record.overall_score = _to_float(scores['overall_score'])
+        match_record.fit_components = _to_native_types(scores['fit_components'])
+        match_record.want_components = _to_native_types(scores['want_components'])
+        match_record.fit_weight = scores['fit_weight']
+        match_record.want_weight = scores['want_weight']
+        match_record.base_score = _to_float(scores['base_score'])
+        match_record.penalties = _to_float(scores['penalties'])
+        match_record.penalty_details = scores['penalty_details']
+        match_record.required_coverage = _to_float(scores['jd_required_coverage'])
+        match_record.preferred_coverage = _to_float(scores['jd_preferences_coverage'])
+        match_record.total_requirements = len(matched_reqs) + len(missing_reqs)
+        match_record.matched_requirements_count = len(matched_reqs)
+        match_record.match_type = scores['match_type']
+        match_record.job_content_hash = job_content_hash
+        match_record.calculated_at = func.now()
+        repo.db.flush()
 
     # Only delete requirements when updating existing record in place
     # When creating new record (is_stale_replacement=True), old record stays with its requirements
