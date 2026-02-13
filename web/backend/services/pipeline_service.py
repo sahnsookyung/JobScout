@@ -6,9 +6,12 @@ Pipeline service - manages background pipeline execution.
 import uuid
 import logging
 import threading
+import asyncio
+import json
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Callable, List
 from threading import Lock, Event
 
 from core.config_loader import load_config
@@ -39,6 +42,56 @@ class PipelineTaskManager:
         self._tasks: Dict[str, PipelineTask] = {}
         self._lock = Lock()
         self._controller = PipelineController()
+        self._event_queues: Dict[str, asyncio.Queue] = {}
+        self._subscriber_counts: Dict[str, int] = defaultdict(int)
+        self._queue_lock = Lock()
+    
+    def subscribe(self, task_id: str) -> asyncio.Queue:
+        """
+        Subscribe to status updates for a task.
+        
+        Args:
+            task_id: The task ID to subscribe to.
+        
+        Returns:
+            asyncio.Queue for receiving status updates.
+        """
+        with self._queue_lock:
+            if task_id not in self._event_queues:
+                self._event_queues[task_id] = asyncio.Queue()
+            self._subscriber_counts[task_id] += 1
+            return self._event_queues[task_id]
+    
+    def unsubscribe(self, task_id: str):
+        """
+        Unsubscribe from status updates for a task.
+        
+        Args:
+            task_id: The task ID to unsubscribe from.
+        """
+        with self._queue_lock:
+            if task_id in self._subscriber_counts:
+                self._subscriber_counts[task_id] -= 1
+                if self._subscriber_counts[task_id] <= 0:
+                    del self._subscriber_counts[task_id]
+                    if task_id in self._event_queues:
+                        del self._event_queues[task_id]
+    
+    def publish_update(self, task_id: str, data: Dict[str, Any]):
+        """
+        Publish a status update to all subscribers.
+        
+        Args:
+            task_id: The task ID.
+            data: The status data to publish.
+        """
+        with self._queue_lock:
+            queue = self._event_queues.get(task_id)
+            if queue:
+                try:
+                    queue.put_nowait(data)
+                except asyncio.QueueFull:
+                    pass
     
     def create_task(self) -> str:
         """
@@ -161,6 +214,34 @@ class PipelineTaskManager:
                 task.status = status
                 for key, value in kwargs.items():
                     setattr(task, key, value)
+                
+                if status in ["completed", "failed"]:
+                    self._cleanup_completed_tasks()
+        
+        update_data = {"task_id": task_id, "status": status, **kwargs}
+        self.publish_update(task_id, update_data)
+    
+    def _cleanup_completed_tasks(self, keep_count: int = 5):
+        """
+        Remove old completed/failed tasks, keeping only the most recent ones.
+        
+        Args:
+            keep_count: Number of completed tasks to keep.
+        """
+        with self._lock:
+            completed_tasks = [
+                (tid, t) for tid, t in self._tasks.items()
+                if t.status in ["completed", "failed"]
+            ]
+            
+            if len(completed_tasks) <= keep_count:
+                return
+            
+            completed_tasks.sort(key=lambda x: x[1].created_at, reverse=True)
+            
+            for tid, _ in completed_tasks[keep_count:]:
+                del self._tasks[tid]
+                logger.debug(f"Cleaned up completed task {tid}")
     
     # Private methods
     

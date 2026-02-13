@@ -5,7 +5,9 @@ Pipeline endpoints - trigger and monitor matching pipeline.
 
 import json
 import os
+import asyncio
 from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import StreamingResponse
 from typing import Optional
 
 from ..services.pipeline_service import get_pipeline_manager
@@ -135,6 +137,91 @@ def stop_matching_pipeline():
         success=True,
         task_id=task_id,
         message="Pipeline cancellation requested."
+    )
+
+
+@router.get("/events/{task_id}")
+async def pipeline_events(task_id: str):
+    """
+    Server-Sent Events endpoint for real-time pipeline status updates.
+    
+    Streams status updates for the specified task in real-time.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    manager = get_pipeline_manager()
+    task = manager.get_task(task_id)
+    
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    queue = manager.subscribe(task_id)
+    
+    async def event_generator():
+        try:
+            task = manager.get_task(task_id)
+            if task:
+                initial_data = {
+                    "task_id": task_id,
+                    "status": task.status,
+                    "step": task.step,
+                }
+                if task.status in ["completed", "failed"] and task.result:
+                    initial_data["matches_count"] = task.result.matches_count
+                    initial_data["saved_count"] = task.result.saved_count
+                    initial_data["notified_count"] = task.result.notified_count
+                    initial_data["execution_time"] = task.result.execution_time
+                    initial_data["success"] = task.result.success
+                    if not task.result.success:
+                        initial_data["error"] = task.result.error
+                elif task.status in ["completed", "failed"] and task.error:
+                    initial_data["error"] = task.error
+                yield f"data: {json.dumps(initial_data)}\n\n"
+            
+            if task and task.status in ["completed", "failed"]:
+                return
+            
+            while True:
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield f"data: {json.dumps(data)}\n\n"
+                except asyncio.TimeoutError:
+                    yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+                    
+                task = manager.get_task(task_id)
+                if task and task.status in ["completed", "failed"]:
+                    final_data = {
+                        "task_id": task_id,
+                        "status": task.status,
+                        "step": task.step,
+                    }
+                    if task.result:
+                        final_data["matches_count"] = task.result.matches_count
+                        final_data["saved_count"] = task.result.saved_count
+                        final_data["notified_count"] = task.result.notified_count
+                        final_data["execution_time"] = task.result.execution_time
+                        final_data["success"] = task.result.success
+                        if not task.result.success:
+                            final_data["error"] = task.result.error
+                    elif task.error:
+                        final_data["error"] = task.error
+                    yield f"data: {json.dumps(final_data)}\n\n"
+                    break
+        except asyncio.CancelledError:
+            logger.info(f"SSE connection cancelled for task {task_id}")
+        finally:
+            manager.unsubscribe(task_id)
+            logger.info(f"SSE connection closed for task {task_id}")
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        }
     )
 
 

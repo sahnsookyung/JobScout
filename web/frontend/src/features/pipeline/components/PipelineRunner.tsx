@@ -1,11 +1,10 @@
 import React from 'react';
-import { Play, CheckCircle, XCircle, Loader, Zap, ArrowUpRight, Sparkles } from 'lucide-react';
+import { Play, CheckCircle, XCircle, Loader, Zap, ArrowUpRight, Sparkles, Wifi, WifiOff } from 'lucide-react';
 import { usePipeline } from '@/hooks/usePipeline';
-import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 
 export const PipelineRunner: React.FC = () => {
-    const { runPipeline, stopPipeline, isRunning, isStopping, status, clearTask } = usePipeline();
+    const { runPipeline, stopPipeline, isRunning, isStopping, status, clearTask, connectionState, sseError, retrySSE } = usePipeline();
 
     const getStepLabel = (step?: string): string => {
         const labels: Record<string, string> = {
@@ -88,13 +87,43 @@ export const PipelineRunner: React.FC = () => {
                         {/* Running State */}
                         {isRunningStatus && (
                             <div>
-                                <div className="flex items-center gap-3 mb-4">
-                                    <div className="p-3 bg-blue-100 rounded-xl">
-                                        <Loader className="w-6 h-6 animate-spin text-blue-600" aria-hidden="true" />
+                                <div className="flex items-center justify-between mb-4">
+                                    <div className="flex items-center gap-3">
+                                        <div className="p-3 bg-blue-100 rounded-xl">
+                                            <Loader className="w-6 h-6 animate-spin text-blue-600" aria-hidden="true" />
+                                        </div>
+                                        <Badge variant="info" className="font-bold text-sm">
+                                            {status.status.toUpperCase()}
+                                        </Badge>
                                     </div>
-                                    <Badge variant="info" className="font-bold text-sm">
-                                        {status.status.toUpperCase()}
-                                    </Badge>
+                                    
+                                    {/* Connection Status */}
+                                    <div className="flex items-center gap-2">
+                                        {connectionState === 'connected' && (
+                                            <div className="flex items-center gap-1 text-green-600 text-xs font-semibold">
+                                                <Wifi className="w-3 h-3" />
+                                                <span>Live</span>
+                                            </div>
+                                        )}
+                                        {connectionState === 'connecting' && (
+                                            <div className="flex items-center gap-1 text-yellow-600 text-xs font-semibold">
+                                                <Loader className="w-3 h-3 animate-spin" />
+                                                <span>Connecting...</span>
+                                            </div>
+                                        )}
+                                        {connectionState === 'reconnecting' && (
+                                            <div className="flex items-center gap-1 text-yellow-600 text-xs font-semibold">
+                                                <Loader className="w-3 h-3 animate-spin" />
+                                                <span>Reconnecting...</span>
+                                            </div>
+                                        )}
+                                        {connectionState === 'failed' && (
+                                            <div className="flex items-center gap-1 text-red-600 text-xs font-semibold">
+                                                <WifiOff className="w-3 h-3" />
+                                                <span>Disconnected</span>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
 
                                 <div className="space-y-3">
@@ -117,6 +146,23 @@ export const PipelineRunner: React.FC = () => {
                                             style={{ width: '60%' }} />
                                     </div>
                                 </div>
+                            </div>
+                        )}
+
+                        {/* Connection Error State */}
+                        {sseError && !isRunningStatus && !isCompletedStatus && !isFailedStatus && (
+                            <div className="mb-4 p-4 bg-yellow-50 border-2 border-yellow-200 rounded-xl">
+                                <div className="flex items-center gap-2 text-yellow-800 font-semibold mb-2">
+                                    <WifiOff className="w-4 h-4" />
+                                    <span>Connection Issue</span>
+                                </div>
+                                <p className="text-sm text-yellow-700 mb-3">{sseError}</p>
+                                <button
+                                    onClick={() => retrySSE()}
+                                    className="px-4 py-2 bg-yellow-500 text-white font-bold rounded-lg hover:bg-yellow-600 transition-colors"
+                                >
+                                    Retry Connection
+                                </button>
                             </div>
                         )}
 
