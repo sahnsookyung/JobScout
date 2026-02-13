@@ -198,7 +198,9 @@ class PipelineTaskManager:
         self,
         task_id: str,
         status: str,
-        **kwargs
+        step: Optional[str] = None,
+        result: Optional[MatchingPipelineResult] = None,
+        error: Optional[str] = None,
     ):
         """
         Update task status and other fields.
@@ -206,19 +208,38 @@ class PipelineTaskManager:
         Args:
             task_id: The task ID.
             status: New status.
-            **kwargs: Additional fields to update.
+            step: Current step name.
+            result: Pipeline result (for completed/failed status).
+            error: Error message if failed.
         """
         with self._lock:
             if task_id in self._tasks:
                 task = self._tasks[task_id]
                 task.status = status
-                for key, value in kwargs.items():
-                    setattr(task, key, value)
+                if step:
+                    task.step = step
+                if result:
+                    task.result = result
+                if error:
+                    task.error = error
                 
                 if status in ["completed", "failed"]:
                     self._cleanup_completed_tasks()
         
-        update_data = {"task_id": task_id, "status": status, **kwargs}
+        update_data = {"task_id": task_id, "status": status}
+        if step:
+            update_data["step"] = step
+        if result:
+            update_data["matches_count"] = result.matches_count
+            update_data["saved_count"] = result.saved_count
+            update_data["notified_count"] = result.notified_count
+            update_data["execution_time"] = result.execution_time
+            update_data["success"] = result.success
+            if result.error:
+                update_data["error"] = result.error
+        if error:
+            update_data["error"] = error
+        
         self.publish_update(task_id, update_data)
     
     def _cleanup_completed_tasks(self, keep_count: int = 5):

@@ -14,3 +14,6 @@ Currently the matching pipeline just shows one status, it should dynamically rel
 
 ## Remove legacy preferences use. 
 It is superseded by user_wants that needs testing.
+
+## Replace github page example with project demo?
+Maybe a short gif?

@@ -1,5 +1,5 @@
 # JobScout
-
+![JobScout Dashboard](image.png)
 AI-powered job matching pipeline that scrapes, analyzes, and matches jobs to your resume and preferences.
 
 ## Features

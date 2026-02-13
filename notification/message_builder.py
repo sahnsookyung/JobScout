@@ -19,6 +19,7 @@ class JobInfo(BaseModel):
     salary: Optional[str] = None
     job_type: Optional[str] = None
     job_level: Optional[str] = None
+    description: Optional[str] = None
 
 
 class MatchInfo(BaseModel):
@@ -104,6 +105,7 @@ class NotificationMessageBuilder:
             salary=NotificationMessageBuilder.format_salary(job_post),
             job_type=getattr(job_post, 'job_type', None),
             job_level=getattr(job_post, 'job_level', None),
+            description=getattr(job_post, 'description', None) or getattr(job_post, 'summary', None),
         )
         
         match_info = MatchInfo(
@@ -135,6 +137,7 @@ class NotificationMessageBuilder:
             salary=job_data.get('salary'),
             job_type=job_data.get('job_type'),
             job_level=job_data.get('job_level'),
+            description=job_data.get('description'),
         )
         
         match_info = MatchInfo(
@@ -176,6 +179,7 @@ class NotificationMessageBuilder:
             salary=NotificationMessageBuilder.format_salary(job_post),
             job_type=getattr(job_post, 'job_type', None),
             job_level=getattr(job_post, 'job_level', None),
+            description=getattr(job_post, 'description', None) or getattr(job_post, 'summary', None),
         )
         
         match_info = MatchInfo(
@@ -238,9 +242,18 @@ class NotificationMessageBuilder:
         if content.apply_url:
             lines.append("")
             lines.append(f"🔗 [Apply Here]({content.apply_url})")
+
+        if content.job.description:
+            lines.append("")
+            lines.append("📝 **Description**")
+            # Truncate if too long (approx 280 chars)
+            desc = content.job.description
+            if len(desc) > 280:
+                desc = desc[:280] + "..."
+            lines.append(desc)
         
         lines.append("")
-        lines.append(f"🔍 View details: /api/matches")
+        lines.append("🔍 View details: /api/matches")
         
         return "\n".join(lines)
     
@@ -289,6 +302,16 @@ class NotificationMessageBuilder:
             fields.append({
                 "name": "✅ Requirements",
                 "value": f"{req_matched}/{req_total} matched",
+                "inline": False
+            })
+
+        if content.job.description:
+            desc = content.job.description
+            if len(desc) > 200:
+                desc = desc[:200] + "..."
+            fields.append({
+                "name": "📝 Description",
+                "value": desc,
                 "inline": False
             })
         
