@@ -538,6 +538,30 @@ def _send_notifications(
 
                 # Send notification
                 try:
+                    with job_uow() as repo:
+                        match_record = repo.get_existing_match(
+                            job_dto.id,
+                            resume_fingerprint
+                        )
+
+                        if not match_record or not match_record.id:
+                            logger.warning(f"No match record found for job {job_dto.id}, skipping notification")
+                            continue
+
+                        if match_record.notified:
+                            logger.debug(f"Match already notified for job {job_dto.id}, skipping")
+                            continue
+
+                        match_id = match_record.id
+                        job_post = match_record.job_post
+
+                    match_data = {
+                        'fit_score': dto.fit_score,
+                        'want_score': dto.want_score,
+                        'required_coverage': dto.jd_required_coverage,
+                        'preferred_coverage': dto.jd_preferences_coverage,
+                    }
+
                     ctx.notification_service.notify_new_match(
                         user_id=user_id,
                         match_id=str(match_id),
@@ -546,7 +570,10 @@ def _send_notifications(
                         score=float(dto.overall_score),
                         location=job_dto.location_text,
                         is_remote=job_dto.is_remote,
-                        channels=enabled_channels
+                        channels=enabled_channels,
+                        job_post=job_post,
+                        match_data=match_data,
+                        apply_url=job_post.company_url_direct if job_post else None
                     )
                     notified_count += 1
                 except Exception as e:
