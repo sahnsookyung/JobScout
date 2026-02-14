@@ -65,6 +65,7 @@ class OpenAIService(LLMProvider):
         self.extraction_model = self.model_config.get('extraction_model', 'qwen3:14b')
         self.embedding_model = self.model_config.get('embedding_model', 'qwen3-embedding:4b')
         self.embedding_dimensions = self.model_config.get('embedding_dimensions', 1024)
+        self.extraction_temperature = self.model_config.get('extraction_temperature', 0.0)
 
     def extract_structured_data(
         self,
@@ -101,6 +102,7 @@ class OpenAIService(LLMProvider):
         response = self.client.chat.completions.create(
             model=self.extraction_model,
             messages=messages,
+            temperature=self.extraction_temperature,
             response_format={
                 "type": "json_schema",
                 "json_schema": {

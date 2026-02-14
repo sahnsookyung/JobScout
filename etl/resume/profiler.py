@@ -408,29 +408,48 @@ class ResumeProfiler:
     def profile_resume(
         self,
         resume_data: Dict[str, Any],
-        stop_event: Optional[threading.Event] = None
+        stop_event: Optional[threading.Event] = None,
+        pre_extracted_resume: Optional[ResumeSchema] = None,
+        resume_fingerprint: Optional[str] = None,
     ) -> tuple[Optional[ResumeSchema], List[ResumeEvidenceUnit], List[Dict[str, Any]]]:
         """
         Complete resume profiling pipeline.
 
         Extracts structured profile, evidence units, and embeddings.
+        
+        If pre_extracted_resume is provided, skips LLM extraction and uses
+        the provided ResumeSchema directly. This enables using cached/stored
+        resumes without re-extraction.
 
         Note: Persistence to database only occurs if a store was provided
         to the constructor. Otherwise, the persistence payload is returned
         for the caller to handle.
 
+        Args:
+            resume_data: Raw resume JSON data (used for fingerprint calculation if pre_extracted_resume not provided)
+            stop_event: Optional stop event for interruption
+            pre_extracted_resume: Optional pre-extracted ResumeSchema to use instead of re-extracting
+            resume_fingerprint: Optional fingerprint (required if using pre_extracted_resume)
+
         Returns:
             Tuple of (ResumeSchema or None, List[ResumeEvidenceUnit], persistence_payload)
             where persistence_payload is a list of section dicts with embeddings (empty if no profile)
         """
-        resume_fingerprint = generate_resume_fingerprint(resume_data)
+        # Use pre-extracted resume if provided, otherwise extract from resume_data
+        if pre_extracted_resume:
+            if not resume_fingerprint:
+                raise ValueError("resume_fingerprint is required when using pre_extracted_resume")
+            resume = pre_extracted_resume
+            logger.info("Using pre-extracted resume from storage (skipping LLM extraction)")
+        else:
+            resume_fingerprint = generate_resume_fingerprint(resume_data)
 
-        if stop_event and stop_event.is_set():
-            logger.info("Resume profiling interrupted (stop event set)")
-            raise InterruptedError("Interrupted by system")
+            if stop_event and stop_event.is_set():
+                logger.info("Resume profiling interrupted (stop event set)")
+                raise InterruptedError("Interrupted by system")
 
-        # Extract structured resume
-        resume = self.extract_structured_resume(resume_data)
+            # Extract structured resume
+            resume = self.extract_structured_resume(resume_data)
 
         # Extract evidence units from structured profile
         evidence_units = []

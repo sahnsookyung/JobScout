@@ -10,6 +10,8 @@
 #   ./logs.sh frontend     Show frontend log only
 #   ./logs.sh frontend -f  Follow frontend log only
 #   ./logs.sh docker       Show Docker service logs
+#   ./logs.sh postgres     Show PostgreSQL logs
+#   ./logs.sh redis        Show Redis logs
 #   ./logs.sh -c           Clear all logs
 #
 # Options:
@@ -99,7 +101,7 @@ main() {
                 show_help
                 exit 0
                 ;;
-            backend|frontend|docker)
+            backend|frontend|docker|postgres|redis)
                 service=$1
                 shift
                 ;;
@@ -196,6 +198,30 @@ main() {
                     docker-compose -f "${DOCKER_COMPOSE_FILE}" logs -f
                 else
                     docker-compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES}
+                fi
+            else
+                echo -e "${RED}docker-compose.yml not found${NC}"
+            fi
+            ;;
+
+        postgres)
+            if [ -f "${DOCKER_COMPOSE_FILE}" ]; then
+                if [ "$follow" = true ]; then
+                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs -f postgres
+                else
+                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES} postgres
+                fi
+            else
+                echo -e "${RED}docker-compose.yml not found${NC}"
+            fi
+            ;;
+
+        redis)
+            if [ -f "${DOCKER_COMPOSE_FILE}" ]; then
+                if [ "$follow" = true ]; then
+                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs -f redis
+                else
+                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES} redis
                 fi
             else
                 echo -e "${RED}docker-compose.yml not found${NC}"

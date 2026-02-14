@@ -11,6 +11,8 @@
 #
 # Options:
 #   -d, --docker    Start Docker services (postgres, redis)
+#   -p, --postgres  Start PostgreSQL only (within Docker)
+#   -r, --redis    Start Redis only (within Docker)
 #   -b, --backend   Start FastAPI backend server
 #   -f, --frontend  Start Vite frontend dev server
 #   -o, --ollama    Include Ollama (local embeddings)
@@ -79,11 +81,21 @@ parse_args() {
     OLLAMA=false
     CLEAN=false
     BLOCK=false
+    POSTGRES=false
+    REDIS=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
             -d|--docker)
                 DOCKER=true
+                shift
+                ;;
+            -p|--postgres)
+                POSTGRES=true
+                shift
+                ;;
+            -r|--redis)
+                REDIS=true
                 shift
                 ;;
             -b|--backend)
@@ -119,7 +131,7 @@ parse_args() {
     done
 
     # Default: enable all if nothing specified
-    if [ "$DOCKER" = false ] && [ "$BACKEND" = false ] && [ "$FRONTEND" = false ]; then
+    if [ "$DOCKER" = false ] && [ "$POSTGRES" = false ] && [ "$REDIS" = false ] && [ "$BACKEND" = false ] && [ "$FRONTEND" = false ]; then
         DOCKER=true
         BACKEND=true
         FRONTEND=true
@@ -154,6 +166,24 @@ stop_services() {
 # Start Docker services
 start_docker() {
     log_info "Starting Docker services..."
+    
+    # Determine which services to start
+    SERVICES_TO_START=""
+    
+    if [ "$POSTGRES" = true ] || [ "$REDIS" = true ]; then
+        # Selective start - only start specific services
+        if [ "$POSTGRES" = true ]; then
+            SERVICES_TO_START="${SERVICES_TO_START} postgres"
+            log_info "Starting PostgreSQL only..."
+        fi
+        if [ "$REDIS" = true ]; then
+            SERVICES_TO_START="${SERVICES_TO_START} redis"
+            log_info "Starting Redis only..."
+        fi
+    else
+        # Start all default services
+        log_info "Starting all Docker services (postgres, redis)..."
+    fi
 
     # Set compose file
     COMPOSE_FILE="${DOCKER_COMPOSE_FILE}"
@@ -171,19 +201,40 @@ start_docker() {
     fi
 
     # Start services
-    docker-compose -f "${COMPOSE_FILE}" up -d ${DOCKER_COMPOSE_PROFILE}
+    if [ -n "$SERVICES_TO_START" ]; then
+        docker-compose -f "${COMPOSE_FILE}" up -d ${DOCKER_COMPOSE_PROFILE} ${SERVICES_TO_START}
+    else
+        docker-compose -f "${COMPOSE_FILE}" up -d ${DOCKER_COMPOSE_PROFILE}
+    fi
 
-    # Wait for services to be healthy
-    log_info "Waiting for PostgreSQL..."
-    timeout 30 bash -c 'until docker-compose -f '"${COMPOSE_FILE}"' exec -T postgres pg_isready -U user -d jobscout; do sleep 1; done' 2>/dev/null || {
-        log_warn "PostgreSQL may not be ready yet, continuing..."
-    }
+    # Wait for PostgreSQL if it was started
+    if [ "$POSTGRES" = true ] || [ "$DOCKER" = true ] && [ "$POSTGRES" = false ] && [ "$REDIS" = false ]; then
+        log_info "Waiting for PostgreSQL..."
+        timeout 30 bash -c 'until docker-compose -f '"${COMPOSE_FILE}"' exec -T postgres pg_isready -U user -d jobscout; do sleep 1; done' 2>/dev/null || {
+            log_warn "PostgreSQL may not be ready yet, continuing..."
+        }
+    fi
 
     log_success "Docker services started"
     log_info "  - PostgreSQL: localhost:5432"
     log_info "  - Redis: localhost:6379"
     if [ "$OLLAMA" = true ]; then
         log_info "  - Ollama: localhost:11434"
+    fi
+
+    # Start background log capture for Docker services
+    ensure_logs_dir
+    
+    # Capture postgres logs
+    if docker-compose -f "${COMPOSE_FILE}" ps postgres 2>/dev/null | grep -q "Up"; then
+        docker-compose -f "${COMPOSE_FILE}" logs -f postgres > "${LOGS_DIR}/postgres.log" 2>&1 &
+        log_info "Capturing PostgreSQL logs to ${LOGS_DIR}/postgres.log"
+    fi
+
+    # Capture main-driver logs (if running)
+    if docker-compose -f "${COMPOSE_FILE}" ps main-driver 2>/dev/null | grep -q "Up"; then
+        docker-compose -f "${COMPOSE_FILE}" logs -f main-driver > "${LOGS_DIR}/main-driver.log" 2>&1 &
+        log_info "Capturing main-driver logs to ${LOGS_DIR}/main-driver.log"
     fi
 }
 
@@ -206,7 +257,7 @@ start_backend() {
 
     # Start backend
     cd "${PROJECT_ROOT}"
-    uv run python -m uvicorn web.backend.app:app --host 0.0.0.0 --port ${BACKEND_PORT} > "${LOGS_DIR}/backend.log" 2>&1 &
+    uv run python -m uvicorn web.backend.app:app --host 0.0.0.0 --reload --port ${BACKEND_PORT} > "${LOGS_DIR}/backend.log" 2>&1 &
 
     BACKEND_PID=$!
     log_info "Backend started with PID: ${BACKEND_PID}"
@@ -317,7 +368,7 @@ main() {
         echo ""
     fi
 
-    if [ "$DOCKER" = true ]; then
+    if [ "$DOCKER" = true ] || [ "$POSTGRES" = true ] || [ "$REDIS" = true ]; then
         start_docker
         echo ""
     fi

@@ -26,8 +26,15 @@ class MatcherService:
         resume_data: Dict[str, Any],
         tenant_id: Optional[Any] = None,
         stop_event: Optional[threading.Event] = None,
+        pre_extracted_resume: Optional[Any] = None,
+        resume_fingerprint: Optional[str] = None,
     ) -> List[JobMatchPreliminary]:
-        profile, evidence_units, _ = self.resume_profiler.profile_resume(resume_data, stop_event=stop_event)
+        profile, evidence_units, _ = self.resume_profiler.profile_resume(
+            resume_data, 
+            stop_event=stop_event,
+            pre_extracted_resume=pre_extracted_resume,
+            resume_fingerprint=resume_fingerprint,
+        )
 
         if not evidence_units:
             logger.warning("No evidence units extracted from resume")

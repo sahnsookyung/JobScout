@@ -62,6 +62,7 @@ class AppContext:
             'extraction_model': llm_config.extraction_model,
             'embedding_model': llm_config.embedding_model,
             'embedding_dimensions': llm_config.embedding_dimensions,
+            'extraction_temperature': llm_config.extraction_temperature,
         }
 
         return OpenAIService(

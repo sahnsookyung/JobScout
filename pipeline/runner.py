@@ -16,6 +16,7 @@ from core.app_context import AppContext
 from core.matcher import MatcherService, MatchResultDTO, JobMatchDTO, JobEvidenceDTO, RequirementMatchDTO, JobRequirementDTO, penalty_details_from_orm
 from core.scorer import ScoringService
 from core.scorer.persistence import save_match_to_db
+from core.llm.schema_models import ResumeSchema
 from etl.resume import ResumeProfiler
 from etl.resume.embedding_store import JobRepositoryAdapter
 from database.uow import job_uow
@@ -231,11 +232,23 @@ def run_matching_pipeline(
             step_start = time.time()
             logger.info("=== MATCHING STEP 7: Running MatcherService (Vector Retrieval) ===")
 
+            # Check if we have a stored structured resume to use (avoid re-extraction)
+            stored_resume = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
+            pre_extracted_resume = None
+            if stored_resume and stored_resume.extracted_data:
+                try:
+                    pre_extracted_resume = ResumeSchema.model_validate(stored_resume.extracted_data)
+                    logger.info(f"Using stored structured resume (fingerprint: {resume_fingerprint[:16]}...)")
+                except Exception as e:
+                    logger.warning(f"Failed to parse stored resume: {e}. Will re-extract.")
+
             # Retrieve top jobs based on cosine distance with resume summary embedding
             preliminary_matches = matcher.match_resume_two_stage(
                 repo=repo,
                 resume_data=resume_data,
                 stop_event=stop_event,
+                pre_extracted_resume=pre_extracted_resume,
+                resume_fingerprint=resume_fingerprint,
             )
 
             step_elapsed = time.time() - step_start

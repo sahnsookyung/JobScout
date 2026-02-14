@@ -33,6 +33,7 @@ class LlmConfig(BaseModel):
     extraction_labels: Optional[List[str]] = None  # GLiNER labels
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1024
+    extraction_temperature: float = 0.0  # Temperature for extraction (0.0 = deterministic)
 
 class EtlConfig(BaseModel):
     llm: Optional[LlmConfig] = LlmConfig()
