@@ -466,7 +466,7 @@ class NotificationTracker(Base):
     channel_type = Column(Text, nullable=False)  # email, discord, telegram, slack, etc.
     
     # Deduplication key - hash of user + job + event type
-    dedup_hash = Column(Text, nullable=False, index=True)
+    dedup_hash = Column(Text, nullable=False, index=True, unique=True)
     
     # Notification content hash (to detect content changes)
     content_hash = Column(Text, nullable=True)

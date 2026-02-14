@@ -267,7 +267,7 @@ class JobPostRepository(BaseRepository):
     def get_top_jobs_by_summary_embedding(
         self,
         resume_embedding: List[float],
-        limit: int,
+        limit: Optional[int] = None,
         tenant_id: Optional[Any] = None,
         require_remote: Optional[bool] = None
     ) -> List[Tuple[JobPost, float]]:
@@ -284,7 +284,9 @@ class JobPostRepository(BaseRepository):
         if require_remote is not None:
             stmt = stmt.where(JobPost.is_remote == require_remote)
 
-        stmt = stmt.order_by(distance_expr).limit(limit)
+        stmt = stmt.order_by(distance_expr)
+        if limit is not None:
+            stmt = stmt.limit(limit)
 
         rows = self.db.execute(stmt).all()
         return [(row[0], cosine_similarity_from_distance(row._mapping['distance'])) for row in rows]

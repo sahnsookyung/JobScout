@@ -12,8 +12,11 @@ jobspy:
   url: "http://localhost:8000" 
 
 etl:
-  # Resume file path (relative or absolute)
-  resume_file: "resume.json"
+  # Resume processing configuration
+  resume:
+    # Resume file path (relative or absolute)
+    resume_file: "resume.json"
+    # force_re_extraction: false  # Uncomment to force re-extraction every time
   llm:
     # Ollama base URL (can be overridden by ETL_LLM_BASE_URL env var)
     base_url: "http://localhost:11434/v1"
@@ -23,7 +26,7 @@ etl:
     extraction_url: "" # Not used for Ollama/OpenAI
     extraction_type: "ollama" # Use "openai", "ollama" or "mock"
     extraction_model: "qwen3:14b"
-    extraction_temperature: 0.0  # Temperature for extraction. 0.0 = deterministic (recommended)
+    extraction_temperature: 0.5  # Temperature for extraction. 0.0 = "deterministic", but the results are not great. Research suggests we need a higher temperature than 0.
     
     # Embedding
     embedding_model: "qwen3-embedding:4b"
@@ -45,7 +48,7 @@ matching:
   enabled: true
   # Mode: requirements_only (default).
   mode: "requirements_only"
-  
+   
   # User wants file (optional): Add your job preferences in natural language
   # One want per line, e.g., "I want remote work", "Looking for Python roles"
   # Enables semantic matching between your wants and job facets (remote_flexibility, compensation, etc.)
@@ -162,7 +165,7 @@ notifications:
   
   # Async processing via Redis Queue
   use_async_queue: true
-  redis_url: "redis://localhost:6379/0"  # Optional: overrides REDIS_URL env var
+  # redis_url: "redis://localhost:6379/0"  # Optional: overrides REDIS_URL env var, 
 
 schedule:
   interval_seconds: 3600  # Run every hour

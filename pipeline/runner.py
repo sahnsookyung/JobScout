@@ -109,10 +109,17 @@ def run_matching_pipeline(
             status_callback("loading_resume")
         
         step_start = time.time()
-        logger.info("=== MATCHING STEP 6: Loading Resume & Preparing Evidence ===")
+        logger.info("=== RESUME ETL STEP 2: Prepare Resume & Compare Fingerprint ===")
 
         # Step 1: Verify resume file exists
-        resume_file = ctx.config.etl.resume_file if (ctx.config.etl and ctx.config.etl.resume_file) else None
+        # Support both old path (etl.resume_file) and new path (etl.resume.resume_file)
+        etl_config = ctx.config.etl
+        if etl_config and etl_config.resume:
+            resume_file = etl_config.resume.resume_file
+        elif etl_config and etl_config.resume_file:
+            resume_file = etl_config.resume_file  # Backward compatibility
+        else:
+            resume_file = None
         if not resume_file:
             error_msg = "No resume file configured in ETL config"
             logger.error(error_msg)
@@ -151,12 +158,19 @@ def run_matching_pipeline(
                 error=error_msg
             )
 
-        # Step 3: Query for latest stored resume fingerprint
-        with job_uow() as repo:
-            resume_fingerprint = repo.resume.get_latest_stored_resume_fingerprint()
+        # Step 3: Load current resume file and calculate its fingerprint
+        # This is needed to compare with stored fingerprint
         
-        if not resume_fingerprint:
-            error_msg = "No resume found in database. Run ETL first."
+        # Support both old path (etl.resume.resume_file) and new path (etl.resume.resume_file)
+        if etl_config and etl_config.resume:
+            resume_file = etl_config.resume.resume_file
+        elif etl_config and etl_config.resume_file:
+            resume_file = etl_config.resume_file  # Backward compatibility
+        else:
+            resume_file = None
+            
+        if not resume_file:
+            error_msg = "No resume file configured in ETL config"
             logger.error(error_msg)
             return MatchingPipelineResult(
                 success=False,
@@ -165,6 +179,71 @@ def run_matching_pipeline(
                 notified_count=0,
                 error=error_msg
             )
+        
+        if not os.path.isabs(resume_file):
+            resume_file = os.path.join(os.getcwd(), resume_file)
+        
+        if not os.path.exists(resume_file):
+            error_msg = f"Resume file not found: {resume_file}"
+            logger.error(error_msg)
+            return MatchingPipelineResult(
+                success=False,
+                matches_count=0,
+                saved_count=0,
+                notified_count=0,
+                error=error_msg
+            )
+
+        # Load resume data and calculate current fingerprint
+        resume_data = load_resume_data(resume_file)
+        if not resume_data:
+            error_msg = "Failed to load resume data"
+            logger.error(error_msg)
+            return MatchingPipelineResult(
+                success=False,
+                matches_count=0,
+                saved_count=0,
+                notified_count=0,
+                error=error_msg
+            )
+
+        from database.models import generate_resume_fingerprint
+        current_fingerprint = generate_resume_fingerprint(resume_data)
+        logger.info(f"Current resume fingerprint: {current_fingerprint[:16]}...")
+
+        # Get stored fingerprint from DB
+        with job_uow() as repo:
+            stored_fingerprint = repo.resume.get_latest_stored_resume_fingerprint()
+        
+        # Determine if we should re-extract:
+        # - Force re-extraction is enabled in config
+        # - OR current fingerprint differs from stored fingerprint (resume file changed)
+        force_re_extraction = (
+            etl_config.resume.force_re_extraction 
+            if etl_config and etl_config.resume and etl_config.resume.force_re_extraction 
+            else False
+        )
+        
+        # Use current fingerprint if:
+        # - Force re-extraction is enabled, OR
+        # - No stored fingerprint exists, OR  
+        # - Current fingerprint differs from stored
+        if force_re_extraction or not stored_fingerprint or current_fingerprint != stored_fingerprint:
+            should_re_extract = True
+            # Use current fingerprint for matching (will be re-extracted)
+            resume_fingerprint = current_fingerprint
+            
+            if not stored_fingerprint:
+                logger.info("No stored resume found - will extract")
+            elif current_fingerprint != stored_fingerprint:
+                logger.info(f"Resume file changed (stored: {stored_fingerprint[:16]}..., current: {current_fingerprint[:16]}...) - will re-extract")
+            else:
+                logger.info("Force re-extraction enabled in config - will re-extract")
+        else:
+            should_re_extract = False
+            # Use stored fingerprint for matching (resume unchanged)
+            resume_fingerprint = stored_fingerprint
+            logger.info(f"Resume unchanged (fingerprint: {current_fingerprint[:16]}...) - using stored data")
 
         # Load user wants BEFORE entering UOW (AI service calls are slow, don't hold DB transaction)
         user_wants = []
@@ -188,22 +267,29 @@ def run_matching_pipeline(
         match_dtos = []
         
         with job_uow() as repo:
-            structured_resume = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
+            # Only load structured resume from DB if NOT re-extracting
+            structured_resume = None
+            if not should_re_extract:
+                structured_resume = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
 
             if not structured_resume:
-                error_msg = f"Resume not found in database for fingerprint: {resume_fingerprint[:16]}..."
-                logger.error(error_msg)
-                logger.error("Make sure ETL Step 5 (resume processing) completed successfully")
-                return MatchingPipelineResult(
-                    success=False,
-                    matches_count=0,
-                    saved_count=0,
-                    notified_count=0,
-                    error=error_msg
-                )
+                if should_re_extract:
+                    logger.info(f"Will re-extract resume (fingerprint: {resume_fingerprint[:16]}...)")
+                else:
+                    error_msg = f"Resume not found in database for fingerprint: {resume_fingerprint[:16]}..."
+                    logger.error(error_msg)
+                    logger.error("Make sure Resume ETL has been run")
+                    return MatchingPipelineResult(
+                        success=False,
+                        matches_count=0,
+                        saved_count=0,
+                        notified_count=0,
+                        error=error_msg
+                    )
 
-            logger.info(f"Loaded resume from database (fingerprint: {resume_fingerprint[:16]}...)")
-            logger.info(f"Resume experience: {structured_resume.total_experience_years} years")
+            if structured_resume:
+                logger.info(f"Loaded resume from database (fingerprint: {resume_fingerprint[:16]}...)")
+                logger.info(f"Resume experience: {structured_resume.total_experience_years} years")
 
             # Create matcher with store to persist resume embeddings
             matcher = MatcherService(
@@ -215,7 +301,7 @@ def run_matching_pipeline(
             )
 
             step_elapsed = time.time() - step_start
-            logger.info(f"MATCHING Step 6 completed: Resume loaded in {step_elapsed:.2f}s")
+            logger.info(f"RESUME ETL Step 2 completed: Resume prepared in {step_elapsed:.2f}s")
 
             if stop_event.is_set():
                 return MatchingPipelineResult(
@@ -230,17 +316,20 @@ def run_matching_pipeline(
                 status_callback("vector_matching")
 
             step_start = time.time()
-            logger.info("=== MATCHING STEP 7: Running MatcherService (Vector Retrieval) ===")
+            logger.info("=== MATCHING STEP 1: Running MatcherService (Vector Retrieval) ===")
 
             # Check if we have a stored structured resume to use (avoid re-extraction)
-            stored_resume = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
+            # Skip if should_re_extract is True
             pre_extracted_resume = None
-            if stored_resume and stored_resume.extracted_data:
-                try:
-                    pre_extracted_resume = ResumeSchema.model_validate(stored_resume.extracted_data)
-                    logger.info(f"Using stored structured resume (fingerprint: {resume_fingerprint[:16]}...)")
-                except Exception as e:
-                    logger.warning(f"Failed to parse stored resume: {e}. Will re-extract.")
+            if not should_re_extract:
+                if structured_resume and structured_resume.extracted_data:
+                    try:
+                        pre_extracted_resume = ResumeSchema.model_validate(structured_resume.extracted_data)
+                        logger.info(f"Using stored structured resume (fingerprint: {resume_fingerprint[:16]}...)")
+                    except Exception as e:
+                        logger.warning(f"Failed to parse stored resume: {e}. Will re-extract.")
+            else:
+                logger.info("Resume re-extraction needed - will extract fresh")
 
             # Retrieve top jobs based on cosine distance with resume summary embedding
             preliminary_matches = matcher.match_resume_two_stage(
@@ -252,7 +341,7 @@ def run_matching_pipeline(
             )
 
             step_elapsed = time.time() - step_start
-            logger.info(f"MATCHING Step 7 completed: Matched against {len(preliminary_matches)} jobs in {step_elapsed:.2f}s")
+            logger.info(f"MATCHING Step 1 completed: Matched against {len(preliminary_matches)} jobs in {step_elapsed:.2f}s")
 
             if stop_event.is_set():
                 return MatchingPipelineResult(
@@ -267,7 +356,7 @@ def run_matching_pipeline(
                 status_callback("scoring")
 
             step_start = time.time()
-            logger.info("=== MATCHING STEP 8: Running ScorerService (Rule-based Scoring) ===")
+            logger.info("=== MATCHING STEP 2: Running ScorerService (Rule-based Scoring) ===")
 
             scorer = ScoringService(repo=repo, config=matching_config.scorer)
 
@@ -364,7 +453,7 @@ def run_matching_pipeline(
                 match_dtos.append(dto)
 
         step_elapsed = time.time() - step_start
-        logger.info(f"MATCHING Step 8 completed: Scored {len(match_dtos)} matches in {step_elapsed:.2f}s")
+        logger.info(f"MATCHING Step 2 completed: Scored {len(match_dtos)} matches in {step_elapsed:.2f}s")
 
         if match_dtos:
             logger.info("Top 5 Matches:")
@@ -385,10 +474,10 @@ def run_matching_pipeline(
             status_callback("saving_results")
 
         step_start = time.time()
-        logger.info("=== MATCHING STEP 9: Saving Matches to Database ===")
+        logger.info("=== MATCHING STEP 3: Saving Matches to Database ===")
         saved_count = _save_matches_batch(match_dtos, resume_fingerprint, matching_config)
         step_elapsed = time.time() - step_start
-        logger.info(f"MATCHING Step 9 completed: Saved {saved_count} matches in {step_elapsed:.2f}s")
+        logger.info(f"MATCHING Step 3 completed: Saved {saved_count} matches in {step_elapsed:.2f}s")
 
         if stop_event.is_set():
             return MatchingPipelineResult(
@@ -500,7 +589,7 @@ def _send_notifications(
         return 0
 
     step_start = time.time()
-    logger.info("=== MATCHING STEP 10: Sending Notifications ===")
+    logger.info("=== MATCHING STEP 4: Sending Notifications ===")
 
     try:
         user_id = notification_config.user_id or resume_data.get('email') or 'default_user'
@@ -614,7 +703,7 @@ def _send_notifications(
                 logger.error(f"Failed to send batch summary: {e}")
 
         step_elapsed = time.time() - step_start
-        logger.info(f"MATCHING Step 10 completed: Sent {notified_count} notifications in {step_elapsed:.2f}s")
+        logger.info(f"MATCHING Step 4 completed: Sent {notified_count} notifications in {step_elapsed:.2f}s")
         return notified_count
     except Exception as e:
         logger.error(f"Error in notification step: {e}", exc_info=True)

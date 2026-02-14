@@ -35,9 +35,22 @@ class LlmConfig(BaseModel):
     embedding_dimensions: int = 1024
     extraction_temperature: float = 0.0  # Temperature for extraction (0.0 = deterministic)
 
+
+class ResumeConfig(BaseModel):
+    """Configuration for resume processing in ETL."""
+    # Resume file path (relative to config or absolute)
+    resume_file: str = "resume.json"
+
+    # Force re-extraction of resume instead of using pre-extracted data from storage.
+    # When enabled, always runs LLM extraction regardless of fingerprint match.
+    # Useful for validating extraction behavior or testing new extraction models.
+    force_re_extraction: bool = False
+
+
 class EtlConfig(BaseModel):
     llm: Optional[LlmConfig] = LlmConfig()
-    resume_file: Optional[str] = None  # Path to resume JSON file for ETL processing
+    resume: Optional[ResumeConfig] = None  # Resume processing configuration
+    resume_file: Optional[str] = None  # Backward compatibility: use resume.resume_file instead
 
 
 class ResultPolicy(BaseModel):
@@ -66,7 +79,7 @@ class MatcherConfig(BaseModel):
     """
     enabled: bool = True
     similarity_threshold: float = 0.5  # Minimum similarity for a match
-    batch_size: int = 100  # Number of jobs to process per batch
+    batch_size: Optional[int] = None  # None = process all jobs
     
     # Preference weights (was hard-coded in matcher_service)
     preference_weights: PreferenceWeights = Field(default_factory=PreferenceWeights)
@@ -127,9 +140,6 @@ class MatchingConfig(BaseModel):
     Top-level matching configuration.
     """
     enabled: bool = True
-
-    # Resume file path (relative to config or absolute)
-    resume_file: str = "resume.json"
 
     # User wants file for Want score (semantic matching via embeddings)
     # Free-text file, one want per line. Example:
@@ -224,5 +234,12 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
         if 'llm' not in data['etl']:
             data['etl']['llm'] = {}
         data['etl']['llm']['base_url'] = env_llm_base_url
+
+    # Allow env var override for Redis URL
+    env_redis_url = os.environ.get("REDIS_URL")
+    if env_redis_url:
+        if 'notifications' not in data:
+            data['notifications'] = {}
+        data['notifications']['redis_url'] = env_redis_url
 
     return AppConfig(**data)

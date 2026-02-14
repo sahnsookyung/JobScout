@@ -277,7 +277,7 @@ class NotificationTrackerService:
         
         stmt = select(NotificationTracker).where(
             NotificationTracker.dedup_hash == dedup_hash
-        ).order_by(NotificationTracker.last_sent_at.desc())
+        ).order_by(NotificationTracker.last_sent_at.desc()).limit(1)
         
         result = self.repo.db.execute(stmt).scalar_one_or_none()
         return result

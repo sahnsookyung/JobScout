@@ -102,7 +102,9 @@ class TestResumeUploadEndpoint(unittest.TestCase):
             with patch('core.config_loader.load_config') as mock_config:
                 mock_cfg = MagicMock()
                 mock_cfg.etl = MagicMock()
-                mock_cfg.etl.resume_file = temp_resume_path
+                # Use new config structure: etl.resume.resume_file
+                mock_cfg.etl.resume = MagicMock()
+                mock_cfg.etl.resume.resume_file = temp_resume_path
                 mock_config.return_value = mock_cfg
 
                 with patch('core.app_context.AppContext') as mock_context:
@@ -141,7 +143,9 @@ class TestResumeUploadEndpoint(unittest.TestCase):
             with patch('core.config_loader.load_config') as mock_config:
                 mock_cfg = MagicMock()
                 mock_cfg.etl = MagicMock()
-                mock_cfg.etl.resume_file = temp_resume_path
+                # Use new config structure: etl.resume.resume_file
+                mock_cfg.etl.resume = MagicMock()
+                mock_cfg.etl.resume.resume_file = temp_resume_path
                 mock_config.return_value = mock_cfg
 
                 with patch('core.app_context.AppContext') as mock_context:
@@ -206,7 +210,9 @@ class TestResumeUploadEndpoint(unittest.TestCase):
             with patch('core.config_loader.load_config') as mock_config:
                 mock_cfg = MagicMock()
                 mock_cfg.etl = MagicMock()
-                mock_cfg.etl.resume_file = temp_resume_path
+                # Use new config structure: etl.resume.resume_file
+                mock_cfg.etl.resume = MagicMock()
+                mock_cfg.etl.resume.resume_file = temp_resume_path
                 mock_config.return_value = mock_cfg
 
                 with patch('core.app_context.AppContext') as mock_context:

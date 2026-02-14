@@ -38,6 +38,14 @@ from notification.channels import EmailChannel
 USE_DOCKER = os.environ.get('USE_DOCKER_CONTAINERS', '1') == '1'
 REDIS_URL = os.environ.get('REDIS_URL')
 
+# Prevent tests from using production Redis - use db=1 for tests if using same host
+if REDIS_URL and '/0' in REDIS_URL:
+    # Check if this looks like production Redis and redirect to test DB
+    if 'redis://redis:6379' in REDIS_URL or 'localhost:6379' in REDIS_URL:
+        # Use db=1 for tests to avoid polluting production
+        REDIS_URL = REDIS_URL.replace('/0', '/1')
+        print(f"Redirecting to test Redis database: {REDIS_URL}")
+
 # Try to import container management
 try:
     from tests.conftest_docker import redis_container
@@ -341,7 +349,7 @@ class TestNotificationsWithRedis(unittest.TestCase):
             'body': 'Test body',
             'metadata': {},
             'user_id': 'test-user',
-            'job_match_id': 'test-match',
+            'job_match_id': '00000000-0000-0000-0000-000000000001',
             'event_type': 'new_match',
             'priority': 'normal',
             'allow_resend': True

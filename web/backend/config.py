@@ -37,6 +37,20 @@ class ScorerConfig(BaseModel):
     })
 
 
+class ResumeConfig(BaseModel):
+    """Configuration for resume processing in ETL."""
+    resume_file: str = Field(default="resume.json")
+    # Force re-extraction of resume instead of using pre-extracted data from storage.
+    # When enabled, always runs LLM extraction regardless of fingerprint match.
+    # Useful for validating extraction behavior or testing new extraction models.
+    force_re_extraction: bool = False
+
+
+class EtlConfig(BaseModel):
+    """ETL configuration."""
+    resume: Optional[ResumeConfig] = None
+
+
 class MatchingConfig(BaseModel):
     """Matching configuration."""
     scorer: ScorerConfig = Field(default_factory=ScorerConfig)
@@ -46,6 +60,7 @@ class AppConfig(BaseModel):
     """Main application configuration."""
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     web: WebConfig = Field(default_factory=WebConfig)
+    etl: Optional[EtlConfig] = None
     matching: MatchingConfig = Field(default_factory=MatchingConfig)
 
 

@@ -39,6 +39,12 @@ USE_DOCKER = os.environ.get('USE_DOCKER_CONTAINERS', '1') == '1'
 TEST_DATABASE_URL = os.environ.get('TEST_DATABASE_URL')
 REDIS_URL = os.environ.get('REDIS_URL')
 
+# Prevent tests from using production Redis - use db=1 for tests if using same host
+if REDIS_URL and '/0' in REDIS_URL:
+    if 'redis://redis:6379' in REDIS_URL or 'localhost:6379' in REDIS_URL:
+        REDIS_URL = REDIS_URL.replace('/0', '/1')
+        print(f"Redirecting to test Redis database: {REDIS_URL}")
+
 # Try to import container management
 postgres_container = None
 redis_container = None

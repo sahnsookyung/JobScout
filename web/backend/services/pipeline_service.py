@@ -17,8 +17,12 @@ from threading import Lock, Event
 from core.config_loader import load_config
 from core.app_context import AppContext
 from pipeline.runner import run_matching_pipeline, MatchingPipelineResult
-from pipeline.control import PipelineController
-from ..exceptions import PipelineLockedException
+# Import resume ETL from main module
+import sys
+import os
+# Add project root to path to import main
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+from main import run_resume_etl
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +45,6 @@ class PipelineTaskManager:
     def __init__(self):
         self._tasks: Dict[str, PipelineTask] = {}
         self._lock = Lock()
-        self._controller = PipelineController()
         self._event_queues: Dict[str, asyncio.Queue] = {}
         self._subscriber_counts: Dict[str, int] = defaultdict(int)
         self._queue_lock = Lock()
@@ -99,9 +102,6 @@ class PipelineTaskManager:
         
         Returns:
             Task ID.
-        
-        Raises:
-            PipelineLockedException: If pipeline is already running.
         """
         # Check for existing running tasks
         with self._lock:
@@ -109,16 +109,7 @@ class PipelineTaskManager:
                 if task.status in ["pending", "running"]:
                     return tid  # Return existing task ID
         
-        # Try to acquire global lock
-        if not self._controller.acquire_lock("frontend"):
-            lock_info = self._controller.get_lock_info()
-            owner = lock_info.get("source", "unknown") if lock_info else "unknown"
-            raise PipelineLockedException(
-                f"Pipeline is locked by another process ({owner}). "
-                "Please try again later."
-            )
-        
-        # Create new task
+        # Create new task (no lock needed - DB handles concurrency)
         task_id = str(uuid.uuid4())
         
         with self._lock:
@@ -128,12 +119,18 @@ class PipelineTaskManager:
                 step="initializing"
             )
         
-        # Start background thread
-        thread = threading.Thread(
-            target=self._run_pipeline_background,
-            args=(task_id,),
-            daemon=True
-        )
+        # Run in a thread to not block the event loop
+        import asyncio
+        
+        def run_in_thread():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                self._run_pipeline_background(task_id)
+            finally:
+                loop.close()
+        
+        thread = threading.Thread(target=run_in_thread, daemon=True)
         thread.start()
         
         return task_id
@@ -202,30 +199,19 @@ class PipelineTaskManager:
         result: Optional[MatchingPipelineResult] = None,
         error: Optional[str] = None,
     ):
-        """
-        Update task status and other fields.
+        """Update task status and publish to subscribers."""
+        # Update task without heavy locking to avoid hangs
+        if task_id in self._tasks:
+            task = self._tasks[task_id]
+            task.status = status
+            if step:
+                task.step = step
+            if result:
+                task.result = result
+            if error:
+                task.error = error
         
-        Args:
-            task_id: The task ID.
-            status: New status.
-            step: Current step name.
-            result: Pipeline result (for completed/failed status).
-            error: Error message if failed.
-        """
-        with self._lock:
-            if task_id in self._tasks:
-                task = self._tasks[task_id]
-                task.status = status
-                if step:
-                    task.step = step
-                if result:
-                    task.result = result
-                if error:
-                    task.error = error
-                
-                if status in ["completed", "failed"]:
-                    self._cleanup_completed_tasks()
-        
+        # Build update data
         update_data = {"task_id": task_id, "status": status}
         if step:
             update_data["step"] = step
@@ -240,7 +226,11 @@ class PipelineTaskManager:
         if error:
             update_data["error"] = error
         
-        self.publish_update(task_id, update_data)
+        # Publish update
+        try:
+            self.publish_update(task_id, update_data)
+        except Exception as e:
+            logger.error(f"Failed to publish update: {e}")
     
     def _cleanup_completed_tasks(self, keep_count: int = 5):
         """
@@ -268,6 +258,8 @@ class PipelineTaskManager:
     
     def _run_pipeline_background(self, task_id: str):
         """Run the matching pipeline in a background thread."""
+        import traceback
+        
         try:
             # Update status to running
             self.update_task_status(task_id, "running")
@@ -286,7 +278,23 @@ class PipelineTaskManager:
                 logger.error(f"Task {task_id} not found during execution")
                 raise RuntimeError(f"Task {task_id} not found during execution")
             
-            # Run the pipeline
+            # Step 1: Run Resume ETL (fresh extraction based on fingerprint)
+            self.update_task_status(task_id, "running", step="resume_etl")
+            logger.info("Running Resume ETL before matching...")
+            try:
+                run_resume_etl(ctx, task.stop_event)
+                logger.info("Resume ETL completed")
+            except Exception as e:
+                logger.error(f"Resume ETL failed: {e}")
+                # Continue to matching - it will handle the case where resume extraction is needed
+            
+            # Check if interrupted
+            if task.stop_event.is_set():
+                self.update_task_status(task_id, "cancelled")
+                return
+            
+            # Step 2: Run the matching pipeline
+            self.update_task_status(task_id, "running", step="matching")
             result = run_matching_pipeline(
                 ctx,
                 task.stop_event,
@@ -310,10 +318,8 @@ class PipelineTaskManager:
                 error=str(e)
             )
         finally:
-            try:
-                self._controller.release_lock()
-            except Exception as e:
-                logger.error(f"Error releasing pipeline lock: {e}")
+            # No lock to release - DB handles concurrency
+            pass
 
 
 # Global pipeline task manager

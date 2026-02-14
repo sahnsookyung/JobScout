@@ -249,7 +249,13 @@ async def upload_resume_endpoint(file: UploadFile = File(...)):
 
     from core.config_loader import load_config
     config = load_config()
-    resume_file = config.etl.resume_file if config.etl and config.etl.resume_file else "resume.json"
+    # Support both old path (etl.resume.resume_file) and new path (etl.resume.resume_file)
+    if config.etl and config.etl.resume:
+        resume_file = config.etl.resume.resume_file
+    elif config.etl and config.etl.resume_file:
+        resume_file = config.etl.resume_file  # Backward compatibility
+    else:
+        resume_file = "resume.json"
     if not os.path.isabs(resume_file):
         resume_file = os.path.join(os.getcwd(), resume_file)
 

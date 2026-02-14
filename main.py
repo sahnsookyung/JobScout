@@ -1,4 +1,10 @@
-"""JobScout Main Driver - Refactored with Unit of Work pattern."""
+"""JobScout Main Driver - Refactored with Unit of Work pattern.
+
+Three CLI commands:
+- job-etl:    Scrapes and extracts jobs (steps 1-4)
+- resume-etl: Extracts and embeds resume (step 5)
+- matching:   Runs matching pipeline (requires jobs + resume in DB)
+"""
 
 import time
 import logging
@@ -20,10 +26,7 @@ from etl.resume import ResumeProfiler
 from etl.resume.embedding_store import JobRepositoryAdapter
 from database.uow import job_uow
 from database.init_db import init_db
-from database.init_db import init_db
 from pipeline.runner import run_matching_pipeline as run_matching_pipeline_shared
-from pipeline.control import PipelineController
-import requests
 
 PIPELINE_API_URL = "http://localhost:8080/api/pipeline"
 
@@ -62,7 +65,7 @@ def load_resume_data(resume_file_path: str) -> Optional[dict]:
     except FileNotFoundError:
         logger.error(f"Resume file not found: {resume_file_path}")
         logger.error("→ Create one: cp resume.example.json " + resume_file_path)
-        logger.error("→ Or set path in config.yaml: etl.resume_file")
+        logger.error("→ Or set path in config.yaml: etl.resume.resume_file")
         return None
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in resume file: {e}")
@@ -90,13 +93,21 @@ def load_user_wants_data(wants_file_path: str) -> List[str]:
         return []
 
 
-def run_etl_pipeline(ctx: AppContext, stop_event: threading.Event) -> None:
+def run_job_etl(ctx: AppContext, stop_event: threading.Event) -> None:
+    """Run job ETL pipeline: gather jobs, extract, facet extract, embed.
+    
+    Steps:
+    1. Gather Jobs (scraping)
+    2. Extraction (structured data)
+    3. Facet Extraction
+    4. Embedding
+    """
     logger.info("=" * 60)
-    logger.info("STARTING ETL PIPELINE")
+    logger.info("STARTING JOB ETL PIPELINE")
     logger.info("=" * 60)
 
     step_start = time.time()
-    logger.info("=== ETL STEP 1: Gathering Jobs ===")
+    logger.info("=== JOB ETL STEP 1: Gathering Jobs ===")
     total_jobs_gathered = 0
 
     for scraper_cfg in ctx.config.scrapers:
@@ -135,50 +146,60 @@ def run_etl_pipeline(ctx: AppContext, stop_event: threading.Event) -> None:
             logger.error("→ Verify scraper configuration in config.yaml")
 
     step_elapsed = time.time() - step_start
-    logger.info(f"ETL Step 1 completed: Gathered {total_jobs_gathered} jobs in {step_elapsed:.2f}s")
+    logger.info(f"Job ETL Step 1 completed: Gathered {total_jobs_gathered} jobs in {step_elapsed:.2f}s")
 
     if stop_event.is_set():
         return
 
     # Step 2: Extraction - per-job transactions
     step_start = time.time()
-    logger.info("=== ETL STEP 2: Running Extraction Batch ===")
+    logger.info("=== JOB ETL STEP 2: Running Extraction Batch ===")
     _run_extraction_batch(ctx, stop_event, limit=200)
     step_elapsed = time.time() - step_start
-    logger.info(f"ETL Step 2 completed: Extraction batch finished in {step_elapsed:.2f}s")
+    logger.info(f"Job ETL Step 2 completed: Extraction batch finished in {step_elapsed:.2f}s")
 
     if stop_event.is_set():
         return
 
     # Step 3: Facet Extraction - per-job transactions
     step_start = time.time()
-    logger.info("=== ETL STEP 3: Running Facet Extraction Batch ===")
+    logger.info("=== JOB ETL STEP 3: Running Facet Extraction Batch ===")
     _run_facet_extraction_batch(ctx, stop_event, limit=100)
     step_elapsed = time.time() - step_start
-    logger.info(f"ETL Step 3 completed: Facet extraction batch finished in {step_elapsed:.2f}s")
+    logger.info(f"Job ETL Step 3 completed: Facet extraction batch finished in {step_elapsed:.2f}s")
 
     if stop_event.is_set():
         return
 
     # Step 4: Embedding - per-job and per-requirement transactions
     step_start = time.time()
-    logger.info("=== ETL STEP 4: Running Embedding Batch ===")
+    logger.info("=== JOB ETL STEP 4: Running Embedding Batch ===")
     _run_embedding_batch(ctx, stop_event, limit=100)
     step_elapsed = time.time() - step_start
-    logger.info(f"ETL Step 4 completed: Embedding batch finished in {step_elapsed:.2f}s")
-
-    if stop_event.is_set():
-        return
-
-    # Step 5: Resume Processing - with fingerprint-based change detection
-    step_start = time.time()
-    logger.info("=== ETL STEP 5: Processing Resume ===")
-    _run_resume_etl(ctx, stop_event)
-    step_elapsed = time.time() - step_start
-    logger.info(f"ETL Step 5 completed in {step_elapsed:.2f}s")
+    logger.info(f"Job ETL Step 4 completed: Embedding batch finished in {step_elapsed:.2f}s")
 
     logger.info("=" * 60)
-    logger.info("ETL PIPELINE COMPLETED")
+    logger.info("JOB ETL PIPELINE COMPLETED")
+    logger.info("=" * 60)
+
+
+def run_resume_etl(ctx: AppContext, stop_event: threading.Event) -> None:
+    """Run resume ETL pipeline: extract and embed resume.
+    
+    Uses fingerprint-based change detection - only re-processes if resume changed.
+    """
+    logger.info("=" * 60)
+    logger.info("STARTING RESUME ETL PIPELINE")
+    logger.info("=" * 60)
+
+    step_start = time.time()
+    logger.info("=== RESUME ETL STEP 1: Processing Resume ===")
+    _run_resume_etl(ctx, stop_event)
+    step_elapsed = time.time() - step_start
+    logger.info(f"Resume ETL Step 1 completed in {step_elapsed:.2f}s")
+
+    logger.info("=" * 60)
+    logger.info("RESUME ETL PIPELINE COMPLETED")
     logger.info("=" * 60)
 
 
@@ -188,12 +209,25 @@ def _run_resume_etl(ctx: AppContext, stop_event: threading.Event) -> None:
     Returns:
         None - matching pipeline will query DB for latest resume independently.
     """
-    # Check if resume file is configured
-    if not ctx.config.etl or not hasattr(ctx.config.etl, 'resume_file') or not ctx.config.etl.resume_file:
+    # Check if resume config is available
+    etl_config = ctx.config.etl
+    if not etl_config:
+        logger.info("No ETL config, skipping resume ETL")
+        return
+    
+    # Support both old path (etl.resume.resume_file) and new path (etl.resume.resume_file)
+    if etl_config.resume:
+        resume_file = etl_config.resume.resume_file
+    elif etl_config.resume_file:
+        resume_file = etl_config.resume_file  # Backward compatibility
+    else:
         logger.info("No resume file configured, skipping resume ETL")
         return
 
-    resume_file = ctx.config.etl.resume_file
+    if not resume_file:
+        logger.info("No resume file configured, skipping resume ETL")
+        return
+        
     if not os.path.isabs(resume_file):
         resume_file = os.path.join(os.getcwd(), resume_file)
 
@@ -333,18 +367,18 @@ def run_internal_sequential_cycle(mode: str = 'all', stop_event: threading.Event
     # Build context once - no DB session attached
     ctx = AppContext.build(config)
 
-    # ETL Phase
-    if mode in ('etl', 'all'):
-        logger.info("Running ETL phase")
+    # Job ETL Phase
+    if mode in ('job-etl', 'all'):
+        logger.info("Running Job ETL phase")
         try:
-            run_etl_pipeline(ctx, stop_event)
+            run_job_etl(ctx, stop_event)
             if not stop_event.is_set() and ctx.job_etl_service:
                 ctx.job_etl_service.unload_models()
         except Exception as e:
-            logger.error(f"Error in ETL phase: {e}", exc_info=True)
+            logger.error(f"Error in Job ETL phase: {e}", exc_info=True)
 
         if stop_event.is_set():
-            logger.info("Shutdown requested after ETL phase")
+            logger.info("Shutdown requested after Job ETL phase")
             # Clean up JobSpyClient session for ETL phase
             try:
                 if ctx.jobspy_client:
@@ -352,6 +386,16 @@ def run_internal_sequential_cycle(mode: str = 'all', stop_event: threading.Event
             except Exception as e:
                 logger.warning(f"Error closing JobSpy client: {e}")
             return
+
+    # Resume ETL Phase
+    if mode in ('resume-etl', 'all'):
+        logger.info("Running Resume ETL phase")
+        try:
+            run_resume_etl(ctx, stop_event)
+            if not stop_event.is_set() and ctx.job_etl_service:
+                ctx.job_etl_service.unload_models()
+        except Exception as e:
+            logger.error(f"Error in Resume ETL phase: {e}", exc_info=True)
 
     # Matching Phase
     if mode in ('matching', 'all'):
@@ -378,19 +422,26 @@ def main():
     setup_logging()
 
     parser = argparse.ArgumentParser(description="JobScout Main Driver")
-    parser.add_argument('--mode', type=str, choices=['all', 'etl', 'matching'], default='all',
-                      help='Pipeline mode to run: all (default), etl, or matching')
+    parser.add_argument(
+        '--mode', 
+        type=str, 
+        choices=['all', 'job-etl', 'resume-etl', 'matching'], 
+        default='all',
+        help='Pipeline mode to run: all (job-etl + resume-etl + matching), job-etl, resume-etl, or matching'
+    )
     args = parser.parse_args()
 
     mode = args.mode
     logger.info(f"Main driver starting in {mode.upper()} mode...")
 
     if mode == 'all':
-        logger.info("Pipeline: ETL (Steps 1-4) -> Matching (Steps 5-9)")
-    elif mode == 'etl':
-        logger.info("Pipeline: ETL ONLY (Steps 1-4)")
+        logger.info("Pipeline: Job ETL -> Resume ETL -> Matching")
+    elif mode == 'job-etl':
+        logger.info("Pipeline: Job ETL ONLY (gather, extract, facet, embed)")
+    elif mode == 'resume-etl':
+        logger.info("Pipeline: Resume ETL ONLY (extract, embed resume)")
     elif mode == 'matching':
-        logger.info("Pipeline: Matching ONLY (Steps 5-9)")
+        logger.info("Pipeline: Matching ONLY (match + score jobs)")
 
     # Initialize DB
     init_db()
@@ -414,38 +465,8 @@ def main():
             interval = 3600
 
         try:
-            # Preemption Logic: Check if frontend is running
-            controller = PipelineController()
-            if not controller.acquire_lock("main", metadata={"cycle": cycle_count}):
-                # Lock held by someone else
-                lock_info = controller.get_lock_info()
-                owner = lock_info.get("source", "unknown") if lock_info else "unknown"
-                
-                if owner == "frontend":
-                    logger.info("Frontend pipeline detected. Preempting for main pipeline execution...")
-                    try:
-                        resp = requests.post(f"{PIPELINE_API_URL}/stop", timeout=5)
-                        logger.info(f"Cancellation requested: {resp.json()}")
-                        # Wait for lock to be released (up to 60s)
-                        for _ in range(60):
-                            if controller.acquire_lock("main", metadata={"cycle": cycle_count}):
-                                logger.info("Lock acquired after preemption.")
-                                break
-                            time.sleep(1)
-                        else:
-                            logger.error("Failed to acquire lock after requesting cancellation. Skipping cycle.")
-                            continue
-                    except Exception as e:
-                        logger.error(f"Failed to trigger cancellation via API: {e}")
-                else:
-                    logger.warning(f"Pipeline locked by another 'main' instance or unknown source ({owner}). Skipping cycle.")
-                    time.sleep(5)
-                    continue
-
-            try:
-                run_internal_sequential_cycle(mode=mode, stop_event=stop_event, config=config)
-            finally:
-                controller.release_lock()
+            # No lock needed - DB handles concurrency
+            run_internal_sequential_cycle(mode=mode, stop_event=stop_event, config=config)
                 
         except Exception as e:
             logger.error(f"Error in main loop: {e}", exc_info=True)

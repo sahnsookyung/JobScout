@@ -78,7 +78,7 @@ class MatcherService:
     ) -> List[Tuple[JobPost, float]]:
         pairs = repo.get_top_jobs_by_summary_embedding(
             resume_embedding=resume_embedding,
-            limit=self.config.batch_size,
+            limit=self.config.batch_size,  # None = process all jobs
             tenant_id=tenant_id,
         )
         logger.debug(
