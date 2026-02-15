@@ -47,8 +47,6 @@ class ResumeProfiler:
         store: Optional[ResumeSectionEmbeddingStore | ResumeEvidenceUnitEmbeddingStore] = None
     ):
         """
-        Initialize resume profiler.
-
         Args:
             ai_service: AI service for extraction and embeddings
             store: Optional store for persistence (if None, no DB writes)

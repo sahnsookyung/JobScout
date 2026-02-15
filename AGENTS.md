@@ -162,6 +162,8 @@ etl/            - Extract-Transform-Load orchestrator, schemas, resume profiler
 notification/   - Notification channels, tracker, service, worker
 web/            - FastAPI web interface
 tests/          - All tests (unit + integration)
+scripts/        - Utility scripts
+scripts/tests/  - Manual test scripts (require running services)
 migrations/     - Database migration scripts
 ```
 
