@@ -30,6 +30,7 @@ from notification.channels import (
     WebhookChannel,
     InAppChannel,
     NotificationChannelFactory,
+    RateLimitException,
 )
 
 from notification.tracker import (
@@ -55,6 +56,7 @@ __all__ = [
     'WebhookChannel',
     'InAppChannel',
     'NotificationChannelFactory',
+    'RateLimitException',
     # Tracker
     'NotificationTrackerService',
     'NotificationEvent',

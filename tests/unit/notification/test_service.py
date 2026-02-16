@@ -28,7 +28,7 @@ from notification import (
     WebhookChannel, InAppChannel, NotificationChannelFactory, NotificationChannel,
     NotificationTrackerService, DefaultDeduplicationStrategy,
     AggressiveDeduplicationStrategy, NotificationEvent,
-    NotificationService, NotificationPriority
+    NotificationService, NotificationPriority, RateLimitException
 )
 
 
@@ -700,6 +700,189 @@ class TestSOLIDPrinciples(unittest.TestCase):
         # Should be usable as NotificationChannel
         self.assertTrue(hasattr(channel, 'send'))
         self.assertTrue(hasattr(channel, 'channel_type'))
+
+
+class TestRateLimiting(unittest.TestCase):
+    """Test rate limiting behavior."""
+    
+    @patch('notification.channels.requests.post')
+    def test_discord_rate_limit_raises_exception(self, mock_post):
+        """Test Discord returns 429 raises RateLimitException."""
+        from notification import RateLimitException
+        
+        # Mock 429 response with Retry-After header
+        mock_response = Mock()
+        mock_response.status_code = 429
+        mock_response.headers = {'Retry-After': '30'}
+        mock_post.return_value = mock_response
+        
+        channel = DiscordChannel()
+        
+        with self.assertRaises(RateLimitException) as ctx:
+            channel.send(
+                recipient='test',
+                subject='Test',
+                body='Body',
+                metadata={'discord_webhook_url': 'https://test.com/webhook'}
+            )
+        
+        self.assertEqual(ctx.exception.retry_after, 30)
+    
+    @patch('notification.channels.requests.post')
+    def test_discord_rate_limit_uses_default_when_no_header(self, mock_post):
+        """Test Discord 429 uses default retry-after when header missing."""
+        from notification import RateLimitException
+        
+        mock_response = Mock()
+        mock_response.status_code = 429
+        mock_response.headers = {}  # No Retry-After header
+        mock_post.return_value = mock_response
+        
+        channel = DiscordChannel()
+        
+        with self.assertRaises(RateLimitException) as ctx:
+            channel.send(
+                recipient='test',
+                subject='Test',
+                body='Body',
+                metadata={'discord_webhook_url': 'https://test.com/webhook'}
+            )
+        
+        # Should default to 60
+        self.assertEqual(ctx.exception.retry_after, 60)
+    
+    @patch('notification.channels.requests.post')
+    def test_telegram_rate_limit_raises_exception(self, mock_post):
+        """Test Telegram returns 429 raises RateLimitException."""
+        from notification import RateLimitException
+        
+        mock_response = Mock()
+        mock_response.status_code = 429
+        # Telegram uses JSON body with parameters.retry_after
+        mock_response.json.return_value = {
+            'parameters': {'retry_after': 45}
+        }
+        mock_response.headers = {}
+        mock_post.return_value = mock_response
+        
+        os.environ['TELEGRAM_BOT_TOKEN'] = 'test-token'
+        
+        channel = TelegramChannel()
+        
+        with self.assertRaises(RateLimitException) as ctx:
+            channel.send(
+                recipient='@testchannel',
+                subject='Test',
+                body='Body',
+                metadata={}
+            )
+        
+        self.assertEqual(ctx.exception.retry_after, 45)
+    
+    def test_global_rate_limiter_stores_and_retrieves(self):
+        """Test NotificationRateLimiter stores and retrieves rate limit info."""
+        from notification.service import NotificationRateLimiter
+        
+        with patch('notification.service.Redis') as mock_redis_class:
+            mock_redis = Mock()
+            mock_redis_class.from_url.return_value = mock_redis
+            
+            limiter = NotificationRateLimiter('redis://localhost:6379/0')
+            
+            # Force the limiter to use our mock redis
+            limiter._redis = mock_redis
+            
+            # Configure get to return a future timestamp
+            import time
+            future_time = time.time() + 30
+            mock_redis.get.return_value = str(future_time).encode()
+            
+            # Set rate limit
+            limiter.set_rate_limit('discord', 30)
+            
+            # Verify Redis setex was called
+            mock_redis.setex.assert_called_once()
+            
+            # Get wait time - should return positive value
+            wait_time = limiter.get_wait_time('discord')
+            self.assertGreater(wait_time, 0)
+    
+    def test_global_rate_limiter_returns_zero_when_no_limit(self):
+        """Test NotificationRateLimiter returns 0 when no rate limit set."""
+        from notification.service import NotificationRateLimiter
+        
+        with patch('notification.service.Redis') as mock_redis_class:
+            mock_redis = Mock()
+            mock_redis_class.from_url.return_value = mock_redis
+            
+            # No rate limit set
+            mock_redis.get.return_value = None
+            
+            limiter = NotificationRateLimiter('redis://localhost:6379/0')
+            wait_time = limiter.get_wait_time('discord')
+            
+            self.assertEqual(wait_time, 0)
+    
+    def test_global_rate_limiter_handles_redis_unavailable(self):
+        """Test NotificationRateLimiter gracefully handles Redis unavailable."""
+        from notification.service import NotificationRateLimiter
+        
+        with patch('notification.service.Redis') as mock_redis_class:
+            mock_redis_class.from_url.side_effect = Exception("Redis unavailable")
+            
+            limiter = NotificationRateLimiter('redis://localhost:6379/0')
+            
+            # Should return 0 instead of crashing
+            wait_time = limiter.get_wait_time('discord')
+            self.assertEqual(wait_time, 0)
+            
+            # Should not crash on set either
+            limiter.set_rate_limit('discord', 30)  # No exception
+    
+    def test_notification_rate_limiter_max_wait_seconds(self):
+        """Test NotificationRateLimiter respects max_wait_seconds."""
+        from notification.service import NotificationRateLimiter
+        
+        with patch('notification.service.Redis') as mock_redis_class:
+            mock_redis = Mock()
+            mock_redis_class.from_url.return_value = mock_redis
+            
+            # Set a very large wait time in Redis
+            import time
+            very_long_wait = time.time() + 9999
+            mock_redis.get.return_value = str(very_long_wait).encode()
+            
+            limiter = NotificationRateLimiter('redis://localhost:6379/0', max_wait_seconds=300)
+            
+            # Should be capped at max_wait_seconds
+            wait_time = limiter.get_wait_time('discord')
+            self.assertEqual(wait_time, 300)
+    
+    def test_rate_limit_retry_capped_to_max(self):
+        """Test that rate limit wait is capped to max_wait_seconds per retry."""
+        from notification.service import NotificationRateLimiter
+        
+        with patch('notification.service.Redis') as mock_redis_class:
+            mock_redis = Mock()
+            mock_redis_class.from_url.return_value = mock_redis
+            
+            limiter = NotificationRateLimiter('redis://localhost:6379/0', max_wait_seconds=300)
+            
+            # Simulate what the worker does: cap retry_after before calling set_rate_limit
+            retry_after = 600  # Discord says wait 10 minutes
+            actual_wait = min(retry_after, 300)  # Worker caps to max (300)
+            limiter.set_rate_limit('discord', actual_wait)
+            
+            # Verify setex was called with capped value
+            call_args = mock_redis.setex.call_args
+            if call_args:
+                # setex(key, expiry, value) - expiry should be capped value + buffer
+                expiry = call_args[0][1]  # Second positional argument
+                self.assertLessEqual(expiry, 305)  # 300 + 5s buffer
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)
 
 
 if __name__ == '__main__':

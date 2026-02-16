@@ -194,6 +194,10 @@ class NotificationConfig(BaseModel):
     # Redis queue settings
     use_async_queue: bool = True  # Use Redis queue for async processing
     redis_url: Optional[str] = None  # Override default Redis URL
+    
+    # Rate limiting settings
+    rate_limit_max_wait_seconds: int = 300  # Max seconds to wait on rate limit (5 min)
+
 
 class AppConfig(BaseModel):
     database: DatabaseConfig

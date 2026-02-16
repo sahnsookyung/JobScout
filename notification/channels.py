@@ -28,6 +28,14 @@ import html
 import requests
 import smtplib
 from email.mime.text import MIMEText
+
+
+class RateLimitException(Exception):
+    """Exception raised when a rate limit is encountered (e.g., HTTP 429)."""
+    
+    def __init__(self, message: str, retry_after: Optional[int] = None):
+        super().__init__(message)
+        self.retry_after = retry_after  # Seconds to wait before retrying
 from email.mime.multipart import MIMEMultipart
 import urllib.parse
 import ipaddress
@@ -351,6 +359,45 @@ class DiscordChannel(NotificationChannel):
     def validate_config(self) -> bool:
         return True
     
+    def _parse_rate_limit_response(self, response: requests.Response) -> int:
+        """
+        Parse rate limit info from Discord 429 response.
+        
+        Discord provides multiple sources:
+        1. JSON body: retry_after field
+        2. Headers: X-RateLimit-Reset-After (fractional seconds)
+        3. Headers: Retry-After
+        
+        Returns:
+            Seconds to wait before retrying.
+        """
+        try:
+            data = response.json()
+            retry_after = data.get('retry_after')
+            if retry_after is not None:
+                return int(float(retry_after))
+        except Exception:
+            pass
+        
+        # Check headers (X-RateLimit-Reset-After may have fractional seconds)
+        reset_after = response.headers.get('X-RateLimit-Reset-After')
+        if reset_after:
+            try:
+                return int(float(reset_after))
+            except (ValueError, TypeError):
+                pass
+        
+        retry_after_header = response.headers.get('Retry-After')
+        if retry_after_header:
+            try:
+                return int(retry_after_header)
+            except (ValueError, TypeError):
+                pass
+        
+        # Default fallback
+        logger.warning("Could not parse Discord rate limit info, using default 60s")
+        return 60
+    
     def send(self, recipient: str, subject: str, body: str, metadata: Dict[str, Any]) -> bool:
         webhook_url = metadata.get('discord_webhook_url') or os.environ.get('DISCORD_WEBHOOK_URL', '')
         
@@ -385,11 +432,24 @@ class DiscordChannel(NotificationChannel):
             }
             
             response = requests.post(webhook_url, json=payload, timeout=30)
+            
+            # Handle rate limiting (HTTP 429)
+            if response.status_code == 429:
+                retry_after = self._parse_rate_limit_response(response)
+                raise RateLimitException(
+                    f"Discord rate limited. Retry after {retry_after} seconds.",
+                    retry_after=retry_after
+                )
+            
             response.raise_for_status()
             
             logger.info(f"Discord message sent ({len(embeds)} embed(s))")
             return True
-            
+        
+        except RateLimitException:
+            # Re-raise rate limit exceptions to be handled by the worker
+            raise
+        
         except Exception as e:
             logger.error(f"Failed to send Discord message: {e}")
             return False
@@ -404,6 +464,38 @@ class TelegramChannel(NotificationChannel):
     
     def validate_config(self) -> bool:
         return bool(os.environ.get('TELEGRAM_BOT_TOKEN'))
+    
+    def _parse_rate_limit_response(self, response: requests.Response) -> int:
+        """
+        Parse rate limit info from Telegram 429 response.
+        
+        Telegram typically provides retry info in JSON body:
+        - parameters.retry_after
+        
+        Returns:
+            Seconds to wait before retrying.
+        """
+        try:
+            data = response.json()
+            parameters = data.get('parameters', {})
+            retry_after = parameters.get('retry_after')
+            if retry_after is not None:
+                return int(retry_after)
+        except Exception:
+            pass
+        
+        # Fallback: try description field
+        try:
+            data = response.json()
+            retry_after = data.get('retry_after')
+            if retry_after is not None:
+                return int(retry_after)
+        except Exception:
+            pass
+        
+        # Default fallback
+        logger.warning("Could not parse Telegram rate limit info, using default 60s")
+        return 60
     
     def send(self, recipient: str, subject: str, body: str, metadata: Dict[str, Any]) -> bool:
         bot_token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
@@ -440,13 +532,24 @@ class TelegramChannel(NotificationChannel):
             
             response = requests.post(api_url, json=payload, timeout=30)
             
+            # Handle rate limiting (HTTP 429)
+            if response.status_code == 429:
+                retry_after = self._parse_rate_limit_response(response)
+                raise RateLimitException(
+                    f"Telegram rate limited. Retry after {retry_after} seconds.",
+                    retry_after=retry_after
+                )
+            
             if response.status_code == 200:
                 logger.info(f"Telegram message sent to {recipient}")
                 return True
             else:
                 logger.error(f"Telegram API error: {response.status_code} - {response.text}")
                 return False
-                
+        
+        except RateLimitException:
+            raise
+        
         except Exception as e:
             logger.error(f"Failed to send Telegram message: {e}")
             return False

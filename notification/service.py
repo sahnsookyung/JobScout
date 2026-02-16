@@ -27,6 +27,7 @@ Usage:
 import os
 import logging
 import uuid
+import time
 from datetime import datetime
 from typing import Optional, Dict, Any, TYPE_CHECKING
 
@@ -47,10 +48,67 @@ except ImportError:
 from database.database import db_session_scope
 from database.repository import JobRepository
 from notification.channels import NotificationChannelFactory
+from notification.channels import RateLimitException
 from notification.tracker import NotificationTrackerService, NotificationEvent
 from notification.message_builder import NotificationMessageBuilder
 
 logger = logging.getLogger(__name__)
+
+
+class NotificationRateLimiter:
+    """
+    Rate limiter using Redis to coordinate across workers.
+    
+    When any worker hits a rate limit, it stores the "wait until" timestamp.
+    All other workers check this and wait before attempting to send.
+    """
+    
+    RATE_LIMIT_PREFIX = "notification:rate_limit:"
+    
+    def __init__(self, redis_url: str = 'redis://localhost:6379/0', max_wait_seconds: int = 300):
+        self.redis_url = redis_url
+        self.max_wait_seconds = max_wait_seconds
+        self._redis = None
+    
+    def _get_redis(self) -> Optional[Redis]:
+        """Get Redis connection (lazy init)."""
+        if self._redis is None:
+            try:
+                self._redis = Redis.from_url(self.redis_url)
+            except Exception:
+                pass
+        return self._redis
+    
+    def set_rate_limit(self, channel_type: str, retry_after: int) -> None:
+        """Set rate limit wait time for a channel."""
+        redis = self._get_redis()
+        if redis:
+            key = f"{self.RATE_LIMIT_PREFIX}{channel_type}"
+            wait_until = time.time() + retry_after
+            redis.setex(key, retry_after + 5, str(wait_until))  # Store +5s buffer
+    
+    def get_wait_time(self, channel_type: str) -> float:
+        """Get how long to wait before retrying (0 if no rate limit, capped at max_wait_seconds)."""
+        redis = self._get_redis()
+        if not redis:
+            return 0
+        
+        key = f"{self.RATE_LIMIT_PREFIX}{channel_type}"
+        wait_until = redis.get(key)
+        
+        if wait_until:
+            try:
+                # Redis returns bytes, convert to float
+                wait_time = float(wait_until) - time.time()
+                return min(max(0, wait_time), self.max_wait_seconds)
+            except (ValueError, TypeError):
+                return 0
+        return 0
+    
+    def is_wait_exceeded(self, channel_type: str) -> bool:
+        """Check if the required wait time exceeds max_wait_seconds (fail-fast condition)."""
+        wait_time = self.get_wait_time(channel_type)
+        return wait_time >= self.max_wait_seconds
 
 
 class NotificationPriority(Enum):
@@ -409,9 +467,11 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
     Process a notification (called by RQ worker).
 
     This function:
-    1. Gets the appropriate channel
-    2. Sends the notification
-    3. Records the result in the tracker
+    1. Checks global rate limiter (coordination across workers)
+    2. Gets the appropriate channel
+    3. Sends the notification
+    4. Records the result in the tracker (only after max retries)
+    5. Updates global rate limiter if rate limited
     """
     notification_id = str(uuid.uuid4())
     
@@ -426,51 +486,38 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
     event_type = notification_data['event_type']
     allow_resend = notification_data.get('allow_resend', True)
     
+    # Read Redis URL from environment (not from notification data - keeps job payload clean)
+    redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+    max_wait_seconds = int(os.environ.get('NOTIFICATION_RATE_LIMIT_MAX_WAIT', '300'))
+    
     logger.info(f"Processing notification {notification_id} via {channel_type}")
     
-    try:
-        # Get channel implementation
-        channel = NotificationChannelFactory.get_channel(channel_type)
+    # Create rate limiter (each worker gets its own instance, but they share Redis)
+    rate_limiter = NotificationRateLimiter(redis_url, max_wait_seconds)
+    
+    # Max retries for rate limiting
+    max_rate_limit_retries = 3
+    rate_limit_retries = 0
+    
+    while True:
+        # Check global rate limit before sending (capped to max_wait_seconds per wait)
+        wait_time = rate_limiter.get_wait_time(channel_type)
+        if wait_time > 0:
+            logger.info(f"Global rate limit active for {channel_type}. Waiting {wait_time:.1f}s...")
+            time.sleep(wait_time)
         
-        # Send notification
-        success = channel.send(recipient, subject, body, metadata)
-        
-        # Record in database
-        with db_session_scope() as session:
-            repo = JobRepository(session)
-            tracker = NotificationTrackerService(repo)
-            
-            tracker.record_notification(
-                user_id=user_id,
-                job_match_id=job_match_id,
-                event_type=event_type,
-                channel_type=channel_type,
-                notification_type=event_type,
-                recipient=recipient,
-                subject=subject,
-                body=body,
-                success=success,
-                error_message=None if success else "Send failed",
-                metadata=metadata,
-                allow_resend=allow_resend
-            )
-        
-        if success:
-            logger.info(f"Notification {notification_id} sent successfully")
-        else:
-            logger.error(f"Notification {notification_id} failed to send")
-        
-        return notification_id
-
-    except Exception as e:
-        logger.error(f"Failed to process notification {notification_id}: {e}", exc_info=True)
-
-        # Record failure
         try:
+            # Get channel implementation
+            channel = NotificationChannelFactory.get_channel(channel_type)
+            
+            # Send notification
+            success = channel.send(recipient, subject, body, metadata)
+            
+            # Record in database
             with db_session_scope() as session:
                 repo = JobRepository(session)
                 tracker = NotificationTrackerService(repo)
-
+                
                 tracker.record_notification(
                     user_id=user_id,
                     job_match_id=job_match_id,
@@ -480,12 +527,83 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
                     recipient=recipient,
                     subject=subject,
                     body=body,
-                    success=False,
-                    error_message=str(e),
+                    success=success,
+                    error_message=None if success else "Send failed",
                     metadata=metadata,
                     allow_resend=allow_resend
                 )
-        except Exception as record_error:
-            logger.error(f"Failed to record notification failure: {record_error}", exc_info=True)
+            
+            if success:
+                logger.info(f"Notification {notification_id} sent successfully")
+            else:
+                logger.error(f"Notification {notification_id} failed to send")
+            
+            return notification_id
 
-        raise
+        except RateLimitException as e:
+            rate_limit_retries += 1
+            
+            # Get retry_after from exception, cap to max per-retry wait
+            retry_after = e.retry_after or 60
+            actual_wait = min(retry_after, max_wait_seconds)
+            
+            # Update global rate limiter so all workers know to wait (capped)
+            rate_limiter.set_rate_limit(channel_type, actual_wait)
+            
+            if rate_limit_retries > max_rate_limit_retries:
+                # Max retries exceeded - record failure and give up
+                logger.error(f"Max rate limit retries ({max_rate_limit_retries}) exceeded for notification {notification_id}")
+                try:
+                    with db_session_scope() as session:
+                        repo = JobRepository(session)
+                        tracker = NotificationTrackerService(repo)
+                        tracker.record_notification(
+                            user_id=user_id,
+                            job_match_id=job_match_id,
+                            event_type=event_type,
+                            channel_type=channel_type,
+                            notification_type=event_type,
+                            recipient=recipient,
+                            subject=subject,
+                            body=body,
+                            success=False,
+                            error_message=f"Rate limit exceeded after {max_rate_limit_retries} retries",
+                            metadata=metadata,
+                            allow_resend=allow_resend
+                        )
+                except Exception as db_error:
+                    logger.error(f"Failed to record notification failure: {db_error}")
+                return notification_id
+            
+            logger.warning(f"Rate limited by {channel_type}. Waiting {actual_wait}s (capped from {retry_after}s) before retry {rate_limit_retries}/{max_rate_limit_retries}")
+            time.sleep(actual_wait)
+            # Retry the notification
+            continue
+        
+        except Exception as e:
+            logger.error(f"Failed to process notification {notification_id}: {e}", exc_info=True)
+
+            # Record failure (non-retryable error)
+            try:
+                with db_session_scope() as session:
+                    repo = JobRepository(session)
+                    tracker = NotificationTrackerService(repo)
+
+                    tracker.record_notification(
+                        user_id=user_id,
+                        job_match_id=job_match_id,
+                        event_type=event_type,
+                        channel_type=channel_type,
+                        notification_type=event_type,
+                        recipient=recipient,
+                        subject=subject,
+                        body=body,
+                        success=False,
+                        error_message=str(e),
+                        metadata=metadata,
+                        allow_resend=allow_resend
+                    )
+            except Exception as db_error:
+                logger.error(f"Failed to record notification failure: {db_error}")
+            
+            return notification_id
