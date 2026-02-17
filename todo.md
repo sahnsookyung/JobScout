@@ -25,3 +25,5 @@ Performance - Cosine similarity on all jobs could be slow. Consider:
    - Adding a similarity threshold filter in SQL
    - Using approximate nearest neighbors (ANN) index
    - Caching results
+
+# Add RAG for retrieval of relevant resume points that align with job description points

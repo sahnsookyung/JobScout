@@ -1,0 +1,37 @@
+# Comprehensive User Wants File
+# Demonstrates various types of preferences that can be expressed
+
+# Work Arrangement Preferences
+I want fully remote work with timezone flexibility
+Looking for asynchronous communication culture
+Prefer 4-day work week or flexible scheduling
+
+# Technical Preferences
+Python and TypeScript development roles
+Modern tech stack with cloud infrastructure
+Microservices architecture experience
+Machine learning or AI-related projects
+
+# Company Preferences
+Small to medium sized startup (10-100 employees)
+Company with strong engineering culture
+Flat hierarchy with minimal bureaucracy
+Transparent communication and decision making
+
+# Compensation and Benefits
+Competitive salary with equity options
+Comprehensive health benefits
+401k matching program
+Annual learning budget for conferences and courses
+
+# Growth and Development
+Mentorship opportunities
+Clear career progression path
+Regular feedback and 1:1s with manager
+Time for open source contributions
+
+# Culture and Values
+Diverse and inclusive workplace
+Psychological safety to speak up
+Sustainable pace without crunch time
+Remote-first culture, not remote-friendly

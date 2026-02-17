@@ -1,0 +1,65 @@
+{
+  "jobs": [
+    {
+      "id": "job-001",
+      "title": "Senior Python Developer - Remote",
+      "company": "TechStartup Inc",
+      "location": "Remote",
+      "is_remote": true,
+      "description": "Join our fast-growing startup! Fully remote Python position with equity and unlimited PTO. Work with modern Python stack including FastAPI and Kubernetes.",
+      "facets": {
+        "remote_flexibility": "Fully remote position with flexible hours and timezone accommodation. Work from anywhere in the world.",
+        "compensation": "Competitive salary with equity options and performance bonuses. Early employee benefits.",
+        "learning_growth": "Rapid career progression with direct impact on product direction. Conference budget and learning stipend.",
+        "company_culture": "Startup culture with flat hierarchy and autonomous teams. Weekly demos and monthly hackathons.",
+        "work_life_balance": "Excellent work-life balance with flexible scheduling and unlimited PTO. No crunch time.",
+        "tech_stack": "Python, FastAPI, PostgreSQL, Docker, Kubernetes, AWS, Terraform. Modern cloud-native stack.",
+        "visa_sponsorship": "Visa sponsorship and relocation assistance available for exceptional candidates."
+      }
+    },
+    {
+      "id": "job-002",
+      "title": "Mid-Level Java Developer",
+      "company": "EnterpriseCorp",
+      "location": "Tokyo",
+      "is_remote": false,
+      "description": "Join our established enterprise team! Work on Java backend systems in our Tokyo office. Standard benefits package.",
+      "facets": {
+        "remote_flexibility": "On-site position with limited remote flexibility. Occasional work from home allowed for special circumstances.",
+        "compensation": "Standard market salary with comprehensive benefits including health insurance and pension.",
+        "learning_growth": "Structured career ladder with annual reviews and training opportunities. Mentorship program available.",
+        "company_culture": "Professional corporate culture with clear hierarchies and established processes. Team-building events.",
+        "work_life_balance": "Standard working hours with occasional overtime during release cycles. 20 days PTO annually.",
+        "tech_stack": "Java, Spring Boot, Oracle, Maven, Jenkins, WebLogic. Enterprise-grade stable technologies.",
+        "visa_sponsorship": "No visa sponsorship available. Must have valid work authorization for Japan."
+      }
+    },
+    {
+      "id": "job-003",
+      "title": "Full Stack Python Engineer - Hybrid",
+      "company": "GrowingScale Ltd",
+      "location": "Osaka",
+      "is_remote": false,
+      "description": "Hybrid position mixing remote and office work. Growing company looking for Python full-stack developers. Good balance of stability and growth.",
+      "facets": {
+        "remote_flexibility": "Hybrid position with 3 days remote, 2 days in office. Flexible core hours between 10am-4pm.",
+        "compensation": "Above-market salary with annual bonus and stock options. Regular salary reviews.",
+        "learning_growth": "Good growth opportunities as company scales. Internal mobility encouraged. Training budget available.",
+        "company_culture": "Growing company culture balancing startup agility with established practices. Collaborative teams.",
+        "work_life_balance": "Good work-life balance with predictable schedules. Minimal overtime expected. 25 days PTO.",
+        "tech_stack": "Python, Django, React, PostgreSQL, AWS, Docker. Modern stack with room for experimentation.",
+        "visa_sponsorship": "Case-by-case visa sponsorship considered for exceptional senior candidates."
+      }
+    }
+  ],
+  "user_wants": {
+    "basic": [
+      "I want fully remote work with flexible hours",
+      "Looking for Python development opportunities",
+      "Good work-life balance is very important to me"
+    ],
+    "remote_focus": ["I want remote work"],
+    "tech_focus": ["I want to work with Python and modern cloud technologies"],
+    "multiple": ["I want remote work", "Python developer role"]
+  }
+}

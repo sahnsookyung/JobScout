@@ -1,0 +1,12 @@
+# Sample User Wants File
+# Each line represents a natural language want/preference
+# These are semantically matched against job facets for scoring
+
+I want a fully remote position with flexible hours
+Looking for Python development work with modern frameworks
+Prefer small to medium sized companies with flat hierarchies
+Competitive compensation is important to me
+Good work-life balance and reasonable hours
+Opportunities for learning and professional growth
+Company with strong engineering culture and best practices
+Interesting technical challenges and impactful work
