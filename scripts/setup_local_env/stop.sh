@@ -155,18 +155,72 @@ stop_docker() {
     fi
 }
 
+# Kill a process tree by port
+# This kills parent wrapper processes (like uv, npm) and their children
+kill_process_tree_by_port() {
+    local port=$1
+    local pids_file
+    pids_file=$(mktemp)
+    
+    # Get PIDs listening on port
+    lsof -ti:${port} 2>/dev/null > "$pids_file"
+    
+    if [ ! -s "$pids_file" ]; then
+        rm -f "$pids_file"
+        return 1
+    fi
+    
+    # Collect all parent PIDs to avoid duplicates
+    declare -a parents=()
+    while read -r pid; do
+        parent=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+        if [ -n "$parent" ] && [ "$parent" -ne 1 ] && [ "$parent" -ne $$ ]; then
+            # Check if parent is already in list
+            local found=false
+            for existing in "${parents[@]}"; do
+                if [ "$existing" = "$parent" ]; then
+                    found=true
+                    break
+                fi
+            done
+            if [ "$found" = false ]; then
+                parents+=("$parent")
+            fi
+        fi
+    done < "$pids_file"
+    
+    # Kill parents first (top-down) with SIGKILL for reliability
+    for parent in "${parents[@]}"; do
+        kill -9 "$parent" 2>/dev/null || true
+    done
+    sleep 1
+    
+    # Kill all child processes with SIGKILL for reliability
+    while read -r pid; do
+        kill -9 "$pid" 2>/dev/null || true
+    done < "$pids_file"
+    
+    rm -f "$pids_file"
+    return 0
+}
+
 # Stop Backend
 stop_backend() {
     log_info "Stopping backend on port ${BACKEND_PORT}..."
 
-    # Kill by port
+    # Kill by port - kill entire process tree to catch parent (uv) and child (uvicorn)
     if lsof -ti:${BACKEND_PORT} >/dev/null 2>&1; then
-        kill $(lsof -ti:${BACKEND_PORT}) 2>/dev/null || true
-        log_success "Backend stopped"
+        if kill_process_tree_by_port ${BACKEND_PORT}; then
+            log_success "Backend stopped"
+        else
+            log_error "Failed to stop backend"
+        fi
     else
         # Also try by process name as fallback
         if pgrep -f "uvicorn.*web.backend.app" > /dev/null; then
             pkill -f "uvicorn.*web.backend.app" 2>/dev/null || true
+            # Also kill uv run wrapper if it exists
+            pgrep -f "uv run.*uvicorn" > /dev/null && pkill -f "uv run.*uvicorn" 2>/dev/null || true
             log_success "Backend stopped (by process name)"
         else
             log_info "Backend not running on port ${BACKEND_PORT}"
@@ -178,14 +232,19 @@ stop_backend() {
 stop_frontend() {
     log_info "Stopping frontend on port ${FRONTEND_PORT}..."
 
-    # Kill by port
+    # Kill by port - kill entire process tree to catch parent (npm) and child (vite)
     if lsof -ti:${FRONTEND_PORT} >/dev/null 2>&1; then
-        kill $(lsof -ti:${FRONTEND_PORT}) 2>/dev/null || true
-        log_success "Frontend stopped"
+        if kill_process_tree_by_port ${FRONTEND_PORT}; then
+            log_success "Frontend stopped"
+        else
+            log_error "Failed to stop frontend"
+        fi
     else
         # Also try by process name as fallback
         if pgrep -f "vite" > /dev/null; then
             pkill -f "vite" 2>/dev/null || true
+            # Also kill npm wrapper if it exists
+            pgrep -f "npm run dev" > /dev/null && pkill -f "npm run dev" 2>/dev/null || true
             log_success "Frontend stopped (by process name)"
         else
             log_info "Frontend not running on port ${FRONTEND_PORT}"
