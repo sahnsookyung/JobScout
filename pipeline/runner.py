@@ -661,25 +661,35 @@ def _send_notifications(
                         match_id = match_record.id
                         job_post = match_record.job_post
 
-                    match_data = {
-                        'fit_score': dto.fit_score,
-                        'want_score': dto.want_score,
-                        'required_coverage': dto.jd_required_coverage,
-                        'preferred_coverage': dto.jd_preferences_coverage,
-                    }
+                        # Extract all needed data while session is open
+                        match_data = {
+                            'fit_score': dto.fit_score,
+                            'want_score': dto.want_score,
+                            'required_coverage': dto.jd_required_coverage,
+                            'preferred_coverage': dto.jd_preferences_coverage,
+                        }
 
+                        # Extract primitive values from job_post before session closes
+                        apply_url = job_post.company_url_direct if job_post else None
+                        job_title = job_dto.title
+                        company = job_dto.company
+                        location = job_dto.location_text
+                        is_remote = job_dto.is_remote
+
+                    # Note: job_post is not passed to avoid detached session issues.
+                    # All needed job data is extracted as primitives above.
                     ctx.notification_service.notify_new_match(
                         user_id=user_id,
                         match_id=str(match_id),
-                        job_title=job_dto.title,
-                        company=job_dto.company,
+                        job_title=job_title,
+                        company=company,
                         score=float(dto.overall_score),
-                        location=job_dto.location_text,
-                        is_remote=job_dto.is_remote,
+                        location=location,
+                        is_remote=is_remote,
                         channels=enabled_channels,
-                        job_post=job_post,
+                        job_post=None,
                         match_data=match_data,
-                        apply_url=job_post.company_url_direct if job_post else None
+                        apply_url=apply_url
                     )
                     notified_count += 1
                 except Exception as e:
