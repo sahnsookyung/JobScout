@@ -22,7 +22,7 @@ from core.app_context import AppContext
 from core.matcher import MatcherService, MatchResultDTO, JobMatchDTO, JobEvidenceDTO, RequirementMatchDTO, JobRequirementDTO, penalty_details_from_orm
 from core.scorer import ScoringService
 from core.scorer.persistence import save_match_to_db
-from etl.resume import ResumeProfiler
+from etl.resume import ResumeProfiler, ResumeParser
 from etl.resume.embedding_store import JobRepositoryAdapter
 from database.uow import job_uow
 from database.init_db import init_db
@@ -58,19 +58,47 @@ def setup_logging():
 
 
 def load_resume_data(resume_file_path: str) -> Optional[dict]:
+    """Load and parse resume data from various formats.
+
+    Supports: .json, .yaml, .yml, .txt, .docx, .pdf
+
+    For JSON/YAML: Returns structured dict that can be used directly.
+    For TXT/DOCX/PDF: Returns dict with 'raw_text' key containing extracted text
+                      for LLM-based parsing.
+
+    Args:
+        resume_file_path: Path to resume file
+
+    Returns:
+        Dict with resume data, or None if loading/parsing fails
+    """
     logger.info(f"Loading resume from {resume_file_path}")
+
     try:
-        with open(resume_file_path, 'r') as f:
-            return json.load(f)
+        parser = ResumeParser()
+        parsed = parser.parse(resume_file_path)
+
+        if parsed.data is not None:
+            # JSON/YAML formats - return structured data
+            logger.info(f"Loaded structured resume from {parsed.format} file")
+            return parsed.data
+        else:
+            # Text-based formats (TXT, DOCX, PDF) - wrap text for LLM processing
+            logger.info(f"Loaded text resume from {parsed.format} file ({len(parsed.text)} chars)")
+            return {"raw_text": parsed.text}
+
     except FileNotFoundError:
         logger.error(f"Resume file not found: {resume_file_path}")
         logger.error("→ Create one: cp resume.example.json " + resume_file_path)
         logger.error("→ Or set path in config.yaml: etl.resume.resume_file")
         return None
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in resume file: {e}")
-        logger.error(f"→ Validate JSON: python -m json.tool {resume_file_path}")
-        logger.error(f"→ Check line {e.lineno}, column {e.colno}")
+    except ValueError as e:
+        supported = ', '.join(ResumeParser.get_supported_formats())
+        logger.error(f"Failed to parse resume: {e}")
+        logger.error(f"→ Supported formats: {supported}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error loading resume: {e}")
         return None
 
 

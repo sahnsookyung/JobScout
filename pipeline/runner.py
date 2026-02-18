@@ -17,7 +17,7 @@ from core.matcher import MatcherService, MatchResultDTO, JobMatchDTO, JobEvidenc
 from core.scorer import ScoringService
 from core.scorer.persistence import save_match_to_db
 from core.llm.schema_models import ResumeSchema
-from etl.resume import ResumeProfiler
+from etl.resume import ResumeProfiler, ResumeParser
 from etl.resume.embedding_store import JobRepositoryAdapter
 from database.uow import job_uow
 
@@ -36,17 +36,21 @@ class MatchingPipelineResult:
     execution_time: float = 0.0
 
 
-def load_resume_data(resume_file_path: str) -> Optional[dict]:
-    """Load resume data from JSON file."""
+def _load_resume_with_parser(resume_file_path: str) -> Optional[dict]:
+    """Load resume using ResumeParser for multi-format support."""
     logger.info(f"Loading resume from {resume_file_path}")
     try:
-        with open(resume_file_path, 'r') as f:
-            return json.load(f)
+        parser = ResumeParser()
+        parsed = parser.parse(resume_file_path)
+        return parsed.data if parsed.data is not None else {"raw_text": parsed.text}
     except FileNotFoundError:
         logger.error(f"Resume file not found: {resume_file_path}")
         return None
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in resume file: {e}")
+    except ValueError as e:
+        logger.error(f"Failed to parse resume: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error loading resume: {e}")
         return None
 
 
@@ -146,7 +150,7 @@ def run_matching_pipeline(
             )
 
         # Step 2: Load raw resume data
-        resume_data = load_resume_data(resume_file)
+        resume_data = _load_resume_with_parser(resume_file)
         if not resume_data:
             error_msg = "Failed to load resume data"
             logger.error(error_msg)
@@ -195,7 +199,7 @@ def run_matching_pipeline(
             )
 
         # Load resume data and calculate current fingerprint
-        resume_data = load_resume_data(resume_file)
+        resume_data = _load_resume_with_parser(resume_file)
         if not resume_data:
             error_msg = "Failed to load resume data"
             logger.error(error_msg)

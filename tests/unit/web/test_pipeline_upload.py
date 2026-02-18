@@ -64,33 +64,56 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         self.assertTrue(data['success'])
         self.assertIn('uploaded successfully', data['message'])
 
-    def test_upload_invalid_json_rejected(self):
-        """Test that invalid JSON files are rejected."""
-        invalid_json = "{ name: 'test' }"
-        files = {'file': ('resume.json', invalid_json, 'application/json')}
+    def test_upload_unsupported_format_rejected(self):
+        """Test that unsupported file formats are rejected."""
+        files = {'file': ('resume.exe', 'binary content', 'application/octet-stream')}
 
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn('Invalid JSON', response.json()['detail'])
-
-    def test_upload_non_json_file_rejected(self):
-        """Test that non-JSON files are rejected."""
-        files = {'file': ('resume.txt', 'some text content', 'text/plain')}
-
-        response = self.client.post('/api/pipeline/upload-resume', files=files)
-
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('Only JSON files', response.json()['detail'])
+        self.assertIn('Unsupported file format', response.json()['detail'])
 
     def test_upload_without_extension_rejected(self):
-        """Test that files without .json extension are rejected."""
+        """Test that files without extension are rejected."""
         files = {'file': ('resume', '{"name": "test"}', 'application/json')}
 
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn('Only JSON files', response.json()['detail'])
+        self.assertIn('Unsupported file format', response.json()['detail'])
+
+    def test_upload_txt_file_accepted(self):
+        """Test that .txt files are now accepted (multi-format support)."""
+        files = {'file': ('resume.txt', 'some text content', 'text/plain')}
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_resume_path = os.path.join(tmp_dir, "resume.txt")
+
+            with patch('core.config_loader.load_config') as mock_config:
+                mock_cfg = MagicMock()
+                mock_cfg.etl = MagicMock()
+                mock_cfg.etl.resume = MagicMock()
+                mock_cfg.etl.resume.resume_file = temp_resume_path
+                mock_config.return_value = mock_cfg
+
+            with patch('core.app_context.AppContext') as mock_context:
+                mock_ctx = MagicMock()
+                mock_etl_service = MagicMock()
+                mock_ctx.job_etl_service = mock_etl_service
+                mock_repo = MagicMock()
+                mock_etl_service.process_resume.return_value = (True, "test_fingerprint_123", None)
+                mock_context.build.return_value = mock_ctx
+
+                with patch('database.uow.job_uow') as mock_uow:
+                    mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
+                    mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+
+                    response = self.client.post('/api/pipeline/upload-resume', files=files)
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.assertIn('uploaded successfully', data['message'])
 
     def test_upload_saves_to_configured_path(self):
         """Test that file is saved to configured path."""
@@ -232,6 +255,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
         self.assertEqual(response.status_code, 400)
+        self.assertIn('Empty file', response.json()['detail'])
 
     def test_upload_file_size_limit_exceeded(self):
         """Test that files exceeding size limit are rejected."""

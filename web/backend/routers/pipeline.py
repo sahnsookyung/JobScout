@@ -6,6 +6,7 @@ Pipeline endpoints - trigger and monitor matching pipeline.
 import json
 import os
 import asyncio
+from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
 from typing import Optional
@@ -16,6 +17,7 @@ from ..models.responses import (
     PipelineStatusResponse
 )
 from ..exceptions import PipelineLockedException
+from etl.resume import ResumeParser
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 
@@ -228,39 +230,54 @@ async def pipeline_events(task_id: str):
 @router.post("/upload-resume", response_model=PipelineTaskResponse)
 async def upload_resume_endpoint(file: UploadFile = File(...)):
     """
-    Upload a resume JSON file.
+    Upload a resume file.
+    Supports: .json, .yaml, .yml, .txt, .docx, .pdf
     Saves to configured resume file path and triggers ETL processing.
     """
     import logging
     logger = logging.getLogger(__name__)
 
-    if not file.filename or not file.filename.endswith('.json'):
-        raise HTTPException(status_code=400, detail="Only JSON files are allowed")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    # Validate file format
+    parser = ResumeParser()
+    if not parser.is_supported(file.filename):
+        supported = ', '.join(ResumeParser.get_supported_formats())
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file format. Supported formats: {supported}"
+        )
 
     content = await file.read()
 
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
+
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File size exceeds 10MB limit")
-
-    try:
-        json.loads(content.decode('utf-8'))
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON file: {str(e)}")
 
     from core.config_loader import load_config
     config = load_config()
     # Support both old path (etl.resume.resume_file) and new path (etl.resume.resume_file)
     if config.etl and config.etl.resume:
-        resume_file = config.etl.resume.resume_file
+        base_resume_file = config.etl.resume.resume_file
     elif config.etl and config.etl.resume_file:
-        resume_file = config.etl.resume_file  # Backward compatibility
+        base_resume_file = config.etl.resume_file  # Backward compatibility
     else:
-        resume_file = "resume.json"
+        base_resume_file = "resume.json"
+    
+    # Preserve the original file extension
+    original_ext = Path(file.filename).suffix
+    resume_file = Path(base_resume_file).with_suffix(original_ext)
+    
     if not os.path.isabs(resume_file):
         resume_file = os.path.join(os.getcwd(), resume_file)
 
+    resume_file_str = str(resume_file)
+    
     try:
-        with open(resume_file, 'wb') as f:
+        with open(resume_file_str, 'wb') as f:
             f.write(content)
     except IOError as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
@@ -274,7 +291,7 @@ async def upload_resume_endpoint(file: UploadFile = File(...)):
         ctx = AppContext.build(full_config)
 
         with job_uow() as repo:
-            changed, fp, _ = ctx.job_etl_service.process_resume(repo, resume_file)
+            changed, fp, _ = ctx.job_etl_service.process_resume(repo, resume_file_str)
             fingerprint = fp
     except Exception as e:
         logger.error(f"ETL processing failed during resume upload: {e}")

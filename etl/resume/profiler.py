@@ -71,7 +71,11 @@ class ResumeProfiler:
             ResumeSchema Pydantic model with structured data, or None if extraction fails
         """
         try:
-            resume_text = json.dumps(resume_data, indent=2)
+            # Handle text-based formats (PDF, DOCX, TXT) that provide raw_text
+            if 'raw_text' in resume_data:
+                resume_text = resume_data['raw_text']
+            else:
+                resume_text = json.dumps(resume_data, indent=2)
 
             extraction_result = self.ai.extract_resume_data(resume_text)
 

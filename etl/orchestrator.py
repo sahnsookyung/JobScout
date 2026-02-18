@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from core.llm.schema_models import JobExtraction
 from core.scorer.want_score import FACET_KEYS
 from database.models import generate_resume_fingerprint
-from etl.resume import ResumeProfiler
+from etl.resume import ResumeProfiler, ResumeParser
 
 logger = logging.getLogger(__name__)
 
@@ -193,9 +193,11 @@ class JobETLService:
             return False, "", None
 
         try:
-            with open(resume_file, 'r') as f:
-                resume_data = json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
+            parser = ResumeParser()
+            parsed = parser.parse(resume_file)
+            # For text-based formats (PDF, DOCX, TXT), wrap in dict for fingerprint
+            resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
+        except (ValueError, IOError) as e:
             logger.error(f"Failed to load resume file: {e}")
             return False, "", None
 

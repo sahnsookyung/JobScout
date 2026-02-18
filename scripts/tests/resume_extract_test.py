@@ -7,11 +7,11 @@ import logging
 import os
 import sys
 
-+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from core.config_loader import load_config
 from core.app_context import AppContext
-from etl.resume import ResumeProfiler
+from etl.resume import ResumeProfiler, ResumeParser
 from database.models import generate_resume_fingerprint
 
 
@@ -53,10 +53,13 @@ def main():
         sys.exit(1)
 
     try:
-        with open(args.resume, 'r', encoding='utf-8') as f:
-            resume_data = json.load(f)
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in resume file: {e}")
+        parser = ResumeParser()
+        parsed = parser.parse(args.resume)
+        # For text-based formats (PDF, DOCX, TXT), wrap in dict
+        resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
+        logger.info(f"Loaded resume from {parsed.format} file")
+    except ValueError as e:
+        logger.error(f"Failed to parse resume file: {e}")
         sys.exit(1)
 
     fingerprint = generate_resume_fingerprint(resume_data)
