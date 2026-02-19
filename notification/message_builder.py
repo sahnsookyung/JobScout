@@ -101,7 +101,7 @@ class NotificationMessageBuilder:
             title=getattr(job_post, 'title', None) or "Unknown Position",
             company=getattr(job_post, 'company', None) or "Unknown Company",
             location=NotificationMessageBuilder.format_location(job_post),
-            is_remote=getattr(job_post, 'is_remote', False),
+            is_remote=getattr(job_post, 'is_remote', False) or False,
             salary=NotificationMessageBuilder.format_salary(job_post),
             job_type=getattr(job_post, 'job_type', None),
             job_level=getattr(job_post, 'job_level', None),
