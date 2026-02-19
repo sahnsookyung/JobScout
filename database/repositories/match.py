@@ -1,6 +1,7 @@
 import logging
 from typing import List, Optional, Any
 from sqlalchemy import select, func
+from sqlalchemy.orm import joinedload
 
 from database.models import JobMatch
 from database.repositories.base import BaseRepository
@@ -12,12 +13,15 @@ class MatchRepository(BaseRepository):
     def get_existing_match(
         self,
         job_post_id: Any,
-        resume_fingerprint: str
+        resume_fingerprint: str,
+        load_job_post: bool = False
     ) -> Optional[JobMatch]:
         stmt = select(JobMatch).where(
             JobMatch.job_post_id == job_post_id,
             JobMatch.resume_fingerprint == resume_fingerprint
         )
+        if load_job_post:
+            stmt = stmt.options(joinedload(JobMatch.job_post))
         return self.db.execute(stmt).scalar_one_or_none()
 
     def get_matches_for_resume(

@@ -22,13 +22,15 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
 
-# Test the notification channels, tracker, and service
 from notification import (
     EmailChannel, DiscordChannel, TelegramChannel,
     WebhookChannel, InAppChannel, NotificationChannelFactory, NotificationChannel,
     NotificationTrackerService, DefaultDeduplicationStrategy,
     AggressiveDeduplicationStrategy, NotificationEvent,
     NotificationService, NotificationPriority, RateLimitException
+)
+from notification.message_builder import (
+    JobNotificationContent, JobInfo, MatchInfo, RequirementsInfo
 )
 
 
@@ -564,19 +566,37 @@ class TestNotificationService(unittest.TestCase):
         )
         
         self.assertIsNone(result)  # Suppressed
-    
+
+    def _make_content(self, title='Python Developer', company='TechCorp', score=85.5):
+        """Helper to create JobNotificationContent for tests."""
+        return JobNotificationContent(
+            job=JobInfo(
+                title=title,
+                company=company,
+                location='San Francisco, CA',
+                is_remote=True,
+            ),
+            match=MatchInfo(
+                overall_score=score,
+                fit_score=80.0,
+                want_score=75.0,
+                required_coverage=0.85,
+            ),
+            requirements=RequirementsInfo(total=10, matched=8, key_matches=[]),
+            apply_url='https://example.com/apply'
+        )
+
     @patch('notification.service.NotificationService.send_notification')
     def test_notify_new_match_single_channel(self, mock_send):
         """Test notifying about new match."""
         mock_send.return_value = 'notif-123'
         
         service = NotificationService(self.mock_repo)
+        content = self._make_content()
         service.notify_new_match(
             user_id='user1',
             match_id='match1',
-            job_title='Python Developer',
-            company='TechCorp',
-            score=85.5,
+            content=content,
             channels=['email']
         )
         
@@ -595,12 +615,11 @@ class TestNotificationService(unittest.TestCase):
         os.environ['TELEGRAM_BOT_TOKEN'] = 'test-token'
         
         service = NotificationService(self.mock_repo)
+        content = self._make_content()
         results = service.notify_new_match(
             user_id='user1',
             match_id='match1',
-            job_title='Python Developer',
-            company='TechCorp',
-            score=85.5,
+            content=content,
             channels=['email', 'discord', 'telegram']
         )
         

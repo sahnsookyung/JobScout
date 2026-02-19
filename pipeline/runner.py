@@ -20,6 +20,7 @@ from core.llm.schema_models import ResumeSchema
 from etl.resume import ResumeProfiler, ResumeParser
 from etl.resume.embedding_store import JobRepositoryAdapter
 from database.uow import job_uow
+from notification.message_builder import NotificationMessageBuilder
 
 
 logger = logging.getLogger(__name__)
@@ -620,34 +621,16 @@ def _send_notifications(
 
             if notification_config.notify_on_new_match:
                 job_dto = dto.job
+                content = None
+                match_id = None
 
-                # Get match record first
+                # Get match record and build notification content inside session
                 try:
                     with job_uow() as repo:
                         match_record = repo.get_existing_match(
                             job_dto.id,
-                            resume_fingerprint
-                        )
-
-                        if not match_record or not match_record.id:
-                            logger.warning(f"No match record found for job {job_dto.id}, skipping notification")
-                            continue
-
-                        if match_record.notified:
-                            logger.debug(f"Match already notified for job {job_dto.id}, skipping")
-                            continue
-
-                        match_id = match_record.id
-                except Exception:
-                    logger.exception("Failed to get match record for job_id=%s", job_dto.id)
-                    continue
-
-                # Send notification
-                try:
-                    with job_uow() as repo:
-                        match_record = repo.get_existing_match(
-                            job_dto.id,
-                            resume_fingerprint
+                            resume_fingerprint,
+                            load_job_post=True
                         )
 
                         if not match_record or not match_record.id:
@@ -661,49 +644,42 @@ def _send_notifications(
                         match_id = match_record.id
                         job_post = match_record.job_post
 
-                        # Extract all needed data while session is open
-                        match_data = {
-                            'fit_score': dto.fit_score,
-                            'want_score': dto.want_score,
-                            'required_coverage': dto.jd_required_coverage,
-                            'preferred_coverage': dto.jd_preferences_coverage,
-                        }
-
-                        # Extract primitive values from job_post before session closes
-                        apply_url = job_post.company_url_direct if job_post else None
-                        job_title = job_dto.title
-                        company = job_dto.company
-                        location = job_dto.location_text
-                        is_remote = job_dto.is_remote
-
-                    # Note: job_post is not passed to avoid detached session issues.
-                    # All needed job data is extracted as primitives above.
-                    ctx.notification_service.notify_new_match(
-                        user_id=user_id,
-                        match_id=str(match_id),
-                        job_title=job_title,
-                        company=company,
-                        score=float(dto.overall_score),
-                        location=location,
-                        is_remote=is_remote,
-                        channels=enabled_channels,
-                        job_post=None,
-                        match_data=match_data,
-                        apply_url=apply_url
-                    )
-                    notified_count += 1
-                except Exception as e:
-                    logger.error(f"Failed to send notification for match {match_id}: {e}")
+                        # Build content while session is alive - job_post is eager loaded
+                        if job_post:
+                            content = NotificationMessageBuilder.build_notification_content(
+                                job_post=job_post,
+                                overall_score=float(dto.overall_score),
+                                fit_score=dto.fit_score,
+                                want_score=dto.want_score,
+                                required_coverage=dto.jd_required_coverage,
+                                apply_url=job_post.company_url_direct
+                            )
+                except Exception:
+                    logger.exception("Failed to get match record for job_id=%s", job_dto.id)
                     continue
 
-                # Persist notified flag
-                try:
-                    with job_uow() as repo:
-                        match_record = repo.get_existing_match(job_dto.id, resume_fingerprint)
-                        if match_record:
-                            match_record.notified = True
-                except Exception as e:
-                    logger.error(f"Failed to persist notified flag for match {match_id}: {e}")
+                # Session closed - safe to call notification with serializable content
+                if content:
+                    try:
+                        ctx.notification_service.notify_new_match(
+                            user_id=user_id,
+                            match_id=str(match_id),
+                            content=content,
+                            channels=enabled_channels,
+                        )
+                        notified_count += 1
+                    except Exception as e:
+                        logger.error(f"Failed to send notification for match {match_id}: {e}")
+                        continue
+
+                    # Persist notified flag
+                    try:
+                        with job_uow() as repo:
+                            match_record = repo.get_existing_match(job_dto.id, resume_fingerprint)
+                            if match_record:
+                                match_record.notified = True
+                    except Exception as e:
+                        logger.error(f"Failed to persist notified flag for match {match_id}: {e}")
 
         if notification_config.notify_on_batch_complete:
             try:

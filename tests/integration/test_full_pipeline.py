@@ -94,6 +94,9 @@ from core.config_loader import MatcherConfig, ScorerConfig
 from core.llm.interfaces import LLMProvider
 from core.scorer import ScoringService, persistence
 from notification import NotificationService
+from notification.message_builder import (
+    NotificationMessageBuilder, JobNotificationContent, JobInfo, MatchInfo, RequirementsInfo
+)
 from etl.orchestrator import JobETLService
 
 
@@ -606,7 +609,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
         # Trigger notifications
         notification_count = 0
         for scored_match in high_score_matches:
-            # Get match record from DB
+            # Get match record from DB with job_post eagerly loaded
             db_match = self.session.query(JobMatch).filter(
                 JobMatch.job_post_id == scored_match.job.id,
                 JobMatch.resume_fingerprint == scored_match.resume_fingerprint
@@ -617,20 +620,28 @@ class TestFullPipelineIntegration(unittest.TestCase):
                 match_id = getattr(db_match, 'id', None)
                 if match_id is not None:
                     try:
-                        # Queue notification
-                        job = self.notification_service.notify_new_match(
-                            user_id=user_id,
-                            match_id=str(match_id),
-                            job_title=scored_match.job.title,
-                            company=scored_match.job.company,
-                            score=float(scored_match.overall_score),
-                            location=scored_match.job.location_text,
-                            is_remote=scored_match.job.is_remote or False,
-                            channels=['in_app']  # Use in_app to avoid external calls
-                        )
-                        
-                        if job:
-                            notification_count += 1
+                        # Build content from job_post while session is active
+                        job_post = db_match.job_post
+                        if job_post:
+                            content = NotificationMessageBuilder.build_notification_content(
+                                job_post=job_post,
+                                overall_score=float(scored_match.overall_score),
+                                fit_score=float(scored_match.fit_score),
+                                want_score=float(scored_match.want_score) if scored_match.want_score else None,
+                                required_coverage=float(scored_match.jd_required_coverage),
+                                apply_url=job_post.company_url_direct
+                            )
+                            
+                            # Queue notification
+                            job = self.notification_service.notify_new_match(
+                                user_id=user_id,
+                                match_id=str(match_id),
+                                content=content,
+                                channels=['in_app']  # Use in_app to avoid external calls
+                            )
+                            
+                            if job:
+                                notification_count += 1
                     except Exception as e:
                         import traceback
                         print(f"  ⚠ Notification failed: {e}\n{traceback.format_exc()}")

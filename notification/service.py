@@ -29,10 +29,8 @@ import logging
 import uuid
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any, TYPE_CHECKING
+from typing import Optional, Dict, Any, List
 
-if TYPE_CHECKING:
-    from database.models import JobPost
 from enum import Enum
 from urllib.parse import urljoin
 
@@ -50,7 +48,7 @@ from database.repository import JobRepository
 from notification.channels import NotificationChannelFactory
 from notification.channels import RateLimitException
 from notification.tracker import NotificationTrackerService, NotificationEvent
-from notification.message_builder import NotificationMessageBuilder
+from notification.message_builder import NotificationMessageBuilder, JobNotificationContent
 
 logger = logging.getLogger(__name__)
 
@@ -280,15 +278,8 @@ class NotificationService:
         self,
         user_id: str,
         match_id: str,
-        job_title: str,
-        company: str,
-        score: float,
-        location: Optional[str] = None,
-        is_remote: bool = False,
+        content: JobNotificationContent,
         channels: Optional[list] = None,
-        job_post: Optional["JobPost"] = None,
-        match_data: Optional[Dict[str, Any]] = None,
-        apply_url: Optional[str] = None
     ) -> Dict[str, Optional[str]]:
         """
         Send notifications about a new job match to multiple channels.
@@ -296,21 +287,16 @@ class NotificationService:
         Args:
             user_id: User to notify
             match_id: Match ID
-            job_title: Job title
-            company: Company name
-            score: Match score
-            location: Job location
-            is_remote: Whether remote
+            content: JobNotificationContent with job details and match scores
             channels: List of channels to notify (default: ['email'])
-            job_post: Optional JobPost object with full job details
-            match_data: Optional dict with match details (fit_score, want_score, coverage, etc.)
-            apply_url: Optional direct apply URL
 
         Returns:
             Dict mapping channel names to notification IDs
         """
         if channels is None:
             channels = ['email']
+
+        score = content.match.overall_score
 
         if score >= self._priority_high:
             priority = NotificationPriority.HIGH
@@ -319,19 +305,7 @@ class NotificationService:
         else:
             priority = NotificationPriority.LOW
 
-        subject = f"🎯 {job_title} at {company}"
-
-        # Build job contents for rich notifications
-        job_contents = []
-        if job_post:
-            job_contents = [NotificationMessageBuilder.build_notification_content(
-                job_post=job_post,
-                overall_score=score,
-                fit_score=match_data.get('fit_score', score) if match_data else score,
-                want_score=match_data.get('want_score') if match_data else None,
-                required_coverage=match_data.get('required_coverage', 0) if match_data else 0,
-                apply_url=apply_url
-            )]
+        subject = f"🎯 {content.job.title} at {content.job.company}"
 
         results = {}
 
@@ -340,12 +314,12 @@ class NotificationService:
                 recipient = self._get_recipient_for_channel(user_id, channel)
 
                 metadata = {
-                    'job_title': job_title,
-                    'company': company,
+                    'job_title': content.job.title,
+                    'company': content.job.company,
                     'score': score,
-                    'is_remote': is_remote,
-                    'location': location,
-                    'job_contents': job_contents,
+                    'is_remote': content.job.is_remote,
+                    'location': content.job.location,
+                    'job_contents': [content],
                     'match_id': match_id,
                 }
 

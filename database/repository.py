@@ -200,9 +200,10 @@ class JobRepository:
     def get_existing_match(
         self,
         job_post_id: Any,
-        resume_fingerprint: str
+        resume_fingerprint: str,
+        load_job_post: bool = False
     ) -> Optional[JobMatch]:
-        return self.match.get_existing_match(job_post_id, resume_fingerprint)
+        return self.match.get_existing_match(job_post_id, resume_fingerprint, load_job_post)
 
     def get_matches_for_resume(
         self,
