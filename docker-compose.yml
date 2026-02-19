@@ -69,6 +69,23 @@ services:
       - "5050:80"
     depends_on:
       - postgres
+
+  # Notification Worker - processes async notifications from Redis queue
+  notification-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "notification.worker"]
+    depends_on:
+      - redis
+      - postgres
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres:5432/jobscout
+      - REDIS_URL=redis://redis:6379/0
+    restart: unless-stopped
+
   # Ollama for local embeddings
   # Ollama for local embeddings (Optional Profile)
   # Run with: docker compose --profile docker-ollama up
