@@ -21,7 +21,6 @@ sys.path.insert(0, str(project_root))
 
 from redis import Redis
 from rq import Worker, Queue
-from rq.connections import push_connection, pop_connection
 
 # Import the task function from notification service
 from notification import process_notification_task
@@ -50,18 +49,14 @@ def start_worker(burst: bool = False, queues: list = None):
         redis_conn.ping()
         logger.info("✓ Connected to Redis")
         
-        push_connection(redis_conn)
-        try:
-            worker = Worker(queues)
-            
-            if burst:
-                logger.info("Running in burst mode...")
-                worker.work(burst=True)
-            else:
-                logger.info("Worker started. Press Ctrl+C to stop.")
-                worker.work()
-        finally:
-            pop_connection()
+        worker = Worker(queues, connection=redis_conn)
+        
+        if burst:
+            logger.info("Running in burst mode...")
+            worker.work(burst=True)
+        else:
+            logger.info("Worker started. Press Ctrl+C to stop.")
+            worker.work()
                 
     except KeyboardInterrupt:
         logger.info("\nWorker stopped")
