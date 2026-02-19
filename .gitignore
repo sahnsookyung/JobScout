@@ -8,4 +8,6 @@
 *.pyc
 .env
 dist
+pipeline.lock
 **/node_modules/
+**/logs/
