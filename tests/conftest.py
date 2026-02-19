@@ -64,6 +64,59 @@ def test_database():
             conn.commit()
         Base.metadata.create_all(engine)
         
+        # Create ENUM types for user_files table (not created by Base.metadata.create_all)
+        with engine.connect() as conn:
+            conn.execute(text("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'upload_status') THEN
+                        CREATE TYPE upload_status AS ENUM ('pending', 'scanned', 'rejected', 'ready');
+                    END IF;
+                END
+                $$;
+            """))
+            
+            conn.execute(text("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'file_type') THEN
+                        CREATE TYPE file_type AS ENUM ('resume');
+                    END IF;
+                END
+                $$;
+            """))
+            
+            # Check and alter upload_status column
+            result = conn.execute(text("""
+                SELECT data_type FROM information_schema.columns 
+                WHERE table_name = 'user_files' AND column_name = 'upload_status'
+            """))
+            row = result.fetchone()
+            if row and row[0] != 'USER-DEFINED':
+                conn.execute(text("""
+                    ALTER TABLE user_files ALTER COLUMN upload_status TYPE upload_status 
+                    USING upload_status::upload_status
+                """))
+            
+            # Check and alter file_type column
+            result = conn.execute(text("""
+                SELECT data_type FROM information_schema.columns 
+                WHERE table_name = 'user_files' AND column_name = 'file_type'
+            """))
+            row = result.fetchone()
+            if row and row[0] != 'USER-DEFINED':
+                conn.execute(text("""
+                    ALTER TABLE user_files ALTER COLUMN file_type TYPE file_type 
+                    USING file_type::file_type
+                """))
+            
+            # Always set the default for upload_status
+            conn.execute(text("""
+                ALTER TABLE user_files ALTER COLUMN upload_status SET DEFAULT 'pending'::upload_status
+            """))
+            
+            conn.commit()
+        
         print(f"\n✓ Test database started: {db_url}")
         
         yield db_url
