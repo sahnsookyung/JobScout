@@ -41,7 +41,7 @@ import urllib.parse
 import ipaddress
 import socket
 
-from notification.message_builder import NotificationMessageBuilder
+from notification.message_builder import NotificationMessageBuilder, JobNotificationContent
 
 logger = logging.getLogger(__name__)
 
@@ -413,7 +413,9 @@ class DiscordChannel(NotificationChannel):
             
             if job_contents:
                 # Use rich embed format for job notifications
-                embeds = NotificationMessageBuilder.build_batch_embeds(job_contents)
+                # Reconstruct Pydantic models from dicts (serialized for safe JSON/RQ transport)
+                contents = [JobNotificationContent.model_validate(jc) for jc in job_contents]
+                embeds = NotificationMessageBuilder.build_batch_embeds(contents)
             else:
                 # Fallback to simple embed
                 embed = {

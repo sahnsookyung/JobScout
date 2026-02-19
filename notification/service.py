@@ -225,18 +225,21 @@ class NotificationService:
         Returns:
             Notification ID if sent/queued, None if suppressed as duplicate
         """
-        # Check deduplication
+        # Check deduplication with fresh session (avoid stale long-lived session issues)
         if not self.skip_dedup:
-            should_send = self.tracker.should_send_notification(
-                user_id=user_id,
-                job_match_id=job_match_id,
-                event_type=event_type,
-                channel_type=channel_type,
-                subject=subject,
-                body=body,
-                metadata=metadata
-            )
-            
+            with db_session_scope() as session:
+                fresh_repo = JobRepository(session)
+                fresh_tracker = NotificationTrackerService(fresh_repo)
+                should_send = fresh_tracker.should_send_notification(
+                    user_id=user_id,
+                    job_match_id=job_match_id,
+                    event_type=event_type,
+                    channel_type=channel_type,
+                    subject=subject,
+                    body=body,
+                    metadata=metadata
+                )
+
             if not should_send:
                 logger.info(f"Suppressing duplicate notification: {event_type} for {user_id}")
                 return None
@@ -319,7 +322,7 @@ class NotificationService:
                     'score': score,
                     'is_remote': content.job.is_remote,
                     'location': content.job.location,
-                    'job_contents': [content],
+                    'job_contents': [content.model_dump()],  # Serialize to plain dict for safe JSON/RQ serialization
                     'match_id': match_id,
                 }
 
