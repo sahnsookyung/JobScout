@@ -121,7 +121,6 @@ def _extract_scores(scored_match: Union[ScoredJobMatch, MatchResultDTO]):
             'base_score': scored_match.base_score,
             'penalties': scored_match.penalties,
             'penalty_details': scored_match.penalty_details,
-            'preferences_boost': scored_match.preferences_boost,
             'jd_required_coverage': scored_match.jd_required_coverage,
             'jd_preferences_coverage': scored_match.jd_preferences_coverage,
             'match_type': scored_match.match_type,
@@ -141,9 +140,7 @@ def _extract_scores(scored_match: Union[ScoredJobMatch, MatchResultDTO]):
             'penalty_details': {
                 'details': getattr(scored_match, 'penalty_details', []),
                 'total': _to_float(scored_match.penalties),
-                'preferences_boost': _to_float(getattr(scored_match, 'preferences_boost', 0.0))
             },
-            'preferences_boost': getattr(scored_match, 'preferences_boost', 0.0),
             'jd_required_coverage': scored_match.jd_required_coverage,
             'jd_preferences_coverage': scored_match.jd_preferences_coverage,
             'match_type': scored_match.match_type,
@@ -183,6 +180,20 @@ def save_match_to_db(
         JobMatch.resume_fingerprint == scored_match.resume_fingerprint
     )
     existing = repo.db.execute(existing_stmt).scalar_one_or_none()
+
+    # Determine if this job was previously hidden
+    is_hidden = False
+    if existing:
+        is_hidden = existing.is_hidden
+    else:
+        # Query if any match for this job is hidden (e.g. from an older resume)
+        hidden_stmt = select(JobMatch).where(
+            JobMatch.job_post_id == job_id,
+            JobMatch.is_hidden.is_(True)
+        ).limit(1)
+        hidden_match = repo.db.execute(hidden_stmt).scalar_one_or_none()
+        if hidden_match:
+            is_hidden = True
 
     # If we're replacing a stale match (job content changed), create new record
     # Otherwise update existing record in place
@@ -231,6 +242,7 @@ def save_match_to_db(
             match_type=scores['match_type'],
             job_content_hash=job_content_hash,
             notified=False,
+            is_hidden=is_hidden,
             calculated_at=func.now()
         )
         repo.db.add(match_record)

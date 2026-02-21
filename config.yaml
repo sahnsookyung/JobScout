@@ -92,15 +92,12 @@ matching:
     penalty_missing_required: 15.0
     penalty_seniority_mismatch: 10.0
     penalty_compensation_mismatch: 10.0
-    penalty_experience_shortfall: 15.0
-
-    # User preferences (for display-time hard filters, NOT scoring)
+    
+    # User preferences (for display-time hard filters)
     wants_remote: true
-    # min_salary: 50000
-    # max_salary: 150000
-    # target_seniority: "mid"  # junior|mid|senior
-    # avoid_industries: []
-    # avoid_roles: []
+    min_salary: null
+    target_seniority: null
+
 
 notifications:
   # Set to true to enable notifications (disabled by default)

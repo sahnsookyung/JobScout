@@ -165,25 +165,6 @@ def calculate_fit_penalties(
             'details': missing_reqs[:3]
         })
 
-    if config.target_seniority and job.job_level:
-        job_level = (job.job_level or '').lower()
-        target = config.target_seniority.lower()
-
-        seniority_mismatch = False
-        if target == 'junior' and ('senior' in job_level or 'lead' in job_level):
-            seniority_mismatch = True
-        elif target == 'senior' and ('junior' in job_level or 'entry' in job_level):
-            seniority_mismatch = True
-
-        if seniority_mismatch:
-            penalties += config.penalty_seniority_mismatch
-            penalty_details.append({
-                'type': 'seniority_mismatch',
-                'amount': config.penalty_seniority_mismatch,
-                'reason': "Seniority level mismatch",
-                'details': f"Job level: {job.job_level}, Target: {config.target_seniority}"
-            })
-
     penalized_requirements = set()
     experience_mismatch_penalty, experience_mismatch_details = _calculate_experience_penalty(
         matched_requirements, experience_sections, config, penalized_requirements
@@ -192,19 +173,5 @@ def calculate_fit_penalties(
     if experience_mismatch_penalty > 0:
         penalties += experience_mismatch_penalty
         penalty_details.extend(experience_mismatch_details)
-
-    if config.min_salary and job.salary_max:
-        try:
-            job_salary = float(job.salary_max)
-            if job_salary < config.min_salary:
-                penalties += config.penalty_compensation_mismatch
-                penalty_details.append({
-                    'type': 'compensation_mismatch',
-                    'amount': config.penalty_compensation_mismatch,
-                    'reason': "Salary below minimum requirement",
-                    'details': f"Job max: {job.salary_max}, User min: {config.min_salary}"
-                })
-        except (ValueError, TypeError):
-            pass
 
     return penalties, penalty_details

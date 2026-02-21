@@ -72,13 +72,12 @@ class MatchResultDTO:
     base_score: float = 0.0
     penalties: float = 0.0
     penalty_details: dict = field(default_factory=dict)
-    preferences_boost: float = 0.0
     fit_weight: float = 0.7
     want_weight: float = 0.3
     match_type: str = "requirements_only"
 
 
-def penalty_details_from_orm(orm_penalty_details, total_penalties: float = 0.0, preferences_boost: float = 0.0) -> dict:
+def penalty_details_from_orm(orm_penalty_details, total_penalties: float = 0.0) -> dict:
     """Convert ORM penalty_details (List) to dict format for database.
     
     Converts numpy types in list items to native Python types.
@@ -86,10 +85,9 @@ def penalty_details_from_orm(orm_penalty_details, total_penalties: float = 0.0, 
     Args:
         orm_penalty_details: List of penalty detail dicts from ORM
         total_penalties: Total penalty amount (from ORM penalties field)
-        preferences_boost: Preferences boost amount
     
     Returns:
-        Dict with 'details', 'total', and 'preferences_boost' keys
+        Dict with 'details' and 'total'
     """
     from core.scorer.persistence import _to_native_types
     
@@ -102,5 +100,4 @@ def penalty_details_from_orm(orm_penalty_details, total_penalties: float = 0.0, 
     return {
         'details': converted_details,
         'total': total_penalties,
-        'preferences_boost': preferences_boost,
     }

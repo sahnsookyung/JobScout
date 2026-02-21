@@ -228,7 +228,6 @@ class TestFullPipelineIntegration(unittest.TestCase):
         )
         cls.matcher = MatcherService(cls.resume_profiler, cls.matcher_config)
         
-        # Scoring Service
         cls.scorer_config = ScorerConfig(
             weight_required=0.7,
             weight_preferred=0.3,

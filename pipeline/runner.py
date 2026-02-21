@@ -447,10 +447,8 @@ def run_matching_pipeline(
                     penalties=getattr(match, 'penalties', 0.0),
                     penalty_details=penalty_details_from_orm(
                         getattr(match, 'penalty_details', []),
-                        total_penalties=getattr(match, 'penalties', 0.0),
-                        preferences_boost=getattr(match, 'preferences_boost', 0.0)
+                        total_penalties=getattr(match, 'penalties', 0.0)
                     ),
-                    preferences_boost=getattr(match, 'preferences_boost', 0.0),
                     fit_weight=getattr(match, 'fit_weight', 0.7),
                     want_weight=getattr(match, 'want_weight', 0.3),
                     match_type=getattr(match, 'match_type', 'requirements_only'),

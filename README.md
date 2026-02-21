@@ -176,4 +176,4 @@ _Coming soon: Dashboard screenshots and demo video_
 
 ## License
 
-PolyForm Noncommercial License 1.0.0
+GNU Affero General Public License v3.0

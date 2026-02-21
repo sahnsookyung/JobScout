@@ -25,7 +25,7 @@ class MatchSummary(BaseModel):
                 "penalties": 9.5,
                 "required_coverage": 0.9,
                 "preferred_coverage": 0.8,
-                "match_type": "with_preferences",
+                "match_type": "requirements_only",
                 "created_at": "2026-02-01T12:00:00",
                 "calculated_at": "2026-02-01T12:00:00"
             }

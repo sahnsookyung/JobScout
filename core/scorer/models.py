@@ -22,7 +22,6 @@ class ScoredJobMatch:
     want_components: Dict[str, Any] = field(default_factory=dict)
 
     base_score: float = 0.0
-    preferences_boost: float = 0.0
     penalties: float = 0.0
     jd_required_coverage: float = 0.0
     jd_preferences_coverage: float = 0.0

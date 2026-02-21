@@ -63,14 +63,6 @@ class ResultPolicy(BaseModel):
     min_jd_required_coverage: Optional[float] = None  # 0-1, optional gate
 
 
-class PreferenceWeights(BaseModel):
-    """Weights for preference alignment scoring."""
-    location: float = 0.35
-    company_size: float = 0.15
-    industry: float = 0.25
-    role: float = 0.25
-
-
 class MatcherConfig(BaseModel):
     """
     Configuration for the MatcherService (Stage 1: Vector Retrieval).
@@ -80,9 +72,6 @@ class MatcherConfig(BaseModel):
     enabled: bool = True
     similarity_threshold: float = 0.5  # Minimum similarity for a match
     batch_size: Optional[int] = None  # None = process all jobs
-    
-    # Preference weights (was hard-coded in matcher_service)
-    preference_weights: PreferenceWeights = Field(default_factory=PreferenceWeights)
 
 class FacetWeights(BaseModel):
     """Weights for each facet in Want score calculation."""
@@ -121,19 +110,11 @@ class ScorerConfig(BaseModel):
     penalty_compensation_mismatch: float = 10.0
     penalty_experience_shortfall: float = 15.0
 
-    # Legacy penalties (kept for backward compatibility with old scoring path)
-    penalty_location_mismatch: float = 10.0
-
-    # Preferences boost (kept for backward compatibility)
-    preferences_boost_max: float = 15.0
-
     # User preferences (for display-time hard filters)
     wants_remote: bool = True
     min_salary: Optional[int] = None
-    max_salary: Optional[int] = None
     target_seniority: Optional[str] = None
-    avoid_industries: List[str] = Field(default_factory=list)
-    avoid_roles: List[str] = Field(default_factory=list)
+
 
 class MatchingConfig(BaseModel):
     """

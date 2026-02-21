@@ -122,7 +122,6 @@ class ScoringService:
             fit_components=fit_components,
             want_components=want_components or {},
             base_score=fit_components.get("blended", 0.0) * 100.0,
-            preferences_boost=0.0,
             penalties=fit_penalties,
             jd_required_coverage=fit_components["required_coverage"],
             jd_preferences_coverage=fit_components["preferred_coverage"],

@@ -334,12 +334,24 @@ print_summary() {
     fi
     echo ""
     echo "  Logs:"
-    echo -e "    ${BLUE}Backend${NC}:   ${LOGS_DIR}/backend.log"
-    echo -e "    ${BLUE}Frontend${NC}:  ${LOGS_DIR}/frontend.log"
+    echo -e "    ${BLUE}Backend${NC}:     ${LOGS_DIR}/backend.log"
+    echo -e "    ${BLUE}Frontend${NC}:    ${LOGS_DIR}/frontend.log"
+    if [ "$DOCKER" = true ] || [ "$POSTGRES" = true ]; then
+        echo -e "    ${BLUE}PostgreSQL${NC}:  ${LOGS_DIR}/postgres.log"
+    fi
+    if [ "$DOCKER" = true ]; then
+        echo -e "    ${BLUE}Main Driver${NC}: ${LOGS_DIR}/main-driver.log"
+    fi
     echo ""
     echo "  To view logs in real-time:"
     echo -e "    ${YELLOW}tail -f ${LOGS_DIR}/backend.log${NC}"
     echo -e "    ${YELLOW}tail -f ${LOGS_DIR}/frontend.log${NC}"
+    if [ "$DOCKER" = true ] || [ "$POSTGRES" = true ]; then
+        echo -e "    ${YELLOW}tail -f ${LOGS_DIR}/postgres.log${NC}"
+    fi
+    if [ "$DOCKER" = true ]; then
+        echo -e "    ${YELLOW}tail -f ${LOGS_DIR}/main-driver.log${NC}"
+    fi
     echo ""
     echo "  Or use the logs script:"
     echo -e "    ${YELLOW}./scripts/setup_local_env/logs.sh -f${NC}   (follow all logs)"

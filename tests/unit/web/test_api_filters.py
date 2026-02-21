@@ -32,7 +32,7 @@ class TestMatchSummaryModel(unittest.TestCase):
             penalties=7.0,
             required_coverage=0.85,
             preferred_coverage=0.75,
-            match_type="with_preferences",
+            match_type="requirements_only",
             is_hidden=False,
             created_at="2026-02-01T12:00:00",
             calculated_at="2026-02-01T12:00:00"
@@ -59,7 +59,7 @@ class TestMatchSummaryModel(unittest.TestCase):
             penalties=12.0,
             required_coverage=0.70,
             preferred_coverage=0.60,
-            match_type="with_preferences",
+            match_type="requirements_only",
             is_hidden=True,
             created_at=None,
             calculated_at=None
@@ -111,7 +111,7 @@ class TestMatchSummaryModel(unittest.TestCase):
             penalties=7.0,
             required_coverage=0.80,
             preferred_coverage=0.70,
-            match_type="with_preferences",
+            match_type="requirements_only",
             created_at="2026-02-01T12:00:00",
             calculated_at="2026-02-01T12:00:00"
         )
