@@ -28,8 +28,8 @@ DEFAULT_REQ_SIMILARITY_THRESHOLD = 0.6  # in [0,1]
 DEFAULT_SIMILARITY_CLAMP = True          # clamp all similarities + job_similarity to [0,1]
 
 # Core weights (unitless, must be >= 0)
-DEFAULT_WEIGHT_REQUIRED = 0.60
-DEFAULT_JOB_SIMILARITY_WEIGHT = 0.30
+DEFAULT_WEIGHT_REQUIRED = 0.60 # Affects how much the resume/JD's REU,job_req similarity contribute to the score
+DEFAULT_JOB_SIMILARITY_WEIGHT = 0.325
 
 # Preferred bonus (fraction of 1; later multiplied by 100 into "points")
 DEFAULT_PREFERRED_BONUS_MAX_FRACTION = 0.15  # up to +15 points

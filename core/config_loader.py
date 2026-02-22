@@ -97,8 +97,8 @@ class ScorerConfig(BaseModel):
 
     # NEW: Fit/Want weights for overall score
     # overall_score = fit_weight * fit_score + want_weight * want_score
-    fit_weight: float = 0.70
-    want_weight: float = 0.30
+    fit_weight: float = 0.80
+    want_weight: float = 0.20
 
     # NEW: Facet weights for Want score calculation
     facet_weights: FacetWeights = Field(default_factory=FacetWeights)

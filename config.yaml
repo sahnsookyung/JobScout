@@ -71,8 +71,8 @@ matching:
 
     # Scoring weights (Fit: "can do the job", Want: "matches what I want")
     # overall_score = fit_weight * fit_score + want_weight * want_score
-    fit_weight: 0.70
-    want_weight: 0.30
+    fit_weight: 0.80
+    want_weight: 0.20
 
     # Facet weights for Want score calculation
     facet_weights:

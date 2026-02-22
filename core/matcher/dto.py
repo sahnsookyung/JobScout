@@ -77,7 +77,7 @@ class MatchResultDTO:
     match_type: str = "requirements_only"
 
 
-def penalty_details_from_orm(orm_penalty_details, total_penalties: float = 0.0) -> dict:
+def penalty_details_from_orm(orm_penalty_details, total_penalties: float = 0.0, **kwargs) -> dict:
     """Convert ORM penalty_details (List) to dict format for database.
     
     Converts numpy types in list items to native Python types.

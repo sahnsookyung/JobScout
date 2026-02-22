@@ -59,6 +59,7 @@ services:
       - ./core:/app/core:ro
       - ./database:/app/database:ro
       - ./etl:/app/etl:ro
+      - ./pipeline:/app/pipeline:ro
 
   pgadmin:
     image: dpage/pgadmin4
