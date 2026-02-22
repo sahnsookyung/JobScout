@@ -18,9 +18,14 @@ etl:
     resume_file: "resume.json"
     # force_re_extraction: false  # Uncomment to force re-extraction every time
   llm:
-    # Ollama base URL (can be overridden by ETL_LLM_BASE_URL env var)
+    # Base URL for LLM (extraction) - can be overridden by ETL_LLM_BASE_URL env var
+    # For local Ollama: http://localhost:11434/v1
+    # For external services: https://api.openai.com/v1, https://your-ollama-host/v1, etc.
     base_url: "http://localhost:11434/v1"
-    api_key: "ollama"  # Dummy key for local Ollama
+    # API Key - can be overridden by ETL_LLM_API_KEY env var
+    # For local Ollama: "ollama" (dummy key)
+    # For external services: your actual API key
+    api_key: "ollama"  
     
     # Extraction
     extraction_url: "" # Not used for Ollama/OpenAI
@@ -31,6 +36,9 @@ etl:
     # Embedding
     embedding_model: "qwen3-embedding:4b"
     embedding_dimensions: 1024 # Embedding Dimension: Up to 2560, supports user-defined output dimensions ranging from 32 to 2560 (https://huggingface.co/Qwen/Qwen3-Embedding-4B)
+    # Separate embedding service (optional) - override with ETL_EMBEDDING_BASE_URL and ETL_EMBEDDING_API_KEY
+    # embedding_base_url: "https://api.openai.com/v1"  # Uncomment and set for separate embedding endpoint
+    # embedding_api_key: "your-api-key"  # Uncomment and set for separate embedding API key
     
     extraction_labels:
       - "programming_language"

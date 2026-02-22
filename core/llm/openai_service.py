@@ -52,7 +52,9 @@ class OpenAIService(LLMProvider):
         self,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        model_config: Optional[Dict[str, Any]] = None
+        model_config: Optional[Dict[str, Any]] = None,
+        embedding_api_key: Optional[str] = None,
+        embedding_base_url: Optional[str] = None
     ):
         client_kwargs = {}
         if api_key:
@@ -61,6 +63,17 @@ class OpenAIService(LLMProvider):
             client_kwargs['base_url'] = base_url
             
         self.client = OpenAI(**client_kwargs)
+        
+        if embedding_base_url or embedding_api_key:
+            embedding_client_kwargs = {}
+            if embedding_api_key:
+                embedding_client_kwargs['api_key'] = embedding_api_key
+            if embedding_base_url:
+                embedding_client_kwargs['base_url'] = embedding_base_url
+            self.embedding_client = OpenAI(**embedding_client_kwargs)
+        else:
+            self.embedding_client = None
+        
         self.model_config = model_config or {}
         self.extraction_model = self.model_config.get('extraction_model', 'qwen3:14b')
         self.embedding_model = self.model_config.get('embedding_model', 'qwen3-embedding:4b')
@@ -206,7 +219,8 @@ class OpenAIService(LLMProvider):
     def generate_embedding(self, text: str) -> List[float]:
         """Generate embedding vector for text."""
         try:
-            response = self.client.embeddings.create(
+            client = self.embedding_client if self.embedding_client else self.client
+            response = client.embeddings.create(
                 input=text,
                 model=self.embedding_model,
                 dimensions=self.embedding_dimensions
