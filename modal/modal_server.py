@@ -13,7 +13,7 @@ tei_image = modal.Image.from_registry(
 
 # Lightweight Python image used only for the one-time model download.
 # The TEI image is a Rust binary with no Python, so we need a separate image here.
-download_image = modal.Image.debian_slim(python_version="3.11").pip_install(
+python_image = modal.Image.debian_slim(python_version="3.11").pip_install(
     "huggingface_hub"
 )
 
@@ -25,7 +25,7 @@ MODEL_ID = "Qwen/Qwen3-Embedding-4B"
 
 
 @app.function(
-    image=download_image,           # Python image, not TEI image
+    image=python_image,           # Python image, not TEI image
     volumes={"/data": volume},
     timeout=600,                    # allow enough time for the full model download
 )
