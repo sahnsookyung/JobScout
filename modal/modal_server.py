@@ -13,19 +13,21 @@ PORT = 8000
 volume = modal.Volume.from_name("qwen3-weights", create_if_missing=True)
 
 def download_model():
-    """Downloads model weights into the persistent volume via huggingface_hub."""
     from huggingface_hub import snapshot_download
     os.makedirs(HF_CACHE, exist_ok=True)
-    snapshot_download(repo_id=MODEL_ID, cache_dir=HF_CACHE)
+    snapshot_download(
+        repo_id=MODEL_ID,
+        cache_dir=HF_CACHE,  # must match HF_CACHE used in spawn_server
+    )
 
 def spawn_server() -> subprocess.Popen:
-    os.environ["HF_HOME"] = HF_CACHE
     process = subprocess.Popen([
         "text-embeddings-router",
         "--model-id", MODEL_ID,
         "--port", str(PORT),
         "--dtype", "float16",
         "--auto-truncate",
+        "--huggingface-hub-cache", HF_CACHE,  # tell TEI exactly where to find weights
     ])
     # Poll until TEI accepts connections
     while True:
