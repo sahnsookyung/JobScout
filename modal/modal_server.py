@@ -48,7 +48,7 @@ def download_model():
     timeout=600,                    # generous cap to cover cold start model load time
 )
 @modal.concurrent(max_inputs=100)  # allow up to 100 concurrent requests per container
-@modal.web_server(8000, startup_timeout=300, requires_auth=True)  # lock down the endpoint
+@modal.web_server(8000, startup_timeout=300)
 def serve():
     """
     Serverless TEI embedding server. Spins up on demand when called by the Docker container
