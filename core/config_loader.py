@@ -253,6 +253,24 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
             data['etl']['llm'] = {}
         data['etl']['llm']['embedding_api_key'] = env_embedding_api_key
 
+    # Allow env var override for Extraction Model
+    env_extraction_model = os.environ.get("ETL_LLM_EXTRACTION_MODEL")
+    if env_extraction_model:
+        if 'etl' not in data:
+            data['etl'] = {}
+        if 'llm' not in data['etl']:
+            data['etl']['llm'] = {}
+        data['etl']['llm']['extraction_model'] = env_extraction_model
+
+    # Allow env var override for Embedding Model
+    env_embedding_model = os.environ.get("ETL_EMBEDDING_MODEL")
+    if env_embedding_model:
+        if 'etl' not in data:
+            data['etl'] = {}
+        if 'llm' not in data['etl']:
+            data['etl']['llm'] = {}
+        data['etl']['llm']['embedding_model'] = env_embedding_model
+
     # Validate LLM configuration - require api_key env var if base_url points to external service
     # Only validate when ETL_LLM_BASE_URL is explicitly set via env var
     env_llm_base_url = os.environ.get("ETL_LLM_BASE_URL")
