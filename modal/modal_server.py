@@ -26,7 +26,7 @@ def download_model():
 # - Model downloaded during image build so weights are always present on cold start
 tei_image = (
     modal.Image.from_registry(
-        "ghcr.io/huggingface/text-embeddings-inference:89-1.5",
+        "ghcr.io/huggingface/text-embeddings-inference:89-1.9.1",
         add_python="3.11",
     )
     .dockerfile_commands("ENTRYPOINT []")
