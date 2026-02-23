@@ -17,7 +17,7 @@ volume = modal.Volume.from_name("qwen3-weights", create_if_missing=True)
 
 def download_model():
     from huggingface_hub import snapshot_download
-    snapshot_download(MODEL_ID, cache_dir=MODEL_DIR)
+    snapshot_download(MODEL_ID, cache_dir=MODEL_DIR, requires_proxy_auth=True)
 
 
 # TEI image optimised for Ada Lovelace GPUs (SM 8.9) such as the L4.

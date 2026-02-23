@@ -68,9 +68,11 @@ class AppContext:
         return OpenAIService(
             base_url=llm_config.base_url,
             api_key=llm_config.api_key,
+            api_secret=llm_config.api_secret,
             model_config=model_config,
             embedding_base_url=llm_config.embedding_base_url,
-            embedding_api_key=llm_config.embedding_api_key
+            embedding_api_key=llm_config.embedding_api_key,
+            embedding_api_secret=llm_config.embedding_api_secret
         )
 
     @staticmethod

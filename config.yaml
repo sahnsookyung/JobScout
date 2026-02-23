@@ -25,7 +25,10 @@ etl:
     # API Key - can be overridden by ETL_LLM_API_KEY env var
     # For local Ollama: "ollama" (dummy key)
     # For external services: your actual API key
-    api_key: "ollama"  
+    api_key: "ollama"
+    # API Secret (optional) - can be overridden by ETL_LLM_API_SECRET env var
+    # For services that require both key and secret (e.g., some AWS, Azure configurations)
+    # api_secret: "your-api-secret"
     
     # Extraction
     extraction_url: "" # Not used for Ollama/OpenAI
@@ -39,6 +42,7 @@ etl:
     # Separate embedding service (optional) - override with ETL_EMBEDDING_BASE_URL and ETL_EMBEDDING_API_KEY
     # embedding_base_url: "https://api.openai.com/v1"  # Uncomment and set for separate embedding endpoint
     # embedding_api_key: "your-api-key"  # Uncomment and set for separate embedding API key
+    # embedding_api_secret: "your-api-secret"  # Uncomment and set for separate embedding API secret (optional)
     
     extraction_labels:
       - "programming_language"

@@ -155,8 +155,39 @@ stop_docker() {
     fi
 }
 
-# Kill a process tree by port
-# This kills parent wrapper processes (like uv, npm) and their children
+# Kill only child processes by port (don't kill parent like npm)
+# This is used for frontend to avoid killing npm which can affect browser
+kill_child_only_by_port() {
+    local port=$1
+    
+    # Get PIDs listening on port
+    local pids
+    pids=$(lsof -ti:${port} 2>/dev/null)
+    
+    if [ -z "$pids" ]; then
+        return 1
+    fi
+    
+    # Only kill child processes (node, vite), not parent (npm)
+    for pid in $pids; do
+        local process_name
+        process_name=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ')
+        # Kill node/vite processes but not npm
+        if [ "$process_name" = "node" ] || [ "$process_name" = "vite" ]; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+    
+    sleep 1
+    
+    # Kill any remaining processes on port
+    lsof -ti:${port} 2>/dev/null | xargs kill -9 2>/dev/null || true
+    
+    return 0
+}
+
+# Kill a process tree by port (kills parent wrapper processes like uv and their children)
+# This is more aggressive - use for backend only
 kill_process_tree_by_port() {
     local port=$1
     local pids_file
@@ -232,9 +263,9 @@ stop_backend() {
 stop_frontend() {
     log_info "Stopping frontend on port ${FRONTEND_PORT}..."
 
-    # Kill by port - kill entire process tree to catch parent (npm) and child (vite)
+    # Kill only child processes (node/vite) without killing npm parent
     if lsof -ti:${FRONTEND_PORT} >/dev/null 2>&1; then
-        if kill_process_tree_by_port ${FRONTEND_PORT}; then
+        if kill_child_only_by_port ${FRONTEND_PORT}; then
             log_success "Frontend stopped"
         else
             log_error "Failed to stop frontend"
@@ -243,8 +274,6 @@ stop_frontend() {
         # Also try by process name as fallback
         if pgrep -f "vite" > /dev/null; then
             pkill -f "vite" 2>/dev/null || true
-            # Also kill npm wrapper if it exists
-            pgrep -f "npm run dev" > /dev/null && pkill -f "npm run dev" 2>/dev/null || true
             log_success "Frontend stopped (by process name)"
         else
             log_info "Frontend not running on port ${FRONTEND_PORT}"

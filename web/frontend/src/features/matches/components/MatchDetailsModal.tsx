@@ -199,11 +199,11 @@ function ScoresSection({ match }: { match: any }) {
             <div className="grid grid-cols-2 gap-4 bg-gray-50 p-6 rounded-2xl border border-gray-200">
                 <div>
                     <div className="text-xs font-bold text-gray-600 uppercase tracking-wider mb-1">Required Coverage</div>
-                    <div className="text-2xl font-black text-gray-900">{formatScore(match.required_coverage * 100)}%</div>
+                    <div className="text-2xl font-black text-gray-900">{formatScore(match.required_coverage * 100)}</div>
                 </div>
                 <div>
                     <div className="text-xs font-bold text-gray-600 uppercase tracking-wider mb-1">Preferred Coverage</div>
-                    <div className="text-2xl font-black text-gray-900">{formatScore(match.preferred_coverage * 100)}%</div>
+                    <div className="text-2xl font-black text-gray-900">{formatScore(match.preferred_coverage * 100)}</div>
                 </div>
                 <div>
                     <div className="text-xs font-bold text-gray-600 uppercase tracking-wider mb-1">Matched Requirements</div>
@@ -226,8 +226,8 @@ function RequirementCard({ req }: { req: any }) {
 
     return (
         <div className={`p-5 rounded-2xl border-2 transition-all duration-200 ${isCovered
-                ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200 hover:border-blue-300'
-                : 'bg-gray-50 border-gray-200 hover:border-gray-300'
+            ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200 hover:border-blue-300'
+            : 'bg-gray-50 border-gray-200 hover:border-gray-300'
             }`}>
             <div className="flex items-start justify-between gap-4 mb-3">
                 <div className="flex items-center gap-2">

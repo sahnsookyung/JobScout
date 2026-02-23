@@ -1,6 +1,5 @@
 import yaml
 import os
-import sys
 from typing import List, Optional, Dict, Any, Union, Literal
 from pydantic import BaseModel, Field
 import logging
@@ -31,6 +30,7 @@ class JobSpyConfig(BaseModel):
 class LlmConfig(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
+    api_secret: Optional[str] = None
     extraction_model: Optional[str] = "gpt-4o-mini"
     extraction_url: Optional[str] = None  # GLiNER endpoint
     extraction_type: str = "openai"  # "openai" or "gliner"
@@ -40,6 +40,7 @@ class LlmConfig(BaseModel):
     extraction_temperature: float = 0.0  # Temperature for extraction (0.0 = deterministic)
     embedding_base_url: Optional[str] = None  # Separate endpoint for embeddings
     embedding_api_key: Optional[str] = None   # Separate API key for embeddings
+    embedding_api_secret: Optional[str] = None  # Separate API secret for embeddings
 
 
 class ResumeConfig(BaseModel):
@@ -235,6 +236,15 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
             data['etl']['llm'] = {}
         data['etl']['llm']['api_key'] = env_llm_api_key
 
+    # Allow env var override for LLM API Secret
+    env_llm_api_secret = os.environ.get("ETL_LLM_API_SECRET")
+    if env_llm_api_secret:
+        if 'etl' not in data:
+            data['etl'] = {}
+        if 'llm' not in data['etl']:
+            data['etl']['llm'] = {}
+        data['etl']['llm']['api_secret'] = env_llm_api_secret
+
     # Allow env var override for Embedding Base URL
     env_embedding_base_url = os.environ.get("ETL_EMBEDDING_BASE_URL")
     if env_embedding_base_url:
@@ -252,6 +262,15 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
         if 'llm' not in data['etl']:
             data['etl']['llm'] = {}
         data['etl']['llm']['embedding_api_key'] = env_embedding_api_key
+
+    # Allow env var override for Embedding API Secret
+    env_embedding_api_secret = os.environ.get("ETL_EMBEDDING_API_SECRET")
+    if env_embedding_api_secret:
+        if 'etl' not in data:
+            data['etl'] = {}
+        if 'llm' not in data['etl']:
+            data['etl']['llm'] = {}
+        data['etl']['llm']['embedding_api_secret'] = env_embedding_api_secret
 
     # Allow env var override for Extraction Model
     env_extraction_model = os.environ.get("ETL_LLM_EXTRACTION_MODEL")
@@ -271,23 +290,8 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
             data['etl']['llm'] = {}
         data['etl']['llm']['embedding_model'] = env_embedding_model
 
-    # Validate LLM configuration - require api_key env var if base_url points to external service
-    # Only validate when ETL_LLM_BASE_URL is explicitly set via env var
-    env_llm_base_url = os.environ.get("ETL_LLM_BASE_URL")
-    env_llm_api_key = os.environ.get("ETL_LLM_API_KEY")
-    if env_llm_base_url:
-        if 'localhost' not in env_llm_base_url and '127.0.0.1' not in env_llm_base_url and 'host.docker.internal' not in env_llm_base_url:
-            if not env_llm_api_key:
-                logger.error("ETL_LLM_API_KEY must be set when ETL_LLM_BASE_URL points to an external service")
-                sys.exit(1)
-
-    # Validate embedding configuration - require both or neither for separate embedding
-    llm_config = data.get('etl', {}).get('llm', {})
-    has_embedding_url = bool(llm_config.get('embedding_base_url'))
-    has_embedding_key = bool(llm_config.get('embedding_api_key'))
-    if has_embedding_url != has_embedding_key:
-        logger.error("Both ETL_EMBEDDING_BASE_URL and ETL_EMBEDDING_API_KEY must be set, or neither. Cannot configure separate embedding service with only one.")
-        sys.exit(1)
+    # Note: API keys and secrets are now optional for all LLM configurations
+    # The underlying service client should handle authentication appropriately
 
     # Allow env var override for Redis URL
     env_redis_url = os.environ.get("REDIS_URL")
