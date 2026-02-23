@@ -17,7 +17,7 @@ volume = modal.Volume.from_name("qwen3-weights", create_if_missing=True)
 
 def download_model():
     from huggingface_hub import snapshot_download
-    snapshot_download(MODEL_ID, cache_dir=MODEL_DIR, requires_proxy_auth=True)
+    snapshot_download(MODEL_ID, cache_dir=MODEL_DIR)
 
 
 # TEI image optimised for Ada Lovelace GPUs (SM 8.9) such as the L4.
@@ -76,7 +76,7 @@ class TextEmbeddingsInference:
         """Clean up TEI when the container shuts down."""
         self.process.terminate()
 
-    @modal.web_server(PORT, startup_timeout=5 * MINUTES)
+    @modal.web_server(PORT, startup_timeout=5 * MINUTES, requires_proxy_auth=True)
     def serve(self):
         """
         Exposes TEI as a web server on the container.
