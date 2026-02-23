@@ -6,25 +6,20 @@ Handles:
 1. Structured resume extraction using AI
 2. Resume evidence unit extraction
 3. Section embedding generation
-
-This separates resume profiling concerns from job matching logic.
 """
-from typing import List, Dict, Any, Optional
 import logging
 import json
+import threading
+from typing import List, Dict, Any, Optional, Iterator
 
 from database.models import generate_resume_fingerprint
-import threading
 from core.llm.interfaces import LLMProvider
 from etl.resume.models import ResumeEvidenceUnit
 from etl.resume.embedding_store import (
     ResumeSectionEmbeddingStore,
     ResumeEvidenceUnitEmbeddingStore,
 )
-from core.llm.schema_models import (
-    ResumeSchema,
-    Profile,
-)
+from core.llm.schema_models import ResumeSchema, Profile
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +27,7 @@ logger = logging.getLogger(__name__)
 class ResumeProfiler:
     """
     Service for extracting and profiling resume data.
-
     Separates resume analysis from job matching logic.
-    Can be used independently for resume parsing and profiling.
-
-    Note: This class no longer directly persists to the database.
-    Use the optional store parameter to persist embeddings, or call
-    the persistence layer separately.
     """
 
     def __init__(
@@ -46,366 +35,143 @@ class ResumeProfiler:
         ai_service: LLMProvider,
         store: Optional[ResumeSectionEmbeddingStore | ResumeEvidenceUnitEmbeddingStore] = None
     ):
-        """
-        Args:
-            ai_service: AI service for extraction and embeddings
-            store: Optional store for persistence (if None, no DB writes)
-        """
         self.ai = ai_service
         self.store = store
 
-    def extract_structured_resume(
-        self,
-        resume_data: Dict[str, Any]
-    ) -> Optional[ResumeSchema]:
-        """
-        Extract comprehensive structured resume data using AI.
-
-        Uses RESUME_SCHEMA to extract work history with dates,
-        skills, education, and captures claimed years of experience.
-
-        Args:
-            resume_data: Raw resume JSON data
-
-        Returns:
-            ResumeSchema Pydantic model with structured data, or None if extraction fails
-        """
+    def extract_structured_resume(self, resume_data: Dict[str, Any]) -> Optional[ResumeSchema]:
+        """Extract comprehensive structured resume data using AI."""
+        resume_text = resume_data.get('raw_text') or json.dumps(resume_data, indent=2)
+        
         try:
-            # Handle text-based formats (PDF, DOCX, TXT) that provide raw_text
-            if 'raw_text' in resume_data:
-                resume_text = resume_data['raw_text']
-            else:
-                resume_text = json.dumps(resume_data, indent=2)
-
-            extraction_result = self.ai.extract_resume_data(resume_text)
-
-            if not extraction_result or 'profile' not in extraction_result:
+            result = self.ai.extract_resume_data(resume_text)
+            if not result or 'profile' not in result:
                 logger.warning("Failed to extract structured resume data")
                 return None
 
-            # Validate and parse with Pydantic
-            resume = ResumeSchema.model_validate(extraction_result)
-            
+            resume = ResumeSchema.model_validate(result)
             logger.info(
                 f"Extracted resume with {len(resume.profile.experience)} experience entries, "
                 f"claimed {resume.claimed_total_years or 'unknown'} years experience"
             )
-
             return resume
 
         except Exception as e:
             logger.error(f"Error extracting structured resume: {e}")
             return None
 
-    def extract_resume_evidence(
-        self,
-        profile: Profile
-    ) -> List[ResumeEvidenceUnit]:
-        """
-        Extract Resume Evidence Units from structured profile.
+    def extract_resume_evidence(self, profile: Profile) -> List[ResumeEvidenceUnit]:
+        """Extract Resume Evidence Units from structured profile."""
+        
+        def _generate_unit_data() -> Iterator[Dict[str, Any]]:
+            # Experience
+            for idx, exp in enumerate(profile.experience):
+                if exp.description:
+                    yield dict(text=exp.description, source="Experience", tags={'company': exp.company or '', 'title': exp.title or '', 'index': idx, 'type': 'description', 'is_current': exp.is_current}, y_val=exp.years_value, y_ctx='experience_at_company' if exp.company else 'experience')
+                
+                for h in (exp.highlights or []):
+                    yield dict(text=h, source="Experience", tags={'company': exp.company or '', 'title': exp.title or '', 'index': idx, 'type': 'highlight', 'is_current': exp.is_current})
+                
+                for tech in exp.tech_keywords:
+                    has_tech = tech in (exp.description or '').lower()
+                    yield dict(text=f"Experience with {tech}", source="Experience", tags={'company': exp.company or '', 'title': exp.title or '', 'technology': tech, 'type': 'tech_keyword'}, y_val=exp.years_value if has_tech else None, y_ctx=f'{tech}_experience' if has_tech else None)
 
-        Creates evidence units from:
-        - Experience descriptions
-        - Individual skills with metadata
+            # Projects
+            if profile.projects and profile.projects.items:
+                for idx, proj in enumerate(profile.projects.items):
+                    if proj.description:
+                        yield dict(text=proj.description, source="Projects", tags={'project': proj.name or '', 'index': idx, 'type': 'description'})
+                    for h in (proj.highlights or []):
+                        yield dict(text=h, source="Projects", tags={'project': proj.name or '', 'index': idx, 'type': 'highlight'})
 
-        Args:
-            profile: Structured resume profile from extraction
+            # Education
+            if profile.education:
+                for idx, edu in enumerate(profile.education):
+                    if edu.description:
+                        yield dict(text=edu.description, source="Education", tags={'institution': edu.institution or '', 'degree': edu.degree or '', 'index': idx, 'type': 'description'})
+                    for h in (edu.highlights or []):
+                        yield dict(text=h, source="Education", tags={'institution': edu.institution or '', 'degree': edu.degree or '', 'index': idx, 'type': 'highlight'})
 
-        Returns:
-            List of ResumeEvidenceUnit objects
-        """
-        evidence_units = []
-        unit_id = 0
+            # Skills
+            for skill in profile.skills.all:
+                if skill.name:
+                    text = skill.to_embedding_text()
+                    text = text.strip() if text and text.strip() else skill.name
+                    yield dict(text=text, source="Skills", tags={'skill': skill.name, 'kind': skill.kind or '', 'proficiency': skill.proficiency or '', 'years_experience': skill.years_experience, 'type': 'skill'}, y_val=skill.years_experience, y_ctx=f'{skill.name}_skill')
 
-        # Extract from experience descriptions
-        for idx, exp in enumerate(profile.experience):
-            if exp.description:
-                evidence_units.append(ResumeEvidenceUnit(
-                    id=f"reu_{unit_id}",
-                    text=exp.description,
-                    source_section="Experience",
-                    tags={
-                        'company': exp.company or '',
-                        'title': exp.title or '',
-                        'index': idx,
-                        'type': 'description',
-                        'is_current': exp.is_current
-                    },
-                    years_value=exp.years_value,
-                    years_context='experience_at_company' if exp.company else 'experience',
-                    is_total_years_claim=False,
-                ))
-                unit_id += 1
-
-            if exp.highlights:
-                for highlight in exp.highlights:
-                    evidence_units.append(ResumeEvidenceUnit(
-                        id=f"reu_{unit_id}",
-                        text=highlight,
-                        source_section="Experience",
-                        tags={
-                            'company': exp.company or '',
-                            'title': exp.title or '',
-                            'index': idx,
-                            'type': 'highlight',
-                            'is_current': exp.is_current
-                        },
-                        years_value=None,  # Do not double count years from highlights
-                        years_context=None,
-                        is_total_years_claim=False,
-                    ))
-                    unit_id += 1
-
-            # Also extract from tech keywords as individual evidence
-            for tech in exp.tech_keywords:
-                description_lower = (exp.description or '').lower()
-                evidence_units.append(ResumeEvidenceUnit(
-                    id=f"reu_{unit_id}",
-                    text=f"Experience with {tech}",
-                    source_section="Experience",
-                    tags={
-                        'company': exp.company or '',
-                        'title': exp.title or '',
-                        'technology': tech,
-                        'type': 'tech_keyword'
-                    },
-                    years_value=exp.years_value if tech in description_lower else None,
-                    years_context=f'{tech}_experience' if tech in description_lower else None,
-                    is_total_years_claim=False,
-                ))
-                unit_id += 1
-
-        # Extract from projects (if available)
-        if profile.projects and profile.projects.items:
-            for idx, project in enumerate(profile.projects.items):
-                # Description
-                if project.description:
-                    evidence_units.append(ResumeEvidenceUnit(
-                        id=f"reu_{unit_id}",
-                        text=project.description,
-                        source_section="Projects",
-                        tags={
-                            'project': project.name or '',
-                            'index': idx,
-                            'type': 'description'
-                        },
-                        years_value=None,
-                        years_context=None,
-                        is_total_years_claim=False,
-                    ))
-                    unit_id += 1
-
-                # Highlights
-                if project.highlights:
-                    for highlight in project.highlights:
-                        evidence_units.append(ResumeEvidenceUnit(
-                            id=f"reu_{unit_id}",
-                            text=highlight,
-                            source_section="Projects",
-                            tags={
-                                'project': project.name or '',
-                                'index': idx,
-                                'type': 'highlight'
-                            },
-                            years_value=None,
-                            years_context=None,
-                            is_total_years_claim=False,
-                        ))
-                        unit_id += 1
-
-        # Extract from education (if available)
-        if profile.education:
-            for idx, edu in enumerate(profile.education):
-                # Description
-                if edu.description:
-                    evidence_units.append(ResumeEvidenceUnit(
-                        id=f"reu_{unit_id}",
-                        text=edu.description,
-                        source_section="Education",
-                        tags={
-                            'institution': edu.institution or '',
-                            'degree': edu.degree or '',
-                            'index': idx,
-                            'type': 'description'
-                        },
-                        years_value=None,
-                        years_context=None,
-                        is_total_years_claim=False,
-                    ))
-                    unit_id += 1
-
-                # Highlights
-                if edu.highlights:
-                    for highlight in edu.highlights:
-                        evidence_units.append(ResumeEvidenceUnit(
-                            id=f"reu_{unit_id}",
-                            text=highlight,
-                            source_section="Education",
-                            tags={
-                                'institution': edu.institution or '',
-                                'degree': edu.degree or '',
-                                'index': idx,
-                                'type': 'highlight'
-                            },
-                            years_value=None,
-                            years_context=None,
-                            is_total_years_claim=False,
-                        ))
-                        unit_id += 1
-
-        # Extract from skills
-        for skill in profile.skills.all:
-            if skill.name:
-                # Compute embedding text and clean whitespace
-                text = skill.to_embedding_text()
-                if not text or not text.strip():
-                    text = skill.name
-                else:
-                    text = text.strip()
-
-                evidence_units.append(ResumeEvidenceUnit(
-                    id=f"reu_{unit_id}",
-                    text=text,
-                    source_section="Skills",
-                    tags={
-                        'skill': skill.name,
-                        'kind': skill.kind or '',
-                        'proficiency': skill.proficiency or '',
-                        'years_experience': skill.years_experience,
-                        'type': 'skill'
-                    },
-                    years_value=skill.years_experience,
-                    years_context=f'{skill.name}_skill',
-                    is_total_years_claim=False,
-                ))
-                unit_id += 1
+        # Build objects using enumerate for the ID
+        evidence_units = [
+            ResumeEvidenceUnit(
+                id=f"reu_{i}",
+                text=data['text'],
+                source_section=data['source'],
+                tags=data['tags'],
+                years_value=data.get('y_val'),
+                years_context=data.get('y_ctx'),
+                is_total_years_claim=False
+            )
+            for i, data in enumerate(_generate_unit_data())
+        ]
 
         logger.info(f"Extracted {len(evidence_units)} evidence units from resume")
         return evidence_units
 
-    def embed_evidence_units(
-        self,
-        evidence_units: List[ResumeEvidenceUnit]
-    ) -> None:
+    def embed_evidence_units(self, evidence_units: List[ResumeEvidenceUnit]) -> None:
         """Generate embeddings for evidence units in-place."""
         for unit in evidence_units:
             if unit.embedding is None:
                 unit.embedding = self.ai.generate_embedding(unit.text)
 
-    def save_evidence_unit_embeddings(
-        self,
-        resume_fingerprint: str,
-        evidence_units: List[ResumeEvidenceUnit]
-    ) -> None:
-        """
-        Persist evidence unit embeddings to DB.
-
-        Args:
-            resume_fingerprint: Unique identifier for the resume
-            evidence_units: List of evidence units with embeddings
-        """
-        if not evidence_units:
+    def save_evidence_unit_embeddings(self, resume_fingerprint: str, evidence_units: List[ResumeEvidenceUnit]) -> None:
+        """Persist evidence unit embeddings to DB."""
+        if not evidence_units or not self.store:
             return
 
-        units_with_embeddings = []
-        for unit in evidence_units:
-            if unit.embedding is not None:
-                units_with_embeddings.append({
-                    'evidence_unit_id': unit.id,
-                    'source_text': unit.text,
-                    'source_section': unit.source_section,
-                    'tags': unit.tags,
-                    'embedding': unit.embedding,
-                    'years_value': unit.years_value,
-                    'years_context': unit.years_context,
-                    'is_total_years_claim': unit.is_total_years_claim,
-                })
+        payload = [
+            {
+                'evidence_unit_id': u.id,
+                'source_text': u.text,
+                'source_section': u.source_section,
+                'tags': u.tags,
+                'embedding': u.embedding,
+                'years_value': u.years_value,
+                'years_context': u.years_context,
+                'is_total_years_claim': u.is_total_years_claim,
+            }
+            for u in evidence_units if u.embedding is not None
+        ]
 
-        if units_with_embeddings and self.store:
-            self.store.save_evidence_unit_embeddings(
-                resume_fingerprint=resume_fingerprint,
-                evidence_units=units_with_embeddings
-            )
-            logger.info(
-                f"Saved {len(units_with_embeddings)} evidence unit embeddings "
-                f"for fingerprint {resume_fingerprint}"
-            )
+        if payload:
+            self.store.save_evidence_unit_embeddings(resume_fingerprint, payload)
+            logger.info(f"Saved {len(payload)} evidence unit embeddings for fingerprint {resume_fingerprint}")
 
-    def save_resume_section_embeddings(
-        self,
-        resume_fingerprint: str,
-        resume: ResumeSchema
-    ) -> List[Dict[str, Any]]:
-        """
-        Generate embeddings for individual resume sections.
-
-        Creates embeddings for experience, skills, and summary
-        to enable granular matching against job requirements.
-
-        If store is configured, persists the embeddings.
-
-        Args:
-            resume_fingerprint: Unique identifier for the resume
-            resume: Parsed ResumeSchema with structured data
-
-        Returns:
-            List of section dictionaries with embedding data (persistence payload)
-        """
-        sections_to_embed = []
+    def save_resume_section_embeddings(self, resume_fingerprint: str, resume: ResumeSchema) -> List[Dict[str, Any]]:
+        """Generate and optionally persist embeddings for individual resume sections."""
+        sections = []
         profile = resume.profile
 
-        # Experience sections
         for idx, exp in enumerate(profile.experience):
-            source_text = exp.to_embedding_text()
-            if source_text:
-                sections_to_embed.append({
-                    'section_type': 'experience',
-                    'section_index': idx,
-                    'source_text': source_text,
-                    'source_data': exp.model_dump()
-                })
+            if text := exp.to_embedding_text():
+                sections.append({'section_type': 'experience', 'section_index': idx, 'source_text': text, 'source_data': exp.model_dump()})
 
-        # Skills section
-        skills_text = profile.skills.to_embedding_text()
-        if skills_text:
-            sections_to_embed.append({
-                'section_type': 'skills',
-                'section_index': 0,
-                'source_text': skills_text,
-                'source_data': profile.skills.model_dump()
-            })
+        if text := profile.skills.to_embedding_text():
+            sections.append({'section_type': 'skills', 'section_index': 0, 'source_text': text, 'source_data': profile.skills.model_dump()})
 
-        # Summary section
-        summary = profile.summary
-        if summary and summary.text:
-            sections_to_embed.append({
-                'section_type': 'summary',
-                'section_index': 0,
-                'source_text': summary.text,
-                'source_data': summary.model_dump()
-            })
+        if profile.summary and profile.summary.text:
+            sections.append({'section_type': 'summary', 'section_index': 0, 'source_text': profile.summary.text, 'source_data': profile.summary.model_dump()})
 
-        # Generate embeddings
-        sections_with_embeddings = []
-        for section in sections_to_embed:
-            embedding = self.ai.generate_embedding(section['source_text'])
-            sections_with_embeddings.append({
-                **section,
-                'embedding': embedding
-            })
+        payload = [{**sec, 'embedding': self.ai.generate_embedding(sec['source_text'])} for sec in sections]
 
-        # Persist if store available
-        if self.store and sections_with_embeddings:
-            self.store.save_resume_section_embeddings(
-                resume_fingerprint=resume_fingerprint,
-                sections=sections_with_embeddings
-            )
-            logger.info(
-                f"Saved {len(sections_with_embeddings)} resume section embeddings "
-                f"for fingerprint {resume_fingerprint}"
-            )
+        if payload and self.store:
+            self.store.save_resume_section_embeddings(resume_fingerprint, payload)
+            logger.info(f"Saved {len(payload)} resume section embeddings for fingerprint {resume_fingerprint}")
 
-        return sections_with_embeddings
+        return payload
+
+    def _check_interrupted(self, stop_event: Optional[threading.Event]) -> None:
+        """Helper to check for early termination."""
+        if stop_event and stop_event.is_set():
+            logger.info("Resume profiling interrupted (stop event set)")
+            raise InterruptedError("Interrupted by system")
 
     def profile_resume(
         self,
@@ -414,30 +180,7 @@ class ResumeProfiler:
         pre_extracted_resume: Optional[ResumeSchema] = None,
         resume_fingerprint: Optional[str] = None,
     ) -> tuple[Optional[ResumeSchema], List[ResumeEvidenceUnit], List[Dict[str, Any]]]:
-        """
-        Complete resume profiling pipeline.
-
-        Extracts structured profile, evidence units, and embeddings.
-        
-        If pre_extracted_resume is provided, skips LLM extraction and uses
-        the provided ResumeSchema directly. This enables using cached/stored
-        resumes without re-extraction.
-
-        Note: Persistence to database only occurs if a store was provided
-        to the constructor. Otherwise, the persistence payload is returned
-        for the caller to handle.
-
-        Args:
-            resume_data: Raw resume JSON data (used for fingerprint calculation if pre_extracted_resume not provided)
-            stop_event: Optional stop event for interruption
-            pre_extracted_resume: Optional pre-extracted ResumeSchema to use instead of re-extracting
-            resume_fingerprint: Optional fingerprint (required if using pre_extracted_resume)
-
-        Returns:
-            Tuple of (ResumeSchema or None, List[ResumeEvidenceUnit], persistence_payload)
-            where persistence_payload is a list of section dicts with embeddings (empty if no profile)
-        """
-        # Use pre-extracted resume if provided, otherwise extract from resume_data
+        """Complete resume profiling pipeline."""
         if pre_extracted_resume:
             if not resume_fingerprint:
                 raise ValueError("resume_fingerprint is required when using pre_extracted_resume")
@@ -445,34 +188,19 @@ class ResumeProfiler:
             logger.info("Using pre-extracted resume from storage (skipping LLM extraction)")
         else:
             resume_fingerprint = generate_resume_fingerprint(resume_data)
-
-            if stop_event and stop_event.is_set():
-                logger.info("Resume profiling interrupted (stop event set)")
-                raise InterruptedError("Interrupted by system")
-
-            # Extract structured resume
+            self._check_interrupted(stop_event)
             resume = self.extract_structured_resume(resume_data)
 
-        # Extract evidence units from structured profile
-        evidence_units = []
+        evidence_units, persistence_payload = [], []
+        
         if resume:
-            if stop_event and stop_event.is_set():
-                logger.info("Resume profiling interrupted (stop event set)")
-                raise InterruptedError("Interrupted by system")
+            self._check_interrupted(stop_event)
             evidence_units = self.extract_resume_evidence(resume.profile)
 
-        # Generate embeddings for evidence units
-        if stop_event and stop_event.is_set():
-            logger.info("Resume profiling interrupted (stop event set)")
-            raise InterruptedError("Interrupted by system")
-        self.embed_evidence_units(evidence_units)
+            self._check_interrupted(stop_event)
+            self.embed_evidence_units(evidence_units)
+            self.save_evidence_unit_embeddings(resume_fingerprint, evidence_units)
 
-        # Persist evidence unit embeddings
-        self.save_evidence_unit_embeddings(resume_fingerprint, evidence_units)
-
-        # Generate and persist section embeddings
-        persistence_payload = []
-        if resume:
             persistence_payload = self.save_resume_section_embeddings(resume_fingerprint, resume)
 
         return resume, evidence_units, persistence_payload

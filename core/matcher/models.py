@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Matcher Models - Data structures for matching.
 """

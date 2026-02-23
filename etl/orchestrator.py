@@ -74,6 +74,11 @@ class JobETLService:
 
         extraction_result = self.ai.extract_requirements_data(job.description)
         
+        # Check if extraction returned meaningful data
+        requirements = extraction_result.get('requirements', [])
+        if not requirements:
+            raise ValueError(f"Empty requirements extraction for job {job.id}")
+        
         # Validate with Pydantic model
         if extraction_result:
             try:
@@ -94,8 +99,8 @@ class JobETLService:
     def extract_facets_one(self, repo: JobRepository, job) -> None:
         """Extract job facets for a single job for Want score matching.
 
-        Extracts per-facet text from job descriptions and generates embeddings
-        for each of the 7 facets used in Want score calculation.
+        Extracts per-facet text from job descriptions. Embedding is done
+        separately in embed_facets_one() for better batch efficiency.
 
         Args:
             repo: JobRepository instance (provided by UoW)
@@ -114,9 +119,8 @@ class JobETLService:
             for facet_key in FACET_KEYS:
                 facet_text = facets.get(facet_key, "")
                 if facet_text:
-                    embedding = self.ai.generate_embedding(facet_text)
                     repo.save_job_facet_embedding(
-                        job.id, facet_key, facet_text, embedding, content_hash
+                        job.id, facet_key, facet_text, None, content_hash
                     )
                     saved_count += 1
                 else:
@@ -129,6 +133,36 @@ class JobETLService:
         except Exception as e:
             repo.mark_job_facets_failed(job.id, str(e))
             logger.error(f"Facet extraction failed for job {job.id}: {e}")
+            raise
+
+    def embed_facets_one(self, repo: JobRepository, job) -> None:
+        """Generate embeddings for extracted facets of a single job.
+
+        Args:
+            repo: JobRepository instance (provided by UoW)
+            job: JobPost ORM instance (loaded within this UoW session)
+        """
+        logger.info(f"Embedding facets for job {job.id}: {job.title}")
+
+        try:
+            facets = repo.get_facets_for_job(job.id)
+            if not facets:
+                logger.debug(f"No facets found for job {job.id}")
+                return
+
+            content_hash = job.content_hash or ''
+            saved_count = 0
+
+            for facet in facets:
+                if facet.embedding is None:
+                    embedding = self.ai.generate_embedding(facet.text)
+                    repo.update_facet_embedding(facet.id, embedding, content_hash)
+                    saved_count += 1
+
+            logger.info(f"Embedded {saved_count} facets for job {job.id}")
+
+        except Exception as e:
+            logger.error(f"Facet embedding failed for job {job.id}: {e}")
             raise
 
     def embed_job_one(self, repo: JobRepository, job) -> None:

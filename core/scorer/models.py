@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Scoring Models - Data structures for scoring results.
 """

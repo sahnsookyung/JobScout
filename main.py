@@ -189,12 +189,22 @@ def run_job_etl(ctx: AppContext, stop_event: threading.Event) -> None:
     if stop_event.is_set():
         return
 
-    # Step 3: Facet Extraction - per-job transactions
+    # Step 3: Facet Extraction - per-job transactions (extract text only)
     step_start = time.time()
     logger.info("=== JOB ETL STEP 3: Running Facet Extraction Batch ===")
     _run_facet_extraction_batch(ctx, stop_event, limit=100)
     step_elapsed = time.time() - step_start
     logger.info(f"Job ETL Step 3 completed: Facet extraction batch finished in {step_elapsed:.2f}s")
+
+    if stop_event.is_set():
+        return
+
+    # Step 3a: Facet Embedding - embed extracted facets (separate batch for efficiency)
+    step_start = time.time()
+    logger.info("=== JOB ETL STEP 3a: Running Facet Embedding Batch ===")
+    _run_facet_embedding_batch(ctx, stop_event, limit=100)
+    step_elapsed = time.time() - step_start
+    logger.info(f"Job ETL Step 3a completed: Facet embedding batch finished in {step_elapsed:.2f}s")
 
     if stop_event.is_set():
         return
@@ -273,20 +283,38 @@ def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: i
 
     logger.info(f"Found {len(job_ids)} jobs needing extraction")
 
+    retry_intervals = [30, 60, 120]
     success_count = 0
+    
     for job_id in job_ids:
         if stop_event.is_set():
             break
-        try:
-            with job_uow() as repo:
-                job = repo.get_by_id(job_id)
-                if job is None:
-                    logger.warning(f"Job {job_id} not found, may have been deleted")
-                    continue
-                ctx.job_etl_service.extract_one(repo, job)
-            success_count += 1
-        except Exception:
-            logger.exception("Failed extraction job_id=%s", job_id)
+        
+        for attempt, wait_time in enumerate(retry_intervals):
+            try:
+                with job_uow() as repo:
+                    job = repo.get_by_id(job_id)
+                    if job is None:
+                        logger.warning(f"Job {job_id} not found, may have been deleted")
+                        break
+                    ctx.job_etl_service.extract_one(repo, job)
+                success_count += 1
+                break
+            except Exception as e:
+                response = getattr(e, 'response', None)
+                http_code = response.status_code if response else 'N/A'
+                
+                if attempt == len(retry_intervals) - 1:
+                    logger.error(
+                        "Extraction failed after %d retries (HTTP %s), job_id=%s. Giving up: %s",
+                        len(retry_intervals), http_code, job_id, e
+                    )
+                else:
+                    logger.warning(
+                        "Extraction attempt %d/%d failed for job %s: HTTP %s. Retrying in %ds...: %s",
+                        attempt + 1, len(retry_intervals), job_id, http_code, wait_time, e
+                    )
+                    time.sleep(wait_time)
 
     logger.info(f"Extraction batch completed: {success_count}/{len(job_ids)} jobs")
 
@@ -322,6 +350,30 @@ def _run_facet_extraction_batch(ctx: AppContext, stop_event: threading.Event, li
                 logger.exception("Facet extraction error job_id=%s", job_id)
 
     logger.info(f"Facet extraction batch completed: processed={processed}")
+
+
+def _run_facet_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):
+    """Run facet embedding batch - embed extracted facets for all jobs."""
+    with job_uow() as repo:
+        jobs = repo.get_jobs_needing_facet_embedding(limit)
+        job_ids = [j.id for j in jobs]
+
+    logger.info(f"Found {len(job_ids)} jobs needing facet embedding")
+
+    processed = 0
+    for job_id in job_ids:
+        if stop_event.is_set():
+            break
+        try:
+            with job_uow() as repo:
+                job = repo.get_by_id(job_id)
+                if job and job.facet_status == 'done':
+                    ctx.job_etl_service.embed_facets_one(repo, job)
+                    processed += 1
+        except Exception:
+            logger.exception("Facet embedding error job_id=%s", job_id)
+
+    logger.info(f"Facet embedding batch completed: processed={processed}")
 
 
 def _run_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):

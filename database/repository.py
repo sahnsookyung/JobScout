@@ -136,6 +136,15 @@ class JobRepository:
     def get_job_facet_embeddings(self, job_post_id: Any) -> dict:
         return self.job_post.get_job_facet_embeddings(job_post_id)
 
+    def get_facets_for_job(self, job_post_id: Any) -> Any:
+        return self.job_post.get_facets_for_job(job_post_id)
+
+    def get_jobs_needing_facet_embedding(self, limit: int = 100) -> List[JobPost]:
+        return self.job_post.get_jobs_needing_facet_embedding(limit)
+
+    def update_facet_embedding(self, facet_id: Any, embedding: List[float], content_hash: str) -> None:
+        return self.job_post.update_facet_embedding(facet_id, embedding, content_hash)
+
     def mark_job_facets_extracted(self, job_post_id: Any, content_hash: str = None) -> None:
         return self.job_post.mark_job_facets_extracted(job_post_id, content_hash)
 

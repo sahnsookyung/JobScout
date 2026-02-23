@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Persistence Operations - Database operations for scored matches.
 

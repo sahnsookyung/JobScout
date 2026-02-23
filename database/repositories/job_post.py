@@ -336,6 +336,32 @@ class JobPostRepository(BaseRepository):
         results = self.db.execute(stmt).scalars().all()
         return {r.facet_key: r.embedding for r in results}
 
+    def get_facets_for_job(self, job_post_id: Any) -> List[JobFacetEmbedding]:
+        stmt = select(JobFacetEmbedding).where(
+            JobFacetEmbedding.job_post_id == job_post_id
+        )
+        return list(self.db.execute(stmt).scalars().all())
+
+    def get_jobs_needing_facet_embedding(self, limit: int = 100) -> List[JobPost]:
+        stmt = select(JobPost).where(
+            JobPost.facet_status == 'done'
+        ).limit(limit)
+        return list(self.db.execute(stmt).scalars().all())
+
+    def update_facet_embedding(
+        self,
+        facet_id: Any,
+        embedding: List[float],
+        content_hash: str
+    ) -> None:
+        stmt = update(JobFacetEmbedding).where(
+            JobFacetEmbedding.id == facet_id
+        ).values(
+            embedding=embedding,
+            content_hash=content_hash
+        )
+        self.db.execute(stmt)
+
     def delete_all_facet_embeddings_for_job(self, job_post_id: Any) -> None:
         self.db.execute(
             delete(JobFacetEmbedding).where(
