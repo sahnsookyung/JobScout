@@ -9,6 +9,7 @@ import logging
 import copy
 import re
 import requests
+import httpx
 
 import openai
 from openai import OpenAI
@@ -176,28 +177,39 @@ class OpenAIService(LLMProvider):
         api_secret: Optional[str] = None,
         base_url: Optional[str] = None,
         model_config: Optional[Dict[str, Any]] = None,
+        extraction_headers: Optional[Dict[str, str]] = None,
         embedding_api_key: Optional[str] = None,
         embedding_api_secret: Optional[str] = None,
-        embedding_base_url: Optional[str] = None
+        embedding_base_url: Optional[str] = None,
+        embedding_headers: Optional[Dict[str, str]] = None
     ):
+        # Build extraction client
         client_kwargs = {}
         if api_key:
             client_kwargs['api_key'] = api_key
-        if api_secret:
-            client_kwargs['api_secret'] = api_secret
         if base_url:
             client_kwargs['base_url'] = base_url
+        
+        # If custom headers provided, create httpx client with headers
+        if extraction_headers:
+            http_client = httpx.Client(headers=extraction_headers)
+            client_kwargs['http_client'] = http_client
             
         self.client = OpenAI(**client_kwargs)
         
-        if embedding_base_url or embedding_api_key or embedding_api_secret:
+        # Build embedding client (separate if different endpoint or headers)
+        if embedding_base_url or embedding_api_key or embedding_api_secret or embedding_headers:
             embedding_client_kwargs = {}
             if embedding_api_key:
                 embedding_client_kwargs['api_key'] = embedding_api_key
-            if embedding_api_secret:
-                embedding_client_kwargs['api_secret'] = embedding_api_secret
             if embedding_base_url:
                 embedding_client_kwargs['base_url'] = embedding_base_url
+            
+            # If custom headers provided for embedding, create httpx client with headers
+            if embedding_headers:
+                http_client = httpx.Client(headers=embedding_headers)
+                embedding_client_kwargs['http_client'] = http_client
+            
             self.embedding_client = OpenAI(**embedding_client_kwargs)
         else:
             self.embedding_client = None

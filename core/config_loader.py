@@ -3,6 +3,7 @@ import os
 from typing import List, Optional, Dict, Any, Union, Literal
 from pydantic import BaseModel, Field
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class LlmConfig(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     api_secret: Optional[str] = None
+    extraction_headers: Optional[Dict[str, str]] = None  # Custom headers for extraction client
     extraction_model: Optional[str] = "gpt-4o-mini"
     extraction_url: Optional[str] = None  # GLiNER endpoint
     extraction_type: str = "openai"  # "openai" or "gliner"
@@ -41,6 +43,7 @@ class LlmConfig(BaseModel):
     embedding_base_url: Optional[str] = None  # Separate endpoint for embeddings
     embedding_api_key: Optional[str] = None   # Separate API key for embeddings
     embedding_api_secret: Optional[str] = None  # Separate API secret for embeddings
+    embedding_headers: Optional[Dict[str, str]] = None   # Custom headers for embedding client
 
 
 class ResumeConfig(BaseModel):
@@ -196,108 +199,55 @@ class AppConfig(BaseModel):
     schedule: ScheduleConfig
     scrapers: List[ScraperConfig] = Field(default_factory=list)
 
+# --- Configuration Loader Logic ---
+
+def _set_nested(data: dict, keys: list, value: Any) -> None:
+    """Helper to set a value in a nested dictionary, creating intermediate dicts as needed."""
+    for key in keys[:-1]:
+        data = data.setdefault(key, {})
+    data[keys[-1]] = value
+
 def load_config(config_path: str = "config.yaml") -> AppConfig:
     # If not found at relative path (e.g. running from root), try absolute or adjusted path
     if not os.path.exists(config_path):
-        # Specific fallback for Docker where WORKDIR is /app and config is in /app/config.yaml
         base_dir = os.path.dirname(os.path.abspath(__file__))
         config_path = os.path.join(base_dir, "..", "config.yaml")
 
     with open(config_path, "r") as f:
-        data = yaml.safe_load(f)
-    
-    # Allow env var override for DB URL
-    env_db_url = os.environ.get("DATABASE_URL")
-    if env_db_url:
-        data['database']['url'] = env_db_url
+        data = yaml.safe_load(f) or {}
 
-    # Allow env var override for JobSpy URL
-    env_jobspy_url = os.environ.get("JOBSPY_URL")
-    if env_jobspy_url:
-        if 'jobspy' not in data or data['jobspy'] is None:
-            data['jobspy'] = {}
-        data['jobspy']['url'] = env_jobspy_url
+    # Standard environment variable mappings
+    # Format: (List of env vars to check in order of priority, Target nested dictionary path)
+    env_mappings = [
+        (["DATABASE_URL"], ["database", "url"]),
+        (["JOBSPY_URL"], ["jobspy", "url"]),
+        (["ETL_LLM_EXTRACTION_BASE_URL", "ETL_LLM_BASE_URL"], ["etl", "llm", "base_url"]),
+        (["ETL_LLM_EXTRACTION_API_KEY", "ETL_LLM_API_KEY"], ["etl", "llm", "api_key"]),
+        (["ETL_LLM_EXTRACTION_API_SECRET", "ETL_LLM_API_SECRET"], ["etl", "llm", "api_secret"]),
+        (["ETL_EMBEDDING_BASE_URL"], ["etl", "llm", "embedding_base_url"]),
+        (["ETL_EMBEDDING_API_KEY"], ["etl", "llm", "embedding_api_key"]),
+        (["ETL_EMBEDDING_API_SECRET"], ["etl", "llm", "embedding_api_secret"]),
+        (["ETL_LLM_EXTRACTION_MODEL"], ["etl", "llm", "extraction_model"]),
+        (["ETL_EMBEDDING_MODEL"], ["etl", "llm", "embedding_model"]),
+        (["REDIS_URL"], ["notifications", "redis_url"]),
+    ]
 
-    # Allow env var override for LLM Base URL
-    env_llm_base_url = os.environ.get("ETL_LLM_BASE_URL")
-    if env_llm_base_url:
-        if 'etl' not in data:
-            data['etl'] = {}
-        if 'llm' not in data['etl']:
-            data['etl']['llm'] = {}
-        data['etl']['llm']['base_url'] = env_llm_base_url
+    for env_vars, keys in env_mappings:
+        val = next((os.environ.get(ev) for ev in env_vars if os.environ.get(ev)), None)
+        if val:
+            _set_nested(data, keys, val)
 
-    # Allow env var override for LLM API Key
-    env_llm_api_key = os.environ.get("ETL_LLM_API_KEY")
-    if env_llm_api_key:
-        if 'etl' not in data:
-            data['etl'] = {}
-        if 'llm' not in data['etl']:
-            data['etl']['llm'] = {}
-        data['etl']['llm']['api_key'] = env_llm_api_key
+    # JSON header overrides
+    header_mappings = [
+        ("ETL_EXTRACTION_MODEL_HEADER_ENV_VARS", ["etl", "llm", "extraction_headers"]),
+        ("ETL_EMBEDDING_MODEL_HEADER_ENV_VARS", ["etl", "llm", "embedding_headers"]),
+    ]
 
-    # Allow env var override for LLM API Secret
-    env_llm_api_secret = os.environ.get("ETL_LLM_API_SECRET")
-    if env_llm_api_secret:
-        if 'etl' not in data:
-            data['etl'] = {}
-        if 'llm' not in data['etl']:
-            data['etl']['llm'] = {}
-        data['etl']['llm']['api_secret'] = env_llm_api_secret
-
-    # Allow env var override for Embedding Base URL
-    env_embedding_base_url = os.environ.get("ETL_EMBEDDING_BASE_URL")
-    if env_embedding_base_url:
-        if 'etl' not in data:
-            data['etl'] = {}
-        if 'llm' not in data['etl']:
-            data['etl']['llm'] = {}
-        data['etl']['llm']['embedding_base_url'] = env_embedding_base_url
-
-    # Allow env var override for Embedding API Key
-    env_embedding_api_key = os.environ.get("ETL_EMBEDDING_API_KEY")
-    if env_embedding_api_key:
-        if 'etl' not in data:
-            data['etl'] = {}
-        if 'llm' not in data['etl']:
-            data['etl']['llm'] = {}
-        data['etl']['llm']['embedding_api_key'] = env_embedding_api_key
-
-    # Allow env var override for Embedding API Secret
-    env_embedding_api_secret = os.environ.get("ETL_EMBEDDING_API_SECRET")
-    if env_embedding_api_secret:
-        if 'etl' not in data:
-            data['etl'] = {}
-        if 'llm' not in data['etl']:
-            data['etl']['llm'] = {}
-        data['etl']['llm']['embedding_api_secret'] = env_embedding_api_secret
-
-    # Allow env var override for Extraction Model
-    env_extraction_model = os.environ.get("ETL_LLM_EXTRACTION_MODEL")
-    if env_extraction_model:
-        if 'etl' not in data:
-            data['etl'] = {}
-        if 'llm' not in data['etl']:
-            data['etl']['llm'] = {}
-        data['etl']['llm']['extraction_model'] = env_extraction_model
-
-    # Allow env var override for Embedding Model
-    env_embedding_model = os.environ.get("ETL_EMBEDDING_MODEL")
-    if env_embedding_model:
-        if 'etl' not in data:
-            data['etl'] = {}
-        if 'llm' not in data['etl']:
-            data['etl']['llm'] = {}
-        data['etl']['llm']['embedding_model'] = env_embedding_model
-
-    # Note: API keys and secrets are now optional for all LLM configurations
-    # The underlying service client should handle authentication appropriately
-
-    # Allow env var override for Redis URL
-    env_redis_url = os.environ.get("REDIS_URL")
-    if env_redis_url:
-        if 'notifications' not in data:
-            data['notifications'] = {}
-        data['notifications']['redis_url'] = env_redis_url
+    for env_var, keys in header_mappings:
+        env_val = os.environ.get(env_var)
+        if env_val:
+            header_map = json.loads(env_val)
+            resolved_headers = {k: os.environ.get(v, "") for k, v in header_map.items()}
+            _set_nested(data, keys, resolved_headers)
 
     return AppConfig(**data)

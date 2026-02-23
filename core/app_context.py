@@ -70,9 +70,11 @@ class AppContext:
             api_key=llm_config.api_key,
             api_secret=llm_config.api_secret,
             model_config=model_config,
+            extraction_headers=llm_config.extraction_headers,
             embedding_base_url=llm_config.embedding_base_url,
             embedding_api_key=llm_config.embedding_api_key,
-            embedding_api_secret=llm_config.embedding_api_secret
+            embedding_api_secret=llm_config.embedding_api_secret,
+            embedding_headers=llm_config.embedding_headers
         )
 
     @staticmethod
