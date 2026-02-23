@@ -25,7 +25,7 @@ def job_uow():
         repo = JobRepository(session)
         yield repo
         session.commit()
-    except Exception:
+    except BaseException:
         session.rollback()
         raise
     finally:

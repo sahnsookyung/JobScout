@@ -1,0 +1,20 @@
+name: Deploy Modal Embedding Server
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'modal/**'  # only trigger when modal code changes
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      - run: pip install modal
+      - run: modal deploy modal/modal_server.py
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}

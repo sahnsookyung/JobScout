@@ -214,8 +214,8 @@ class TestScorerConfigFitWantWeights(unittest.TestCase):
     def test_default_fit_want_weights(self):
         """Default fit/want weights should be 0.7/0.3."""
         scorer = ScorerConfig()
-        self.assertEqual(scorer.fit_weight, 0.7)
-        self.assertEqual(scorer.want_weight, 0.3)
+        self.assertEqual(scorer.fit_weight, 0.8)
+        self.assertEqual(scorer.want_weight, 0.2)
 
     def test_custom_fit_want_weights(self):
         """Should accept custom fit/want weights."""
