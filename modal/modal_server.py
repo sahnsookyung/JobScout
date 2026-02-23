@@ -1,79 +1,88 @@
-# Modal is a cloud GPU provider.
-# The below hosts an openAI API compatible server on modal and is deployed through github actions.
-
+import modal
 import os
 import socket
 import subprocess
 
-import modal
-
 app = modal.App("qwen3-tei-server")
 
-MODEL_ID = "Qwen/Qwen3-Embedding-4B"
-PORT = 8000
 GPU_CONFIG = "L4"
+MODEL_ID = "Qwen/Qwen3-Embedding-4B"
+HF_CACHE = "/data/hf-cache"
+PORT = 8000
 
-LAUNCH_FLAGS = [
-    "--model-id", MODEL_ID,
-    "--port", str(PORT),
-    "--dtype", "float16",   # ~8GB VRAM, safe within L4's 24GB
-    "--auto-truncate",      # silently truncate inputs that exceed max sequence length
-]
+volume = modal.Volume.from_name("qwen3-weights", create_if_missing=True)
 
+def download_model():
+    """Downloads model weights into the persistent volume via huggingface_hub."""
+    from huggingface_hub import snapshot_download
+    os.makedirs(HF_CACHE, exist_ok=True)
+    snapshot_download(repo_id=MODEL_ID, cache_dir=HF_CACHE)
 
 def spawn_server() -> subprocess.Popen:
-    process = subprocess.Popen(["text-embeddings-router"] + LAUNCH_FLAGS)
-    # Poll until TEI accepts connections before accepting traffic
+    os.environ["HF_HOME"] = HF_CACHE
+    process = subprocess.Popen([
+        "text-embeddings-router",
+        "--model-id", MODEL_ID,
+        "--port", str(PORT),
+        "--dtype", "float16",
+        "--auto-truncate",
+    ])
+    # Poll until TEI accepts connections
     while True:
         try:
             socket.create_connection(("127.0.0.1", PORT), timeout=1).close()
-            print("TEI server ready!")
+            print("TEI ready!")
             return process
         except (socket.timeout, ConnectionRefusedError):
-            # If the process has exited something went wrong, fail fast
             retcode = process.poll()
             if retcode is not None:
                 raise RuntimeError(f"TEI exited unexpectedly with code {retcode}")
 
+# Separate image for downloading — Python + huggingface_hub only
+download_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install("huggingface_hub")
+)
 
-def download_model():
-    # Spawning the server triggers TEI to download model weights if not present,
-    # then we immediately terminate it — weights are now baked into the image.
-    spawn_server().terminate()
-
-
-# Use the TEI image optimised for Ada Lovelace GPUs (SM 8.9) such as the L4.
-# - ENTRYPOINT [] clears TEI's default entrypoint so Modal can bootstrap normally.
-# - run_function bakes the model weights into the image at build time,
-#   eliminating the need for a separate volume or manual download step.
+# TEI image for serving — entrypoint cleared so Modal can bootstrap
 tei_image = (
     modal.Image.from_registry(
         "ghcr.io/huggingface/text-embeddings-inference:89-1.5",
         add_python="3.11",
     )
     .dockerfile_commands("ENTRYPOINT []")
-    .run_function(download_model, gpu=GPU_CONFIG)
 )
 
+@app.function(
+    image=download_image,
+    volumes={"/data": volume},
+    timeout=600,
+)
+def download_model_to_volume():
+    """
+    One-time setup to pre-download model weights into the persistent volume.
+    Run manually with: modal run modal/modal_server.py::download_model_to_volume
+    Only needs re-running if you change the model.
+    """
+    download_model()
+    volume.commit()
+    print("Model downloaded and committed to volume.")
 
 @app.function(
     image=tei_image,
     gpu=GPU_CONFIG,
-    scaledown_window=60,        # spin down after 1 min of inactivity to save cost
-    timeout=600,                # generous cap to cover cold start model load time
+    volumes={"/data": volume},      # mount pre-downloaded weights
+    scaledown_window=60,            # spin down after 1 min idle to save cost
+    timeout=600,                    # generous cap to cover cold start load time
 )
-@modal.concurrent(max_inputs=100)   # allow up to 100 concurrent requests per container
+@modal.concurrent(max_inputs=100)
 @modal.web_server(PORT, startup_timeout=300)
 def serve():
     """
-    Serverless TEI embedding server. Spins up on demand when called by the Docker container
-    and shuts down after scaledown_window seconds of inactivity. Model weights are baked
-    into the image so cold starts only need to load weights from disk.
+    Serverless TEI embedding server. Spins up on demand, shuts down after
+    scaledown_window seconds of inactivity.
 
-    Endpoint URL is available in the Modal dashboard after deploying with:
-        modal deploy modal/modal_server.py
-
-    NOTE: After first deploy, immediately attach a Proxy Auth Token in the Modal dashboard
-    to prevent unauthorized access to the endpoint.
+    Deploy with: modal deploy modal/modal_server.py
+    NOTE: Attach a Proxy Auth Token in the Modal dashboard immediately after deploying.
     """
     spawn_server()

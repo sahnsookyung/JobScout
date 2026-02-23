@@ -7,6 +7,7 @@ from typing import Dict, Any, List, Optional, Tuple
 import json
 import logging
 import copy
+import re
 import requests
 
 import openai
@@ -64,19 +65,67 @@ def _log_retry(retry_state: RetryCallState) -> None:
         )
 
 
+def _parse_reset_duration(value: str) -> float:
+    """Parse an OpenAI reset-timer header value like '1s', '500ms', '1m30s' into seconds."""
+    total = 0.0
+    for amount, unit in re.findall(r"([\d.]+)(ms|s|m|h)", value):
+        a = float(amount)
+        if unit == "ms":
+            total += a / 1000
+        elif unit == "s":
+            total += a
+        elif unit == "m":
+            total += a * 60
+        else:  # h
+            total += a * 3600
+    return total
+
+
+def _wait_from_rate_limit_headers(exc: openai.RateLimitError) -> float:
+    """Extract the longest declared wait from rate-limit response headers.
+
+    Reads (in priority order, taking the maximum):
+      - ``retry-after``                standard HTTP, plain seconds
+      - ``x-ratelimit-reset-requests`` OpenAI request-quota reset duration
+      - ``x-ratelimit-reset-tokens``   OpenAI token-quota reset duration
+
+    Returns 0.0 if no usable header is present.
+    """
+    try:
+        headers = exc.response.headers
+        candidates: list[float] = []
+
+        retry_after = headers.get("retry-after", "")
+        if retry_after:
+            try:
+                candidates.append(float(retry_after))
+            except ValueError:
+                pass
+
+        for header in ("x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"):
+            parsed = _parse_reset_duration(headers.get(header, ""))
+            if parsed > 0:
+                candidates.append(parsed)
+
+        return max(candidates) if candidates else 0.0
+    except Exception:
+        return 0.0
+
+
 def _wait_respecting_retry_after(retry_state: RetryCallState) -> float:
-    """Wait for the Retry-After seconds declared by the server, or fall back
-    to capped exponential backoff."""
+    """Return how long tenacity should sleep before the next attempt.
+
+    For ``RateLimitError``: honours server-declared timers via response headers.
+    For all other retryable errors: falls back to capped exponential backoff.
+    """
     exc = retry_state.outcome.exception()
     if isinstance(exc, openai.RateLimitError):
-        # The openai SDK wraps the raw response; try to extract Retry-After.
-        try:
-            raw = exc.response
-            retry_after = float(raw.headers.get("retry-after", 0))
-            if retry_after > 0:
-                return min(retry_after, 120)  # cap at 2 min as a safety guard
-        except Exception:
-            pass
+        wait = _wait_from_rate_limit_headers(exc)
+        if wait > 0:
+            wait = min(wait, 120)  # safety cap at 2 min
+            logger.info("Rate limit headers indicate %.1fs wait.", wait)
+            return wait
+
     # Fallback: exponential backoff 2 → 4 → 8 … capped at 60s
     exp = wait_exponential(multiplier=1, min=2, max=60)
     return exp(retry_state)
