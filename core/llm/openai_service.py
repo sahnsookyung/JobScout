@@ -3,13 +3,21 @@ OpenAI Service - LLM implementation using OpenAI API.
 
 Provides structured data extraction and embedding generation.
 """
-from typing import Dict, Any, List, Optional, Tuple, Literal
+from typing import Dict, Any, List, Optional, Tuple
 import json
 import logging
 import copy
 import requests
 
+import openai
 from openai import OpenAI
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+from tenacity import RetryCallState
 from core.llm.interfaces import LLMProvider
 from core.llm.system_prompts import (
     DEFAULT_EXTRACTION_SYSTEM_PROMPT,
@@ -24,6 +32,71 @@ from core.llm.schema_models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Retry helpers
+# ---------------------------------------------------------------------------
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Return True for transient errors that are worth retrying."""
+    return isinstance(exc, (
+        openai.RateLimitError,
+        openai.APITimeoutError,
+        openai.APIConnectionError,
+        openai.InternalServerError,
+    ))
+
+
+def _log_retry(retry_state: RetryCallState) -> None:
+    """Log a warning before each retry sleep, including Retry-After info."""
+    exc = retry_state.outcome.exception()
+    wait = retry_state.next_action.sleep if retry_state.next_action else 0
+    if isinstance(exc, openai.RateLimitError):
+        logger.warning(
+            "Rate limit hit (attempt %s). Waiting %.1fs before retry. Details: %s",
+            retry_state.attempt_number, wait, exc,
+        )
+    else:
+        logger.warning(
+            "Transient API error (attempt %s). Waiting %.1fs before retry. Details: %s",
+            retry_state.attempt_number, wait, exc,
+        )
+
+
+def _wait_respecting_retry_after(retry_state: RetryCallState) -> float:
+    """Wait for the Retry-After seconds declared by the server, or fall back
+    to capped exponential backoff."""
+    exc = retry_state.outcome.exception()
+    if isinstance(exc, openai.RateLimitError):
+        # The openai SDK wraps the raw response; try to extract Retry-After.
+        try:
+            raw = exc.response
+            retry_after = float(raw.headers.get("retry-after", 0))
+            if retry_after > 0:
+                return min(retry_after, 120)  # cap at 2 min as a safety guard
+        except Exception:
+            pass
+    # Fallback: exponential backoff 2 → 4 → 8 … capped at 60s
+    exp = wait_exponential(multiplier=1, min=2, max=60)
+    return exp(retry_state)
+
+
+def _llm_retry(**kwargs):
+    """Return a tenacity @retry decorator for LLM API calls."""
+    return retry(
+        retry=retry_if_exception_type((
+            openai.RateLimitError,
+            openai.APITimeoutError,
+            openai.APIConnectionError,
+            openai.InternalServerError,
+        )),
+        wait=_wait_respecting_retry_after,
+        stop=stop_after_attempt(8),
+        before_sleep=_log_retry,
+        reraise=True,
+        **kwargs,
+    )
 
 def _unwrap_schema_spec(spec: Dict[str, Any]) -> Tuple[str, bool, Dict[str, Any]]:
     """Unwrap a schema spec to extract name, strict flag, and raw JSON schema.
@@ -80,6 +153,7 @@ class OpenAIService(LLMProvider):
         self.embedding_dimensions = self.model_config.get('embedding_dimensions', 1024)
         self.extraction_temperature = self.model_config.get('extraction_temperature', 0.0)
 
+    @_llm_retry()
     def extract_structured_data(
         self,
         text: str,
@@ -216,19 +290,16 @@ class OpenAIService(LLMProvider):
         logger.debug(f"Extracted facets: {list(data.keys())}")
         return data
 
+    @_llm_retry()
     def generate_embedding(self, text: str) -> List[float]:
         """Generate embedding vector for text."""
-        try:
-            client = self.embedding_client if self.embedding_client else self.client
-            response = client.embeddings.create(
-                input=text,
-                model=self.embedding_model,
-                dimensions=self.embedding_dimensions
-            )
-            return response.data[0].embedding
-        except Exception as e:
-            logger.error(f"Embedding failed: {e}")
-            raise
+        client = self.embedding_client if self.embedding_client else self.client
+        response = client.embeddings.create(
+            input=text,
+            model=self.embedding_model,
+            dimensions=self.embedding_dimensions
+        )
+        return response.data[0].embedding
 
     def unload_model(self, model_name: str):
         """Unload model from Ollama (no-op for pure OpenAI)."""

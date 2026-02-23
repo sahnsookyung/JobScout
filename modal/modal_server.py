@@ -3,6 +3,8 @@
 
 import modal
 import os
+import subprocess
+import time
 
 app = modal.App("qwen3-tei-server")
 
@@ -59,7 +61,6 @@ def serve():
     Endpoint URL is available in the Modal dashboard after deploying with:
         modal deploy modal/modal_server.py
     """
-    import subprocess
 
     # Point HuggingFace to the volume cache so TEI loads weights from disk
     os.environ["HF_HOME"] = HF_CACHE
@@ -68,6 +69,15 @@ def serve():
         "text-embeddings-router",
         "--model-id", MODEL_ID,
         "--port", "8000",
-        "--dtype", "float16",   # ~8GB VRAM, safe within L4's 24GB
-        "--auto-truncate",      # silently truncate inputs that exceed the model's max sequence length
+        "--dtype", "float16",
+        "--auto-truncate",
     ])
+
+    # Wait for TEI to finish loading the model before Modal starts routing traffic
+    import urllib.request
+    for _ in range(60):
+        try:
+            urllib.request.urlopen("http://localhost:8000/health")
+            break  # TEI is ready
+        except:
+            time.sleep(5)
