@@ -161,6 +161,24 @@ class ResumeRepository(BaseRepository):
         )
         return self.db.execute(stmt).scalar_one_or_none()
 
+    def resume_hash_exists(self, resume_fingerprint: str) -> bool:
+        """Check if a resume with the given hash already exists in the database.
+
+        This is used for deduplication - if the hash exists, we can skip
+        re-processing the same file.
+
+        Args:
+            resume_fingerprint: The file hash to check
+
+        Returns:
+            True if a resume with this hash exists, False otherwise
+        """
+        stmt = select(StructuredResume.resume_fingerprint).where(
+            StructuredResume.resume_fingerprint == resume_fingerprint
+        ).limit(1)
+        result = self.db.execute(stmt).scalar_one_or_none()
+        return result is not None
+
     def get_latest_stored_resume_fingerprint(self) -> Optional[str]:
         """Get fingerprint of the most recently stored resume.
 

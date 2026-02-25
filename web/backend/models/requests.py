@@ -26,3 +26,8 @@ class NotificationRequest(BaseModel):
     subject: str = Field(..., description="Notification subject")
     body: str = Field(..., description="Notification body")
     priority: str = Field(default="normal", description="Priority: low, normal, high, urgent")
+
+
+class ResumeHashCheckRequest(BaseModel):
+    """Request to check if a resume hash already exists in the database."""
+    resume_hash: str = Field(..., description="SHA-256 hash of the resume file (first 32 chars)")

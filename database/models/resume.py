@@ -135,3 +135,19 @@ def generate_resume_fingerprint(resume_data: Dict[str, Any]) -> str:
     Uses SHA-256 hash of normalized resume JSON.
     """
     return FingerprintGenerator.generate(resume_data)
+
+
+def generate_file_fingerprint(file_bytes: bytes) -> str:
+    """
+    Generate a fingerprint for a resume file based on raw file bytes.
+
+    This is used for deduplication - same file = same hash regardless of parsing.
+    The hash is computed from the raw file content (not parsed/normalized data).
+
+    Args:
+        file_bytes: Raw bytes of the resume file
+
+    Returns:
+        First 32 characters of SHA-256 hash of the file bytes
+    """
+    return hashlib.sha256(file_bytes).hexdigest()[:32]

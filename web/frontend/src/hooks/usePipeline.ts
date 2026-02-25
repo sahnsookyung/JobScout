@@ -42,7 +42,7 @@ export const usePipeline = () => {
     });
 
     const uploadResumeMutation = useMutation({
-        mutationFn: (file: File) => pipelineApi.uploadResume(file),
+        mutationFn: ({ file, hash }: { file: File; hash?: string }) => pipelineApi.uploadResume(file, hash),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['resume'] });
         },

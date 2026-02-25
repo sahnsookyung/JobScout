@@ -59,6 +59,10 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# Configure rate limiting
+from .routers.pipeline import add_rate_limit_handlers
+add_rate_limit_handlers(app)
+
 # Register exception handlers
 app.add_exception_handler(ServiceException, service_exception_handler)
 app.add_exception_handler(HTTPException, http_exception_handler)
