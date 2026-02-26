@@ -6,7 +6,13 @@
  */
 
 import { saveResume, getResume, getResumeHash, deleteResume, hasResume } from '../indexedDB';
-import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '../constants';
+import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
+
+// Polyfill crypto.subtle for JSDOM environment
+if (typeof globalThis.crypto === 'undefined') {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    Object.defineProperty(globalThis, 'crypto', { value: require('crypto').webcrypto });
+}
 
 describe('IndexedDB Resume Storage', () => {
     const testBlob = new Blob(['test content'], { type: 'application/pdf' });
@@ -73,13 +79,7 @@ describe('IndexedDB Resume Storage', () => {
             expect(retrieved).toBeNull();
         });
 
-        it('should return null for expired entries (>30 days)', async () => {
-            // This test would require manipulating the timestamp
-            // For now, just verify basic functionality
-            await saveResume(testBlob, testHash);
-            const retrieved = await getResume(testHash);
-            expect(retrieved).not.toBeNull();
-        });
+        it.todo('should return null for expired entries (>30 days) - requires timestamp manipulation');
     });
 
     describe('getResumeHash', () => {
@@ -192,7 +192,7 @@ describe('2MB File Validation', () => {
         expect(result.error).toContain('2MB');
     });
 
-    it('should reject file exactly at 2MB', () => {
+    it('should accept file exactly at 2MB boundary', () => {
         const boundaryContent = 'x'.repeat(2 * 1024 * 1024);
         const file = new File([boundaryContent], 'boundary.pdf', { type: 'application/pdf' });
         

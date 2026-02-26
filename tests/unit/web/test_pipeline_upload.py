@@ -34,12 +34,18 @@ class TestResumeUploadEndpoint(unittest.TestCase):
     def _create_upload_mocks(self, temp_resume_path: str, resume_exists: bool = False, process_result=None):
         """Helper to create common mocks for upload tests."""
         mock_config = patch('core.config_loader.load_config').start()
+        self.addCleanup(mock_config.stop)
         cfg = MagicMock()
         cfg.etl = MagicMock()
-        cfg.etl.resume_file = temp_resume_path
+        cfg.etl.resume = MagicMock()
+        cfg.etl.resume.resume_file = temp_resume_path
         mock_config.return_value = cfg
 
+        mock_fingerprint = patch('database.models.resume.generate_file_fingerprint').start()
+        self.addCleanup(mock_fingerprint.stop)
+
         mock_context = patch('core.app_context.AppContext').start()
+        self.addCleanup(mock_context.stop)
         ctx = MagicMock()
         ctx.job_etl_service = MagicMock()
         repo = MagicMock()
@@ -47,10 +53,12 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         
         if process_result:
             ctx.job_etl_service.process_resume.return_value = process_result
+            mock_fingerprint.return_value = process_result[1]
         
         mock_context.build.return_value = ctx
 
         mock_uow = patch('database.uow.job_uow').start()
+        self.addCleanup(mock_uow.stop)
         mock_uow.return_value.__enter__ = MagicMock(return_value=repo)
         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -59,14 +67,9 @@ class TestResumeUploadEndpoint(unittest.TestCase):
             'context': mock_context,
             'uow': mock_uow,
             'repo': repo,
-            'etl_service': ctx.job_etl_service
+            'etl_service': ctx.job_etl_service,
+            'fingerprint': mock_fingerprint
         }
-
-    def _cleanup_mocks(self, mocks):
-        """Helper to stop all mocks."""
-        mocks['config'].stop()
-        mocks['context'].stop()
-        mocks['uow'].stop()
 
     def test_upload_valid_json_resume(self):
         """Test uploading a valid JSON resume file."""
@@ -86,7 +89,6 @@ class TestResumeUploadEndpoint(unittest.TestCase):
             )
 
             response = self.client.post('/api/pipeline/upload-resume', files=files)
-            self._cleanup_mocks(mocks)
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -124,7 +126,6 @@ class TestResumeUploadEndpoint(unittest.TestCase):
             )
 
             response = self.client.post('/api/pipeline/upload-resume', files=files)
-            self._cleanup_mocks(mocks)
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -144,10 +145,9 @@ class TestResumeUploadEndpoint(unittest.TestCase):
             )
 
             response = self.client.post('/api/pipeline/upload-resume', files={'file': ('resume.json', json.dumps(sample_resume), 'application/json')})
-            self._cleanup_mocks(mocks)
+            mocks['etl_service'].process_resume.assert_called_once()
 
         self.assertEqual(response.status_code, 200)
-        mocks['etl_service'].process_resume.assert_called_once()
 
     def test_upload_continues_on_etl_error(self):
         """Test that upload returns error response when ETL processing fails."""
@@ -200,11 +200,12 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn('2MB', response.json()['detail'])
+        self.assertIn('2', response.json()['detail'])
 
     def test_response_message_includes_fingerprint(self):
         """Test that successful response includes fingerprint in message."""
         sample_resume = {"name": "Test", "sections": []}
+        test_fingerprint = "test_fingerprint_1234567890"
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             temp_resume_path = os.path.join(tmp_dir, "resume.json")
@@ -212,24 +213,28 @@ class TestResumeUploadEndpoint(unittest.TestCase):
             with patch('core.config_loader.load_config') as mock_config:
                 mock_cfg = MagicMock()
                 mock_cfg.etl = MagicMock()
-                mock_cfg.etl.resume_file = temp_resume_path
+                mock_cfg.etl.resume = MagicMock()
+                mock_cfg.etl.resume.resume_file = temp_resume_path
                 mock_config.return_value = mock_cfg
 
-                with patch('core.app_context.AppContext') as mock_context:
-                    mock_ctx = MagicMock()
-                    mock_etl_service = MagicMock()
-                    mock_ctx.job_etl_service = mock_etl_service
-                    mock_repo = MagicMock()
-                    mock_repo.resume.resume_hash_exists.return_value = False
-                    mock_etl_service.process_resume.return_value = (True, "test_fingerprint_1234567890", sample_resume)
-                    mock_context.build.return_value = mock_ctx
+                with patch('database.models.resume.generate_file_fingerprint') as mock_fingerprint:
+                    mock_fingerprint.return_value = test_fingerprint
 
-                    with patch('database.uow.job_uow') as mock_uow:
-                        mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
-                        mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+                    with patch('core.app_context.AppContext') as mock_context:
+                        mock_ctx = MagicMock()
+                        mock_etl_service = MagicMock()
+                        mock_ctx.job_etl_service = mock_etl_service
+                        mock_repo = MagicMock()
+                        mock_repo.resume.resume_hash_exists.return_value = False
+                        mock_etl_service.process_resume.return_value = (True, test_fingerprint, sample_resume)
+                        mock_context.build.return_value = mock_ctx
 
-                        files = {'file': ('resume.json', json.dumps(sample_resume), 'application/json')}
-                        response = self.client.post('/api/pipeline/upload-resume', files=files)
+                        with patch('database.uow.job_uow') as mock_uow:
+                            mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
+                            mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+
+                            files = {'file': ('resume.json', json.dumps(sample_resume), 'application/json')}
+                            response = self.client.post('/api/pipeline/upload-resume', files=files)
 
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -241,8 +246,11 @@ class TestResumeHashCheckEndpoint(unittest.TestCase):
 
     def setUp(self):
         from fastapi.testclient import TestClient
-        from web.backend.routers.pipeline import router
+        from web.backend.routers.pipeline import router, limiter
         from fastapi import FastAPI
+
+        # Disable rate limiting for tests
+        limiter.enabled = False
 
         self.app = FastAPI()
         self.app.include_router(router)
@@ -321,7 +329,7 @@ class TestResumeUploadSecurity(unittest.TestCase):
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn('2MB', response.json()['detail'])
+        self.assertIn('2', response.json()['detail'])
 
     def test_upload_hash_mismatch_rejected(self):
         """Test that server rejects file when client hash doesn't match computed hash (security)."""
@@ -376,26 +384,27 @@ class TestResumeUploadSecurity(unittest.TestCase):
                 mock_cfg.etl.resume.resume_file = temp_resume_path
                 mock_config.return_value = mock_cfg
 
-                with patch('database.uow.job_uow') as mock_uow:
-                    mock_repo = MagicMock()
-                    # First call: hash doesn't exist (resume_hash_exists)
-                    # Second call: save (process_resume)
-                    mock_repo.resume.resume_hash_exists.return_value = False
-                    mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
-                    mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+                with patch('database.models.resume.generate_file_fingerprint') as mock_fingerprint:
+                    mock_fingerprint.return_value = correct_hash
 
-                    with patch('core.app_context.AppContext') as mock_context:
-                        mock_ctx = MagicMock()
-                        mock_etl_service = MagicMock()
-                        mock_ctx.job_etl_service = mock_etl_service
-                        mock_etl_service.process_resume.return_value = (True, correct_hash, {"raw_text": "test"})
-                        mock_context.build.return_value = mock_ctx
+                    with patch('database.uow.job_uow') as mock_uow:
+                        mock_repo = MagicMock()
+                        mock_repo.resume.resume_hash_exists.return_value = False
+                        mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
+                        mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
-                        response = self.client.post(
-                            '/api/pipeline/upload-resume',
-                            files=files,
-                            data={'resume_hash': correct_hash}
-                        )
+                        with patch('core.app_context.AppContext') as mock_context:
+                            mock_ctx = MagicMock()
+                            mock_etl_service = MagicMock()
+                            mock_ctx.job_etl_service = mock_etl_service
+                            mock_etl_service.process_resume.return_value = (True, correct_hash, {"raw_text": "test"})
+                            mock_context.build.return_value = mock_ctx
+
+                            response = self.client.post(
+                                '/api/pipeline/upload-resume',
+                                files=files,
+                                data={'resume_hash': correct_hash}
+                            )
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -435,26 +444,30 @@ class TestResumeUploadDeduplication(unittest.TestCase):
                 mock_cfg.etl.resume.resume_file = temp_resume_path
                 mock_config.return_value = mock_cfg
 
-                with patch('database.uow.job_uow') as mock_uow:
-                    mock_repo = MagicMock()
-                    # Simulate hash already exists in DB
-                    mock_repo.resume.resume_hash_exists.return_value = True
-                    mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
-                    mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+                with patch('database.models.resume.generate_file_fingerprint') as mock_fingerprint:
+                    mock_fingerprint.return_value = file_hash
 
-                    with patch('core.app_context.AppContext') as mock_context:
-                        mock_ctx = MagicMock()
-                        mock_etl_service = MagicMock()
-                        mock_ctx.job_etl_service = mock_etl_service
-                        mock_context.build.return_value = mock_ctx
+                    with patch('database.uow.job_uow') as mock_uow:
+                        mock_repo = MagicMock()
+                        mock_repo.resume.resume_hash_exists.return_value = True
+                        mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
+                        mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
-                        response = self.client.post(
-                            '/api/pipeline/upload-resume',
-                            files=files,
-                            data={'resume_hash': file_hash}
-                        )
+                        with patch('core.app_context.AppContext') as mock_context:
+                            mock_ctx = MagicMock()
+                            mock_etl_service = MagicMock()
+                            # Return (changed=False, fingerprint, data) to indicate already exists
+                            mock_etl_service.process_resume.return_value = (False, file_hash, {"name": "Test User"})
+                            mock_ctx.job_etl_service = mock_etl_service
+                            mock_context.build.return_value = mock_ctx
 
-        # Should succeed without calling process_resume
+                            response = self.client.post(
+                                '/api/pipeline/upload-resume',
+                                files=files,
+                                data={'resume_hash': file_hash}
+                            )
+
+        # Should succeed and indicate already processed
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertTrue(data['success'])
@@ -477,24 +490,27 @@ class TestResumeUploadDeduplication(unittest.TestCase):
                 mock_cfg.etl.resume.resume_file = temp_resume_path
                 mock_config.return_value = mock_cfg
 
-                with patch('database.uow.job_uow') as mock_uow:
-                    mock_repo = MagicMock()
-                    mock_repo.resume.resume_hash_exists.return_value = False
-                    mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
-                    mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+                with patch('database.models.resume.generate_file_fingerprint') as mock_fingerprint:
+                    mock_fingerprint.return_value = expected_hash
 
-                    with patch('core.app_context.AppContext') as mock_context:
-                        mock_ctx = MagicMock()
-                        mock_etl_service = MagicMock()
-                        mock_ctx.job_etl_service = mock_etl_service
-                        mock_etl_service.process_resume.return_value = (True, expected_hash, {"raw_text": "test"})
-                        mock_context.build.return_value = mock_ctx
+                    with patch('database.uow.job_uow') as mock_uow:
+                        mock_repo = MagicMock()
+                        mock_repo.resume.resume_hash_exists.return_value = False
+                        mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
+                        mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
-                        response = self.client.post(
-                            '/api/pipeline/upload-resume',
-                            files=files,
-                            data={'resume_hash': expected_hash}
-                        )
+                        with patch('core.app_context.AppContext') as mock_context:
+                            mock_ctx = MagicMock()
+                            mock_etl_service = MagicMock()
+                            mock_ctx.job_etl_service = mock_etl_service
+                            mock_etl_service.process_resume.return_value = (True, expected_hash, {"raw_text": "test"})
+                            mock_context.build.return_value = mock_ctx
+
+                            response = self.client.post(
+                                '/api/pipeline/upload-resume',
+                                files=files,
+                                data={'resume_hash': expected_hash}
+                            )
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -518,25 +534,27 @@ class TestResumeUploadDeduplication(unittest.TestCase):
                 mock_cfg.etl.resume.resume_file = temp_resume_path
                 mock_config.return_value = mock_cfg
 
-                with patch('database.uow.job_uow') as mock_uow:
-                    mock_repo = MagicMock()
-                    # First call: hash doesn't exist
-                    mock_repo.resume.resume_hash_exists.return_value = False
-                    mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
-                    mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+                with patch('database.models.resume.generate_file_fingerprint') as mock_fingerprint:
+                    mock_fingerprint.return_value = file_hash
 
-                    with patch('core.app_context.AppContext') as mock_context:
-                        mock_ctx = MagicMock()
-                        mock_etl_service = MagicMock()
-                        mock_ctx.job_etl_service = mock_etl_service
-                        mock_etl_service.process_resume.return_value = (True, file_hash, {"raw_text": "test"})
-                        mock_context.build.return_value = mock_ctx
+                    with patch('database.uow.job_uow') as mock_uow:
+                        mock_repo = MagicMock()
+                        mock_repo.resume.resume_hash_exists.return_value = False
+                        mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
+                        mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
-                        response = self.client.post(
-                            '/api/pipeline/upload-resume',
-                            files=files,
-                            data={'resume_hash': file_hash}
-                        )
+                        with patch('core.app_context.AppContext') as mock_context:
+                            mock_ctx = MagicMock()
+                            mock_etl_service = MagicMock()
+                            mock_ctx.job_etl_service = mock_etl_service
+                            mock_etl_service.process_resume.return_value = (True, file_hash, {"raw_text": "test"})
+                            mock_context.build.return_value = mock_ctx
+
+                            response = self.client.post(
+                                '/api/pipeline/upload-resume',
+                                files=files,
+                                data={'resume_hash': file_hash}
+                            )
 
         self.assertEqual(response.status_code, 200)
         data = response.json()

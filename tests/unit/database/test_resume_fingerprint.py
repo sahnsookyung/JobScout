@@ -63,16 +63,17 @@ class TestResumeFingerprint(unittest.TestCase):
 
     def test_generate_file_fingerprint_vs_content_fingerprint(self):
         """Test that file fingerprint differs from content fingerprint."""
+        import json
         from database.models.resume import generate_file_fingerprint, generate_resume_fingerprint
 
         content = b'{"name": "Test", "experience": []}'
         file_fp = generate_file_fingerprint(content)
 
         # Content-based fingerprint hashes the parsed JSON
-        parsed_data = {"raw_text": "test content"}
+        parsed_data = json.loads(content)
         content_fp = generate_resume_fingerprint(parsed_data)
 
-        # These should be different (different hashing approach)
+        # Same underlying data, but different hashing strategies → different fingerprints
         self.assertNotEqual(file_fp, content_fp)
 
     def test_resume_hash_exists_method(self):

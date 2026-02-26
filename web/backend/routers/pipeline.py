@@ -253,7 +253,7 @@ async def pipeline_events(task_id: str):
 
 @router.post("/check-resume-hash", response_model=ResumeHashCheckResponse)
 @limiter.limit("10/minute")
-async def check_resume_hash_endpoint(request: Request, body: ResumeHashCheckRequest):
+def check_resume_hash_endpoint(request: Request, body: ResumeHashCheckRequest):
     """
     Check if a resume with the given hash already exists in the database.
     
@@ -285,7 +285,7 @@ async def upload_resume_endpoint(
     If resume_hash is provided, checks if it already exists first.
     If the hash exists, returns success without re-processing.
     
-    The file is processed in memory - never written to disk.
+    The file is written to a temporary file for ETL processing, then cleaned up.
     Returns only the hash for frontend verification and IndexedDB storage.
     """
 
@@ -307,7 +307,12 @@ async def upload_resume_endpoint(
         raise HTTPException(status_code=400, detail="Empty file")
 
     if len(content) > RESUME_MAX_SIZE:
-        raise HTTPException(status_code=400, detail=f"File size exceeds {RESUME_MAX_SIZE // (1024*1024)}MB limit")
+        limit_mb = RESUME_MAX_SIZE / (1024 * 1024)
+        if limit_mb >= 1:
+            limit_str = f"{limit_mb:.1f}MB"
+        else:
+            limit_str = f"{RESUME_MAX_SIZE // 1024}KB"
+        raise HTTPException(status_code=400, detail=f"File size exceeds {limit_str} limit")
 
     # Always compute hash from file bytes (security: verify file integrity)
     from database.models.resume import generate_file_fingerprint
@@ -323,28 +328,20 @@ async def upload_resume_endpoint(
     # Use the computed hash (either client matched, or we use computed)
     resume_hash = computed_hash
 
-    # Check if hash already exists (deduplication)
+    # Process the resume (deduplication is handled inside process_resume)
+    # Run heavy ETL processing in threadpool to avoid blocking the event loop
     from database.uow import job_uow
-    with job_uow() as repo:
-        exists = repo.resume.resume_hash_exists(resume_hash)
-        if exists:
-            logger.info(f"Resume hash already exists: {resume_hash[:16]}...")
-            return ResumeUploadResponse(
-                success=True,
-                resume_hash=resume_hash,
-                message="Resume already processed"
-            )
-
-    # Process the resume (file is in memory, not saved to disk)
     from core.config_loader import load_config
     from core.app_context import AppContext
     import tempfile
 
-    fingerprint = None
-    try:
-        # Write to temp file for processing (will be cleaned up)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as tmp:
-            tmp.write(content)
+    def process_resume_task(file_content: bytes, filename: str) -> tuple:
+        """Run ETL processing in a thread (sync function)."""
+        fingerprint = None
+        resume_changed = False
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp:
+            tmp.write(file_content)
             tmp_path = tmp.name
 
         try:
@@ -354,26 +351,39 @@ async def upload_resume_endpoint(
             with job_uow() as repo:
                 changed, fp, _ = ctx.job_etl_service.process_resume(repo, tmp_path)
                 fingerprint = fp
+                resume_changed = changed
         finally:
-            # Clean up temp file
             try:
                 os.unlink(tmp_path)
             except Exception:
                 pass
+        
+        return fingerprint, resume_changed
+
+    try:
+        fingerprint, resume_changed = await asyncio.to_thread(process_resume_task, content, file.filename)
     except Exception as e:
-        logger.error(f"ETL processing failed during resume upload: {e}")
+        logger.exception("ETL processing failed during resume upload")
         return ResumeUploadResponse(
             success=False,
             resume_hash=resume_hash,
-            message=f"Processing failed: {str(e)}"
+            message="Resume processing failed. Please try again or contact support."
         )
 
     # Verify the fingerprint matches (should always match since we provided hash)
     if fingerprint and fingerprint != resume_hash:
-        logger.warning(f"Fingerprint mismatch: provided={resume_hash[:16]}..., computed={fingerprint[:16]}...")
+        logger.error(
+            f"Fingerprint mismatch: provided={resume_hash[:16]}..., computed={fingerprint[:16]}..."
+        )
+        return ResumeUploadResponse(
+            success=False,
+            resume_hash=resume_hash,
+            message="Resume processing failed. Please try again or contact support."
+        )
 
+    message = "Resume already processed" if not resume_changed else "Resume uploaded and processed successfully"
     return ResumeUploadResponse(
         success=True,
         resume_hash=resume_hash,
-        message="Resume uploaded and processed successfully"
+        message=message
     )

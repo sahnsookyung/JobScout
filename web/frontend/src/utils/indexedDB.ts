@@ -1,4 +1,4 @@
-import { RESUME_INDEXEDDB_NAME, RESUME_MAX_AGE_DAYS } from './constants';
+import { RESUME_INDEXEDDB_NAME, RESUME_MAX_AGE_DAYS } from '@shared/constants';
 
 const DB_NAME = RESUME_INDEXEDDB_NAME;
 const DB_VERSION = 1;
@@ -12,12 +12,17 @@ interface ResumeEntry {
   hash: string;
 }
 
+let dbPromise: Promise<IDBDatabase> | null = null;
+
 function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  if (dbPromise) return dbPromise;
+  
+  dbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onerror = () => reject(request.error);
     request.onsuccess = () => resolve(request.result);
+    request.onblocked = () => reject(new Error('IndexedDB open blocked'));
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
@@ -26,6 +31,8 @@ function openDB(): Promise<IDBDatabase> {
       }
     };
   });
+  
+  return dbPromise;
 }
 
 export async function saveResume(file: Blob, hash: string): Promise<void> {
@@ -101,6 +108,7 @@ export async function getResumeHash(): Promise<string | null> {
       const now = Date.now();
 
       const getRequest = store.get(hash);
+      getRequest.onerror = () => reject(getRequest.error);
       getRequest.onsuccess = () => {
         const entry = getRequest.result as ResumeEntry | undefined;
         if (!entry) {
@@ -147,6 +155,7 @@ async function cleanupOldEntries(db: IDBDatabase): Promise<void> {
       }
 
       const getAllRequest = store.getAll();
+      getAllRequest.onerror = () => reject(getAllRequest.error);
       getAllRequest.onsuccess = () => {
         const entries = getAllRequest.result as ResumeEntry[];
         const now = Date.now();
@@ -156,9 +165,10 @@ async function cleanupOldEntries(db: IDBDatabase): Promise<void> {
             entry,
             age: now - entry.timestamp,
           }))
-          .sort((a, b) => a.age - b.age);
+          .sort((a, b) => a.age - b.age); // ascending: youngest first
 
-        const toDelete = sortedEntries.slice(0, sortedEntries.length - MAX_ENTRIES);
+        // Keep the first MAX_ENTRIES (youngest), delete the rest (oldest)
+        const toDelete = sortedEntries.slice(MAX_ENTRIES);
 
         let deletedCount = 0;
         toDelete.forEach(({ entry }) => {
@@ -170,6 +180,7 @@ async function cleanupOldEntries(db: IDBDatabase): Promise<void> {
             }
           };
           deleteReq.onerror = () => {
+            console.error('Failed to delete entry during cleanup:', deleteReq.error);
             deletedCount++;
             if (deletedCount === toDelete.length) {
               resolve();

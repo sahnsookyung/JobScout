@@ -7,9 +7,12 @@ import { Badge } from '@/components/ui/Badge';
 import { toast } from 'sonner';
 import { pipelineApi } from '@/services/pipelineApi';
 import { saveResume } from '@/utils/indexedDB';
-import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@/utils/constants';
+import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
 
 async function computeFileHash(file: File): Promise<string> {
+    if (!globalThis.crypto?.subtle) {
+        throw new Error('Web Crypto unavailable: secure context required (HTTPS)');
+    }
     const buffer = await file.arrayBuffer();
     const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
@@ -360,15 +363,20 @@ export const CompactControls: React.FC = () => {
             }
 
             // Store in IndexedDB (best effort - don't fail if this fails)
+            let savedLocally = true;
             try {
                 await saveResume(file, hash);
             } catch (indexedDbError) {
                 console.warn('Failed to save resume to IndexedDB:', indexedDbError);
-                toast.warning('Resume uploaded but could not be saved locally');
+                savedLocally = false;
             }
 
             setResumeFilename(file.name);
-            toast.success("Resume uploaded!");
+            toast.success(
+                savedLocally
+                    ? 'Resume uploaded!'
+                    : 'Resume uploaded (could not be saved locally)'
+            );
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown error';
             toast.error(`Failed to upload resume: ${message}`);

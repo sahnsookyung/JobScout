@@ -28,7 +28,8 @@ def db_session(test_database):
     yield session
     
     session.close()
-    transaction.rollback()
+    if transaction.is_active:
+        transaction.rollback()
     connection.close()
 
 
