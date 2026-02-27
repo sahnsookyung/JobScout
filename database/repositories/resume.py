@@ -212,31 +212,4 @@ class ResumeRepository(BaseRepository):
         rows = self.db.execute(stmt).all()
         return [(row[0], cosine_similarity_from_distance(row._mapping['distance'])) for row in rows]
 
-    def save_user_wants(
-        self,
-        user_id: str,
-        resume_fingerprint: Optional[str],
-        wants_text: str,
-        embedding: List[float],
-        facet_key: Optional[str] = None
-    ) -> UserWants:
-        user_want = UserWants(
-            user_id=user_id,
-            resume_fingerprint=resume_fingerprint,
-            wants_text=wants_text,
-            embedding=embedding,
-            facet_key=facet_key
-        )
-        self.db.add(user_want)
-        return user_want
 
-    def get_user_wants_embeddings(
-        self,
-        user_id: str,
-        resume_fingerprint: Optional[str] = None
-    ) -> List[List[float]]:
-        stmt = select(UserWants.embedding).where(UserWants.user_id == user_id)
-        if resume_fingerprint:
-            stmt = stmt.where(UserWants.resume_fingerprint == resume_fingerprint)
-        results = self.db.execute(stmt).scalars().all()
-        return list(results)

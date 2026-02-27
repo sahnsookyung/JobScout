@@ -15,7 +15,6 @@ class UserWants(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(Text, nullable=False, index=True)
-    resume_fingerprint = Column(Text, nullable=True)
 
     wants_text = Column(Text, nullable=False)
     embedding = Column(Vector(1024), nullable=False)
@@ -25,5 +24,4 @@ class UserWants(Base):
 
     __table_args__ = (
         Index('idx_user_wants_user', 'user_id'),
-        Index('idx_user_wants_resume', 'resume_fingerprint'),
     )
