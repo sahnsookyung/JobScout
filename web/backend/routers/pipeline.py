@@ -318,11 +318,11 @@ async def upload_resume_endpoint(
     from database.models.resume import generate_file_fingerprint
     computed_hash = generate_file_fingerprint(content)
 
-    # If client provided a hash, verify it matches (security: prevent tampering)
+    # If client provided a hash, verify it matches
     if resume_hash and resume_hash != computed_hash:
         raise HTTPException(
             status_code=400,
-            detail="File hash mismatch. The provided hash does not match the file content. This may indicate file tampering."
+            detail="File hash mismatch. The provided hash does not match the file content."
         )
 
     # Use the computed hash (either client matched, or we use computed)

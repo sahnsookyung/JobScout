@@ -5,7 +5,7 @@ Unit tests for database models - resume fingerprint functions.
 
 import sys
 import unittest
-import hashlib
+import xxhash
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -15,16 +15,16 @@ class TestResumeFingerprint(unittest.TestCase):
     """Tests for resume fingerprint generation functions."""
 
     def test_generate_file_fingerprint(self):
-        """Test generate_file_fingerprint produces correct SHA-256 hash."""
+        """Test generate_file_fingerprint produces correct XXH3 hash."""
         from database.models.resume import generate_file_fingerprint
 
         content = b'{"name": "Test User", "experience": []}'
-        expected_hash = hashlib.sha256(content).hexdigest()[:32]
+        expected_hash = xxhash.xxh64_hexdigest(content)
 
         result = generate_file_fingerprint(content)
 
         self.assertEqual(result, expected_hash)
-        self.assertEqual(len(result), 32)
+        self.assertEqual(len(result), 16)
 
     def test_generate_file_fingerprint_deterministic(self):
         """Test generate_file_fingerprint is deterministic (same input = same output)."""
@@ -58,7 +58,7 @@ class TestResumeFingerprint(unittest.TestCase):
 
         result = generate_file_fingerprint(binary_content)
 
-        expected_hash = hashlib.sha256(binary_content).hexdigest()[:32]
+        expected_hash = xxhash.xxh64_hexdigest(binary_content)
         self.assertEqual(result, expected_hash)
 
     def test_generate_file_fingerprint_vs_content_fingerprint(self):

@@ -9,14 +9,21 @@ import { pipelineApi } from '@/services/pipelineApi';
 import { saveResume } from '@/utils/indexedDB';
 import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
 
-async function computeFileHash(file: File): Promise<string> {
-    if (!globalThis.crypto?.subtle) {
-        throw new Error('Web Crypto unavailable: secure context required (HTTPS)');
+import xxhash from 'xxhash-wasm';
+
+let xxhPromise: ReturnType<typeof xxhash> | null = null;
+
+async function getXxh() {
+    if (!xxhPromise) {
+        xxhPromise = xxhash();
     }
+    return xxhPromise;
+}
+
+async function computeFileHash(file: File): Promise<string> {
+    const xxh = await getXxh();
     const buffer = await file.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    return xxh.h64ToString(new Uint8Array(buffer));
 }
 
 interface ScoreBarProps {
