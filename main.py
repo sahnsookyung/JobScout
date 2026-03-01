@@ -302,17 +302,31 @@ def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: i
                 break
             except Exception as e:
                 response = getattr(e, 'response', None)
-                http_code = response.status_code if response else 'N/A'
-                
+                if response:
+                    try:
+                        http_details = f"HTTP {response.status_code}: {response.text[:500]}"
+                    except Exception:
+                        http_details = f"HTTP {response.status_code}"
+                else:
+                    http_details = None
+
+                job_title = getattr(job, 'title', None)  # type: ignore[union-attr]
+                if job_title:
+                    job_title = job_title[:50]
+                else:
+                    job_title = "unknown"
+                exc_type = type(e).__name__
+                exc_message = str(e)
+
                 if attempt == len(retry_intervals) - 1:
                     logger.error(
-                        "Extraction failed after %d retries (HTTP %s), job_id=%s. Giving up: %s",
-                        len(retry_intervals), http_code, job_id, e
+                        "Extraction failed after %d retries, job_id=%s (title: %r): %s - %s. %s. Giving up.",
+                        len(retry_intervals), job_id, job_title, exc_type, exc_message, http_details or "N/A"
                     )
                 else:
                     logger.warning(
-                        "Extraction attempt %d/%d failed for job %s: HTTP %s. Retrying in %ds...: %s",
-                        attempt + 1, len(retry_intervals), job_id, http_code, wait_time, e
+                        "Extraction attempt %d/%d failed for job %s (title: %r): %s - %s. %s. Retrying in %ds...",
+                        attempt + 1, len(retry_intervals), job_id, job_title, exc_type, exc_message, http_details or "N/A", wait_time
                     )
                     time.sleep(wait_time)
 

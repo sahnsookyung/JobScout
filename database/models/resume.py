@@ -1,5 +1,5 @@
 import uuid
-import hashlib
+import xxhash
 import json
 from typing import Dict, Any
 
@@ -116,22 +116,38 @@ class FingerprintGenerator:
     @staticmethod
     def generate(data: Dict[str, Any]) -> str:
         """
-        Generate a fingerprint from data using SHA-256 hash of normalized JSON.
+        Generate a fingerprint from data using XXH64 hash of normalized JSON.
 
         Args:
             data: Dictionary to generate fingerprint for
 
         Returns:
-            First 32 characters of SHA-256 hash
+            XXH64 64-bit hash as hex string
         """
         normalized = json.dumps(data, sort_keys=True, ensure_ascii=False)
-        return hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:32]
+        return xxhash.xxh64_hexdigest(normalized.encode('utf-8'))
 
 
 def generate_resume_fingerprint(resume_data: Dict[str, Any]) -> str:
     """
     Generate a fingerprint for a resume to track changes.
 
-    Uses SHA-256 hash of normalized resume JSON.
+    Uses XXH64 hash of normalized resume JSON.
     """
     return FingerprintGenerator.generate(resume_data)
+
+
+def generate_file_fingerprint(file_bytes: bytes) -> str:
+    """
+    Generate a fingerprint for a resume file based on raw file bytes.
+
+    This is used for deduplication - same file = same hash regardless of parsing.
+    Uses XXH64 (non-cryptographic hash) for performance.
+
+    Args:
+        file_bytes: Raw bytes of the resume file
+
+    Returns:
+        XXH64 64-bit hash as hex string
+    """
+    return xxhash.xxh64_hexdigest(file_bytes)

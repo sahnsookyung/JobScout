@@ -5,6 +5,28 @@ import { usePipeline } from '@/hooks/usePipeline';
 import { useStats } from '@/hooks/useStats';
 import { Badge } from '@/components/ui/Badge';
 import { toast } from 'sonner';
+import { pipelineApi } from '@/services/pipelineApi';
+import { saveResume } from '@/utils/indexedDB';
+import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
+
+import xxhash from 'xxhash-wasm';
+
+let xxhPromise: ReturnType<typeof xxhash> | null = null;
+
+async function getXxh() {
+    if (!xxhPromise) {
+        xxhPromise = xxhash();
+    }
+    return xxhPromise;
+}
+
+async function computeFileHash(file: File): Promise<string> {
+    const xxh = await getXxh();
+    const buffer = await file.arrayBuffer();
+    const hasher = xxh.create64();
+    hasher.update(new Uint8Array(buffer));
+    return hasher.digest().toString(16);
+}
 
 interface ScoreBarProps {
     label: string;
@@ -171,7 +193,7 @@ const ResumeUploadSection: React.FC<ResumeUploadSectionProps> = ({ fileInputRef,
             className="w-full lg:w-auto px-6 py-4 border-2 border-gray-300 text-gray-700 font-semibold rounded-xl hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 min-w-[160px]"
         >
             {isUploading ? <Loader className="w-5 h-5 animate-spin" /> : <FileUp className="w-5 h-5" />}
-            <span>{filename ? 'Update Resume' : 'Upload Resume'}</span>
+            <span>{filename ? 'Update Resume' : `Upload Resume (max ${RESUME_MAX_SIZE_MB}MB)`}</span>
             {filename && <span className="ml-2 text-xs opacity-70 truncate max-w-[120px]">({filename})</span>}
         </button>
         <input
@@ -302,23 +324,73 @@ const DashboardWrapper: React.FC<{ children: React.ReactNode }> = ({ children })
 );
 
 export const CompactControls: React.FC = () => {
-    const { runPipeline, stopPipeline, isRunning, isStopping, status, uploadResume, isUploading } = usePipeline();
+    const { runPipeline, stopPipeline, isRunning, isStopping, status, isUploading } = usePipeline();
     const { data: stats } = useStats();
     const [resumeFilename, setResumeFilename] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const [isProcessingResume, setIsProcessingResume] = useState(false);
 
     const handleResumeUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
 
+        // Check file size
+        if (file.size > RESUME_MAX_SIZE) {
+            toast.error(`File size exceeds ${RESUME_MAX_SIZE_MB}MB limit. Please upload a smaller file.`);
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
+            return;
+        }
+
+        setIsProcessingResume(true);
         try {
-            await uploadResume(file);
+            // Compute hash of file bytes
+            const hash = await computeFileHash(file);
+
+            // Check if hash already exists in backend
+            const checkResponse = await pipelineApi.checkResumeHash(hash);
+
+            if (checkResponse.exists) {
+                // Hash exists, skip upload, store in IndexedDB (best effort)
+                try {
+                    await saveResume(file, hash);
+                } catch (indexedDbError) {
+                    console.warn('Failed to save resume to IndexedDB:', indexedDbError);
+                }
+                setResumeFilename(file.name);
+                toast.success("Resume already processed!");
+                return;
+            }
+
+            // Hash doesn't exist, need to upload
+            const uploadResponse = await pipelineApi.uploadResume(file, hash);
+
+            // Verify returned hash matches
+            if (uploadResponse.resume_hash !== hash) {
+                throw new Error("Hash verification failed");
+            }
+
+            // Store in IndexedDB (best effort - don't fail if this fails)
+            let savedLocally = true;
+            try {
+                await saveResume(file, hash);
+            } catch (indexedDbError) {
+                console.warn('Failed to save resume to IndexedDB:', indexedDbError);
+                savedLocally = false;
+            }
+
             setResumeFilename(file.name);
-            toast.success("Resume uploaded!");
+            toast.success(
+                savedLocally
+                    ? 'Resume uploaded!'
+                    : 'Resume uploaded (could not be saved locally)'
+            );
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown error';
             toast.error(`Failed to upload resume: ${message}`);
         } finally {
+            setIsProcessingResume(false);
             if (fileInputRef.current) {
                 fileInputRef.current.value = '';
             }
@@ -361,7 +433,7 @@ export const CompactControls: React.FC = () => {
                         <ResumeUploadSection
                             fileInputRef={fileInputRef}
                             onUpload={handleResumeUpload}
-                            isUploading={isUploading}
+                            isUploading={isUploading || isProcessingResume}
                             isRunning={isRunning}
                             filename={resumeFilename}
                         />

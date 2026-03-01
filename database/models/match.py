@@ -24,7 +24,6 @@ class JobMatch(Base):
     job_post_id = Column(UUID(as_uuid=True), ForeignKey('job_post.id', ondelete='CASCADE'), nullable=False)
 
     resume_fingerprint = Column(Text, nullable=False)
-    resume_version = Column(Text, nullable=True)
 
     job_content_hash = Column(Text, nullable=True)
 

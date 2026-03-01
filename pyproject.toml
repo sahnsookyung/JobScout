@@ -17,6 +17,7 @@ dependencies = [
     "rq>=1.15.0",
     "python-docx>=1.1.0",
     "pypdf>=4.0.0",
+    "xxhash>=3.5.0",
 ]
 
 [dependency-groups]
@@ -32,6 +33,7 @@ web = [
     "uvicorn>=0.40.0",
     "pydantic>=2.12.5",
     "python-multipart>=0.0.22",
+    "slowapi>=0.1.9",
 ]
 
 [tool.uv]

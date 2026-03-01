@@ -6,20 +6,46 @@ Pipeline endpoints - trigger and monitor matching pipeline.
 import json
 import os
 import asyncio
+import logging
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Request
+from fastapi.responses import StreamingResponse, JSONResponse
 from typing import Optional
+
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from ..services.pipeline_service import get_pipeline_manager
 from ..models.responses import (
     PipelineTaskResponse,
-    PipelineStatusResponse
+    PipelineStatusResponse,
+    ResumeHashCheckResponse,
+    ResumeUploadResponse
 )
+from ..models.requests import ResumeHashCheckRequest
 from ..exceptions import PipelineLockedException
 from etl.resume import ResumeParser
+from web.shared.constants import RESUME_MAX_SIZE
+
+logger = logging.getLogger(__name__)
+
+limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
+
+
+def add_rate_limit_handlers(app):
+    """Add rate limit exception handlers to the FastAPI app."""
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": str(exc)}
+    )
 
 
 @router.post("/run-matching", response_model=PipelineTaskResponse)
@@ -149,8 +175,6 @@ async def pipeline_events(task_id: str):
     
     Streams status updates for the specified task in real-time.
     """
-    import logging
-    logger = logging.getLogger(__name__)
     
     manager = get_pipeline_manager()
     task = manager.get_task(task_id)
@@ -227,15 +251,43 @@ async def pipeline_events(task_id: str):
     )
 
 
-@router.post("/upload-resume", response_model=PipelineTaskResponse)
-async def upload_resume_endpoint(file: UploadFile = File(...)):
+@router.post("/check-resume-hash", response_model=ResumeHashCheckResponse)
+@limiter.limit("10/minute")
+def check_resume_hash_endpoint(request: Request, body: ResumeHashCheckRequest):
+    """
+    Check if a resume with the given hash already exists in the database.
+    
+    Used for deduplication - if the hash exists, the frontend can skip
+    uploading the same file again. The frontend stores the file in IndexedDB.
+    """
+    from database.uow import job_uow
+    
+    with job_uow() as repo:
+        exists = repo.resume.resume_hash_exists(body.resume_hash)
+    
+    return ResumeHashCheckResponse(
+        exists=exists,
+        resume_hash=body.resume_hash
+    )
+
+
+@router.post("/upload-resume", response_model=ResumeUploadResponse)
+@limiter.limit("5/minute")
+async def upload_resume_endpoint(
+    request: Request,
+    file: UploadFile = File(...),
+    resume_hash: Optional[str] = Form(None)
+):
     """
     Upload a resume file.
     Supports: .json, .yaml, .yml, .txt, .docx, .pdf
-    Saves to configured resume file path and triggers ETL processing.
+    
+    If resume_hash is provided, checks if it already exists first.
+    If the hash exists, returns success without re-processing.
+    
+    The file is written to a temporary file for ETL processing, then cleaned up.
+    Returns only the hash for frontend verification and IndexedDB storage.
     """
-    import logging
-    logger = logging.getLogger(__name__)
 
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
@@ -254,50 +306,84 @@ async def upload_resume_endpoint(file: UploadFile = File(...)):
     if len(content) == 0:
         raise HTTPException(status_code=400, detail="Empty file")
 
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File size exceeds 10MB limit")
+    if len(content) > RESUME_MAX_SIZE:
+        limit_mb = RESUME_MAX_SIZE / (1024 * 1024)
+        if limit_mb >= 1:
+            limit_str = f"{limit_mb:.1f}MB"
+        else:
+            limit_str = f"{RESUME_MAX_SIZE // 1024}KB"
+        raise HTTPException(status_code=400, detail=f"File size exceeds {limit_str} limit")
 
+    # Always compute hash from file bytes (security: verify file integrity)
+    from database.models.resume import generate_file_fingerprint
+    computed_hash = generate_file_fingerprint(content)
+
+    # If client provided a hash, verify it matches
+    if resume_hash and resume_hash != computed_hash:
+        raise HTTPException(
+            status_code=400,
+            detail="File hash mismatch. The provided hash does not match the file content."
+        )
+
+    # Use the computed hash (either client matched, or we use computed)
+    resume_hash = computed_hash
+
+    # Process the resume (deduplication is handled inside process_resume)
+    # Run heavy ETL processing in threadpool to avoid blocking the event loop
+    from database.uow import job_uow
     from core.config_loader import load_config
-    config = load_config()
-    # Support both old path (etl.resume.resume_file) and new path (etl.resume.resume_file)
-    if config.etl and config.etl.resume:
-        base_resume_file = config.etl.resume.resume_file
-    elif config.etl and config.etl.resume_file:
-        base_resume_file = config.etl.resume_file  # Backward compatibility
-    else:
-        base_resume_file = "resume.json"
-    
-    # Preserve the original file extension
-    original_ext = Path(file.filename).suffix
-    resume_file = Path(base_resume_file).with_suffix(original_ext)
-    
-    if not os.path.isabs(resume_file):
-        resume_file = os.path.join(os.getcwd(), resume_file)
+    from core.app_context import AppContext
+    import tempfile
 
-    resume_file_str = str(resume_file)
-    
+    def process_resume_task(file_content: bytes, filename: str) -> tuple:
+        """Run ETL processing in a thread (sync function)."""
+        fingerprint = None
+        resume_changed = False
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp:
+            tmp.write(file_content)
+            tmp_path = tmp.name
+
+        try:
+            full_config = load_config()
+            ctx = AppContext.build(full_config)
+
+            with job_uow() as repo:
+                changed, fp, _ = ctx.job_etl_service.process_resume(repo, tmp_path)
+                fingerprint = fp
+                resume_changed = changed
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+        
+        return fingerprint, resume_changed
+
     try:
-        with open(resume_file_str, 'wb') as f:
-            f.write(content)
-    except IOError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
-
-    fingerprint = None
-    try:
-        from database.uow import job_uow
-        from core.app_context import AppContext
-
-        full_config = load_config()
-        ctx = AppContext.build(full_config)
-
-        with job_uow() as repo:
-            changed, fp, _ = ctx.job_etl_service.process_resume(repo, resume_file_str)
-            fingerprint = fp
+        fingerprint, resume_changed = await asyncio.to_thread(process_resume_task, content, file.filename)
     except Exception as e:
-        logger.error(f"ETL processing failed during resume upload: {e}")
+        logger.exception("ETL processing failed during resume upload")
+        return ResumeUploadResponse(
+            success=False,
+            resume_hash=resume_hash,
+            message="Resume processing failed. Please try again or contact support."
+        )
 
-    return PipelineTaskResponse(
+    # Verify the fingerprint matches (should always match since we provided hash)
+    if fingerprint and fingerprint != resume_hash:
+        logger.error(
+            f"Fingerprint mismatch: provided={resume_hash[:16]}..., computed={fingerprint[:16]}..."
+        )
+        return ResumeUploadResponse(
+            success=False,
+            resume_hash=resume_hash,
+            message="Resume processing failed. Please try again or contact support."
+        )
+
+    message = "Resume already processed" if not resume_changed else "Resume uploaded and processed successfully"
+    return ResumeUploadResponse(
         success=True,
-        task_id="",
-        message=f"Resume uploaded successfully{f' (fingerprint: {fingerprint[:16]}...)' if fingerprint else ''}"
+        resume_hash=resume_hash,
+        message=message
     )

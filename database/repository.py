@@ -7,7 +7,7 @@ from database.repositories.job_post import JobPostRepository
 from database.repositories.resume import ResumeRepository
 from database.repositories.match import MatchRepository
 from database.repositories.embedding import EmbeddingRepository
-
+from database.repositories.user_wants import UserWantsRepository
 
 class JobRepository:
     def __init__(self, db: Session):
@@ -16,6 +16,7 @@ class JobRepository:
         self._resume_repo: Optional[ResumeRepository] = None
         self._match_repo: Optional[MatchRepository] = None
         self._embedding_repo: Optional[EmbeddingRepository] = None
+        self._user_wants_repo: Optional[UserWantsRepository] = None
 
     @property
     def job_post(self) -> JobPostRepository:
@@ -40,6 +41,12 @@ class JobRepository:
         if self._embedding_repo is None:
             self._embedding_repo = EmbeddingRepository(self.db)
         return self._embedding_repo
+
+    @property
+    def user_wants(self) -> UserWantsRepository:
+        if self._user_wants_repo is None:
+            self._user_wants_repo = UserWantsRepository(self.db)
+        return self._user_wants_repo
 
     def commit(self) -> None:
         self.db.commit()
@@ -249,21 +256,19 @@ class JobRepository:
     def save_user_wants(
         self,
         user_id: str,
-        resume_fingerprint: Optional[str],
         wants_text: str,
         embedding: List[float],
         facet_key: Optional[str] = None
     ) -> Any:
-        return self.resume.save_user_wants(
-            user_id, resume_fingerprint, wants_text, embedding, facet_key
+        return self.user_wants.save_user_wants(
+            user_id, wants_text, embedding, facet_key
         )
 
     def get_user_wants_embeddings(
         self,
-        user_id: str,
-        resume_fingerprint: Optional[str] = None
+        user_id: str
     ) -> List[List[float]]:
-        return self.resume.get_user_wants_embeddings(user_id, resume_fingerprint)
+        return self.user_wants.get_user_wants_embeddings(user_id)
 
     def save_evidence_unit_embeddings(
         self,

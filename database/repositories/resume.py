@@ -161,6 +161,24 @@ class ResumeRepository(BaseRepository):
         )
         return self.db.execute(stmt).scalar_one_or_none()
 
+    def resume_hash_exists(self, resume_fingerprint: str) -> bool:
+        """Check if a resume with the given hash already exists in the database.
+
+        This is used for deduplication - if the hash exists, we can skip
+        re-processing the same file.
+
+        Args:
+            resume_fingerprint: The file hash to check
+
+        Returns:
+            True if a resume with this hash exists, False otherwise
+        """
+        stmt = select(StructuredResume.resume_fingerprint).where(
+            StructuredResume.resume_fingerprint == resume_fingerprint
+        ).limit(1)
+        result = self.db.execute(stmt).scalar_one_or_none()
+        return result is not None
+
     def get_latest_stored_resume_fingerprint(self) -> Optional[str]:
         """Get fingerprint of the most recently stored resume.
 
@@ -194,31 +212,4 @@ class ResumeRepository(BaseRepository):
         rows = self.db.execute(stmt).all()
         return [(row[0], cosine_similarity_from_distance(row._mapping['distance'])) for row in rows]
 
-    def save_user_wants(
-        self,
-        user_id: str,
-        resume_fingerprint: Optional[str],
-        wants_text: str,
-        embedding: List[float],
-        facet_key: Optional[str] = None
-    ) -> UserWants:
-        user_want = UserWants(
-            user_id=user_id,
-            resume_fingerprint=resume_fingerprint,
-            wants_text=wants_text,
-            embedding=embedding,
-            facet_key=facet_key
-        )
-        self.db.add(user_want)
-        return user_want
 
-    def get_user_wants_embeddings(
-        self,
-        user_id: str,
-        resume_fingerprint: Optional[str] = None
-    ) -> List[List[float]]:
-        stmt = select(UserWants.embedding).where(UserWants.user_id == user_id)
-        if resume_fingerprint:
-            stmt = stmt.where(UserWants.resume_fingerprint == resume_fingerprint)
-        results = self.db.execute(stmt).scalars().all()
-        return list(results)

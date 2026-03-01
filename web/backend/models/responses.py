@@ -203,3 +203,16 @@ class MatchExplanationResponse(BaseModel):
     match_id: str
     explanation: Optional[Dict[str, Any]]
     message: Optional[str] = None
+
+
+class ResumeHashCheckResponse(BaseModel):
+    """Response for checking if a resume hash exists."""
+    exists: bool
+    resume_hash: str
+
+
+class ResumeUploadResponse(BaseModel):
+    """Response after uploading a resume."""
+    success: bool
+    resume_hash: str
+    message: str
