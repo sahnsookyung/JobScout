@@ -23,7 +23,9 @@ async function getXxh() {
 async function computeFileHash(file: File): Promise<string> {
     const xxh = await getXxh();
     const buffer = await file.arrayBuffer();
-    return xxh.h64ToString(new Uint8Array(buffer));
+    const hasher = xxh.create64();
+    hasher.update(new Uint8Array(buffer));
+    return hasher.digest().toString(16);
 }
 
 interface ScoreBarProps {
