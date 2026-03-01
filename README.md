@@ -13,7 +13,7 @@ AI-powered job matching pipeline that scrapes, analyzes, and matches jobs to you
 
 ### Prerequisites
 
-- **Python 3.11+** and **uv** (package manager)
+- **Python 3.13+** and **uv** (package manager)
 - **Docker** (for PostgreSQL, Redis, Ollama)
 - **Node.js 18+** (for frontend)
 
