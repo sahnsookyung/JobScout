@@ -491,7 +491,8 @@ class TestFullPipelineIntegration(unittest.TestCase):
         
         # Profile resume to save embeddings (required for two-stage matching)
         print("  Processing resume to create embeddings...")
-        profile, evidence_units, _ = self.resume_profiler.profile_resume(self.resume_data)
+        test_fingerprint = f"test-pipeline-{datetime.now().timestamp()}"
+        profile, evidence_units, _ = self.resume_profiler.profile_resume(self.resume_data, resume_fingerprint=test_fingerprint)
         
         self.assertIsNotNone(profile, "Resume profiling should return a profile")
         print(f"  ✓ Resume profiled successfully")
@@ -499,7 +500,8 @@ class TestFullPipelineIntegration(unittest.TestCase):
         # Run matching using two-stage pipeline
         preliminary_matches = self.matcher.match_resume_two_stage(
             repo=self.repo,
-            resume_data=self.resume_data
+            resume_data=self.resume_data,
+            resume_fingerprint=test_fingerprint,
         )
         
         self.assertGreater(len(preliminary_matches), 0)

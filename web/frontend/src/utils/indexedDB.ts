@@ -10,6 +10,7 @@ interface ResumeEntry {
   file: Blob;
   timestamp: number;
   hash: string;
+  filename?: string;
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -35,7 +36,7 @@ function openDB(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
-export async function saveResume(file: Blob, hash: string): Promise<void> {
+export async function saveResume(file: Blob, hash: string, filename?: string): Promise<void> {
   const db = await openDB();
 
   return new Promise((resolve, reject) => {
@@ -46,6 +47,7 @@ export async function saveResume(file: Blob, hash: string): Promise<void> {
       file,
       timestamp: Date.now(),
       hash,
+      filename,
     };
 
     const request = store.put(entry);
@@ -129,6 +131,28 @@ export async function getResumeHash(): Promise<string | null> {
   });
 }
 
+export async function getResumeFilename(): Promise<string | null> {
+  const hash = await getResumeHash();
+  if (!hash) return null;
+
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    const request = store.get(hash);
+
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const entry = request.result as ResumeEntry | undefined;
+      if (!entry || !entry.filename) {
+        resolve(null);
+        return;
+      }
+      resolve(entry.filename);
+    };
+  });
+}
+
 export async function deleteResume(hash: string): Promise<void> {
   const db = await openDB();
 
@@ -169,6 +193,11 @@ async function cleanupOldEntries(db: IDBDatabase): Promise<void> {
 
         // Keep the first MAX_ENTRIES (youngest), delete the rest (oldest)
         const toDelete = sortedEntries.slice(MAX_ENTRIES);
+
+        if (toDelete.length === 0) {
+          resolve();
+          return;
+        }
 
         let deletedCount = 0;
         toDelete.forEach(({ entry }) => {

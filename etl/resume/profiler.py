@@ -12,7 +12,6 @@ import json
 import threading
 from typing import List, Dict, Any, Optional, Iterator
 
-from database.models import generate_resume_fingerprint
 from core.llm.interfaces import LLMProvider
 from etl.resume.models import ResumeEvidenceUnit
 from etl.resume.embedding_store import (
@@ -176,18 +175,17 @@ class ResumeProfiler:
     def profile_resume(
         self,
         resume_data: Dict[str, Any],
+        resume_fingerprint: str,
         stop_event: Optional[threading.Event] = None,
         pre_extracted_resume: Optional[ResumeSchema] = None,
-        resume_fingerprint: Optional[str] = None,
     ) -> tuple[Optional[ResumeSchema], List[ResumeEvidenceUnit], List[Dict[str, Any]]]:
         """Complete resume profiling pipeline."""
         if pre_extracted_resume:
-            if not resume_fingerprint:
-                raise ValueError("resume_fingerprint is required when using pre_extracted_resume")
             resume = pre_extracted_resume
             logger.info("Using pre-extracted resume from storage (skipping LLM extraction)")
         else:
-            resume_fingerprint = generate_resume_fingerprint(resume_data)
+            if not resume_fingerprint:
+                raise ValueError("resume_fingerprint is required when processing resume")
             self._check_interrupted(stop_event)
             resume = self.extract_structured_resume(resume_data)
 

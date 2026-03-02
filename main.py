@@ -134,6 +134,16 @@ def run_job_etl(ctx: AppContext, stop_event: threading.Event) -> None:
     logger.info("STARTING JOB ETL PIPELINE")
     logger.info("=" * 60)
 
+    # Recovery: Fix failed/incomplete facet processing from previous runs
+    step_start = time.time()
+    logger.info("=== JOB ETL RECOVERY: Fixing failed facet extraction/embedding ===")
+    _run_facet_recovery_batch(ctx, stop_event, limit=100)
+    step_elapsed = time.time() - step_start
+    logger.info(f"Job ETL Recovery completed in {step_elapsed:.2f}s")
+
+    if stop_event.is_set():
+        return
+
     step_start = time.time()
     logger.info("=== JOB ETL STEP 1: Gathering Jobs ===")
     total_jobs_gathered = 0
@@ -290,6 +300,7 @@ def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: i
         if stop_event.is_set():
             break
         
+        job_title = None
         for attempt, wait_time in enumerate(retry_intervals):
             try:
                 with job_uow() as repo:
@@ -297,6 +308,7 @@ def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: i
                     if job is None:
                         logger.warning(f"Job {job_id} not found, may have been deleted")
                         break
+                    job_title = job.title  # Capture before context exits
                     ctx.job_etl_service.extract_one(repo, job)
                 success_count += 1
                 break
@@ -310,27 +322,88 @@ def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: i
                 else:
                     http_details = None
 
-                job_title = getattr(job, 'title', None)  # type: ignore[union-attr]
                 if job_title:
-                    job_title = job_title[:50]
+                    job_title_str = job_title[:50]
                 else:
-                    job_title = "unknown"
+                    job_title_str = "unknown"
                 exc_type = type(e).__name__
                 exc_message = str(e)
 
                 if attempt == len(retry_intervals) - 1:
                     logger.error(
                         "Extraction failed after %d retries, job_id=%s (title: %r): %s - %s. %s. Giving up.",
-                        len(retry_intervals), job_id, job_title, exc_type, exc_message, http_details or "N/A"
+                        len(retry_intervals), job_id, job_title_str, exc_type, exc_message, http_details or "N/A"
                     )
                 else:
                     logger.warning(
                         "Extraction attempt %d/%d failed for job %s (title: %r): %s - %s. %s. Retrying in %ds...",
-                        attempt + 1, len(retry_intervals), job_id, job_title, exc_type, exc_message, http_details or "N/A", wait_time
+                        attempt + 1, len(retry_intervals), job_id, job_title_str, exc_type, exc_message, http_details or "N/A", wait_time
                     )
                     time.sleep(wait_time)
 
     logger.info(f"Extraction batch completed: {success_count}/{len(job_ids)} jobs")
+
+
+def _run_facet_recovery_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):
+    """Recover failed/incomplete facet extraction and embeddings from previous runs.
+
+    This runs before the main ETL pipeline to fix any jobs that:
+    1. Have stale 'in_progress' status (worker crashed)
+    2. Have 'failed' status (extraction API failed)
+    3. Have facets extracted but missing embeddings
+
+    Args:
+        ctx: Application context
+        stop_event: Stop signal
+        limit: Maximum jobs to recover per category
+    """
+    max_retries = 5
+    claim_timeout_minutes = 30
+    recovered = 0
+
+    # Step 1: Reset stale in_progress jobs
+    with job_uow() as repo:
+        reset_count = repo.reset_stale_facet_jobs(claim_timeout_minutes, max_retries)
+        if reset_count > 0:
+            logger.info(f"Facet recovery: reset {reset_count} stale in_progress jobs")
+
+    # Step 2: Retry failed extractions
+    with job_uow() as repo:
+        failed_jobs = repo.get_jobs_with_failed_facets(limit, max_retries)
+        if failed_jobs:
+            logger.info(f"Facet recovery: retrying {len(failed_jobs)} failed extractions")
+            for job in failed_jobs:
+                if stop_event.is_set():
+                    break
+                try:
+                    job_id = job.id
+                    with job_uow() as repo:
+                        job = repo.get_by_id(job_id)
+                        if job and job.facet_status == 'failed':
+                            repo.mark_job_facets_failed(job.id, "Retrying from recovery")
+                            recovered += 1
+                except Exception:
+                    logger.exception(f"Facet recovery failed for job {job_id}")
+
+    # Step 3: Retry missing embeddings
+    with job_uow() as repo:
+        jobs_missing_embeddings = repo.get_jobs_with_missing_facet_embeddings(limit, max_retries)
+        if jobs_missing_embeddings:
+            logger.info(f"Facet recovery: retrying {len(jobs_missing_embeddings)} missing embeddings")
+            for job in jobs_missing_embeddings:
+                if stop_event.is_set():
+                    break
+                try:
+                    job_id = job.id
+                    with job_uow() as repo:
+                        job = repo.get_by_id(job_id)
+                        if job and job.facet_status == 'done':
+                            ctx.job_etl_service.embed_facets_one(repo, job)
+                            recovered += 1
+                except Exception:
+                    logger.exception(f"Facet embedding recovery failed for job {job_id}")
+
+    logger.info(f"Facet recovery batch completed: recovered={recovered}")
 
 
 def _run_facet_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):

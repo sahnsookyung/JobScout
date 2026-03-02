@@ -10,6 +10,7 @@ interface ResumeUploadResponse {
     success: boolean;
     resume_hash: string;
     message: string;
+    task_id?: string;
 }
 
 export const pipelineApi = {

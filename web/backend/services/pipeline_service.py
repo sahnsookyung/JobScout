@@ -37,6 +37,8 @@ class PipelineTask:
     error: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
     stop_event: Event = field(default_factory=Event)
+    message: Optional[str] = None
+    phases: Optional[Dict[str, Any]] = None
 
 
 class PipelineTaskManager:

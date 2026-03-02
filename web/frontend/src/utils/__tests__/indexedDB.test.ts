@@ -60,9 +60,13 @@ describe('IndexedDB Resume Storage', () => {
             await saveResume(blob1, 'hash1111111111111111111111111111');
             await saveResume(blob2, 'hash2222222222222222222222222222');
             
-            const hash1 = await getResumeHash();
-            // Only one should remain
-            expect(await hasResume()).toBe(true);
+            // Verify only the newer entry remains
+            const currentHash = await getResumeHash();
+            expect(currentHash).toBe('hash2222222222222222222222222222');
+            
+            // Verify old entry was evicted
+            const oldEntry = await getResume('hash1111111111111111111111111111');
+            expect(oldEntry).toBeNull();
         });
     });
 

@@ -100,7 +100,7 @@ class TestResumeProfilerProfiling:
         """Test that profile_resume returns persistence payload even without store."""
         profiler = ResumeProfiler(ai_service=mock_ai_service)
         
-        profile, evidence_units, persistence_payload = profiler.profile_resume(sample_resume_data)
+        profile, evidence_units, persistence_payload = profiler.profile_resume(sample_resume_data, resume_fingerprint="test-fp-123")
         
         # Profile should be extracted
         assert profile is not None
@@ -117,7 +117,7 @@ class TestResumeProfilerProfiling:
         """Test that profile_resume without store does not persist to DB."""
         profiler = ResumeProfiler(ai_service=mock_ai_service)
         
-        profiler.profile_resume(sample_resume_data)
+        profiler.profile_resume(sample_resume_data, resume_fingerprint="test-fp-123")
         
         # AI service should not be called for section embeddings (no store)
         # extract_resume_data is called, but save_resume_section_embeddings won't persist
@@ -131,7 +131,7 @@ class TestResumeProfilerProfiling:
         store = InMemoryEmbeddingStore()
         profiler = ResumeProfiler(ai_service=mock_ai_service, store=store)
         
-        profile, evidence_units, persistence_payload = profiler.profile_resume(sample_resume_data)
+        profile, evidence_units, persistence_payload = profiler.profile_resume(sample_resume_data, resume_fingerprint="test-fp-123")
         
         # Persistence should have happened
         assert len(persistence_payload) > 0

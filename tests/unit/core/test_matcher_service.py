@@ -15,7 +15,7 @@ from core.matcher import MatcherService
 from etl.resume import ResumeEvidenceUnit, ResumeProfiler
 from etl.resume.embedding_store import JobRepositoryAdapter
 from tests.mocks.matcher_mocks import MockMatcherService
-from database.models import generate_resume_fingerprint
+from database.models import generate_file_fingerprint
 
 
 class TestMatcherService(unittest.TestCase):
@@ -148,16 +148,17 @@ scrapers: []
         """Test resume fingerprint generation."""
         print("\n🔐 UNIT Test 4: Resume Fingerprint")
 
-        fp1 = generate_resume_fingerprint(self.resume_data)
-        fp2 = generate_resume_fingerprint(self.resume_data)
+        content1 = b'{"name": "Test User", "experience": []}'
+        content2 = b'{"name": "Different User", "experience": []}'
+
+        fp1 = generate_file_fingerprint(content1)
+        fp2 = generate_file_fingerprint(content1)
 
         # Same data = same fingerprint
         self.assertEqual(fp1, fp2)
 
         # Different data = different fingerprint
-        modified_data = self.resume_data.copy()
-        modified_data["name"] = "Different Name"
-        fp3 = generate_resume_fingerprint(modified_data)
+        fp3 = generate_file_fingerprint(content2)
 
         self.assertNotEqual(fp1, fp3)
 

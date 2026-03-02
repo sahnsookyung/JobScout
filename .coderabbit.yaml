@@ -1,0 +1,25 @@
+language: "en"
+early_access: true
+reviews:
+  profile: "detailed"
+  high_level_summary: true
+  auto_title_placeholder: ""
+  collapse_walkthrough: false
+  review_status: true
+  poem: false
+  sequence_diagrams: true
+  work_flows:
+    high_level_summary: true
+    auto_title_placeholder: "Work item"
+    collapse_walkthrough: false
+    sequence_diagrams: false
+    print_summary: true
+    group_by_directory: false
+
+chat:
+  auto_reply: false
+
+coding_rules:
+  enable_default_rules: true
+
+version: "1.0"

@@ -304,7 +304,7 @@ class JobPostRepository(BaseRepository):
         job_post_id: Any,
         facet_key: str,
         facet_text: str,
-        embedding: List[float],
+        embedding: Optional[List[float]],
         content_hash: str
     ) -> JobFacetEmbedding:
         stmt = insert(JobFacetEmbedding).values(
@@ -334,7 +334,7 @@ class JobPostRepository(BaseRepository):
             JobFacetEmbedding.job_post_id == job_post_id
         )
         results = self.db.execute(stmt).scalars().all()
-        return {r.facet_key: r.embedding for r in results}
+        return {r.facet_key: r.embedding for r in results if r.embedding is not None}
 
     def get_facets_for_job(self, job_post_id: Any) -> List[JobFacetEmbedding]:
         stmt = select(JobFacetEmbedding).where(
@@ -456,3 +456,88 @@ class JobPostRepository(BaseRepository):
                 facet_last_error=error
             )
         )
+
+    def reset_stale_facet_jobs(self, timeout_minutes: int = 30, max_retries: int = 5) -> int:
+        """Reset jobs with stale 'in_progress' facet status to 'pending' for retry.
+
+        Args:
+            timeout_minutes: Jobs in_progress longer than this are considered stale
+            max_retries: Only reset jobs with retry_count < max_retries
+
+        Returns:
+            Number of jobs reset
+        """
+        now = datetime.now(timezone.utc)
+        timeout_threshold = now - timedelta(minutes=timeout_minutes)
+
+        result = self.db.execute(
+            update(JobPost).where(
+                and_(
+                    JobPost.facet_status == 'in_progress',
+                    JobPost.facet_claimed_at < timeout_threshold,
+                    JobPost.facet_retry_count < max_retries
+                )
+            ).values(facet_status='pending')
+        )
+        return result.rowcount
+
+    def get_jobs_with_failed_facets(self, limit: int = 100, max_retries: int = 5) -> List[JobPost]:
+        """Get jobs that have failed facet extraction for retry.
+
+        Args:
+            limit: Maximum number of jobs to return
+            max_retries: Only return jobs with retry_count < max_retries
+
+        Returns:
+            List of jobs with failed facet extraction
+        """
+        stmt = select(JobPost).where(
+            and_(
+                JobPost.facet_status == 'pending',
+                JobPost.facet_last_error.isnot(None),
+                JobPost.facet_retry_count < max_retries,
+                JobPost.description.isnot(None)
+            )
+        ).limit(limit)
+        return list(self.db.execute(stmt).scalars().all())
+
+    def get_jobs_with_missing_facet_embeddings(
+        self,
+        limit: int = 100,
+        max_retries: int = 5
+    ) -> List[JobPost]:
+        """Get jobs that have facets extracted but missing embeddings for retry.
+
+        This finds jobs where:
+        - facet_status is 'done' (extraction succeeded)
+        - But the job_facet_embedding table has NULL embeddings
+
+        Args:
+            limit: Maximum number of jobs to return
+            max_retries: Only return jobs with facet_retry_count < max_retries
+
+        Returns:
+            List of jobs needing facet embedding retry
+        """
+        stmt = text("""
+            SELECT j.id, j.facet_status, j.facet_retry_count, j.description
+            FROM job_post j
+            WHERE j.facet_status = 'done'
+              AND j.facet_retry_count < :max_retries
+              AND j.description IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM job_facet_embedding e
+                  WHERE e.job_post_id = j.id
+                    AND e.embedding IS NULL
+              )
+            LIMIT :limit
+        """).bindparams(max_retries=max_retries, limit=limit)
+
+        result = self.db.execute(stmt)
+        job_ids = [row[0] for row in result.fetchall()]
+
+        if not job_ids:
+            return []
+
+        jobs_stmt = select(JobPost).where(JobPost.id.in_(job_ids))
+        return list(self.db.execute(jobs_stmt).scalars().all())

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Tuple
 import numpy as np
 
 from core.config_loader import FacetWeights
+
+logger = logging.getLogger(__name__)
 
 FACET_KEYS = [
     "remote_flexibility",
@@ -24,11 +27,17 @@ def calculate_want_score(
     user_want_embeddings: List[np.ndarray],
     job_facet_embeddings: Dict[str, np.ndarray],
     facet_weights: FacetWeights,
+    job_id: str = None,
 ) -> Tuple[float, Dict[str, Any]]:
     if not user_want_embeddings:
         return 0.0, {"error": "No user wants provided", "want_score": 0.0}
     if not job_facet_embeddings:
+        logger.warning(f"No job facet embeddings available for job_id={job_id}")
         return 0.0, {"error": "No job facet embeddings available", "want_score": 0.0}
+
+    missing_facets = set(FACET_KEYS) - set(job_facet_embeddings.keys())
+    if missing_facets:
+        logger.warning(f"Partial facet embeddings for job_id={job_id}: missing {missing_facets}")
 
     # Keep a stable facet order (prefer FACET_KEYS, otherwise whatever is present)
     facet_keys = [k for k in FACET_KEYS if k in job_facet_embeddings]

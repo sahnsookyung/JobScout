@@ -93,7 +93,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertTrue(data['success'])
-        self.assertIn('processed', data['message'].lower())
+        self.assertIn('background', data['message'].lower())
 
     def test_upload_unsupported_format_rejected(self):
         """Test that unsupported file formats are rejected."""
@@ -130,7 +130,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertTrue(data['success'])
-        self.assertIn('processed', data['message'].lower())
+        self.assertIn('background', data['message'].lower())
 
     def test_upload_triggers_etl_processing(self):
         """Test that upload triggers ETL resume processing."""
@@ -150,7 +150,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
 
     def test_upload_continues_on_etl_error(self):
-        """Test that upload returns error response when ETL processing fails."""
+        """Test that upload returns success immediately while ETL runs in background."""
         sample_resume = {"name": "Test", "sections": []}
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -159,29 +159,24 @@ class TestResumeUploadEndpoint(unittest.TestCase):
             with patch('core.config_loader.load_config') as mock_config:
                 mock_cfg = MagicMock()
                 mock_cfg.etl = MagicMock()
-                # Use new config structure: etl.resume.resume_file
                 mock_cfg.etl.resume = MagicMock()
                 mock_cfg.etl.resume.resume_file = temp_resume_path
                 mock_config.return_value = mock_cfg
 
-                # Mock database to return hash doesn't exist
                 with patch('database.uow.job_uow') as mock_uow:
                     mock_repo = MagicMock()
                     mock_repo.resume.resume_hash_exists.return_value = False
                     mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                     mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
-                    with patch('core.app_context.AppContext') as mock_context:
-                        mock_context.build.side_effect = Exception("ETL Error")
+                    files = {'file': ('resume.json', json.dumps(sample_resume), 'application/json')}
+                    response = self.client.post('/api/pipeline/upload-resume', files=files)
 
-                        files = {'file': ('resume.json', json.dumps(sample_resume), 'application/json')}
-                        response = self.client.post('/api/pipeline/upload-resume', files=files)
-
-            # Should return 200 with success=false when ETL fails
+            # Should return 200 with success=true immediately (ETL runs in background)
             self.assertEqual(response.status_code, 200)
             data = response.json()
-            self.assertFalse(data['success'])
-            self.assertIn('failed', data['message'].lower())
+            self.assertTrue(data['success'])
+            self.assertIn('background', data['message'].lower())
 
     def test_upload_with_empty_file_rejected(self):
         """Test that empty files are rejected."""
@@ -467,11 +462,11 @@ class TestResumeUploadDeduplication(unittest.TestCase):
                                 data={'resume_hash': file_hash}
                             )
 
-        # Should succeed and indicate already processed
+        # Should succeed and indicate upload started (processing happens in background)
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertTrue(data['success'])
-        self.assertIn('already processed', data['message'].lower())
+        self.assertIn('background', data['message'].lower())
 
     def test_upload_returns_hash_for_indexeddb(self):
         """Test that response includes resume_hash for frontend IndexedDB storage."""
@@ -559,7 +554,7 @@ class TestResumeUploadDeduplication(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertTrue(data['success'])
-        self.assertIn('successfully', data['message'].lower())
+        self.assertIn('uploaded', data['message'].lower())
 
 
 if __name__ == '__main__':

@@ -1,15 +1,17 @@
 // CompactControls.tsx
-import React, { useRef, useState } from 'react';
-import { TrendingUp, Zap, CheckCircle, XCircle, Loader, ArrowUpRight, Award, FileUp } from 'lucide-react';
+import React, { useRef, useState, useEffect } from 'react';
+import { TrendingUp, Zap, CheckCircle, XCircle, Loader, Award, FileUp } from 'lucide-react';
 import { usePipeline } from '@/hooks/usePipeline';
 import { useStats } from '@/hooks/useStats';
 import { Badge } from '@/components/ui/Badge';
 import { toast } from 'sonner';
 import { pipelineApi } from '@/services/pipelineApi';
-import { saveResume } from '@/utils/indexedDB';
+import { saveResume, hasResume, getResumeFilename } from '@/utils/indexedDB';
 import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
 
 import xxhash from 'xxhash-wasm';
+
+const isDev = import.meta.env.DEV;
 
 let xxhPromise: ReturnType<typeof xxhash> | null = null;
 
@@ -25,7 +27,7 @@ async function computeFileHash(file: File): Promise<string> {
     const buffer = await file.arrayBuffer();
     const hasher = xxh.create64();
     hasher.update(new Uint8Array(buffer));
-    return hasher.digest().toString(16);
+    return hasher.digest().toString(16).padStart(16, '0');
 }
 
 interface ScoreBarProps {
@@ -64,8 +66,8 @@ interface CircleChartProps {
     radius: number;
 }
 
-const SegmentedCircle: React.FC<CircleChartProps> = ({ 
-    activeMatches, activeArc, hiddenArc, belowArc, circumference, radius 
+const SegmentedCircle: React.FC<CircleChartProps> = ({
+    activeMatches, activeArc, hiddenArc, belowArc, circumference, radius
 }) => (
     <div className="relative w-28 h-28 sm:w-32 sm:h-32 lg:w-36 lg:h-36 flex-shrink-0">
         <svg className="transform -rotate-90 w-full h-full" viewBox="0 0 96 96">
@@ -83,7 +85,7 @@ const SegmentedCircle: React.FC<CircleChartProps> = ({
         <div className="absolute inset-0 flex items-center justify-center">
             <div className="text-center">
                 <div className="text-3xl sm:text-4xl font-black text-gray-800">{activeMatches}</div>
-                <div className="text-[10px] sm:text-xs font-bold text-gray-500 uppercase">Active</div>
+                <div className="text-[10px] sm:text-xs font-bold text-gray-500 uppercase">Fits</div>
             </div>
         </div>
     </div>
@@ -143,15 +145,15 @@ const StatsPanel: React.FC<StatsPanelProps> = ({ stats, ...chartProps }) => {
                         <div className="space-y-2 sm:space-y-2.5 flex-1">
                             <div className="flex items-center gap-2">
                                 <div className="w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full bg-gradient-to-r from-blue-500 to-purple-500" />
-                                <span className="text-xs sm:text-sm font-bold text-gray-700">{activeMatches} Active</span>
+                                <span className="text-xs sm:text-sm font-bold text-gray-700">{activeMatches} Fit</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <div className="w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full bg-gray-300" />
+                                <span className="text-xs sm:text-sm font-bold text-gray-700">{belowThreshold} Misfit</span>
                             </div>
                             <div className="flex items-center gap-2">
                                 <div className="w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full bg-gray-400" />
                                 <span className="text-xs sm:text-sm font-bold text-gray-700">{hiddenMatches} Hidden</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full bg-gray-300" />
-                                <span className="text-xs sm:text-sm font-bold text-gray-700">{belowThreshold} Below</span>
                             </div>
                         </div>
                     </div>
@@ -190,11 +192,16 @@ const ResumeUploadSection: React.FC<ResumeUploadSectionProps> = ({ fileInputRef,
         <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isRunning || isUploading}
-            className="w-full lg:w-auto px-6 py-4 border-2 border-gray-300 text-gray-700 font-semibold rounded-xl hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 min-w-[160px]"
+            className="w-full lg:w-auto px-6 py-4 border-2 border-gray-300 text-gray-700 font-semibold rounded-xl hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50 transition-all duration-200 flex flex-col items-center justify-center gap-1 min-w-[160px] relative group shadow-lg hover:shadow-2xl hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:active:scale-100 disabled:hover:shadow-lg"
         >
-            {isUploading ? <Loader className="w-5 h-5 animate-spin" /> : <FileUp className="w-5 h-5" />}
-            <span>{filename ? 'Update Resume' : `Upload Resume (max ${RESUME_MAX_SIZE_MB}MB)`}</span>
-            {filename && <span className="ml-2 text-xs opacity-70 truncate max-w-[120px]">({filename})</span>}
+            <span className="flex items-center gap-2 text-base">
+                {!filename && <FileUp className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />}
+                <span>{filename ? 'Update Resume' : 'Upload Resume'}</span>
+            </span>
+            {filename && <span className="text-xs opacity-70 truncate max-w-[200px]">{filename}</span>}
+            <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                {filename || `Upload Resume (max ${RESUME_MAX_SIZE_MB}MB)`}
+            </span>
         </button>
         <input
             ref={fileInputRef}
@@ -218,26 +225,26 @@ interface ActionButtonProps {
 const ActionButton: React.FC<ActionButtonProps> = ({ isRunningStatus, isRunning, isStopping, onRun, onStop }) => {
     const isProcessing = isRunningStatus ? isStopping : isRunning;
     const buttonText = isRunningStatus ? 'Stop' : 'Run Matching';
-    
+
     return (
         <button
             onClick={isRunningStatus ? onStop : onRun}
             disabled={isProcessing}
-            className={`w-full lg:w-auto group relative px-8 py-5 sm:px-10 sm:py-6 font-bold rounded-2xl shadow-lg hover:shadow-2xl hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-50 overflow-hidden ${
-                isRunningStatus ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white'
-            }`}
+            // Standardized to px-6 py-4, font-semibold, rounded-xl, and flex-col to match Upload button exactly
+            className={`w-full lg:w-auto group relative px-6 py-4 font-semibold rounded-xl shadow-lg hover:shadow-2xl hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-50 overflow-hidden flex flex-col items-center justify-center ${isRunningStatus ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white'
+                }`}
         >
-            <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 ${
-                isRunningStatus ? 'bg-red-400' : 'bg-gradient-to-r from-blue-400 to-indigo-400'
-            }`} />
-            <div className="relative flex items-center justify-center gap-2.5 sm:gap-3">
-                {!isRunningStatus && <Zap className="w-5 h-5 sm:w-6 sm:h-6" />}
-                <span className="text-base sm:text-lg">{buttonText}</span>
-                {!isRunningStatus && <ArrowUpRight className="w-4 h-4 sm:w-5 sm:h-5 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />}
-            </div>
+            <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none ${isRunningStatus ? 'bg-red-400' : 'bg-gradient-to-r from-blue-400 to-indigo-400'
+                }`} />
+            <span className="relative flex items-center justify-center gap-2 text-base">
+                {/* Matched sizing to FileUp and added shrink-0 */}
+                {!isRunningStatus && <Zap className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />}
+                <span>{buttonText}</span>
+            </span>
         </button>
     );
 };
+
 
 interface StatusBannerProps {
     status: string;
@@ -330,6 +337,31 @@ export const CompactControls: React.FC = () => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isProcessingResume, setIsProcessingResume] = useState(false);
 
+    // Check for existing resume in IndexedDB on mount
+    useEffect(() => {
+        const checkExistingResume = async () => {
+            try {
+                const filename = await getResumeFilename();
+                if (filename) {
+                    setResumeFilename(filename);
+                }
+            } catch (error) {
+                console.warn('[CompactControls] Failed to check IndexedDB:', error);
+            }
+        };
+        checkExistingResume();
+    }, []);
+
+    // Handle run matching - check if resume exists first
+    const handleRunMatching = async () => {
+        const exists = await hasResume();
+        if (!exists) {
+            toast.error("No resume found in browser storage. Please upload a resume first.");
+            return;
+        }
+        runPipeline();
+    };
+
     const handleResumeUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -350,42 +382,35 @@ export const CompactControls: React.FC = () => {
 
             // Check if hash already exists in backend
             const checkResponse = await pipelineApi.checkResumeHash(hash);
+            isDev && console.log('Hash check response:', checkResponse);
 
-            if (checkResponse.exists) {
+            if (checkResponse.data.exists) {
+                isDev && console.log('Hash exists, skipping upload');
                 // Hash exists, skip upload, store in IndexedDB (best effort)
                 try {
-                    await saveResume(file, hash);
+                    await saveResume(file, hash, file.name);
                 } catch (indexedDbError) {
                     console.warn('Failed to save resume to IndexedDB:', indexedDbError);
                 }
                 setResumeFilename(file.name);
-                toast.success("Resume already processed!");
+                toast.success("An identical resume has already been uploaded.");
                 return;
             }
 
             // Hash doesn't exist, need to upload
             const uploadResponse = await pipelineApi.uploadResume(file, hash);
 
-            // Verify returned hash matches
-            if (uploadResponse.resume_hash !== hash) {
-                throw new Error("Hash verification failed");
-            }
-
             // Store in IndexedDB (best effort - don't fail if this fails)
             let savedLocally = true;
             try {
-                await saveResume(file, hash);
+                await saveResume(file, hash, file.name);
             } catch (indexedDbError) {
                 console.warn('Failed to save resume to IndexedDB:', indexedDbError);
                 savedLocally = false;
             }
 
             setResumeFilename(file.name);
-            toast.success(
-                savedLocally
-                    ? 'Resume uploaded!'
-                    : 'Resume uploaded (could not be saved locally)'
-            );
+            toast.success(uploadResponse.data.message || 'Resume uploaded successfully');
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown error';
             toast.error(`Failed to upload resume: ${message}`);
@@ -441,7 +466,7 @@ export const CompactControls: React.FC = () => {
                             isRunningStatus={isRunningStatus}
                             isRunning={isRunning}
                             isStopping={isStopping}
-                            onRun={runPipeline}
+                            onRun={handleRunMatching}
                             onStop={stopPipeline}
                         />
                     </div>

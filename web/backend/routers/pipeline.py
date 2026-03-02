@@ -17,6 +17,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from ..services.pipeline_service import get_pipeline_manager
+from core.config_loader import load_config
 from ..models.responses import (
     PipelineTaskResponse,
     PipelineStatusResponse,
@@ -317,9 +318,11 @@ async def upload_resume_endpoint(
     # Always compute hash from file bytes (security: verify file integrity)
     from database.models.resume import generate_file_fingerprint
     computed_hash = generate_file_fingerprint(content)
+    logger.debug(f"Hash check - frontend: {resume_hash}, backend: {computed_hash}, len: {len(computed_hash)}")
 
     # If client provided a hash, verify it matches
     if resume_hash and resume_hash != computed_hash:
+        logger.debug(f"Hash mismatch - provided: {resume_hash}, computed: {computed_hash}")
         raise HTTPException(
             status_code=400,
             detail="File hash mismatch. The provided hash does not match the file content."
@@ -328,18 +331,26 @@ async def upload_resume_endpoint(
     # Use the computed hash (either client matched, or we use computed)
     resume_hash = computed_hash
 
-    # Process the resume (deduplication is handled inside process_resume)
-    # Run heavy ETL processing in threadpool to avoid blocking the event loop
-    from database.uow import job_uow
-    from core.config_loader import load_config
-    from core.app_context import AppContext
-    import tempfile
+    # Create a task to track resume processing
+    manager = get_pipeline_manager()
+    task_id = manager.create_task()
 
-    def process_resume_task(file_content: bytes, filename: str) -> tuple:
-        """Run ETL processing in a thread (sync function)."""
-        fingerprint = None
-        resume_changed = False
-        
+    # Process the resume asynchronously with status tracking
+    def process_resume_background(file_content: bytes, filename: str, task_id: str) -> None:
+        """Run ETL processing in background thread with status updates."""
+        import tempfile
+        from database.uow import job_uow
+        from core.app_context import AppContext
+
+        # Update task status to running
+        task = manager.get_task(task_id)
+        if not task:
+            logger.warning(f"Task {task_id} not found, cannot update status")
+        else:
+            task.status = "running"
+            task.message = "Processing resume..."
+            task.phases = {"resume_etl": {"status": "running", "progress": 0}}
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp:
             tmp.write(file_content)
             tmp_path = tmp.name
@@ -348,42 +359,37 @@ async def upload_resume_endpoint(
             full_config = load_config()
             ctx = AppContext.build(full_config)
 
+            # Update progress
+            if task:
+                task.phases = {"resume_etl": {"status": "running", "progress": 50}}
+                task.message = "Extracting resume data..."
+
             with job_uow() as repo:
-                changed, fp, _ = ctx.job_etl_service.process_resume(repo, tmp_path)
-                fingerprint = fp
-                resume_changed = changed
+                ctx.job_etl_service.process_resume(repo, tmp_path)
+
+            # Mark complete
+            if task:
+                task.status = "completed"
+                task.message = "Resume processed successfully"
+                task.phases = {"resume_etl": {"status": "completed", "progress": 100}}
+        except Exception as e:
+            logger.exception("Background resume processing failed")
+            if task:
+                task.status = "failed"
+                task.message = f"Resume processing failed: {str(e)}"
+                task.phases = {"resume_etl": {"status": "failed", "progress": 0}}
         finally:
             try:
                 os.unlink(tmp_path)
             except Exception:
                 pass
-        
-        return fingerprint, resume_changed
 
-    try:
-        fingerprint, resume_changed = await asyncio.to_thread(process_resume_task, content, file.filename)
-    except Exception as e:
-        logger.exception("ETL processing failed during resume upload")
-        return ResumeUploadResponse(
-            success=False,
-            resume_hash=resume_hash,
-            message="Resume processing failed. Please try again or contact support."
-        )
+    # Fire and forget - return immediately while processing continues in background
+    asyncio.create_task(asyncio.to_thread(process_resume_background, content, file.filename, task_id))
 
-    # Verify the fingerprint matches (should always match since we provided hash)
-    if fingerprint and fingerprint != resume_hash:
-        logger.error(
-            f"Fingerprint mismatch: provided={resume_hash[:16]}..., computed={fingerprint[:16]}..."
-        )
-        return ResumeUploadResponse(
-            success=False,
-            resume_hash=resume_hash,
-            message="Resume processing failed. Please try again or contact support."
-        )
-
-    message = "Resume already processed" if not resume_changed else "Resume uploaded and processed successfully"
     return ResumeUploadResponse(
         success=True,
         resume_hash=resume_hash,
-        message=message
+        message="Resume uploaded. Processing in background...",
+        task_id=task_id
     )

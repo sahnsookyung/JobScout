@@ -212,8 +212,9 @@ def run_matching_pipeline(
                 error=error_msg
             )
 
-        from database.models import generate_resume_fingerprint
-        current_fingerprint = generate_resume_fingerprint(resume_data)
+        from database.models import generate_file_fingerprint
+        with open(resume_file, 'rb') as f:
+            current_fingerprint = generate_file_fingerprint(f.read())
         logger.info(f"Current resume fingerprint: {current_fingerprint[:16]}...")
 
         # Get stored fingerprint from DB

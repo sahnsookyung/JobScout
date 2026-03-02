@@ -216,3 +216,4 @@ class ResumeUploadResponse(BaseModel):
     success: bool
     resume_hash: str
     message: str
+    task_id: Optional[str] = None

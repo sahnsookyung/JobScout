@@ -133,7 +133,7 @@ class JobRepository:
         job_post_id: Any,
         facet_key: str,
         facet_text: str,
-        embedding: List[float],
+        embedding: Optional[List[float]],
         content_hash: str
     ) -> Any:
         return self.job_post.save_job_facet_embedding(
@@ -171,6 +171,19 @@ class JobRepository:
 
     def mark_job_facets_failed(self, job_post_id: Any, error: str = None) -> None:
         return self.job_post.mark_job_facets_failed(job_post_id, error)
+
+    def reset_stale_facet_jobs(self, timeout_minutes: int = 30, max_retries: int = 5) -> int:
+        return self.job_post.reset_stale_facet_jobs(timeout_minutes, max_retries)
+
+    def get_jobs_with_failed_facets(self, limit: int = 100, max_retries: int = 5) -> List[JobPost]:
+        return self.job_post.get_jobs_with_failed_facets(limit, max_retries)
+
+    def get_jobs_with_missing_facet_embeddings(
+        self,
+        limit: int = 100,
+        max_retries: int = 5
+    ) -> List[JobPost]:
+        return self.job_post.get_jobs_with_missing_facet_embeddings(limit, max_retries)
 
     def get_resume_summary_embedding(self, resume_fingerprint: str) -> Optional[List[float]]:
         return self.resume.get_resume_summary_embedding(resume_fingerprint)

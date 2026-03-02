@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from core.config_loader import load_config
 from core.app_context import AppContext
 from etl.resume import ResumeProfiler, ResumeParser
-from database.models import generate_resume_fingerprint
+from database.models import generate_file_fingerprint
 
 
 def setup_logging(level: int = logging.DEBUG):
@@ -62,7 +62,8 @@ def main():
         logger.error(f"Failed to parse resume file: {e}")
         sys.exit(1)
 
-    fingerprint = generate_resume_fingerprint(resume_data)
+    with open(args.resume, 'rb') as f:
+        fingerprint = generate_file_fingerprint(f.read())
     logger.info(f"Resume fingerprint: {fingerprint[:16]}...")
 
     config = load_config()
@@ -71,7 +72,7 @@ def main():
     profiler = ResumeProfiler(ai_service=ctx.ai_service)
 
     logger.info("Running resume profiling (no store - no DB writes)...")
-    resume, evidence_units, persistence_payload = profiler.profile_resume(resume_data)
+    resume, evidence_units, persistence_payload = profiler.profile_resume(resume_data, resume_fingerprint=fingerprint)
 
     if resume:
         logger.info(f"=== EXTRACTION COMPLETE ===")

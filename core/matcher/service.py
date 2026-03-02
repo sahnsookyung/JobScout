@@ -3,7 +3,7 @@ import logging
 import threading
 
 from database.repository import JobRepository
-from database.models import JobPost, generate_resume_fingerprint
+from database.models import JobPost
 from core.config_loader import MatcherConfig
 from core.matcher.models import JobMatchPreliminary
 from core.matcher.requirement_matcher import RequirementMatcher
@@ -29,6 +29,9 @@ class MatcherService:
         pre_extracted_resume: Optional[Any] = None,
         resume_fingerprint: Optional[str] = None,
     ) -> List[JobMatchPreliminary]:
+        if not resume_fingerprint:
+            raise ValueError("resume_fingerprint is required for matching")
+
         profile, evidence_units, _ = self.resume_profiler.profile_resume(
             resume_data, 
             stop_event=stop_event,
@@ -40,7 +43,6 @@ class MatcherService:
             logger.warning("No evidence units extracted from resume")
             return []
 
-        resume_fingerprint = generate_resume_fingerprint(resume_data)
         resume_embedding = self._get_resume_embedding_or_raise(repo, resume_fingerprint)
 
         job_similarity_pairs = self._retrieve_candidates(

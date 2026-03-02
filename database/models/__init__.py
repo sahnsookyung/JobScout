@@ -1,7 +1,7 @@
 from .base import Base
 from .tenant import Tenant
 from .job import JobPost, JobPostSource, JobRequirementUnit, JobRequirementUnitEmbedding, JobBenefit, JobFacetEmbedding
-from .resume import ResumeSectionEmbedding, ResumeEvidenceUnitEmbedding, StructuredResume, FingerprintGenerator, generate_resume_fingerprint
+from .resume import ResumeSectionEmbedding, ResumeEvidenceUnitEmbedding, StructuredResume, generate_file_fingerprint
 from .user_wants import UserWants
 from .match import JobMatch, JobMatchRequirement
 from .notification import NotificationTracker
@@ -20,8 +20,7 @@ __all__ = [
     'ResumeSectionEmbedding',
     'ResumeEvidenceUnitEmbedding',
     'StructuredResume',
-    'FingerprintGenerator',
-    'generate_resume_fingerprint',
+    'generate_file_fingerprint',
     'UserWants',
     'JobMatch',
     'JobMatchRequirement',

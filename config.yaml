@@ -15,7 +15,7 @@ etl:
   # Resume processing configuration
   resume:
     # Resume file path (relative or absolute)
-    resume_file: "resume.json"
+    resume_file: "resume.pdf"
     # force_re_extraction: false  # Uncomment to force re-extraction every time
   llm:
     # Base URL for LLM (extraction) - can be overridden by ETL_LLM_BASE_URL env var

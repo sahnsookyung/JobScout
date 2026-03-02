@@ -86,7 +86,7 @@ class StructuredResume(Base):
     __tablename__ = 'structured_resume'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    resume_fingerprint = Column(Text, nullable=False, unique=True, index=True)  # Hash of resume content
+    resume_fingerprint = Column(Text, nullable=False, unique=True, index=True)  # Hash of raw file bytes
     
     # Raw extraction result
     extracted_data = Column(JSONB, nullable=False)  # Full structured extraction
@@ -108,33 +108,6 @@ class StructuredResume(Base):
         # Index for experience queries
         Index('idx_structured_resume_years', 'total_experience_years'),
     )
-
-
-class FingerprintGenerator:
-    """Utility class for generating fingerprints from data using SHA-256."""
-
-    @staticmethod
-    def generate(data: Dict[str, Any]) -> str:
-        """
-        Generate a fingerprint from data using XXH64 hash of normalized JSON.
-
-        Args:
-            data: Dictionary to generate fingerprint for
-
-        Returns:
-            XXH64 64-bit hash as hex string
-        """
-        normalized = json.dumps(data, sort_keys=True, ensure_ascii=False)
-        return xxhash.xxh64_hexdigest(normalized.encode('utf-8'))
-
-
-def generate_resume_fingerprint(resume_data: Dict[str, Any]) -> str:
-    """
-    Generate a fingerprint for a resume to track changes.
-
-    Uses XXH64 hash of normalized resume JSON.
-    """
-    return FingerprintGenerator.generate(resume_data)
 
 
 def generate_file_fingerprint(file_bytes: bytes) -> str:

@@ -9,7 +9,7 @@ from core.utils import JobFingerprinter
 from pydantic import ValidationError
 from core.llm.schema_models import JobExtraction
 from core.scorer.want_score import FACET_KEYS
-from database.models import generate_resume_fingerprint
+from database.models import generate_file_fingerprint
 from etl.resume import ResumeProfiler, ResumeParser
 
 logger = logging.getLogger(__name__)
@@ -226,24 +226,31 @@ class JobETLService:
             logger.error(f"Resume file not found: {resume_file}")
             return False, "", None
 
+        # Generate fingerprint from raw file bytes
         try:
-            parser = ResumeParser()
-            parsed = parser.parse(resume_file)
-            # For text-based formats (PDF, DOCX, TXT), wrap in dict for fingerprint
-            resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
-        except (ValueError, IOError) as e:
-            logger.error(f"Failed to load resume file: {e}")
+            with open(resume_file, 'rb') as f:
+                file_bytes = f.read()
+            fingerprint = generate_file_fingerprint(file_bytes)
+        except IOError as e:
+            logger.error(f"Failed to read resume file: {e}")
             return False, "", None
 
-        # Generate fingerprint
-        fingerprint = generate_resume_fingerprint(resume_data)
         logger.info(f"Resume fingerprint: {fingerprint[:16]}...")
 
         # Check if resume already exists (unchanged)
         existing = repo.resume.get_structured_resume_by_fingerprint(fingerprint)
         if existing:
             logger.info(f"Resume unchanged (fingerprint: {fingerprint[:16]}...), skipping ETL")
-            return False, fingerprint, resume_data
+            return False, fingerprint, None
+
+        # Parse for processing
+        try:
+            parser = ResumeParser()
+            parsed = parser.parse(resume_file)
+            resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
+        except (ValueError, IOError) as e:
+            logger.error(f"Failed to parse resume file: {e}")
+            return False, "", None
 
         logger.info(f"Resume changed (fingerprint: {fingerprint[:16]}...), processing...")
 
@@ -275,7 +282,7 @@ class JobETLService:
         profiler = ResumeProfiler(ai_service=self.ai)
 
         # Run complete profiling pipeline
-        resume, evidence_units, _ = profiler.profile_resume(resume_data)
+        resume, evidence_units, _ = profiler.profile_resume(resume_data, resume_fingerprint=fingerprint)
 
         if resume:
             years_msg = f"Total experience: {resume.claimed_total_years or 'unknown'} years"

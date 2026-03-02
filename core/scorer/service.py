@@ -110,6 +110,7 @@ class ScoringService:
                 user_want_embeddings=user_want_embeddings,
                 job_facet_embeddings=job_facet_embeddings,
                 facet_weights=self.config.facet_weights,
+                job_id=str(job.id),
             )
 
         overall = _blend_overall(self.config, fit_value, want_value)
