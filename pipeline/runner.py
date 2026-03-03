@@ -550,7 +550,7 @@ def _save_matches_batch(
                         save_match_to_db(
                             scored_match=dto,
                             repo=repo,
-                            is_stale_replacement=True,  # Creates NEW record
+                            is_stale_replacement=False,  # Updates existing record
                         )
                         saved_count += 1
                         continue
