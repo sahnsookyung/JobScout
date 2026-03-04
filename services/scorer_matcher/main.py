@@ -172,7 +172,7 @@ async def match_jobs(request: MatchJobRequest):
         return MatchResponse(
             success=True,
             message="Job matching not yet implemented",
-            matches=len(request.job_ids) if request.job_ids else 0
+            matches=0
         )
     except Exception as e:
         logger.exception("Job matching failed")

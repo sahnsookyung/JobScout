@@ -250,7 +250,7 @@ class JobETLService:
             resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
         except (ValueError, IOError) as e:
             logger.error(f"Failed to parse resume file: {e}")
-            return False, "", None
+            return False, fingerprint, None
 
         logger.info(f"Resume changed (fingerprint: {fingerprint[:16]}...), processing...")
 

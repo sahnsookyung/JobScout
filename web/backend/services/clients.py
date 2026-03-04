@@ -4,6 +4,7 @@ Service client for calling internal microservices.
 
 import os
 import logging
+import threading
 from urllib.parse import urlparse
 
 import httpx
@@ -19,7 +20,7 @@ ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "")
 
 def _validate_url(url: str, env_var: str) -> str:
     """Validate URL is configured and properly formatted.
-    
+
     Logs warning if URL is empty (allows tests to run without env vars).
     Raises error if URL is provided but malformed.
     """
@@ -27,7 +28,7 @@ def _validate_url(url: str, env_var: str) -> str:
         logger.warning(f"{env_var} not configured - client will be unavailable")
         return ""
     parsed = urlparse(url)
-    if not parsed.scheme or parsed.scheme not in ('http', 'https'):
+    if not parsed.scheme or parsed.scheme not in ('http', 'https') or not parsed.netloc:
         raise RuntimeError(f"{env_var} must be a valid HTTP/HTTPS URL, got: {url}")
     return url
 
@@ -42,6 +43,8 @@ class ServiceClient:
         self.timeout = timeout
     
     def _request(self, method: str, path: str, **kwargs) -> dict:
+        if not self.base_url:
+            raise RuntimeError("Service client not configured - base URL is empty")
         url = f"{self.base_url}{path}"
         try:
             with httpx.Client(timeout=self.timeout) as client:
@@ -140,12 +143,16 @@ _embeddings_client = None
 _scorer_matcher_client = None
 _orchestrator_client = None
 
+_clients_lock = threading.Lock()
+
 
 def get_extraction_client() -> ExtractionClient:
     """Get or create ExtractionClient singleton."""
     global _extraction_client
     if _extraction_client is None:
-        _extraction_client = ExtractionClient()
+        with _clients_lock:
+            if _extraction_client is None:
+                _extraction_client = ExtractionClient()
     return _extraction_client
 
 
@@ -153,7 +160,9 @@ def get_embeddings_client() -> EmbeddingsClient:
     """Get or create EmbeddingsClient singleton."""
     global _embeddings_client
     if _embeddings_client is None:
-        _embeddings_client = EmbeddingsClient()
+        with _clients_lock:
+            if _embeddings_client is None:
+                _embeddings_client = EmbeddingsClient()
     return _embeddings_client
 
 
@@ -161,7 +170,9 @@ def get_scorer_matcher_client() -> ScorerMatcherClient:
     """Get or create ScorerMatcherClient singleton."""
     global _scorer_matcher_client
     if _scorer_matcher_client is None:
-        _scorer_matcher_client = ScorerMatcherClient()
+        with _clients_lock:
+            if _scorer_matcher_client is None:
+                _scorer_matcher_client = ScorerMatcherClient()
     return _scorer_matcher_client
 
 
@@ -169,7 +180,9 @@ def get_orchestrator_client() -> OrchestratorClient:
     """Get or create OrchestratorClient singleton."""
     global _orchestrator_client
     if _orchestrator_client is None:
-        _orchestrator_client = OrchestratorClient()
+        with _clients_lock:
+            if _orchestrator_client is None:
+                _orchestrator_client = OrchestratorClient()
     return _orchestrator_client
 
 
