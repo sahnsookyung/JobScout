@@ -33,7 +33,7 @@ def _run_facet_embedding_batch(ctx: AppContext, stop_event: threading.Event, lim
                 job = repo.get_by_id(job_id)
                 if job and job.facet_status == 'done':
                     ctx.job_etl_service.embed_facets_one(repo, job)
-                    processed += 1
+            processed += 1
         except Exception:
             logger.exception("Facet embedding error job_id=%s", job_id)
 
@@ -81,7 +81,7 @@ def _run_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: in
                     logger.warning(f"Requirement {req_id} not found, may have been deleted")
                     continue
                 ctx.job_etl_service.embed_requirement_one(repo, req)
-                req_success += 1
+            req_success += 1
         except Exception:
             logger.exception("Failed requirement embedding req_id=%s", req_id)
 
@@ -120,9 +120,8 @@ def generate_resume_embedding(ctx: AppContext, resume_fingerprint: str) -> bool:
     from etl.orchestrator import JobETLService
     
     logger.info(f"Generating embeddings for resume: {resume_fingerprint}")
-    
+
     with job_uow() as repo:
-        service = JobETLService(ctx.job_etl_service)
-        embedded, fp = service.embed_resume(repo, resume_fingerprint)
-        
+        embedded, fp = ctx.job_etl_service.embed_resume(repo, resume_fingerprint)
+
     return embedded

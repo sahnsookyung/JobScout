@@ -80,6 +80,7 @@ def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: i
                     time.sleep(wait_time)
 
     logger.info(f"Extraction batch completed: {success_count}/{len(job_ids)} jobs")
+    return success_count
 
 
 def _run_facet_recovery_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100) -> int:

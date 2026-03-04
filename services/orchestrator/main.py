@@ -158,12 +158,37 @@ def get_or_create_orchestration(task_id: str) -> OrchestrationState:
     return orchestrations[task_id]
 
 
+async def _wait_for_task_message(pubsub, task_id: str, timeout: float) -> Optional[dict]:
+    """Wait for a message matching the given task_id, skipping messages for other tasks.
+    
+    Args:
+        pubsub: Redis async pubsub instance
+        task_id: The task ID we're waiting for
+        timeout: Timeout in seconds
+        
+    Returns:
+        The message data dict for the matching task_id
+        
+    Raises:
+        asyncio.TimeoutError: If no matching message received within timeout
+    """
+    deadline = asyncio.get_event_loop().time() + timeout
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            raise asyncio.TimeoutError(f"Timeout waiting for task {task_id}")
+        data = await _wait_for_next_message(pubsub, timeout=remaining)
+        if data.get("task_id") == task_id:
+            return data
+        logger.debug(f"Skipping message for task {data.get('task_id')}, waiting for {task_id}")
+
+
 async def orchestrate_match(task_id: str, resume_file: str):
     """Run the orchestration flow: extraction -> embeddings -> matching."""
     import redis.asyncio as redis_async
-    
+
     LISTENER_TIMEOUT = 600.0  # 10 minutes per stage
-    
+
     state = get_or_create_orchestration(task_id)
     state.status = "extracting"
     state.resume_file = resume_file
@@ -183,16 +208,12 @@ async def orchestrate_match(task_id: str, resume_file: str):
 
         # Wait for extraction completion
         try:
-            data = await _wait_for_next_message(pubsub, timeout=LISTENER_TIMEOUT)
+            data = await _wait_for_task_message(pubsub, task_id, LISTENER_TIMEOUT)
         except asyncio.TimeoutError:
             state.status = "failed"
             state.error = "Timeout waiting for extraction completion"
             state._save_to_redis()
             state.notify({"task_id": task_id, "status": "failed", "error": state.error})
-            return
-            
-        if data.get("task_id") != task_id:
-            logger.warning(f"Received message for wrong task: {data.get('task_id')}")
             return
 
         if data.get("status") == "failed":
@@ -240,15 +261,12 @@ async def orchestrate_match(task_id: str, resume_file: str):
 
         # Wait for embeddings completion
         try:
-            data = await _wait_for_next_message(pubsub, timeout=LISTENER_TIMEOUT)
+            data = await _wait_for_task_message(pubsub, task_id, LISTENER_TIMEOUT)
         except asyncio.TimeoutError:
             state.status = "failed"
             state.error = "Timeout waiting for embeddings completion"
             state._save_to_redis()
             state.notify({"task_id": task_id, "status": "failed", "error": state.error})
-            return
-            
-        if data.get("task_id") != task_id:
             return
 
         if data.get("status") == "failed":
@@ -285,15 +303,12 @@ async def orchestrate_match(task_id: str, resume_file: str):
 
         # Wait for matching completion
         try:
-            data = await _wait_for_next_message(pubsub, timeout=LISTENER_TIMEOUT)
+            data = await _wait_for_task_message(pubsub, task_id, LISTENER_TIMEOUT)
         except asyncio.TimeoutError:
             state.status = "failed"
             state.error = "Timeout waiting for matching completion"
             state._save_to_redis()
             state.notify({"task_id": task_id, "status": "failed", "error": state.error})
-            return
-            
-        if data.get("task_id") != task_id:
             return
 
         if data.get("status") == "failed":

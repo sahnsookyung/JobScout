@@ -141,6 +141,18 @@ async def extract_resume(request: ExtractResumeRequest):
             processed=0
         )
 
+    # Validate file path to prevent path traversal
+    import os
+    resume_path = os.path.realpath(request.resume_file)
+    # Only allow files in common resume locations
+    allowed_prefixes = ['/app/', '/data/', './', '../']
+    if not any(resume_path.startswith(p) for p in allowed_prefixes):
+        return ExtractResponse(
+            success=False,
+            message="Invalid resume file path",
+            processed=0
+        )
+
     try:
         from services.base.extraction import process_resume
         loop = asyncio.get_running_loop()
