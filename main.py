@@ -22,11 +22,15 @@ from core.app_context import AppContext
 from core.matcher import MatcherService, MatchResultDTO, JobMatchDTO, JobEvidenceDTO, RequirementMatchDTO, JobRequirementDTO, penalty_details_from_orm
 from core.scorer import ScoringService
 from core.scorer.persistence import save_match_to_db
+import os
+
 from etl.resume import ResumeProfiler, ResumeParser
 from etl.resume.embedding_store import JobRepositoryAdapter
 from database.uow import job_uow
 from database.init_db import init_db
 from pipeline.runner import run_matching_pipeline as run_matching_pipeline_shared
+
+from web.backend.services.clients import extraction_client, embeddings_client, orchestrator_client
 
 PIPELINE_API_URL = "http://localhost:8080/api/pipeline"
 
@@ -134,12 +138,7 @@ def run_job_etl(ctx: AppContext, stop_event: threading.Event) -> None:
     logger.info("STARTING JOB ETL PIPELINE")
     logger.info("=" * 60)
 
-    # Recovery: Fix failed/incomplete facet processing from previous runs
-    step_start = time.time()
-    logger.info("=== JOB ETL RECOVERY: Fixing failed facet extraction/embedding ===")
-    _run_facet_recovery_batch(ctx, stop_event, limit=100)
-    step_elapsed = time.time() - step_start
-    logger.info(f"Job ETL Recovery completed in {step_elapsed:.2f}s")
+    # Recovery is now handled automatically by the extraction microservice.
 
     if stop_event.is_set():
         return
@@ -189,49 +188,37 @@ def run_job_etl(ctx: AppContext, stop_event: threading.Event) -> None:
     if stop_event.is_set():
         return
 
-    # Step 2: Extraction - per-job transactions
+    # Step 2: Extraction
     step_start = time.time()
-    logger.info("=== JOB ETL STEP 2: Running Extraction Batch ===")
-    _run_extraction_batch(ctx, stop_event, limit=200)
+    logger.info("=== JOB ETL STEP 2: Triggering Extraction Microservice ===")
+    try:
+        res = extraction_client.extract_jobs(limit=200)
+        logger.info(f"Extraction microservice response: {res}")
+    except Exception as e:
+        logger.error(f"Extraction microservice failed: {e}")
     step_elapsed = time.time() - step_start
-    logger.info(f"Job ETL Step 2 completed: Extraction batch finished in {step_elapsed:.2f}s")
+    logger.info(f"Job ETL Step 2 completed in {step_elapsed:.2f}s")
 
     if stop_event.is_set():
         return
 
-    # Step 3: Facet Extraction - per-job transactions (extract text only)
+    # Step 3: Embeddings
     step_start = time.time()
-    logger.info("=== JOB ETL STEP 3: Running Facet Extraction Batch ===")
-    _run_facet_extraction_batch(ctx, stop_event, limit=100)
+    logger.info("=== JOB ETL STEP 3: Triggering Embeddings Microservice ===")
+    try:
+        res = embeddings_client.embed_jobs(limit=100)
+        logger.info(f"Embeddings microservice response: {res}")
+    except Exception as e:
+        logger.error(f"Embeddings microservice failed: {e}")
     step_elapsed = time.time() - step_start
-    logger.info(f"Job ETL Step 3 completed: Facet extraction batch finished in {step_elapsed:.2f}s")
-
-    if stop_event.is_set():
-        return
-
-    # Step 3a: Facet Embedding - embed extracted facets (separate batch for efficiency)
-    step_start = time.time()
-    logger.info("=== JOB ETL STEP 3a: Running Facet Embedding Batch ===")
-    _run_facet_embedding_batch(ctx, stop_event, limit=100)
-    step_elapsed = time.time() - step_start
-    logger.info(f"Job ETL Step 3a completed: Facet embedding batch finished in {step_elapsed:.2f}s")
-
-    if stop_event.is_set():
-        return
-
-    # Step 4: Embedding - per-job and per-requirement transactions
-    step_start = time.time()
-    logger.info("=== JOB ETL STEP 4: Running Embedding Batch ===")
-    _run_embedding_batch(ctx, stop_event, limit=100)
-    step_elapsed = time.time() - step_start
-    logger.info(f"Job ETL Step 4 completed: Embedding batch finished in {step_elapsed:.2f}s")
+    logger.info(f"Job ETL Step 3 completed in {step_elapsed:.2f}s")
 
     logger.info("=" * 60)
     logger.info("JOB ETL PIPELINE COMPLETED")
     logger.info("=" * 60)
 
 
-def run_resume_etl(ctx: AppContext, stop_event: threading.Event) -> None:
+def run_resume_etl(ctx: AppContext) -> None:
     """Run resume ETL pipeline: extract and embed resume.
     
     Uses fingerprint-based change detection - only re-processes if resume changed.
@@ -242,7 +229,7 @@ def run_resume_etl(ctx: AppContext, stop_event: threading.Event) -> None:
 
     step_start = time.time()
     logger.info("=== RESUME ETL STEP 1: Processing Resume ===")
-    _run_resume_etl(ctx, stop_event)
+    _run_resume_etl(ctx)
     step_elapsed = time.time() - step_start
     logger.info(f"Resume ETL Step 1 completed in {step_elapsed:.2f}s")
 
@@ -251,7 +238,7 @@ def run_resume_etl(ctx: AppContext, stop_event: threading.Event) -> None:
     logger.info("=" * 60)
 
 
-def _run_resume_etl(ctx: AppContext, stop_event: threading.Event) -> None:
+def _run_resume_etl(ctx: AppContext) -> None:
     """Run resume ETL with fingerprint-based change detection.
 
     Returns:
@@ -280,246 +267,29 @@ def _run_resume_etl(ctx: AppContext, stop_event: threading.Event) -> None:
         resume_file = os.path.join(os.getcwd(), resume_file)
 
     try:
-        with job_uow() as repo:
-            ctx.job_etl_service.process_resume(repo, resume_file)
+        res = extraction_client.extract_resume(resume_file=resume_file)
+        logger.info(f"Extraction microservice response for resume: {res}")
     except Exception as e:
-        logger.error(f"Failed to process resume: {e}")
+        logger.error(f"Failed to trigger resume extraction: {e}")
 
 
-def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 200):
-    """Run extraction batch with per-job transactions."""
-    with job_uow() as repo:
-        job_ids = [j.id for j in repo.get_unextracted_jobs(limit)]
-
-    logger.info(f"Found {len(job_ids)} jobs needing extraction")
-
-    retry_intervals = [30, 60, 120]
-    success_count = 0
-    
-    for job_id in job_ids:
-        if stop_event.is_set():
-            break
-        
-        job_title = None
-        for attempt, wait_time in enumerate(retry_intervals):
-            try:
-                with job_uow() as repo:
-                    job = repo.get_by_id(job_id)
-                    if job is None:
-                        logger.warning(f"Job {job_id} not found, may have been deleted")
-                        break
-                    job_title = job.title  # Capture before context exits
-                    ctx.job_etl_service.extract_one(repo, job)
-                success_count += 1
-                break
-            except Exception as e:
-                response = getattr(e, 'response', None)
-                if response:
-                    try:
-                        http_details = f"HTTP {response.status_code}: {response.text[:500]}"
-                    except Exception:
-                        http_details = f"HTTP {response.status_code}"
-                else:
-                    http_details = None
-
-                if job_title:
-                    job_title_str = job_title[:50]
-                else:
-                    job_title_str = "unknown"
-                exc_type = type(e).__name__
-                exc_message = str(e)
-
-                if attempt == len(retry_intervals) - 1:
-                    logger.error(
-                        "Extraction failed after %d retries, job_id=%s (title: %r): %s - %s. %s. Giving up.",
-                        len(retry_intervals), job_id, job_title_str, exc_type, exc_message, http_details or "N/A"
-                    )
-                else:
-                    logger.warning(
-                        "Extraction attempt %d/%d failed for job %s (title: %r): %s - %s. %s. Retrying in %ds...",
-                        attempt + 1, len(retry_intervals), job_id, job_title_str, exc_type, exc_message, http_details or "N/A", wait_time
-                    )
-                    time.sleep(wait_time)
-
-    logger.info(f"Extraction batch completed: {success_count}/{len(job_ids)} jobs")
 
 
-def _run_facet_recovery_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):
-    """Recover failed/incomplete facet extraction and embeddings from previous runs.
 
-    This runs before the main ETL pipeline to fix any jobs that:
-    1. Have stale 'in_progress' status (worker crashed)
-    2. Have 'failed' status (extraction API failed)
-    3. Have facets extracted but missing embeddings
-
-    Args:
-        ctx: Application context
-        stop_event: Stop signal
-        limit: Maximum jobs to recover per category
+def run_matching_pipeline() -> None:
+    """Run the matching pipeline using the orchestrator microservice.
     """
-    max_retries = 5
-    claim_timeout_minutes = 30
-    recovered = 0
-
-    # Step 1: Reset stale in_progress jobs
-    with job_uow() as repo:
-        reset_count = repo.reset_stale_facet_jobs(claim_timeout_minutes, max_retries)
-        if reset_count > 0:
-            logger.info(f"Facet recovery: reset {reset_count} stale in_progress jobs")
-
-    # Step 2: Retry failed extractions
-    with job_uow() as repo:
-        failed_jobs = repo.get_jobs_with_failed_facets(limit, max_retries)
-        if failed_jobs:
-            logger.info(f"Facet recovery: retrying {len(failed_jobs)} failed extractions")
-            for job in failed_jobs:
-                if stop_event.is_set():
-                    break
-                try:
-                    job_id = job.id
-                    with job_uow() as repo:
-                        job = repo.get_by_id(job_id)
-                        if job and job.facet_status == 'failed':
-                            repo.mark_job_facets_failed(job.id, "Retrying from recovery")
-                            recovered += 1
-                except Exception:
-                    logger.exception(f"Facet recovery failed for job {job_id}")
-
-    # Step 3: Retry missing embeddings
-    with job_uow() as repo:
-        jobs_missing_embeddings = repo.get_jobs_with_missing_facet_embeddings(limit, max_retries)
-        if jobs_missing_embeddings:
-            logger.info(f"Facet recovery: retrying {len(jobs_missing_embeddings)} missing embeddings")
-            for job in jobs_missing_embeddings:
-                if stop_event.is_set():
-                    break
-                try:
-                    job_id = job.id
-                    with job_uow() as repo:
-                        job = repo.get_by_id(job_id)
-                        if job and job.facet_status == 'done':
-                            ctx.job_etl_service.embed_facets_one(repo, job)
-                            recovered += 1
-                except Exception:
-                    logger.exception(f"Facet embedding recovery failed for job {job_id}")
-
-    logger.info(f"Facet recovery batch completed: recovered={recovered}")
-
-
-def _run_facet_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):
-    """Run facet extraction batch with atomic claiming."""
-    worker_id = f"worker_{os.getpid()}"
-    processed = 0
-
-    while not stop_event.is_set():
-        with job_uow() as repo:
-            jobs = repo.get_and_claim_jobs_for_facet_extraction(limit, worker_id)
-            if not jobs:
-                break
-            job_ids = [j.id for j in jobs]
-
-        for job_id in job_ids:
-            if stop_event.is_set():
-                break
-            try:
-                with job_uow() as repo:
-                    job = repo.get_by_id(job_id)
-                    if job and job.facet_status == 'in_progress':
-                        ctx.job_etl_service.extract_facets_one(repo, job)
-                        processed += 1
-            except Exception:
-                error_msg = traceback.format_exc()
-                try:
-                    with job_uow() as repo:
-                        repo.mark_job_facets_failed(job_id, error_msg)
-                except Exception as mark_err:
-                    logger.warning("Failed to mark job %s facets as failed: %s", job_id, mark_err)
-                logger.exception("Facet extraction error job_id=%s", job_id)
-
-    logger.info(f"Facet extraction batch completed: processed={processed}")
-
-
-def _run_facet_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):
-    """Run facet embedding batch - embed extracted facets for all jobs."""
-    with job_uow() as repo:
-        jobs = repo.get_jobs_needing_facet_embedding(limit)
-        job_ids = [j.id for j in jobs]
-
-    logger.info(f"Found {len(job_ids)} jobs needing facet embedding")
-
-    processed = 0
-    for job_id in job_ids:
-        if stop_event.is_set():
-            break
-        try:
-            with job_uow() as repo:
-                job = repo.get_by_id(job_id)
-                if job and job.facet_status == 'done':
-                    ctx.job_etl_service.embed_facets_one(repo, job)
-                    processed += 1
-        except Exception:
-            logger.exception("Facet embedding error job_id=%s", job_id)
-
-    logger.info(f"Facet embedding batch completed: processed={processed}")
-
-
-def _run_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):
-    """Run embedding batch with per-job and per-requirement transactions."""
-    # 1. Jobs
-    with job_uow() as repo:
-        job_ids = [j.id for j in repo.get_unembedded_jobs(limit)]
-
-    logger.info(f"Found {len(job_ids)} jobs needing embedding")
-
-    job_success = 0
-    for job_id in job_ids:
-        if stop_event.is_set():
-            break
-        try:
-            with job_uow() as repo:
-                job = repo.get_by_id(job_id)
-                if job is None:
-                    logger.warning(f"Job {job_id} not found, may have been deleted")
-                    continue
-                ctx.job_etl_service.embed_job_one(repo, job)
-            job_success += 1
-        except Exception:
-            logger.exception("Failed job embedding job_id=%s", job_id)
-
-    # 2. Requirements
-    with job_uow() as repo:
-        req_ids = [r.id for r in repo.get_unembedded_requirements(limit * 10)]
-
-    logger.info(f"Found {len(req_ids)} requirements needing embedding")
-
-    req_success = 0
-    for req_id in req_ids:
-        if stop_event.is_set():
-            break
-        try:
-            with job_uow() as repo:
-                req = repo.get_requirement_by_id(req_id)
-                if req:
-                    ctx.job_etl_service.embed_requirement_one(repo, req)
-            req_success += 1
-        except Exception:
-            logger.exception("Failed requirement embedding req_id=%s", req_id)
-
-    logger.info(f"Embedding batch completed: {job_success} jobs, {req_success} reqs")
-
-
-def run_matching_pipeline(ctx: AppContext, stop_event: threading.Event) -> None:
-    """Run the matching pipeline using the shared pipeline module.
-    
-    This is a wrapper around the shared pipeline.runner.run_matching_pipeline
-    that maintains backward compatibility with the existing main.py interface.
-    """
-    result = run_matching_pipeline_shared(ctx, stop_event)
-    
-    if not result.success:
-        logger.error(f"Matching pipeline failed: {result.error}")
-    else:
-        logger.info(f"Matching pipeline succeeded: {result.matches_count} matches, {result.saved_count} saved")
+    logger.info("Triggering orchestrator microservice for matching pipeline...")
+    try:
+        res = orchestrator_client.start_matching()
+        logger.info(f"Orchestrator microservice response: {res}")
+        if res.get("success"):
+            task_id = res.get("task_id")
+            logger.info(f"Started orchestration task {task_id}. You can monitor progress via SSE.")
+        else:
+            logger.error(f"Orchestrator failed to start: {res.get('message')}")
+    except Exception as e:
+        logger.error(f"Failed to trigger orchestrator microservice: {e}")
 
 
 def run_internal_sequential_cycle(mode: str = 'all', stop_event: threading.Event = None, config=None) -> None:
@@ -558,7 +328,7 @@ def run_internal_sequential_cycle(mode: str = 'all', stop_event: threading.Event
     if mode in ('resume-etl', 'all'):
         logger.info("Running Resume ETL phase")
         try:
-            run_resume_etl(ctx, stop_event)
+            run_resume_etl(ctx)
             if not stop_event.is_set() and ctx.job_etl_service:
                 ctx.job_etl_service.unload_models()
         except Exception as e:
@@ -568,7 +338,7 @@ def run_internal_sequential_cycle(mode: str = 'all', stop_event: threading.Event
     if mode in ('matching', 'all'):
         logger.info("Running Matching phase")
         try:
-            run_matching_pipeline(ctx, stop_event)
+            run_matching_pipeline()
             if not stop_event.is_set() and ctx.job_etl_service:
                 ctx.job_etl_service.unload_models()
         except Exception as e:

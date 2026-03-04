@@ -128,6 +128,15 @@ stop_docker() {
         return
     fi
 
+    # Build Compose args
+    COMPOSE_ARGS="-f ${DOCKER_COMPOSE_FILE}"
+    if [ -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]; then
+        COMPOSE_ARGS="${COMPOSE_ARGS} -f ${PROJECT_ROOT}/docker-compose.pipeline.yml"
+    fi
+    if [ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]; then
+        COMPOSE_ARGS="${COMPOSE_ARGS} -f ${PROJECT_ROOT}/docker-compose.web.yml"
+    fi
+
     # Determine which services to stop
     SERVICES_TO_STOP=""
     
@@ -143,11 +152,11 @@ stop_docker() {
     fi
 
     # Check if any containers are running
-    if docker-compose -f "${DOCKER_COMPOSE_FILE}" ps -q 2>/dev/null | grep -q .; then
+    if docker-compose ${COMPOSE_ARGS} ps -q 2>/dev/null | grep -q .; then
         if [ -n "$SERVICES_TO_STOP" ]; then
-            docker-compose -f "${DOCKER_COMPOSE_FILE}" stop ${SERVICES_TO_STOP} 2>/dev/null || true
+            docker-compose ${COMPOSE_ARGS} stop ${SERVICES_TO_STOP} 2>/dev/null || true
         else
-            docker-compose -f "${DOCKER_COMPOSE_FILE}" down --remove-orphans 2>/dev/null || true
+            docker-compose ${COMPOSE_ARGS} down --remove-orphans 2>/dev/null || true
         fi
         log_success "Docker services stopped"
     else
