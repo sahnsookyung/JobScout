@@ -12,7 +12,7 @@ x-service-common: &service-common
     redis:
       condition: service_healthy
   environment:
-    - DATABASE_URL=postgresql://user:password@postgres:5432/jobscout
+    - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-jobscout}
     - REDIS_URL=redis://:${REDIS_PASSWORD:-jobscoutredis}@redis:6379/0
   env_file:
     - .env
@@ -22,9 +22,9 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: jobscout
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-jobscout}
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U user -d jobscout" ]
       interval: 5s
@@ -39,7 +39,7 @@ services:
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-jobscoutredis}
     healthcheck:
-      test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-jobscoutredis}", "ping" ]
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -50,25 +50,28 @@ services:
     <<: *service-common
     ports:
       - "8081:8081"
-    command: [ "python", "-m", "uvicorn", "services.extraction.main:app", "--host", "0.0.0.0", "--port", "8081" ]
+    command: [ "uv", "run", "uvicorn", "services.extraction.main:app", "--host", "0.0.0.0", "--port", "8081" ]
 
   embeddings:
     <<: *service-common
     ports:
       - "8082:8082"
-    command: [ "python", "-m", "uvicorn", "services.embeddings.main:app", "--host", "0.0.0.0", "--port", "8082" ]
+    command: [ "uv", "run", "uvicorn", "services.embeddings.main:app", "--host", "0.0.0.0", "--port", "8082" ]
 
   scorer-matcher:
     <<: *service-common
+    build:
+      context: .
+      dockerfile: services/scorer_matcher/Dockerfile
     ports:
       - "8083:8083"
-    command: [ "python", "-m", "uvicorn", "services.scorer_matcher.main:app", "--host", "0.0.0.0", "--port", "8083" ]
+    command: [ "uv", "run", "uvicorn", "services.scorer_matcher.main:app", "--host", "0.0.0.0", "--port", "8083" ]
 
   orchestrator:
     <<: *service-common
     ports:
       - "8084:8084"
-    command: [ "python", "-m", "uvicorn", "services.orchestrator.main:app", "--host", "0.0.0.0", "--port", "8084" ]
+    command: [ "uv", "run", "uvicorn", "services.orchestrator.main:app", "--host", "0.0.0.0", "--port", "8084" ]
 
 volumes:
   postgres_data:

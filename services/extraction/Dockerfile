@@ -8,6 +8,7 @@ COPY database/ ./database/
 COPY etl/ ./etl/
 COPY web/backend/models/ ./web/backend/models/
 COPY pipeline/ ./pipeline/
+COPY services/extraction/ ./services/extraction/
 COPY config.yaml ./
 
 RUN pip install uv && \
@@ -15,4 +16,4 @@ RUN pip install uv && \
 
 EXPOSE 8081
 
-CMD ["python", "-m", "uvicorn", "services.extraction.main:app", "--host", "0.0.0.0", "--port", "8081"]
+CMD ["uv", "run", "uvicorn", "services.extraction.main:app", "--host", "0.0.0.0", "--port", "8081"]

@@ -22,13 +22,14 @@ class TestRedisStreamsModule:
     @patch('core.redis_streams.get_redis_client')
     def test_ack_message(self, mock_get_client):
         mock_client = Mock()
+        mock_client.xack.return_value = 1  # Redis xack returns count of acknowledged messages
         mock_get_client.return_value = mock_client
-        
+
         from core.redis_streams import ack_message
-        
+
         result = ack_message("test:jobs", "group-1", "1234567890-0")
-        
-        assert result is True
+
+        assert result == 1
         mock_client.xack.assert_called_once_with("test:jobs", "group-1", "1234567890-0")
 
     @patch('core.redis_streams.get_redis_client')

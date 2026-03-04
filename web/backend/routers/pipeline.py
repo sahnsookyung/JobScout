@@ -185,17 +185,21 @@ async def pipeline_events(task_id: str):
     
     async def event_generator():
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(None)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
                 async with client.stream(
                     "GET",
                     f"{orchestrator_url}/orchestrate/status/{task_id}"
                 ) as response:
+                    if response.is_error:
+                        logger.error(f"Orchestrator returned {response.status_code} for task {task_id}")
+                        yield f"data: {json.dumps({'error': 'Failed to get pipeline status'})}\n\n"
+                        return
                     async for chunk in response.aiter_bytes(chunk_size=1024):
                         if chunk:
                             yield chunk
         except Exception as e:
-            logger.error(f"Failed to connect to orchestrator: {e}")
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            logger.exception(f"Failed to connect to orchestrator: {e}")
+            yield f"data: {json.dumps({'error': 'Failed to connect to pipeline service'})}\n\n"
     
     return StreamingResponse(
         event_generator(),

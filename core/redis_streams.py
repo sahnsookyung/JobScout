@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import threading
+import time
 from typing import Optional, Generator
 
 import redis
@@ -10,16 +12,21 @@ logger = logging.getLogger(__name__)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 _connection_pool: Optional[redis.ConnectionPool] = None
+_pool_lock = threading.Lock()
 
 
 def _get_connection_pool() -> redis.ConnectionPool:
     global _connection_pool
     if _connection_pool is None:
-        _connection_pool = redis.ConnectionPool.from_url(
-            REDIS_URL,
-            decode_responses=True,
-            max_connections=20
-        )
+        with _pool_lock:
+            if _connection_pool is None:
+                _connection_pool = redis.ConnectionPool.from_url(
+                    REDIS_URL,
+                    decode_responses=True,
+                    max_connections=20,
+                    socket_timeout=5.0,
+                    socket_connect_timeout=5.0
+                )
     return _connection_pool
 
 
@@ -78,17 +85,30 @@ def read_stream(
                 count=count,
                 block=block
             )
-            
+
             if not messages:
+                if block is None:
+                    time.sleep(0.1)  # Prevent CPU spin in non-blocking mode
                 continue
-                
+
             for stream_name, msgs in messages:
                 for msg_id, msg in msgs:
                     yield msg_id, msg
-                    
+
+        except redis.ConnectionError as e:
+            logger.error(f"Connection error reading from stream {stream}: {e}")
+            time.sleep(1)  # Back off on connection errors
+            continue
         except Exception as e:
-            logger.error(f"Error reading from stream {stream}: {e}")
-            break
+            # Handle socket timeouts and other transient errors
+            error_msg = str(e)
+            if "timeout" in error_msg.lower() or "socket" in error_msg.lower():
+                logger.warning(f"Transient error reading from stream {stream}: {e}")
+                time.sleep(1)  # Brief backoff for transient errors
+                continue
+            else:
+                logger.error(f"Fatal error reading from stream {stream}: {e}")
+                raise
 
 
 def ack_message(stream: str, group: str, msg_id: str) -> bool:

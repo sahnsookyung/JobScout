@@ -98,11 +98,21 @@ async def embed_jobs(request: EmbedJobRequest = EmbedJobRequest(limit=100)):
     """Generate embeddings for jobs."""
     global ctx
     logger.info(f"Processing job embeddings (limit: {request.limit})")
-    
+
+    if ctx is None:
+        return EmbedResponse(
+            success=False,
+            message="Service not initialized",
+            processed=0
+        )
+
     try:
         from services.base.embeddings import run_embedding_extraction
         stop_event = threading.Event()
-        processed = run_embedding_extraction(ctx, stop_event, request.limit)
+        loop = asyncio.get_running_loop()
+        processed = await loop.run_in_executor(
+            None, run_embedding_extraction, ctx, stop_event, request.limit
+        )
         return EmbedResponse(
             success=True,
             message=f"Job embedding completed",
@@ -122,10 +132,18 @@ async def embed_resume(request: EmbedResumeRequest):
     """Generate embeddings for resume."""
     global ctx
     logger.info(f"Processing resume embedding: {request.resume_fingerprint}")
-    
+
+    if ctx is None:
+        return EmbedResponse(
+            success=False,
+            message="Service not initialized",
+            processed=0
+        )
+
     try:
         from services.base.embeddings import generate_resume_embedding
-        generate_resume_embedding(ctx, request.resume_fingerprint)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, generate_resume_embedding, ctx, request.resume_fingerprint)
         return EmbedResponse(
             success=True,
             message="Resume embedding completed",
@@ -148,29 +166,34 @@ if __name__ == "__main__":
 async def consume_embeddings_jobs():
     """Background task that consumes embeddings jobs from Redis Streams."""
     from services.base.embeddings import generate_resume_embedding
-    
+
     logger.info(f"Starting embeddings consumer: {CONSUMER_NAME}")
-    
+    loop = asyncio.get_running_loop()
+
     while True:
         try:
-            for msg_id, msg in read_stream(STREAM_EMBEDDINGS, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000):
+            messages = await loop.run_in_executor(
+                None,
+                lambda: list(read_stream(STREAM_EMBEDDINGS, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000))
+            )
+            for msg_id, msg in messages:
                 task_id = msg.get("task_id")
                 resume_fingerprint = msg.get("resume_fingerprint")
-                
-                logger.info(f"Processing embeddings job: task_id={task_id}, fingerprint={resume_fingerprint[:16]}...")
-                
+
+                logger.info(f"Processing embeddings job: task_id={task_id}, fingerprint={(resume_fingerprint or '')[:16]}...")
+
                 try:
-                    generate_resume_embedding(ctx, resume_fingerprint)
-                    
+                    await loop.run_in_executor(None, generate_resume_embedding, ctx, resume_fingerprint)
+
                     publish_completion(CHANNEL_EMBEDDINGS_DONE, {
                         "task_id": task_id,
                         "status": "completed",
                         "resume_fingerprint": resume_fingerprint
                     })
-                    
+
                     ack_message(STREAM_EMBEDDINGS, CONSUMER_GROUP, msg_id)
                     logger.info(f"Embeddings job done: task_id={task_id}")
-                    
+
                 except Exception as e:
                     logger.exception(f"Embeddings failed: task_id={task_id}")
                     publish_completion(CHANNEL_EMBEDDINGS_DONE, {
@@ -178,6 +201,8 @@ async def consume_embeddings_jobs():
                         "status": "failed",
                         "error": str(e)
                     })
+                    # Ack to prevent infinite redelivery; failure is recorded in completion event
+                    ack_message(STREAM_EMBEDDINGS, CONSUMER_GROUP, msg_id)
                     
         except asyncio.CancelledError:
             logger.info("Embeddings consumer cancelled")

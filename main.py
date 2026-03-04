@@ -22,7 +22,6 @@ from core.app_context import AppContext
 from core.matcher import MatcherService, MatchResultDTO, JobMatchDTO, JobEvidenceDTO, RequirementMatchDTO, JobRequirementDTO, penalty_details_from_orm
 from core.scorer import ScoringService
 from core.scorer.persistence import save_match_to_db
-import os
 
 from etl.resume import ResumeProfiler, ResumeParser
 from etl.resume.embedding_store import JobRepositoryAdapter

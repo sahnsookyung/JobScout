@@ -82,7 +82,7 @@ def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: i
     logger.info(f"Extraction batch completed: {success_count}/{len(job_ids)} jobs")
 
 
-def _run_facet_recovery_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):
+def _run_facet_recovery_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100) -> int:
     """Recover failed/incomplete facet extraction and embeddings from previous runs."""
     max_retries = 5
     claim_timeout_minutes = 30
@@ -93,6 +93,7 @@ def _run_facet_recovery_batch(ctx: AppContext, stop_event: threading.Event, limi
         reset_count = repo.reset_stale_facet_jobs(claim_timeout_minutes, max_retries)
         if reset_count > 0:
             logger.info(f"Facet recovery: reset {reset_count} stale in_progress jobs")
+        recovered += reset_count
 
     # Step 2: Retry failed extractions
     with job_uow() as repo:
@@ -102,12 +103,12 @@ def _run_facet_recovery_batch(ctx: AppContext, stop_event: threading.Event, limi
             for job in failed_jobs:
                 if stop_event.is_set():
                     break
+                job_id = job.id
                 try:
-                    job_id = job.id
                     with job_uow() as repo:
                         job = repo.get_by_id(job_id)
                         if job and job.facet_status == 'failed':
-                            repo.mark_job_facets_failed(job.id, "Retrying from recovery")
+                            repo.update_job_facet_status(job.id, None)
                             recovered += 1
                 except Exception:
                     logger.exception(f"Facet recovery failed for job {job_id}")
@@ -120,8 +121,8 @@ def _run_facet_recovery_batch(ctx: AppContext, stop_event: threading.Event, limi
             for job in jobs_missing_embeddings:
                 if stop_event.is_set():
                     break
+                job_id = job.id
                 try:
-                    job_id = job.id
                     with job_uow() as repo:
                         job = repo.get_by_id(job_id)
                         if job and job.facet_status == 'done':
@@ -131,9 +132,10 @@ def _run_facet_recovery_batch(ctx: AppContext, stop_event: threading.Event, limi
                     logger.exception(f"Facet embedding recovery failed for job {job_id}")
 
     logger.info(f"Facet recovery batch completed: recovered={recovered}")
+    return recovered
 
 
-def _run_facet_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):
+def _run_facet_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100) -> int:
     """Run facet extraction batch with atomic claiming."""
     worker_id = f"worker_{os.getpid()}"
     processed = 0
@@ -164,24 +166,25 @@ def _run_facet_extraction_batch(ctx: AppContext, stop_event: threading.Event, li
                 logger.exception("Facet extraction error job_id=%s", job_id)
 
     logger.info(f"Facet extraction batch completed: processed={processed}")
+    return processed
 
 
 def run_job_extraction(ctx: AppContext, stop_event: threading.Event, limit: int = 200) -> int:
     """
     Run job extraction - extract structured data from jobs.
-    
+
     Args:
         ctx: Application context
         stop_event: Event to signal shutdown
         limit: Maximum jobs to process
-    
+
     Returns:
         Number of jobs processed
     """
-    _run_facet_recovery_batch(ctx, stop_event, limit)
-    _run_extraction_batch(ctx, stop_event, limit)
-    _run_facet_extraction_batch(ctx, stop_event, limit)
-    return limit
+    recovery_count = _run_facet_recovery_batch(ctx, stop_event, limit)
+    extraction_count = _run_extraction_batch(ctx, stop_event, limit)
+    facet_count = _run_facet_extraction_batch(ctx, stop_event, limit)
+    return recovery_count + extraction_count + facet_count
 
 
 

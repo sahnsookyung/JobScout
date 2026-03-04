@@ -305,7 +305,7 @@ class JobETLService:
             resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
         except (ValueError, IOError) as e:
             logger.error(f"Failed to parse resume file: {e}")
-            return False, "", None
+            return False, fingerprint, None
 
         logger.info(f"Resume changed (fingerprint: {fingerprint[:16]}...), extracting...")
         
@@ -354,19 +354,18 @@ class JobETLService:
         existing = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
         if not existing:
             logger.error(f"Resume not found in DB: {resume_fingerprint[:16]}...")
-            return False, ""
-        
+            return False, resume_fingerprint
+
         if not existing.extracted_data:
             logger.error(f"No extracted data for resume: {resume_fingerprint[:16]}...")
-            return False, ""
+            return False, resume_fingerprint
         
         logger.info(f"Generating embeddings for resume: {resume_fingerprint[:16]}...")
-        
+
         try:
-            from etl.resume import ResumeProfiler
             from etl.resume.embedding_store import JobRepositoryAdapter
             from core.llm.schema_models import ResumeSchema
-            
+
             resume = ResumeSchema.model_validate(existing.extracted_data)
             store = JobRepositoryAdapter(repo)
             profiler = ResumeProfiler(ai_service=self.ai, store=store)

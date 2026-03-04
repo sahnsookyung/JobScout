@@ -16,7 +16,7 @@ from database.uow import job_uow
 logger = logging.getLogger(__name__)
 
 
-def _run_facet_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):
+def _run_facet_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100) -> int:
     """Run facet embedding batch - embed extracted facets for all jobs."""
     with job_uow() as repo:
         jobs = repo.get_jobs_needing_facet_embedding(limit)
@@ -38,9 +38,10 @@ def _run_facet_embedding_batch(ctx: AppContext, stop_event: threading.Event, lim
             logger.exception("Facet embedding error job_id=%s", job_id)
 
     logger.info(f"Facet embedding batch completed: processed={processed}")
+    return processed
 
 
-def _run_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):
+def _run_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100) -> int:
     """Run embedding batch with per-job and per-requirement transactions."""
     # 1. Jobs
     with job_uow() as repo:
@@ -76,30 +77,33 @@ def _run_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: in
         try:
             with job_uow() as repo:
                 req = repo.get_requirement_by_id(req_id)
-                if req:
-                    ctx.job_etl_service.embed_requirement_one(repo, req)
-            req_success += 1
+                if req is None:
+                    logger.warning(f"Requirement {req_id} not found, may have been deleted")
+                    continue
+                ctx.job_etl_service.embed_requirement_one(repo, req)
+                req_success += 1
         except Exception:
             logger.exception("Failed requirement embedding req_id=%s", req_id)
 
     logger.info(f"Embedding batch completed: {job_success} jobs, {req_success} reqs")
+    return job_success + req_success
 
 
 def run_embedding_extraction(ctx: AppContext, stop_event: threading.Event, limit: int = 100) -> int:
     """
     Run embedding extraction for jobs.
-    
+
     Args:
         ctx: Application context
         stop_event: Event to signal shutdown
         limit: Maximum jobs to process
-    
+
     Returns:
         Number of jobs processed
     """
-    _run_facet_embedding_batch(ctx, stop_event, limit)
-    _run_embedding_batch(ctx, stop_event, limit)
-    return limit
+    facet_count = _run_facet_embedding_batch(ctx, stop_event, limit)
+    embed_count = _run_embedding_batch(ctx, stop_event, limit)
+    return facet_count + embed_count
 
 
 def generate_resume_embedding(ctx: AppContext, resume_fingerprint: str) -> bool:

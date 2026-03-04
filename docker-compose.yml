@@ -29,7 +29,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-jobscoutredis}", "ping"]
+      test: ["CMD", "sh", "-c", "REDISCLI_AUTH=${REDIS_PASSWORD:-jobscoutredis} redis-cli ping"]
       interval: 5s
       timeout: 3s
       retries: 5

@@ -99,11 +99,21 @@ async def extract_jobs(request: ExtractJobRequest = ExtractJobRequest(limit=200)
     """Extract job data from job boards."""
     global ctx
     logger.info(f"Processing job extraction (limit: {request.limit})")
-    
+
+    if ctx is None:
+        return ExtractResponse(
+            success=False,
+            message="Service not initialized",
+            processed=0
+        )
+
     try:
         from services.base.extraction import run_job_extraction
         stop_event = threading.Event()
-        processed = run_job_extraction(ctx, stop_event, request.limit)
+        loop = asyncio.get_running_loop()
+        processed = await loop.run_in_executor(
+            None, run_job_extraction, ctx, stop_event, request.limit
+        )
         return ExtractResponse(
             success=True,
             message=f"Job extraction completed",
@@ -123,11 +133,19 @@ async def extract_resume(request: ExtractResumeRequest):
     """Extract resume data from file."""
     global ctx
     logger.info(f"Processing resume: {request.resume_file}")
-    
+
+    if ctx is None:
+        return ExtractResponse(
+            success=False,
+            message="Service not initialized",
+            processed=0
+        )
+
     try:
         from services.base.extraction import process_resume
-        changed = process_resume(ctx, request.resume_file)
-        
+        loop = asyncio.get_running_loop()
+        changed = await loop.run_in_executor(None, process_resume, ctx, request.resume_file)
+
         if changed:
             return ExtractResponse(
                 success=True,
@@ -157,34 +175,39 @@ if __name__ == "__main__":
 async def consume_extraction_jobs():
     """Background task that consumes extraction jobs from Redis Streams."""
     from services.base.extraction import process_resume
-    
+
     logger.info(f"Starting extraction consumer: {CONSUMER_NAME}")
-    
+    loop = asyncio.get_running_loop()
+
     while True:
         try:
-            for msg_id, msg in read_stream(STREAM_EXTRACTION, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000):
+            messages = await loop.run_in_executor(
+                None,
+                lambda: list(read_stream(STREAM_EXTRACTION, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000))
+            )
+            for msg_id, msg in messages:
                 task_id = msg.get("task_id")
                 resume_file = msg.get("resume_file")
-                
+
                 logger.info(f"Processing extraction job: task_id={task_id}, file={resume_file}")
-                
+
                 try:
-                    changed = process_resume(ctx, resume_file)
-                    
+                    changed = await loop.run_in_executor(None, process_resume, ctx, resume_file)
+
                     from database.uow import job_uow
                     with job_uow() as repo:
                         resume = repo.resume.get_latest_stored_resume_fingerprint()
-                    
+
                     status = "skipped" if not changed else "completed"
                     publish_completion(CHANNEL_EXTRACTION_DONE, {
                         "task_id": task_id,
                         "status": status,
                         "resume_fingerprint": resume or ""
                     })
-                    
+
                     ack_message(STREAM_EXTRACTION, CONSUMER_GROUP, msg_id)
                     logger.info(f"Extraction job done: task_id={task_id}, status={status}")
-                    
+
                 except Exception as e:
                     logger.exception(f"Extraction failed: task_id={task_id}")
                     publish_completion(CHANNEL_EXTRACTION_DONE, {
@@ -192,6 +215,8 @@ async def consume_extraction_jobs():
                         "status": "failed",
                         "error": str(e)
                     })
+                    # Ack to prevent infinite redelivery; failure is recorded in completion event
+                    ack_message(STREAM_EXTRACTION, CONSUMER_GROUP, msg_id)
                     
         except asyncio.CancelledError:
             logger.info("Extraction consumer cancelled")

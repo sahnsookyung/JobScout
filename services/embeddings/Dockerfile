@@ -6,6 +6,7 @@ COPY pyproject.toml uv.lock ./
 COPY core/ ./core/
 COPY database/ ./database/
 COPY web/backend/models/ ./web/backend/models/
+COPY services/embeddings/ ./services/embeddings/
 COPY config.yaml ./
 
 RUN pip install uv && \
