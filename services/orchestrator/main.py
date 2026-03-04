@@ -120,6 +120,11 @@ class OrchestrationState:
         queue = asyncio.Queue()
         self._subscribers.append(queue)
         return queue
+
+    def unsubscribe(self, queue: asyncio.Queue) -> None:
+        """Remove a subscriber queue to prevent memory leaks."""
+        if queue in self._subscribers:
+            self._subscribers.remove(queue)
     
     def notify(self, data: dict):
         for queue in self._subscribers:
@@ -131,10 +136,16 @@ class OrchestrationState:
     async def close(self):
         for queue in self._subscribers:
             await queue.put(None)
-        try:
-            delete_task_state(self.task_id)
-        except Exception as e:
-            logger.warning(f"Failed to delete state from Redis: {e}")
+        # Keep completed/failed state with TTL for late-arriving clients
+        # Only delete if status is not terminal
+        if self.status not in ("completed", "failed"):
+            try:
+                delete_task_state(self.task_id)
+            except Exception as e:
+                logger.warning(f"Failed to delete state from Redis: {e}")
+        # Remove from in-memory cache
+        if self.task_id in orchestrations:
+            del orchestrations[self.task_id]
 
 
 orchestrations: dict[str, OrchestrationState] = {}
@@ -149,126 +160,175 @@ def get_or_create_orchestration(task_id: str) -> OrchestrationState:
 
 async def orchestrate_match(task_id: str, resume_file: str):
     """Run the orchestration flow: extraction -> embeddings -> matching."""
+    import redis.asyncio as redis_async
+    
+    LISTENER_TIMEOUT = 600.0  # 10 minutes per stage
+    
     state = get_or_create_orchestration(task_id)
     state.status = "extracting"
     state.resume_file = resume_file
     state._save_to_redis()
     state.notify({"task_id": task_id, "status": "extracting", "message": "Starting extraction"})
-    
+
     redis_client = None
     try:
         enqueue_job(STREAM_EXTRACTION, {
             "task_id": task_id,
             "resume_file": resume_file
         })
-        
-        redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+
+        redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
         pubsub = redis_client.pubsub()
-        pubsub.subscribe(CHANNEL_EXTRACTION_DONE)
-        
-        async for message in _async_listen(pubsub):
-            data = json.loads(message["data"])
-            if data.get("task_id") != task_id:
-                continue
-                
-            if data.get("status") == "failed":
+        await pubsub.subscribe(CHANNEL_EXTRACTION_DONE)
+
+        # Wait for extraction completion
+        try:
+            data = await _wait_for_next_message(pubsub, timeout=LISTENER_TIMEOUT)
+        except asyncio.TimeoutError:
+            state.status = "failed"
+            state.error = "Timeout waiting for extraction completion"
+            state._save_to_redis()
+            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            return
+            
+        if data.get("task_id") != task_id:
+            logger.warning(f"Received message for wrong task: {data.get('task_id')}")
+            return
+
+        if data.get("status") == "failed":
+            state.status = "failed"
+            state.error = data.get("error", "Extraction failed")
+            state._save_to_redis()
+            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            return
+
+        if data.get("status") in ("skipped", "completed"):
+            fp = data.get("resume_fingerprint")
+            if not fp:
                 state.status = "failed"
-                state.error = data.get("error", "Extraction failed")
+                state.error = "No fingerprint in extraction response"
                 state._save_to_redis()
                 state.notify({"task_id": task_id, "status": "failed", "error": state.error})
                 return
+
+            state.resume_fingerprint = fp
+
+            if data.get("status") == "skipped":
+                logger.info(f"Resume unchanged, using existing: {fp[:16]}...")
+            else:
+                logger.info(f"Extraction complete: {fp[:16]}...")
+
+            state.status = "embedding"
+            state._save_to_redis()
+            state.notify({"task_id": task_id, "status": "embedding", "message": "Starting embeddings"})
+
+            enqueue_job(STREAM_EMBEDDINGS, {
+                "task_id": task_id,
+                "resume_fingerprint": state.resume_fingerprint
+            })
+
+            await pubsub.unsubscribe(CHANNEL_EXTRACTION_DONE)
+            await pubsub.subscribe(CHANNEL_EMBEDDINGS_DONE)
+        else:
+            # Unexpected status - treat as error
+            logger.warning(f"Unexpected status in extraction response: {data.get('status')}")
+            state.status = "failed"
+            state.error = f"Unexpected status from extraction: {data.get('status')}"
+            state._save_to_redis()
+            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            return
+
+        # Wait for embeddings completion
+        try:
+            data = await _wait_for_next_message(pubsub, timeout=LISTENER_TIMEOUT)
+        except asyncio.TimeoutError:
+            state.status = "failed"
+            state.error = "Timeout waiting for embeddings completion"
+            state._save_to_redis()
+            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            return
             
-            if data.get("status") in ("skipped", "completed"):
-                fp = data.get("resume_fingerprint")
-                if not fp:
-                    state.status = "failed"
-                    state.error = "No fingerprint in extraction response"
-                    state._save_to_redis()
-                    state.notify({"task_id": task_id, "status": "failed", "error": state.error})
-                    return
-                    
-                state.resume_fingerprint = fp
-                
-                if data.get("status") == "skipped":
-                    logger.info(f"Resume unchanged, using existing: {fp[:16]}...")
-                else:
-                    logger.info(f"Extraction complete: {fp[:16]}...")
-                
-                state.status = "embedding"
-                state._save_to_redis()
-                state.notify({"task_id": task_id, "status": "embedding", "message": "Starting embeddings"})
-                
-                enqueue_job(STREAM_EMBEDDINGS, {
-                    "task_id": task_id,
-                    "resume_fingerprint": state.resume_fingerprint
-                })
-                
-                pubsub.unsubscribe(CHANNEL_EXTRACTION_DONE)
-                pubsub.subscribe(CHANNEL_EMBEDDINGS_DONE)
-                
-                continue
+        if data.get("task_id") != task_id:
+            return
+
+        if data.get("status") == "failed":
+            state.status = "failed"
+            state.error = data.get("error", "Embeddings failed")
+            state._save_to_redis()
+            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            return
+
+        if data.get("status") == "completed":
+            fp = state.resume_fingerprint
+            if fp:
+                logger.info(f"Embeddings complete: {fp[:16]}...")
+
+            state.status = "matching"
+            state._save_to_redis()
+            state.notify({"task_id": task_id, "status": "matching", "message": "Starting matching"})
+
+            enqueue_job(STREAM_MATCHING, {
+                "task_id": task_id,
+                "resume_fingerprint": state.resume_fingerprint
+            })
+
+            await pubsub.unsubscribe(CHANNEL_EMBEDDINGS_DONE)
+            await pubsub.subscribe(CHANNEL_MATCHING_DONE)
+        else:
+            # Unexpected status - treat as error
+            logger.warning(f"Unexpected status in embeddings response: {data.get('status')}")
+            state.status = "failed"
+            state.error = f"Unexpected status from embeddings: {data.get('status')}"
+            state._save_to_redis()
+            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            return
+
+        # Wait for matching completion
+        try:
+            data = await _wait_for_next_message(pubsub, timeout=LISTENER_TIMEOUT)
+        except asyncio.TimeoutError:
+            state.status = "failed"
+            state.error = "Timeout waiting for matching completion"
+            state._save_to_redis()
+            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            return
             
-            break
-        
-        async for message in _async_listen(pubsub):
-            data = json.loads(message["data"])
-            if data.get("task_id") != task_id:
-                continue
-                
-            if data.get("status") == "failed":
-                state.status = "failed"
-                state.error = data.get("error", "Embeddings failed")
-                state._save_to_redis()
-                state.notify({"task_id": task_id, "status": "failed", "error": state.error})
-                return
-            
-            if data.get("status") == "completed":
-                fp = state.resume_fingerprint
-                if fp:
-                    logger.info(f"Embeddings complete: {fp[:16]}...")
-                
-                state.status = "matching"
-                state._save_to_redis()
-                state.notify({"task_id": task_id, "status": "matching", "message": "Starting matching"})
-                
-                enqueue_job(STREAM_MATCHING, {
-                    "task_id": task_id,
-                    "resume_fingerprint": state.resume_fingerprint
-                })
-                
-                pubsub.unsubscribe(CHANNEL_EMBEDDINGS_DONE)
-                pubsub.subscribe(CHANNEL_MATCHING_DONE)
-                
-                continue
-            
-            break
-        
-        async for message in _async_listen(pubsub):
-            data = json.loads(message["data"])
-            if data.get("task_id") != task_id:
-                continue
-                
-            if data.get("status") == "failed":
-                state.status = "failed"
-                state.error = data.get("error", "Matching failed")
-                state._save_to_redis()
-                state.notify({"task_id": task_id, "status": "failed", "error": state.error})
-                return
-            
-            if data.get("status") == "completed":
-                state.status = "completed"
-                state.matches_count = data.get("matches_count", 0)
-                state._save_to_redis()
-                state.notify({
-                    "task_id": task_id,
-                    "status": "completed",
-                    "matches_count": state.matches_count,
-                    "message": f"Matching complete, {state.matches_count} matches"
-                })
-                return
-            
-            break
-            
+        if data.get("task_id") != task_id:
+            return
+
+        if data.get("status") == "failed":
+            state.status = "failed"
+            state.error = data.get("error", "Matching failed")
+            state._save_to_redis()
+            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            return
+
+        if data.get("status") == "completed":
+            state.status = "completed"
+            state.matches_count = data.get("matches_count", 0)
+            state._save_to_redis()
+            state.notify({
+                "task_id": task_id,
+                "status": "completed",
+                "matches_count": state.matches_count,
+                "message": f"Matching complete, {state.matches_count} matches"
+            })
+            return
+        else:
+            # Unexpected status - treat as error
+            logger.warning(f"Unexpected status in matching response: {data.get('status')}")
+            state.status = "failed"
+            state.error = f"Unexpected status from matching: {data.get('status')}"
+            state._save_to_redis()
+            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            return
+
+    except asyncio.TimeoutError as e:
+        logger.exception(f"Orchestration timeout for task {task_id}")
+        state.status = "failed"
+        state.error = f"Orchestration timeout: {str(e)}"
+        state._save_to_redis()
+        state.notify({"task_id": task_id, "status": "failed", "error": state.error})
     except Exception as e:
         logger.exception(f"Orchestration failed for task {task_id}")
         state.status = "failed"
@@ -277,15 +337,39 @@ async def orchestrate_match(task_id: str, resume_file: str):
         state.notify({"task_id": task_id, "status": "failed", "error": str(e)})
     finally:
         if redis_client:
-            redis_client.close()
+            await redis_client.close()
         await state.close()
 
 
-async def _async_listen(pubsub) -> dict:
-    """Async wrapper for pubsub.listen()."""
-    for message in pubsub.listen():
+async def _async_listen(pubsub):
+    """Async generator that yields messages from pubsub.
+    
+    Args:
+        pubsub: Redis async pubsub instance
+    """
+    async for message in pubsub.listen():
         if message["type"] == "message":
             yield message
+
+
+async def _wait_for_next_message(pubsub, timeout: float = 300.0) -> Optional[dict]:
+    """Wait for the next message from pubsub with a timeout.
+    
+    Args:
+        pubsub: Redis async pubsub instance
+        timeout: Timeout in seconds (default: 300s)
+        
+    Returns:
+        The message data dict, or None if timeout
+        
+    Raises:
+        asyncio.TimeoutError: If no message received within timeout
+    """
+    async with asyncio.timeout(timeout):
+        async for message in pubsub.listen():
+            if message["type"] == "message":
+                return json.loads(message["data"])
+    return None  # Will raise TimeoutError before reaching here
 
 
 @app.get("/health")
@@ -327,24 +411,27 @@ async def orchestrate_match_endpoint():
 @app.get("/orchestrate/status/{task_id}")
 async def get_orchestration_status(task_id: str):
     """Get orchestration status via SSE."""
-    
+
     async def event_generator():
         state = get_or_create_orchestration(task_id)
         queue = state.subscribe()
-        
-        yield f"data: {json.dumps({'task_id': task_id, 'status': state.status})}\n\n"
-        
-        while True:
-            try:
-                data = await asyncio.wait_for(queue.get(), timeout=30.0)
-                if data is None:
-                    break
-                yield f"data: {json.dumps(data)}\n\n"
-                
-                if state.status in ["completed", "failed"]:
-                    break
-            except asyncio.TimeoutError:
-                yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+        try:
+            yield f"data: {json.dumps({'task_id': task_id, 'status': state.status})}\n\n"
+
+            while True:
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    if data is None:
+                        break
+                    yield f"data: {json.dumps(data)}\n\n"
+
+                    if state.status in ["completed", "failed"]:
+                        break
+                except asyncio.TimeoutError:
+                    yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+        finally:
+            # Clean up subscriber to prevent memory leak
+            state.unsubscribe(queue)
     
     return StreamingResponse(
         event_generator(),

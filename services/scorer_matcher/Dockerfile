@@ -5,8 +5,11 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY core/ ./core/
 COPY database/ ./database/
+COPY etl/ ./etl/
+COPY notification/ ./notification/
 COPY web/backend/models/ ./web/backend/models/
 COPY pipeline/ ./pipeline/
+COPY services/scorer_matcher/ ./services/scorer_matcher/
 COPY config.yaml ./
 
 RUN pip install uv && \
@@ -14,4 +17,4 @@ RUN pip install uv && \
 
 EXPOSE 8083
 
-CMD ["python", "-m", "uvicorn", "services.scorer_matcher.main:app", "--host", "0.0.0.0", "--port", "8083"]
+CMD ["uv", "run", "uvicorn", "services.scorer_matcher.main:app", "--host", "0.0.0.0", "--port", "8083"]

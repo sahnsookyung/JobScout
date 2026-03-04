@@ -14,7 +14,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql://user:password@postgres:5432/jobscout
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-jobscout}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-jobscoutredis}@redis:6379/0
       - EXTRACTION_URL=http://extraction:8081
       - EMBEDDINGS_URL=http://embeddings:8082

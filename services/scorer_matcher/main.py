@@ -111,13 +111,13 @@ async def match_resume(request: MatchResumeRequest):
         )
     
     try:
-        loop = asyncio.get_event_loop()
-        
+        loop = asyncio.get_running_loop()
+
         def run_match():
             stop_event = threading.Event()
             result = run_matching_pipeline(ctx, stop_event)
             return result
-        
+
         result = await loop.run_in_executor(None, run_match)
         
         if result and result.saved_count > 0:
@@ -145,14 +145,33 @@ async def match_resume(request: MatchResumeRequest):
 
 @app.post("/match/jobs", response_model=MatchResponse)
 async def match_jobs(request: MatchJobRequest):
-    """Run matching for specific jobs."""
+    """Run matching for specific jobs.
+    
+    TODO: Implement actual job matching logic.
+    Currently returns a stub response.
+    """
     global ctx
     logger.info(f"Matching {len(request.job_ids) if request.job_ids else 0} jobs")
-    
+
+    if ctx is None:
+        return MatchResponse(
+            success=False,
+            message="Service not initialized",
+            matches=0
+        )
+
+    if not request.job_ids:
+        return MatchResponse(
+            success=True,
+            message="No job IDs provided",
+            matches=0
+        )
+
+    # TODO: Implement actual job matching logic using run_matching_pipeline
     try:
         return MatchResponse(
             success=True,
-            message="Job matching triggered",
+            message="Job matching not yet implemented",
             matches=len(request.job_ids) if request.job_ids else 0
         )
     except Exception as e:
@@ -172,31 +191,39 @@ if __name__ == "__main__":
 async def consume_matching_jobs():
     """Background task that consumes matching jobs from Redis Streams."""
     logger.info(f"Starting matching consumer: {CONSUMER_NAME}")
-    
+    loop = asyncio.get_running_loop()
+
     while True:
         try:
-            for msg_id, msg in read_stream(STREAM_MATCHING, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000):
+            messages = await loop.run_in_executor(
+                None,
+                lambda: list(read_stream(STREAM_MATCHING, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000))
+            )
+            for msg_id, msg in messages:
                 task_id = msg.get("task_id")
                 resume_fingerprint = msg.get("resume_fingerprint")
-                
-                logger.info(f"Processing matching job: task_id={task_id}, fingerprint={resume_fingerprint[:16]}...")
-                
+
+                logger.info(f"Processing matching job: task_id={task_id}, fingerprint={(resume_fingerprint or '')[:16]}...")
+
                 try:
-                    stop_event = threading.Event()
-                    result = run_matching_pipeline(ctx, stop_event)
-                    
+                    def run_pipeline():
+                        stop_event = threading.Event()
+                        return run_matching_pipeline(ctx, stop_event)
+
+                    result = await loop.run_in_executor(None, run_pipeline)
+
                     matches_count = result.saved_count if result else 0
-                    
+
                     publish_completion(CHANNEL_MATCHING_DONE, {
                         "task_id": task_id,
                         "status": "completed",
                         "resume_fingerprint": resume_fingerprint,
                         "matches_count": matches_count
                     })
-                    
+
                     ack_message(STREAM_MATCHING, CONSUMER_GROUP, msg_id)
                     logger.info(f"Matching job done: task_id={task_id}, matches={matches_count}")
-                    
+
                 except Exception as e:
                     logger.exception(f"Matching failed: task_id={task_id}")
                     publish_completion(CHANNEL_MATCHING_DONE, {
@@ -204,6 +231,8 @@ async def consume_matching_jobs():
                         "status": "failed",
                         "error": str(e)
                     })
+                    # Ack to prevent infinite redelivery; failure is recorded in completion event
+                    ack_message(STREAM_MATCHING, CONSUMER_GROUP, msg_id)
                     
         except asyncio.CancelledError:
             logger.info("Matching consumer cancelled")
