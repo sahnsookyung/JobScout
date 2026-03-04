@@ -172,6 +172,45 @@ class ResumeProfiler:
             logger.info("Resume profiling interrupted (stop event set)")
             raise InterruptedError("Interrupted by system")
 
+    def extract_only(self, resume_data: Dict[str, Any]) -> Optional[ResumeSchema]:
+        """Extract structured resume data only (no embeddings).
+        
+        Args:
+            resume_data: Raw resume data dict (from parser)
+            
+        Returns:
+            ResumeSchema if extraction successful, None otherwise
+        """
+        return self.extract_structured_resume(resume_data)
+
+    def embed_only(
+        self,
+        resume_fingerprint: str,
+        resume: ResumeSchema,
+        stop_event: Optional[threading.Event] = None
+    ) -> List[ResumeEvidenceUnit]:
+        """Generate embeddings for already-extracted resume.
+        
+        Args:
+            resume_fingerprint: Resume fingerprint for storage
+            resume: Already-extracted ResumeSchema
+            stop_event: Optional event to signal interruption
+            
+        Returns:
+            List of ResumeEvidenceUnit with embeddings generated
+        """
+        self._check_interrupted(stop_event)
+        evidence_units = self.extract_resume_evidence(resume.profile)
+
+        self._check_interrupted(stop_event)
+        self.embed_evidence_units(evidence_units)
+        self.save_evidence_unit_embeddings(resume_fingerprint, evidence_units)
+
+        self._check_interrupted(stop_event)
+        self.save_resume_section_embeddings(resume_fingerprint, resume)
+
+        return evidence_units
+
     def profile_resume(
         self,
         resume_data: Dict[str, Any],

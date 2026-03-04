@@ -54,39 +54,40 @@ def run_matching_pipeline_endpoint():
     """
     Trigger the full matching pipeline in the background.
     
-    Returns immediately with a task_id that can be used to poll for status.
+    Returns immediately with a task_id that can be used to poll for status via SSE.
     The pipeline will:
-    - Load the resume from the database
+    - Extract resume (if changed)
+    - Generate embeddings
     - Run vector-based job matching
     - Calculate fit/want scores
     - Save results to database
     - Send notifications (if configured)
     """
-    manager = get_pipeline_manager()
-    
+    # Call orchestrator service - it will handle the full pipeline
     try:
-        task_id = manager.create_task()
+        from web.backend.services.clients import orchestrator_client
+        result = orchestrator_client.start_matching()
         
-        # Check if this is an existing task
-        task = manager.get_task(task_id)
-        if task and task.status in ["pending", "running"]:
+        task_id = result.get("task_id", "")
+        
+        if result.get("success"):
             return PipelineTaskResponse(
                 success=True,
                 task_id=task_id,
-                message="Pipeline is already running. Returning existing task."
+                message="Matching pipeline started. Use SSE /api/pipeline/status/{task_id} to track progress."
             )
-        
-        return PipelineTaskResponse(
-            success=True,
-            task_id=task_id,
-            message="Matching pipeline started. Use /api/pipeline/status/{task_id} to check progress."
-        )
-        
-    except PipelineLockedException as e:
+        else:
+            return PipelineTaskResponse(
+                success=False,
+                task_id=task_id,
+                message=result.get("message", "Failed to start pipeline")
+            )
+    except Exception as e:
+        logger.exception("Failed to start matching pipeline")
         return PipelineTaskResponse(
             success=False,
             task_id="",
-            message=str(e)
+            message=f"Failed to start matching: {str(e)}"
         )
 
 
@@ -175,71 +176,26 @@ async def pipeline_events(task_id: str):
     Server-Sent Events endpoint for real-time pipeline status updates.
     
     Streams status updates for the specified task in real-time.
+    Proxies to the orchestrator service.
     """
+    import httpx
+    from fastapi.responses import StreamingResponse
     
-    manager = get_pipeline_manager()
-    task = manager.get_task(task_id)
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    queue = manager.subscribe(task_id)
+    orchestrator_url = os.getenv("ORCHESTRATOR_URL", "http://localhost:8084")
     
     async def event_generator():
         try:
-            task = manager.get_task(task_id)
-            if task:
-                initial_data = {
-                    "task_id": task_id,
-                    "status": task.status,
-                    "step": task.step,
-                }
-                if task.status in ["completed", "failed"] and task.result:
-                    initial_data["matches_count"] = task.result.matches_count
-                    initial_data["saved_count"] = task.result.saved_count
-                    initial_data["notified_count"] = task.result.notified_count
-                    initial_data["execution_time"] = task.result.execution_time
-                    initial_data["success"] = task.result.success
-                    if not task.result.success:
-                        initial_data["error"] = task.result.error
-                elif task.status in ["completed", "failed"] and task.error:
-                    initial_data["error"] = task.error
-                yield f"data: {json.dumps(initial_data)}\n\n"
-            
-            if task and task.status in ["completed", "failed"]:
-                return
-            
-            while True:
-                try:
-                    data = await asyncio.wait_for(queue.get(), timeout=30.0)
-                    yield f"data: {json.dumps(data)}\n\n"
-                except asyncio.TimeoutError:
-                    yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
-                    
-                task = manager.get_task(task_id)
-                if task and task.status in ["completed", "failed"]:
-                    final_data = {
-                        "task_id": task_id,
-                        "status": task.status,
-                        "step": task.step,
-                    }
-                    if task.result:
-                        final_data["matches_count"] = task.result.matches_count
-                        final_data["saved_count"] = task.result.saved_count
-                        final_data["notified_count"] = task.result.notified_count
-                        final_data["execution_time"] = task.result.execution_time
-                        final_data["success"] = task.result.success
-                        if not task.result.success:
-                            final_data["error"] = task.result.error
-                    elif task.error:
-                        final_data["error"] = task.error
-                    yield f"data: {json.dumps(final_data)}\n\n"
-                    break
-        except asyncio.CancelledError:
-            logger.info(f"SSE connection cancelled for task {task_id}")
-        finally:
-            manager.unsubscribe(task_id)
-            logger.info(f"SSE connection closed for task {task_id}")
+            async with httpx.AsyncClient(timeout=httpx.Timeout(None)) as client:
+                async with client.stream(
+                    "GET",
+                    f"{orchestrator_url}/orchestrate/status/{task_id}"
+                ) as response:
+                    async for chunk in response.aiter_bytes(chunk_size=1024):
+                        if chunk:
+                            yield chunk
+        except Exception as e:
+            logger.error(f"Failed to connect to orchestrator: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
     
     return StreamingResponse(
         event_generator(),

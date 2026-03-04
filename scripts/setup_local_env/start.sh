@@ -7,6 +7,7 @@
 #   ./start.sh --backend                        Backend only
 #   ./start.sh --frontend                       Frontend only
 #   ./start.sh --docker --backend --frontend --block  Block and show all logs
+#   ./start.sh --pipeline                        Start pipeline services (extraction, embeddings, scorer-matcher)
 #   ./logs.sh -f                                Tail all logs in real-time
 #
 # Options:
@@ -15,6 +16,7 @@
 #   -r, --redis    Start Redis only (within Docker)
 #   -b, --backend   Start FastAPI backend server
 #   -f, --frontend  Start Vite frontend dev server
+#   --pipeline      Start pipeline services (extraction, embeddings, scorer-matcher)
 #   -o, --ollama    Include Ollama (local embeddings)
 #   -c, --clean     Stop existing services first
 #   -h, --help      Show this help message
@@ -23,6 +25,7 @@
 #   ./start.sh --docker --backend --frontend    Full stack
 #   ./start.sh --backend --frontend --block     Full stack, block and show logs
 #   ./start.sh --backend                        Backend only
+#   ./start.sh --pipeline                       Pipeline services only
 # =============================================================================
 
 set -e
@@ -78,6 +81,7 @@ parse_args() {
     DOCKER=false
     BACKEND=false
     FRONTEND=false
+    PIPELINE=false
     OLLAMA=false
     CLEAN=false
     BLOCK=false
@@ -106,6 +110,10 @@ parse_args() {
                 FRONTEND=true
                 shift
                 ;;
+            --pipeline)
+                PIPELINE=true
+                shift
+                ;;
             -o|--ollama)
                 OLLAMA=true
                 shift
@@ -131,10 +139,11 @@ parse_args() {
     done
 
     # Default: enable all if nothing specified
-    if [ "$DOCKER" = false ] && [ "$POSTGRES" = false ] && [ "$REDIS" = false ] && [ "$BACKEND" = false ] && [ "$FRONTEND" = false ]; then
+    if [ "$DOCKER" = false ] && [ "$POSTGRES" = false ] && [ "$REDIS" = false ] && [ "$BACKEND" = false ] && [ "$FRONTEND" = false ] && [ "$PIPELINE" = false ]; then
         DOCKER=true
         BACKEND=true
         FRONTEND=true
+        PIPELINE=true
     fi
 }
 
@@ -142,10 +151,19 @@ parse_args() {
 stop_services() {
     log_info "Stopping existing services..."
 
+    # Build compose args to stop all potential services
+    COMPOSE_ARGS="-f ${DOCKER_COMPOSE_FILE}"
+    if [ -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]; then
+        COMPOSE_ARGS="${COMPOSE_ARGS} -f ${PROJECT_ROOT}/docker-compose.pipeline.yml"
+    fi
+    if [ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]; then
+        COMPOSE_ARGS="${COMPOSE_ARGS} -f ${PROJECT_ROOT}/docker-compose.web.yml"
+    fi
+
     # Stop Docker services
-    if docker-compose -f "${DOCKER_COMPOSE_FILE}" ps -q 2>/dev/null | grep -q .; then
+    if docker-compose ${COMPOSE_ARGS} ps -q 2>/dev/null | grep -q .; then
         log_info "Stopping Docker services..."
-        docker-compose -f "${DOCKER_COMPOSE_FILE}" down --remove-orphans 2>/dev/null || true
+        docker-compose ${COMPOSE_ARGS} down --remove-orphans 2>/dev/null || true
     fi
 
     # Kill backend process
@@ -188,6 +206,17 @@ start_docker() {
     # Set compose file
     COMPOSE_FILE="${DOCKER_COMPOSE_FILE}"
 
+    # Add pipeline compose file if pipeline services requested
+    if [ "$PIPELINE" = true ]; then
+        COMPOSE_FILE="${COMPOSE_FILE} -f ${PROJECT_ROOT}/docker-compose.pipeline.yml"
+        log_info "Pipeline services enabled"
+    fi
+
+    # Add web compose file if backend requested
+    if [ "$BACKEND" = true ]; then
+        COMPOSE_FILE="${COMPOSE_FILE} -f ${PROJECT_ROOT}/docker-compose.web.yml"
+    fi
+
     # Set profile for Ollama if requested
     if [ "$OLLAMA" = true ]; then
         DOCKER_COMPOSE_PROFILE="--profile docker-ollama"
@@ -195,8 +224,8 @@ start_docker() {
     fi
 
     # Check if docker-compose.yml exists
-    if [ ! -f "${COMPOSE_FILE}" ]; then
-        log_error "docker-compose.yml not found at ${COMPOSE_FILE}"
+    if [ ! -f "${PROJECT_ROOT}/docker-compose.yml" ]; then
+        log_error "docker-compose.yml not found at ${PROJECT_ROOT}"
         exit 1
     fi
 
@@ -210,7 +239,7 @@ start_docker() {
     # Wait for PostgreSQL if it was started
     if [ "$POSTGRES" = true ] || [ "$DOCKER" = true ] && [ "$POSTGRES" = false ] && [ "$REDIS" = false ]; then
         log_info "Waiting for PostgreSQL..."
-        timeout 30 bash -c 'until docker-compose -f '"${COMPOSE_FILE}"' exec -T postgres pg_isready -U user -d jobscout; do sleep 1; done' 2>/dev/null || {
+        timeout 30 bash -c 'until docker-compose -f '"${PROJECT_ROOT}/docker-compose.yml"' exec -T postgres pg_isready -U user -d jobscout; do sleep 1; done' 2>/dev/null || {
             log_warn "PostgreSQL may not be ready yet, continuing..."
         }
     fi
