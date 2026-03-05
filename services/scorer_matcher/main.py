@@ -169,7 +169,7 @@ async def match_jobs(request: MatchJobRequest):
 
     # TODO: Implement actual job matching logic using run_matching_pipeline
     return MatchResponse(
-        success=True,
+        success=False,
         message="Job matching not yet implemented",
         matches=0
     )

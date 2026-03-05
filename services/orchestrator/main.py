@@ -156,9 +156,10 @@ class OrchestrationState:
                 delete_task_state(self.task_id)
             except Exception as e:
                 logger.warning(f"Failed to delete state from Redis: {e}")
-        # Remove from in-memory cache
-        if self.task_id in orchestrations:
-            del orchestrations[self.task_id]
+        # Remove from in-memory cache (use lock to avoid race condition)
+        async with _orchestration_lock:
+            if self.task_id in orchestrations:
+                del orchestrations[self.task_id]
 
 
 orchestrations: dict[str, OrchestrationState] = {}
@@ -448,9 +449,10 @@ async def orchestrate_match_endpoint():
             task_id=task_id,
             message="No resume file configured"
         )
-    
-    asyncio.create_task(orchestrate_match(task_id, resume_file))
-    
+
+    task = asyncio.create_task(orchestrate_match(task_id, resume_file))
+    task.add_done_callback(lambda t: logger.error(f"Orchestration failed: {t.exception()}") if not t.cancelled() and t.exception() else None)
+
     return MatchResponse(
         success=True,
         task_id=task_id,

@@ -74,7 +74,7 @@ def run_matching_pipeline_endpoint():
             return PipelineTaskResponse(
                 success=True,
                 task_id=task_id,
-                message="Matching pipeline started. Use SSE /api/pipeline/status/{task_id} to track progress."
+                message="Matching pipeline started. Use SSE /api/pipeline/events/{task_id} to track progress."
             )
         else:
             return PipelineTaskResponse(

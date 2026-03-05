@@ -194,29 +194,32 @@ def run_job_extraction(ctx: AppContext, stop_event: threading.Event, limit: int 
 def run_resume_extraction(ctx: AppContext, resume_file: str) -> tuple[Optional[dict], str]:
     """
     Extract resume data from file.
-    
+
     Args:
         ctx: Application context
         resume_file: Path to resume file
-    
+
     Returns:
         Tuple of (resume_data, fingerprint)
     """
     logger.info(f"Extracting resume from {resume_file}")
-    
-    # Load and parse resume
-    resume_data = _load_resume_with_parser(resume_file)
-    if not resume_data:
+
+    # Load and parse resume with error handling
+    try:
+        resume_data = _load_resume_with_parser(resume_file)
+        if not resume_data:
+            return None, ""
+
+        # Generate fingerprint from parsed data
+        fingerprint = generate_file_fingerprint(str(resume_data).encode())
+    except (FileNotFoundError, IOError, PermissionError) as e:
+        logger.error(f"Failed to read resume file {resume_file}: {e}")
         return None, ""
-    
-    # Generate fingerprint
-    with open(resume_file, 'rb') as f:
-        fingerprint = generate_file_fingerprint(f.read())
-    
+
     return resume_data, fingerprint
 
 
-def process_resume(ctx: AppContext, resume_file: str) -> bool:
+def process_resume(ctx: AppContext, resume_file: str) -> tuple[bool, Optional[str]]:
     """
     Extract resume data (no embeddings).
 
@@ -225,11 +228,11 @@ def process_resume(ctx: AppContext, resume_file: str) -> bool:
         resume_file: Path to resume file
 
     Returns:
-        True if extracted, False if already exists
+        Tuple of (extracted: bool, fingerprint: Optional[str])
     """
     logger.info(f"Extracting resume: {resume_file}")
 
     with job_uow() as repo:
         extracted, fingerprint, _ = ctx.job_etl_service.extract_resume(repo, resume_file)
 
-    return extracted
+    return extracted, fingerprint

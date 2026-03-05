@@ -354,7 +354,7 @@ start_web_app() {
 
     # Start web app
     cd "${PROJECT_ROOT}"
-    uv run python -m uvicorn web.backend.app:app --host 0.0.0.0 --reload --port ${BACKEND_PORT} --log-config web.backend.logging_config.LOGGING_CONFIG > "${LOGS_DIR}/web-app.log" 2>&1 &
+    uv run python -m uvicorn web.backend.app:app --host 0.0.0.0 --reload --port ${BACKEND_PORT} > "${LOGS_DIR}/web-app.log" 2>&1 &
 
     WEB_APP_PID=$!
     log_info "Web application started with PID: ${WEB_APP_PID}"
