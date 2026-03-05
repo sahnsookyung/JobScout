@@ -35,12 +35,18 @@ def get_redis_client() -> redis.Redis:
 
 
 STREAM_EXTRACTION = "extraction:jobs"
+STREAM_EXTRACTION_BATCH = "extraction:batch"
 STREAM_EMBEDDINGS = "embeddings:jobs"
+STREAM_EMBEDDINGS_BATCH = "embeddings:batch"
 STREAM_MATCHING = "matching:jobs"
 
 CHANNEL_EXTRACTION_DONE = "extraction:completed"
+CHANNEL_EXTRACTION_BATCH_DONE = "extraction:batch:completed"
 CHANNEL_EMBEDDINGS_DONE = "embeddings:completed"
+CHANNEL_EMBEDDINGS_BATCH_DONE = "embeddings:batch:completed"
 CHANNEL_MATCHING_DONE = "matching:completed"
+
+STREAM_MAX_LEN = 10_000
 
 
 def validate_job_payload(payload: dict, required_fields: list[str]) -> tuple[bool, str]:
@@ -62,7 +68,7 @@ def enqueue_job(stream: str, payload: dict) -> str:
         raise ValueError(f"Payload contains non-JSON-serializable value: {e}")
 
     try:
-        msg_id = client.xadd(stream, serialized)
+        msg_id = client.xadd(stream, serialized, maxlen=STREAM_MAX_LEN, approximate=True)
         logger.info(f"📤 Enqueued job to {stream}: msg_id={msg_id}, task_id={payload.get('task_id')}")
     except (redis.ConnectionError, redis.TimeoutError) as e:
         logger.error(f"❌ Redis error enqueuing job to {stream}: {type(e).__name__}: {e}")
@@ -336,6 +342,68 @@ def get_stream_info(stream: str) -> dict:
             return {}
         # Re-raise other errors (permission issues, misconfiguration, etc.)
         raise
+
+
+def get_stream_backlog(stream: str) -> dict:
+    """Get pending message count and queue depth for a stream.
+    
+    Args:
+        stream: Stream name
+        
+    Returns:
+        Dict with stream stats:
+        - stream: Stream name
+        - length: Total messages ever added
+        - pending: Messages pending acknowledgment
+        - consumers: Number of active consumers
+        - groups: Number of consumer groups
+    """
+    client = get_redis_client()
+    try:
+        info = client.xinfo_stream(stream)
+        return {
+            "stream": stream,
+            "length": info.get("length", 0),
+            "pending": info.get("pending", 0),
+            "consumers": info.get("consumers", 0),
+            "groups": info.get("groups", 0),
+        }
+    except redis.ResponseError as e:
+        if "no such key" in str(e).lower() or "err no such key" in str(e).lower():
+            return {"stream": stream, "length": 0, "pending": 0, "consumers": 0, "groups": 0}
+        raise
+
+
+def get_all_stream_backlogs() -> dict:
+    """Get backlog stats for all pipeline streams.
+    
+    Returns:
+        Dict mapping stream names to their backlog stats
+    """
+    return {
+        "extraction": get_stream_backlog(STREAM_EXTRACTION),
+        "extraction_batch": get_stream_backlog(STREAM_EXTRACTION_BATCH),
+        "embeddings": get_stream_backlog(STREAM_EMBEDDINGS),
+        "embeddings_batch": get_stream_backlog(STREAM_EMBEDDINGS_BATCH),
+        "matching": get_stream_backlog(STREAM_MATCHING),
+    }
+
+
+def log_stream_backlogs() -> None:
+    """Log current backlog for all pipeline streams.
+    
+    Useful for periodic health checks or debugging.
+    """
+    backlogs = get_all_stream_backlogs()
+    for stream_name, stats in backlogs.items():
+        logger.info(
+            "📊 Stream backlog: %s - length=%d, pending=%d, consumers=%d, groups=%d",
+            stream_name,
+            stats.get("length", 0),
+            stats.get("pending", 0),
+            stats.get("consumers", 0),
+            stats.get("groups", 0),
+        )
 
 
 def stream_exists(stream: str) -> bool:
