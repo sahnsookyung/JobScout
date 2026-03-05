@@ -133,8 +133,10 @@ def read_stream(
 
 def ack_message(stream: str, group: str, msg_id: str) -> bool:
     client = get_redis_client()
-    client.xack(stream, group, msg_id)
-    return True
+    result = client.xack(stream, group, msg_id)
+    if result == 0:
+        logger.warning(f"Message {msg_id} was not acknowledged (already acked or not found)")
+    return result > 0
 
 
 def publish_completion(channel: str, payload: dict) -> int:
@@ -183,7 +185,8 @@ def listen_for_messages(
                     logger.error(f"Failed to decode message: {e}")
         except redis.ConnectionError as e:
             logger.error(f"Connection error in pubsub listener: {e}")
-            raise
+            time.sleep(1)
+            continue
 
 
 def create_consumer_group(stream: str, group: str) -> None:
