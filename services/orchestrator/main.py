@@ -417,7 +417,7 @@ async def _async_listen(pubsub):
             yield message
 
 
-async def _wait_for_next_message(pubsub, timeout: float = 300.0) -> Optional[dict]:
+async def _wait_for_next_message(pubsub, timeout: float = 300.0) -> dict:
     """Wait for the next message from pubsub with a timeout.
 
     Args:
@@ -425,7 +425,7 @@ async def _wait_for_next_message(pubsub, timeout: float = 300.0) -> Optional[dic
         timeout: Timeout in seconds (default: 300s)
 
     Returns:
-        The message data dict
+        The message data dict (never None)
 
     Raises:
         asyncio.TimeoutError: If no message received within timeout
@@ -497,8 +497,15 @@ async def orchestrate_match_endpoint():
 
     def safe_done_callback(t: asyncio.Task) -> None:
         try:
-            loop = asyncio.get_running_loop()
-            loop.call_soon_threadsafe(loop.create_task, _handle_task_done(task_id, t))
+            try:
+                loop = asyncio.get_running_loop()
+                loop.call_soon_threadsafe(loop.create_task, _handle_task_done(task_id, t))
+            except RuntimeError:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.call_soon_threadsafe(loop.create_task, _handle_task_done(task_id, t))
+                else:
+                    logger.warning(f"No running loop for task {task_id} completion, state may be inconsistent")
         except RuntimeError:
             logger.warning(f"Could not handle task completion for {task_id}: no running loop")
 

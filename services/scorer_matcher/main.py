@@ -199,6 +199,8 @@ async def consume_matching_jobs():
 
                 try:
                     def run_pipeline():
+                        if ctx is None:
+                            raise RuntimeError("AppContext not initialized")
                         stop_event = threading.Event()
                         return run_matching_pipeline(ctx, stop_event)
 
