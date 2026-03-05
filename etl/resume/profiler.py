@@ -199,6 +199,8 @@ class ResumeProfiler:
         Returns:
             List of ResumeEvidenceUnit with embeddings generated
         """
+        if not resume_fingerprint:
+            raise ValueError("resume_fingerprint is required")
         self._check_interrupted(stop_event)
         evidence_units = self.extract_resume_evidence(resume.profile)
 
@@ -206,7 +208,8 @@ class ResumeProfiler:
         self.embed_evidence_units(evidence_units)
         self.save_evidence_unit_embeddings(resume_fingerprint, evidence_units)
 
-        # Skip interruption check between saves to ensure atomic persistence
+        # Skip interruption check between saves to minimize partial persistence risk
+        # Note: These saves are not atomic - partial data may occur if crash happens between calls
         self.save_resume_section_embeddings(resume_fingerprint, resume)
 
         return evidence_units

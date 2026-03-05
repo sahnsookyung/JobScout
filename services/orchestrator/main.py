@@ -164,6 +164,7 @@ class OrchestrationState:
 orchestrations: dict[str, OrchestrationState] = {}
 orchestration_timestamps: dict[str, float] = {}
 ORCHESTRATION_TTL = 3600  # 1 hour
+_orchestration_lock = asyncio.Lock()
 
 
 async def cleanup_stale_orchestrations():
@@ -221,7 +222,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
 
     LISTENER_TIMEOUT = 600.0  # 10 minutes per stage
 
-    state = get_or_create_orchestration(task_id)
+    state = await get_or_create_orchestration(task_id)
     state.status = "extracting"
     state.resume_file = resume_file
     state._save_to_redis()
@@ -461,7 +462,7 @@ async def get_orchestration_status(task_id: str):
     """Get orchestration status via SSE."""
 
     async def event_generator():
-        state = get_or_create_orchestration(task_id)
+        state = await get_or_create_orchestration(task_id)
         queue = state.subscribe()
         try:
             yield f"data: {json.dumps({'task_id': task_id, 'status': state.status})}\n\n"
