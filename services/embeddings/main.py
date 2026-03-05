@@ -184,6 +184,8 @@ async def consume_embeddings_jobs():
                 logger.info(f"Processing embeddings job: task_id={task_id}, fingerprint={(resume_fingerprint or '')[:16]}...")
 
                 try:
+                    if ctx is None:
+                        raise RuntimeError("AppContext not initialized")
                     await loop.run_in_executor(None, generate_resume_embedding, ctx, resume_fingerprint)
 
                     publish_completion(CHANNEL_EMBEDDINGS_DONE, {
