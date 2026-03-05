@@ -122,16 +122,13 @@ def read_stream(
             logger.error(f"Connection error reading from stream {stream}: {e}")
             time.sleep(1)  # Back off on connection errors
             continue
+        except redis.TimeoutError as e:
+            logger.warning(f"Timeout reading from stream {stream}: {e}")
+            time.sleep(1)  # Brief backoff for transient errors
+            continue
         except Exception as e:
-            # Handle socket timeouts and other transient errors
-            error_msg = str(e)
-            if "timeout" in error_msg.lower() or "socket" in error_msg.lower():
-                logger.warning(f"Transient error reading from stream {stream}: {e}")
-                time.sleep(1)  # Brief backoff for transient errors
-                continue
-            else:
-                logger.error(f"Fatal error reading from stream {stream}: {e}")
-                raise
+            logger.error(f"Fatal error reading from stream {stream}: {e}")
+            raise
 
 
 def ack_message(stream: str, group: str, msg_id: str) -> bool:
@@ -230,6 +227,7 @@ def get_task_state(task_id: str) -> Optional[dict]:
         try:
             return json.loads(data)
         except json.JSONDecodeError:
+            logger.warning(f"Failed to decode task state for {task_id}, returning None")
             return None
     return None
 

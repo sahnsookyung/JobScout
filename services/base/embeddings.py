@@ -71,7 +71,7 @@ def _run_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: in
 
     # 2. Requirements
     with job_uow() as repo:
-        req_ids = [r.id for r in repo.get_unembedded_requirements(limit * 10)]
+        req_ids = [r.id for r in repo.get_unembedded_requirements(limit)]
 
     logger.info(f"Found {len(req_ids)} requirements needing embedding")
 

@@ -65,12 +65,12 @@ log_error() {
 
 # Build compose args from available compose files
 build_compose_args() {
-    COMPOSE_ARGS="-f ${DOCKER_COMPOSE_FILE}"
+    COMPOSE_ARGS=(-f "${DOCKER_COMPOSE_FILE}")
     if [ -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]; then
-        COMPOSE_ARGS="${COMPOSE_ARGS} -f ${PROJECT_ROOT}/docker-compose.pipeline.yml"
+        COMPOSE_ARGS+=(-f "${PROJECT_ROOT}/docker-compose.pipeline.yml")
     fi
     if [ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]; then
-        COMPOSE_ARGS="${COMPOSE_ARGS} -f ${PROJECT_ROOT}/docker-compose.web.yml"
+        COMPOSE_ARGS+=(-f "${PROJECT_ROOT}/docker-compose.web.yml")
     fi
 }
 
@@ -198,11 +198,11 @@ stop_docker() {
     fi
 
     # Check if any containers are running
-    if docker compose ${COMPOSE_ARGS} ps -q 2>/dev/null | grep -q .; then
+    if docker compose "${COMPOSE_ARGS[@]}" ps -q 2>/dev/null | grep -q .; then
         if [ -n "$SERVICES_TO_STOP" ]; then
-            docker compose ${COMPOSE_ARGS} stop ${SERVICES_TO_STOP} 2>/dev/null || true
+            docker compose "${COMPOSE_ARGS[@]}" stop ${SERVICES_TO_STOP} 2>/dev/null || true
         else
-            docker compose ${COMPOSE_ARGS} down --remove-orphans 2>/dev/null || true
+            docker compose "${COMPOSE_ARGS[@]}" down --remove-orphans 2>/dev/null || true
         fi
         log_success "Docker services stopped"
     else
@@ -376,7 +376,7 @@ main() {
         else
             # Stop pipeline services via docker compose
             build_compose_args
-            docker compose ${COMPOSE_ARGS} stop extraction embeddings scorer-matcher orchestrator 2>/dev/null || true
+            docker compose "${COMPOSE_ARGS[@]}" stop extraction embeddings scorer-matcher orchestrator 2>/dev/null || true
             log_success "Microservices stopped"
         fi
         echo ""

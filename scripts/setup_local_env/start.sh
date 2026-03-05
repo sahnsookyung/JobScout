@@ -307,7 +307,7 @@ start_docker() {
     # Wait for PostgreSQL if it was started
     if [ "$DATABASE" = true ] || [ "$INFRA" = true ]; then
         log_info "Waiting for PostgreSQL..."
-        timeout 30 bash -c 'until docker compose -f '"${DOCKER_COMPOSE_FILE}"' exec -T postgres pg_isready -U user -d jobscout; do sleep 1; done' 2>/dev/null || {
+        timeout 30 bash -c 'until docker compose -f '"${DOCKER_COMPOSE_FILE}"' exec -T postgres pg_isready -U "${POSTGRES_USER:-user}" -d "${POSTGRES_DB:-jobscout}"; do sleep 1; done' 2>/dev/null || {
             log_warn "PostgreSQL may not be ready yet, continuing..."
         }
     fi

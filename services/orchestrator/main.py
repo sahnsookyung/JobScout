@@ -228,7 +228,8 @@ async def orchestrate_match(task_id: str, resume_file: str):
     LISTENER_TIMEOUT = 600.0  # 10 minutes per stage
 
     state = await get_or_create_orchestration(task_id)
-    active_task_id = task_id  # Mark as active
+    async with _orchestration_lock:
+        active_task_id = task_id  # Mark as active
     state.status = "extracting"
     state.resume_file = resume_file
     state._save_to_redis()
@@ -393,8 +394,9 @@ async def orchestrate_match(task_id: str, resume_file: str):
         if redis_client:
             await redis_client.close()
         # Clear active task if this was the active one
-        if active_task_id == task_id:
-            active_task_id = None
+        async with _orchestration_lock:
+            if active_task_id == task_id:
+                active_task_id = None
         await state.close()
 
 
@@ -540,14 +542,17 @@ async def get_orchestration_status(task_id: str):
 async def get_active_orchestration():
     """Get the currently active orchestration task, if any."""
     global active_task_id
-    if not active_task_id:
+    async with _orchestration_lock:
+        current_task_id = active_task_id
+    
+    if not current_task_id:
         return {"success": False, "message": "No active task"}
     
-    state = await get_or_create_orchestration(active_task_id)
+    state = await get_or_create_orchestration(current_task_id)
     return {
         "success": True,
         "status": {
-            "task_id": active_task_id,
+            "task_id": current_task_id,
             "status": state.status,
             "resume_fingerprint": state.resume_fingerprint,
             "matches_count": state.matches_count,
@@ -560,10 +565,13 @@ async def get_active_orchestration():
 async def stop_orchestration():
     """Stop the currently active orchestration task."""
     global active_task_id
-    if not active_task_id:
+    async with _orchestration_lock:
+        current_task_id = active_task_id
+    
+    if not current_task_id:
         return {"success": False, "message": "No active task to stop"}
     
-    task_id = active_task_id
+    task_id = current_task_id
     
     # Try to cancel the task if it's still running
     async with _orchestration_lock:
