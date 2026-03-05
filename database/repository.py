@@ -81,6 +81,9 @@ class JobRepository:
     def mark_as_extracted(self, job_post: JobPost) -> None:
         return self.job_post.mark_as_extracted(job_post)
 
+    def mark_extraction_failed(self, job_post_id: str, error: str) -> None:
+        return self.job_post.mark_extraction_failed(job_post_id, error)
+
     def _extract_years_from_requirement(self, text: str) -> tuple:
         return self.job_post._extract_years_from_requirement(text)
 

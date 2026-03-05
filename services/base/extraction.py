@@ -6,6 +6,7 @@ This module provides extraction functionality that can be used by:
 - services/extraction/main.py (new microservice)
 """
 
+import json
 import logging
 import threading
 from typing import Optional
@@ -72,6 +73,12 @@ def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: i
                         "Extraction failed after %d retries, job_id=%s (title: %r): %s - %s. %s. Giving up.",
                         len(retry_intervals), job_id, job_title_str, exc_type, exc_message, http_details or "N/A"
                     )
+                    # Mark job as failed to prevent infinite retries
+                    try:
+                        with job_uow() as repo:
+                            repo.mark_extraction_failed(job_id, f"{exc_type}: {exc_message}")
+                    except Exception as mark_err:
+                        logger.warning("Failed to mark job %s as failed: %s", job_id, mark_err)
                 else:
                     logger.warning(
                         "Extraction attempt %d/%d failed for job %s (title: %r): %s - %s. %s. Retrying in %ds...",
@@ -211,7 +218,7 @@ def run_resume_extraction(ctx: AppContext, resume_file: str) -> tuple[Optional[d
             return None, ""
 
         # Generate fingerprint from parsed data
-        fingerprint = generate_file_fingerprint(str(resume_data).encode())
+        fingerprint = generate_file_fingerprint(json.dumps(resume_data, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode())
     except (FileNotFoundError, IOError, PermissionError) as e:
         logger.error(f"Failed to read resume file {resume_file}: {e}")
         return None, ""

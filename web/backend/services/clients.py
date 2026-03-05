@@ -137,10 +137,7 @@ class OrchestratorClient(ServiceClient):
 
     def get_task_status(self, task_id: str) -> dict:
         """Get status of a specific task."""
-        try:
-            return self.get(f"/orchestrate/status/{task_id}")
-        except Exception:
-            return {"success": False, "error": "Task not found"}
+        return self.get(f"/orchestrate/status/{task_id}")
 
     def get_active_task(self) -> dict:
         """Get the currently active task, if any."""
@@ -162,6 +159,8 @@ class OrchestratorClient(ServiceClient):
             Final status dict with 'status' key ('completed', 'failed', 'cancelled', 'timeout')
         """
         import time
+        import httpx
+        
         start_time = time.time()
         
         while time.time() - start_time < timeout:
@@ -172,8 +171,16 @@ class OrchestratorClient(ServiceClient):
                 if status in ("completed", "failed", "cancelled"):
                     return {"success": True, "status": status, "result": result}
                     
-            except Exception:
-                pass
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    # Task not found - may not exist yet or was cleaned up
+                    pass
+                else:
+                    # Other HTTP errors - log and continue polling
+                    logger.warning(f"HTTP error polling task {task_id}: {e}")
+            except httpx.RequestError as e:
+                # Connection errors - log and continue polling
+                logger.warning(f"Connection error polling task {task_id}: {e}")
             
             time.sleep(poll_interval)
         
