@@ -193,8 +193,12 @@ def run_job_etl(ctx: AppContext, stop_event: threading.Event) -> None:
     try:
         res = extraction_client.extract_jobs(limit=200)
         logger.info(f"Extraction microservice response: {res}")
+        if not res.get("success"):
+            logger.error("Extraction failed, aborting pipeline")
+            return
     except Exception as e:
         logger.error(f"Extraction microservice failed: {e}")
+        return
     step_elapsed = time.time() - step_start
     logger.info(f"Job ETL Step 2 completed in {step_elapsed:.2f}s")
 
@@ -207,8 +211,12 @@ def run_job_etl(ctx: AppContext, stop_event: threading.Event) -> None:
     try:
         res = embeddings_client.embed_jobs(limit=100)
         logger.info(f"Embeddings microservice response: {res}")
+        if not res.get("success"):
+            logger.error("Embeddings failed, aborting pipeline")
+            return
     except Exception as e:
         logger.error(f"Embeddings microservice failed: {e}")
+        return
     step_elapsed = time.time() - step_start
     logger.info(f"Job ETL Step 3 completed in {step_elapsed:.2f}s")
 

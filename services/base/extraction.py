@@ -12,7 +12,6 @@ from typing import Optional
 
 from core.config_loader import load_config
 from core.app_context import AppContext
-from etl.resume import ResumeProfiler, ResumeParser
 from database.uow import job_uow
 from pipeline.runner import _load_resume_with_parser
 from database.models import generate_file_fingerprint
@@ -54,7 +53,8 @@ def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: i
                 response = getattr(e, 'response', None)
                 if response:
                     try:
-                        http_details = f"HTTP {response.status_code}: {response.text[:500]}"
+                        text = response.text or ""
+                        http_details = f"HTTP {response.status_code}: {text[:500]}"
                     except Exception:
                         http_details = f"HTTP {response.status_code}"
                 else:
@@ -219,16 +219,14 @@ def run_resume_extraction(ctx: AppContext, resume_file: str) -> tuple[Optional[d
 def process_resume(ctx: AppContext, resume_file: str) -> bool:
     """
     Extract resume data (no embeddings).
-    
+
     Args:
         ctx: Application context
         resume_file: Path to resume file
-    
+
     Returns:
         True if extracted, False if already exists
     """
-    from etl.orchestrator import JobETLService
-    
     logger.info(f"Extracting resume: {resume_file}")
 
     with job_uow() as repo:

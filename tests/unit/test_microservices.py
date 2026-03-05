@@ -11,13 +11,14 @@ class TestRedisStreamsModule:
         mock_client = Mock()
         mock_client.xadd.return_value = "1234567890-0"
         mock_get_client.return_value = mock_client
-        
+
         from core.redis_streams import enqueue_job
-        
+
         result = enqueue_job("test:jobs", {"task_id": "test-123", "data": "value"})
-        
+
         assert result == "1234567890-0"
-        mock_client.xadd.assert_called_once_with("test:jobs", {"task_id": "test-123", "data": "value"})
+        # All values are now JSON-encoded for type preservation
+        mock_client.xadd.assert_called_once_with("test:jobs", {"task_id": '"test-123"', "data": '"value"'})
 
     @patch('core.redis_streams.get_redis_client')
     def test_ack_message(self, mock_get_client):

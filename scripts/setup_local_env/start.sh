@@ -204,19 +204,19 @@ parse_args() {
 stop_services() {
     log_info "Stopping existing services..."
 
-    # Build compose args to stop all potential services
-    COMPOSE_ARGS="-f ${DOCKER_COMPOSE_FILE}"
+    # Build compose args to stop all potential services (using array for paths with spaces)
+    local compose_args=(-f "${DOCKER_COMPOSE_FILE}")
     if [ -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]; then
-        COMPOSE_ARGS="${COMPOSE_ARGS} -f ${PROJECT_ROOT}/docker-compose.pipeline.yml"
+        compose_args+=(-f "${PROJECT_ROOT}/docker-compose.pipeline.yml")
     fi
     if [ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]; then
-        COMPOSE_ARGS="${COMPOSE_ARGS} -f ${PROJECT_ROOT}/docker-compose.web.yml"
+        compose_args+=(-f "${PROJECT_ROOT}/docker-compose.web.yml")
     fi
 
     # Stop Docker services
-    if docker compose ${COMPOSE_ARGS} ps -q 2>/dev/null | grep -q .; then
+    if docker compose "${compose_args[@]}" ps -q 2>/dev/null | grep -q .; then
         log_info "Stopping Docker services..."
-        docker compose ${COMPOSE_ARGS} down --remove-orphans 2>/dev/null || true
+        docker compose "${compose_args[@]}" down --remove-orphans 2>/dev/null || true
     fi
 
     # Kill backend process
@@ -256,8 +256,8 @@ start_docker() {
         log_info "Starting all Docker services (postgres, redis)..."
     fi
 
-    # Set compose file
-    COMPOSE_FILE="-f ${DOCKER_COMPOSE_FILE}"
+    # Build compose file array (handles paths with spaces)
+    local compose_files=(-f "${DOCKER_COMPOSE_FILE}")
 
     # Add pipeline compose file if microservices requested
     if [ "$MICROSERVICES" = true ]; then
@@ -265,14 +265,14 @@ start_docker() {
             log_error "docker-compose.pipeline.yml not found at ${PROJECT_ROOT}"
             exit 1
         fi
-        COMPOSE_FILE="${COMPOSE_FILE} -f ${PROJECT_ROOT}/docker-compose.pipeline.yml"
+        compose_files+=(-f "${PROJECT_ROOT}/docker-compose.pipeline.yml")
         log_info "Microservices enabled"
     fi
 
     # Add web compose file if web app requested
     if [ "$WEB_APP" = true ]; then
         if [ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]; then
-            COMPOSE_FILE="${COMPOSE_FILE} -f ${PROJECT_ROOT}/docker-compose.web.yml"
+            compose_files+=(-f "${PROJECT_ROOT}/docker-compose.web.yml")
         else
             log_warn "docker-compose.web.yml not found, skipping web compose file"
         fi
@@ -285,22 +285,22 @@ start_docker() {
     fi
 
     # Check if docker-compose.yml exists
-    if [ ! -f "${PROJECT_ROOT}/docker-compose.yml" ]; then
+    if [ ! -f "${DOCKER_COMPOSE_FILE}" ]; then
         log_error "docker-compose.yml not found at ${PROJECT_ROOT}"
         exit 1
     fi
 
     # Start services
     if [ -n "$SERVICES_TO_START" ]; then
-        docker compose ${COMPOSE_FILE} up -d ${DOCKER_COMPOSE_PROFILE} ${SERVICES_TO_START}
+        docker compose "${compose_files[@]}" up -d ${DOCKER_COMPOSE_PROFILE} ${SERVICES_TO_START}
     else
-        docker compose ${COMPOSE_FILE} up -d ${DOCKER_COMPOSE_PROFILE}
+        docker compose "${compose_files[@]}" up -d ${DOCKER_COMPOSE_PROFILE}
     fi
 
     # Wait for PostgreSQL if it was started
     if [ "$DATABASE" = true ] || { [ "$INFRA" = true ] && [ "$DATABASE" = false ] && [ "$REDIS" = false ]; }; then
         log_info "Waiting for PostgreSQL..."
-        timeout 30 bash -c 'until docker compose -f '"${PROJECT_ROOT}/docker-compose.yml"' exec -T postgres pg_isready -U user -d jobscout; do sleep 1; done' 2>/dev/null || {
+        timeout 30 bash -c 'until docker compose -f '"${DOCKER_COMPOSE_FILE}"' exec -T postgres pg_isready -U user -d jobscout; do sleep 1; done' 2>/dev/null || {
             log_warn "PostgreSQL may not be ready yet, continuing..."
         }
     fi
@@ -314,16 +314,16 @@ start_docker() {
 
     # Start background log capture for Docker services
     ensure_logs_dir
-    
+
     # Capture postgres logs
-    if docker compose ${COMPOSE_FILE} ps postgres 2>/dev/null | grep -q "Up"; then
-        docker compose ${COMPOSE_FILE} logs -f postgres > "${LOGS_DIR}/postgres.log" 2>&1 &
+    if docker compose "${compose_files[@]}" ps postgres 2>/dev/null | grep -q "Up"; then
+        docker compose "${compose_files[@]}" logs -f postgres > "${LOGS_DIR}/postgres.log" 2>&1 &
         log_info "Capturing PostgreSQL logs to ${LOGS_DIR}/postgres.log"
     fi
 
     # Capture main-driver logs (if running)
-    if docker compose ${COMPOSE_FILE} ps main-driver 2>/dev/null | grep -q "Up"; then
-        docker compose ${COMPOSE_FILE} logs -f main-driver > "${LOGS_DIR}/main-driver.log" 2>&1 &
+    if docker compose "${compose_files[@]}" ps main-driver 2>/dev/null | grep -q "Up"; then
+        docker compose "${compose_files[@]}" logs -f main-driver > "${LOGS_DIR}/main-driver.log" 2>&1 &
         log_info "Capturing main-driver logs to ${LOGS_DIR}/main-driver.log"
     fi
 }
@@ -461,9 +461,7 @@ print_summary() {
     echo "    ./scripts/setup_local_env/logs.sh web-ui     (web UI only)"
     echo ""
     echo "  To stop:"
-    echo -e "    ${YELLOW}pkill -f 'uvicorn'${NC}   (web app)"
-    echo -e "    ${YELLOW}pkill -f 'vite'${NC}       (web UI)"
-    echo "    docker compose down  (infrastructure/microservices)"
+    echo -e "    ${YELLOW}./scripts/setup_local_env/start.sh --clean${NC}  (all services)"
     echo ""
 }
 
@@ -482,7 +480,7 @@ main() {
         echo ""
     fi
 
-    if [ "$INFRA" = true ] || [ "$DATABASE" = true ] || [ "$REDIS" = true ]; then
+    if [ "$INFRA" = true ] || [ "$DATABASE" = true ] || [ "$REDIS" = true ] || [ "$MICROSERVICES" = true ]; then
         start_docker
         echo ""
     fi
