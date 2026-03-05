@@ -154,7 +154,7 @@ async def extract_resume(request: ExtractResumeRequest):
     try:
         from services.base.extraction import process_resume
         loop = asyncio.get_running_loop()
-        changed = await loop.run_in_executor(None, process_resume, ctx, request.resume_file)
+        changed = await loop.run_in_executor(None, process_resume, ctx, resume_path)
 
         if changed:
             return ExtractResponse(

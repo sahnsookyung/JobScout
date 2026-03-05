@@ -194,7 +194,7 @@ async def pipeline_events(task_id: str):
                         logger.error(f"Orchestrator returned {response.status_code} for task {task_id}")
                         yield f"data: {json.dumps({'error': 'Failed to get pipeline status'})}\n\n"
                         return
-                    async for chunk in response.aiter_bytes(chunk_size=1024):
+                    async for chunk in response.aiter_raw():
                         if chunk:
                             yield chunk
         except Exception as e:

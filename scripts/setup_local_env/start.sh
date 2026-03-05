@@ -255,9 +255,9 @@ start_docker() {
         # Start all default infra services
         log_info "Starting all Docker services (postgres, redis)..."
     elif [ "$MICROSERVICES" = true ]; then
-        # Microservices only - don't start infra unless explicitly requested
+        # Microservices only - explicitly specify service names to avoid starting infra
         log_info "Starting microservices only (no infra)..."
-        # Services from pipeline compose file will be started
+        SERVICES_TO_START="extraction embeddings scorer-matcher orchestrator"
     else
         # Start all default infra services
         log_info "Starting all Docker services (postgres, redis)..."
