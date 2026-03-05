@@ -187,8 +187,7 @@ def listen_for_messages(
                     logger.error(f"Failed to decode message: {e}")
         except redis.ConnectionError as e:
             logger.error(f"Connection error in pubsub listener: {e}")
-            time.sleep(1)
-            continue
+            raise
 
 
 def create_consumer_group(stream: str, group: str) -> None:
