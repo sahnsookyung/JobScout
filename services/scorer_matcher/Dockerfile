@@ -2,7 +2,13 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
+RUN useradd --create-home --shell /bin/bash appuser
+
 COPY pyproject.toml uv.lock ./
+
+RUN pip install --no-cache-dir uv==0.10.8 && \
+    uv sync --no-dev --group web
+
 COPY core/ ./core/
 COPY database/ ./database/
 COPY etl/ ./etl/
@@ -12,8 +18,9 @@ COPY pipeline/ ./pipeline/
 COPY services/scorer_matcher/ ./services/scorer_matcher/
 COPY config.yaml ./
 
-RUN pip install uv && \
-    uv sync --no-dev --group web
+RUN chown -R appuser:appuser /app
+
+USER appuser
 
 EXPOSE 8083
 

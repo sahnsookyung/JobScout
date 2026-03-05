@@ -91,6 +91,7 @@ export const usePipelineEvents = (
                 setStatus(data);
 
                 if (data.status === 'completed' || data.status === 'failed') {
+                    clearRetryTimeout();
                     eventSource.close();
                     eventSourceRef.current = null;
                     setConnectionState('disconnected');
