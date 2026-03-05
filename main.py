@@ -19,6 +19,11 @@ from typing import Optional, List
 
 from core.config_loader import load_config
 from core.app_context import AppContext
+from core.logging_utils import (
+    is_nul_filter_active,
+    setup_logging as setup_shared_logging,
+)
+setup_shared_logging(level=logging.INFO)
 from core.matcher import MatcherService, MatchResultDTO, JobMatchDTO, JobEvidenceDTO, RequirementMatchDTO, JobRequirementDTO, penalty_details_from_orm
 from core.scorer import ScoringService
 from core.scorer.persistence import save_match_to_db
@@ -27,9 +32,7 @@ from etl.resume import ResumeProfiler, ResumeParser
 from etl.resume.embedding_store import JobRepositoryAdapter
 from database.uow import job_uow
 from database.init_db import init_db
-from pipeline.runner import run_matching_pipeline as run_matching_pipeline_shared
-
-from web.backend.services.clients import extraction_client, embeddings_client, orchestrator_client
+from web.backend.services.clients import extraction_client, orchestrator_client
 
 PIPELINE_API_URL = "http://localhost:8080/api/pipeline"
 
@@ -37,6 +40,7 @@ PIPELINE_API_URL = "http://localhost:8080/api/pipeline"
 
 
 logger = logging.getLogger(__name__)
+logger.debug("NUL log sanitization active=%s", is_nul_filter_active())
 
 stop_event = threading.Event()
 
@@ -48,16 +52,6 @@ def signal_handler(sig, frame):
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
-
-
-def setup_logging():
-    # Force logging configuration with timestamps
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-        force=True  # Force reconfiguration of logging
-    )
 
 
 def load_resume_data(resume_file_path: str) -> Optional[dict]:
@@ -189,15 +183,24 @@ def run_job_etl(ctx: AppContext, stop_event: threading.Event) -> None:
 
     # Step 2: Extraction
     step_start = time.time()
-    logger.info("=== JOB ETL STEP 2: Triggering Extraction Microservice ===")
+    if not os.getenv("ORCHESTRATOR_URL", "").strip():
+        logger.error("ORCHESTRATOR_URL not configured — cannot run extraction stage")
+        return
+    logger.info("=== JOB ETL STEP 2: Triggering Orchestrator Extraction Stage ===")
     try:
-        res = extraction_client.extract_jobs(limit=200)
-        logger.info(f"Extraction microservice response: {res}")
+        res = orchestrator_client.start_stage("extract", limit=200)
+        logger.info(f"Orchestrator extraction response: {res}")
         if not res.get("success"):
             logger.error("Extraction failed, aborting pipeline")
             return
+        stage_result = orchestrator_client.wait_for_completion(
+            res.get("task_id", ""), timeout=600.0
+        )
+        if stage_result.get("status") != "completed":
+            logger.error("Extraction failed, aborting pipeline: %s", stage_result)
+            return
     except Exception as e:
-        logger.error(f"Extraction microservice failed: {e}")
+        logger.error(f"Extraction stage failed: {e}")
         return
     step_elapsed = time.time() - step_start
     logger.info(f"Job ETL Step 2 completed in {step_elapsed:.2f}s")
@@ -207,15 +210,21 @@ def run_job_etl(ctx: AppContext, stop_event: threading.Event) -> None:
 
     # Step 3: Embeddings
     step_start = time.time()
-    logger.info("=== JOB ETL STEP 3: Triggering Embeddings Microservice ===")
+    logger.info("=== JOB ETL STEP 3: Triggering Orchestrator Embedding Stage ===")
     try:
-        res = embeddings_client.embed_jobs(limit=100)
-        logger.info(f"Embeddings microservice response: {res}")
+        res = orchestrator_client.start_stage("embed", limit=100)
+        logger.info(f"Orchestrator embedding response: {res}")
         if not res.get("success"):
             logger.error("Embeddings failed, aborting pipeline")
             return
+        stage_result = orchestrator_client.wait_for_completion(
+            res.get("task_id", ""), timeout=600.0
+        )
+        if stage_result.get("status") != "completed":
+            logger.error("Embeddings failed, aborting pipeline: %s", stage_result)
+            return
     except Exception as e:
-        logger.error(f"Embeddings microservice failed: {e}")
+        logger.error(f"Embedding stage failed: {e}")
         return
     step_elapsed = time.time() - step_start
     logger.info(f"Job ETL Step 3 completed in {step_elapsed:.2f}s")
@@ -273,6 +282,10 @@ def _run_resume_etl(ctx: AppContext) -> bool:
     if not os.path.isabs(resume_file):
         resume_file = os.path.join(os.getcwd(), resume_file)
 
+    if not os.getenv("EXTRACTION_URL", "").strip():
+        logger.error("EXTRACTION_URL not configured — cannot run resume extraction")
+        return False
+
     try:
         res = extraction_client.extract_resume(resume_file=resume_file)
         logger.info(f"Extraction microservice response for resume: {res}")
@@ -285,14 +298,21 @@ def _run_resume_etl(ctx: AppContext) -> bool:
 
 
 
-def run_matching_pipeline() -> tuple[bool, str]:
-    """Run the matching pipeline using the orchestrator microservice.
+def run_matching_pipeline(
+    ctx: AppContext,
+    stop_event_local: Optional[threading.Event] = None,
+) -> tuple[bool, str]:
+    """Run the matching pipeline via the orchestrator microservice.
 
     Returns:
         Tuple of (success: bool, task_id: str)
         - success: True if matching completed successfully, False otherwise
         - task_id: The task ID for reference (empty string on immediate failure)
     """
+    if not os.getenv("ORCHESTRATOR_URL", "").strip():
+        logger.error("ORCHESTRATOR_URL not configured — cannot run matching pipeline")
+        return False, ""
+
     logger.info("Triggering orchestrator microservice for matching pipeline...")
     try:
         res = orchestrator_client.start_matching()
@@ -394,7 +414,7 @@ def _run_matching_phase(ctx: AppContext, stop_event: threading.Event) -> None:
     """Run Matching phase."""
     logger.info("Running Matching phase")
     try:
-        success, task_id = run_matching_pipeline()
+        success, task_id = run_matching_pipeline(ctx, stop_event)
         if success:
             logger.info(f"Matching phase completed successfully (task: {task_id})")
         else:
@@ -415,8 +435,6 @@ def _cleanup_jobspy_client(ctx: AppContext) -> None:
 
 
 def main():
-    setup_logging()
-
     parser = argparse.ArgumentParser(description="JobScout Main Driver")
     parser.add_argument(
         '--mode', 

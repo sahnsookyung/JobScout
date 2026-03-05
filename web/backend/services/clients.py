@@ -44,16 +44,22 @@ class ServiceClient:
         else:
             self.base_url = base_url
         self.timeout = timeout
-    
+        self._lock = threading.Lock()
+        self._http_client = httpx.Client(timeout=self.timeout)
+
+    def close(self) -> None:
+        """Close the underlying HTTP client and release connections."""
+        self._http_client.close()
+
     def _request(self, method: str, path: str, **kwargs) -> dict:
         if not self.base_url:
             raise RuntimeError("Service client not configured - base URL is empty")
         url = f"{self.base_url}{path}"
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.request(method, url, **kwargs)
-                response.raise_for_status()
-                return response.json()
+            with self._lock:
+                response = self._http_client.request(method, url, **kwargs)
+            response.raise_for_status()
+            return response.json()
         except httpx.HTTPStatusError as e:
             logger.error(f"Service returned error: {method} {url} - {e.response.status_code}")
             raise
@@ -77,10 +83,6 @@ class ExtractionClient(ServiceClient):
     def __init__(self, base_url: str = EXTRACTION_URL):
         super().__init__(base_url, env_var="EXTRACTION_URL")
     
-    def extract_jobs(self, limit: int = 200) -> dict:
-        """Extract job data."""
-        return self.post("/extract/jobs", json={"limit": limit})
-    
     def extract_resume(self, resume_file: str) -> dict:
         """Extract resume data."""
         return self.post("/extract/resume", json={"resume_file": resume_file})
@@ -95,10 +97,6 @@ class EmbeddingsClient(ServiceClient):
 
     def __init__(self, base_url: str = EMBEDDINGS_URL):
         super().__init__(base_url, env_var="EMBEDDINGS_URL")
-    
-    def embed_jobs(self, limit: int = 100) -> dict:
-        """Generate job embeddings."""
-        return self.post("/embed/jobs", json={"limit": limit})
     
     def embed_resume(self, resume_fingerprint: str) -> dict:
         """Generate resume embeddings."""
@@ -138,9 +136,20 @@ class OrchestratorClient(ServiceClient):
         """Start the full pipeline: extraction -> embeddings -> matching."""
         return self.post("/orchestrate/match", json={})
 
+    def start_stage(self, stage: str, limit: int | None = None) -> dict:
+        """Start a canonical scrape/extract/embed stage task."""
+        payload = {}
+        if limit is not None:
+            payload["limit"] = limit
+        return self.post(f"/orchestrate/stages/{stage}", json=payload)
+
+    def start_scrape_extract_embed_pipeline(self) -> dict:
+        """Start the canonical scrape -> extract -> embed pipeline task."""
+        return self.post("/orchestrate/pipelines/scrape-extract-embed", json={})
+
     def get_task_status(self, task_id: str) -> dict:
         """Get status of a specific task."""
-        return self.get(f"/orchestrate/status/{task_id}")
+        return self.get(f"/orchestrate/tasks/{task_id}")
 
     def get_active_task(self) -> dict:
         """Get the currently active task, if any."""
@@ -168,7 +177,7 @@ class OrchestratorClient(ServiceClient):
         
         while time.time() - start_time < timeout:
             try:
-                result = self.get(f"/orchestrate/status/{task_id}")
+                result = self.get(f"/orchestrate/tasks/{task_id}")
                 status = result.get("status", "unknown")
                 
                 if status in ("completed", "failed", "cancelled"):
@@ -188,6 +197,16 @@ class OrchestratorClient(ServiceClient):
             time.sleep(poll_interval)
         
         return {"success": False, "status": "timeout", "error": f"Timeout waiting for task {task_id}"}
+
+    def process_resume(self, file_path: str, task_id: str) -> dict:
+        """Sequence extraction → embeddings for a resume file.
+
+        The orchestrator writes progress to task:{task_id}:state so the
+        web-backend can poll Redis directly without a status proxy.
+        Returns immediately (202 accepted); processing is asynchronous.
+        """
+        return self.post("/orchestrate/resume-etl",
+                         json={"file_path": file_path, "task_id": task_id})
 
     def health(self) -> dict:
         """Check service health."""
