@@ -1,26 +1,45 @@
-FROM python:3.13-slim
+# syntax=docker/dockerfile:1
+
+FROM python:3.14-slim AS builder
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
-# Copy dependency files first for better layer caching
-COPY pyproject.toml uv.lock ./
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
 
-RUN pip install --no-cache-dir uv==0.10.8 && \
-  uv sync --frozen --no-dev --group web
+# Install dependencies first for layer caching
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --no-dev --no-install-project --group web
 
-# Copy application code (specific directories to avoid sensitive files)
+# Copy application source
 COPY core/ ./core/
 COPY database/ ./database/
+COPY etl/ ./etl/
+COPY notification/ ./notification/
+COPY pipeline/ ./pipeline/
 COPY web/backend/models/ ./web/backend/models/
+COPY services/base/ ./services/base/
 COPY services/orchestrator/ ./services/orchestrator/
 COPY config.yaml ./
 
-RUN adduser --disabled-password --gecos '' appuser && \
-  chown -R appuser:appuser /app
+RUN uv sync --frozen --no-dev --group web
+
+# ---------------------------------------------------------
+# Runtime Stage
+FROM python:3.14-slim AS runtime
+
+RUN useradd --create-home --shell /bin/bash appuser
+
+WORKDIR /app
+
+COPY --from=builder --chown=root:root /app /app
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH=/app
 
 USER appuser
 EXPOSE 8084
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8084/health')" || exit 1
 
-CMD ["uv", "run", "uvicorn", "services.orchestrator.main:app", "--host", "127.0.0.1", "--port", "8084"]
+CMD ["uvicorn", "services.orchestrator.main:app", "--host", "0.0.0.0", "--port", "8084"]
