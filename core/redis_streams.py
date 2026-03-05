@@ -68,17 +68,31 @@ def read_stream(
     group: str,
     consumer: str,
     count: int = 10,
-    block: Optional[int] = None
+    block: Optional[int] = 5000,  # Default 5s timeout for graceful shutdown
+    shutdown_event: Optional[threading.Event] = None
 ) -> Generator[tuple[str, dict], None, None]:
-    client = get_redis_client()
+    """Read messages from a Redis stream consumer group.
     
+    Args:
+        stream: Stream name
+        group: Consumer group name
+        consumer: Consumer name
+        count: Max messages to read per iteration
+        block: Milliseconds to block waiting for messages (default 5000)
+        shutdown_event: Optional event to signal shutdown
+        
+    Yields:
+        Tuples of (message_id, message_data)
+    """
+    client = get_redis_client()
+
     try:
         client.xgroup_create(stream, group, id="0", mkstream=True)
     except redis.ResponseError as e:
         if "BUSYGROUP" not in str(e):
             raise
-    
-    while True:
+
+    while shutdown_event is None or not shutdown_event.is_set():
         try:
             messages = client.xreadgroup(
                 group,
