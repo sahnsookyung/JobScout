@@ -122,11 +122,9 @@ def generate_resume_embedding(ctx: AppContext, resume_fingerprint: str) -> bool:
     Returns:
         True if embedded, False if resume not found
     """
-    from etl.orchestrator import JobETLService
-    
     logger.info(f"Generating embeddings for resume: {resume_fingerprint}")
 
     with job_uow() as repo:
-        embedded, fp = ctx.job_etl_service.embed_resume(repo, resume_fingerprint)
+        embedded, _ = ctx.job_etl_service.embed_resume(repo, resume_fingerprint)
 
     return embedded
