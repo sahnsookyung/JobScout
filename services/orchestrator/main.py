@@ -11,38 +11,12 @@ This service:
 """
 
 import asyncio
-import json
 import logging
-import os
 import time
-import uuid
-from contextlib import asynccontextmanager
+import json
 from typing import Optional
+import redis.asyncio as redis_async
 
-import redis
-from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-
-from core.config_loader import load_config
-from core.app_context import AppContext
-from core.redis_streams import (
-    enqueue_job,
-    STREAM_EXTRACTION,
-    STREAM_EMBEDDINGS,
-    STREAM_MATCHING,
-    CHANNEL_EXTRACTION_DONE,
-    CHANNEL_EMBEDDINGS_DONE,
-    CHANNEL_MATCHING_DONE,
-    get_task_state,
-    set_task_state,
-    delete_task_state,
-)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -167,6 +141,7 @@ orchestration_timestamps: dict[str, float] = {}
 active_task_ids: set[str] = set()  # Track currently active tasks
 orchestration_tasks: dict[str, asyncio.Task] = {}  # Track asyncio.Task objects for cancellation
 ORCHESTRATION_TTL = 3600  # 1 hour
+LISTENER_TIMEOUT = 300.0  # 5 minutes per stage
 _orchestration_lock = asyncio.Lock()
 
 
@@ -174,6 +149,7 @@ async def cleanup_stale_orchestrations():
     """Periodically clean up old orchestration entries."""
     while True:
         await asyncio.sleep(300)  # Every 5 minutes
+        stale_states = []
         async with _orchestration_lock:
             now = time.time()
             stale = [k for k, v in orchestration_timestamps.items()
@@ -181,17 +157,21 @@ async def cleanup_stale_orchestrations():
             for task_id in stale:
                 state = orchestrations.pop(task_id, None)
                 if state:
-                    for queue in state._subscribers:
-                        try:
-                            queue.put_nowait(None)
-                        except Exception:
-                            pass
-                    await state.close()
+                    stale_states.append(state)
                 orchestration_timestamps.pop(task_id, None)
                 orchestration_tasks.pop(task_id, None)
                 active_task_ids.discard(task_id)
             if stale:
                 logger.info(f"Cleaned up {len(stale)} stale orchestrations")
+
+        # Close states outside the lock to avoid deadlock
+        for state in stale_states:
+            for queue in state._subscribers:
+                try:
+                    queue.put_nowait(None)
+                except Exception:
+                    pass
+            await state.close()
 
 
 async def get_or_create_orchestration(task_id: str) -> OrchestrationState:
@@ -234,6 +214,8 @@ async def orchestrate_match(task_id: str, resume_file: str):
     global active_task_ids
     async with _orchestration_lock:
         active_task_ids.add(task_id)  # Mark as active
+
+    state = await get_or_create_orchestration(task_id)
     state.status = "extracting"
     state.resume_file = resume_file
     state._save_to_redis()
