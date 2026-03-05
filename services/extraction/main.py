@@ -236,17 +236,14 @@ async def consume_extraction_jobs():
                 logger.info(f"Processing extraction job: task_id={task_id}, file={result}")
 
                 try:
-                    changed = await loop.run_in_executor(None, process_resume, ctx, result)
-
-                    from database.uow import job_uow
-                    with job_uow() as repo:
-                        resume = repo.resume.get_latest_stored_resume_fingerprint()
+                    # process_resume now returns (changed, fingerprint)
+                    changed, fingerprint = await loop.run_in_executor(None, process_resume, ctx, result)
 
                     status = "skipped" if not changed else "completed"
                     publish_completion(CHANNEL_EXTRACTION_DONE, {
                         "task_id": task_id,
                         "status": status,
-                        "resume_fingerprint": resume or ""
+                        "resume_fingerprint": fingerprint or ""
                     })
 
                     ack_message(STREAM_EXTRACTION, CONSUMER_GROUP, msg_id)
@@ -261,7 +258,7 @@ async def consume_extraction_jobs():
                     })
                     # Ack to prevent infinite redelivery; failure is recorded in completion event
                     ack_message(STREAM_EXTRACTION, CONSUMER_GROUP, msg_id)
-                    
+
         except asyncio.CancelledError:
             logger.info("Extraction consumer cancelled")
             break

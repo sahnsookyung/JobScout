@@ -371,10 +371,14 @@ main() {
 
     if [ "$STOP_MICROSERVICES" = true ]; then
         log_info "Stopping microservices..."
-        # Stop pipeline services via docker compose
-        build_compose_args
-        docker compose ${COMPOSE_ARGS} stop extraction embeddings scorer-matcher orchestrator 2>/dev/null || true
-        log_success "Microservices stopped"
+        if [ ! -f "${DOCKER_COMPOSE_FILE}" ]; then
+            log_warn "docker-compose.yml not found, skipping microservices"
+        else
+            # Stop pipeline services via docker compose
+            build_compose_args
+            docker compose ${COMPOSE_ARGS} stop extraction embeddings scorer-matcher orchestrator 2>/dev/null || true
+            log_success "Microservices stopped"
+        fi
         echo ""
     fi
 
