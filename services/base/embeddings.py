@@ -104,7 +104,7 @@ def run_embedding_extraction(ctx: AppContext, stop_event: threading.Event, limit
         limit: Maximum jobs to process
 
     Returns:
-        Number of jobs processed
+        Total number of items processed (facets, jobs, and requirements)
     """
     facet_count = _run_facet_embedding_batch(ctx, stop_event, limit)
     embed_count = _run_embedding_batch(ctx, stop_event, limit)

@@ -369,14 +369,14 @@ async def _async_listen(pubsub):
 
 async def _wait_for_next_message(pubsub, timeout: float = 300.0) -> Optional[dict]:
     """Wait for the next message from pubsub with a timeout.
-    
+
     Args:
         pubsub: Redis async pubsub instance
         timeout: Timeout in seconds (default: 300s)
-        
+
     Returns:
-        The message data dict, or None if timeout
-        
+        The message data dict
+
     Raises:
         asyncio.TimeoutError: If no message received within timeout
     """
@@ -384,7 +384,8 @@ async def _wait_for_next_message(pubsub, timeout: float = 300.0) -> Optional[dic
         async for message in pubsub.listen():
             if message["type"] == "message":
                 return json.loads(message["data"])
-    return None  # Will raise TimeoutError before reaching here
+    # Note: This line is unreachable - TimeoutError raised if no message within timeout
+    raise asyncio.TimeoutError("No message received")
 
 
 @app.get("/health")

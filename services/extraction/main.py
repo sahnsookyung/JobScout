@@ -188,6 +188,23 @@ if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8081)
 
 
+def _validate_resume_path(resume_file: str) -> tuple[bool, str]:
+    """Validate resume file path against allowed directories.
+
+    Returns:
+        Tuple of (is_valid, resolved_path or error_message)
+    """
+    resume_path = os.path.realpath(resume_file)
+    ALLOWED_DIRS = [
+        os.path.realpath('/app/'),
+        os.path.realpath('/data/'),
+        os.path.realpath(os.getcwd()),
+    ]
+    if not any(resume_path.startswith(allowed_dir) for allowed_dir in ALLOWED_DIRS):
+        return False, "Invalid resume file path"
+    return True, resume_path
+
+
 async def consume_extraction_jobs():
     """Background task that consumes extraction jobs from Redis Streams."""
     from services.base.extraction import process_resume
@@ -205,10 +222,22 @@ async def consume_extraction_jobs():
                 task_id = msg.get("task_id")
                 resume_file = msg.get("resume_file")
 
-                logger.info(f"Processing extraction job: task_id={task_id}, file={resume_file}")
+                # Validate path before processing
+                is_valid, result = _validate_resume_path(resume_file)
+                if not is_valid:
+                    logger.error(f"Invalid path in extraction job: task_id={task_id}, file={resume_file}")
+                    publish_completion(CHANNEL_EXTRACTION_DONE, {
+                        "task_id": task_id,
+                        "status": "failed",
+                        "error": "Invalid resume file path"
+                    })
+                    ack_message(STREAM_EXTRACTION, CONSUMER_GROUP, msg_id)
+                    continue
+
+                logger.info(f"Processing extraction job: task_id={task_id}, file={result}")
 
                 try:
-                    changed = await loop.run_in_executor(None, process_resume, ctx, resume_file)
+                    changed = await loop.run_in_executor(None, process_resume, ctx, result)
 
                     from database.uow import job_uow
                     with job_uow() as repo:

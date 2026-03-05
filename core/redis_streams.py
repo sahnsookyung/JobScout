@@ -56,8 +56,8 @@ def enqueue_job(stream: str, payload: dict) -> str:
         raise ValueError(f"Invalid job payload: {error}")
 
     client = get_redis_client()
-    # Serialize complex values to JSON strings for Redis compatibility
-    serialized = {k: json.dumps(v) if isinstance(v, (dict, list)) else str(v) for k, v in payload.items()}
+    # Serialize all values to JSON strings for Redis compatibility and type preservation
+    serialized = {k: json.dumps(v) for k, v in payload.items()}
     msg_id = client.xadd(stream, serialized)
     logger.info(f"Enqueued job to {stream}: {msg_id}")
     return msg_id
