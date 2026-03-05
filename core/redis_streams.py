@@ -169,24 +169,29 @@ def listen_for_messages(
     shutdown_event: Optional[threading.Event] = None
 ) -> Generator[dict, None, None]:
     """Listen for messages on pubsub with optional shutdown support.
-    
+
     Args:
         pubsub: Redis pubsub instance
         shutdown_event: Optional event to signal shutdown
-        
+
     Yields:
         Decoded message data dicts
     """
     while shutdown_event is None or not shutdown_event.is_set():
-        message = pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-        if message is None:
+        try:
+            message = pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+            if message is None:
+                continue
+            if message["type"] == "message":
+                try:
+                    data = json.loads(message["data"])
+                    yield data
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to decode message: {e}")
+        except redis.ConnectionError as e:
+            logger.error(f"Connection error in pubsub listener: {e}")
+            time.sleep(1)
             continue
-        if message["type"] == "message":
-            try:
-                data = json.loads(message["data"])
-                yield data
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to decode message: {e}")
 
 
 def create_consumer_group(stream: str, group: str) -> None:

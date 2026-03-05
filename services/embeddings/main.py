@@ -47,11 +47,11 @@ async def lifespan(app: FastAPI):
     config = load_config()
     ctx = AppContext.build(config)
     logger.info("Embeddings service ready")
-    
+
     consumer_task = asyncio.create_task(consume_embeddings_jobs())
-    
+
     yield
-    
+
     logger.info("Shutting down embeddings service...")
     if consumer_task:
         consumer_task.cancel()
@@ -59,6 +59,7 @@ async def lifespan(app: FastAPI):
             await consumer_task
         except asyncio.CancelledError:
             pass
+    logger.info("Embeddings service shutdown complete")
 
 
 app = FastAPI(

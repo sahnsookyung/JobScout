@@ -47,11 +47,11 @@ async def lifespan(app: FastAPI):
     config = load_config()
     ctx = AppContext.build(config)
     logger.info("Extraction service ready")
-    
+
     consumer_task = asyncio.create_task(consume_extraction_jobs())
-    
+
     yield
-    
+
     logger.info("Shutting down extraction service...")
     if consumer_task:
         consumer_task.cancel()
@@ -59,6 +59,7 @@ async def lifespan(app: FastAPI):
             await consumer_task
         except asyncio.CancelledError:
             pass
+    logger.info("Extraction service shutdown complete")
 
 
 app = FastAPI(
@@ -190,11 +191,15 @@ def _validate_resume_path(resume_file: str) -> tuple[bool, str]:
     """
     resume_path = os.path.realpath(resume_file)
     ALLOWED_DIRS = [
-        os.path.realpath('/app/'),
-        os.path.realpath('/data/'),
+        os.path.realpath('/app'),
+        os.path.realpath('/data'),
         os.path.realpath(os.getcwd()),
     ]
-    if not any(resume_path.startswith(allowed_dir) for allowed_dir in ALLOWED_DIRS):
+    # Ensure proper directory boundary check
+    if not any(
+        resume_path == allowed_dir or resume_path.startswith(allowed_dir + os.sep)
+        for allowed_dir in ALLOWED_DIRS
+    ):
         return False, "Invalid resume file path"
     return True, resume_path
 
