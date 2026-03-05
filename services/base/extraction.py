@@ -106,38 +106,40 @@ def _run_facet_recovery_batch(ctx: AppContext, stop_event: threading.Event, limi
     # Step 2: Retry failed extractions
     with job_uow() as repo:
         failed_jobs = repo.get_jobs_with_failed_facets(limit, max_retries)
-        if failed_jobs:
-            logger.info(f"Facet recovery: retrying {len(failed_jobs)} failed extractions")
-            for job in failed_jobs:
-                if stop_event.is_set():
-                    break
-                job_id = job.id
-                try:
-                    with job_uow() as repo:
-                        job = repo.get_by_id(job_id)
-                        if job and job.facet_status == 'failed':
-                            repo.update_job_facet_status(job.id, None)
-                            recovered += 1
-                except Exception:
-                    logger.exception(f"Facet recovery failed for job {job_id}")
+        failed_job_ids = [j.id for j in failed_jobs]
+
+    if failed_job_ids:
+        logger.info(f"Facet recovery: retrying {len(failed_job_ids)} failed extractions")
+        for job_id in failed_job_ids:
+            if stop_event.is_set():
+                break
+            try:
+                with job_uow() as repo:
+                    job = repo.get_by_id(job_id)
+                    if job and job.facet_status == 'failed':
+                        repo.update_job_facet_status(job.id, None)
+                        recovered += 1
+            except Exception:
+                logger.exception(f"Facet recovery failed for job {job_id}")
 
     # Step 3: Retry missing embeddings
     with job_uow() as repo:
         jobs_missing_embeddings = repo.get_jobs_with_missing_facet_embeddings(limit, max_retries)
-        if jobs_missing_embeddings:
-            logger.info(f"Facet recovery: retrying {len(jobs_missing_embeddings)} missing embeddings")
-            for job in jobs_missing_embeddings:
-                if stop_event.is_set():
-                    break
-                job_id = job.id
-                try:
-                    with job_uow() as repo:
-                        job = repo.get_by_id(job_id)
-                        if job and job.facet_status == 'done':
-                            ctx.job_etl_service.embed_facets_one(repo, job)
-                            recovered += 1
-                except Exception:
-                    logger.exception(f"Facet embedding recovery failed for job {job_id}")
+        missing_embedding_job_ids = [j.id for j in jobs_missing_embeddings]
+
+    if missing_embedding_job_ids:
+        logger.info(f"Facet recovery: retrying {len(missing_embedding_job_ids)} missing embeddings")
+        for job_id in missing_embedding_job_ids:
+            if stop_event.is_set():
+                break
+            try:
+                with job_uow() as repo:
+                    job = repo.get_by_id(job_id)
+                    if job and job.facet_status == 'done':
+                        ctx.job_etl_service.embed_facets_one(repo, job)
+                        recovered += 1
+            except Exception:
+                logger.exception(f"Facet embedding recovery failed for job {job_id}")
 
     logger.info(f"Facet recovery batch completed: recovered={recovered}")
     return recovered
@@ -198,11 +200,12 @@ def run_job_extraction(ctx: AppContext, stop_event: threading.Event, limit: int 
 
 
 
-def run_resume_extraction(resume_file: str) -> tuple[Optional[dict], str]:
+def run_resume_extraction(ctx: AppContext, resume_file: str) -> tuple[Optional[dict], str]:
     """
     Extract resume data from file.
 
     Args:
+        ctx: Application context
         resume_file: Path to resume file
 
     Returns:

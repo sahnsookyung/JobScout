@@ -40,7 +40,7 @@ services:
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-jobscoutredis}
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping || exit 1"]
+      test: ["CMD", "sh", "-c", "REDISCLI_AUTH=${REDIS_PASSWORD:-jobscoutredis} redis-cli ping"]
       interval: 5s
       timeout: 3s
       retries: 5
