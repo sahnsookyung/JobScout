@@ -109,7 +109,14 @@ def read_stream(
 
             for stream_name, msgs in messages:
                 for msg_id, msg in msgs:
-                    yield msg_id, msg
+                    # Deserialize JSON-encoded values from enqueue_job
+                    deserialized = {}
+                    for k, v in msg.items():
+                        try:
+                            deserialized[k] = json.loads(v)
+                        except (json.JSONDecodeError, TypeError):
+                            deserialized[k] = v
+                    yield msg_id, deserialized
 
         except redis.ConnectionError as e:
             logger.error(f"Connection error reading from stream {stream}: {e}")
@@ -157,8 +164,23 @@ def subscribe(channels: list[str]) -> redis.client.PubSub:
     return pubsub
 
 
-def listen_for_messages(pubsub: redis.client.PubSub) -> Generator[dict, None, None]:
-    for message in pubsub.listen():
+def listen_for_messages(
+    pubsub: redis.client.PubSub,
+    shutdown_event: Optional[threading.Event] = None
+) -> Generator[dict, None, None]:
+    """Listen for messages on pubsub with optional shutdown support.
+    
+    Args:
+        pubsub: Redis pubsub instance
+        shutdown_event: Optional event to signal shutdown
+        
+    Yields:
+        Decoded message data dicts
+    """
+    while shutdown_event is None or not shutdown_event.is_set():
+        message = pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+        if message is None:
+            continue
         if message["type"] == "message":
             try:
                 data = json.loads(message["data"])

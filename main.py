@@ -245,11 +245,11 @@ def run_resume_etl(ctx: AppContext) -> None:
     logger.info("=" * 60)
 
 
-def _run_resume_etl(ctx: AppContext) -> None:
+def _run_resume_etl(ctx: AppContext) -> bool:
     """Run resume ETL with fingerprint-based change detection.
 
     Returns:
-        None - matching pipeline will query DB for latest resume independently.
+        True if extraction succeeded, False otherwise.
     """
     # Check if resume config is available
     etl_config = ctx.config.etl
@@ -276,8 +276,10 @@ def _run_resume_etl(ctx: AppContext) -> None:
     try:
         res = extraction_client.extract_resume(resume_file=resume_file)
         logger.info(f"Extraction microservice response for resume: {res}")
+        return res.get("success", False)
     except Exception as e:
         logger.error(f"Failed to trigger resume extraction: {e}")
+        return False
 
 
 

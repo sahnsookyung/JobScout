@@ -168,19 +168,11 @@ async def match_jobs(request: MatchJobRequest):
         )
 
     # TODO: Implement actual job matching logic using run_matching_pipeline
-    try:
-        return MatchResponse(
-            success=True,
-            message="Job matching not yet implemented",
-            matches=0
-        )
-    except Exception as e:
-        logger.exception("Job matching failed")
-        return MatchResponse(
-            success=False,
-            message=f"Matching failed: {str(e)}",
-            matches=0
-        )
+    return MatchResponse(
+        success=True,
+        message="Job matching not yet implemented",
+        matches=0
+    )
 
 
 if __name__ == "__main__":

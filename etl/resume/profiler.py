@@ -190,12 +190,12 @@ class ResumeProfiler:
         stop_event: Optional[threading.Event] = None
     ) -> List[ResumeEvidenceUnit]:
         """Generate embeddings for already-extracted resume.
-        
+
         Args:
             resume_fingerprint: Resume fingerprint for storage
             resume: Already-extracted ResumeSchema
             stop_event: Optional event to signal interruption
-            
+
         Returns:
             List of ResumeEvidenceUnit with embeddings generated
         """
@@ -206,7 +206,7 @@ class ResumeProfiler:
         self.embed_evidence_units(evidence_units)
         self.save_evidence_unit_embeddings(resume_fingerprint, evidence_units)
 
-        self._check_interrupted(stop_event)
+        # Skip interruption check between saves to ensure atomic persistence
         self.save_resume_section_embeddings(resume_fingerprint, resume)
 
         return evidence_units
