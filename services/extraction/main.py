@@ -155,19 +155,21 @@ async def extract_resume(request: ExtractResumeRequest):
     try:
         from services.base.extraction import process_resume
         loop = asyncio.get_running_loop()
-        changed = await loop.run_in_executor(None, process_resume, ctx, resume_path)
+        changed, fingerprint = await loop.run_in_executor(None, process_resume, ctx, resume_path)
 
         if changed:
             return ExtractResponse(
                 success=True,
                 message="Resume processed successfully",
-                processed=1
+                processed=1,
+                fingerprint=fingerprint
             )
         else:
             return ExtractResponse(
                 success=True,
                 message="Resume already exists, no processing needed",
-                processed=0
+                processed=0,
+                fingerprint=fingerprint
             )
     except Exception as e:
         logger.exception("Resume extraction failed")

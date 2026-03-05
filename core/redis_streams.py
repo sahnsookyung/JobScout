@@ -210,8 +210,12 @@ def get_stream_info(stream: str) -> dict:
     client = get_redis_client()
     try:
         return client.xinfo_stream(stream)
-    except redis.ResponseError:
-        return {}
+    except redis.ResponseError as e:
+        # Only return {} for "stream not found" errors
+        if "no such key" in str(e).lower() or "err no such key" in str(e).lower():
+            return {}
+        # Re-raise other errors (permission issues, misconfiguration, etc.)
+        raise
 
 
 def stream_exists(stream: str) -> bool:

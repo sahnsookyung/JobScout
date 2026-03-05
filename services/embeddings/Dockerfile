@@ -14,4 +14,4 @@ RUN pip install uv && \
 
 EXPOSE 8082
 
-CMD ["python", "-m", "uvicorn", "services.embeddings.main:app", "--host", "0.0.0.0", "--port", "8082"]
+CMD ["uv", "run", "uvicorn", "services.embeddings.main:app", "--host", "0.0.0.0", "--port", "8082"]

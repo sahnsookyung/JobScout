@@ -130,10 +130,54 @@ class OrchestratorClient(ServiceClient):
 
     def __init__(self, base_url: str = ORCHESTRATOR_URL):
         super().__init__(base_url, env_var="ORCHESTRATOR_URL")
-    
+
     def start_matching(self) -> dict:
         """Start the full pipeline: extraction -> embeddings -> matching."""
         return self.post("/orchestrate/match", json={})
+
+    def get_task_status(self, task_id: str) -> dict:
+        """Get status of a specific task."""
+        try:
+            return self.get(f"/orchestrate/status/{task_id}")
+        except Exception:
+            return {"success": False, "error": "Task not found"}
+
+    def get_active_task(self) -> dict:
+        """Get the currently active task, if any."""
+        return self.get("/orchestrate/active")
+
+    def stop_task(self) -> dict:
+        """Stop the currently active task."""
+        return self.post("/orchestrate/stop", json={})
+
+    def wait_for_completion(self, task_id: str, timeout: float = 600.0, poll_interval: float = 2.0) -> dict:
+        """Poll for task completion.
+        
+        Args:
+            task_id: Task ID to wait for
+            timeout: Maximum time to wait in seconds (default 10 minutes)
+            poll_interval: Time between polls in seconds (default 2s)
+            
+        Returns:
+            Final status dict with 'status' key ('completed', 'failed', 'cancelled', 'timeout')
+        """
+        import time
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            try:
+                result = self.get(f"/orchestrate/status/{task_id}")
+                status = result.get("status", "unknown")
+                
+                if status in ("completed", "failed", "cancelled"):
+                    return {"success": True, "status": status, "result": result}
+                    
+            except Exception:
+                pass
+            
+            time.sleep(poll_interval)
+        
+        return {"success": False, "status": "timeout", "error": f"Timeout waiting for task {task_id}"}
 
     def health(self) -> dict:
         """Check service health."""
