@@ -428,8 +428,6 @@ async def _wait_for_next_message(pubsub, timeout: float = 300.0) -> Optional[dic
         async for message in pubsub.listen():
             if message["type"] == "message":
                 return json.loads(message["data"])
-    # Note: This line is unreachable - TimeoutError raised if no message within timeout
-    raise asyncio.TimeoutError("No message received")
 
 
 @app.get("/health")
@@ -490,7 +488,15 @@ async def orchestrate_match_endpoint():
         )
 
     task = asyncio.create_task(orchestrate_match(task_id, resume_file))
-    task.add_done_callback(lambda t: asyncio.create_task(_handle_task_done(task_id, t)))
+
+    def safe_done_callback(t: asyncio.Task) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.call_soon_threadsafe(loop.create_task, _handle_task_done(task_id, t))
+        except RuntimeError:
+            logger.warning(f"Could not handle task completion for {task_id}: no running loop")
+
+    task.add_done_callback(safe_done_callback)
 
     # Store task reference for potential cancellation
     async with _orchestration_lock:

@@ -258,10 +258,11 @@ start_docker() {
         if [ "$INFRA" = false ] && [ "$DATABASE" = false ] && [ "$REDIS" = false ]; then
             log_info "Microservices require infrastructure, enabling postgres and redis..."
             INFRA=true
+            SERVICES_TO_START="postgres redis extraction embeddings scorer-matcher orchestrator"
+        else
+            log_info "Starting microservices..."
+            SERVICES_TO_START="extraction embeddings scorer-matcher orchestrator"
         fi
-        # Microservices only - explicitly specify service names to avoid starting infra
-        log_info "Starting microservices only..."
-        SERVICES_TO_START="extraction embeddings scorer-matcher orchestrator"
     else
         # Start all default infra services
         log_info "Starting all Docker services (postgres, redis)..."
