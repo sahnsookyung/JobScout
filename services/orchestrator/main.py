@@ -127,7 +127,7 @@ class OrchestrationState:
             self._subscribers.remove(queue)
     
     def notify(self, data: dict):
-        for queue in self._subscribers:
+        for queue in list(self._subscribers):  # Iterate over a copy to avoid modification during iteration
             try:
                 queue.put_nowait(data)
             except Exception as e:
@@ -172,9 +172,9 @@ async def _wait_for_task_message(pubsub, task_id: str, timeout: float) -> Option
     Raises:
         asyncio.TimeoutError: If no matching message received within timeout
     """
-    deadline = asyncio.get_event_loop().time() + timeout
+    deadline = asyncio.get_running_loop().time() + timeout
     while True:
-        remaining = deadline - asyncio.get_event_loop().time()
+        remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
             raise asyncio.TimeoutError(f"Timeout waiting for task {task_id}")
         data = await _wait_for_next_message(pubsub, timeout=remaining)

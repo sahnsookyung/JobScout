@@ -298,7 +298,7 @@ start_docker() {
     fi
 
     # Wait for PostgreSQL if it was started
-    if [ "$DATABASE" = true ] || [ "$INFRA" = true ] && [ "$DATABASE" = false ] && [ "$REDIS" = false ]; then
+    if [ "$DATABASE" = true ] || { [ "$INFRA" = true ] && [ "$DATABASE" = false ] && [ "$REDIS" = false ]; }; then
         log_info "Waiting for PostgreSQL..."
         timeout 30 bash -c 'until docker compose -f '"${PROJECT_ROOT}/docker-compose.yml"' exec -T postgres pg_isready -U user -d jobscout; do sleep 1; done' 2>/dev/null || {
             log_warn "PostgreSQL may not be ready yet, continuing..."

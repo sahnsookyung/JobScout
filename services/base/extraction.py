@@ -230,9 +230,8 @@ def process_resume(ctx: AppContext, resume_file: str) -> bool:
     from etl.orchestrator import JobETLService
     
     logger.info(f"Extracting resume: {resume_file}")
-    
+
     with job_uow() as repo:
-        service = JobETLService(ctx.job_etl_service)
-        extracted, fingerprint, _ = service.extract_resume(repo, resume_file)
-        
+        extracted, fingerprint, _ = ctx.job_etl_service.extract_resume(repo, resume_file)
+
     return extracted
