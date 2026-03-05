@@ -51,7 +51,7 @@ services:
       - .env
     environment:
       - JOBSPY_URL=http://jobspy-service:8000
-      - DATABASE_URL=postgresql://user:password@postgres:5432/jobscout
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-jobscout}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-jobscoutredis}@redis:6379/0
     volumes:
       - ./resume.json:/app/resume.json

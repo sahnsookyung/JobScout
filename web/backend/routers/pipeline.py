@@ -87,7 +87,7 @@ def run_matching_pipeline_endpoint():
         return PipelineTaskResponse(
             success=False,
             task_id="",
-            message=f"Failed to start matching: {str(e)}"
+            message="Failed to start matching pipeline. Please try again or check server logs."
         )
 
 

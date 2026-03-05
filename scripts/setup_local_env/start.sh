@@ -251,8 +251,15 @@ start_docker() {
             SERVICES_TO_START="${SERVICES_TO_START} redis"
             log_info "Starting Redis only..."
         fi
+    elif [ "$INFRA" = true ]; then
+        # Start all default infra services
+        log_info "Starting all Docker services (postgres, redis)..."
+    elif [ "$MICROSERVICES" = true ]; then
+        # Microservices only - don't start infra unless explicitly requested
+        log_info "Starting microservices only (no infra)..."
+        # Services from pipeline compose file will be started
     else
-        # Start all default services
+        # Start all default infra services
         log_info "Starting all Docker services (postgres, redis)..."
     fi
 
@@ -298,7 +305,7 @@ start_docker() {
     fi
 
     # Wait for PostgreSQL if it was started
-    if [ "$DATABASE" = true ] || { [ "$INFRA" = true ] && [ "$DATABASE" = false ] && [ "$REDIS" = false ]; }; then
+    if [ "$DATABASE" = true ] || [ "$INFRA" = true ]; then
         log_info "Waiting for PostgreSQL..."
         timeout 30 bash -c 'until docker compose -f '"${DOCKER_COMPOSE_FILE}"' exec -T postgres pg_isready -U user -d jobscout; do sleep 1; done' 2>/dev/null || {
             log_warn "PostgreSQL may not be ready yet, continuing..."

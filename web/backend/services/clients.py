@@ -57,6 +57,9 @@ class ServiceClient:
         except httpx.RequestError as e:
             logger.error(f"Service call failed: {method} {url} - {e}")
             raise
+        except ValueError as e:
+            logger.error(f"Invalid JSON response: {method} {url} - {e}")
+            raise
     
     def get(self, path: str, **kwargs) -> dict:
         return self._request("GET", path, **kwargs)

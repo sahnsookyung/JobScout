@@ -142,20 +142,14 @@ async def extract_resume(request: ExtractResumeRequest):
         )
 
     # Validate file path to prevent path traversal
-    import os
-    resume_path = os.path.realpath(request.resume_file)
-    # Define allowed directories as absolute paths
-    ALLOWED_DIRS = [
-        os.path.realpath('/app/'),
-        os.path.realpath('/data/'),
-        os.path.realpath(os.getcwd()),  # Current working directory
-    ]
-    if not any(resume_path.startswith(allowed_dir) for allowed_dir in ALLOWED_DIRS):
+    is_valid, result = _validate_resume_path(request.resume_file)
+    if not is_valid:
         return ExtractResponse(
             success=False,
-            message="Invalid resume file path",
+            message=result,
             processed=0
         )
+    resume_path = result
 
     try:
         from services.base.extraction import process_resume

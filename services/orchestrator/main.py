@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -56,7 +57,19 @@ async def lifespan(app: FastAPI):
     config = load_config()
     ctx = AppContext.build(config)
     logger.info("Orchestrator service ready")
+    
+    # Start cleanup task
+    cleanup_task = asyncio.create_task(cleanup_stale_orchestrations())
+    
     yield
+    
+    # Cancel cleanup task
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    
     logger.info("Shutting down orchestrator service...")
 
 
@@ -149,13 +162,32 @@ class OrchestrationState:
 
 
 orchestrations: dict[str, OrchestrationState] = {}
+orchestration_timestamps: dict[str, float] = {}
+ORCHESTRATION_TTL = 3600  # 1 hour
 
 
-def get_or_create_orchestration(task_id: str) -> OrchestrationState:
+async def cleanup_stale_orchestrations():
+    """Periodically clean up old orchestration entries."""
+    while True:
+        await asyncio.sleep(300)  # Every 5 minutes
+        now = time.time()
+        stale = [k for k, v in orchestration_timestamps.items()
+                 if now - v > ORCHESTRATION_TTL]
+        for task_id in stale:
+            if task_id in orchestrations:
+                del orchestrations[task_id]
+            orchestration_timestamps.pop(task_id, None)
+        if stale:
+            logger.info(f"Cleaned up {len(stale)} stale orchestrations")
+
+
+async def get_or_create_orchestration(task_id: str) -> OrchestrationState:
     """Get or create orchestration state (loads from Redis if exists)."""
-    if task_id not in orchestrations:
-        orchestrations[task_id] = OrchestrationState(task_id, load_from_redis=True)
-    return orchestrations[task_id]
+    async with _orchestration_lock:
+        if task_id not in orchestrations:
+            orchestrations[task_id] = OrchestrationState(task_id, load_from_redis=True)
+        orchestration_timestamps[task_id] = time.time()
+        return orchestrations[task_id]
 
 
 async def _wait_for_task_message(pubsub, task_id: str, timeout: float) -> Optional[dict]:
