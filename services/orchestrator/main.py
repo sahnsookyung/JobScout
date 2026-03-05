@@ -164,7 +164,7 @@ class OrchestrationState:
 
 orchestrations: dict[str, OrchestrationState] = {}
 orchestration_timestamps: dict[str, float] = {}
-active_task_id: str | None = None  # Track currently active task
+active_task_ids: set[str] = set()  # Track currently active tasks
 orchestration_tasks: dict[str, asyncio.Task] = {}  # Track asyncio.Task objects for cancellation
 ORCHESTRATION_TTL = 3600  # 1 hour
 _orchestration_lock = asyncio.Lock()
@@ -179,9 +179,17 @@ async def cleanup_stale_orchestrations():
             stale = [k for k, v in orchestration_timestamps.items()
                      if now - v > ORCHESTRATION_TTL]
             for task_id in stale:
-                orchestrations.pop(task_id, None)
+                state = orchestrations.pop(task_id, None)
+                if state:
+                    for queue in state._subscribers:
+                        try:
+                            queue.put_nowait(None)
+                        except Exception:
+                            pass
+                    await state.close()
                 orchestration_timestamps.pop(task_id, None)
                 orchestration_tasks.pop(task_id, None)
+                active_task_ids.discard(task_id)
             if stale:
                 logger.info(f"Cleaned up {len(stale)} stale orchestrations")
 
@@ -223,13 +231,9 @@ async def _wait_for_task_message(pubsub, task_id: str, timeout: float) -> Option
 async def orchestrate_match(task_id: str, resume_file: str):
     """Run the orchestration flow: extraction -> embeddings -> matching."""
     import redis.asyncio as redis_async
-    global active_task_id
-
-    LISTENER_TIMEOUT = 600.0  # 10 minutes per stage
-
-    state = await get_or_create_orchestration(task_id)
+    global active_task_ids
     async with _orchestration_lock:
-        active_task_id = task_id  # Mark as active
+        active_task_ids.add(task_id)  # Mark as active
     state.status = "extracting"
     state.resume_file = resume_file
     state._save_to_redis()
@@ -401,8 +405,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
             await redis_client.close()
         # Clear active task if this was the active one
         async with _orchestration_lock:
-            if active_task_id == task_id:
-                active_task_id = None
+            active_task_ids.discard(task_id)
         await state.close()
 
 
@@ -539,7 +542,7 @@ async def get_orchestration_status(task_id: str):
                         break
                     yield f"data: {json.dumps(data)}\n\n"
 
-                    if state.status in ["completed", "failed"]:
+                    if state.status in ["completed", "failed", "cancelled"]:
                         break
                 except asyncio.TimeoutError:
                     yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
@@ -560,69 +563,63 @@ async def get_orchestration_status(task_id: str):
 
 @app.get("/orchestrate/active")
 async def get_active_orchestration():
-    """Get the currently active orchestration task, if any."""
-    global active_task_id
+    """Get the currently active orchestration tasks."""
+    global active_task_ids
     async with _orchestration_lock:
-        current_task_id = active_task_id
+        task_ids = list(active_task_ids)
     
-    if not current_task_id:
-        return {"success": False, "message": "No active task"}
+    if not task_ids:
+        return {"success": False, "message": "No active tasks"}
     
-    state = await get_or_create_orchestration(current_task_id)
-    return {
-        "success": True,
-        "status": {
-            "task_id": current_task_id,
+    states = []
+    for task_id in task_ids:
+        state = await get_or_create_orchestration(task_id)
+        states.append({
+            "task_id": task_id,
             "status": state.status,
             "resume_fingerprint": state.resume_fingerprint,
             "matches_count": state.matches_count,
             "error": state.error
-        }
-    }
+        })
+    
+    return {"success": True, "tasks": states}
 
 
 @app.post("/orchestrate/stop")
-async def stop_orchestration():
-    """Stop the currently active orchestration task."""
-    global active_task_id
+async def stop_orchestration(task_id: str = None):
+    """Stop the currently active orchestration task(s)."""
+    global active_task_ids
     async with _orchestration_lock:
-        current_task_id = active_task_id
+        if task_id:
+            task_ids_to_stop = [task_id] if task_id in active_task_ids else []
+        else:
+            task_ids_to_stop = list(active_task_ids)
     
-    if not current_task_id:
-        return {"success": False, "message": "No active task to stop"}
+    if not task_ids_to_stop:
+        return {"success": False, "message": "No active tasks to stop"}
     
-    task_id = current_task_id
-    
-    # Try to cancel the task if it's still running
-    async with _orchestration_lock:
-        if task_id in orchestration_tasks:
-            task = orchestration_tasks[task_id]
-            if not task.done():
-                task.cancel()
-                return {
-                    "success": True,
-                    "task_id": task_id,
-                    "message": "Task cancelled"
-                }
-            else:
-                return {
-                    "success": False,
-                    "task_id": task_id,
-                    "message": "Task already completed"
-                }
-    
-    # If task not in registry, update state directly
-    state = await get_or_create_orchestration(task_id)
-    if state.status not in ("completed", "failed", "cancelled"):
-        state.status = "cancelled"
-        state.error = "Cancelled by user"
-        state._save_to_redis()
-        state.notify({"task_id": task_id, "status": "cancelled", "error": "Cancelled by user"})
+    stopped = []
+    for task_id in task_ids_to_stop:
+        async with _orchestration_lock:
+            if task_id in orchestration_tasks:
+                task = orchestration_tasks[task_id]
+                if not task.done():
+                    task.cancel()
+                    stopped.append(task_id)
+                    continue
+        
+        state = await get_or_create_orchestration(task_id)
+        if state.status not in ("completed", "failed", "cancelled"):
+            state.status = "cancelled"
+            state.error = "Cancelled by user"
+            state._save_to_redis()
+            state.notify({"task_id": task_id, "status": "cancelled", "error": "Cancelled by user"})
+            stopped.append(task_id)
     
     return {
         "success": True,
-        "task_id": task_id,
-        "message": "Cancellation requested"
+        "stopped": stopped,
+        "message": f"Cancelled {len(stopped)} task(s)"
     }
 
 

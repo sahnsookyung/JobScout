@@ -188,8 +188,7 @@ def listen_for_messages(
         except redis.ConnectionError as e:
             logger.error(f"Connection error in pubsub listener: {e}")
             pubsub.close()
-            time.sleep(1)
-            continue
+            return  # Exit generator; caller should handle reconnection
 
 
 def create_consumer_group(stream: str, group: str) -> None:
