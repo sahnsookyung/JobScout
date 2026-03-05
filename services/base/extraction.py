@@ -198,12 +198,11 @@ def run_job_extraction(ctx: AppContext, stop_event: threading.Event, limit: int 
 
 
 
-def run_resume_extraction(ctx: AppContext, resume_file: str) -> tuple[Optional[dict], str]:
+def run_resume_extraction(resume_file: str) -> tuple[Optional[dict], str]:
     """
     Extract resume data from file.
 
     Args:
-        ctx: Application context
         resume_file: Path to resume file
 
     Returns:
@@ -221,6 +220,9 @@ def run_resume_extraction(ctx: AppContext, resume_file: str) -> tuple[Optional[d
         fingerprint = generate_file_fingerprint(json.dumps(resume_data, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode())
     except (FileNotFoundError, IOError, PermissionError) as e:
         logger.error(f"Failed to read resume file {resume_file}: {e}")
+        return None, ""
+    except Exception as e:
+        logger.error(f"Failed to parse resume file {resume_file}: {e}")
         return None, ""
 
     return resume_data, fingerprint

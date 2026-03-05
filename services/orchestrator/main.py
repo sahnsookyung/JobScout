@@ -442,6 +442,36 @@ async def metrics():
     return {"service": "orchestrator", "version": "1.0.0"}
 
 
+async def _handle_task_done(task_id: str, t: asyncio.Task):
+    """Async helper to handle task completion/failure with proper locking."""
+    if t.cancelled():
+        logger.info(f"Orchestration cancelled: {task_id}")
+        async with _orchestration_lock:
+            state = orchestrations.get(task_id)
+            if state:
+                if state.status not in ("completed", "failed", "cancelled"):
+                    state.status = "cancelled"
+                    state.error = "Task cancelled"
+                    state._save_to_redis()
+    elif t.exception():
+        logger.error(f"Orchestration failed: {task_id} - {t.exception()}")
+        async with _orchestration_lock:
+            state = orchestrations.get(task_id)
+            if state:
+                if state.status not in ("completed", "failed", "cancelled"):
+                    state.status = "failed"
+                    state.error = str(t.exception())
+                    state._save_to_redis()
+                    state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+    else:
+        logger.info(f"Orchestration completed successfully: {task_id}")
+    
+    # Remove from task registry
+    async with _orchestration_lock:
+        if task_id in orchestration_tasks:
+            del orchestration_tasks[task_id]
+
+
 @app.post("/orchestrate/match", response_model=MatchResponse)
 async def orchestrate_match_endpoint():
     """Trigger the full pipeline: extraction -> embeddings -> matching."""
@@ -460,37 +490,8 @@ async def orchestrate_match_endpoint():
         )
 
     task = asyncio.create_task(orchestrate_match(task_id, resume_file))
-    
-    def on_task_done(t: asyncio.Task):
-        """Callback to handle task completion/failure."""
-        if t.cancelled():
-            logger.info(f"Orchestration cancelled: {task_id}")
-            # Update state to cancelled if possible
-            if task_id in orchestrations:
-                state = orchestrations[task_id]
-                if state.status not in ("completed", "failed", "cancelled"):
-                    state.status = "cancelled"
-                    state.error = "Task cancelled"
-                    state._save_to_redis()
-        elif t.exception():
-            logger.error(f"Orchestration failed: {task_id} - {t.exception()}")
-            # Update state to failed if possible
-            if task_id in orchestrations:
-                state = orchestrations[task_id]
-                if state.status not in ("completed", "failed", "cancelled"):
-                    state.status = "failed"
-                    state.error = str(t.exception())
-                    state._save_to_redis()
-                    state.notify({"task_id": task_id, "status": "failed", "error": state.error})
-        else:
-            logger.info(f"Orchestration completed successfully: {task_id}")
-        
-        # Remove from task registry
-        if task_id in orchestration_tasks:
-            del orchestration_tasks[task_id]
-    
-    task.add_done_callback(on_task_done)
-    
+    task.add_done_callback(lambda t: asyncio.create_task(_handle_task_done(task_id, t)))
+
     # Store task reference for potential cancellation
     async with _orchestration_lock:
         orchestration_tasks[task_id] = task
