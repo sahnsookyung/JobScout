@@ -111,9 +111,9 @@ class JobPostRepository(BaseRepository):
     def mark_as_extracted(self, job_post: JobPost) -> None:
         job_post.is_extracted = True
 
-    def mark_extraction_failed(self, job_post_id: str, error: str) -> None:
+    def mark_extraction_failed(self, job_post_id: Any, error: str) -> None:
         """Mark job extraction as failed to prevent infinite retries.
-        
+
         Args:
             job_post_id: Job ID
             error: Error message
@@ -126,7 +126,6 @@ class JobPostRepository(BaseRepository):
             facet_last_error=error
         )
         self.db.execute(stmt)
-        self.db.commit()
 
     def _extract_years_from_requirement(self, text: str) -> Tuple[Optional[int], Optional[str]]:
         if not text:
