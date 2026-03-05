@@ -1,5 +1,5 @@
 # Core Infrastructure
-# Run: docker-compose -f docker-compose.yml up -d
+# Run: docker-compose -f docker-compose.yml --profile driver up -d
 
 services:
   jobspy-service:

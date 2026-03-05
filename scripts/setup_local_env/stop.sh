@@ -63,6 +63,17 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
 }
 
+# Build compose args from available compose files
+build_compose_args() {
+    COMPOSE_ARGS="-f ${DOCKER_COMPOSE_FILE}"
+    if [ -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]; then
+        COMPOSE_ARGS="${COMPOSE_ARGS} -f ${PROJECT_ROOT}/docker-compose.pipeline.yml"
+    fi
+    if [ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]; then
+        COMPOSE_ARGS="${COMPOSE_ARGS} -f ${PROJECT_ROOT}/docker-compose.web.yml"
+    fi
+}
+
 # Print help message
 show_help() {
     head -25 "$0" | tail -23
@@ -170,13 +181,7 @@ stop_docker() {
     fi
 
     # Build Compose args
-    COMPOSE_ARGS="-f ${DOCKER_COMPOSE_FILE}"
-    if [ -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]; then
-        COMPOSE_ARGS="${COMPOSE_ARGS} -f ${PROJECT_ROOT}/docker-compose.pipeline.yml"
-    fi
-    if [ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]; then
-        COMPOSE_ARGS="${COMPOSE_ARGS} -f ${PROJECT_ROOT}/docker-compose.web.yml"
-    fi
+    build_compose_args
 
     # Determine which services to stop
     SERVICES_TO_STOP=""
@@ -367,10 +372,7 @@ main() {
     if [ "$STOP_MICROSERVICES" = true ]; then
         log_info "Stopping microservices..."
         # Stop pipeline services via docker compose
-        COMPOSE_ARGS="-f ${DOCKER_COMPOSE_FILE}"
-        if [ -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]; then
-            COMPOSE_ARGS="${COMPOSE_ARGS} -f ${PROJECT_ROOT}/docker-compose.pipeline.yml"
-        fi
+        build_compose_args
         docker compose ${COMPOSE_ARGS} stop extraction embeddings scorer-matcher orchestrator 2>/dev/null || true
         log_success "Microservices stopped"
         echo ""

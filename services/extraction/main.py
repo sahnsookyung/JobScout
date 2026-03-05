@@ -144,9 +144,13 @@ async def extract_resume(request: ExtractResumeRequest):
     # Validate file path to prevent path traversal
     import os
     resume_path = os.path.realpath(request.resume_file)
-    # Only allow files in common resume locations
-    allowed_prefixes = ['/app/', '/data/', './', '../']
-    if not any(resume_path.startswith(p) for p in allowed_prefixes):
+    # Define allowed directories as absolute paths
+    ALLOWED_DIRS = [
+        os.path.realpath('/app/'),
+        os.path.realpath('/data/'),
+        os.path.realpath(os.getcwd()),  # Current working directory
+    ]
+    if not any(resume_path.startswith(allowed_dir) for allowed_dir in ALLOWED_DIRS):
         return ExtractResponse(
             success=False,
             message="Invalid resume file path",
