@@ -59,7 +59,8 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-jobscoutredis}
-      # For backwards compatibility, also set URL vars (use separate env vars for passwords with special chars)
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-jobscout}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-jobscoutredis}@redis:6379/0
     volumes:
       - ./resume.json:/app/resume.json
       - ./config.yaml:/app/config.yaml:ro
