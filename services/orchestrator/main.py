@@ -164,6 +164,8 @@ class OrchestrationState:
 
 orchestrations: dict[str, OrchestrationState] = {}
 orchestration_timestamps: dict[str, float] = {}
+active_task_id: str | None = None  # Track currently active task
+orchestration_tasks: dict[str, asyncio.Task] = {}  # Track asyncio.Task objects for cancellation
 ORCHESTRATION_TTL = 3600  # 1 hour
 _orchestration_lock = asyncio.Lock()
 
@@ -177,9 +179,9 @@ async def cleanup_stale_orchestrations():
             stale = [k for k, v in orchestration_timestamps.items()
                      if now - v > ORCHESTRATION_TTL]
             for task_id in stale:
-                if task_id in orchestrations:
-                    del orchestrations[task_id]
+                orchestrations.pop(task_id, None)
                 orchestration_timestamps.pop(task_id, None)
+                orchestration_tasks.pop(task_id, None)
             if stale:
                 logger.info(f"Cleaned up {len(stale)} stale orchestrations")
 
@@ -221,10 +223,12 @@ async def _wait_for_task_message(pubsub, task_id: str, timeout: float) -> Option
 async def orchestrate_match(task_id: str, resume_file: str):
     """Run the orchestration flow: extraction -> embeddings -> matching."""
     import redis.asyncio as redis_async
+    global active_task_id
 
     LISTENER_TIMEOUT = 600.0  # 10 minutes per stage
 
     state = await get_or_create_orchestration(task_id)
+    active_task_id = task_id  # Mark as active
     state.status = "extracting"
     state.resume_file = resume_file
     state._save_to_redis()
@@ -388,6 +392,9 @@ async def orchestrate_match(task_id: str, resume_file: str):
     finally:
         if redis_client:
             await redis_client.close()
+        # Clear active task if this was the active one
+        if active_task_id == task_id:
+            active_task_id = None
         await state.close()
 
 
@@ -437,12 +444,12 @@ async def metrics():
 async def orchestrate_match_endpoint():
     """Trigger the full pipeline: extraction -> embeddings -> matching."""
     task_id = f"match-{uuid.uuid4().hex[:8]}"
-    
+
     config = load_config()
     resume_file = None
     if config.etl and config.etl.resume:
         resume_file = config.etl.resume.resume_file
-    
+
     if not resume_file:
         return MatchResponse(
             success=False,
@@ -451,7 +458,40 @@ async def orchestrate_match_endpoint():
         )
 
     task = asyncio.create_task(orchestrate_match(task_id, resume_file))
-    task.add_done_callback(lambda t: logger.error(f"Orchestration failed: {t.exception()}") if not t.cancelled() and t.exception() else None)
+    
+    def on_task_done(t: asyncio.Task):
+        """Callback to handle task completion/failure."""
+        if t.cancelled():
+            logger.info(f"Orchestration cancelled: {task_id}")
+            # Update state to cancelled if possible
+            if task_id in orchestrations:
+                state = orchestrations[task_id]
+                if state.status not in ("completed", "failed", "cancelled"):
+                    state.status = "cancelled"
+                    state.error = "Task cancelled"
+                    state._save_to_redis()
+        elif t.exception():
+            logger.error(f"Orchestration failed: {task_id} - {t.exception()}")
+            # Update state to failed if possible
+            if task_id in orchestrations:
+                state = orchestrations[task_id]
+                if state.status not in ("completed", "failed", "cancelled"):
+                    state.status = "failed"
+                    state.error = str(t.exception())
+                    state._save_to_redis()
+                    state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+        else:
+            logger.info(f"Orchestration completed successfully: {task_id}")
+        
+        # Remove from task registry
+        if task_id in orchestration_tasks:
+            del orchestration_tasks[task_id]
+    
+    task.add_done_callback(on_task_done)
+    
+    # Store task reference for potential cancellation
+    async with _orchestration_lock:
+        orchestration_tasks[task_id] = task
 
     return MatchResponse(
         success=True,
@@ -484,7 +524,7 @@ async def get_orchestration_status(task_id: str):
         finally:
             # Clean up subscriber to prevent memory leak
             state.unsubscribe(queue)
-    
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -494,6 +534,68 @@ async def get_orchestration_status(task_id: str):
             "Connection": "keep-alive",
         }
     )
+
+
+@app.get("/orchestrate/active")
+async def get_active_orchestration():
+    """Get the currently active orchestration task, if any."""
+    global active_task_id
+    if not active_task_id:
+        return {"success": False, "message": "No active task"}
+    
+    state = await get_or_create_orchestration(active_task_id)
+    return {
+        "success": True,
+        "status": {
+            "task_id": active_task_id,
+            "status": state.status,
+            "resume_fingerprint": state.resume_fingerprint,
+            "matches_count": state.matches_count,
+            "error": state.error
+        }
+    }
+
+
+@app.post("/orchestrate/stop")
+async def stop_orchestration():
+    """Stop the currently active orchestration task."""
+    global active_task_id
+    if not active_task_id:
+        return {"success": False, "message": "No active task to stop"}
+    
+    task_id = active_task_id
+    
+    # Try to cancel the task if it's still running
+    async with _orchestration_lock:
+        if task_id in orchestration_tasks:
+            task = orchestration_tasks[task_id]
+            if not task.done():
+                task.cancel()
+                return {
+                    "success": True,
+                    "task_id": task_id,
+                    "message": "Task cancelled"
+                }
+            else:
+                return {
+                    "success": False,
+                    "task_id": task_id,
+                    "message": "Task already completed"
+                }
+    
+    # If task not in registry, update state directly
+    state = await get_or_create_orchestration(task_id)
+    if state.status not in ("completed", "failed", "cancelled"):
+        state.status = "cancelled"
+        state.error = "Cancelled by user"
+        state._save_to_redis()
+        state.notify({"task_id": task_id, "status": "cancelled", "error": "Cancelled by user"})
+    
+    return {
+        "success": True,
+        "task_id": task_id,
+        "message": "Cancellation requested"
+    }
 
 
 if __name__ == "__main__":

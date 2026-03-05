@@ -266,6 +266,12 @@ start_docker() {
     # Build compose file array (handles paths with spaces)
     local compose_files=(-f "${DOCKER_COMPOSE_FILE}")
 
+    # Check if docker-compose.yml exists (fail fast)
+    if [ ! -f "${DOCKER_COMPOSE_FILE}" ]; then
+        log_error "docker-compose.yml not found at ${PROJECT_ROOT}"
+        exit 1
+    fi
+
     # Add pipeline compose file if microservices requested
     if [ "$MICROSERVICES" = true ]; then
         if [ ! -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]; then
@@ -289,12 +295,6 @@ start_docker() {
     if [ "$OLLAMA" = true ]; then
         DOCKER_COMPOSE_PROFILE="--profile docker-ollama"
         log_info "Ollama profile enabled"
-    fi
-
-    # Check if docker-compose.yml exists
-    if [ ! -f "${DOCKER_COMPOSE_FILE}" ]; then
-        log_error "docker-compose.yml not found at ${PROJECT_ROOT}"
-        exit 1
     fi
 
     # Start services

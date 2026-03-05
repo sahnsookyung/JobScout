@@ -95,57 +95,65 @@ def run_matching_pipeline_endpoint():
 def get_pipeline_status(task_id: str):
     """
     Get the status of a pipeline task.
-    
+
     Status values:
     - pending: Task created but not yet started
     - running: Pipeline is currently executing
     - completed: Pipeline finished successfully
     - failed: Pipeline encountered an error
     """
-    manager = get_pipeline_manager()
-    task = manager.get_task(task_id)
-    
-    if not task:
+    try:
+        from web.backend.services.clients import orchestrator_client
+        result = orchestrator_client.get_task_status(task_id)
+
+        if not result.get("success"):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Map orchestrator response to PipelineStatusResponse
+        status_data = result.get("status", {})
+        return PipelineStatusResponse(
+            task_id=task_id,
+            status=status_data.get("status", "unknown"),
+            step=status_data.get("step"),
+            matches_count=status_data.get("matches_count"),
+            saved_count=status_data.get("saved_count"),
+            notified_count=status_data.get("notified_count"),
+            execution_time=status_data.get("execution_time"),
+            error=status_data.get("error")
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Failed to get pipeline status for task {task_id}")
         from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    response = PipelineStatusResponse(
-        task_id=task_id,
-        status=task.status,
-        step=task.step
-    )
-    
-    if task.result:
-        response.matches_count = task.result.matches_count
-        response.saved_count = task.result.saved_count
-        response.notified_count = task.result.notified_count
-        response.execution_time = task.result.execution_time
-        if not task.result.success:
-            response.error = task.result.error
-    elif task.error:
-        response.error = task.error
-    
-    return response
+        raise HTTPException(status_code=500, detail=f"Failed to get pipeline status: {str(e)}")
 
 
 @router.get("/active", response_model=Optional[PipelineStatusResponse])
 def get_active_pipeline_task():
     """
     Get the currently running pipeline task, if any.
-    
+
     Useful for frontend recovery on page refresh.
     """
-    manager = get_pipeline_manager()
-    task = manager.get_active_task()
-    
-    if not task:
+    try:
+        from web.backend.services.clients import orchestrator_client
+        result = orchestrator_client.get_active_task()
+
+        if not result or not result.get("success"):
+            return None
+
+        # Map orchestrator response to PipelineStatusResponse
+        status_data = result.get("status", {})
+        return PipelineStatusResponse(
+            task_id=status_data.get("task_id", ""),
+            status=status_data.get("status", "unknown"),
+            step=status_data.get("step")
+        )
+    except Exception as e:
+        logger.exception(f"Failed to get active pipeline task")
         return None
-    
-    return PipelineStatusResponse(
-        task_id=task.task_id,
-        status=task.status,
-        step=task.step
-    )
 
 
 @router.post("/stop", response_model=PipelineTaskResponse)
@@ -153,21 +161,29 @@ def stop_matching_pipeline():
     """
     Stop the currently running pipeline task.
     """
-    manager = get_pipeline_manager()
-    task_id = manager.stop_active_task()
-    
-    if not task_id:
+    try:
+        from web.backend.services.clients import orchestrator_client
+        result = orchestrator_client.stop_task()
+
+        if not result or not result.get("success"):
+            return PipelineTaskResponse(
+                success=False,
+                task_id="",
+                message="No active pipeline to stop."
+            )
+
+        return PipelineTaskResponse(
+            success=True,
+            task_id=result.get("task_id", ""),
+            message="Pipeline cancellation requested."
+        )
+    except Exception as e:
+        logger.exception(f"Failed to stop pipeline")
         return PipelineTaskResponse(
             success=False,
             task_id="",
-            message="No active pipeline to stop."
+            message=f"Failed to stop pipeline: {str(e)}"
         )
-    
-    return PipelineTaskResponse(
-        success=True,
-        task_id=task_id,
-        message="Pipeline cancellation requested."
-    )
 
 
 @router.get("/events/{task_id}")
