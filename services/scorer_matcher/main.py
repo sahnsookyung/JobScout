@@ -15,26 +15,137 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Callable, Optional
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 
 from core.config_loader import load_config
 from core.app_context import AppContext
+from core.stream_consumer import StreamConsumerWithCompletion, validate_message
 from core.redis_streams import (
-    read_stream,
-    ack_message,
-    publish_completion,
     CHANNEL_MATCHING_DONE,
     STREAM_MATCHING,
+    set_task_state,
 )
 from pipeline.runner import run_matching_pipeline
+from database.init_db import init_db
 
 logger = logging.getLogger(__name__)
 
 CONSUMER_GROUP = os.getenv("MATCHER_CONSUMER_GROUP", "matcher-service")
 CONSUMER_NAME = os.getenv("HOSTNAME", "matcher-1")
+
+
+# ---------------------------------------------------------------------------
+# Stream consumer for matcher service
+# ---------------------------------------------------------------------------
+
+class MatcherConsumer(StreamConsumerWithCompletion):
+    """Consumer for matching jobs from Redis Streams."""
+
+    def __init__(self, ctx: AppContext) -> None:
+        super().__init__(
+            stream=STREAM_MATCHING,
+            group=CONSUMER_GROUP,
+            consumer_name=CONSUMER_NAME,
+            completion_channel=CHANNEL_MATCHING_DONE,
+            logger=logger,
+        )
+        self.ctx = ctx
+        self.stop_event = threading.Event()
+
+    async def _do_process(self, msg_id: str, msg: dict) -> tuple[bool, dict]:
+        """Process a matching job.
+
+        Args:
+            msg_id: Redis Stream message ID
+            msg: Message data dict with task_id and resume_fingerprint
+
+        Returns:
+            Tuple of (success, result_data)
+        """
+        task_id = msg.get("task_id")
+        resume_fingerprint = msg.get("resume_fingerprint")
+
+        # Validate required fields
+        is_valid, error = validate_message(msg, ["task_id", "resume_fingerprint"])
+        if not is_valid:
+            logger.error("❌ Invalid matching job: %s", error)
+            return False, {"status": "failed", "error": error}
+
+        fp_preview = (resume_fingerprint or "")[:16]
+        logger.info(
+            "⚙️ Processing matching job: task_id=%s, fingerprint=%s...",
+            task_id, fp_preview,
+        )
+
+        last_step = "initializing"
+
+        def _update_task_state(step: str) -> None:
+            nonlocal last_step
+            last_step = step
+            try:
+                set_task_state(task_id, {
+                    "status": "running",
+                    "step": step,
+                }, ttl=3600)
+            except Exception:
+                logger.warning("Failed to write running task state for %s", task_id)
+
+        try:
+            _update_task_state(last_step)
+            result = await asyncio.to_thread(
+                _run_matching_pipeline_sync,
+                self.ctx,
+                self.stop_event,
+                resume_fingerprint,
+                _update_task_state,
+            )
+
+            matches_count = result.matches_count if result else 0
+            saved_count = result.saved_count if result else 0
+            notified_count = result.notified_count if result else 0
+            execution_time = result.execution_time if result else 0.0
+            logger.info(
+                "✅ Matching job done: task_id=%s, matches=%d",
+                task_id, saved_count,
+            )
+
+            # Write task state so the web-backend can poll Redis directly (split mode)
+            try:
+                set_task_state(task_id, {
+                    "status": "completed",
+                    "step": last_step,
+                    "result": {
+                        "matches_count": matches_count,
+                        "saved_count": saved_count,
+                        "notified_count": notified_count,
+                        "execution_time": execution_time,
+                    },
+                }, ttl=3600)
+            except Exception:
+                logger.warning("Failed to write completed task state for %s", task_id)
+
+            return True, {
+                "status": "completed",
+                "resume_fingerprint": resume_fingerprint,
+                "matches_count": saved_count,
+            }
+        except Exception as e:
+            logger.error(
+                "❌ Matching failed: task_id=%s, error=%s: %s",
+                task_id, type(e).__name__, e, exc_info=True,
+            )
+            try:
+                set_task_state(task_id, {
+                    "status": "failed",
+                    "step": last_step,
+                    "error": str(e),
+                }, ttl=3600)
+            except Exception:
+                logger.warning("Failed to write failed task state for %s", task_id)
+            return False, {"status": "failed", "error": str(e)}
 
 
 # ---------------------------------------------------------------------------
@@ -44,8 +155,9 @@ CONSUMER_NAME = os.getenv("HOSTNAME", "matcher-1")
 class MatcherState:
     """Holds all mutable service-level state."""
 
-    def __init__(self, ctx: AppContext) -> None:
+    def __init__(self, ctx: AppContext, consumer: MatcherConsumer) -> None:
         self.ctx = ctx
+        self.consumer = consumer
         self.stop_event = threading.Event()
         self.consumer_task: Optional[asyncio.Task] = None
 
@@ -55,23 +167,27 @@ class MatcherState:
 # ---------------------------------------------------------------------------
 
 def _setup_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    from core.logging_utils import setup_logging, is_nul_filter_active
+    setup_logging()
+    logger.debug("NUL log sanitization active=%s", is_nul_filter_active())
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _setup_logging()
     logger.info("Starting matcher service...")
+    init_db()
 
     config = load_config()
-    state = MatcherState(ctx=AppContext.build(config))
+    ctx = AppContext.build(config)
+    consumer = MatcherConsumer(ctx)
+    state = MatcherState(ctx=ctx, consumer=consumer)
     app.state.matcher = state
 
     logger.info("Matcher service ready")
-    state.consumer_task = asyncio.create_task(consume_matching_jobs(state))
+    state.consumer_task = asyncio.create_task(
+        consumer.consume_loop(state.stop_event)
+    )
 
     yield
 
@@ -157,7 +273,7 @@ async def match_resume(request: Request, body: MatchResumeRequest):
         return MatchResponse(success=True, message=msg, matches=matches, task_id=task_id)
 
     except Exception:
-        logger.exception("Matching failed")
+        logger.error("Matching failed", exc_info=True)
         return MatchResponse(
             success=False,
             message="Matching failed",
@@ -195,98 +311,18 @@ async def stop_matching(request: Request):
 # ---------------------------------------------------------------------------
 
 def _run_matching_pipeline_sync(
-    ctx: AppContext, stop_event: threading.Event
+    ctx: AppContext,
+    stop_event: threading.Event,
+    resume_fingerprint: Optional[str] = None,
+    status_callback: Optional[Callable[[str], None]] = None,
 ):
     """Run the matching pipeline synchronously — safe to call via asyncio.to_thread."""
-    return run_matching_pipeline(ctx, stop_event)
-
-
-async def _process_matching_message(
-    state: MatcherState, msg_id: str, msg: dict
-) -> bool:
-    """Process a single matching job. Returns True if successful."""
-    task_id = msg.get("task_id")
-    resume_fingerprint = msg.get("resume_fingerprint")
-    fp_preview = (resume_fingerprint or "")[:16]
-
-    logger.info(
-        "📨 Received matching job: msg_id=%s, task_id=%s, fingerprint=%s...",
-        msg_id, task_id, fp_preview,
+    return run_matching_pipeline(
+        ctx,
+        stop_event,
+        status_callback=status_callback,
+        resume_fingerprint=resume_fingerprint,
     )
-
-    try:
-        result = await asyncio.to_thread(
-            _run_matching_pipeline_sync, state.ctx, state.stop_event
-        )
-        matches_count = result.saved_count if result else 0
-        await asyncio.to_thread(
-            publish_completion,
-            CHANNEL_MATCHING_DONE,
-            {
-                "task_id": task_id,
-                "status": "completed",
-                "resume_fingerprint": resume_fingerprint,
-                "matches_count": matches_count,
-            },
-        )
-        await asyncio.to_thread(ack_message, STREAM_MATCHING, CONSUMER_GROUP, msg_id)
-        logger.info("✅ Matching job done: task_id=%s, matches=%d", task_id, matches_count)
-        return True
-
-    except Exception as e:
-        logger.exception(
-            "❌ Matching failed: task_id=%s, error=%s: %s", task_id, type(e).__name__, e
-        )
-        await asyncio.to_thread(
-            publish_completion,
-            CHANNEL_MATCHING_DONE,
-            {"task_id": task_id, "status": "failed", "error": str(e)},
-        )
-        await asyncio.to_thread(ack_message, STREAM_MATCHING, CONSUMER_GROUP, msg_id)
-        logger.info("✅ Acknowledged failed job: msg_id=%s", msg_id)
-        return False
-
-
-async def consume_matching_jobs(state: MatcherState) -> None:
-    """Background task that consumes matching jobs from Redis Streams."""
-    logger.info(
-        "Starting matching consumer: %s (group: %s)", CONSUMER_NAME, CONSUMER_GROUP
-    )
-    message_count = 0
-    error_count = 0
-
-    while not state.stop_event.is_set():
-        try:
-            logger.debug("Waiting for matching job from Redis stream...")
-            messages = await asyncio.to_thread(
-                lambda: list(
-                    read_stream(STREAM_MATCHING, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000)
-                )
-            )
-
-            if not messages:
-                logger.debug("No messages received (timeout), continuing...")
-                continue
-
-            for msg_id, msg in messages:
-                message_count += 1
-                success = await _process_matching_message(state, msg_id, msg)
-                if not success:
-                    error_count += 1
-
-        except asyncio.CancelledError:
-            logger.info(
-                "🛑 Matching consumer cancelled (processed: %d, errors: %d)",
-                message_count, error_count,
-            )
-            raise
-
-        except Exception as e:
-            error_count += 1
-            logger.exception(
-                "❌ Error in matching consumer: %s: %s", type(e).__name__, e
-            )
-            await asyncio.sleep(1)
 
 
 # ---------------------------------------------------------------------------

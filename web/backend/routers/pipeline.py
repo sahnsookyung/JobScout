@@ -3,6 +3,11 @@
 Pipeline endpoints - trigger and monitor matching pipeline.
 """
 
+# Constants
+TASK_NOT_FOUND_DETAIL = "Task not found"
+ACTIVE_TASK_ID_KEY = "pipeline:active_task_id"
+STOP_PIPELINE_ERROR = "Failed to stop pipeline"
+
 import json
 import os
 import asyncio
@@ -21,13 +26,21 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from ..services.pipeline_service import get_pipeline_manager
-from core.config_loader import load_config
-from ..dependencies import get_db
+from core.redis_streams import (
+    get_redis_client,
+    set_task_state,
+    get_task_state,
+    STREAM_MATCHING,
+    enqueue_job,
+)
+from database.uow import job_uow
+from ..dependencies import get_db, get_current_user
 from ..models.responses import (
     PipelineTaskResponse,
     PipelineStatusResponse,
     ResumeHashCheckResponse,
-    ResumeUploadResponse
+    ResumeUploadResponse,
+    ResumeStatusResponse,
 )
 from ..models.requests import ResumeHashCheckRequest
 from ..exceptions import PipelineLockedException
@@ -35,6 +48,10 @@ from etl.resume import ResumeParser
 from web.shared.constants import RESUME_MAX_SIZE
 
 logger = logging.getLogger(__name__)
+
+# Strong references to fire-and-forget upload tasks — prevents GC on Python 3.12+
+# where the event loop only keeps weak refs to asyncio.Task objects.
+_upload_tasks: set = set()
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -92,14 +109,15 @@ async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded)
     "/run-matching",
     response_model=PipelineTaskResponse,
     responses={
+        400: {"description": "No resume found"},
         409: {"description": "Pipeline is already running"},
         500: {"description": "Internal server error"},
     }
 )
-def run_matching_pipeline_endpoint():
+def run_matching_pipeline_endpoint(user: Annotated[None, Depends(get_current_user)] = None):
     """
     Trigger the full matching pipeline in the background.
-    
+
     Returns immediately with a task_id that can be used to poll for status via SSE.
     The pipeline will:
     - Extract resume (if changed)
@@ -108,37 +126,233 @@ def run_matching_pipeline_endpoint():
     - Calculate fit/want scores
     - Save results to database
     - Send notifications (if configured)
-    
+
     Raises:
         409: Pipeline is already running.
         500: Internal error starting the pipeline.
     """
-    from web.backend.services.clients import orchestrator_client
+    return _start_matching()
+
+
+def _guard_resume_not_uploading(redis) -> None:
+    """Raise 409 if a resume upload is currently in progress.
+
+    No-ops silently when Redis is unavailable.
+    """
     try:
-        result = orchestrator_client.start_matching()
-    except PipelineLockedException as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        if not redis:
+            return
+        latest_task_id = redis.get("resume:upload:latest_task_id")
+        if not latest_task_id:
+            return
+        state = get_task_state(latest_task_id)
+        if state and state.get("status") in ("processing", "running"):
+            # "processing" = web-backend initial write; "running" = orchestrator stage active.
+            # Both mean extraction/embedding is in progress; matching against the old
+            # fingerprint would produce stale results.
+            raise HTTPException(
+                status_code=409,
+                detail="Resume is currently being processed. Please wait and try again.",
+            )
+    except HTTPException:
+        raise
     except Exception:
-        logger.exception("Failed to start matching pipeline")
+        pass  # Redis unavailable — proceed without guard
+
+
+def _get_matching_redis_client():
+    """Return a Redis client for matching orchestration, or None on failure."""
+    try:
+        return get_redis_client()
+    except Exception:
+        logger.warning("Redis unavailable — proceeding without active task check")
+        return None
+
+
+def _decode_redis_value(value) -> str:
+    """Normalize Redis values to strings."""
+    return value if isinstance(value, str) else value.decode()
+
+
+def _normalize_matching_step(
+    step: Optional[str],
+    *,
+    default: Optional[str] = None,
+) -> Optional[str]:
+    """Map raw backend stage names to the canonical matching step vocabulary."""
+    if not step:
+        return default
+
+    normalized = step.strip().lower().replace(" ", "_").replace("-", "_")
+    canonical_steps = {
+        "initializing",
+        "loading_resume",
+        "vector_matching",
+        "scoring",
+        "saving_results",
+        "notifying",
+    }
+    if normalized in canonical_steps:
+        return normalized
+
+    aliases = {
+        "start": "initializing",
+        "starting": "initializing",
+        "queued": "initializing",
+        "loading": "loading_resume",
+        "resume_loading": "loading_resume",
+        "resume_loaded": "loading_resume",
+        "extracting": "loading_resume",
+        "embedding": "loading_resume",
+        "matching": "vector_matching",
+        "match": "vector_matching",
+        "vector_match": "vector_matching",
+        "saving": "saving_results",
+        "save": "saving_results",
+        "saved": "saving_results",
+        "notification": "notifying",
+        "notify": "notifying",
+    }
+    return aliases.get(normalized, default)
+
+
+def _build_pipeline_status_response(task_id: str, state: dict) -> PipelineStatusResponse:
+    """Convert Redis task state into the shared pipeline status response shape."""
+    result_data = state.get("result", {}) or {}
+    status = state.get("status", "unknown")
+    default_step = "initializing" if status in ("pending", "running") else None
+    return PipelineStatusResponse(
+        task_id=task_id,
+        status=status,
+        step=_normalize_matching_step(state.get("step"), default=default_step),
+        matches_count=result_data.get("matches_count"),
+        saved_count=result_data.get("saved_count"),
+        notified_count=result_data.get("notified_count"),
+        execution_time=result_data.get("execution_time"),
+        error=state.get("error"),
+    )
+
+
+def _ensure_no_active_matching_task(redis) -> None:
+    """Raise 409 if a matching task is already pending/running."""
+    if not redis:
+        return
+
+    try:
+        active_id_raw = redis.get(ACTIVE_TASK_ID_KEY)
+        if not active_id_raw:
+            return
+
+        active_id = _decode_redis_value(active_id_raw)
+        state = get_task_state(active_id)
+        if state and state.get("status") in ("pending", "running"):
+            raise HTTPException(status_code=409, detail="Matching pipeline is already running")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Failed to check active task state in Redis")
+
+
+def _get_latest_resume_fingerprint_or_400() -> str:
+    """Return latest resume fingerprint or raise 400 if missing."""
+    with job_uow() as repo:
+        fingerprint = repo.resume.get_latest_stored_resume_fingerprint()
+
+    if not fingerprint:
+        raise HTTPException(
+            status_code=400,
+            detail="No resume found. Please upload a resume via the web UI first.",
+        )
+
+    return fingerprint
+
+
+def _set_initial_matching_task_state(task_id: str) -> None:
+    """Write initial pending state for matching tasks."""
+    try:
+        set_task_state(task_id, {"status": "pending", "step": "initializing"}, ttl=3600)
+    except Exception:
+        logger.warning("Failed to set initial Redis task state for %s", task_id)
+
+
+def _store_active_task_id(redis, task_id: str) -> None:
+    """Store active matching task ID in Redis when available."""
+    if not redis:
+        return
+
+    try:
+        redis.set(ACTIVE_TASK_ID_KEY, task_id, ex=3600)
+    except Exception:
+        logger.warning("Failed to store active_task_id in Redis for %s", task_id)
+
+
+def _enqueue_matching_job_or_500(task_id: str, fingerprint: str) -> None:
+    """Enqueue matching work or raise 500 if enqueue fails."""
+    try:
+        enqueue_job(STREAM_MATCHING, {
+            "task_id": task_id,
+            "resume_fingerprint": fingerprint,
+            "correlation_id": task_id,
+        })
+    except Exception:
+        logger.exception("Failed to enqueue matching job to stream")
         raise HTTPException(status_code=500, detail="Failed to start matching pipeline")
 
-    task_id = result.get("task_id", "")
-    message = result.get("message", "")
 
-    if not result.get("success"):
-        # Orchestrator reports already-running state
-        if "already" in message.lower() or "running" in message.lower():
-            raise HTTPException(status_code=409, detail=message or "Pipeline is already running")
-        raise HTTPException(status_code=500, detail=message or "Failed to start pipeline")
+def _start_matching() -> PipelineTaskResponse:
+    """Enqueue a matching job to the Redis stream for the scorer-matcher consumer."""
+    import uuid as _uuid
+
+    redis = _get_matching_redis_client()
+    _ensure_no_active_matching_task(redis)
+    _guard_resume_not_uploading(redis)
+    fingerprint = _get_latest_resume_fingerprint_or_400()
+
+    task_id = str(_uuid.uuid4())
+    _set_initial_matching_task_state(task_id)
+    _store_active_task_id(redis, task_id)
+    _enqueue_matching_job_or_500(task_id, fingerprint)
 
     return PipelineTaskResponse(
         success=True,
         task_id=task_id,
-        message="Matching pipeline started. Use SSE /api/pipeline/events/{task_id} to track progress."
+        message="Matching pipeline started. Use SSE /api/pipeline/events/{task_id} to track progress.",
     )
 
 
-@router.get("/status/{task_id}", response_model=PipelineStatusResponse, responses={500: {"description": "Internal server error"}})
+def _stop_matching() -> PipelineTaskResponse:
+    """Cancel the active matching task by marking it cancelled in Redis."""
+    try:
+        redis = get_redis_client()
+        active_id_raw = redis.get(ACTIVE_TASK_ID_KEY)
+        if not active_id_raw:
+            raise HTTPException(status_code=404, detail="No active pipeline to stop")
+
+        task_id = active_id_raw if isinstance(active_id_raw, str) else active_id_raw.decode()
+        state = get_task_state(task_id)
+        if not state or state.get("status") not in ("pending", "running"):
+            raise HTTPException(status_code=404, detail="No active pipeline to stop")
+
+        cancelled_state = {"status": "cancelled"}
+        normalized_step = _normalize_matching_step(state.get("step"), default="initializing")
+        if normalized_step:
+            cancelled_state["step"] = normalized_step
+        set_task_state(task_id, cancelled_state, ttl=3600)
+        redis.delete(ACTIVE_TASK_ID_KEY)
+
+        return PipelineTaskResponse(
+            success=True,
+            task_id=task_id,
+            message="Pipeline cancellation requested.",
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to stop pipeline")
+        raise HTTPException(status_code=500, detail=STOP_PIPELINE_ERROR)
+
+
+@router.get("/status/{task_id}", response_model=PipelineStatusResponse, responses={500: {"description": "Internal server error"}, 404: {"description": "Task not found"}})
 def get_pipeline_status(task_id: str):
     """
     Get the status of a pipeline task.
@@ -149,24 +363,34 @@ def get_pipeline_status(task_id: str):
     - completed: Pipeline finished successfully
     - failed: Pipeline encountered an error
     """
+    # Check Redis first — task state is written by the scorer-matcher consumer
+    try:
+        state = get_task_state(task_id)
+        if state:
+            return _build_pipeline_status_response(task_id, state)
+    except Exception:
+        pass  # fall through to orchestrator
+
+    # Proxy to orchestrator for tasks not yet reflected in Redis
     try:
         from web.backend.services.clients import orchestrator_client
         result = orchestrator_client.get_task_status(task_id)
 
         if not result.get("success"):
-            raise HTTPException(status_code=404, detail="Task not found")
+            raise HTTPException(status_code=404, detail=TASK_NOT_FOUND_DETAIL)
 
-        # Map orchestrator response to PipelineStatusResponse
-        status_data = result.get("status", {})
         return PipelineStatusResponse(
             task_id=task_id,
-            status=status_data.get("status", "unknown"),
-            step=status_data.get("step"),
-            matches_count=status_data.get("matches_count"),
-            saved_count=status_data.get("saved_count"),
-            notified_count=status_data.get("notified_count"),
-            execution_time=status_data.get("execution_time"),
-            error=status_data.get("error")
+            status=result.get("status", "unknown"),
+            step=_normalize_matching_step(
+                result.get("current_stage"),
+                default="initializing" if result.get("status") in ("pending", "running") else None,
+            ),
+            matches_count=result.get("result", {}).get("matches_count"),
+            saved_count=result.get("result", {}).get("saved_count"),
+            notified_count=result.get("result", {}).get("notified_count"),
+            execution_time=result.get("result", {}).get("execution_time"),
+            error=result.get("error")
         )
     except HTTPException:
         raise
@@ -182,22 +406,22 @@ def get_active_pipeline_task():
 
     Useful for frontend recovery on page refresh.
     """
+    return _get_active_task()
+
+
+def _get_active_task() -> Optional[PipelineStatusResponse]:
+    """Return the active matching task from Redis, or None if nothing is running."""
     try:
-        from web.backend.services.clients import orchestrator_client
-        result = orchestrator_client.get_active_task()
-
-        if not result or not result.get("success"):
+        redis = get_redis_client()
+        task_id_raw = redis.get(ACTIVE_TASK_ID_KEY)
+        if not task_id_raw:
             return None
-
-        # Map orchestrator response to PipelineStatusResponse
-        status_data = result.get("status", {})
-        return PipelineStatusResponse(
-            task_id=status_data.get("task_id", ""),
-            status=status_data.get("status", "unknown"),
-            step=status_data.get("step")
-        )
+        task_id = task_id_raw if isinstance(task_id_raw, str) else task_id_raw.decode()
+        state = get_task_state(task_id)
+        if not state or state.get("status") not in ("running", "pending"):
+            return None
+        return _build_pipeline_status_response(task_id, state)
     except Exception:
-        logger.exception("Failed to get active pipeline task")
         return None
 
 
@@ -209,7 +433,7 @@ def get_active_pipeline_task():
         500: {"description": "Internal server error"},
     }
 )
-def stop_matching_pipeline():
+def stop_matching_pipeline(user: Annotated[None, Depends(get_current_user)] = None):
     """
     Stop the currently running pipeline task.
 
@@ -217,22 +441,7 @@ def stop_matching_pipeline():
         404: No active pipeline is running.
         500: Internal error stopping the pipeline.
     """
-    try:
-        from web.backend.services.clients import orchestrator_client
-        result = orchestrator_client.stop_task()
-    except Exception:
-        logger.exception("Failed to stop pipeline")
-        raise HTTPException(status_code=500, detail="Failed to stop pipeline")
-
-    if not result or not result.get("success"):
-        raise HTTPException(status_code=404, detail="No active pipeline to stop")
-
-    return PipelineTaskResponse(
-        success=True,
-        task_id=result.get("task_id", ""),
-        message="Pipeline cancellation requested."
-    )
-
+    return _stop_matching()
 
 
 async def _stream_orchestrator_sse(orchestrator_url: str, task_id: str):
@@ -250,7 +459,7 @@ async def _stream_orchestrator_sse(orchestrator_url: str, task_id: str):
             ) as response:
                 if response.status_code == 404:
                     logger.error("Orchestrator: task not found")
-                    yield f"data: {json.dumps({'error': 'Task not found', 'status': 'failed'})}\n\n"
+                    yield f"data: {json.dumps({'error': TASK_NOT_FOUND_DETAIL, 'status': 'failed'})}\n\n"
                     return
                 if response.is_error:
                     logger.error("Orchestrator returned %s", response.status_code)
@@ -264,12 +473,15 @@ async def _stream_orchestrator_sse(orchestrator_url: str, task_id: str):
         yield f"data: {json.dumps({'error': 'Failed to connect to pipeline service'})}\n\n"
 
 
-async def _preflight_task_check(orchestrator_url: str, task_id: str) -> None:
+async def _preflight_task_check(orchestrator_url: str, _task_id: str) -> None:
     """Quick probe to verify task existence before opening a long-lived SSE stream.
 
     Raises HTTPException(404) only if the orchestrator definitively reports
     the task does not exist. Failures during the probe are logged and ignored
     so the SSE stream can surface errors itself.
+    
+    Note: _task_id is reserved for future use when the orchestrator supports
+    task-specific status endpoints.
     """
     import httpx
 
@@ -278,17 +490,48 @@ async def _preflight_task_check(orchestrator_url: str, task_id: str) -> None:
             probe_resp = await probe.get(f"{orchestrator_url}/orchestrate/active")
             if probe_resp.status_code == 404:
                 logger.warning("Task not found")
-                raise HTTPException(status_code=404, detail="Task not found")
+                raise HTTPException(status_code=404, detail=TASK_NOT_FOUND_DETAIL)
     except HTTPException:
         raise
     except Exception as e:
         logger.warning("Pre-flight check failed: %s", type(e).__name__)
 
 
+async def _stream_local_task_sse(task_id: str):
+    """Poll Redis task state and emit SSE events for a running task."""
+    timeout = 600.0
+    poll_interval = 1.5
+    elapsed = 0.0
+
+    while elapsed < timeout:
+        try:
+            state = await asyncio.to_thread(get_task_state, task_id)
+        except Exception:
+            state = None
+
+        if state is None:
+            yield f"data: {json.dumps({'task_id': task_id, 'status': 'failed', 'error': 'Task not found'})}\n\n"
+            return
+
+        # Flatten result sub-dict to match PipelineStatusResponse shape expected by the frontend
+        response = _build_pipeline_status_response(task_id, state)
+        event_data = response.model_dump(exclude_none=True)
+
+        yield f"data: {json.dumps(event_data)}\n\n"
+
+        if state.get("status") in ("completed", "failed", "cancelled"):
+            return
+
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+
+    yield f"data: {json.dumps({'status': 'failed', 'error': 'Timeout waiting for pipeline'})}\n\n"
+
+
 @router.get(
     "/events/{task_id}",
     responses={
-        404: {"description": "Task not found"},
+        404: {"description": TASK_NOT_FOUND_DETAIL},
         400: {"description": "Invalid task_id format"},
     }
 )
@@ -296,21 +539,43 @@ async def pipeline_events(task_id: str, db: Annotated[Session, Depends(get_db)] 
     """
     Server-Sent Events endpoint for real-time pipeline status updates.
 
-    Validates task existence before opening the stream.
-    Proxies to the orchestrator service.
+    Checks Redis first (task state written by scorer-matcher consumer), then
+    falls back to proxying the orchestrator's SSE stream for tasks not yet
+    reflected in Redis.
 
     Raises:
-        404: Task does not exist in the orchestrator.
+        404: Task does not exist.
         400: Invalid task_id format.
     """
     # Validate task_id BEFORE any use (OWASP: Validate Early)
     if not _validate_task_id(task_id):
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail="Invalid task_id format. Must be alphanumeric with hyphens, max 50 characters."
         )
-    
-    orchestrator_url = os.getenv("ORCHESTRATOR_URL", "http://localhost:8084")
+
+    # Check Redis first — task state is written by the scorer-matcher consumer
+    try:
+        state = await asyncio.to_thread(get_task_state, task_id)
+    except Exception:
+        state = None
+
+    if state is not None:
+        return StreamingResponse(
+            _stream_local_task_sse(task_id),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
+    # Fall back to orchestrator SSE for tasks not managed via Redis
+    orchestrator_url = os.getenv("ORCHESTRATOR_URL", "").strip()
+    if not orchestrator_url:
+        raise HTTPException(status_code=404, detail=TASK_NOT_FOUND_DETAIL)
+
     await _preflight_task_check(orchestrator_url, task_id)
 
     return StreamingResponse(
@@ -324,9 +589,42 @@ async def pipeline_events(task_id: str, db: Annotated[Session, Depends(get_db)] 
     )
 
 
+@router.get(
+    "/resume-status/{task_id}",
+    response_model=ResumeStatusResponse,
+    responses={
+        400: {"description": "Invalid task_id format"},
+        404: {"description": "Task not found"},
+    }
+)
+def get_resume_status(task_id: str):
+    """
+    Poll the status of a background resume processing task.
+
+    Status values:
+    - processing: Resume ETL is currently running
+    - completed: Resume was extracted and embedded successfully
+    - failed: Resume processing encountered an error
+    """
+    if not _validate_task_id(task_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid task_id format. Must be alphanumeric with hyphens, max 50 characters."
+        )
+    state = get_task_state(task_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Task not found or expired")
+    return ResumeStatusResponse(
+        task_id=task_id,
+        status=state.get("status", "unknown"),
+        step=state.get("step"),
+        error=state.get("error")
+    )
+
+
 @router.post("/check-resume-hash", response_model=ResumeHashCheckResponse)
 @limiter.limit("10/minute")
-def check_resume_hash_endpoint(request: Request, body: ResumeHashCheckRequest):
+def check_resume_hash_endpoint(request: Request, body: ResumeHashCheckRequest, user: Annotated[None, Depends(get_current_user)] = None):
     """
     Check if a resume with the given hash already exists in the database.
     
@@ -359,6 +657,7 @@ async def upload_resume_endpoint(
     request: Request,
     file: Annotated[UploadFile, File(...)],
     resume_hash: Annotated[Optional[str], Form()] = None,
+    user: Annotated[None, Depends(get_current_user)] = None,
 ):
     """
     Upload a resume file.
@@ -393,12 +692,26 @@ async def upload_resume_endpoint(
     manager = get_pipeline_manager()
     task_id = manager.create_task()
 
+    # Advertise task_id so the orchestrator can check upload state cross-process
+    try:
+        redis = get_redis_client()
+        redis.set("resume:upload:latest_task_id", task_id, ex=3600)
+    except Exception:
+        logger.warning("Failed to set resume:upload:latest_task_id in Redis — guard will not work")
+
     # Fire and forget - return immediately while processing continues in background
     # Store task reference to prevent premature garbage collection
     background_task = asyncio.create_task(asyncio.to_thread(
         _process_resume_background, content, file.filename, task_id, manager, resume_hash
     ))
-    background_task.add_done_callback(lambda t: None)  # Suppress unhandled exception warnings
+    _upload_tasks.add(background_task)
+
+    def _upload_done(t: asyncio.Task) -> None:
+        _upload_tasks.discard(t)
+        if not t.cancelled() and t.exception() is not None:
+            logger.error("Upload background task raised unhandled: %s", t.exception())
+
+    background_task.add_done_callback(_upload_done)
 
     return ResumeUploadResponse(
         success=True,
@@ -470,49 +783,130 @@ def _process_resume_background(
         manager: Pipeline manager
         known_fingerprint: Pre-computed fingerprint from raw file bytes
     """
-    import tempfile
-    from database.uow import job_uow
-    from core.app_context import AppContext
+    import time as _time
+    from web.backend.services.clients import orchestrator_client
+
+    _ = known_fingerprint
 
     # Update task status to running
     task = manager.get_task(task_id)
-    if task:
-        task.status = "running"
-        task.message = "Processing resume..."
-        task.phases = {"resume_etl": {"status": "running", "progress": 0}}
+    _mark_resume_task_running(task)
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp:
-        tmp.write(file_content)
-        tmp_path = tmp.name
+    # Signal to cross-process listeners (e.g. orchestrator) that upload is in progress
+    try:
+        set_task_state(task_id, {"status": "processing", "step": "extracting"}, ttl=3600)
+    except Exception:
+        logger.warning("Failed to write Redis processing state for task %s", task_id)
+
+    tmp_path = _write_resume_file_to_shared_volume(file_content, filename, task_id)
 
     try:
-        full_config = load_config()
-        ctx = AppContext.build(full_config)
+        _mark_resume_phase_extracting(task)
 
-        # Update progress
-        if task:
-            task.phases = {"resume_etl": {"status": "running", "progress": 50}}
-            task.message = "Extracting resume data..."
-
-        with job_uow() as repo:
-            # Pass known_fingerprint to avoid re-computing
-            ctx.job_etl_service.extract_and_embed_resume(
-                repo, tmp_path, known_fingerprint=known_fingerprint
-            )
+        orchestrator_client.process_resume(tmp_path, task_id)
+        final_state = _wait_for_resume_etl_final_state(task_id, task, _time)
+        if final_state.get("status") == "failed":
+            raise RuntimeError(final_state.get("error") or "Resume ETL failed")
 
         # Mark complete
-        if task:
-            task.status = "completed"
-            task.message = "Resume processed successfully"
-            task.phases = {"resume_etl": {"status": "completed", "progress": 100}}
-    except Exception:
+        _mark_resume_task_completed(task)
+    except Exception as exc:
         logger.exception("Background resume processing failed")
-        if task:
-            task.status = "failed"
-            task.message = "Resume processing failed. Please try again or contact support."
-            task.phases = {"resume_etl": {"status": "failed", "progress": 0}}
+        _mark_resume_task_failed(task)
+        _write_resume_failure_state(task_id, exc)
     finally:
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
+        _remove_temporary_resume_file(tmp_path)
+
+
+def _mark_resume_task_running(task) -> None:
+    """Set in-memory task state to running."""
+    if not task:
+        return
+
+    task.status = "running"
+    task.message = "Processing resume..."
+    task.phases = {"resume_etl": {"status": "running", "progress": 0}}
+
+
+def _mark_resume_phase_extracting(task) -> None:
+    """Update in-memory progress for extraction phase."""
+    if not task:
+        return
+
+    task.phases = {"resume_etl": {"status": "running", "progress": 30}}
+    task.message = "Extracting resume data..."
+
+
+def _mark_resume_task_completed(task) -> None:
+    """Mark in-memory task as successfully completed."""
+    if not task:
+        return
+
+    task.status = "completed"
+    task.message = "Resume processed successfully"
+    task.phases = {"resume_etl": {"status": "completed", "progress": 100}}
+
+
+def _mark_resume_task_failed(task) -> None:
+    """Mark in-memory task as failed."""
+    if not task:
+        return
+
+    task.status = "failed"
+    task.message = "Resume processing failed. Please try again or contact support."
+    task.phases = {"resume_etl": {"status": "failed", "progress": 0}}
+
+
+def _write_resume_file_to_shared_volume(file_content: bytes, filename: str, task_id: str) -> str:
+    """Write uploaded resume to shared volume for orchestrator processing."""
+    shared_dir = Path("/data/resume_uploads")
+    shared_dir.mkdir(parents=True, exist_ok=True)
+    tmp_path = shared_dir / f"{task_id}{Path(filename).suffix}"
+    tmp_path.write_bytes(file_content)
+    return str(tmp_path)
+
+
+def _wait_for_resume_etl_final_state(task_id: str, task, time_module) -> dict:
+    """Poll Redis for resume ETL completion and return the final state."""
+    poll_timeout_seconds = 600
+    deadline = time_module.time() + poll_timeout_seconds
+
+    while time_module.time() < deadline:
+        state = get_task_state(task_id)
+        if state:
+            _sync_resume_task_message_from_state(task, state)
+            if state.get("status") in ("completed", "failed"):
+                return state
+        time_module.sleep(1)
+
+    raise RuntimeError(
+        f"Resume ETL timed out after {poll_timeout_seconds}s waiting for orchestrator"
+    )
+
+
+def _sync_resume_task_message_from_state(task, state: dict) -> None:
+    """Reflect Redis stage progress into in-memory task status message."""
+    if not task:
+        return
+
+    step = state.get("step")
+    if not step:
+        return
+
+    task.message = "Extracting resume data..." if step == "extracting" else "Generating resume vectors..."
+
+
+def _write_resume_failure_state(task_id: str, error: Exception) -> None:
+    """Persist failed state to Redis for resume ETL tasks."""
+    try:
+        set_task_state(task_id, {"status": "failed", "error": str(error)}, ttl=3600)
+    except Exception:
+        logger.warning("Failed to write Redis failed state for task %s", task_id)
+
+
+def _remove_temporary_resume_file(tmp_path: str) -> None:
+    """Best-effort cleanup of temporary resume file."""
+    try:
+        os.unlink(tmp_path)
+    except Exception:
+        pass
