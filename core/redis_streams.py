@@ -56,8 +56,10 @@ def enqueue_job(stream: str, payload: dict) -> str:
         raise ValueError(f"Invalid job payload: {error}")
 
     client = get_redis_client()
-    # Serialize all values to JSON strings for Redis compatibility and type preservation
-    serialized = {k: json.dumps(v) for k, v in payload.items()}
+    try:
+        serialized = {k: json.dumps(v) for k, v in payload.items()}
+    except TypeError as e:
+        raise ValueError(f"Payload contains non-JSON-serializable value: {e}")
     msg_id = client.xadd(stream, serialized)
     logger.info(f"Enqueued job to {stream}: {msg_id}")
     return msg_id
@@ -185,6 +187,7 @@ def listen_for_messages(
                     logger.error(f"Failed to decode message: {e}")
         except redis.ConnectionError as e:
             logger.error(f"Connection error in pubsub listener: {e}")
+            pubsub.close()
             time.sleep(1)
             continue
 

@@ -238,6 +238,8 @@ async def consume_extraction_jobs():
                 logger.info(f"Processing extraction job: task_id={task_id}, file={result}")
 
                 try:
+                    if ctx is None:
+                        raise RuntimeError("AppContext not initialized")
                     # process_resume now returns (changed, fingerprint)
                     changed, fingerprint = await loop.run_in_executor(None, process_resume, ctx, result)
 
