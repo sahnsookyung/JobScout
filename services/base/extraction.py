@@ -9,12 +9,13 @@ This module provides extraction functionality that can be used by:
 import json
 import logging
 import threading
+import traceback
 from typing import Optional
 
 from core.config_loader import load_config
 from core.app_context import AppContext
 from database.uow import job_uow
-from pipeline.runner import _load_resume_with_parser
+from etl.resume.loader import load_resume_with_parser
 from database.models import generate_file_fingerprint
 
 logger = logging.getLogger(__name__)
@@ -36,13 +37,18 @@ def _format_http_error(e: Exception) -> str:
     return "N/A"
 
 
-def _mark_job_failed(job_id: int, exc_type: str, exc_message: str) -> None:
-    """Persist failure state so the job isn't retried indefinitely."""
+def _mark_job_retryable(job_id: int, exc_type: str, exc_message: str) -> None:
+    """Persist retryable failure state for backoff-based reprocessing."""
     try:
         with job_uow() as repo:
-            repo.mark_extraction_failed(job_id, f"{exc_type}: {exc_message}")
+            repo.mark_extraction_retryable_failed(job_id, f"{exc_type}: {exc_message}")
     except Exception as mark_err:
-        logger.warning("Failed to mark job %s as failed: %s", job_id, mark_err)
+        logger.warning("Failed to mark job %s as retryable failed: %s", job_id, mark_err)
+
+
+def _mark_job_failed(job_id: int, exc_type: str, exc_message: str) -> None:
+    """Compatibility wrapper: failed extraction remains retryable."""
+    _mark_job_retryable(job_id, exc_type, exc_message)
 
 
 def _on_extraction_error(
@@ -66,12 +72,13 @@ def _on_extraction_error(
 
     if is_last_attempt:
         logger.error(
-            "Extraction failed after %d retries, job_id=%s (title: %r): %s - %s. %s. Giving up.",
+            "Extraction failed after %d immediate retries, job_id=%s (title: %r): %s - %s. %s. Deferring to queue retry.",
             len(retry_intervals), job_id, job_title_str, exc_type, exc_message, http_details,
         )
-        _mark_job_failed(job_id, exc_type, exc_message)
+        _mark_job_retryable(job_id, exc_type, exc_message)
         return True
     else:
+        _mark_job_retryable(job_id, exc_type, exc_message)
         logger.warning(
             "Extraction attempt %d/%d failed for job %s (title: %r): %s - %s. %s. Retrying in %ds...",
             attempt + 1, len(retry_intervals), job_id, job_title_str, exc_type, exc_message, http_details, wait_time,
@@ -98,6 +105,7 @@ def _extract_single_job(
                 if job is None:
                     logger.warning("Job %s not found, may have been deleted", job_id)
                     return False
+                repo.mark_extraction_in_progress(job_id)
                 job_title = job.title
                 ctx.job_etl_service.extract_one(repo, job)
             return True
@@ -114,7 +122,10 @@ def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: i
     with job_uow() as repo:
         job_ids = [j.id for j in repo.get_unextracted_jobs(limit)]
 
-    logger.info("Found %d jobs needing extraction", len(job_ids))
+    if job_ids:
+        logger.info("Found %d jobs needing extraction", len(job_ids))
+    else:
+        logger.info("No jobs need extraction — all already processed")
 
     retry_intervals = [30, 60, 120]
     success_count = 0
@@ -158,8 +169,8 @@ def _retry_failed_facet_extractions(limit: int, max_retries: int, stop_event: th
                         repo.update_job_facet_status(job.id, None)
                         recovered += 1
             except Exception:
-                logger.exception("Facet recovery failed for job %s", job_id)
-    
+                logger.error("Facet recovery failed for job %s", job_id, exc_info=True)
+
     return recovered
 
 
@@ -182,8 +193,8 @@ def _retry_missing_facet_embeddings(ctx: AppContext, limit: int, max_retries: in
                         ctx.job_etl_service.embed_facets_one(repo, job)
                         recovered += 1
             except Exception:
-                logger.exception("Facet embedding recovery failed for job %s", job_id)
-    
+                logger.error("Facet embedding recovery failed for job %s", job_id, exc_info=True)
+
     return recovered
 
 
@@ -219,7 +230,7 @@ def _process_facet_job(ctx: AppContext, job_id: int) -> int:
 def _handle_facet_error(job_id: int) -> None:
     """Log and persist a facet extraction failure."""
     error_msg = traceback.format_exc()
-    logger.exception("Facet extraction error job_id=%s", job_id)
+    logger.error("Facet extraction error job_id=%s", job_id, exc_info=True)
     try:
         with job_uow() as repo:
             repo.mark_job_facets_failed(job_id, error_msg)
@@ -304,7 +315,7 @@ def run_resume_extraction(
 
     # Load and parse resume with error handling
     try:
-        resume_data = _load_resume_with_parser(resume_file)
+        resume_data = load_resume_with_parser(resume_file)
         if not resume_data:
             return None, fingerprint
     except (FileNotFoundError, IOError, PermissionError) as e:

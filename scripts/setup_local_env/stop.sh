@@ -48,33 +48,36 @@ NC='\033[0m' # No Color
 
 # Logging functions
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    printf "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') - %s\n" "$1"
     return 0
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    printf "${GREEN}[SUCCESS]${NC} $(date '+%Y-%m-%d %H:%M:%S') - %s\n" "$1"
     return 0
 }
 
 log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    printf "${YELLOW}[WARN]${NC} $(date '+%Y-%m-%d %H:%M:%S') - %s\n" "$1"
     return 0
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1" >&2
+    printf "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') - %s\n" "$1" >&2
     return 0
 }
 
 # Build compose args from available compose files
 build_compose_args() {
     COMPOSE_ARGS=(-f "${DOCKER_COMPOSE_FILE}")
-    if [[ -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]]; then
-        COMPOSE_ARGS+=(-f "${PROJECT_ROOT}/docker-compose.pipeline.yml")
+    if [[ -f "${PROJECT_ROOT}/docker-compose.microservices.yml" ]]; then
+        COMPOSE_ARGS+=(-f "${PROJECT_ROOT}/docker-compose.microservices.yml")
     fi
     if [[ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]]; then
         COMPOSE_ARGS+=(-f "${PROJECT_ROOT}/docker-compose.web.yml")
+    fi
+    if [[ -f "${PROJECT_ROOT}/docker-compose.dev.yml" ]]; then
+        COMPOSE_ARGS+=(-f "${PROJECT_ROOT}/docker-compose.dev.yml")
     fi
     return 0
 }
@@ -87,13 +90,14 @@ show_help() {
 
 # Parse command line arguments
 parse_args() {
-    local STOP_INFRA=false
-    local STOP_WEB_APP=false
-    local STOP_WEB_UI=false
-    local STOP_MICROSERVICES=false
-    local STOP_DATABASE=false
-    local STOP_REDIS=false
-    local STOP_ALL=false
+    # Initialize global variables (removed 'local' to make them global)
+    STOP_INFRA=false
+    STOP_WEB_APP=false
+    STOP_WEB_UI=false
+    STOP_MICROSERVICES=false
+    STOP_DATABASE=false
+    STOP_REDIS=false
+    STOP_ALL=false
     local option
 
     while [[ $# -gt 0 ]]; do
@@ -206,12 +210,28 @@ stop_docker() {
         fi
     fi
 
+    # Check if docker-compose.web.yml exists - web services need explicit stop or profile
+    local WEB_SERVICES=false
+    local COMPOSE_PROFILE=""
+    if [[ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]]; then
+        # Check if web services are running
+        if docker compose "${COMPOSE_ARGS[@]}" ps web-backend web-frontend 2>/dev/null | grep -q "Up"; then
+            WEB_SERVICES=true
+            log_info "Stopping web services (web-backend, web-frontend)..."
+            docker compose "${COMPOSE_ARGS[@]}" --profile web stop web-backend web-frontend 2>/dev/null || true
+            docker compose "${COMPOSE_ARGS[@]}" --profile web rm -f web-backend web-frontend 2>/dev/null || true
+        fi
+    fi
+
     # Check if any containers are running
     if docker compose "${COMPOSE_ARGS[@]}" ps -q 2>/dev/null | grep -q .; then
         if [[ -n "$SERVICES_TO_STOP" ]]; then
             docker compose "${COMPOSE_ARGS[@]}" stop ${SERVICES_TO_STOP} 2>/dev/null || true
         else
-            docker compose "${COMPOSE_ARGS[@]}" down --remove-orphans 2>/dev/null || true
+            # Include active profiles so profile-bound services remain visible to compose.
+            local ALL_PROFILES=(--profile split --profile web)
+            docker compose "${COMPOSE_ARGS[@]}" "${ALL_PROFILES[@]}" stop 2>/dev/null || true
+            docker compose "${COMPOSE_ARGS[@]}" "${ALL_PROFILES[@]}" rm -f 2>/dev/null || true
         fi
         log_success "Docker services stopped"
     else
@@ -261,6 +281,9 @@ kill_process_tree_by_port() {
     local parent
     local found
     local existing
+    local process_name
+
+    local -a DOCKER_PROCS=("com.docker" "docker" "vpnkit" "Docker Desktop")
 
     pids_file=$(mktemp)
 
@@ -276,6 +299,17 @@ kill_process_tree_by_port() {
     declare -a parents=()
     while read -r pid; do
         parent=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+        process_name=$(ps -o comm= -p "$parent" 2>/dev/null | tr -d ' ')
+
+        local is_docker=false
+        for guard in "${DOCKER_PROCS[@]}"; do
+            if [[ "$process_name" == *"$guard"* ]]; then
+                is_docker=true
+                break
+            fi
+        done
+        [[ "$is_docker" == true ]] && continue
+
         if [[ -n "$parent" ]] && [[ "$parent" -ne 1 ]] && [[ "$parent" -ne $$ ]]; then
             # Check if parent is already in list
             found=false
@@ -392,12 +426,15 @@ main() {
         log_info "Stopping microservices..."
         if [[ ! -f "${DOCKER_COMPOSE_FILE}" ]]; then
             log_warn "docker-compose.yml not found, skipping microservices" >&2
-        elif [[ ! -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]]; then
-            log_warn "docker-compose.pipeline.yml not found, skipping microservices" >&2
+        elif [[ ! -f "${PROJECT_ROOT}/docker-compose.microservices.yml" ]]; then
+            log_warn "docker-compose.microservices.yml not found, skipping microservices" >&2
         else
             # Stop pipeline services via docker compose
             build_compose_args
-            docker compose "${COMPOSE_ARGS[@]}" stop extraction embeddings scorer-matcher orchestrator 2>/dev/null || true
+            # Include split so profile-bound pipeline services are visible to compose.
+            docker compose "${COMPOSE_ARGS[@]}" \
+                --profile split \
+                stop extraction embeddings scorer-matcher orchestrator 2>/dev/null || true
             log_success "Microservices stopped"
         fi
         echo ""
