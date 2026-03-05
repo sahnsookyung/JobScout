@@ -236,6 +236,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
     state.notify({"task_id": task_id, "status": "extracting", "message": "Starting extraction"})
 
     redis_client = None
+    pubsub = None
     try:
         enqueue_job(STREAM_EXTRACTION, {
             "task_id": task_id,
@@ -392,6 +393,11 @@ async def orchestrate_match(task_id: str, resume_file: str):
         state.notify({"task_id": task_id, "status": "failed", "error": str(e)})
     finally:
         if redis_client:
+            if pubsub:
+                try:
+                    await pubsub.unsubscribe()
+                except Exception:
+                    pass
             await redis_client.close()
         # Clear active task if this was the active one
         async with _orchestration_lock:

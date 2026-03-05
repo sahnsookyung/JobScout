@@ -133,12 +133,8 @@ def read_stream(
 
 def ack_message(stream: str, group: str, msg_id: str) -> bool:
     client = get_redis_client()
-    try:
-        client.xack(stream, group, msg_id)
-        return True
-    except Exception as e:
-        logger.error(f"Failed to ack message {msg_id}: {e}")
-        return False
+    client.xack(stream, group, msg_id)
+    return True
 
 
 def publish_completion(channel: str, payload: dict) -> int:
