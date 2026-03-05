@@ -171,15 +171,16 @@ async def cleanup_stale_orchestrations():
     """Periodically clean up old orchestration entries."""
     while True:
         await asyncio.sleep(300)  # Every 5 minutes
-        now = time.time()
-        stale = [k for k, v in orchestration_timestamps.items()
-                 if now - v > ORCHESTRATION_TTL]
-        for task_id in stale:
-            if task_id in orchestrations:
-                del orchestrations[task_id]
-            orchestration_timestamps.pop(task_id, None)
-        if stale:
-            logger.info(f"Cleaned up {len(stale)} stale orchestrations")
+        async with _orchestration_lock:
+            now = time.time()
+            stale = [k for k, v in orchestration_timestamps.items()
+                     if now - v > ORCHESTRATION_TTL]
+            for task_id in stale:
+                if task_id in orchestrations:
+                    del orchestrations[task_id]
+                orchestration_timestamps.pop(task_id, None)
+            if stale:
+                logger.info(f"Cleaned up {len(stale)} stale orchestrations")
 
 
 async def get_or_create_orchestration(task_id: str) -> OrchestrationState:
