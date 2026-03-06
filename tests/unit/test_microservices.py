@@ -120,6 +120,9 @@ class TestServiceClient:
         result = client.post("/orchestrate/match", json={})
         
         assert result == {"task_id": "123", "success": True}
+        mock_client_instance.request.assert_called_once_with(
+            "POST", "http://localhost:8084/orchestrate/match", json={}
+        )
 
 
 class TestOrchestratorClient:
