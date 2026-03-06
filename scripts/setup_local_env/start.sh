@@ -350,6 +350,13 @@ start_web_app() {
         exit 1
     fi
 
+    # Set microservice URLs for local development (when running web app locally but microservices in Docker)
+    # These allow the web backend to communicate with microservices on localhost
+    export EXTRACTION_URL=${EXTRACTION_URL:-http://localhost:8081}
+    export EMBEDDINGS_URL=${EMBEDDINGS_URL:-http://localhost:8082}
+    export SCORER_MATCHER_URL=${SCORER_MATCHER_URL:-http://localhost:8083}
+    export ORCHESTRATOR_URL=${ORCHESTRATOR_URL:-http://localhost:8084}
+
     # Check if port is already in use
     if lsof -ti:${BACKEND_PORT} >/dev/null 2>&1; then
         log_warn "Port ${BACKEND_PORT} is already in use. Attempting to kill..."
