@@ -260,9 +260,9 @@ async def orchestrate_match(task_id: str, resume_file: str):
         # Subscribe to completion channel FIRST (before enqueueing)
         logger.info(f"📡 Subscribing to completion channel: {CHANNEL_EXTRACTION_DONE}")
         await pubsub.subscribe(CHANNEL_EXTRACTION_DONE)
-        
+
         # Verify subscription
-        channels = await pubsub.channels()
+        channels = pubsub.channels  # Property, not method
         logger.info(f"📡 Subscribed to channels: {channels}")
         
         # Now enqueue the job
@@ -322,7 +322,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
             await pubsub.subscribe(CHANNEL_EMBEDDINGS_DONE)
             
             # Verify subscription
-            channels = await pubsub.channels()
+            channels = pubsub.channels  # Property, not method
             logger.info(f"📡 Now subscribed to channels: {channels}")
 
             logger.info(f"📤 Enqueueing embeddings job to {STREAM_EMBEDDINGS}")
@@ -377,7 +377,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
             await pubsub.subscribe(CHANNEL_MATCHING_DONE)
             
             # Verify subscription
-            channels = await pubsub.channels()
+            channels = pubsub.channels  # Property, not method
             logger.info(f"📡 Now subscribed to channels: {channels}")
 
             logger.info(f"📤 Enqueueing matching job to {STREAM_MATCHING}")

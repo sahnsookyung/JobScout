@@ -15,9 +15,15 @@ x-service-common: &service-common
     # Note: Defaults match postgres/redis service defaults for development
     - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-jobscout}
     - REDIS_URL=redis://:${REDIS_PASSWORD:-jobscoutredis}@redis:6379/0
+    - PYTHONUNBUFFERED=1
   env_file:
     - .env
   restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 services:
   postgres:
