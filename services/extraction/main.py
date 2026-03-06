@@ -210,62 +210,85 @@ async def consume_extraction_jobs():
     """Background task that consumes extraction jobs from Redis Streams."""
     from services.base.extraction import process_resume
 
-    logger.info(f"Starting extraction consumer: {CONSUMER_NAME}")
+    logger.info(f"Starting extraction consumer: {CONSUMER_NAME} (group: {CONSUMER_GROUP})")
     loop = asyncio.get_running_loop()
+    message_count = 0
+    error_count = 0
 
     while True:
         try:
-            messages = await loop.run_in_executor(
-                None,
-                lambda: list(read_stream(STREAM_EXTRACTION, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000))
-            )
-            for msg_id, msg in messages:
-                task_id = msg.get("task_id")
-                resume_file = msg.get("resume_file")
-
-                # Validate path before processing
-                is_valid, result = _validate_resume_path(resume_file)
-                if not is_valid:
-                    logger.error(f"Invalid path in extraction job: task_id={task_id}, file={resume_file}")
-                    publish_completion(CHANNEL_EXTRACTION_DONE, {
-                        "task_id": task_id,
-                        "status": "failed",
-                        "error": "Invalid resume file path"
-                    })
-                    ack_message(STREAM_EXTRACTION, CONSUMER_GROUP, msg_id)
-                    continue
-
-                logger.info(f"Processing extraction job: task_id={task_id}, file={result}")
-
+            # Get messages one at a time using next() on the generator
+            # The generator will block for up to block=5000ms waiting for messages
+            # Use run_in_executor with a timeout to avoid blocking forever
+            def get_one_message():
+                gen = read_stream(STREAM_EXTRACTION, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000)
                 try:
-                    if ctx is None:
-                        raise RuntimeError("AppContext not initialized")
-                    # process_resume now returns (changed, fingerprint)
-                    changed, fingerprint = await loop.run_in_executor(None, process_resume, ctx, result)
+                    return next(gen)
+                except StopIteration:
+                    return None
 
-                    status = "skipped" if not changed else "completed"
-                    publish_completion(CHANNEL_EXTRACTION_DONE, {
-                        "task_id": task_id,
-                        "status": status,
-                        "resume_fingerprint": fingerprint or ""
-                    })
+            logger.debug("Waiting for extraction job from Redis stream...")
+            result = await asyncio.wait_for(loop.run_in_executor(None, get_one_message), timeout=10.0)
 
-                    ack_message(STREAM_EXTRACTION, CONSUMER_GROUP, msg_id)
-                    logger.info(f"Extraction job done: task_id={task_id}, status={status}")
+            if result is None:
+                logger.debug("No messages received (timeout), continuing...")
+                continue
 
-                except Exception as e:
-                    logger.exception(f"Extraction failed: task_id={task_id}")
-                    publish_completion(CHANNEL_EXTRACTION_DONE, {
-                        "task_id": task_id,
-                        "status": "failed",
-                        "error": str(e)
-                    })
-                    # Ack to prevent infinite redelivery; failure is recorded in completion event
-                    ack_message(STREAM_EXTRACTION, CONSUMER_GROUP, msg_id)
+            msg_id, msg = result
+            message_count += 1
+            task_id = msg.get("task_id")
+            resume_file = msg.get("resume_file")
+
+            logger.info(f"📨 Received extraction job: msg_id={msg_id}, task_id={task_id}, file={resume_file}")
+
+            # Validate path before processing
+            is_valid, result = _validate_resume_path(resume_file)
+            if not is_valid:
+                logger.error(f"❌ Invalid path in extraction job: task_id={task_id}, file={resume_file}")
+                publish_completion(CHANNEL_EXTRACTION_DONE, {
+                    "task_id": task_id,
+                    "status": "failed",
+                    "error": "Invalid resume file path"
+                })
+                ack_message(STREAM_EXTRACTION, CONSUMER_GROUP, msg_id)
+                logger.info(f"✅ Acknowledged failed job: msg_id={msg_id}")
+                error_count += 1
+                continue
+
+            logger.info(f"⚙️ Processing extraction job: task_id={task_id}, file={result}")
+
+            try:
+                if ctx is None:
+                    raise RuntimeError("AppContext not initialized")
+                # process_resume now returns (changed, fingerprint)
+                changed, fingerprint = await loop.run_in_executor(None, process_resume, ctx, result)
+
+                status = "skipped" if not changed else "completed"
+                publish_completion(CHANNEL_EXTRACTION_DONE, {
+                    "task_id": task_id,
+                    "status": status,
+                    "resume_fingerprint": fingerprint or ""
+                })
+
+                ack_message(STREAM_EXTRACTION, CONSUMER_GROUP, msg_id)
+                logger.info(f"✅ Extraction job done: task_id={task_id}, status={status}, fingerprint={(fingerprint or '')[:16]}...")
+
+            except Exception as e:
+                error_count += 1
+                logger.exception(f"❌ Extraction failed: task_id={task_id}, error={type(e).__name__}: {e}")
+                publish_completion(CHANNEL_EXTRACTION_DONE, {
+                    "task_id": task_id,
+                    "status": "failed",
+                    "error": str(e)
+                })
+                # Ack to prevent infinite redelivery; failure is recorded in completion event
+                ack_message(STREAM_EXTRACTION, CONSUMER_GROUP, msg_id)
+                logger.info(f"✅ Acknowledged failed job: msg_id={msg_id}")
 
         except asyncio.CancelledError:
-            logger.info("Extraction consumer cancelled")
+            logger.info(f"🛑 Extraction consumer cancelled (processed: {message_count}, errors: {error_count})")
             break
         except Exception as e:
-            logger.error(f"Error in extraction consumer: {e}")
+            error_count += 1
+            logger.exception(f"❌ Error in extraction consumer: {type(e).__name__}: {e}")
             await asyncio.sleep(1)

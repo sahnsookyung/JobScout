@@ -27,6 +27,8 @@ dev = [
     "jsonschema>=4.26.0",
     "vulture>=2.14",
     "reportlab>=4.0.0",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
 ]
 web = [
     "fastapi>=0.128.1",
@@ -44,3 +46,9 @@ testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py", "integration_test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    "ignore::RuntimeWarning:asyncio",
+    "ignore:coroutine 'AsyncMockMixin.*was never awaited",
+]

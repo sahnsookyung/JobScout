@@ -50,23 +50,31 @@ ctx: AppContext | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global ctx
-    logger.info("Starting orchestrator service...")
+    logger.info("=" * 60)
+    logger.info("STARTING ORCHESTRATOR SERVICE")
+    logger.info("=" * 60)
+    logger.info("🚀 Starting orchestrator service...")
     config = load_config()
     ctx = AppContext.build(config)
-    logger.info("Orchestrator service ready")
-    
+    logger.info("✅ Orchestrator service ready")
+    logger.info(f"📡 Will subscribe to channels: {CHANNEL_EXTRACTION_DONE}, {CHANNEL_EMBEDDINGS_DONE}, {CHANNEL_MATCHING_DONE}")
+    logger.info("=" * 60)
+
     # Start cleanup task
     cleanup_task = asyncio.create_task(cleanup_stale_orchestrations())
-    
+
     yield
-    
+
     # Cancel cleanup task
     cleanup_task.cancel()
     try:
         await cleanup_task
     except asyncio.CancelledError:
         pass
-    
+
+    logger.info("=" * 60)
+    logger.info("SHUTTING DOWN ORCHESTRATOR SERVICE")
+    logger.info("=" * 60)
     logger.info("Shutting down orchestrator service...")
 
 
@@ -243,19 +251,35 @@ async def orchestrate_match(task_id: str, resume_file: str):
     redis_client = None
     pubsub = None
     try:
+        logger.info(f"🚀 Starting pipeline for task: {task_id}")
+        
+        # Create Redis client and pubsub BEFORE enqueueing job
+        redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
+        pubsub = redis_client.pubsub()
+        
+        # Subscribe to completion channel FIRST (before enqueueing)
+        logger.info(f"📡 Subscribing to completion channel: {CHANNEL_EXTRACTION_DONE}")
+        await pubsub.subscribe(CHANNEL_EXTRACTION_DONE)
+        
+        # Verify subscription
+        channels = await pubsub.channels()
+        logger.info(f"📡 Subscribed to channels: {channels}")
+        
+        # Now enqueue the job
+        logger.info(f"📤 Enqueueing extraction job to {STREAM_EXTRACTION}")
         enqueue_job(STREAM_EXTRACTION, {
             "task_id": task_id,
             "resume_file": resume_file
         })
-
-        redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
-        pubsub = redis_client.pubsub()
-        await pubsub.subscribe(CHANNEL_EXTRACTION_DONE)
+        logger.info(f"✅ Extraction job enqueued successfully")
 
         # Wait for extraction completion
+        logger.info(f"⏳ Waiting for extraction completion (timeout: {LISTENER_TIMEOUT}s)...")
         try:
             data = await _wait_for_task_message(pubsub, task_id, LISTENER_TIMEOUT)
+            logger.info(f"📨 Received extraction response: status={data.get('status')}")
         except asyncio.TimeoutError:
+            logger.error(f"❌ Timeout waiting for extraction completion for task: {task_id}")
             state.status = "failed"
             state.error = "Timeout waiting for extraction completion"
             state._save_to_redis()
@@ -263,6 +287,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
             return
 
         if data.get("status") == "failed":
+            logger.error(f"❌ Extraction failed for task {task_id}: {data.get('error')}")
             state.status = "failed"
             state.error = data.get("error", "Extraction failed")
             state._save_to_redis()
@@ -272,6 +297,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
         if data.get("status") in ("skipped", "completed"):
             fp = data.get("resume_fingerprint")
             if not fp:
+                logger.error(f"❌ No fingerprint in extraction response for task: {task_id}")
                 state.status = "failed"
                 state.error = "No fingerprint in extraction response"
                 state._save_to_redis()
@@ -281,24 +307,33 @@ async def orchestrate_match(task_id: str, resume_file: str):
             state.resume_fingerprint = fp
 
             if data.get("status") == "skipped":
-                logger.info(f"Resume unchanged, using existing: {fp[:16]}...")
+                logger.info(f"ℹ️ Resume unchanged, using existing: {fp[:16]}...")
             else:
-                logger.info(f"Extraction complete: {fp[:16]}...")
+                logger.info(f"✅ Extraction complete: {fp[:16]}...")
 
             state.status = "embedding"
             state._save_to_redis()
             await state.notify({"task_id": task_id, "status": "embedding", "message": "Starting embeddings"})
 
+            # Switch to embeddings channel
+            logger.info(f"📡 Unsubscribing from {CHANNEL_EXTRACTION_DONE}")
+            await pubsub.unsubscribe(CHANNEL_EXTRACTION_DONE)
+            logger.info(f"📡 Subscribing to channel: {CHANNEL_EMBEDDINGS_DONE}")
+            await pubsub.subscribe(CHANNEL_EMBEDDINGS_DONE)
+            
+            # Verify subscription
+            channels = await pubsub.channels()
+            logger.info(f"📡 Now subscribed to channels: {channels}")
+
+            logger.info(f"📤 Enqueueing embeddings job to {STREAM_EMBEDDINGS}")
             enqueue_job(STREAM_EMBEDDINGS, {
                 "task_id": task_id,
                 "resume_fingerprint": state.resume_fingerprint
             })
-
-            await pubsub.unsubscribe(CHANNEL_EXTRACTION_DONE)
-            await pubsub.subscribe(CHANNEL_EMBEDDINGS_DONE)
+            logger.info(f"✅ Embeddings job enqueued successfully")
         else:
             # Unexpected status - treat as error
-            logger.warning(f"Unexpected status in extraction response: {data.get('status')}")
+            logger.warning(f"❌ Unexpected status in extraction response: {data.get('status')}")
             state.status = "failed"
             state.error = f"Unexpected status from extraction: {data.get('status')}"
             state._save_to_redis()
@@ -306,9 +341,12 @@ async def orchestrate_match(task_id: str, resume_file: str):
             return
 
         # Wait for embeddings completion
+        logger.info(f"⏳ Waiting for embeddings completion (timeout: {LISTENER_TIMEOUT}s)...")
         try:
             data = await _wait_for_task_message(pubsub, task_id, LISTENER_TIMEOUT)
+            logger.info(f"📨 Received embeddings response: status={data.get('status')}")
         except asyncio.TimeoutError:
+            logger.error(f"❌ Timeout waiting for embeddings completion for task: {task_id}")
             state.status = "failed"
             state.error = "Timeout waiting for embeddings completion"
             state._save_to_redis()
@@ -316,6 +354,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
             return
 
         if data.get("status") == "failed":
+            logger.error(f"❌ Embeddings failed for task {task_id}: {data.get('error')}")
             state.status = "failed"
             state.error = data.get("error", "Embeddings failed")
             state._save_to_redis()
@@ -325,22 +364,31 @@ async def orchestrate_match(task_id: str, resume_file: str):
         if data.get("status") == "completed":
             fp = state.resume_fingerprint
             if fp:
-                logger.info(f"Embeddings complete: {fp[:16]}...")
+                logger.info(f"✅ Embeddings complete: {fp[:16]}...")
 
             state.status = "matching"
             state._save_to_redis()
             await state.notify({"task_id": task_id, "status": "matching", "message": "Starting matching"})
 
+            # Switch to matching channel
+            logger.info(f"📡 Unsubscribing from {CHANNEL_EMBEDDINGS_DONE}")
+            await pubsub.unsubscribe(CHANNEL_EMBEDDINGS_DONE)
+            logger.info(f"📡 Subscribing to channel: {CHANNEL_MATCHING_DONE}")
+            await pubsub.subscribe(CHANNEL_MATCHING_DONE)
+            
+            # Verify subscription
+            channels = await pubsub.channels()
+            logger.info(f"📡 Now subscribed to channels: {channels}")
+
+            logger.info(f"📤 Enqueueing matching job to {STREAM_MATCHING}")
             enqueue_job(STREAM_MATCHING, {
                 "task_id": task_id,
                 "resume_fingerprint": state.resume_fingerprint
             })
-
-            await pubsub.unsubscribe(CHANNEL_EMBEDDINGS_DONE)
-            await pubsub.subscribe(CHANNEL_MATCHING_DONE)
+            logger.info(f"✅ Matching job enqueued successfully")
         else:
             # Unexpected status - treat as error
-            logger.warning(f"Unexpected status in embeddings response: {data.get('status')}")
+            logger.warning(f"❌ Unexpected status in embeddings response: {data.get('status')}")
             state.status = "failed"
             state.error = f"Unexpected status from embeddings: {data.get('status')}"
             state._save_to_redis()
@@ -348,9 +396,12 @@ async def orchestrate_match(task_id: str, resume_file: str):
             return
 
         # Wait for matching completion
+        logger.info(f"⏳ Waiting for matching completion (timeout: {LISTENER_TIMEOUT}s)...")
         try:
             data = await _wait_for_task_message(pubsub, task_id, LISTENER_TIMEOUT)
+            logger.info(f"📨 Received matching response: status={data.get('status')}, matches={data.get('matches_count')}")
         except asyncio.TimeoutError:
+            logger.error(f"❌ Timeout waiting for matching completion for task: {task_id}")
             state.status = "failed"
             state.error = "Timeout waiting for matching completion"
             state._save_to_redis()
@@ -358,6 +409,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
             return
 
         if data.get("status") == "failed":
+            logger.error(f"❌ Matching failed for task {task_id}: {data.get('error')}")
             state.status = "failed"
             state.error = data.get("error", "Matching failed")
             state._save_to_redis()
@@ -368,6 +420,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
             state.status = "completed"
             state.matches_count = data.get("matches_count", 0)
             state._save_to_redis()
+            logger.info(f"🎉 Pipeline completed successfully for task {task_id}: {state.matches_count} matches")
             await state.notify({
                 "task_id": task_id,
                 "status": "completed",
@@ -377,7 +430,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
             return
         else:
             # Unexpected status - treat as error
-            logger.warning(f"Unexpected status in matching response: {data.get('status')}")
+            logger.warning(f"❌ Unexpected status in matching response: {data.get('status')}")
             state.status = "failed"
             state.error = f"Unexpected status from matching: {data.get('status')}"
             state._save_to_redis()
@@ -385,13 +438,13 @@ async def orchestrate_match(task_id: str, resume_file: str):
             return
 
     except asyncio.TimeoutError as e:
-        logger.exception(f"Orchestration timeout for task {task_id}")
+        logger.exception(f"❌ Orchestration timeout for task {task_id}")
         state.status = "failed"
         state.error = f"Orchestration timeout: {str(e)}"
         state._save_to_redis()
         await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
     except Exception as e:
-        logger.exception(f"Orchestration failed for task {task_id}")
+        logger.exception(f"❌ Orchestration failed for task {task_id}")
         state.status = "failed"
         state.error = str(e)
         state._save_to_redis()
@@ -400,10 +453,15 @@ async def orchestrate_match(task_id: str, resume_file: str):
         if redis_client:
             if pubsub:
                 try:
+                    logger.info(f"📡 Unsubscribing from all channels")
                     await pubsub.unsubscribe()
-                except Exception:
-                    pass
-            await redis_client.close()
+                    await pubsub.close()
+                except Exception as e:
+                    logger.warning(f"Failed to close pubsub: {e}")
+            try:
+                await redis_client.close()
+            except Exception as e:
+                logger.warning(f"Failed to close Redis client: {e}")
         # Clear active task if this was the active one
         async with _orchestration_lock:
             active_task_ids.discard(task_id)
@@ -443,7 +501,26 @@ async def _wait_for_next_message(pubsub, timeout: float = 300.0) -> dict:
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "service": "orchestrator"}
+    """Health check endpoint with Redis connectivity verification."""
+    from core.redis_streams import get_redis_client
+    import redis
+    
+    redis_status = "unknown"
+    try:
+        client = get_redis_client()
+        client.ping()
+        redis_status = "connected"
+    except redis.ConnectionError as e:
+        redis_status = f"connection_error: {e}"
+    except Exception as e:
+        redis_status = f"error: {e}"
+    
+    return {
+        "status": "healthy",
+        "service": "orchestrator",
+        "redis": redis_status,
+        "active_tasks": len(active_task_ids)
+    }
 
 
 @app.get("/metrics")
@@ -484,7 +561,12 @@ async def _handle_task_done(task_id: str, t: asyncio.Task):
 @app.post("/orchestrate/match", response_model=MatchResponse)
 async def orchestrate_match_endpoint():
     """Trigger the full pipeline: extraction -> embeddings -> matching."""
+    logger.info("=" * 60)
+    logger.info("📨 HTTP POST /orchestrate/match received")
+    logger.info("=" * 60)
+    
     task_id = f"match-{uuid.uuid4().hex[:8]}"
+    logger.info(f"🆔 Created task: {task_id}")
 
     config = load_config()
     resume_file = None
@@ -492,11 +574,15 @@ async def orchestrate_match_endpoint():
         resume_file = config.etl.resume.resume_file
 
     if not resume_file:
+        logger.error(f"❌ No resume file configured in config")
         return MatchResponse(
             success=False,
             task_id=task_id,
             message="No resume file configured"
         )
+    
+    logger.info(f"📄 Using resume file: {resume_file}")
+    logger.info(f"🚀 Creating orchestration task...")
 
     task = asyncio.create_task(orchestrate_match(task_id, resume_file))
 
@@ -561,10 +647,10 @@ async def get_active_orchestration():
     global active_task_ids
     async with _orchestration_lock:
         task_ids = list(active_task_ids)
-    
+
     if not task_ids:
         return {"success": False, "message": "No active tasks"}
-    
+
     states = []
     for task_id in task_ids:
         state = await get_or_create_orchestration(task_id)
@@ -575,8 +661,94 @@ async def get_active_orchestration():
             "matches_count": state.matches_count,
             "error": state.error
         })
-    
+
     return {"success": True, "tasks": states}
+
+
+@app.get("/orchestrate/diagnostics")
+async def get_diagnostics():
+    """Get diagnostics for Redis streams and consumer groups.
+    
+    This endpoint provides visibility into:
+    - Stream lengths and pending messages
+    - Consumer group status
+    - Active orchestrations
+    - Recent task states
+    """
+    from core.redis_streams import get_redis_client, stream_exists, get_stream_info
+    
+    redis_client = get_redis_client()
+    
+    # Get stream info for all streams
+    streams_info = {}
+    for stream_name in [STREAM_EXTRACTION, STREAM_EMBEDDINGS, STREAM_MATCHING]:
+        try:
+            if stream_exists(stream_name):
+                info = get_stream_info(stream_name)
+                streams_info[stream_name] = {
+                    "exists": True,
+                    "length": info.get("length", 0),
+                    "first_entry": info.get("first-entry"),
+                    "last_entry": info.get("last-entry"),
+                    "groups": info.get("groups", 0),
+                }
+                
+                # Get consumer group info
+                try:
+                    groups = redis_client.xinfo_groups(stream_name)
+                    streams_info[stream_name]["consumer_groups"] = [
+                        {
+                            "name": g.get("name"),
+                            "consumers": g.get("consumers", 0),
+                            "pending": g.get("pending", 0),
+                            "last_delivered_id": g.get("last-delivered-id"),
+                        }
+                        for g in groups
+                    ]
+                except Exception as e:
+                    streams_info[stream_name]["consumer_groups_error"] = str(e)
+            else:
+                streams_info[stream_name] = {"exists": False, "length": 0}
+        except Exception as e:
+            streams_info[stream_name] = {"error": str(e)}
+    
+    # Get active orchestrations
+    async with _orchestration_lock:
+        active_task_ids_list = list(active_task_ids)
+        active_states = []
+        for task_id in active_task_ids_list:
+            if task_id in orchestrations:
+                state = orchestrations[task_id]
+                active_states.append({
+                    "task_id": task_id,
+                    "status": state.status,
+                    "error": state.error,
+                })
+    
+    # Get recent task states from Redis
+    recent_tasks = []
+    try:
+        keys = redis_client.keys("task:*:state")
+        for key in keys[:10]:  # Limit to 10 most recent
+            task_id = key.split(":")[1]
+            task_data = get_task_state(task_id)
+            if task_data:
+                recent_tasks.append({
+                    "task_id": task_id,
+                    "status": task_data.get("status"),
+                    "error": task_data.get("error"),
+                })
+    except Exception as e:
+        recent_tasks = {"error": str(e)}
+    
+    return {
+        "success": True,
+        "timestamp": time.time(),
+        "streams": streams_info,
+        "active_orchestrations": active_states,
+        "recent_tasks": recent_tasks,
+        "active_task_count": len(active_task_ids_list),
+    }
 
 
 @app.post("/orchestrate/stop")
