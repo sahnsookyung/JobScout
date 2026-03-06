@@ -8,9 +8,10 @@ import os
 import asyncio
 import logging
 from pathlib import Path
+from typing import Annotated, Optional
+
 from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Request
 from fastapi.responses import StreamingResponse, JSONResponse
-from typing import Optional
 
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -252,8 +253,8 @@ def check_resume_hash_endpoint(request: Request, body: ResumeHashCheckRequest):
 @limiter.limit("5/minute")
 async def upload_resume_endpoint(
     request: Request,
-    file: UploadFile = File(...),
-    resume_hash: Optional[str] = Form(None)
+    file: Annotated[UploadFile, File(...)],
+    resume_hash: Annotated[Optional[str], Form(None)] = None,
 ):
     """
     Upload a resume file.

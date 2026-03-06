@@ -73,18 +73,23 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
           REDIS_URL: redis://localhost:6379/1
 
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-xml
-          path: coverage.xml
-          retention-days: 1
+      - name: Verify coverage file exists
+        run: |
+          ls -la coverage.xml
+          ls -la htmlcov/
 
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 1
 
       - name: Cleanup Redis container
         if: always()

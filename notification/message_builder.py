@@ -14,7 +14,7 @@ class JobNotificationContent(BaseModel):
 class JobInfo(BaseModel):
     title: str
     company: str
-    location: Optional[str]
+    location: Optional[str] = None
     is_remote: bool
     salary: Optional[str] = None
     job_type: Optional[str] = None
