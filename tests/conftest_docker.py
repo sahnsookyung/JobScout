@@ -7,7 +7,7 @@ and Redis containers for integration testing.
 Usage:
     import pytest
     from tests.conftest_docker import postgres_container, redis_container
-    
+
     def test_something(postgres_container, redis_container):
         # Use containers here
         pass
@@ -21,6 +21,11 @@ import atexit
 import uuid
 from typing import Optional, Generator
 from contextlib import contextmanager
+
+# Test database credentials (not production credentials)
+TEST_DB_USER = "test"
+TEST_DB_PASSWORD = "test"
+TEST_DB_NAME = "jobscout_test"
 
 
 class TestContainer:
@@ -113,15 +118,15 @@ class PostgresContainer(TestContainer):
             image='ankane/pgvector:latest',
             ports={host_port: 5432},
             env={
-                'POSTGRES_USER': 'test',
-                'POSTGRES_PASSWORD': 'test',
-                'POSTGRES_DB': 'jobscout_test'
+                'POSTGRES_USER': TEST_DB_USER,
+                'POSTGRES_PASSWORD': TEST_DB_PASSWORD,
+                'POSTGRES_DB': TEST_DB_NAME
             },
             ready_check=lambda: self._check_ready(host_port),
             ready_timeout=30
         )
         self.host_port = host_port
-        self.database_url = f"postgresql://test:test@localhost:{host_port}/jobscout_test"
+        self.database_url = f"postgresql://{TEST_DB_USER}:{TEST_DB_PASSWORD}@localhost:{host_port}/{TEST_DB_NAME}"
     
     def _check_ready(self, port: int) -> bool:
         """Check if PostgreSQL is accepting connections."""
@@ -130,14 +135,14 @@ class PostgresContainer(TestContainer):
             conn = psycopg2.connect(
                 host='localhost',
                 port=port,
-                user='test',
-                password='test',
-                database='jobscout_test',
+                user=TEST_DB_USER,
+                password=TEST_DB_PASSWORD,
+                database=TEST_DB_NAME,
                 connect_timeout=2
             )
             conn.close()
             return True
-        except:
+        except Exception:
             return False
 
 
@@ -162,7 +167,7 @@ class RedisContainer(TestContainer):
             import redis
             r = redis.Redis(host='localhost', port=port, socket_connect_timeout=2)
             return r.ping()
-        except:
+        except Exception:
             return False
 
 

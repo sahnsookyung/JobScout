@@ -33,15 +33,15 @@ class MatchSummary(BaseModel):
     )
 
     match_id: str
-    job_id: Optional[str]
+    job_id: Optional[str] = None
     title: str
     company: str
-    location: Optional[str]
-    is_remote: Optional[bool]
+    location: Optional[str] = None
+    is_remote: Optional[bool] = None
 
     # Explicit Fit/Want/Overall scores
-    fit_score: Optional[float] = Field(None, ge=0, le=100)
-    want_score: Optional[float] = Field(None, ge=0, le=100)
+    fit_score: Optional[float] = Field(default=None, ge=0, le=100)
+    want_score: Optional[float] = Field(default=None, ge=0, le=100)
     overall_score: float = Field(ge=0, le=100)
 
     # Legacy fields for backward compatibility
@@ -51,16 +51,16 @@ class MatchSummary(BaseModel):
     preferred_coverage: float = Field(ge=0, le=1)
     match_type: str
     is_hidden: bool = False
-    created_at: Optional[str]
-    calculated_at: Optional[str]
+    created_at: Optional[str] = None
+    calculated_at: Optional[str] = None
 
 
 class RequirementDetail(BaseModel):
     """Details of a requirement match."""
     requirement_id: str
-    requirement_text: Optional[str]
-    evidence_text: Optional[str]
-    evidence_section: Optional[str]
+    requirement_text: Optional[str] = None
+    evidence_text: Optional[str] = None
+    evidence_section: Optional[str] = None
     similarity_score: float = Field(ge=0, le=1)
     is_covered: bool
     req_type: str
@@ -68,19 +68,19 @@ class RequirementDetail(BaseModel):
 
 class JobDetails(BaseModel):
     """Details of a job posting."""
-    job_id: Optional[str]
-    title: Optional[str]
-    company: Optional[str]
-    location: Optional[str]
-    is_remote: Optional[bool]
-    description: Optional[str]
-    salary_min: Optional[float]
-    salary_max: Optional[float]
-    currency: Optional[str]
-    min_years_experience: Optional[int]
-    requires_degree: Optional[bool]
-    security_clearance: Optional[bool]
-    job_level: Optional[str]
+    job_id: Optional[str] = None
+    title: Optional[str] = None
+    company: Optional[str] = None
+    location: Optional[str] = None
+    is_remote: Optional[bool] = None
+    description: Optional[str] = None
+    salary_min: Optional[float] = None
+    salary_max: Optional[float] = None
+    currency: Optional[str] = None
+    min_years_experience: Optional[int] = None
+    requires_degree: Optional[bool] = None
+    security_clearance: Optional[bool] = None
+    job_level: Optional[str] = None
 
 
 class MatchDetail(BaseModel):
@@ -108,8 +108,8 @@ class MatchDetail(BaseModel):
     matched_requirements_count: int
     match_type: str
     status: str
-    created_at: Optional[str]
-    calculated_at: Optional[str]
+    created_at: Optional[str] = None
+    calculated_at: Optional[str] = None
     penalty_details: Dict[str, Any]
 
 

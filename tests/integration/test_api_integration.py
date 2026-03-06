@@ -38,7 +38,7 @@ def submit_job(site_type, search_term=None, location=None, results_wanted=3, opt
         print(f"✗ Failed to submit job: {e}")
         try:
              print(f"Response content: {response.text}")
-        except:
+        except Exception:
              pass
         return None
 
