@@ -71,7 +71,7 @@ class OrchestrationState:
         self.resume_file: Optional[str] = None
         self.matches_count: int = 0
         self.error: Optional[str] = None
-        self._subscribers: list[asyncio.Queue] = []
+        self._subscribers: set[asyncio.Queue] = set()
         
         if load_from_redis:
             self._load_from_redis()
@@ -105,20 +105,21 @@ class OrchestrationState:
     
     def subscribe(self) -> asyncio.Queue:
         queue = asyncio.Queue()
-        self._subscribers.append(queue)
+        self._subscribers.add(queue)
         return queue
 
     def unsubscribe(self, queue: asyncio.Queue) -> None:
         """Remove a subscriber queue to prevent memory leaks."""
-        if queue in self._subscribers:
-            self._subscribers.remove(queue)
+        self._subscribers.discard(queue)
     
-    def notify(self, data: dict):
-        for queue in list(self._subscribers):  # Iterate over a copy to avoid modification during iteration
+    async def notify(self, data: dict) -> None:
+        subscribers = set(self._subscribers)
+        for queue in subscribers:
             try:
-                queue.put_nowait(data)
+                await queue.put(data)
             except Exception as e:
                 logger.error(f"Failed to notify subscriber: {e}")
+                self._subscribers.discard(queue)
     
     async def close(self):
         for queue in self._subscribers:
@@ -219,7 +220,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
     state.status = "extracting"
     state.resume_file = resume_file
     state._save_to_redis()
-    state.notify({"task_id": task_id, "status": "extracting", "message": "Starting extraction"})
+    await state.notify({"task_id": task_id, "status": "extracting", "message": "Starting extraction"})
 
     redis_client = None
     pubsub = None
@@ -240,14 +241,14 @@ async def orchestrate_match(task_id: str, resume_file: str):
             state.status = "failed"
             state.error = "Timeout waiting for extraction completion"
             state._save_to_redis()
-            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
             return
 
         if data.get("status") == "failed":
             state.status = "failed"
             state.error = data.get("error", "Extraction failed")
             state._save_to_redis()
-            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
             return
 
         if data.get("status") in ("skipped", "completed"):
@@ -256,7 +257,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
                 state.status = "failed"
                 state.error = "No fingerprint in extraction response"
                 state._save_to_redis()
-                state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+                await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
                 return
 
             state.resume_fingerprint = fp
@@ -268,7 +269,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
 
             state.status = "embedding"
             state._save_to_redis()
-            state.notify({"task_id": task_id, "status": "embedding", "message": "Starting embeddings"})
+            await state.notify({"task_id": task_id, "status": "embedding", "message": "Starting embeddings"})
 
             enqueue_job(STREAM_EMBEDDINGS, {
                 "task_id": task_id,
@@ -283,7 +284,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
             state.status = "failed"
             state.error = f"Unexpected status from extraction: {data.get('status')}"
             state._save_to_redis()
-            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
             return
 
         # Wait for embeddings completion
@@ -293,14 +294,14 @@ async def orchestrate_match(task_id: str, resume_file: str):
             state.status = "failed"
             state.error = "Timeout waiting for embeddings completion"
             state._save_to_redis()
-            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
             return
 
         if data.get("status") == "failed":
             state.status = "failed"
             state.error = data.get("error", "Embeddings failed")
             state._save_to_redis()
-            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
             return
 
         if data.get("status") == "completed":
@@ -310,7 +311,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
 
             state.status = "matching"
             state._save_to_redis()
-            state.notify({"task_id": task_id, "status": "matching", "message": "Starting matching"})
+            await state.notify({"task_id": task_id, "status": "matching", "message": "Starting matching"})
 
             enqueue_job(STREAM_MATCHING, {
                 "task_id": task_id,
@@ -325,7 +326,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
             state.status = "failed"
             state.error = f"Unexpected status from embeddings: {data.get('status')}"
             state._save_to_redis()
-            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
             return
 
         # Wait for matching completion
@@ -335,21 +336,21 @@ async def orchestrate_match(task_id: str, resume_file: str):
             state.status = "failed"
             state.error = "Timeout waiting for matching completion"
             state._save_to_redis()
-            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
             return
 
         if data.get("status") == "failed":
             state.status = "failed"
             state.error = data.get("error", "Matching failed")
             state._save_to_redis()
-            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
             return
 
         if data.get("status") == "completed":
             state.status = "completed"
             state.matches_count = data.get("matches_count", 0)
             state._save_to_redis()
-            state.notify({
+            await state.notify({
                 "task_id": task_id,
                 "status": "completed",
                 "matches_count": state.matches_count,
@@ -362,7 +363,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
             state.status = "failed"
             state.error = f"Unexpected status from matching: {data.get('status')}"
             state._save_to_redis()
-            state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
             return
 
     except asyncio.TimeoutError as e:
@@ -370,13 +371,13 @@ async def orchestrate_match(task_id: str, resume_file: str):
         state.status = "failed"
         state.error = f"Orchestration timeout: {str(e)}"
         state._save_to_redis()
-        state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+        await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
     except Exception as e:
         logger.exception(f"Orchestration failed for task {task_id}")
         state.status = "failed"
         state.error = str(e)
         state._save_to_redis()
-        state.notify({"task_id": task_id, "status": "failed", "error": str(e)})
+        await state.notify({"task_id": task_id, "status": "failed", "error": str(e)})
     finally:
         if redis_client:
             if pubsub:
@@ -451,7 +452,7 @@ async def _handle_task_done(task_id: str, t: asyncio.Task):
                     state.status = "failed"
                     state.error = str(t.exception())
                     state._save_to_redis()
-                    state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+                    await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
     else:
         logger.info(f"Orchestration completed successfully: {task_id}")
     
@@ -595,7 +596,7 @@ async def stop_orchestration(task_id: str = None):
             state.status = "cancelled"
             state.error = "Cancelled by user"
             state._save_to_redis()
-            state.notify({"task_id": task_id, "status": "cancelled", "error": "Cancelled by user"})
+            await state.notify({"task_id": task_id, "status": "cancelled", "error": "Cancelled by user"})
             stopped.append(task_id)
     
     return {
