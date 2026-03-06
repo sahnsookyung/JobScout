@@ -12,10 +12,33 @@ This service:
 
 import asyncio
 import logging
+import os
 import time
 import json
+import uuid
+from contextlib import asynccontextmanager
 from typing import Optional
 import redis.asyncio as redis_async
+
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from core.app_context import AppContext
+from core.config_loader import load_config
+from core.redis_streams import (
+    enqueue_job,
+    publish_completion,
+    ack_message,
+    get_task_state,
+    set_task_state,
+    delete_task_state,
+    STREAM_EXTRACTION,
+    STREAM_EMBEDDINGS,
+    STREAM_MATCHING,
+    CHANNEL_EXTRACTION_DONE,
+    CHANNEL_EMBEDDINGS_DONE,
+    CHANNEL_MATCHING_DONE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -167,11 +190,6 @@ async def cleanup_stale_orchestrations():
 
         # Close states outside the lock to avoid deadlock
         for state in stale_states:
-            for queue in state._subscribers:
-                try:
-                    queue.put_nowait(None)
-                except Exception:
-                    pass
             await state.close()
 
 
@@ -420,6 +438,7 @@ async def _wait_for_next_message(pubsub, timeout: float = 300.0) -> dict:
         async for message in pubsub.listen():
             if message["type"] == "message":
                 return json.loads(message["data"])
+    raise asyncio.TimeoutError("No message received")
 
 
 @app.get("/health")
