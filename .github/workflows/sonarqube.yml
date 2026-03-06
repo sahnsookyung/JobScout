@@ -1,0 +1,103 @@
+name: SonarQube Code Quality
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run daily at 2 AM UTC to catch regressions
+    - cron: '0 2 * * *'
+
+jobs:
+  sonarqube:
+    name: SonarQube Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for better analysis
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv sync --all-extras
+          uv pip install pytest pytest-asyncio pytest-cov
+
+      - name: Run tests with coverage
+        run: |
+          # Run all tests with coverage
+          # Redis is available on localhost:6379 from GitHub Actions service
+          uv run pytest tests/ \
+            --cov=services \
+            --cov=core \
+            --cov=database \
+            --cov=etl \
+            --cov=pipeline \
+            --cov=notification \
+            --cov=web \
+            --cov=modal \
+            --cov-report=xml:coverage.xml \
+            --cov-report=html:htmlcov \
+            --cov-report=term \
+            -v --tb=short \
+            --ignore=tests/integration/test_full_pipeline.py \
+            --ignore=tests/integration/test_etl_real_data.py \
+            --ignore=tests/integration/test_openai_schema_validation.py \
+            --ignore=tests/integration/test_resume_schema.py \
+            --ignore=tests/integration/test_user_wants_pipeline.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          REDIS_URL: redis://localhost:6379/1
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 1
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+
+      - name: Cleanup Redis container
+        if: always()
+        run: |
+          docker stop redis-test || true
+          docker rm redis-test || true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            coverage.xml
+            htmlcov/
+          retention-days: 7

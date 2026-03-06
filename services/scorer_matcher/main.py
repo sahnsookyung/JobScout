@@ -182,20 +182,29 @@ if __name__ == "__main__":
 
 async def consume_matching_jobs():
     """Background task that consumes matching jobs from Redis Streams."""
-    logger.info(f"Starting matching consumer: {CONSUMER_NAME}")
+    logger.info(f"Starting matching consumer: {CONSUMER_NAME} (group: {CONSUMER_GROUP})")
     loop = asyncio.get_running_loop()
+    message_count = 0
+    error_count = 0
 
     while True:
         try:
+            logger.debug("Waiting for matching job from Redis stream...")
             messages = await loop.run_in_executor(
                 None,
                 lambda: list(read_stream(STREAM_MATCHING, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000))
             )
+            
+            if not messages:
+                logger.debug("No messages received (timeout), continuing...")
+                continue
+
             for msg_id, msg in messages:
+                message_count += 1
                 task_id = msg.get("task_id")
                 resume_fingerprint = msg.get("resume_fingerprint")
 
-                logger.info(f"Processing matching job: task_id={task_id}, fingerprint={(resume_fingerprint or '')[:16]}...")
+                logger.info(f"📨 Received matching job: msg_id={msg_id}, task_id={task_id}, fingerprint={(resume_fingerprint or '')[:16]}...")
 
                 try:
                     def run_pipeline():
@@ -216,10 +225,11 @@ async def consume_matching_jobs():
                     })
 
                     ack_message(STREAM_MATCHING, CONSUMER_GROUP, msg_id)
-                    logger.info(f"Matching job done: task_id={task_id}, matches={matches_count}")
+                    logger.info(f"✅ Matching job done: task_id={task_id}, matches={matches_count}")
 
                 except Exception as e:
-                    logger.exception(f"Matching failed: task_id={task_id}")
+                    error_count += 1
+                    logger.exception(f"❌ Matching failed: task_id={task_id}, error={type(e).__name__}: {e}")
                     publish_completion(CHANNEL_MATCHING_DONE, {
                         "task_id": task_id,
                         "status": "failed",
@@ -227,10 +237,12 @@ async def consume_matching_jobs():
                     })
                     # Ack to prevent infinite redelivery; failure is recorded in completion event
                     ack_message(STREAM_MATCHING, CONSUMER_GROUP, msg_id)
-                    
+                    logger.info(f"✅ Acknowledged failed job: msg_id={msg_id}")
+
         except asyncio.CancelledError:
-            logger.info("Matching consumer cancelled")
+            logger.info(f"🛑 Matching consumer cancelled (processed: {message_count}, errors: {error_count})")
             break
         except Exception as e:
-            logger.error(f"Error in matching consumer: {e}")
+            error_count += 1
+            logger.exception(f"❌ Error in matching consumer: {type(e).__name__}: {e}")
             await asyncio.sleep(1)

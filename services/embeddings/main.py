@@ -168,20 +168,29 @@ async def consume_embeddings_jobs():
     """Background task that consumes embeddings jobs from Redis Streams."""
     from services.base.embeddings import generate_resume_embedding
 
-    logger.info(f"Starting embeddings consumer: {CONSUMER_NAME}")
+    logger.info(f"Starting embeddings consumer: {CONSUMER_NAME} (group: {CONSUMER_GROUP})")
     loop = asyncio.get_running_loop()
+    message_count = 0
+    error_count = 0
 
     while True:
         try:
+            logger.debug("Waiting for embeddings job from Redis stream...")
             messages = await loop.run_in_executor(
                 None,
                 lambda: list(read_stream(STREAM_EMBEDDINGS, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000))
             )
+            
+            if not messages:
+                logger.debug("No messages received (timeout), continuing...")
+                continue
+
             for msg_id, msg in messages:
+                message_count += 1
                 task_id = msg.get("task_id")
                 resume_fingerprint = msg.get("resume_fingerprint")
 
-                logger.info(f"Processing embeddings job: task_id={task_id}, fingerprint={(resume_fingerprint or '')[:16]}...")
+                logger.info(f"📨 Received embeddings job: msg_id={msg_id}, task_id={task_id}, fingerprint={(resume_fingerprint or '')[:16]}...")
 
                 try:
                     if ctx is None:
@@ -195,10 +204,11 @@ async def consume_embeddings_jobs():
                     })
 
                     ack_message(STREAM_EMBEDDINGS, CONSUMER_GROUP, msg_id)
-                    logger.info(f"Embeddings job done: task_id={task_id}")
+                    logger.info(f"✅ Embeddings job done: task_id={task_id}, fingerprint={(resume_fingerprint or '')[:16]}...")
 
                 except Exception as e:
-                    logger.exception(f"Embeddings failed: task_id={task_id}")
+                    error_count += 1
+                    logger.exception(f"❌ Embeddings failed: task_id={task_id}, error={type(e).__name__}: {e}")
                     publish_completion(CHANNEL_EMBEDDINGS_DONE, {
                         "task_id": task_id,
                         "status": "failed",
@@ -206,10 +216,12 @@ async def consume_embeddings_jobs():
                     })
                     # Ack to prevent infinite redelivery; failure is recorded in completion event
                     ack_message(STREAM_EMBEDDINGS, CONSUMER_GROUP, msg_id)
-                    
+                    logger.info(f"✅ Acknowledged failed job: msg_id={msg_id}")
+
         except asyncio.CancelledError:
-            logger.info("Embeddings consumer cancelled")
+            logger.info(f"🛑 Embeddings consumer cancelled (processed: {message_count}, errors: {error_count})")
             break
         except Exception as e:
-            logger.error(f"Error in embeddings consumer: {e}")
+            error_count += 1
+            logger.exception(f"❌ Error in embeddings consumer: {type(e).__name__}: {e}")
             await asyncio.sleep(1)
