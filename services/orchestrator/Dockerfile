@@ -19,6 +19,6 @@ USER appuser
 EXPOSE 8084
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD curl --fail http://localhost:8084/health || exit 1
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8084/health')" || exit 1
 
 CMD ["uv", "run", "uvicorn", "services.orchestrator.main:app", "--host", "0.0.0.0", "--port", "8084"]
