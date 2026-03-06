@@ -80,7 +80,7 @@ class TestUserModel:
             failed_login_attempts=0,
             locked_until=None,
             last_login_at=now,
-            last_login_ip="192.168.1.1",
+            last_login_ip="127.0.0.1",  # NOSONAR - test fixture IP
             deleted_at=None
         )
         db_session.add(user)
@@ -90,7 +90,7 @@ class TestUserModel:
         
         assert user.display_name == "Test User"  # type: ignore
         assert user.email_verified_at is not None  # type: ignore
-        assert user.last_login_ip == "192.168.1.1"  # type: ignore
+        assert user.last_login_ip == "127.0.0.1"  # NOSONAR - test fixture IP
     
     def test_user_default_values(self, db_session):
         """Test that default values are set correctly."""

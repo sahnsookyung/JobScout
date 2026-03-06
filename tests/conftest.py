@@ -8,6 +8,11 @@ For standard test utilities, see tests/__init__.py
 import os
 import pytest
 
+# Test database credentials (not production credentials)
+TEST_DB_USER = "testuser"
+TEST_DB_PASSWORD = "testpass"
+TEST_DB_NAME = "jobscout_test"
+
 
 @pytest.fixture(autouse=True)
 def clean_env():
