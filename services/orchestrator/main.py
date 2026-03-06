@@ -502,15 +502,7 @@ async def orchestrate_match_endpoint():
 
     def safe_done_callback(t: asyncio.Task) -> None:
         try:
-            try:
-                loop = asyncio.get_running_loop()
-                loop.call_soon_threadsafe(loop.create_task, _handle_task_done(task_id, t))
-            except RuntimeError:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.call_soon_threadsafe(loop.create_task, _handle_task_done(task_id, t))
-                else:
-                    logger.warning(f"No running loop for task {task_id} completion, state may be inconsistent")
+            asyncio.create_task(_handle_task_done(task_id, t))
         except RuntimeError:
             logger.warning(f"Could not handle task completion for {task_id}: no running loop")
 
