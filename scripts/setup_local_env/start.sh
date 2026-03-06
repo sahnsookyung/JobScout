@@ -338,6 +338,14 @@ start_docker() {
         docker compose "${compose_files[@]}" logs -f main-driver > "${LOGS_DIR}/main-driver.log" 2>&1 &
         log_info "Capturing main-driver logs to ${LOGS_DIR}/main-driver.log"
     fi
+
+    # Capture microservice logs
+    for service in extraction embeddings scorer-matcher orchestrator; do
+        if docker compose "${compose_files[@]}" ps $service 2>/dev/null | grep -q "Up"; then
+            docker compose "${compose_files[@]}" logs -f $service > "${LOGS_DIR}/${service}.log" 2>&1 &
+            log_info "Capturing ${service} logs to ${LOGS_DIR}/${service}.log"
+        fi
+    done
 }
 
 # Start Web Application (FastAPI backend)
