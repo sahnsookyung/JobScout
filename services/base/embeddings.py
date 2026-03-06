@@ -35,10 +35,9 @@ def _run_facet_embedding_batch(ctx: AppContext, stop_event: threading.Event, lim
                     continue
                 if job.facet_status == 'done':
                     ctx.job_etl_service.embed_facets_one(repo, job)
+                    processed += 1
                 else:
                     logger.debug(f"Job {job_id} facet_status is '{job.facet_status}', skipping")
-            if job and job.facet_status == 'done':
-                processed += 1
         except Exception:
             logger.exception("Facet embedding error job_id=%s", job_id)
 
