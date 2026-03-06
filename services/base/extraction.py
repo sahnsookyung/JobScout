@@ -84,7 +84,8 @@ def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: i
                         "Extraction attempt %d/%d failed for job %s (title: %r): %s - %s. %s. Retrying in %ds...",
                         attempt + 1, len(retry_intervals), job_id, job_title_str, exc_type, exc_message, http_details or "N/A", wait_time
                     )
-                    time.sleep(wait_time)
+                    if stop_event.wait(wait_time):
+                        break
 
     logger.info(f"Extraction batch completed: {success_count}/{len(job_ids)} jobs")
     return success_count

@@ -60,7 +60,13 @@ def enqueue_job(stream: str, payload: dict) -> str:
         serialized = {k: json.dumps(v) for k, v in payload.items()}
     except TypeError as e:
         raise ValueError(f"Payload contains non-JSON-serializable value: {e}")
-    msg_id = client.xadd(stream, serialized)
+    
+    try:
+        msg_id = client.xadd(stream, serialized)
+    except (redis.ConnectionError, redis.TimeoutError) as e:
+        logger.error(f"Redis error enqueuing job to {stream}: {e}")
+        raise
+    
     logger.info(f"Enqueued job to {stream}: {msg_id}")
     return msg_id
 
@@ -149,7 +155,10 @@ def publish_completion(channel: str, payload: dict) -> int:
     client = get_redis_client()
     msg = json.dumps(payload)
     result = client.publish(channel, msg)
-    logger.info(f"Published to {channel}: {payload.get('task_id')}")
+    if result == 0:
+        logger.warning(f"No subscribers received completion event on {channel}: {payload.get('task_id')}")
+    else:
+        logger.info(f"Published to {channel}: {payload.get('task_id')} (subscribers: {result})")
     return result
 
 
@@ -235,7 +244,11 @@ def get_task_state(task_id: str) -> Optional[dict]:
 def set_task_state(task_id: str, state: dict, ttl: int = 3600) -> None:
     client = get_redis_client()
     key = f"task:{task_id}:state"
-    client.setex(key, ttl, json.dumps(state))
+    try:
+        serialized = json.dumps(state)
+    except TypeError as e:
+        raise ValueError(f"State contains non-JSON-serializable value: {e}")
+    client.setex(key, ttl, serialized)
 
 
 def delete_task_state(task_id: str) -> None:

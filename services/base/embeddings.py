@@ -9,7 +9,6 @@ This module provides embedding functionality that can be used by:
 import logging
 import threading
 
-from core.config_loader import load_config
 from core.app_context import AppContext
 from database.uow import job_uow
 
