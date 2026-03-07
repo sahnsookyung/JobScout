@@ -67,10 +67,7 @@ async def lifespan(app: FastAPI):
 
     # Cancel cleanup task
     cleanup_task.cancel()
-    try:
-        await cleanup_task
-    except asyncio.CancelledError:
-        raise  # Re-raise after cleanup to allow proper cancellation propagation
+    await cleanup_task
 
     logger.info("=" * 60)
     logger.info("SHUTTING DOWN ORCHESTRATOR SERVICE")
@@ -117,9 +114,9 @@ class OrchestrationState:
                 self.resume_file = data.get("resume_file")
                 self.matches_count = data.get("matches_count", 0)
                 self.error = data.get("error")
-                logger.info("Loaded state from Redis for task %s: %s", self.task_id, self.status)
-        except Exception as e:
-            logger.warning("Failed to load state from Redis: %s", e)
+                logger.info("Loaded state from Redis for task: %s", self.task_id)
+        except Exception:
+            logger.warning("Failed to load state from Redis for task: %s", self.task_id)
 
     def _save_to_redis(self) -> None:
         """Save state to Redis."""
