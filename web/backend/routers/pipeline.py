@@ -125,7 +125,7 @@ def get_pipeline_status(task_id: str):
     except HTTPException:
         raise
     except Exception:
-        logger.exception("Failed to get pipeline status for task %s", task_id)
+        logger.exception("Failed to get pipeline status")
         raise HTTPException(status_code=500, detail="Failed to get pipeline status")
 
 

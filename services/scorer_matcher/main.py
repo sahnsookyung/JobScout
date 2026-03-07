@@ -58,10 +58,9 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down matcher service...")
     if consumer_task:
         consumer_task.cancel()
-        try:
-            await consumer_task
-        except asyncio.CancelledError:
-            raise  # Re-raise after cleanup to allow proper cancellation
+        await consumer_task
+
+    logger.info("Matcher service shutdown complete")
 
 
 app = FastAPI(
