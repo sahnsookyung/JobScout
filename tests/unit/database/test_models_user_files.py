@@ -25,10 +25,10 @@ TEST_EMAIL_UNIQUE = "unique@example.com"
 TEST_EMAIL_DEFAULTS = "defaults@example.com"
 TEST_EMAIL_FILES = "files@example.com"
 TEST_EMAIL_FULL = "full@example.com"
-TEST_EMAIL_SOFTDELETE = TEST_EMAIL_SOFTDELETE
-TEST_EMAIL_FILEOWNER = TEST_EMAIL_FILEOWNER
-TEST_EMAIL_DEFAULTSTATUS = TEST_EMAIL_DEFAULTSTATUS
-TEST_EMAIL_STORAGEKEY = TEST_EMAIL_STORAGEKEY
+TEST_EMAIL_SOFTDELETE = "softdelete@example.com"
+TEST_EMAIL_FILEOWNER = "fileowner@example.com"
+TEST_EMAIL_DEFAULTSTATUS = "defaultstatus@example.com"
+TEST_EMAIL_STORAGEKEY = "storagekey@example.com"
 
 
 @pytest.fixture(scope="function")

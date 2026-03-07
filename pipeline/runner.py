@@ -9,7 +9,7 @@ import time
 import json
 import logging
 import threading
-from typing import List, Optional, Dict, Any, Callable
+from typing import List, Optional, Dict, Any, Callable, Tuple
 from dataclasses import dataclass
 
 from core.app_context import AppContext
@@ -76,24 +76,22 @@ def run_matching_pipeline(
     status_callback: Optional[Callable[[str], None]] = None
 ) -> MatchingPipelineResult:
     """Run the matching pipeline as a self-contained operation.
-    
+
     This function queries the database for the latest stored resume,
     loads the raw resume data from file, performs matching and scoring,
     then saves the results. It can run standalone without requiring
     ETL to have run in the same process.
-    
+
     Args:
         ctx: Application context with config, AI service, and other dependencies
         stop_event: Optional threading event to signal early termination
-        
+
     Returns:
         MatchingPipelineResult with success status and counts
     """
     if stop_event is None:
         stop_event = threading.Event()
-    
-    pipeline_start = time.time()
-    
+
     logger.info("=" * 60)
     logger.info("STARTING MATCHING PIPELINE")
     logger.info("=" * 60)
@@ -110,398 +108,48 @@ def run_matching_pipeline(
         )
 
     try:
-        if status_callback:
-            status_callback("loading_resume")
-        
-        step_start = time.time()
-        logger.info("=== RESUME ETL STEP 2: Prepare Resume & Compare Fingerprint ===")
-
-        # Step 1: Verify resume file exists
-        # Support both old path (etl.resume_file) and new path (etl.resume.resume_file)
-        etl_config = ctx.config.etl
-        if etl_config and etl_config.resume:
-            resume_file = etl_config.resume.resume_file
-        elif etl_config and etl_config.resume_file:
-            resume_file = etl_config.resume_file  # Backward compatibility
-        else:
-            resume_file = None
-        if not resume_file:
-            error_msg = "No resume file configured in ETL config"
-            logger.error(error_msg)
+        # Step 1: Load and validate resume file
+        resume_file, resume_data = _load_resume_file(ctx.config.etl)
+        if not resume_file or not resume_data:
             return MatchingPipelineResult(
-                success=False,
-                matches_count=0,
-                saved_count=0,
-                notified_count=0,
-                error=error_msg
-            )
-        
-        if not os.path.isabs(resume_file):
-            resume_file = os.path.join(os.getcwd(), resume_file)
-        
-        if not os.path.exists(resume_file):
-            error_msg = f"Resume file not found: {resume_file}"
-            logger.error(error_msg)
-            return MatchingPipelineResult(
-                success=False,
-                matches_count=0,
-                saved_count=0,
-                notified_count=0,
-                error=error_msg
+                success=False, matches_count=0, saved_count=0,
+                notified_count=0, error="Failed to load resume"
             )
 
-        # Step 2: Load raw resume data
-        resume_data = _load_resume_with_parser(resume_file)
-        if not resume_data:
-            error_msg = "Failed to load resume data"
-            logger.error(error_msg)
-            return MatchingPipelineResult(
-                success=False,
-                matches_count=0,
-                saved_count=0,
-                notified_count=0,
-                error=error_msg
-            )
-
-        # Step 3: Load current resume file and calculate its fingerprint
-        # This is needed to compare with stored fingerprint
-        
-        # Support both old path (etl.resume.resume_file) and new path (etl.resume.resume_file)
-        if etl_config and etl_config.resume:
-            resume_file = etl_config.resume.resume_file
-        elif etl_config and etl_config.resume_file:
-            resume_file = etl_config.resume_file  # Backward compatibility
-        else:
-            resume_file = None
-            
-        if not resume_file:
-            error_msg = "No resume file configured in ETL config"
-            logger.error(error_msg)
-            return MatchingPipelineResult(
-                success=False,
-                matches_count=0,
-                saved_count=0,
-                notified_count=0,
-                error=error_msg
-            )
-        
-        if not os.path.isabs(resume_file):
-            resume_file = os.path.join(os.getcwd(), resume_file)
-        
-        if not os.path.exists(resume_file):
-            error_msg = f"Resume file not found: {resume_file}"
-            logger.error(error_msg)
-            return MatchingPipelineResult(
-                success=False,
-                matches_count=0,
-                saved_count=0,
-                notified_count=0,
-                error=error_msg
-            )
-
-        # Load resume data and calculate current fingerprint
-        resume_data = _load_resume_with_parser(resume_file)
-        if not resume_data:
-            error_msg = "Failed to load resume data"
-            logger.error(error_msg)
-            return MatchingPipelineResult(
-                success=False,
-                matches_count=0,
-                saved_count=0,
-                notified_count=0,
-                error=error_msg
-            )
-
-        from database.models import generate_file_fingerprint
-        with open(resume_file, 'rb') as f:
-            current_fingerprint = generate_file_fingerprint(f.read())
-        logger.info(f"Current resume fingerprint: {current_fingerprint[:16]}...")
-
-        # Get stored fingerprint from DB
-        with job_uow() as repo:
-            stored_fingerprint = repo.resume.get_latest_stored_resume_fingerprint()
-        
-        # Determine if we should re-extract:
-        # - Force re-extraction is enabled in config
-        # - OR current fingerprint differs from stored fingerprint (resume file changed)
-        force_re_extraction = (
-            etl_config.resume.force_re_extraction 
-            if etl_config and etl_config.resume and etl_config.resume.force_re_extraction 
-            else False
+        # Step 2: Calculate fingerprint and determine if re-extraction is needed
+        resume_fingerprint, should_re_extract = _determine_resume_extraction(
+            resume_file, ctx.config.etl
         )
-        
-        # Use current fingerprint if:
-        # - Force re-extraction is enabled, OR
-        # - No stored fingerprint exists, OR  
-        # - Current fingerprint differs from stored
-        if force_re_extraction or not stored_fingerprint or current_fingerprint != stored_fingerprint:
-            should_re_extract = True
-            # Use current fingerprint for matching (will be re-extracted)
-            resume_fingerprint = current_fingerprint
-            
-            if not stored_fingerprint:
-                logger.info("No stored resume found - will extract")
-            elif current_fingerprint != stored_fingerprint:
-                logger.info(f"Resume file changed (stored: {stored_fingerprint[:16]}..., current: {current_fingerprint[:16]}...) - will re-extract")
-            else:
-                logger.info("Force re-extraction enabled in config - will re-extract")
-        else:
-            should_re_extract = False
-            # Use stored fingerprint for matching (resume unchanged)
-            resume_fingerprint = stored_fingerprint
-            logger.info(f"Resume unchanged (fingerprint: {current_fingerprint[:16]}...) - using stored data")
 
-        # Load user wants BEFORE entering UOW (AI service calls are slow, don't hold DB transaction)
-        user_wants = []
-        user_want_embeddings = []
-        if matching_config.user_wants_file:
-            wants_file = matching_config.user_wants_file
-            if not os.path.isabs(wants_file):
-                wants_file = os.path.join(os.getcwd(), wants_file)
-            if not os.path.exists(wants_file):
-                logger.warning(f"User wants file not found: {wants_file}")
-            else:
-                user_wants = load_user_wants_data(wants_file)
-                if user_wants:
-                    logger.info(f"Loaded {len(user_wants)} user wants from {matching_config.user_wants_file}")
-                    for want_text in user_wants:
-                        embedding = ctx.ai_service.generate_embedding(want_text)
-                        user_want_embeddings.append(embedding)
+        # Step 3: Load user wants embeddings
+        user_want_embeddings = _load_user_wants_embeddings(
+            matching_config, ctx.ai_service
+        )
 
-        # Step 4: Run matching and scoring within UOW, then convert to DTOs
-        job_facet_embeddings_map = {}
-        match_dtos = []
-        
-        with job_uow() as repo:
-            # Only load structured resume from DB if NOT re-extracting
-            structured_resume = None
-            if not should_re_extract:
-                structured_resume = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
-
-            if not structured_resume:
-                if should_re_extract:
-                    logger.info(f"Will re-extract resume (fingerprint: {resume_fingerprint[:16]}...)")
-                else:
-                    error_msg = f"Resume not found in database for fingerprint: {resume_fingerprint[:16]}..."
-                    logger.error(error_msg)
-                    logger.error("Make sure Resume ETL has been run")
-                    return MatchingPipelineResult(
-                        success=False,
-                        matches_count=0,
-                        saved_count=0,
-                        notified_count=0,
-                        error=error_msg
-                    )
-
-            if structured_resume:
-                logger.info(f"Loaded resume from database (fingerprint: {resume_fingerprint[:16]}...)")
-                logger.info(f"Resume experience: {structured_resume.total_experience_years} years")
-
-            # Create matcher with store to persist resume embeddings
-            matcher = MatcherService(
-                resume_profiler=ResumeProfiler(
-                    ai_service=ctx.ai_service,
-                    store=JobRepositoryAdapter(repo)
-                ),
-                config=matching_config.matcher
-            )
-
-            step_elapsed = time.time() - step_start
-            logger.info(f"RESUME ETL Step 2 completed: Resume prepared in {step_elapsed:.2f}s")
-
-            if stop_event.is_set():
-                return MatchingPipelineResult(
-                    success=False,
-                    matches_count=0,
-                    saved_count=0,
-                    notified_count=0,
-                    error="Interrupted by system"
-                )
-
-            if status_callback:
-                status_callback("vector_matching")
-
-            step_start = time.time()
-            logger.info("=== MATCHING STEP 1: Running MatcherService (Vector Retrieval) ===")
-
-            # Check if we have a stored structured resume to use (avoid re-extraction)
-            # Skip if should_re_extract is True
-            pre_extracted_resume = None
-            if not should_re_extract:
-                if structured_resume and structured_resume.extracted_data:
-                    try:
-                        pre_extracted_resume = ResumeSchema.model_validate(structured_resume.extracted_data)
-                        logger.info(f"Using stored structured resume (fingerprint: {resume_fingerprint[:16]}...)")
-                    except Exception as e:
-                        logger.warning(f"Failed to parse stored resume: {e}. Will re-extract.")
-            else:
-                logger.info("Resume re-extraction needed - will extract fresh")
-
-            # Retrieve top jobs based on cosine distance with resume summary embedding
-            preliminary_matches = matcher.match_resume_two_stage(
-                repo=repo,
-                resume_data=resume_data,
-                stop_event=stop_event,
-                pre_extracted_resume=pre_extracted_resume,
-                resume_fingerprint=resume_fingerprint,
-            )
-
-            step_elapsed = time.time() - step_start
-            logger.info(f"MATCHING Step 1 completed: Matched against {len(preliminary_matches)} jobs in {step_elapsed:.2f}s")
-
-            if stop_event.is_set():
-                return MatchingPipelineResult(
-                    success=False,
-                    matches_count=0,
-                    saved_count=0,
-                    notified_count=0,
-                    error="Interrupted by system"
-                )
-
-            if status_callback:
-                status_callback("scoring")
-
-            step_start = time.time()
-            logger.info("=== MATCHING STEP 2: Running ScorerService (Rule-based Scoring) ===")
-
-            scorer = ScoringService(repo=repo, config=matching_config.scorer)
-
-            if user_want_embeddings:
-                logger.info("=== Using Fit/Want scoring with 'user wants' embeddings ===")
-                for preliminary in preliminary_matches:
-                    job_id = str(preliminary.job.id)
-                    if job_id not in job_facet_embeddings_map:
-                        job_facet_embeddings_map[job_id] = repo.get_job_facet_embeddings(preliminary.job.id)
-
-                scored_matches = scorer.score_matches(
-                    preliminary_matches=preliminary_matches,
-                    result_policy=matching_config.result_policy,
-                    user_want_embeddings=user_want_embeddings,
-                    job_facet_embeddings_map=job_facet_embeddings_map,
-                    match_type="requirements_only",
-                    stop_event=stop_event,
-                )
-            else:
-                logger.info("=== Using Fit-only scoring ===")
-                scored_matches = scorer.score_matches(
-                    preliminary_matches=preliminary_matches,
-                    result_policy=matching_config.result_policy,
-                    match_type="requirements_only",
-                    stop_event=stop_event,
-                )
-
-            # Convert ORM objects to DTOs before exiting UOW context
-            for match in scored_matches:
-                # Extract requirement matches
-                requirement_matches_dtos = []
-                for req in match.matched_requirements:
-                    evidence_dto = None
-                    if req.evidence:
-                        evidence_dto = JobEvidenceDTO(
-                            text=getattr(req.evidence, 'text', ''),
-                            source_section=getattr(req.evidence, 'source_section', None),
-                            tags=getattr(req.evidence, 'tags', {}),
-                        )
-                    requirement_matches_dtos.append(RequirementMatchDTO(
-                        requirement=JobRequirementDTO(
-                            id=str(req.requirement.id),
-                            req_type=getattr(req.requirement, 'req_type', 'required'),
-                        ),
-                        evidence=evidence_dto,
-                        similarity=req.similarity,
-                        is_covered=req.is_covered,
-                    ))
-                
-                # Extract missing requirements
-                missing_requirements_dtos = []
-                for req in match.missing_requirements:
-                    missing_requirements_dtos.append(RequirementMatchDTO(
-                        requirement=JobRequirementDTO(
-                            id=str(req.requirement.id),
-                            req_type=getattr(req.requirement, 'req_type', 'required'),
-                        ),
-                        similarity=req.similarity,
-                        is_covered=False,
-                    ))
-
-                dto = MatchResultDTO(
-                    job=JobMatchDTO(
-                        id=str(match.job.id),
-                        title=getattr(match.job, 'title', 'Unknown'),
-                        company=getattr(match.job, 'company', 'Unknown'),
-                        location_text=getattr(match.job, 'location_text', ''),
-                        is_remote=getattr(match.job, 'is_remote', False),
-                        content_hash=getattr(match.job, 'content_hash', ''),
-                    ),
-                    overall_score=match.overall_score if match.overall_score is not None else 0.0,
-                    fit_score=match.fit_score if match.fit_score is not None else 0.0,
-                    want_score=match.want_score if match.want_score is not None else 0.0,
-                    job_similarity=match.job_similarity if match.job_similarity is not None else 0.0,
-                    jd_required_coverage=match.jd_required_coverage,
-                    jd_preferences_coverage=match.jd_preferences_coverage,
-                    requirement_matches=requirement_matches_dtos,
-                    missing_requirements=missing_requirements_dtos,
-                    resume_fingerprint=match.resume_fingerprint,
-                    fit_components=getattr(match, 'fit_components', {}),
-                    want_components=getattr(match, 'want_components', {}),
-                    base_score=getattr(match, 'base_score', 0.0),
-                    penalties=getattr(match, 'penalties', 0.0),
-                    penalty_details=penalty_details_from_orm(
-                        getattr(match, 'penalty_details', []),
-                        total_penalties=getattr(match, 'penalties', 0.0)
-                    ),
-                    fit_weight=getattr(match, 'fit_weight', 0.7),
-                    want_weight=getattr(match, 'want_weight', 0.3),
-                    match_type=getattr(match, 'match_type', 'requirements_only'),
-                )
-                match_dtos.append(dto)
-
-        step_elapsed = time.time() - step_start
-        logger.info(f"MATCHING Step 2 completed: Scored {len(match_dtos)} matches in {step_elapsed:.2f}s")
-
-        if match_dtos:
-            logger.info("Top 5 Matches:")
-            for i, dto in enumerate(match_dtos[:5], 1):
-                logger.info(f"  {i}. {dto.job.title} @ {dto.job.company}: overall={dto.overall_score:.1f}/100 (fit={dto.fit_score:.1f}, want={dto.want_score:.1f})")
-
-        if stop_event.is_set():
+        # Step 4: Run matching and scoring
+        match_dtos = _run_matching_and_scoring(
+            ctx, resume_data, resume_fingerprint, should_re_extract,
+            matching_config, user_want_embeddings, stop_event, status_callback
+        )
+        if not match_dtos and stop_event.is_set():
             return MatchingPipelineResult(
-                success=False,
-                matches_count=len(match_dtos),
-                saved_count=0,
-                notified_count=0,
-                error="Interrupted by system"
+                success=False, matches_count=0, saved_count=0,
+                notified_count=0, error="Interrupted by system"
             )
 
-        # Step 9: Save matches with per-match transactions
-        if status_callback:
-            status_callback("saving_results")
-
-        step_start = time.time()
-        logger.info("=== MATCHING STEP 3: Saving Matches to Database ===")
+        # Step 5: Save matches
         saved_count = _save_matches_batch(match_dtos, resume_fingerprint, matching_config)
-        step_elapsed = time.time() - step_start
-        logger.info(f"MATCHING Step 3 completed: Saved {saved_count} matches in {step_elapsed:.2f}s")
 
-        if stop_event.is_set():
-            return MatchingPipelineResult(
-                success=True,
-                matches_count=len(match_dtos),
-                saved_count=saved_count,
-                notified_count=0,
-                error="Interrupted by system before notifications"
-            )
-
-        # Step 10: Send notifications (optional, only if notification service exists)
+        # Step 6: Send notifications
         notified_count = 0
-        if ctx.notification_service:
+        if ctx.notification_service and not stop_event.is_set():
             if status_callback:
                 status_callback("notifying")
             notified_count = _send_notifications(
                 ctx, match_dtos, saved_count, resume_data, resume_fingerprint, stop_event
             )
 
-        execution_time = time.time() - pipeline_start
+        execution_time = time.time() - _get_pipeline_start_time()
         logger.info("=" * 60)
         logger.info(f"MATCHING PIPELINE COMPLETED in {execution_time:.2f}s")
         logger.info("=" * 60)
@@ -516,7 +164,7 @@ def run_matching_pipeline(
 
     except Exception as e:
         logger.exception("Error in matching pipeline")
-        execution_time = time.time() - pipeline_start
+        execution_time = time.time() - _get_pipeline_start_time()
         return MatchingPipelineResult(
             success=False,
             matches_count=0,
@@ -525,6 +173,327 @@ def run_matching_pipeline(
             error=str(e),
             execution_time=execution_time
         )
+
+
+_pipeline_start_time: Optional[float] = None
+
+
+def _get_pipeline_start_time() -> float:
+    """Get the pipeline start time for execution time calculation."""
+    global _pipeline_start_time
+    if _pipeline_start_time is None:
+        _pipeline_start_time = time.time()
+    return _pipeline_start_time
+
+
+def _reset_pipeline_start_time() -> None:
+    """Reset the pipeline start time."""
+    global _pipeline_start_time
+    _pipeline_start_time = time.time()
+
+
+def _load_resume_file(etl_config) -> Tuple[Optional[str], Optional[dict]]:
+    """Load resume file from configured path and return (filepath, data)."""
+    # Support both old path (etl.resume_file) and new path (etl.resume.resume_file)
+    if etl_config and etl_config.resume:
+        resume_file = etl_config.resume.resume_file
+    elif etl_config and etl_config.resume_file:
+        resume_file = etl_config.resume_file
+    else:
+        resume_file = None
+    
+    if not resume_file:
+        logger.error("No resume file configured in ETL config")
+        return None, None
+
+    if not os.path.isabs(resume_file):
+        resume_file = os.path.join(os.getcwd(), resume_file)
+
+    if not os.path.exists(resume_file):
+        logger.error(f"Resume file not found: {resume_file}")
+        return None, None
+
+    resume_data = _load_resume_with_parser(resume_file)
+    if not resume_data:
+        logger.error("Failed to load resume data")
+        return None, None
+
+    return resume_file, resume_data
+
+
+def _determine_resume_extraction(
+    resume_file: str,
+    etl_config
+) -> Tuple[str, bool]:
+    """
+    Determine if resume should be re-extracted based on fingerprint comparison.
+    
+    Returns:
+        Tuple of (resume_fingerprint, should_re_extract)
+    """
+    from database.models import generate_file_fingerprint
+    from database.uow import job_uow
+
+    with open(resume_file, 'rb') as f:
+        current_fingerprint = generate_file_fingerprint(f.read())
+    logger.info(f"Current resume fingerprint: {current_fingerprint[:16]}...")
+
+    # Get stored fingerprint from DB
+    with job_uow() as repo:
+        stored_fingerprint = repo.resume.get_latest_stored_resume_fingerprint()
+
+    # Check if force re-extraction is enabled
+    force_re_extraction = (
+        etl_config.resume.force_re_extraction
+        if etl_config and etl_config.resume and etl_config.resume.force_re_extraction
+        else False
+    )
+
+    # Determine if re-extraction is needed
+    if force_re_extraction or not stored_fingerprint or current_fingerprint != stored_fingerprint:
+        should_re_extract = True
+        resume_fingerprint = current_fingerprint
+        if not stored_fingerprint:
+            logger.info("No stored resume found - will extract")
+        elif current_fingerprint != stored_fingerprint:
+            logger.info(f"Resume file changed (stored: {stored_fingerprint[:16]}..., current: {current_fingerprint[:16]}...) - will re-extract")
+        else:
+            logger.info("Force re-extraction enabled in config - will re-extract")
+    else:
+        should_re_extract = False
+        resume_fingerprint = stored_fingerprint
+        logger.info(f"Resume unchanged (fingerprint: {current_fingerprint[:16]}...) - using stored data")
+
+    return resume_fingerprint, should_re_extract
+
+
+def _load_user_wants_embeddings(
+    matching_config,
+    ai_service
+) -> List[List[float]]:
+    """Load user wants from file and generate embeddings."""
+    user_want_embeddings = []
+    
+    if matching_config.user_wants_file:
+        wants_file = matching_config.user_wants_file
+        if not os.path.isabs(wants_file):
+            wants_file = os.path.join(os.getcwd(), wants_file)
+        if not os.path.exists(wants_file):
+            logger.warning(f"User wants file not found: {wants_file}")
+        else:
+            user_wants = load_user_wants_data(wants_file)
+            if user_wants:
+                logger.info(f"Loaded {len(user_wants)} user wants from {matching_config.user_wants_file}")
+                for want_text in user_wants:
+                    embedding = ai_service.generate_embedding(want_text)
+                    user_want_embeddings.append(embedding)
+    
+    return user_want_embeddings
+
+
+def _run_matching_and_scoring(
+    ctx: AppContext,
+    resume_data: dict,
+    resume_fingerprint: str,
+    should_re_extract: bool,
+    matching_config,
+    user_want_embeddings: List[List[float]],
+    stop_event: threading.Event,
+    status_callback: Optional[Callable[[str], None]]
+) -> List[MatchResultDTO]:
+    """Run the matching and scoring pipeline within a UOW context."""
+    from database.uow import job_uow
+
+    if status_callback:
+        status_callback("loading_resume")
+
+    step_start = time.time()
+    logger.info("=== RESUME ETL STEP 2: Prepare Resume & Compare Fingerprint ===")
+
+    job_facet_embeddings_map = {}
+    match_dtos = []
+
+    with job_uow() as repo:
+        # Only load structured resume from DB if NOT re-extracting
+        structured_resume = None
+        if not should_re_extract:
+            structured_resume = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
+
+        if not structured_resume:
+            if should_re_extract:
+                logger.info(f"Will re-extract resume (fingerprint: {resume_fingerprint[:16]}...)")
+            else:
+                error_msg = f"Resume not found in database for fingerprint: {resume_fingerprint[:16]}..."
+                logger.error(error_msg)
+                logger.error("Make sure Resume ETL has been run")
+                return []
+
+        if structured_resume:
+            logger.info(f"Loaded resume from database (fingerprint: {resume_fingerprint[:16]}...)")
+            logger.info(f"Resume experience: {structured_resume.total_experience_years} years")
+
+        # Create matcher with store to persist resume embeddings
+        matcher = MatcherService(
+            resume_profiler=ResumeProfiler(
+                ai_service=ctx.ai_service,
+                store=JobRepositoryAdapter(repo)
+            ),
+            config=matching_config.matcher
+        )
+
+        step_elapsed = time.time() - step_start
+        logger.info(f"RESUME ETL Step 2 completed: Resume prepared in {step_elapsed:.2f}s")
+
+        if stop_event.is_set():
+            return []
+
+        if status_callback:
+            status_callback("vector_matching")
+
+        step_start = time.time()
+        logger.info("=== MATCHING STEP 1: Running MatcherService (Vector Retrieval) ===")
+
+        # Check if we have a stored structured resume to use (avoid re-extraction)
+        pre_extracted_resume = None
+        if not should_re_extract:
+            if structured_resume and structured_resume.extracted_data:
+                try:
+                    pre_extracted_resume = ResumeSchema.model_validate(structured_resume.extracted_data)
+                    logger.info(f"Using stored structured resume (fingerprint: {resume_fingerprint[:16]}...)")
+                except Exception as e:
+                    logger.warning(f"Failed to parse stored resume: {e}. Will re-extract.")
+        else:
+            logger.info("Resume re-extraction needed - will extract fresh")
+
+        # Retrieve top jobs based on cosine distance with resume summary embedding
+        preliminary_matches = matcher.match_resume_two_stage(
+            repo=repo,
+            resume_data=resume_data,
+            stop_event=stop_event,
+            pre_extracted_resume=pre_extracted_resume,
+            resume_fingerprint=resume_fingerprint,
+        )
+
+        step_elapsed = time.time() - step_start
+        logger.info(f"MATCHING Step 1 completed: Matched against {len(preliminary_matches)} jobs in {step_elapsed:.2f}s")
+
+        if stop_event.is_set():
+            return []
+
+        if status_callback:
+            status_callback("scoring")
+
+        step_start = time.time()
+        logger.info("=== MATCHING STEP 2: Running ScorerService (Rule-based Scoring) ===")
+
+        scorer = ScoringService(repo=repo, config=matching_config.scorer)
+
+        if user_want_embeddings:
+            logger.info("=== Using Fit/Want scoring with 'user wants' embeddings ===")
+            for preliminary in preliminary_matches:
+                job_id = str(preliminary.job.id)
+                if job_id not in job_facet_embeddings_map:
+                    job_facet_embeddings_map[job_id] = repo.get_job_facet_embeddings(preliminary.job.id)
+
+            scored_matches = scorer.score_matches(
+                preliminary_matches=preliminary_matches,
+                result_policy=matching_config.result_policy,
+                user_want_embeddings=user_want_embeddings,
+                job_facet_embeddings_map=job_facet_embeddings_map,
+                match_type="requirements_only",
+                stop_event=stop_event,
+            )
+        else:
+            logger.info("=== Using Fit-only scoring ===")
+            scored_matches = scorer.score_matches(
+                preliminary_matches=preliminary_matches,
+                result_policy=matching_config.result_policy,
+                match_type="requirements_only",
+                stop_event=stop_event,
+            )
+
+        # Convert ORM objects to DTOs before exiting UOW context
+        match_dtos = _convert_matches_to_dtos(scored_matches)
+
+    step_elapsed = time.time() - step_start
+    logger.info(f"MATCHING Step 2 completed: Scored {len(match_dtos)} matches in {step_elapsed:.2f}s")
+
+    if match_dtos:
+        logger.info("Top 5 Matches:")
+        for i, dto in enumerate(match_dtos[:5], 1):
+            logger.info(f"  {i}. {dto.job.title} @ {dto.job.company}: overall={dto.overall_score:.1f}/100 (fit={dto.fit_score:.1f}, want={dto.want_score:.1f})")
+
+    return match_dtos
+
+
+def _convert_matches_to_dtos(scored_matches) -> List[MatchResultDTO]:
+    """Convert ORM match objects to DTOs."""
+    match_dtos = []
+    for match in scored_matches:
+        # Extract requirement matches
+        requirement_matches_dtos = []
+        for req in match.matched_requirements:
+            evidence_dto = None
+            if req.evidence:
+                evidence_dto = JobEvidenceDTO(
+                    text=getattr(req.evidence, 'text', ''),
+                    source_section=getattr(req.evidence, 'source_section', None),
+                    tags=getattr(req.evidence, 'tags', {}),
+                )
+            requirement_matches_dtos.append(RequirementMatchDTO(
+                requirement=JobRequirementDTO(
+                    id=str(req.requirement.id),
+                    req_type=getattr(req.requirement, 'req_type', 'required'),
+                ),
+                evidence=evidence_dto,
+                similarity=req.similarity,
+                is_covered=req.is_covered,
+            ))
+
+        # Extract missing requirements
+        missing_requirements_dtos = []
+        for req in match.missing_requirements:
+            missing_requirements_dtos.append(RequirementMatchDTO(
+                requirement=JobRequirementDTO(
+                    id=str(req.requirement.id),
+                    req_type=getattr(req.requirement, 'req_type', 'required'),
+                ),
+                similarity=req.similarity,
+                is_covered=False,
+            ))
+
+        dto = MatchResultDTO(
+            job=JobMatchDTO(
+                id=str(match.job.id),
+                title=getattr(match.job, 'title', 'Unknown'),
+                company=getattr(match.job, 'company', 'Unknown'),
+                location_text=getattr(match.job, 'location_text', ''),
+                is_remote=getattr(match.job, 'is_remote', False),
+                content_hash=getattr(match.job, 'content_hash', ''),
+            ),
+            overall_score=match.overall_score if match.overall_score is not None else 0.0,
+            fit_score=match.fit_score if match.fit_score is not None else 0.0,
+            want_score=match.want_score if match.want_score is not None else 0.0,
+            job_similarity=match.job_similarity if match.job_similarity is not None else 0.0,
+            jd_required_coverage=match.jd_required_coverage,
+            jd_preferences_coverage=match.jd_preferences_coverage,
+            requirement_matches=requirement_matches_dtos,
+            missing_requirements=missing_requirements_dtos,
+            resume_fingerprint=match.resume_fingerprint,
+            fit_components=getattr(match, 'fit_components', {}),
+            want_components=getattr(match, 'want_components', {}),
+            base_score=getattr(match, 'base_score', 0.0),
+            penalties=getattr(match, 'penalties', 0.0),
+            penalty_details=penalty_details_from_orm(
+                getattr(match, 'penalty_details', []),
+                total_penalties=getattr(match, 'penalties', 0.0)
+            ),
+            fit_weight=getattr(match, 'fit_weight', 0.7),
+            want_weight=getattr(match, 'want_weight', 0.3),
+            match_type=getattr(match, 'match_type', 'requirements_only'),
+        )
+        match_dtos.append(dto)
+    return match_dtos
 
 
 def _save_matches_batch(
