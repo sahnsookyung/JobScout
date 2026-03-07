@@ -10,7 +10,7 @@ import pytest
 
 # Test database credentials (not production credentials)
 TEST_DB_USER = "testuser"
-TEST_DB_PASSWORD = "testpass"
+TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD", "testpass")
 TEST_DB_NAME = "jobscout_test"
 
 
