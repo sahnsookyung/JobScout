@@ -3,6 +3,7 @@ import time
 import logging
 import json
 import os
+import math
 from database.repository import JobRepository
 from core.llm.interfaces import LLMProvider
 from core.utils import JobFingerprinter
@@ -13,6 +14,20 @@ from database.models import generate_file_fingerprint
 from etl.resume import ResumeProfiler, ResumeParser
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_embedding_vector(vector: List[float], context: str) -> List[float]:
+    """Ensure embedding vectors are non-empty finite numeric lists."""
+    if not isinstance(vector, list) or not vector:
+        raise ValueError(f"Invalid embedding vector for {context}: empty or non-list")
+
+    validated: List[float] = []
+    for value in vector:
+        if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            raise ValueError(f"Invalid embedding vector for {context}: non-finite value")
+        validated.append(float(value))
+
+    return validated
 
 
 class JobETLService:
@@ -135,31 +150,49 @@ class JobETLService:
             logger.error(f"Facet extraction failed for job {job.id}: {e}")
             raise
 
-    def embed_facets_one(self, repo: JobRepository, job) -> None:
+    def embed_facets_one(self, repo: JobRepository, job) -> int:
         """Generate embeddings for extracted facets of a single job.
 
         Args:
             repo: JobRepository instance (provided by UoW)
             job: JobPost ORM instance (loaded within this UoW session)
-        """
-        logger.info(f"Embedding facets for job {job.id}: {job.title}")
 
+        Returns:
+            Number of new facet embeddings created (0 if all already embedded).
+        """
         try:
             facets = repo.get_facets_for_job(job.id)
             if not facets:
                 logger.debug(f"No facets found for job {job.id}")
-                return
+                return 0
 
+            unembedded = [f for f in facets if f.embedding is None]
+            if not unembedded:
+                logger.debug(
+                    f"All {len(facets)} facets already embedded for job {job.id} — skipping"
+                )
+                return 0
+
+            logger.info(
+                f"Embedding {len(unembedded)}/{len(facets)} facets for job {job.id}: {job.title}"
+            )
             content_hash = job.content_hash or ''
             saved_count = 0
 
-            for facet in facets:
-                if facet.embedding is None:
-                    embedding = self.ai.generate_embedding(facet.text)
-                    repo.update_facet_embedding(facet.id, embedding, content_hash)
-                    saved_count += 1
+            for facet in unembedded:
+                # DB model stores facet content in facet_text; keep text fallback for older mocks.
+                facet_text = getattr(facet, "facet_text", None) or getattr(facet, "text", None)
+                if not facet_text:
+                    logger.debug(f"Facet {getattr(facet, 'id', 'unknown')} has no text, skipping")
+                    continue
+                embedding = _validate_embedding_vector(
+                    self.ai.generate_embedding(facet_text),
+                    f"job facet {facet.id}",
+                )
+                repo.update_facet_embedding(facet.id, embedding, content_hash)
+                saved_count += 1
 
-            logger.info(f"Embedded {saved_count} facets for job {job.id}")
+            return saved_count
 
         except Exception as e:
             logger.error(f"Facet embedding failed for job {job.id}: {e}")
@@ -186,7 +219,10 @@ class JobETLService:
             logger.warning(f"Job {job.id} has no requirements/benefits, using description for summary_embedding")
             text = job.description[:5000] if job.description else ""
 
-        vector = self.ai.generate_embedding(text)
+        vector = _validate_embedding_vector(
+            self.ai.generate_embedding(text),
+            f"job {job.id}",
+        )
 
         repo.save_job_embedding(job, vector)
 
@@ -197,7 +233,10 @@ class JobETLService:
             repo: JobRepository instance (provided by UoW)
             req: JobRequirementUnit ORM instance (loaded within this UoW session)
         """
-        vector = self.ai.generate_embedding(req.text)
+        vector = _validate_embedding_vector(
+            self.ai.generate_embedding(req.text),
+            f"requirement {req.id}",
+        )
         repo.save_requirement_embedding(req.id, vector)
 
     def _load_and_check_resume(
@@ -260,7 +299,8 @@ class JobETLService:
         self,
         repo: JobRepository,
         resume_file: str,
-        known_fingerprint: Optional[str] = None
+        known_fingerprint: Optional[str] = None,
+        on_progress: Optional[Any] = None,
     ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
         """Full ETL: extract structured data AND generate embeddings.
 
@@ -293,6 +333,8 @@ class JobETLService:
             if not extracted:
                 return False, fingerprint, None
 
+            if on_progress:
+                on_progress("embedding")
             self.embed_resume(repo, fingerprint)
             logger.info(f"Resume ETL completed for fingerprint: {fingerprint}")
             return True, fingerprint, resume_data
