@@ -83,6 +83,9 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Include coverage report from pytest-cov
+          SONAR_COVERAGE_REPORT_PATHS: coverage.xml
 
       - name: Upload test results
         if: always()
