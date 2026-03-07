@@ -2,6 +2,9 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash appuser
+
 COPY pyproject.toml uv.lock ./
 COPY config.yaml ./
 
@@ -12,6 +15,10 @@ COPY core/ ./core/
 COPY database/ ./database/
 COPY web/backend/models/ ./web/backend/models/
 COPY services/embeddings/ ./services/embeddings/
+
+RUN chown -R appuser:appuser /app
+
+USER appuser
 
 EXPOSE 8082
 

@@ -38,7 +38,6 @@ def _get_requirement_embedding(job_requirement: JobRequirementUnit) -> Optional[
 def _calculate_section_similarities(
     req_embedding: Any,
     all_sections: list,
-    top_k: int = 10  # pylint: disable=unused-argument
 ) -> Tuple[Optional[Any], float, List[Dict[str, Any]]]:
     """Calculate similarities between requirement and all sections."""
     best_section = None
@@ -71,7 +70,7 @@ def calculate_requirement_similarity_with_resume_sections(
     resume_fingerprint: str,
     repo: JobRepository,
     section_types: Optional[List[str]] = None,
-    top_k: int = 10  # pylint: disable=unused-argument
+    top_k: int = 10
 ) -> Tuple[float, Dict[str, Any]]:
     """
     Calculate similarity between job requirement and resume sections.
@@ -170,7 +169,7 @@ def explain_match(
             job_requirement=req,
             resume_fingerprint=resume_fingerprint,
             repo=repo,
-            top_k=3
+            top_k=10
         )
         
         requirement_explanations.append({
