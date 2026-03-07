@@ -28,19 +28,19 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0  # Shallow clones should be disabled for better analysis
 
       - name: Install uv
-        uses: astral-sh/setup-uv@15b87e6b42ed266142ae47e06235f5e80b9a2c38
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098
         with:
           version: "latest"
 
       - name: Set up Python
-        uses: actions/setup-python@0b93645e92b6e5ae5e3e9e01ad7071f0eb18f16d
+        uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Install dependencies
         run: |
@@ -79,14 +79,14 @@ jobs:
           ls -la htmlcov/
 
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@7819713a3a77872d61c353cb89b93758184688f7
+        uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@65c4c2f01240a26b6734856e5c3a001b8c136381
+        uses: actions/upload-artifact@v4
         with:
           name: test-results
           path: |
