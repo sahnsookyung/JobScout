@@ -255,7 +255,7 @@ start_docker() {
         # Start all default infra services
         log_info "Starting all Docker services (postgres, redis)..."
     elif [ "$MICROSERVICES" = true ]; then
-        if [ "$INFRA" = false ] && [ "$DATABASE" = false ] && [ "$REDIS" = false ]; then
+        if [[ "$INFRA" = false ]] && [[ "$DATABASE" = false ]] && [[ "$REDIS" = false ]]; then
             log_info "Microservices require infrastructure, enabling postgres and redis..."
             INFRA=true
             SERVICES_TO_START="postgres redis extraction embeddings scorer-matcher orchestrator"
@@ -272,14 +272,14 @@ start_docker() {
     local compose_files=(-f "${DOCKER_COMPOSE_FILE}")
 
     # Check if docker-compose.yml exists (fail fast)
-    if [ ! -f "${DOCKER_COMPOSE_FILE}" ]; then
+    if [[ ! -f "${DOCKER_COMPOSE_FILE}" ]]; then
         log_error "docker-compose.yml not found at ${PROJECT_ROOT}"
         exit 1
     fi
 
     # Add pipeline compose file if microservices requested
     if [ "$MICROSERVICES" = true ]; then
-        if [ ! -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]; then
+        if [[ ! -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]]; then
             log_error "docker-compose.pipeline.yml not found at ${PROJECT_ROOT}"
             exit 1
         fi

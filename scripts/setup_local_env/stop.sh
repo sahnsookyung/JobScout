@@ -371,7 +371,7 @@ main() {
 
     if [ "$STOP_MICROSERVICES" = true ]; then
         log_info "Stopping microservices..."
-        if [ ! -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]; then
+        if [[ ! -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]]; then
             log_warn "docker-compose.pipeline.yml not found, skipping microservices"
         else
             # Stop pipeline services via docker compose

@@ -19,6 +19,7 @@ import pytest
 import subprocess
 import time
 import requests
+from typing import Generator
 
 # Configuration - Test services run on different ports to avoid conflicts
 REDIS_PORT = os.environ.get("TEST_REDIS_PORT", "6380")
@@ -27,7 +28,7 @@ EMBEDDINGS_PORT = os.environ.get("TEST_EMBEDDINGS_PORT", "18082")
 MATCHER_PORT = os.environ.get("TEST_MATCHER_PORT", "18083")
 ORCHESTRATOR_PORT = os.environ.get("TEST_ORCHESTRATOR_PORT", "18084")
 
-# Service URLs - localhost for tests, container names for Docker network
+# Service URLs - use configured ports
 REDIS_URL = f"redis://localhost:{REDIS_PORT}/1"
 REDIS_URL_DOCKER = f"redis://redis-test:6379/1"  # For containers
 EXTRACTION_URL = f"http://localhost:{EXTRACTION_PORT}"
@@ -55,13 +56,19 @@ def run_docker_command(args):
 
 def start_test_infrastructure():
     """Start Redis and all microservices containers."""
+    # Check if Docker is available
+    result = run_docker_command(["version"])
+    if result.returncode != 0:
+        pytest.skip("Docker not available - skipping integration tests")
+        return
+
     print("\n🚀 Starting test infrastructure...")
-    
+
     # Stop and remove existing containers
     for container in ["redis-test", "extraction-test", "embeddings-test", "matcher-test", "orchestrator-test"]:
         run_docker_command(["stop", container])
         run_docker_command(["rm", container])
-    
+
     # Create test network
     run_docker_command(["network", "rm", "test-network"])
     run_docker_command(["network", "create", "test-network"])
@@ -136,9 +143,9 @@ def start_test_infrastructure():
         "--network", "test-network",
         "-p", f"{ORCHESTRATOR_PORT}:8084",
         "-e", f"REDIS_URL={REDIS_URL_DOCKER}",
-        "-e", f"EXTRACTION_URL=http://extraction-test:8081",
-        "-e", f"EMBEDDINGS_URL=http://embeddings-test:8082",
-        "-e", f"SCORER_MATCHER_URL=http://matcher-test:8083",
+        "-e", "EXTRACTION_URL=http://extraction-test:8081",
+        "-e", "EMBEDDINGS_URL=http://embeddings-test:8082",
+        "-e", "SCORER_MATCHER_URL=http://matcher-test:8083",
         "--rm",
         "jobscout-orchestrator:latest",
         "uv", "run", "uvicorn", "services.orchestrator.main:app",
@@ -158,7 +165,7 @@ def start_test_infrastructure():
 def wait_for_service(host_port, check_type, timeout=60):
     """Wait for service to be ready."""
     start_time = time.time()
-    
+
     while time.time() - start_time < timeout:
         try:
             if check_type == "health":
@@ -169,10 +176,10 @@ def wait_for_service(host_port, check_type, timeout=60):
                 result = run_docker_command(["exec", "redis-test", "redis-cli", "ping"])
                 if result.stdout.strip() == "PONG":
                     return
-        except:
+        except (requests.exceptions.RequestException, subprocess.SubprocessError):
             pass
         time.sleep(1)
-    
+
     raise RuntimeError(f"Service at {host_port} failed to start within {timeout}s")
 
 
@@ -185,8 +192,12 @@ def stop_test_infrastructure():
     print("  ✅ Test infrastructure stopped")
 
 
-# Start infrastructure before any tests run
-start_test_infrastructure()
+@pytest.fixture(scope="session", autouse=True)
+def test_infrastructure() -> Generator[None, None, None]:
+    """Session fixture to start and stop test infrastructure."""
+    start_test_infrastructure()
+    yield
+    stop_test_infrastructure()
 
 
 class TestRedisStreamsIntegration:
@@ -233,7 +244,7 @@ class TestRedisStreamsIntegration:
         """Test acknowledging a message."""
         stream = f"test:extraction:jobs:{uuid.uuid4().hex[:8]}"
 
-        msg_id = self.redis_client.xadd(stream, {"task_id": "test-789"})
+        self.redis_client.xadd(stream, {"task_id": "test-789"})
 
         self.redis_client.xgroup_create(stream, "test-consumer-group", id="0", mkstream=False)
 
@@ -336,10 +347,10 @@ class TestMicroservicesLogging:
         
         stream = f"test:logs:jobs:{uuid.uuid4().hex[:8]}"
         task_id = f"test-{uuid.uuid4().hex[:8]}"
-        
+
         with caplog.at_level(logging.INFO):
-            msg_id = enqueue_job(stream, {"task_id": task_id})
-            
+            _ = enqueue_job(stream, {"task_id": task_id})
+
             assert task_id in caplog.text
             assert "Enqueued" in caplog.text or "enqueued" in caplog.text
 

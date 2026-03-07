@@ -75,23 +75,23 @@ def _calculate_best_experience_years(
     evidence_years = _extract_years_from_evidence(req.evidence)
     if evidence_years is not None:
         return evidence_years, getattr(req.evidence, 'text', '') if req.evidence else ''
-    
+
     # Priority 2 & 3: Fall back to experience sections
     if not experience_sections:
         return 0.0, ''
-    
+
     best_exp_years = 0.0
     best_exp_source = ''
-    
+
     for exp_section in experience_sections:
         if not exp_section.get('has_embedding', False):
             continue
-        
+
         exp_years, exp_source = _extract_years_from_section(exp_section)
         if exp_years > best_exp_years:
             best_exp_years = exp_years
             best_exp_source = exp_source
-    
+
     return best_exp_years, best_exp_source
 
 

@@ -24,7 +24,7 @@ from contextlib import contextmanager
 
 # Test database credentials (not production credentials)
 TEST_DB_USER = "test"
-TEST_DB_PASSWORD = "test"
+TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD", "test")
 TEST_DB_NAME = "jobscout_test"
 
 

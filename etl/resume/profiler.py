@@ -87,62 +87,74 @@ class ResumeProfiler:
             evidence_units.append(unit)
             unit_id += 1
 
-        logger.info(f"Extracted {len(evidence_units)} evidence units from resume")
+        logger.info("Extracted %d evidence units from resume", len(evidence_units))
         return evidence_units
+
+    def _create_experience_description_unit(self, exp, idx: int) -> ResumeEvidenceUnit:
+        """Create evidence unit from experience description."""
+        return ResumeEvidenceUnit(
+            id="",
+            text=exp.description,
+            source_section="Experience",
+            tags={
+                'company': exp.company or '',
+                'title': exp.title or '',
+                'index': idx,
+                'type': 'description',
+                'is_current': exp.is_current
+            },
+            years_value=exp.years_value,
+            years_context='experience_at_company' if exp.company else 'experience',
+            is_total_years_claim=False
+        )
+
+    def _create_experience_highlight_unit(self, exp, idx: int, highlight: str) -> ResumeEvidenceUnit:
+        """Create evidence unit from experience highlight."""
+        return ResumeEvidenceUnit(
+            id="",
+            text=highlight,
+            source_section="Experience",
+            tags={
+                'company': exp.company or '',
+                'title': exp.title or '',
+                'index': idx,
+                'type': 'highlight',
+                'is_current': exp.is_current
+            },
+            years_value=None,
+            years_context=None,
+            is_total_years_claim=False
+        )
+
+    def _create_experience_tech_unit(self, exp, idx: int, tech: str) -> ResumeEvidenceUnit:
+        """Create evidence unit from experience tech keyword."""
+        has_tech = tech in (exp.description or '').lower()
+        return ResumeEvidenceUnit(
+            id="",
+            text=f"Experience with {tech}",
+            source_section="Experience",
+            tags={
+                'company': exp.company or '',
+                'title': exp.title or '',
+                'technology': tech,
+                'type': 'tech_keyword'
+            },
+            years_value=exp.years_value if has_tech else None,
+            years_context=f'{tech}_experience' if has_tech else None,
+            is_total_years_claim=False
+        )
 
     def _extract_experience_evidence(self, experience: list) -> Iterator[ResumeEvidenceUnit]:
         """Extract evidence units from experience section."""
         for idx, exp in enumerate(experience):
             if exp.description:
-                yield ResumeEvidenceUnit(
-                    id="",  # Will be set by caller
-                    text=exp.description,
-                    source_section="Experience",
-                    tags={
-                        'company': exp.company or '',
-                        'title': exp.title or '',
-                        'index': idx,
-                        'type': 'description',
-                        'is_current': exp.is_current
-                    },
-                    years_value=exp.years_value,
-                    years_context='experience_at_company' if exp.company else 'experience',
-                    is_total_years_claim=False
-                )
+                yield self._create_experience_description_unit(exp, idx)
 
             for h in (exp.highlights or []):
-                yield ResumeEvidenceUnit(
-                    id="",
-                    text=h,
-                    source_section="Experience",
-                    tags={
-                        'company': exp.company or '',
-                        'title': exp.title or '',
-                        'index': idx,
-                        'type': 'highlight',
-                        'is_current': exp.is_current
-                    },
-                    years_value=None,
-                    years_context=None,
-                    is_total_years_claim=False
-                )
+                yield self._create_experience_highlight_unit(exp, idx, h)
 
             for tech in exp.tech_keywords:
-                has_tech = tech in (exp.description or '').lower()
-                yield ResumeEvidenceUnit(
-                    id="",
-                    text=f"Experience with {tech}",
-                    source_section="Experience",
-                    tags={
-                        'company': exp.company or '',
-                        'title': exp.title or '',
-                        'technology': tech,
-                        'type': 'tech_keyword'
-                    },
-                    years_value=exp.years_value if has_tech else None,
-                    years_context=f'{tech}_experience' if has_tech else None,
-                    is_total_years_claim=False
-                )
+                yield self._create_experience_tech_unit(exp, idx, tech)
 
     def _extract_project_evidence(self, projects) -> Iterator[ResumeEvidenceUnit]:
         """Extract evidence units from projects section."""

@@ -291,6 +291,85 @@ def _load_user_wants_embeddings(
     return user_want_embeddings
 
 
+def _load_structured_resume(repo, resume_fingerprint: str, should_re_extract: bool):
+    """Load structured resume from database."""
+    if not should_re_extract:
+        return repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
+    return None
+
+
+def _prepare_matcher_service(ctx, repo, matching_config):
+    """Create and configure matcher service."""
+    return MatcherService(
+        resume_profiler=ResumeProfiler(
+            ai_service=ctx.ai_service,
+            store=JobRepositoryAdapter(repo)
+        ),
+        config=matching_config.matcher
+    )
+
+
+def _get_pre_extracted_resume(structured_resume, should_re_extract: bool):
+    """Get pre-extracted resume if available."""
+    if should_re_extract:
+        logger.info("Resume re-extraction needed - will extract fresh")
+        return None
+        
+    if not structured_resume or not structured_resume.extracted_data:
+        return None
+        
+    try:
+        pre_extracted = ResumeSchema.model_validate(structured_resume.extracted_data)
+        logger.info("Using stored structured resume (fingerprint: %s...)", structured_resume.fingerprint[:16] if structured_resume.fingerprint else '')
+        return pre_extracted
+    except Exception as e:
+        logger.warning("Failed to parse stored resume: %s. Will re-extract.", e)
+        return None
+
+
+def _run_vector_matching(matcher, repo, resume_data, stop_event, pre_extracted_resume, resume_fingerprint):
+    """Run vector-based job matching."""
+    logger.info("=== MATCHING STEP 1: Running MatcherService (Vector Retrieval) ===")
+    
+    preliminary_matches = matcher.match_resume_two_stage(
+        repo=repo,
+        resume_data=resume_data,
+        stop_event=stop_event,
+        pre_extracted_resume=pre_extracted_resume,
+        resume_fingerprint=resume_fingerprint,
+    )
+    
+    logger.info("MATCHING Step 1 completed: Matched against %d jobs", len(preliminary_matches))
+    return preliminary_matches
+
+
+def _run_scorer_service(scorer, preliminary_matches, matching_config, user_want_embeddings, job_facet_embeddings_map, stop_event):
+    """Run rule-based scoring."""
+    logger.info("=== MATCHING STEP 2: Running ScorerService (Rule-based Scoring) ===")
+    
+    if user_want_embeddings:
+        logger.info("=== Using Fit/Want scoring with 'user wants' embeddings ===")
+        scored_matches = scorer.score_matches(
+            preliminary_matches=preliminary_matches,
+            result_policy=matching_config.result_policy,
+            user_want_embeddings=user_want_embeddings,
+            job_facet_embeddings_map=job_facet_embeddings_map,
+            match_type="requirements_only",
+            stop_event=stop_event,
+        )
+    else:
+        logger.info("=== Using Fit-only scoring ===")
+        scored_matches = scorer.score_matches(
+            preliminary_matches=preliminary_matches,
+            result_policy=matching_config.result_policy,
+            match_type="requirements_only",
+            stop_event=stop_event,
+        )
+    
+    logger.info("MATCHING Step 2 completed: Scored %d matches", len(scored_matches))
+    return scored_matches
+
+
 def _run_matching_and_scoring(
     ctx: AppContext,
     resume_data: dict,
@@ -314,35 +393,25 @@ def _run_matching_and_scoring(
     match_dtos = []
 
     with job_uow() as repo:
-        # Only load structured resume from DB if NOT re-extracting
-        structured_resume = None
-        if not should_re_extract:
-            structured_resume = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
+        # Load structured resume
+        structured_resume = _load_structured_resume(repo, resume_fingerprint, should_re_extract)
 
         if not structured_resume:
             if should_re_extract:
-                logger.info(f"Will re-extract resume (fingerprint: {resume_fingerprint[:16]}...)")
+                logger.info("Will re-extract resume (fingerprint: %s...)", resume_fingerprint[:16])
             else:
-                error_msg = f"Resume not found in database for fingerprint: {resume_fingerprint[:16]}..."
-                logger.error(error_msg)
+                logger.error("Resume not found in database for fingerprint: %s...", resume_fingerprint[:16])
                 logger.error("Make sure Resume ETL has been run")
                 return []
 
-        if structured_resume:
-            logger.info(f"Loaded resume from database (fingerprint: {resume_fingerprint[:16]}...)")
-            logger.info(f"Resume experience: {structured_resume.total_experience_years} years")
+        logger.info("Loaded resume from database (fingerprint: %s...)", resume_fingerprint[:16])
+        logger.info("Resume experience: %s years", structured_resume.total_experience_years)
 
         # Create matcher with store to persist resume embeddings
-        matcher = MatcherService(
-            resume_profiler=ResumeProfiler(
-                ai_service=ctx.ai_service,
-                store=JobRepositoryAdapter(repo)
-            ),
-            config=matching_config.matcher
-        )
+        matcher = _prepare_matcher_service(ctx, repo, matching_config)
 
         step_elapsed = time.time() - step_start
-        logger.info(f"RESUME ETL Step 2 completed: Resume prepared in {step_elapsed:.2f}s")
+        logger.info("RESUME ETL Step 2 completed: Resume prepared in %.2fs", step_elapsed)
 
         if stop_event.is_set():
             return []
@@ -351,31 +420,17 @@ def _run_matching_and_scoring(
             status_callback("vector_matching")
 
         step_start = time.time()
-        logger.info("=== MATCHING STEP 1: Running MatcherService (Vector Retrieval) ===")
-
-        # Check if we have a stored structured resume to use (avoid re-extraction)
-        pre_extracted_resume = None
-        if not should_re_extract:
-            if structured_resume and structured_resume.extracted_data:
-                try:
-                    pre_extracted_resume = ResumeSchema.model_validate(structured_resume.extracted_data)
-                    logger.info(f"Using stored structured resume (fingerprint: {resume_fingerprint[:16]}...)")
-                except Exception as e:
-                    logger.warning(f"Failed to parse stored resume: {e}. Will re-extract.")
-        else:
-            logger.info("Resume re-extraction needed - will extract fresh")
-
-        # Retrieve top jobs based on cosine distance with resume summary embedding
-        preliminary_matches = matcher.match_resume_two_stage(
-            repo=repo,
-            resume_data=resume_data,
-            stop_event=stop_event,
-            pre_extracted_resume=pre_extracted_resume,
-            resume_fingerprint=resume_fingerprint,
+        
+        # Get pre-extracted resume if available
+        pre_extracted_resume = _get_pre_extracted_resume(structured_resume, should_re_extract)
+        
+        # Run vector matching
+        preliminary_matches = _run_vector_matching(
+            matcher, repo, resume_data, stop_event, pre_extracted_resume, resume_fingerprint
         )
 
         step_elapsed = time.time() - step_start
-        logger.info(f"MATCHING Step 1 completed: Matched against {len(preliminary_matches)} jobs in {step_elapsed:.2f}s")
+        logger.info("MATCHING Step 1 completed: Matched against %d jobs in %.2fs", len(preliminary_matches), step_elapsed)
 
         if stop_event.is_set():
             return []
@@ -384,44 +439,31 @@ def _run_matching_and_scoring(
             status_callback("scoring")
 
         step_start = time.time()
-        logger.info("=== MATCHING STEP 2: Running ScorerService (Rule-based Scoring) ===")
-
+        
+        # Build job facet embeddings map
+        for preliminary in preliminary_matches:
+            job_id = str(preliminary.job.id)
+            if job_id not in job_facet_embeddings_map:
+                job_facet_embeddings_map[job_id] = repo.get_job_facet_embeddings(preliminary.job.id)
+        
+        # Run scorer
         scorer = ScoringService(repo=repo, config=matching_config.scorer)
-
-        if user_want_embeddings:
-            logger.info("=== Using Fit/Want scoring with 'user wants' embeddings ===")
-            for preliminary in preliminary_matches:
-                job_id = str(preliminary.job.id)
-                if job_id not in job_facet_embeddings_map:
-                    job_facet_embeddings_map[job_id] = repo.get_job_facet_embeddings(preliminary.job.id)
-
-            scored_matches = scorer.score_matches(
-                preliminary_matches=preliminary_matches,
-                result_policy=matching_config.result_policy,
-                user_want_embeddings=user_want_embeddings,
-                job_facet_embeddings_map=job_facet_embeddings_map,
-                match_type="requirements_only",
-                stop_event=stop_event,
-            )
-        else:
-            logger.info("=== Using Fit-only scoring ===")
-            scored_matches = scorer.score_matches(
-                preliminary_matches=preliminary_matches,
-                result_policy=matching_config.result_policy,
-                match_type="requirements_only",
-                stop_event=stop_event,
-            )
+        scored_matches = _run_scorer_service(
+            scorer, preliminary_matches, matching_config, user_want_embeddings, 
+            job_facet_embeddings_map, stop_event
+        )
 
         # Convert ORM objects to DTOs before exiting UOW context
         match_dtos = _convert_matches_to_dtos(scored_matches)
 
     step_elapsed = time.time() - step_start
-    logger.info(f"MATCHING Step 2 completed: Scored {len(match_dtos)} matches in {step_elapsed:.2f}s")
+    logger.info("MATCHING Step 2 completed: Scored %d matches in %.2fs", len(match_dtos), step_elapsed)
 
     if match_dtos:
         logger.info("Top 5 Matches:")
         for i, dto in enumerate(match_dtos[:5], 1):
-            logger.info(f"  {i}. {dto.job.title} @ {dto.job.company}: overall={dto.overall_score:.1f}/100 (fit={dto.fit_score:.1f}, want={dto.want_score:.1f})")
+            logger.info("  %d. %s @ %s: overall=%.1f/100 (fit=%.1f, want=%.1f)", 
+                       i, dto.job.title, dto.job.company, dto.overall_score, dto.fit_score, dto.want_score)
 
     return match_dtos
 
