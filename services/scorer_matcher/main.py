@@ -15,8 +15,9 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
+from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
 
 from core.config_loader import load_config
@@ -30,35 +31,62 @@ from core.redis_streams import (
 )
 from pipeline.runner import run_matching_pipeline
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 CONSUMER_GROUP = os.getenv("MATCHER_CONSUMER_GROUP", "matcher-service")
 CONSUMER_NAME = os.getenv("HOSTNAME", "matcher-1")
 
-ctx: AppContext | None = None
-consumer_task: asyncio.Task | None = None
+
+# ---------------------------------------------------------------------------
+# App state container — replaces module-level globals
+# ---------------------------------------------------------------------------
+
+class MatcherState:
+    """Holds all mutable service-level state."""
+
+    def __init__(self, ctx: AppContext) -> None:
+        self.ctx = ctx
+        self.stop_event = threading.Event()
+        self.consumer_task: Optional[asyncio.Task] = None
+
+
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
+
+def _setup_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global ctx, consumer_task
+    _setup_logging()
     logger.info("Starting matcher service...")
+
     config = load_config()
-    ctx = AppContext.build(config)
+    state = MatcherState(ctx=AppContext.build(config))
+    app.state.matcher = state
+
     logger.info("Matcher service ready")
-    
-    consumer_task = asyncio.create_task(consume_matching_jobs())
-    
+    state.consumer_task = asyncio.create_task(consume_matching_jobs(state))
+
     yield
-    
+
     logger.info("Shutting down matcher service...")
-    if consumer_task:
-        consumer_task.cancel()
-        await consumer_task
+    state.stop_event.set()
+
+    if state.consumer_task:
+        state.consumer_task.cancel()
+        await asyncio.gather(state.consumer_task, return_exceptions=True)
+
+    ctx: AppContext = state.ctx
+    if hasattr(ctx, "aclose"):
+        await ctx.aclose()
+    elif hasattr(ctx, "close"):
+        ctx.close()
 
     logger.info("Matcher service shutdown complete")
 
@@ -67,24 +95,32 @@ app = FastAPI(
     title="Matcher Service",
     description="Vector matching and scoring for jobs and resumes",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
+
 class MatchResumeRequest(BaseModel):
-    resume_fingerprint: str | None = None
+    resume_fingerprint: Optional[str] = None
 
 
 class MatchJobRequest(BaseModel):
-    job_ids: list[str] | None = None
+    job_ids: Optional[list[str]] = None
 
 
 class MatchResponse(BaseModel):
     success: bool
     message: str
     matches: int = 0
-    task_id: str | None = None
+    task_id: Optional[str] = None
 
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 @app.get("/health")
 async def health():
@@ -92,157 +128,173 @@ async def health():
 
 
 @app.get("/metrics")
-async def metrics():
-    return {"service": "matcher", "version": "1.0.0"}
+async def metrics(request: Request):
+    state: MatcherState = request.app.state.matcher
+    return {
+        "service": "matcher",
+        "version": "1.0.0",
+        "consumer_running": (
+            state.consumer_task is not None and not state.consumer_task.done()
+        ),
+    }
 
 
 @app.post("/match/resume", response_model=MatchResponse)
-async def match_resume(request: MatchResumeRequest):
+async def match_resume(request: Request, body: MatchResumeRequest):
     """Run matching for a resume."""
-    global ctx
+    state: MatcherState = request.app.state.matcher
     logger.info("Running matching for resume request")
 
-    if ctx is None:
-        return MatchResponse(
-            success=False,
-            message="Service not initialized",
-            matches=0
-        )
-    
+    fp = body.resume_fingerprint
+    task_id = f"match-{fp[:8] if fp else 'none'}"
+
     try:
-        loop = asyncio.get_running_loop()
+        result = await asyncio.to_thread(
+            _run_matching_pipeline_sync, state.ctx, state.stop_event
+        )
+        matches = result.saved_count if result else 0
+        msg = f"Matching complete, {matches} matches saved" if matches > 0 else "No matches found"
+        return MatchResponse(success=True, message=msg, matches=matches, task_id=task_id)
 
-        def run_match():
-            stop_event = threading.Event()
-            result = run_matching_pipeline(ctx, stop_event)
-            return result
-
-        result = await loop.run_in_executor(None, run_match)
-        
-        if result and result.saved_count > 0:
-            return MatchResponse(
-                success=True,
-                message=f"Matching complete, {result.saved_count} matches saved",
-                matches=result.saved_count,
-                task_id=f"match-{request.resume_fingerprint[:8] if request.resume_fingerprint else 'none'}"
-            )
-        else:
-            return MatchResponse(
-                success=True,
-                message="No matches found",
-                matches=0,
-                task_id=f"match-{request.resume_fingerprint[:8] if request.resume_fingerprint else 'none'}"
-            )
-    except Exception as e:
+    except Exception:
         logger.exception("Matching failed")
         return MatchResponse(
             success=False,
-            message=f"Matching failed: {str(e)}",
-            matches=0
+            message="Matching failed",
+            matches=0,
+            task_id=task_id,
         )
 
 
 @app.post("/match/jobs", response_model=MatchResponse)
-async def match_jobs(request: MatchJobRequest):
+async def match_jobs(request: Request, body: MatchJobRequest):
     """Run matching for specific jobs.
-    
+
     TODO: Implement actual job matching logic.
     Currently returns a stub response.
     """
-    global ctx
-    logger.info(f"Matching {len(request.job_ids) if request.job_ids else 0} jobs")
+    state: MatcherState = request.app.state.matcher  # noqa: F841 — available for when TODO is implemented
+    job_count = len(body.job_ids) if body.job_ids else 0
+    logger.info("Matching %d jobs", job_count)
 
-    if ctx is None:
-        return MatchResponse(
-            success=False,
-            message="Service not initialized",
-            matches=0
-        )
-
-    if not request.job_ids:
-        return MatchResponse(
-            success=True,
-            message="No job IDs provided",
-            matches=0
-        )
+    if not body.job_ids:
+        return MatchResponse(success=True, message="No job IDs provided", matches=0)
 
     # TODO: Implement actual job matching logic using run_matching_pipeline
-    return MatchResponse(
-        success=False,
-        message="Job matching not yet implemented",
-        matches=0
+    return MatchResponse(success=False, message="Job matching not yet implemented", matches=0)
+
+
+@app.post("/match/stop")
+async def stop_matching(request: Request):
+    """Signal any in-progress pipeline run to stop gracefully."""
+    state: MatcherState = request.app.state.matcher
+    state.stop_event.set()
+    return {"success": True, "message": "Stop signal sent"}
+
+
+# ---------------------------------------------------------------------------
+# Pipeline helpers
+# ---------------------------------------------------------------------------
+
+def _run_matching_pipeline_sync(
+    ctx: AppContext, stop_event: threading.Event
+):
+    """Run the matching pipeline synchronously — safe to call via asyncio.to_thread."""
+    return run_matching_pipeline(ctx, stop_event)
+
+
+async def _process_matching_message(
+    state: MatcherState, msg_id: str, msg: dict
+) -> bool:
+    """Process a single matching job. Returns True if successful."""
+    task_id = msg.get("task_id")
+    resume_fingerprint = msg.get("resume_fingerprint")
+    fp_preview = (resume_fingerprint or "")[:16]
+
+    logger.info(
+        "📨 Received matching job: msg_id=%s, task_id=%s, fingerprint=%s...",
+        msg_id, task_id, fp_preview,
     )
 
+    try:
+        result = await asyncio.to_thread(
+            _run_matching_pipeline_sync, state.ctx, state.stop_event
+        )
+        matches_count = result.saved_count if result else 0
+        await asyncio.to_thread(
+            publish_completion,
+            CHANNEL_MATCHING_DONE,
+            {
+                "task_id": task_id,
+                "status": "completed",
+                "resume_fingerprint": resume_fingerprint,
+                "matches_count": matches_count,
+            },
+        )
+        await asyncio.to_thread(ack_message, STREAM_MATCHING, CONSUMER_GROUP, msg_id)
+        logger.info("✅ Matching job done: task_id=%s, matches=%d", task_id, matches_count)
+        return True
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8083)
+    except Exception as e:
+        logger.exception(
+            "❌ Matching failed: task_id=%s, error=%s: %s", task_id, type(e).__name__, e
+        )
+        await asyncio.to_thread(
+            publish_completion,
+            CHANNEL_MATCHING_DONE,
+            {"task_id": task_id, "status": "failed", "error": str(e)},
+        )
+        await asyncio.to_thread(ack_message, STREAM_MATCHING, CONSUMER_GROUP, msg_id)
+        logger.info("✅ Acknowledged failed job: msg_id=%s", msg_id)
+        return False
 
 
-# pylint: disable=too-many-branches
-async def consume_matching_jobs():
+async def consume_matching_jobs(state: MatcherState) -> None:
     """Background task that consumes matching jobs from Redis Streams."""
-    logger.info(f"Starting matching consumer: {CONSUMER_NAME} (group: {CONSUMER_GROUP})")
-    loop = asyncio.get_running_loop()
+    logger.info(
+        "Starting matching consumer: %s (group: %s)", CONSUMER_NAME, CONSUMER_GROUP
+    )
     message_count = 0
     error_count = 0
 
     while True:
         try:
             logger.debug("Waiting for matching job from Redis stream...")
-            messages = await loop.run_in_executor(
-                None,
-                lambda: list(read_stream(STREAM_MATCHING, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000))
+            messages = await asyncio.to_thread(
+                lambda: list(
+                    read_stream(STREAM_MATCHING, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000)
+                )
             )
-            
+
             if not messages:
                 logger.debug("No messages received (timeout), continuing...")
                 continue
 
             for msg_id, msg in messages:
                 message_count += 1
-                task_id = msg.get("task_id")
-                resume_fingerprint = msg.get("resume_fingerprint")
-
-                logger.info(f"📨 Received matching job: msg_id={msg_id}, task_id={task_id}, fingerprint={(resume_fingerprint or '')[:16]}...")
-
-                try:
-                    def run_pipeline():
-                        if ctx is None:
-                            raise RuntimeError("AppContext not initialized")
-                        stop_event = threading.Event()
-                        return run_matching_pipeline(ctx, stop_event)
-
-                    result = await loop.run_in_executor(None, run_pipeline)
-
-                    matches_count = result.saved_count if result else 0
-
-                    publish_completion(CHANNEL_MATCHING_DONE, {
-                        "task_id": task_id,
-                        "status": "completed",
-                        "resume_fingerprint": resume_fingerprint,
-                        "matches_count": matches_count
-                    })
-
-                    ack_message(STREAM_MATCHING, CONSUMER_GROUP, msg_id)
-                    logger.info(f"✅ Matching job done: task_id={task_id}, matches={matches_count}")
-
-                except Exception as e:
+                success = await _process_matching_message(state, msg_id, msg)
+                if not success:
                     error_count += 1
-                    logger.exception(f"❌ Matching failed: task_id={task_id}, error={type(e).__name__}: {e}")
-                    publish_completion(CHANNEL_MATCHING_DONE, {
-                        "task_id": task_id,
-                        "status": "failed",
-                        "error": str(e)
-                    })
-                    # Ack to prevent infinite redelivery; failure is recorded in completion event
-                    ack_message(STREAM_MATCHING, CONSUMER_GROUP, msg_id)
-                    logger.info(f"✅ Acknowledged failed job: msg_id={msg_id}")
 
         except asyncio.CancelledError:
-            logger.info("🛑 Matching consumer cancelled (processed: %d, errors: %d)", message_count, error_count)
+            logger.info(
+                "🛑 Matching consumer cancelled (processed: %d, errors: %d)",
+                message_count, error_count,
+            )
             raise
+
         except Exception as e:
             error_count += 1
-            logger.exception(f"❌ Error in matching consumer: {type(e).__name__}: {e}")
+            logger.exception(
+                "❌ Error in matching consumer: %s: %s", type(e).__name__, e
+            )
             await asyncio.sleep(1)
+
+
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8083)

@@ -454,42 +454,45 @@ def _run_matching_and_scoring(
     return match_dtos
 
 
+def _build_evidence_dto(evidence) -> Optional[JobEvidenceDTO]:
+    """Return a JobEvidenceDTO if evidence exists, otherwise None."""
+    if evidence is None:
+        return None
+    return JobEvidenceDTO(
+        text=getattr(evidence, 'text', ''),
+        source_section=getattr(evidence, 'source_section', None),
+        tags=getattr(evidence, 'tags', {}),
+    )
+
+
+def _matched_req_to_dto(req) -> RequirementMatchDTO:
+    return RequirementMatchDTO(
+        requirement=JobRequirementDTO(
+            id=str(req.requirement.id),
+            req_type=getattr(req.requirement, 'req_type', 'required'),
+        ),
+        evidence=_build_evidence_dto(req.evidence),
+        similarity=req.similarity,
+        is_covered=req.is_covered,
+    )
+
+
+def _missing_req_to_dto(req) -> RequirementMatchDTO:
+    return RequirementMatchDTO(
+        requirement=JobRequirementDTO(
+            id=str(req.requirement.id),
+            req_type=getattr(req.requirement, 'req_type', 'required'),
+        ),
+        similarity=req.similarity,
+        is_covered=False,
+    )
+
+
 def _convert_matches_to_dtos(scored_matches) -> List[MatchResultDTO]:
     """Convert ORM match objects to DTOs."""
     match_dtos = []
+
     for match in scored_matches:
-        # Extract requirement matches
-        requirement_matches_dtos = []
-        for req in match.matched_requirements:
-            evidence_dto = None
-            if req.evidence:
-                evidence_dto = JobEvidenceDTO(
-                    text=getattr(req.evidence, 'text', ''),
-                    source_section=getattr(req.evidence, 'source_section', None),
-                    tags=getattr(req.evidence, 'tags', {}),
-                )
-            requirement_matches_dtos.append(RequirementMatchDTO(
-                requirement=JobRequirementDTO(
-                    id=str(req.requirement.id),
-                    req_type=getattr(req.requirement, 'req_type', 'required'),
-                ),
-                evidence=evidence_dto,
-                similarity=req.similarity,
-                is_covered=req.is_covered,
-            ))
-
-        # Extract missing requirements
-        missing_requirements_dtos = []
-        for req in match.missing_requirements:
-            missing_requirements_dtos.append(RequirementMatchDTO(
-                requirement=JobRequirementDTO(
-                    id=str(req.requirement.id),
-                    req_type=getattr(req.requirement, 'req_type', 'required'),
-                ),
-                similarity=req.similarity,
-                is_covered=False,
-            ))
-
         dto = MatchResultDTO(
             job=JobMatchDTO(
                 id=str(match.job.id),
@@ -505,8 +508,8 @@ def _convert_matches_to_dtos(scored_matches) -> List[MatchResultDTO]:
             job_similarity=match.job_similarity if match.job_similarity is not None else 0.0,
             jd_required_coverage=match.jd_required_coverage,
             jd_preferences_coverage=match.jd_preferences_coverage,
-            requirement_matches=requirement_matches_dtos,
-            missing_requirements=missing_requirements_dtos,
+            requirement_matches=[_matched_req_to_dto(r) for r in match.matched_requirements],
+            missing_requirements=[_missing_req_to_dto(r) for r in match.missing_requirements],
             resume_fingerprint=match.resume_fingerprint,
             fit_components=getattr(match, 'fit_components', {}),
             want_components=getattr(match, 'want_components', {}),
@@ -514,14 +517,16 @@ def _convert_matches_to_dtos(scored_matches) -> List[MatchResultDTO]:
             penalties=getattr(match, 'penalties', 0.0),
             penalty_details=penalty_details_from_orm(
                 getattr(match, 'penalty_details', []),
-                total_penalties=getattr(match, 'penalties', 0.0)
+                total_penalties=getattr(match, 'penalties', 0.0),
             ),
             fit_weight=getattr(match, 'fit_weight', 0.7),
             want_weight=getattr(match, 'want_weight', 0.3),
             match_type=getattr(match, 'match_type', 'requirements_only'),
         )
         match_dtos.append(dto)
+
     return match_dtos
+
 
 
 def _save_matches_batch(

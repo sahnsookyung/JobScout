@@ -56,49 +56,56 @@ def check_service_health(name, url):
         print_error(f"{name}: Error")
         return False, None
 
-def check_orchestrator_diagnostics(url):
+def _print_streams_status(streams: dict) -> None:
+    print("\n" + "-" * 40)
+    print("Redis Streams Status:")
+    print("-" * 40)
+
+    for stream_name, info in streams.items():
+        exists = info.get('exists', False)
+        length = info.get('length', 0)
+        status = f"{Colors.GREEN}EXISTS{Colors.RESET}" if exists else f"{Colors.RED}MISSING{Colors.RESET}"
+        print(f"  {stream_name}: {status} (length: {length})")
+
+        if 'consumer_groups' in info:
+            for cg in info['consumer_groups']:
+                print(f"    └─ Group: {cg.get('name')}")
+                print(f"       Consumers: {cg.get('consumers', 0)}, Pending: {cg.get('pending', 0)}")
+
+
+def _print_active_orchestrations(active: list) -> None:
+    print("\n" + "-" * 40)
+    print("Active Orchestrations:")
+    print("-" * 40)
+
+    if active:
+        for task in active:
+            print(f"  {task.get('task_id')}: {task.get('status')}")
+    else:
+        print_info("No active orchestrations")
+
+
+def check_orchestrator_diagnostics(url: str):
     """Get orchestrator diagnostics."""
     try:
         with httpx.Client(timeout=10.0) as client:
             response = client.get(f"{url}/orchestrate/diagnostics")
+
             if response.status_code == 200:
                 data = response.json()
                 print_success("Orchestrator diagnostics retrieved")
-                
-                # Print stream info
-                print("\n" + "-" * 40)
-                print("Redis Streams Status:")
-                print("-" * 40)
-                streams = data.get('streams', {})
-                for stream_name, info in streams.items():
-                    exists = info.get('exists', False)
-                    length = info.get('length', 0)
-                    status = f"{Colors.GREEN}EXISTS{Colors.RESET}" if exists else f"{Colors.RED}MISSING{Colors.RESET}"
-                    print(f"  {stream_name}: {status} (length: {length})")
-                    
-                    if 'consumer_groups' in info:
-                        for cg in info['consumer_groups']:
-                            print(f"    └─ Group: {cg.get('name')}")
-                            print(f"       Consumers: {cg.get('consumers', 0)}, Pending: {cg.get('pending', 0)}")
-                
-                # Print active orchestrations
-                print("\n" + "-" * 40)
-                print("Active Orchestrations:")
-                print("-" * 40)
-                active = data.get('active_orchestrations', [])
-                if active:
-                    for task in active:
-                        print(f"  {task.get('task_id')}: {task.get('status')}")
-                else:
-                    print_info("No active orchestrations")
-                
+                _print_streams_status(data.get('streams', {}))
+                _print_active_orchestrations(data.get('active_orchestrations', []))
                 return True, data
+
             else:
                 print_error(f"Orchestrator diagnostics: HTTP {response.status_code}")
                 return False, None
+
     except Exception as e:
         print_error(f"Orchestrator diagnostics: {e}")
         return False, None
+
 
 def test_pipeline_trigger(url):
     """Test triggering the pipeline."""

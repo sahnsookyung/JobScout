@@ -19,7 +19,5 @@ COPY services/embeddings/ ./services/embeddings/
 RUN chown -R appuser:appuser /app
 
 USER appuser
-
 EXPOSE 8082
-
 CMD ["uv", "run", "uvicorn", "services.embeddings.main:app", "--host", "0.0.0.0", "--port", "8082"]

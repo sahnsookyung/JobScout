@@ -13,8 +13,9 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
+from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
 
 from core.config_loader import load_config
@@ -26,36 +27,65 @@ from core.redis_streams import (
     CHANNEL_EMBEDDINGS_DONE,
     STREAM_EMBEDDINGS,
 )
+from services.base.embeddings import run_embedding_extraction, generate_resume_embedding
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 CONSUMER_GROUP = os.getenv("EMBEDDINGS_CONSUMER_GROUP", "embeddings-service")
 CONSUMER_NAME = os.getenv("HOSTNAME", "embeddings-1")
 
-ctx: AppContext | None = None
-consumer_task: asyncio.Task | None = None
+
+# ---------------------------------------------------------------------------
+# App state container — replaces module-level globals
+# ---------------------------------------------------------------------------
+
+class EmbeddingsState:
+    """Holds all mutable service-level state."""
+
+    def __init__(self, ctx: AppContext) -> None:
+        self.ctx = ctx
+        self.stop_event = threading.Event()
+        self.consumer_task: Optional[asyncio.Task] = None
+
+
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
+
+def _setup_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global ctx, consumer_task
+    _setup_logging()
     logger.info("Starting embeddings service...")
-    config = load_config()
-    ctx = AppContext.build(config)
-    logger.info("Embeddings service ready")
 
-    consumer_task = asyncio.create_task(consume_embeddings_jobs())
+    config = load_config()
+    state = EmbeddingsState(ctx=AppContext.build(config))
+    app.state.embeddings = state
+
+    logger.info("Embeddings service ready")
+    state.consumer_task = asyncio.create_task(consume_embeddings_jobs(state))
 
     yield
 
     logger.info("Shutting down embeddings service...")
-    if consumer_task:
-        consumer_task.cancel()
-        await consumer_task
+    state.stop_event.set()
+
+    if state.consumer_task:
+        state.consumer_task.cancel()
+        await asyncio.gather(state.consumer_task, return_exceptions=True)
+
+    ctx: AppContext = state.ctx
+    if hasattr(ctx, "aclose"):
+        await ctx.aclose()
+    elif hasattr(ctx, "close"):
+        ctx.close()
+
     logger.info("Embeddings service shutdown complete")
 
 
@@ -63,9 +93,13 @@ app = FastAPI(
     title="Embeddings Service",
     description="Vector embedding generation for jobs and resumes",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
+
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
 
 class EmbedJobRequest(BaseModel):
     limit: int = 100
@@ -81,145 +115,165 @@ class EmbedResponse(BaseModel):
     processed: int = 0
 
 
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
 @app.get("/health")
 async def health():
     return {"status": "healthy", "service": "embeddings"}
 
 
 @app.get("/metrics")
-async def metrics():
-    return {"service": "embeddings", "version": "1.0.0"}
+async def metrics(request: Request):
+    state: EmbeddingsState = request.app.state.embeddings
+    return {
+        "service": "embeddings",
+        "version": "1.0.0",
+        "consumer_running": (
+            state.consumer_task is not None and not state.consumer_task.done()
+        ),
+    }
 
 
 @app.post("/embed/jobs", response_model=EmbedResponse)
-async def embed_jobs(request: EmbedJobRequest = EmbedJobRequest(limit=100)):
+async def embed_jobs(request: Request, body: EmbedJobRequest = EmbedJobRequest()):
     """Generate embeddings for jobs."""
-    global ctx
-    logger.info(f"Processing job embeddings (limit: {request.limit})")
-
-    if ctx is None:
-        return EmbedResponse(
-            success=False,
-            message="Service not initialized",
-            processed=0
-        )
+    state: EmbeddingsState = request.app.state.embeddings
+    logger.info("Processing job embeddings (limit: %d)", body.limit)
 
     try:
-        from services.base.embeddings import run_embedding_extraction
-        stop_event = threading.Event()
-        loop = asyncio.get_running_loop()
-        processed = await loop.run_in_executor(
-            None, run_embedding_extraction, ctx, stop_event, request.limit
+        processed = await asyncio.to_thread(
+            run_embedding_extraction, state.ctx, state.stop_event, body.limit
         )
         return EmbedResponse(
             success=True,
             message="Job embedding completed",
-            processed=processed
+            processed=processed,
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Job embedding failed")
-        return EmbedResponse(
-            success=False,
-            message=f"Job embedding failed: {str(e)}",
-            processed=0
-        )
+        return EmbedResponse(success=False, message="Job embedding failed", processed=0)
 
 
 @app.post("/embed/resume", response_model=EmbedResponse)
-async def embed_resume(request: EmbedResumeRequest):
+async def embed_resume(request: Request, body: EmbedResumeRequest):
     """Generate embeddings for resume."""
-    global ctx
+    state: EmbeddingsState = request.app.state.embeddings
     logger.info("Processing resume embedding request")
 
-    if ctx is None:
-        return EmbedResponse(
-            success=False,
-            message="Service not initialized",
-            processed=0
-        )
+    try:
+        await asyncio.to_thread(generate_resume_embedding, state.ctx, body.resume_fingerprint)
+        return EmbedResponse(success=True, message="Resume embedding completed", processed=1)
+    except Exception:
+        logger.exception("Resume embedding failed")
+        return EmbedResponse(success=False, message="Resume embedding failed", processed=0)
+
+
+@app.post("/embed/stop")
+async def stop_embeddings(request: Request):
+    """Signal any in-progress embedding run to stop gracefully."""
+    state: EmbeddingsState = request.app.state.embeddings
+    state.stop_event.set()
+    return {"success": True, "message": "Stop signal sent"}
+
+
+# ---------------------------------------------------------------------------
+# Stream consumer helpers
+# ---------------------------------------------------------------------------
+
+async def _process_embedding_message(
+    state: EmbeddingsState, msg_id: str, msg: dict
+) -> bool:
+    """Process a single embedding job. Returns True if successful."""
+    task_id = msg.get("task_id")
+    resume_fingerprint = msg.get("resume_fingerprint")
+    fp_preview = (resume_fingerprint or "")[:16]
+
+    logger.info(
+        "📨 Received embeddings job: msg_id=%s, task_id=%s, fingerprint=%s...",
+        msg_id, task_id, fp_preview,
+    )
 
     try:
-        from services.base.embeddings import generate_resume_embedding
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, generate_resume_embedding, ctx, request.resume_fingerprint)
-        return EmbedResponse(
-            success=True,
-            message="Resume embedding completed",
-            processed=1
+        await asyncio.to_thread(generate_resume_embedding, state.ctx, resume_fingerprint)
+        await asyncio.to_thread(
+            publish_completion,
+            CHANNEL_EMBEDDINGS_DONE,
+            {
+                "task_id": task_id,
+                "status": "completed",
+                "resume_fingerprint": resume_fingerprint,
+            },
         )
+        await asyncio.to_thread(ack_message, STREAM_EMBEDDINGS, CONSUMER_GROUP, msg_id)
+        logger.info(
+            "✅ Embeddings job done: task_id=%s, fingerprint=%s...", task_id, fp_preview
+        )
+        return True
+
     except Exception as e:
-        logger.exception("Resume embedding failed")
-        return EmbedResponse(
-            success=False,
-            message=f"Resume embedding failed: {str(e)}",
-            processed=0
+        logger.exception(
+            "❌ Embeddings failed: task_id=%s, error=%s: %s", task_id, type(e).__name__, e
         )
+        await asyncio.to_thread(
+            publish_completion,
+            CHANNEL_EMBEDDINGS_DONE,
+            {"task_id": task_id, "status": "failed", "error": str(e)},
+        )
+        await asyncio.to_thread(ack_message, STREAM_EMBEDDINGS, CONSUMER_GROUP, msg_id)
+        logger.info("✅ Acknowledged failed job: msg_id=%s", msg_id)
+        return False
 
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8082)
-
-
-# pylint: disable=too-many-branches
-async def consume_embeddings_jobs():
+async def consume_embeddings_jobs(state: EmbeddingsState) -> None:
     """Background task that consumes embeddings jobs from Redis Streams."""
-    from services.base.embeddings import generate_resume_embedding
-
-    logger.info(f"Starting embeddings consumer: {CONSUMER_NAME} (group: {CONSUMER_GROUP})")
-    loop = asyncio.get_running_loop()
+    logger.info(
+        "Starting embeddings consumer: %s (group: %s)", CONSUMER_NAME, CONSUMER_GROUP
+    )
     message_count = 0
     error_count = 0
 
     while True:
         try:
             logger.debug("Waiting for embeddings job from Redis stream...")
-            messages = await loop.run_in_executor(
-                None,
-                lambda: list(read_stream(STREAM_EMBEDDINGS, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000))
+            messages = await asyncio.to_thread(
+                lambda: list(
+                    read_stream(
+                        STREAM_EMBEDDINGS, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000
+                    )
+                )
             )
-            
+
             if not messages:
                 logger.debug("No messages received (timeout), continuing...")
                 continue
 
             for msg_id, msg in messages:
                 message_count += 1
-                task_id = msg.get("task_id")
-                resume_fingerprint = msg.get("resume_fingerprint")
-
-                logger.info(f"📨 Received embeddings job: msg_id={msg_id}, task_id={task_id}, fingerprint={(resume_fingerprint or '')[:16]}...")
-
-                try:
-                    if ctx is None:
-                        raise RuntimeError("AppContext not initialized")
-                    await loop.run_in_executor(None, generate_resume_embedding, ctx, resume_fingerprint)
-
-                    publish_completion(CHANNEL_EMBEDDINGS_DONE, {
-                        "task_id": task_id,
-                        "status": "completed",
-                        "resume_fingerprint": resume_fingerprint
-                    })
-
-                    ack_message(STREAM_EMBEDDINGS, CONSUMER_GROUP, msg_id)
-                    logger.info(f"✅ Embeddings job done: task_id={task_id}, fingerprint={(resume_fingerprint or '')[:16]}...")
-
-                except Exception as e:
+                success = await _process_embedding_message(state, msg_id, msg)
+                if not success:
                     error_count += 1
-                    logger.exception(f"❌ Embeddings failed: task_id={task_id}, error={type(e).__name__}: {e}")
-                    publish_completion(CHANNEL_EMBEDDINGS_DONE, {
-                        "task_id": task_id,
-                        "status": "failed",
-                        "error": str(e)
-                    })
-                    # Ack to prevent infinite redelivery; failure is recorded in completion event
-                    ack_message(STREAM_EMBEDDINGS, CONSUMER_GROUP, msg_id)
-                    logger.info(f"✅ Acknowledged failed job: msg_id={msg_id}")
 
         except asyncio.CancelledError:
-            logger.info("🛑 Embeddings consumer cancelled (processed: %d, errors: %d)", message_count, error_count)
+            logger.info(
+                "🛑 Embeddings consumer cancelled (processed: %d, errors: %d)",
+                message_count, error_count,
+            )
             raise
+
         except Exception as e:
             error_count += 1
-            logger.exception(f"❌ Error in embeddings consumer: {type(e).__name__}: {e}")
+            logger.exception(
+                "❌ Error in embeddings consumer: %s: %s", type(e).__name__, e
+            )
             await asyncio.sleep(1)
+
+
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8082)
