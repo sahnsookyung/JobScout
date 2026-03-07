@@ -60,59 +60,188 @@ class ResumeProfiler:
 
     def extract_resume_evidence(self, profile: Profile) -> List[ResumeEvidenceUnit]:
         """Extract Resume Evidence Units from structured profile."""
-        
-        def _generate_unit_data() -> Iterator[Dict[str, Any]]:
-            # Experience
-            for idx, exp in enumerate(profile.experience):
-                if exp.description:
-                    yield dict(text=exp.description, source="Experience", tags={'company': exp.company or '', 'title': exp.title or '', 'index': idx, 'type': 'description', 'is_current': exp.is_current}, y_val=exp.years_value, y_ctx='experience_at_company' if exp.company else 'experience')
-                
-                for h in (exp.highlights or []):
-                    yield dict(text=h, source="Experience", tags={'company': exp.company or '', 'title': exp.title or '', 'index': idx, 'type': 'highlight', 'is_current': exp.is_current})
-                
-                for tech in exp.tech_keywords:
-                    has_tech = tech in (exp.description or '').lower()
-                    yield dict(text=f"Experience with {tech}", source="Experience", tags={'company': exp.company or '', 'title': exp.title or '', 'technology': tech, 'type': 'tech_keyword'}, y_val=exp.years_value if has_tech else None, y_ctx=f'{tech}_experience' if has_tech else None)
+        evidence_units = []
+        unit_id = 0
 
-            # Projects
-            if profile.projects and profile.projects.items:
-                for idx, proj in enumerate(profile.projects.items):
-                    if proj.description:
-                        yield dict(text=proj.description, source="Projects", tags={'project': proj.name or '', 'index': idx, 'type': 'description'})
-                    for h in (proj.highlights or []):
-                        yield dict(text=h, source="Projects", tags={'project': proj.name or '', 'index': idx, 'type': 'highlight'})
+        # Experience section
+        for unit in self._extract_experience_evidence(profile.experience):
+            unit.id = f"reu_{unit_id}"
+            evidence_units.append(unit)
+            unit_id += 1
 
-            # Education
-            if profile.education:
-                for idx, edu in enumerate(profile.education):
-                    if edu.description:
-                        yield dict(text=edu.description, source="Education", tags={'institution': edu.institution or '', 'degree': edu.degree or '', 'index': idx, 'type': 'description'})
-                    for h in (edu.highlights or []):
-                        yield dict(text=h, source="Education", tags={'institution': edu.institution or '', 'degree': edu.degree or '', 'index': idx, 'type': 'highlight'})
+        # Projects section
+        for unit in self._extract_project_evidence(profile.projects):
+            unit.id = f"reu_{unit_id}"
+            evidence_units.append(unit)
+            unit_id += 1
 
-            # Skills
-            for skill in profile.skills.all:
-                if skill.name:
-                    text = skill.to_embedding_text()
-                    text = text.strip() if text and text.strip() else skill.name
-                    yield dict(text=text, source="Skills", tags={'skill': skill.name, 'kind': skill.kind or '', 'proficiency': skill.proficiency or '', 'years_experience': skill.years_experience, 'type': 'skill'}, y_val=skill.years_experience, y_ctx=f'{skill.name}_skill')
+        # Education section
+        for unit in self._extract_education_evidence(profile.education):
+            unit.id = f"reu_{unit_id}"
+            evidence_units.append(unit)
+            unit_id += 1
 
-        # Build objects using enumerate for the ID
-        evidence_units = [
-            ResumeEvidenceUnit(
-                id=f"reu_{i}",
-                text=data['text'],
-                source_section=data['source'],
-                tags=data['tags'],
-                years_value=data.get('y_val'),
-                years_context=data.get('y_ctx'),
-                is_total_years_claim=False
-            )
-            for i, data in enumerate(_generate_unit_data())
-        ]
+        # Skills section
+        for unit in self._extract_skill_evidence(profile.skills):
+            unit.id = f"reu_{unit_id}"
+            evidence_units.append(unit)
+            unit_id += 1
 
         logger.info(f"Extracted {len(evidence_units)} evidence units from resume")
         return evidence_units
+
+    def _extract_experience_evidence(self, experience: list) -> Iterator[ResumeEvidenceUnit]:
+        """Extract evidence units from experience section."""
+        for idx, exp in enumerate(experience):
+            if exp.description:
+                yield ResumeEvidenceUnit(
+                    id="",  # Will be set by caller
+                    text=exp.description,
+                    source_section="Experience",
+                    tags={
+                        'company': exp.company or '',
+                        'title': exp.title or '',
+                        'index': idx,
+                        'type': 'description',
+                        'is_current': exp.is_current
+                    },
+                    years_value=exp.years_value,
+                    years_context='experience_at_company' if exp.company else 'experience',
+                    is_total_years_claim=False
+                )
+
+            for h in (exp.highlights or []):
+                yield ResumeEvidenceUnit(
+                    id="",
+                    text=h,
+                    source_section="Experience",
+                    tags={
+                        'company': exp.company or '',
+                        'title': exp.title or '',
+                        'index': idx,
+                        'type': 'highlight',
+                        'is_current': exp.is_current
+                    },
+                    years_value=None,
+                    years_context=None,
+                    is_total_years_claim=False
+                )
+
+            for tech in exp.tech_keywords:
+                has_tech = tech in (exp.description or '').lower()
+                yield ResumeEvidenceUnit(
+                    id="",
+                    text=f"Experience with {tech}",
+                    source_section="Experience",
+                    tags={
+                        'company': exp.company or '',
+                        'title': exp.title or '',
+                        'technology': tech,
+                        'type': 'tech_keyword'
+                    },
+                    years_value=exp.years_value if has_tech else None,
+                    years_context=f'{tech}_experience' if has_tech else None,
+                    is_total_years_claim=False
+                )
+
+    def _extract_project_evidence(self, projects) -> Iterator[ResumeEvidenceUnit]:
+        """Extract evidence units from projects section."""
+        if not projects or not projects.items:
+            return
+
+        for idx, proj in enumerate(projects.items):
+            if proj.description:
+                yield ResumeEvidenceUnit(
+                    id="",
+                    text=proj.description,
+                    source_section="Projects",
+                    tags={
+                        'project': proj.name or '',
+                        'index': idx,
+                        'type': 'description'
+                    },
+                    years_value=None,
+                    years_context=None,
+                    is_total_years_claim=False
+                )
+
+            for h in (proj.highlights or []):
+                yield ResumeEvidenceUnit(
+                    id="",
+                    text=h,
+                    source_section="Projects",
+                    tags={
+                        'project': proj.name or '',
+                        'index': idx,
+                        'type': 'highlight'
+                    },
+                    years_value=None,
+                    years_context=None,
+                    is_total_years_claim=False
+                )
+
+    def _extract_education_evidence(self, education: list) -> Iterator[ResumeEvidenceUnit]:
+        """Extract evidence units from education section."""
+        if not education:
+            return
+
+        for idx, edu in enumerate(education):
+            if edu.description:
+                yield ResumeEvidenceUnit(
+                    id="",
+                    text=edu.description,
+                    source_section="Education",
+                    tags={
+                        'institution': edu.institution or '',
+                        'degree': edu.degree or '',
+                        'index': idx,
+                        'type': 'description'
+                    },
+                    years_value=None,
+                    years_context=None,
+                    is_total_years_claim=False
+                )
+
+            for h in (edu.highlights or []):
+                yield ResumeEvidenceUnit(
+                    id="",
+                    text=h,
+                    source_section="Education",
+                    tags={
+                        'institution': edu.institution or '',
+                        'degree': edu.degree or '',
+                        'index': idx,
+                        'type': 'highlight'
+                    },
+                    years_value=None,
+                    years_context=None,
+                    is_total_years_claim=False
+                )
+
+    def _extract_skill_evidence(self, skills) -> Iterator[ResumeEvidenceUnit]:
+        """Extract evidence units from skills section."""
+        if not skills:
+            return
+
+        for skill in skills.all:
+            if skill.name:
+                text = skill.to_embedding_text()
+                text = text.strip() if text and text.strip() else skill.name
+                yield ResumeEvidenceUnit(
+                    id="",
+                    text=text,
+                    source_section="Skills",
+                    tags={
+                        'skill': skill.name,
+                        'kind': skill.kind or '',
+                        'proficiency': skill.proficiency or '',
+                        'years_experience': skill.years_experience,
+                        'type': 'skill'
+                    },
+                    years_value=skill.years_experience,
+                    years_context=f'{skill.name}_skill',
+                    is_total_years_claim=False
+                )
 
     def embed_evidence_units(self, evidence_units: List[ResumeEvidenceUnit]) -> None:
         """Generate embeddings for evidence units in-place."""
