@@ -508,7 +508,6 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
 def _send_and_record_notification(
     notification_id: str,
     notification_data: Dict[str, Any],
-    rate_limiter: NotificationRateLimiter  # pylint: disable=unused-argument
 ) -> str:
     """Send notification and record result in database."""
     channel_type = notification_data['channel_type']
@@ -529,7 +528,6 @@ def _send_and_record_notification(
             job_match_id=notification_data.get('job_match_id'),
             event_type=notification_data['event_type'],
             channel_type=channel_type,
-            notification_type=notification_data['event_type'],
             recipient=notification_data['recipient'],
             subject=notification_data['subject'],
             body=notification_data['body'],
@@ -548,7 +546,7 @@ def _send_and_record_notification(
 
 
 def _record_notification_failure(
-    notification_id: str,  # pylint: disable=unused-argument
+    notification_id: str,
     notification_data: Dict[str, Any],
     error_message: str
 ) -> None:
@@ -562,7 +560,6 @@ def _record_notification_failure(
                 job_match_id=notification_data.get('job_match_id'),
                 event_type=notification_data['event_type'],
                 channel_type=notification_data['channel_type'],
-                notification_type=notification_data['event_type'],
                 recipient=notification_data['recipient'],
                 subject=notification_data['subject'],
                 body=notification_data['body'],
@@ -572,4 +569,6 @@ def _record_notification_failure(
                 allow_resend=notification_data.get('allow_resend', True)
             )
     except Exception as db_error:
-        logger.error(f"Failed to record notification failure: {db_error}")
+        logger.error(
+            f"Failed to record failure for notification {notification_id}: {db_error}"
+        )
