@@ -169,7 +169,7 @@ def wait_for_service(host_port, check_type, timeout=60):
     while time.time() - start_time < timeout:
         try:
             if check_type == "health":
-                response = requests.get(f"http://{host_port}/health", timeout=2)
+                response = requests.get(f"http://{host_port}/health", timeout=2)  # nosec: B113 - localhost test URL
                 if response.status_code == 200:
                     return
             elif check_type == "redis-cli ping":

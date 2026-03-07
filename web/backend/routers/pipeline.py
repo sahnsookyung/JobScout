@@ -83,7 +83,7 @@ def run_matching_pipeline_endpoint():
                 task_id=task_id,
                 message=result.get("message", "Failed to start pipeline")
             )
-    except Exception:
+    except Exception as e:
         logger.exception("Failed to start matching pipeline")
         return PipelineTaskResponse(
             success=False,
@@ -125,7 +125,7 @@ def get_pipeline_status(task_id: str):
     except HTTPException:
         raise
     except Exception:
-        logger.exception("Failed to get pipeline status")
+        logger.exception("Failed to get pipeline status for task %s", task_id)
         raise HTTPException(status_code=500, detail="Failed to get pipeline status")
 
 
@@ -150,7 +150,7 @@ def get_active_pipeline_task():
             status=status_data.get("status", "unknown"),
             step=status_data.get("step")
         )
-    except Exception:
+    except Exception as e:
         logger.exception("Failed to get active pipeline task")
         return None
 
@@ -176,7 +176,7 @@ def stop_matching_pipeline():
             task_id=result.get("task_id", ""),
             message="Pipeline cancellation requested."
         )
-    except Exception:
+    except Exception as e:
         logger.exception("Failed to stop pipeline")
         return PipelineTaskResponse(
             success=False,
@@ -274,7 +274,7 @@ async def upload_resume_endpoint(
     task_id = manager.create_task()
 
     # Fire and forget - return immediately while processing continues in background
-    asyncio.create_task(asyncio.to_thread(
+    background_task = asyncio.create_task(asyncio.to_thread(
         _process_resume_background, content, file.filename, task_id, manager
     ))
 
@@ -370,7 +370,7 @@ def _process_resume_background(
             task.status = "completed"
             task.message = "Resume processed successfully"
             task.phases = {"resume_etl": {"status": "completed", "progress": 100}}
-    except Exception:
+    except Exception as e:
         logger.exception("Background resume processing failed")
         if task:
             task.status = "failed"

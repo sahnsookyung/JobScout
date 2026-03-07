@@ -2,6 +2,9 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash appuser
+
 COPY pyproject.toml uv.lock ./
 COPY core/ ./core/
 COPY database/ ./database/
@@ -13,6 +16,10 @@ COPY config.yaml ./
 
 RUN pip install uv && \
     uv sync --no-dev --group web
+
+RUN chown -R appuser:appuser /app
+
+USER appuser
 
 EXPOSE 8081
 

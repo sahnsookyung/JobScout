@@ -33,12 +33,12 @@ jobs:
           fetch-depth: 0  # Shallow clones should be disabled for better analysis
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@15b87e6b42ed266142ae47e06235f5e80b9a2c38
         with:
           version: "latest"
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@0b93645e92b6e5ae5e3e9e01ad7071f0eb18f16d
         with:
           python-version: "3.12"
 
