@@ -132,7 +132,7 @@ async def embed_jobs(request: EmbedJobRequest = EmbedJobRequest(limit=100)):
 async def embed_resume(request: EmbedResumeRequest):
     """Generate embeddings for resume."""
     global ctx
-    logger.info(f"Processing resume embedding: {request.resume_fingerprint}")
+    logger.info("Processing resume embedding request")
 
     if ctx is None:
         return EmbedResponse(
@@ -161,7 +161,7 @@ async def embed_resume(request: EmbedResumeRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8082)
+    uvicorn.run(app, host="127.0.0.1", port=8082)
 
 
 async def consume_embeddings_jobs():
