@@ -84,19 +84,6 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
 
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-xml
-          path: coverage.xml
-          retention-days: 1
-
-      - name: Cleanup Redis container
-        if: always()
-        run: |
-          docker stop redis-test || true
-          docker rm redis-test || true
-
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4

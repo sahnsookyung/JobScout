@@ -6,7 +6,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 
 RUN pip install --no-cache-dir uv==0.10.8 && \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev --group web
 
 # Copy application code after dependencies are installed
 COPY . /app

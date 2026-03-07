@@ -69,11 +69,9 @@ class TestOrchestratorSubscriptionOrder:
                                 orchestrate_match(task_id, "/app/resume.pdf"),
                                 timeout=0.1
                             )
-                        except asyncio.TimeoutError:
-                            pass
                         except Exception:
                             pass
-                        
+
                         # Verify subscription happened BEFORE enqueue
                         # First call should be subscribe
                         subscribe_calls = mock_pubsub.subscribe.call_args_list
@@ -119,8 +117,6 @@ class TestOrchestratorSubscriptionOrder:
                                 orchestrate_match(task_id, "/app/resume.pdf"),
                                 timeout=0.1
                             )
-                        except asyncio.TimeoutError:
-                            pass
                         except Exception:
                             pass
 
@@ -172,8 +168,6 @@ class TestOrchestratorSubscriptionOrder:
                                 orchestrate_match(task_id, "/app/resume.pdf"),
                                 timeout=0.1
                             )
-                        except asyncio.TimeoutError:
-                            pass
                         except Exception:
                             pass
 
@@ -218,7 +212,7 @@ class TestOrchestratorLogging:
                                     orchestrate_match("test-123", "/app/resume.pdf"),
                                     timeout=0.1
                                 )
-                            except asyncio.TimeoutError:
+                            except Exception:
                                 pass
 
                         # Verify pipeline start is logged

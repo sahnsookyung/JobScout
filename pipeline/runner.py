@@ -96,6 +96,8 @@ def run_matching_pipeline(
     logger.info("STARTING MATCHING PIPELINE")
     logger.info("=" * 60)
 
+    pipeline_start_time = time.time()
+
     matching_config = ctx.config.matching
     if not matching_config or not matching_config.enabled:
         logger.info("=== MATCHING PIPELINE: Skipped (disabled in config) ===")
@@ -149,9 +151,9 @@ def run_matching_pipeline(
                 ctx, match_dtos, saved_count, resume_data, resume_fingerprint, stop_event
             )
 
-        execution_time = time.time() - _get_pipeline_start_time()
+        execution_time = time.time() - pipeline_start_time
         logger.info("=" * 60)
-        logger.info(f"MATCHING PIPELINE COMPLETED in {execution_time:.2f}s")
+        logger.info("MATCHING PIPELINE COMPLETED in %.2fs", execution_time)
         logger.info("=" * 60)
 
         return MatchingPipelineResult(
@@ -164,7 +166,7 @@ def run_matching_pipeline(
 
     except Exception as e:
         logger.exception("Error in matching pipeline")
-        execution_time = time.time() - _get_pipeline_start_time()
+        execution_time = time.time() - pipeline_start_time
         return MatchingPipelineResult(
             success=False,
             matches_count=0,
@@ -173,23 +175,6 @@ def run_matching_pipeline(
             error=str(e),
             execution_time=execution_time
         )
-
-
-_pipeline_start_time: Optional[float] = None
-
-
-def _get_pipeline_start_time() -> float:
-    """Get the pipeline start time for execution time calculation."""
-    global _pipeline_start_time
-    if _pipeline_start_time is None:
-        _pipeline_start_time = time.time()
-    return _pipeline_start_time
-
-
-def _reset_pipeline_start_time() -> None:
-    """Reset the pipeline start time."""
-    global _pipeline_start_time
-    _pipeline_start_time = time.time()
 
 
 def _load_resume_file(etl_config) -> Tuple[Optional[str], Optional[dict]]:

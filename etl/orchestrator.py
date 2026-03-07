@@ -362,10 +362,10 @@ class JobETLService:
         
         logger.info(f"Generating embeddings for resume: {resume_fingerprint[:16]}...")
 
-        try:
-            from etl.resume.embedding_store import JobRepositoryAdapter
-            from core.llm.schema_models import ResumeSchema
+        from etl.resume.embedding_store import JobRepositoryAdapter
+        from core.llm.schema_models import ResumeSchema
 
+        try:
             resume = ResumeSchema.model_validate(existing.extracted_data)
             store = JobRepositoryAdapter(repo)
             profiler = ResumeProfiler(ai_service=self.ai, store=store)

@@ -107,9 +107,10 @@ def check_redis_available(port="6379"):
     try:
         import redis
         conn = redis.Redis.from_url(f"redis://localhost:{port}/1", socket_timeout=2)
-        result = conn.ping()
-        conn.close()
-        return result
+        try:
+            return conn.ping()
+        finally:
+            conn.close()
     except Exception:
         return False
 
@@ -154,7 +155,14 @@ def run_tests(coverage=False, watch=False, test_path="tests/", redis_port="6379"
             ])
     
     if watch:
-        cmd.append("-f")  # pytest-watch flag
+        # Use pytest-watch for watch mode
+        print("👁️  Watch mode enabled - using pytest-watch")
+        cmd = ["uv", "run", "ptw", "--", test_path, "-v", "--tb=short",
+               "--ignore=tests/integration/test_full_pipeline.py",
+               "--ignore=tests/integration/test_etl_real_data.py",
+               "--ignore=tests/integration/test_openai_schema_validation.py",
+               "--ignore=tests/integration/test_resume_schema.py",
+               "--ignore=tests/integration/test_user_wants_pipeline.py"]
     
     # Set environment for tests
     env = os.environ.copy()
@@ -230,7 +238,6 @@ def main():
             # We used existing test Redis, remind user they can stop it
             print("\n💡 Test Redis container still running on port 6380")
             print("   To stop it: docker stop redis-test")
-            print("   Or run with --no-cleanup to keep it running for next test run")
 
 
 if __name__ == "__main__":
