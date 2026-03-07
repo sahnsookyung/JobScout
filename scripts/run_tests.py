@@ -110,7 +110,7 @@ def check_redis_available(port="6379"):
         result = conn.ping()
         conn.close()
         return result
-    except:
+    except Exception:
         return False
 
 
@@ -136,21 +136,21 @@ def run_tests(coverage=False, watch=False, test_path="tests/", redis_port="6379"
     if coverage:
         print("📊 Coverage enabled")
         cmd.extend([
-            f"--cov=services",
-            f"--cov=core",
-            f"--cov=database",
-            f"--cov=etl",
-            f"--cov=pipeline",
-            f"--cov=notification",
-            f"--cov=web",
-            f"--cov=modal",
-            f"--cov-report=term",
+            "--cov=services",
+            "--cov=core",
+            "--cov=database",
+            "--cov=etl",
+            "--cov=pipeline",
+            "--cov=notification",
+            "--cov=web",
+            "--cov=modal",
+            "--cov-report=term",
         ])
-        
+
         if not watch:
             cmd.extend([
-                f"--cov-report=xml:coverage.xml",
-                f"--cov-report=html:htmlcov",
+                "--cov-report=xml:coverage.xml",
+                "--cov-report=html:htmlcov",
             ])
     
     if watch:

@@ -125,10 +125,10 @@ def get_pipeline_status(task_id: str):
         )
     except HTTPException:
         raise
-    except Exception as e:
-        logger.exception(f"Failed to get pipeline status for task {task_id}")
+    except Exception:
+        logger.exception("Failed to get pipeline status for task %s", task_id)
         from fastapi import HTTPException
-        raise HTTPException(status_code=500, detail=f"Failed to get pipeline status: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get pipeline status")
 
 
 @router.get("/active", response_model=Optional[PipelineStatusResponse])
@@ -153,7 +153,7 @@ def get_active_pipeline_task():
             step=status_data.get("step")
         )
     except Exception as e:
-        logger.exception(f"Failed to get active pipeline task")
+        logger.exception("Failed to get active pipeline task")
         return None
 
 
@@ -179,7 +179,7 @@ def stop_matching_pipeline():
             message="Pipeline cancellation requested."
         )
     except Exception as e:
-        logger.exception(f"Failed to stop pipeline")
+        logger.exception("Failed to stop pipeline")
         return PipelineTaskResponse(
             success=False,
             task_id="",
@@ -275,9 +275,9 @@ async def upload_resume_endpoint(
     # Create task and process in background
     manager = get_pipeline_manager()
     task_id = manager.create_task()
-    
+
     # Fire and forget - return immediately while processing continues in background
-    asyncio.create_task(asyncio.to_thread(
+    background_task = asyncio.create_task(asyncio.to_thread(
         _process_resume_background, content, file.filename, task_id, manager
     ))
 

@@ -38,13 +38,13 @@ def _get_requirement_embedding(job_requirement: JobRequirementUnit) -> Optional[
 def _calculate_section_similarities(
     req_embedding: Any,
     all_sections: list,
-    top_k: int = 10
+    top_k: int = 10  # pylint: disable=unused-argument
 ) -> Tuple[Optional[Any], float, List[Dict[str, Any]]]:
     """Calculate similarities between requirement and all sections."""
     best_section = None
     best_distance = float('inf')
     similarity_scores = []
-    
+
     for section in all_sections:
         if section.embedding:
             try:
@@ -60,9 +60,9 @@ def _calculate_section_similarities(
                     best_distance = distance
                     best_section = section
             except Exception as e:
-                logger.warning(f"Error computing similarity for section: {e}")
+                logger.warning("Error computing similarity for section: %s", e)
                 continue
-    
+
     return best_section, best_distance, similarity_scores
 
 
@@ -71,7 +71,7 @@ def calculate_requirement_similarity_with_resume_sections(
     resume_fingerprint: str,
     repo: JobRepository,
     section_types: Optional[List[str]] = None,
-    top_k: int = 10
+    top_k: int = 10  # pylint: disable=unused-argument
 ) -> Tuple[float, Dict[str, Any]]:
     """
     Calculate similarity between job requirement and resume sections.
@@ -111,7 +111,7 @@ def calculate_requirement_similarity_with_resume_sections(
     
     # Calculate similarities
     best_section, best_distance, similarity_scores = _calculate_section_similarities(
-        req_embedding, all_sections, top_k
+        req_embedding, all_sections
     )
     
     if not similarity_scores:

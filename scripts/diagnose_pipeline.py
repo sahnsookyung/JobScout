@@ -49,11 +49,11 @@ def check_service_health(name, url):
             else:
                 print_error(f"{name}: HTTP {response.status_code}")
                 return False, None
-    except httpx.ConnectError as e:
-        print_error(f"{name}: Connection failed - {e}")
+    except httpx.ConnectError:
+        print_error(f"{name}: Connection failed")
         return False, None
-    except Exception as e:
-        print_error(f"{name}: Error - {e}")
+    except Exception:
+        print_error(f"{name}: Error")
         return False, None
 
 def check_orchestrator_diagnostics(url):
@@ -119,38 +119,38 @@ def test_pipeline_trigger(url):
 
 def main():
     print_header("MICROSERVICES PIPELINE DIAGNOSTICS")
-    
+
     # Get base URLs from environment or use defaults
     base_url = os.getenv('ORCHESTRATOR_URL', 'http://localhost:8084')
     extraction_url = os.getenv('EXTRACTION_URL', 'http://localhost:8081')
     embeddings_url = os.getenv('EMBEDDINGS_URL', 'http://localhost:8082')
     matcher_url = os.getenv('SCORER_MATCHER_URL', 'http://localhost:8083')
-    
+
     print_info(f"Using orchestrator URL: {base_url}")
     print_info(f"Using extraction URL: {extraction_url}")
     print_info(f"Using embeddings URL: {embeddings_url}")
     print_info(f"Using matcher URL: {matcher_url}")
-    
+
     # Check all services health
     print_header("SERVICE HEALTH CHECKS")
-    
+
     services = [
         ("Extraction", extraction_url),
         ("Embeddings", embeddings_url),
         ("Scorer-Matcher", matcher_url),
         ("Orchestrator", base_url),
     ]
-    
+
     healthy_services = []
     for name, url in services:
-        success, data = check_service_health(name, url)
+        success, _ = check_service_health(name, url)
         if success:
             healthy_services.append((name, url))
-    
+
     # Check orchestrator diagnostics
     print_header("ORCHESTRATOR DIAGNOSTICS")
-    success, diagnostics = check_orchestrator_diagnostics(base_url)
-    
+    success, _ = check_orchestrator_diagnostics(base_url)
+
     if success:
         # Optionally test pipeline trigger
         print_header("PIPELINE TRIGGER TEST")
@@ -159,17 +159,15 @@ def main():
             choice = input("> ").strip().lower()
             if choice == 'y':
                 test_pipeline_trigger(base_url)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError):
             pass
-        except EOFError:
-            pass
-    
+
     # Summary
     print_header("SUMMARY")
     print(f"Healthy services: {len(healthy_services)}/{len(services)}")
     for name, _ in healthy_services:
         print_success(f"  {name}")
-    
+
     unhealthy = [name for name, _ in services if name not in [h[0] for h in healthy_services]]
     if unhealthy:
         print_error(f"Unhealthy services: {', '.join(unhealthy)}")
@@ -178,7 +176,7 @@ def main():
         print("2. Check service logs: docker-compose logs <service-name>")
         print("3. Verify network connectivity between containers")
         print("4. Check Redis connectivity: docker-compose exec redis redis-cli ping")
-    
+
     print("\n" + "=" * 60)
 
 if __name__ == "__main__":

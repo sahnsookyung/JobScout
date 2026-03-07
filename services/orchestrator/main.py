@@ -117,10 +117,10 @@ class OrchestrationState:
                 self.resume_file = data.get("resume_file")
                 self.matches_count = data.get("matches_count", 0)
                 self.error = data.get("error")
-                logger.info(f"Loaded state from Redis for task {self.task_id}: {self.status}")
+                logger.info("Loaded state from Redis for task %s: %s", self.task_id, self.status)
         except Exception as e:
-            logger.warning(f"Failed to load state from Redis: {e}")
-    
+            logger.warning("Failed to load state from Redis: %s", e)
+
     def _save_to_redis(self) -> None:
         """Save state to Redis."""
         try:
@@ -132,7 +132,7 @@ class OrchestrationState:
                 "error": self.error,
             })
         except Exception as e:
-            logger.warning(f"Failed to save state to Redis: {e}")
+            logger.warning("Failed to save state to Redis: %s", e)
     
     def subscribe(self) -> asyncio.Queue:
         queue = asyncio.Queue()
@@ -271,7 +271,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
             "task_id": task_id,
             "resume_file": resume_file
         })
-        logger.info(f"✅ Extraction job enqueued successfully")
+        logger.info("✅ Extraction job enqueued successfully")
 
         # Wait for extraction completion
         logger.info(f"⏳ Waiting for extraction completion (timeout: {LISTENER_TIMEOUT}s)...")
@@ -330,7 +330,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
                 "task_id": task_id,
                 "resume_fingerprint": state.resume_fingerprint
             })
-            logger.info(f"✅ Embeddings job enqueued successfully")
+            logger.info("✅ Embeddings job enqueued successfully")
         else:
             # Unexpected status - treat as error
             logger.warning(f"❌ Unexpected status in extraction response: {data.get('status')}")
@@ -385,7 +385,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
                 "task_id": task_id,
                 "resume_fingerprint": state.resume_fingerprint
             })
-            logger.info(f"✅ Matching job enqueued successfully")
+            logger.info("✅ Matching job enqueued successfully")
         else:
             # Unexpected status - treat as error
             logger.warning(f"❌ Unexpected status in embeddings response: {data.get('status')}")
@@ -453,7 +453,7 @@ async def orchestrate_match(task_id: str, resume_file: str):
         if redis_client:
             if pubsub:
                 try:
-                    logger.info(f"📡 Unsubscribing from all channels")
+                    logger.info("📡 Unsubscribing from all channels")
                     await pubsub.unsubscribe()
                     await pubsub.close()
                 except Exception as e:
@@ -492,7 +492,7 @@ async def _wait_for_next_message(pubsub, timeout: float = 300.0) -> dict:
     Raises:
         asyncio.TimeoutError: If no message received within timeout
     """
-    async with asyncio.timeout(timeout):
+    with asyncio.timeout(timeout):
         async for message in pubsub.listen():
             if message["type"] == "message":
                 return json.loads(message["data"])
@@ -574,15 +574,15 @@ async def orchestrate_match_endpoint():
         resume_file = config.etl.resume.resume_file
 
     if not resume_file:
-        logger.error(f"❌ No resume file configured in config")
+        logger.error("❌ No resume file configured in config")
         return MatchResponse(
             success=False,
             task_id=task_id,
             message="No resume file configured"
         )
-    
-    logger.info(f"📄 Using resume file: {resume_file}")
-    logger.info(f"🚀 Creating orchestration task...")
+
+    logger.info("📄 Using resume file: %s", resume_file)
+    logger.info("🚀 Creating orchestration task...")
 
     task = asyncio.create_task(orchestrate_match(task_id, resume_file))
 
@@ -590,7 +590,7 @@ async def orchestrate_match_endpoint():
         try:
             asyncio.create_task(_handle_task_done(task_id, t))
         except RuntimeError:
-            logger.warning(f"Could not handle task completion for {task_id}: no running loop")
+            logger.warning("Could not handle task completion for %s: no running loop", task_id)
 
     task.add_done_callback(safe_done_callback)
 

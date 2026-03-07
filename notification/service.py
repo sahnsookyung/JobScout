@@ -508,7 +508,7 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
 def _send_and_record_notification(
     notification_id: str,
     notification_data: Dict[str, Any],
-    rate_limiter: NotificationRateLimiter
+    rate_limiter: NotificationRateLimiter  # pylint: disable=unused-argument
 ) -> str:
     """Send notification and record result in database."""
     channel_type = notification_data['channel_type']
@@ -548,7 +548,7 @@ def _send_and_record_notification(
 
 
 def _record_notification_failure(
-    notification_id: str,
+    notification_id: str,  # pylint: disable=unused-argument
     notification_data: Dict[str, Any],
     error_message: str
 ) -> None:

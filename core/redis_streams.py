@@ -140,9 +140,76 @@ def _claim_stale_messages(stream: str, group: str, consumer: str, count: int = 1
                 logger.debug(f"Could not claim message {msg_id}: {e}")
                 
     except Exception as e:
-        logger.warning(f"Error claiming stale messages: {e}")
-    
+        logger.warning("Error claiming stale messages: %s", e)
+
     return claimed
+
+
+def _deserialize_message(msg: dict) -> dict:
+    """Deserialize message values from JSON strings."""
+    deserialized = {}
+    for k, v in msg.items():
+        try:
+            deserialized[k] = json.loads(v)
+        except (json.JSONDecodeError, TypeError):
+            deserialized[k] = v
+    return deserialized
+
+
+def _read_stream_loop(
+    client,
+    stream: str,
+    group: str,
+    consumer: str,
+    count: int,
+    block: Optional[int],
+    shutdown_event: Optional[threading.Event],
+    read_pending: bool
+) -> Generator[tuple[str, dict], None, None]:
+    """Main loop for reading messages from Redis stream."""
+    while shutdown_event is None or not shutdown_event.is_set():
+        # First, try to claim stale pending messages from dead consumers
+        if read_pending:
+            try:
+                claimed = _claim_stale_messages(stream, group, consumer, count)
+                for msg_id, msg in claimed:
+                    logger.info("🔄 Claimed stale message %s from %s", msg_id, stream)
+                    yield msg_id, _deserialize_message(msg)
+            except Exception as e:
+                logger.error("❌ Error claiming stale messages: %s: %s", type(e).__name__, e)
+
+        try:
+            logger.debug("⏳ Reading from stream %s (blocking for %sms)...", stream, block)
+            messages = client.xreadgroup(
+                group,
+                consumer,
+                {stream: ">"},  # ">" = read new messages only
+                count=count,
+                block=block
+            )
+
+            if not messages:
+                logger.debug("⏰ No messages from %s (timeout after %sms)", stream, block)
+                if block is None:
+                    time.sleep(0.1)  # Prevent CPU spin in non-blocking mode
+                continue
+
+            for stream_name, msgs in messages:
+                for msg_id, msg in msgs:
+                    logger.debug("📨 Read new message %s from %s", msg_id, stream)
+                    yield msg_id, _deserialize_message(msg)
+
+        except redis.ConnectionError as e:
+            logger.error("❌ Connection error reading from stream %s: %s: %s", stream, type(e).__name__, e)
+            time.sleep(1)  # Back off on connection errors
+            continue
+        except redis.TimeoutError as e:
+            logger.warning("⚠️ Timeout reading from stream %s: %s: %s", stream, type(e).__name__, e)
+            time.sleep(1)  # Brief backoff for transient errors
+            continue
+        except Exception as e:
+            logger.error("❌ Fatal error reading from stream %s: %s: %s", stream, type(e).__name__, e)
+            raise
 
 
 def read_stream(
@@ -172,68 +239,16 @@ def read_stream(
 
     try:
         client.xgroup_create(stream, group, id="0", mkstream=True)
-        logger.info(f"✅ Created/verified consumer group {group} for stream {stream}")
+        logger.info("✅ Created/verified consumer group %s for stream %s", group, stream)
     except redis.ResponseError as e:
         if "BUSYGROUP" not in str(e):
-            logger.error(f"❌ Failed to create consumer group: {type(e).__name__}: {e}")
+            logger.error("❌ Failed to create consumer group: %s: %s", type(e).__name__, e)
             raise
-        logger.debug(f"ℹ️ Consumer group {group} already exists for stream {stream}")
+        logger.debug("ℹ️ Consumer group %s already exists for stream %s", group, stream)
 
-    while shutdown_event is None or not shutdown_event.is_set():
-        # First, try to claim stale pending messages from dead consumers
-        if read_pending:
-            try:
-                claimed = _claim_stale_messages(stream, group, consumer, count)
-                for msg_id, msg in claimed:
-                    logger.info(f"🔄 Claimed stale message {msg_id} from {stream}")
-                    deserialized = {}
-                    for k, v in msg.items():
-                        try:
-                            deserialized[k] = json.loads(v)
-                        except (json.JSONDecodeError, TypeError):
-                            deserialized[k] = v
-                    yield msg_id, deserialized
-            except Exception as e:
-                logger.error(f"❌ Error claiming stale messages: {type(e).__name__}: {e}")
-
-        try:
-            logger.debug(f"⏳ Reading from stream {stream} (blocking for {block}ms)...")
-            messages = client.xreadgroup(
-                group,
-                consumer,
-                {stream: ">"},  # ">" = read new messages only
-                count=count,
-                block=block
-            )
-
-            if not messages:
-                logger.debug(f"⏰ No messages from {stream} (timeout after {block}ms)")
-                if block is None:
-                    time.sleep(0.1)  # Prevent CPU spin in non-blocking mode
-                continue
-
-            for stream_name, msgs in messages:
-                for msg_id, msg in msgs:
-                    logger.debug(f"📨 Read new message {msg_id} from {stream}")
-                    deserialized = {}
-                    for k, v in msg.items():
-                        try:
-                            deserialized[k] = json.loads(v)
-                        except (json.JSONDecodeError, TypeError):
-                            deserialized[k] = v
-                    yield msg_id, deserialized
-
-        except redis.ConnectionError as e:
-            logger.error(f"❌ Connection error reading from stream {stream}: {type(e).__name__}: {e}")
-            time.sleep(1)  # Back off on connection errors
-            continue
-        except redis.TimeoutError as e:
-            logger.warning(f"⚠️ Timeout reading from stream {stream}: {type(e).__name__}: {e}")
-            time.sleep(1)  # Brief backoff for transient errors
-            continue
-        except Exception as e:
-            logger.error(f"❌ Fatal error reading from stream {stream}: {type(e).__name__}: {e}")
-            raise
+    yield from _read_stream_loop(
+        client, stream, group, consumer, count, block, shutdown_event, read_pending
+    )
 
 
 def ack_message(stream: str, group: str, msg_id: str) -> bool:

@@ -108,12 +108,12 @@ class TestOrchestratorSubscriptionOrder:
         
         with patch('services.orchestrator.main.get_or_create_orchestration', return_value=mock_state):
             with patch('services.orchestrator.main.redis_async.from_url', return_value=mock_client):
-                with patch('services.orchestrator.main.enqueue_job') as mock_enqueue:
+                with patch('services.orchestrator.main.enqueue_job'):
                     with patch('services.orchestrator.main._orchestration_lock'):
                         from services.orchestrator.main import orchestrate_match
-                        
+
                         task_id = f"test-{uuid.uuid4().hex[:8]}"
-                        
+
                         try:
                             await asyncio.wait_for(
                                 orchestrate_match(task_id, "/app/resume.pdf"),
@@ -123,11 +123,10 @@ class TestOrchestratorSubscriptionOrder:
                             pass
                         except Exception:
                             pass
-                        
+
                         # Verify unsubscribe from extraction and subscribe to embeddings
                         subscribe_calls = mock_pubsub.subscribe.call_args_list
-                        unsubscribe_calls = mock_pubsub.unsubscribe.call_args_list
-                        
+
                         # Should subscribe to extraction:completed first
                         assert len(subscribe_calls) >= 1
 
@@ -162,12 +161,12 @@ class TestOrchestratorSubscriptionOrder:
         
         with patch('services.orchestrator.main.get_or_create_orchestration', return_value=mock_state):
             with patch('services.orchestrator.main.redis_async.from_url', return_value=mock_client):
-                with patch('services.orchestrator.main.enqueue_job') as mock_enqueue:
+                with patch('services.orchestrator.main.enqueue_job'):
                     with patch('services.orchestrator.main._orchestration_lock'):
                         from services.orchestrator.main import orchestrate_match
-                        
+
                         task_id = f"test-{uuid.uuid4().hex[:8]}"
-                        
+
                         try:
                             await asyncio.wait_for(
                                 orchestrate_match(task_id, "/app/resume.pdf"),
@@ -177,7 +176,7 @@ class TestOrchestratorSubscriptionOrder:
                             pass
                         except Exception:
                             pass
-                        
+
                         # Verify channel switching happened
                         # Should have multiple subscribe calls for channel switching
                         assert mock_pubsub.subscribe.call_count >= 1
@@ -219,9 +218,9 @@ class TestOrchestratorLogging:
                                     orchestrate_match("test-123", "/app/resume.pdf"),
                                     timeout=0.1
                                 )
-                            except:
+                            except asyncio.TimeoutError:
                                 pass
-                        
+
                         # Verify pipeline start is logged
                         assert "Starting pipeline" in caplog.text or "pipeline" in caplog.text.lower()
 
@@ -257,9 +256,9 @@ class TestOrchestratorLogging:
                                     orchestrate_match("test-123", "/app/resume.pdf"),
                                     timeout=0.1
                                 )
-                            except:
+                            except asyncio.TimeoutError:
                                 pass
-                        
+
                         # Verify enqueue is called
                         assert mock_enqueue.called
                         # Verify enqueue is logged (check for extraction:jobs in logs)

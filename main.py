@@ -255,8 +255,8 @@ def _run_resume_etl(ctx: AppContext) -> bool:
     etl_config = ctx.config.etl
     if not etl_config:
         logger.info("No ETL config, skipping resume ETL")
-        return
-    
+        return False
+
     # Support both old path (etl.resume.resume_file) and new path (etl.resume.resume_file)
     if etl_config.resume:
         resume_file = etl_config.resume.resume_file
@@ -264,11 +264,11 @@ def _run_resume_etl(ctx: AppContext) -> bool:
         resume_file = etl_config.resume_file  # Backward compatibility
     else:
         logger.info("No resume file configured, skipping resume ETL")
-        return
+        return False
 
     if not resume_file:
         logger.info("No resume file configured, skipping resume ETL")
-        return
+        return False
         
     if not os.path.isabs(resume_file):
         resume_file = os.path.join(os.getcwd(), resume_file)
@@ -326,10 +326,10 @@ def _wait_for_orchestrator_result(task_id: str) -> tuple[bool, str]:
         logger.error(f"Matching pipeline failed: {error}")
         return False, task_id
     elif status == "cancelled":
-        logger.warning(f"Matching pipeline cancelled")
+        logger.warning("Matching pipeline cancelled")
         return False, task_id
     else:  # timeout
-        logger.error(f"Matching pipeline timed out waiting for completion")
+        logger.error("Matching pipeline timed out waiting for completion")
         return False, task_id
 
 
