@@ -83,7 +83,7 @@ def run_matching_pipeline_endpoint():
                 task_id=task_id,
                 message=result.get("message", "Failed to start pipeline")
             )
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to start matching pipeline")
         return PipelineTaskResponse(
             success=False,
@@ -150,7 +150,7 @@ def get_active_pipeline_task():
             status=status_data.get("status", "unknown"),
             step=status_data.get("step")
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to get active pipeline task")
         return None
 
@@ -176,7 +176,7 @@ def stop_matching_pipeline():
             task_id=result.get("task_id", ""),
             message="Pipeline cancellation requested."
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to stop pipeline")
         return PipelineTaskResponse(
             success=False,
@@ -274,7 +274,7 @@ async def upload_resume_endpoint(
     task_id = manager.create_task()
 
     # Fire and forget - return immediately while processing continues in background
-    background_task = asyncio.create_task(asyncio.to_thread(
+    asyncio.create_task(asyncio.to_thread(
         _process_resume_background, content, file.filename, task_id, manager
     ))
 
@@ -370,7 +370,7 @@ def _process_resume_background(
             task.status = "completed"
             task.message = "Resume processed successfully"
             task.phases = {"resume_etl": {"status": "completed", "progress": 100}}
-    except Exception as e:
+    except Exception:
         logger.exception("Background resume processing failed")
         if task:
             task.status = "failed"
