@@ -259,14 +259,38 @@ async def upload_resume_endpoint(
     """
     Upload a resume file.
     Supports: .json, .yaml, .yml, .txt, .docx, .pdf
-    
+
     If resume_hash is provided, checks if it already exists first.
     If the hash exists, returns success without re-processing.
-    
+
     The file is written to a temporary file for ETL processing, then cleaned up.
     Returns only the hash for frontend verification and IndexedDB storage.
     """
+    # Validate file
+    content = await _validate_resume_file(file)
+    
+    # Compute and verify hash
+    resume_hash = _compute_and_verify_hash(content, resume_hash)
+    
+    # Create task and process in background
+    manager = get_pipeline_manager()
+    task_id = manager.create_task()
+    
+    # Fire and forget - return immediately while processing continues in background
+    asyncio.create_task(asyncio.to_thread(
+        _process_resume_background, content, file.filename, task_id, manager
+    ))
 
+    return ResumeUploadResponse(
+        success=True,
+        resume_hash=resume_hash,
+        message="Resume uploaded. Processing in background...",
+        task_id=task_id
+    )
+
+
+async def _validate_resume_file(file: UploadFile) -> bytes:
+    """Validate resume file and return its content."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
 
@@ -286,87 +310,77 @@ async def upload_resume_endpoint(
 
     if len(content) > RESUME_MAX_SIZE:
         limit_mb = RESUME_MAX_SIZE / (1024 * 1024)
-        if limit_mb >= 1:
-            limit_str = f"{limit_mb:.1f}MB"
-        else:
-            limit_str = f"{RESUME_MAX_SIZE // 1024}KB"
+        limit_str = f"{limit_mb:.1f}MB" if limit_mb >= 1 else f"{RESUME_MAX_SIZE // 1024}KB"
         raise HTTPException(status_code=400, detail=f"File size exceeds {limit_str} limit")
 
-    # Always compute hash from file bytes (security: verify file integrity)
+    return content
+
+
+def _compute_and_verify_hash(content: bytes, provided_hash: Optional[str]) -> str:
+    """Compute file fingerprint and verify against provided hash."""
     from database.models.resume import generate_file_fingerprint
+    
     computed_hash = generate_file_fingerprint(content)
-    logger.debug(f"Hash check - frontend: {resume_hash}, backend: {computed_hash}, len: {len(computed_hash)}")
+    logger.debug(f"Hash check - frontend: {provided_hash}, backend: {computed_hash}, len: {len(computed_hash)}")
 
     # If client provided a hash, verify it matches
-    if resume_hash and resume_hash != computed_hash:
-        logger.debug(f"Hash mismatch - provided: {resume_hash}, computed: {computed_hash}")
+    if provided_hash and provided_hash != computed_hash:
+        logger.debug(f"Hash mismatch - provided: {provided_hash}, computed: {computed_hash}")
         raise HTTPException(
             status_code=400,
             detail="File hash mismatch. The provided hash does not match the file content."
         )
 
-    # Use the computed hash (either client matched, or we use computed)
-    resume_hash = computed_hash
+    return computed_hash
 
-    # Create a task to track resume processing
-    manager = get_pipeline_manager()
-    task_id = manager.create_task()
 
-    # Process the resume asynchronously with status tracking
-    def process_resume_background(file_content: bytes, filename: str, task_id: str) -> None:
-        """Run ETL processing in background thread with status updates."""
-        import tempfile
-        from database.uow import job_uow
-        from core.app_context import AppContext
+def _process_resume_background(
+    file_content: bytes,
+    filename: str,
+    task_id: str,
+    manager
+) -> None:
+    """Run ETL processing in background thread with status updates."""
+    import tempfile
+    from database.uow import job_uow
+    from core.app_context import AppContext
 
-        # Update task status to running
-        task = manager.get_task(task_id)
-        if not task:
-            logger.warning(f"Task {task_id} not found, cannot update status")
-        else:
-            task.status = "running"
-            task.message = "Processing resume..."
-            task.phases = {"resume_etl": {"status": "running", "progress": 0}}
+    # Update task status to running
+    task = manager.get_task(task_id)
+    if task:
+        task.status = "running"
+        task.message = "Processing resume..."
+        task.phases = {"resume_etl": {"status": "running", "progress": 0}}
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp:
-            tmp.write(file_content)
-            tmp_path = tmp.name
+    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp:
+        tmp.write(file_content)
+        tmp_path = tmp.name
 
+    try:
+        full_config = load_config()
+        ctx = AppContext.build(full_config)
+
+        # Update progress
+        if task:
+            task.phases = {"resume_etl": {"status": "running", "progress": 50}}
+            task.message = "Extracting resume data..."
+
+        with job_uow() as repo:
+            ctx.job_etl_service.process_resume(repo, tmp_path)
+
+        # Mark complete
+        if task:
+            task.status = "completed"
+            task.message = "Resume processed successfully"
+            task.phases = {"resume_etl": {"status": "completed", "progress": 100}}
+    except Exception as e:
+        logger.exception("Background resume processing failed")
+        if task:
+            task.status = "failed"
+            task.message = f"Resume processing failed: {str(e)}"
+            task.phases = {"resume_etl": {"status": "failed", "progress": 0}}
+    finally:
         try:
-            full_config = load_config()
-            ctx = AppContext.build(full_config)
-
-            # Update progress
-            if task:
-                task.phases = {"resume_etl": {"status": "running", "progress": 50}}
-                task.message = "Extracting resume data..."
-
-            with job_uow() as repo:
-                ctx.job_etl_service.process_resume(repo, tmp_path)
-
-            # Mark complete
-            if task:
-                task.status = "completed"
-                task.message = "Resume processed successfully"
-                task.phases = {"resume_etl": {"status": "completed", "progress": 100}}
-        except Exception as e:
-            logger.exception("Background resume processing failed")
-            if task:
-                task.status = "failed"
-                task.message = f"Resume processing failed: {str(e)}"
-                task.phases = {"resume_etl": {"status": "failed", "progress": 0}}
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
-
-    # Fire and forget - return immediately while processing continues in background
-    asyncio.create_task(asyncio.to_thread(process_resume_background, content, file.filename, task_id))
-
-    return ResumeUploadResponse(
-        success=True,
-        resume_hash=resume_hash,
-        message="Resume uploaded. Processing in background...",
-        task_id=task_id
-    )
+            os.unlink(tmp_path)
+        except Exception:
+            pass

@@ -287,7 +287,7 @@ def _run_resume_etl(ctx: AppContext) -> bool:
 
 def run_matching_pipeline() -> tuple[bool, str]:
     """Run the matching pipeline using the orchestrator microservice.
-    
+
     Returns:
         Tuple of (success: bool, task_id: str)
         - success: True if matching completed successfully, False otherwise
@@ -297,36 +297,40 @@ def run_matching_pipeline() -> tuple[bool, str]:
     try:
         res = orchestrator_client.start_matching()
         logger.info(f"Orchestrator microservice response: {res}")
-        
+
         if not res.get("success"):
             logger.error(f"Orchestrator failed to start: {res.get('message')}")
             return False, ""
-        
+
         task_id = res.get("task_id", "")
         logger.info(f"Started orchestration task {task_id}. Waiting for completion...")
-        
-        # Wait for completion with timeout (10 minutes)
-        result = orchestrator_client.wait_for_completion(task_id, timeout=600.0)
-        status = result.get("status", "unknown")
-        
-        if status == "completed":
-            matches_count = result.get("result", {}).get("matches_count", 0)
-            logger.info(f"Matching pipeline completed successfully with {matches_count} matches")
-            return True, task_id
-        elif status == "failed":
-            error = result.get("result", {}).get("error", "Unknown error")
-            logger.error(f"Matching pipeline failed: {error}")
-            return False, task_id
-        elif status == "cancelled":
-            logger.warning(f"Matching pipeline cancelled")
-            return False, task_id
-        else:  # timeout
-            logger.error(f"Matching pipeline timed out waiting for completion")
-            return False, task_id
-            
+
+        return _wait_for_orchestrator_result(task_id)
+
     except Exception as e:
         logger.error(f"Failed to trigger orchestrator microservice: {e}")
         return False, ""
+
+
+def _wait_for_orchestrator_result(task_id: str) -> tuple[bool, str]:
+    """Wait for orchestrator task completion and return result."""
+    result = orchestrator_client.wait_for_completion(task_id, timeout=600.0)
+    status = result.get("status", "unknown")
+
+    if status == "completed":
+        matches_count = result.get("result", {}).get("matches_count", 0)
+        logger.info(f"Matching pipeline completed successfully with {matches_count} matches")
+        return True, task_id
+    elif status == "failed":
+        error = result.get("result", {}).get("error", "Unknown error")
+        logger.error(f"Matching pipeline failed: {error}")
+        return False, task_id
+    elif status == "cancelled":
+        logger.warning(f"Matching pipeline cancelled")
+        return False, task_id
+    else:  # timeout
+        logger.error(f"Matching pipeline timed out waiting for completion")
+        return False, task_id
 
 
 def run_internal_sequential_cycle(mode: str = 'all', stop_event: threading.Event = None, config=None) -> None:
@@ -341,59 +345,73 @@ def run_internal_sequential_cycle(mode: str = 'all', stop_event: threading.Event
     # Build context once - no DB session attached
     ctx = AppContext.build(config)
 
-    # Job ETL Phase
-    if mode in ('job-etl', 'all'):
-        logger.info("Running Job ETL phase")
-        try:
-            run_job_etl(ctx, stop_event)
-            if not stop_event.is_set() and ctx.job_etl_service:
-                ctx.job_etl_service.unload_models()
-        except Exception as e:
-            logger.error(f"Error in Job ETL phase: {e}", exc_info=True)
+    try:
+        # Job ETL Phase
+        if mode in ('job-etl', 'all'):
+            _run_job_etl_phase(ctx, stop_event)
+            if stop_event.is_set():
+                logger.info("Shutdown requested after Job ETL phase")
+                return
 
-        if stop_event.is_set():
-            logger.info("Shutdown requested after Job ETL phase")
-            # Clean up JobSpyClient session for ETL phase
-            try:
-                if ctx.jobspy_client:
-                    ctx.jobspy_client.close()
-            except Exception as e:
-                logger.warning(f"Error closing JobSpy client: {e}")
-            return
+        # Resume ETL Phase
+        if mode in ('resume-etl', 'all'):
+            _run_resume_etl_phase(ctx, stop_event)
 
-    # Resume ETL Phase
-    if mode in ('resume-etl', 'all'):
-        logger.info("Running Resume ETL phase")
-        try:
-            run_resume_etl(ctx)
-            if not stop_event.is_set() and ctx.job_etl_service:
-                ctx.job_etl_service.unload_models()
-        except Exception as e:
-            logger.error(f"Error in Resume ETL phase: {e}", exc_info=True)
+        # Matching Phase
+        if mode in ('matching', 'all'):
+            _run_matching_phase(ctx, stop_event)
+    finally:
+        # Clean up JobSpyClient session
+        _cleanup_jobspy_client(ctx)
 
-    # Matching Phase
-    if mode in ('matching', 'all'):
-        logger.info("Running Matching phase")
-        try:
-            success, task_id = run_matching_pipeline()
-            if success:
-                logger.info(f"Matching phase completed successfully (task: {task_id})")
-            else:
-                logger.error(f"Matching phase failed (task: {task_id})")
-            if not stop_event.is_set() and ctx.job_etl_service:
-                ctx.job_etl_service.unload_models()
-        except Exception as e:
-            logger.error(f"Error in Matching phase: {e}", exc_info=True)
+    cycle_elapsed = time.time() - cycle_start
+    logger.info(f"=== Cycle Completed in {cycle_elapsed:.2f}s ===")
 
-    # Clean up JobSpyClient session
+
+def _run_job_etl_phase(ctx: AppContext, stop_event: threading.Event) -> None:
+    """Run Job ETL phase."""
+    logger.info("Running Job ETL phase")
+    try:
+        run_job_etl(ctx, stop_event)
+        if not stop_event.is_set() and ctx.job_etl_service:
+            ctx.job_etl_service.unload_models()
+    except Exception as e:
+        logger.error(f"Error in Job ETL phase: {e}", exc_info=True)
+
+
+def _run_resume_etl_phase(ctx: AppContext, stop_event: threading.Event) -> None:
+    """Run Resume ETL phase."""
+    logger.info("Running Resume ETL phase")
+    try:
+        run_resume_etl(ctx)
+        if not stop_event.is_set() and ctx.job_etl_service:
+            ctx.job_etl_service.unload_models()
+    except Exception as e:
+        logger.error(f"Error in Resume ETL phase: {e}", exc_info=True)
+
+
+def _run_matching_phase(ctx: AppContext, stop_event: threading.Event) -> None:
+    """Run Matching phase."""
+    logger.info("Running Matching phase")
+    try:
+        success, task_id = run_matching_pipeline()
+        if success:
+            logger.info(f"Matching phase completed successfully (task: {task_id})")
+        else:
+            logger.error(f"Matching phase failed (task: {task_id})")
+        if not stop_event.is_set() and ctx.job_etl_service:
+            ctx.job_etl_service.unload_models()
+    except Exception as e:
+        logger.error(f"Error in Matching phase: {e}", exc_info=True)
+
+
+def _cleanup_jobspy_client(ctx: AppContext) -> None:
+    """Clean up JobSpyClient session."""
     try:
         if ctx.jobspy_client:
             ctx.jobspy_client.close()
     except Exception as e:
         logger.warning(f"Error closing JobSpy client: {e}")
-
-    cycle_elapsed = time.time() - cycle_start
-    logger.info(f"=== Cycle Completed in {cycle_elapsed:.2f}s ===")
 
 
 def main():
