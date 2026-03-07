@@ -51,6 +51,7 @@ jobs:
         run: |
           # Run all tests with coverage
           # Redis is available on localhost:6379 from GitHub Actions service
+          # Skip integration tests that require Docker containers for microservices
           uv run pytest tests/ \
             --cov=services \
             --cov=core \
@@ -68,7 +69,8 @@ jobs:
             --ignore=tests/integration/test_etl_real_data.py \
             --ignore=tests/integration/test_openai_schema_validation.py \
             --ignore=tests/integration/test_resume_schema.py \
-            --ignore=tests/integration/test_user_wants_pipeline.py
+            --ignore=tests/integration/test_user_wants_pipeline.py \
+            --ignore=tests/integration/test_orchestrator_pipeline.py
         env:
           PYTHONPATH: ${{ github.workspace }}
           REDIS_URL: redis://localhost:6379/1
