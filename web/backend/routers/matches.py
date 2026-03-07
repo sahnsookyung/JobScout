@@ -38,11 +38,11 @@ def validate_uuid(match_id: str) -> str:
 
 @router.get("", response_model=MatchesResponse)
 def get_matches(
-    status: Annotated[str, Query(default="active", description="Match status: active, stale, or all")] = "active",
+    status: Annotated[str, Query(description="Match status: active, stale, or all")] = "active",
     min_fit: Annotated[float | None, Query(ge=0, le=100, description="Minimum fit score filter")] = None,
     top_k: Annotated[int | None, Query(ge=1, le=500, description="Maximum results to return")] = None,
-    remote_only: Annotated[bool, Query(default=False, description="Filter to remote jobs only")] = False,
-    show_hidden: Annotated[bool, Query(default=False, description="Include hidden matches in results")] = False,
+    remote_only: Annotated[bool, Query(description="Filter to remote jobs only")] = False,
+    show_hidden: Annotated[bool, Query(description="Include hidden matches in results")] = False,
     db: Annotated[Session, Depends(get_db)] = None,
 ):
     """

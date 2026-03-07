@@ -254,7 +254,7 @@ def check_resume_hash_endpoint(request: Request, body: ResumeHashCheckRequest):
 async def upload_resume_endpoint(
     request: Request,
     file: Annotated[UploadFile, File(...)],
-    resume_hash: Annotated[Optional[str], Form(None)] = None,
+    resume_hash: Annotated[Optional[str], Form()] = None,
 ):
     """
     Upload a resume file.
