@@ -274,9 +274,11 @@ async def upload_resume_endpoint(
     task_id = manager.create_task()
 
     # Fire and forget - return immediately while processing continues in background
-    asyncio.create_task(asyncio.to_thread(
+    # Store task reference to prevent premature garbage collection
+    background_task = asyncio.create_task(asyncio.to_thread(
         _process_resume_background, content, file.filename, task_id, manager
     ))
+    background_task.add_done_callback(lambda t: None)  # Suppress unhandled exception warnings
 
     return ResumeUploadResponse(
         success=True,
