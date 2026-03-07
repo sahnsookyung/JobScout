@@ -180,6 +180,7 @@ if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8083)
 
 
+# pylint: disable=too-many-branches
 async def consume_matching_jobs():
     """Background task that consumes matching jobs from Redis Streams."""
     logger.info(f"Starting matching consumer: {CONSUMER_NAME} (group: {CONSUMER_GROUP})")

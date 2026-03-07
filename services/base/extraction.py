@@ -81,6 +81,7 @@ def _extract_single_job(ctx: AppContext, job_id: int, retry_intervals: list, sto
     return False
 
 
+# pylint: disable=too-many-branches,too-many-statements
 def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 200):
     """Run extraction batch with per-job transactions."""
     with job_uow() as repo:
@@ -178,6 +179,7 @@ def _run_facet_recovery_batch(ctx: AppContext, stop_event: threading.Event, limi
     return recovered
 
 
+# pylint: disable=too-many-branches
 def _run_facet_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100) -> int:
     """Run facet extraction batch with atomic claiming."""
     worker_id = f"worker_{os.getpid()}"

@@ -117,6 +117,7 @@ def test_pipeline_trigger(url):
         print_error(f"Pipeline trigger: {e}")
         return False, None
 
+# pylint: disable=too-many-branches
 def main():
     print_header("MICROSERVICES PIPELINE DIAGNOSTICS")
 

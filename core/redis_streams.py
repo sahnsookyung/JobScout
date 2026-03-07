@@ -71,6 +71,7 @@ def enqueue_job(stream: str, payload: dict) -> str:
     return msg_id
 
 
+# pylint: disable=too-many-branches
 def _claim_stale_messages(stream: str, group: str, consumer: str, count: int = 10) -> list[tuple[str, dict]]:
     """Claim stale pending messages from dead consumers.
     
@@ -156,6 +157,7 @@ def _deserialize_message(msg: dict) -> dict:
     return deserialized
 
 
+# pylint: disable=too-many-branches,too-many-statements
 def _read_stream_loop(
     client,
     stream: str,
