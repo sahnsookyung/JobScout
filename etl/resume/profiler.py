@@ -153,7 +153,7 @@ class ResumeProfiler:
             for h in (exp.highlights or []):
                 yield self._create_experience_highlight_unit(exp, idx, h)
 
-            for tech in exp.tech_keywords:
+            for tech in (exp.tech_keywords or []):
                 yield self._create_experience_tech_unit(exp, idx, tech)
 
     def _extract_project_evidence(self, projects) -> Iterator[ResumeEvidenceUnit]:

@@ -17,10 +17,10 @@ router = APIRouter(prefix="/api/stats", tags=["stats"])
 
 
 @router.get("", response_model=StatsResponse)
-def get_stats(db: Annotated[Session, Depends(get_db)] = None):
+def get_stats(db: Annotated[Session, Depends(get_db)]):
     """
     Get overall statistics about matches in the database.
-    
+
     Returns total counts and score distribution.
     """
     policy_service = get_policy_service()

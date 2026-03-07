@@ -176,7 +176,7 @@ def wait_for_service(host_port, check_type, timeout=60):
                 result = run_docker_command(["exec", "redis-test", "redis-cli", "ping"])
                 if result.stdout.strip() == "PONG":
                     return
-        except (requests.exceptions.RequestException, subprocess.SubprocessError):
+        except Exception:
             pass
         time.sleep(1)
 
@@ -270,7 +270,7 @@ class TestOrchestratorHealth:
 
     def test_orchestrator_health_endpoint(self):
         """Test orchestrator health endpoint returns status."""
-        response = requests.get(f"{ORCHESTRATOR_URL}/health")
+        response = requests.get(f"{ORCHESTRATOR_URL}/health", timeout=10)
         assert response.status_code == 200
         
         data = response.json()
@@ -289,7 +289,7 @@ class TestOrchestratorHealth:
         ]
         
         for name, url in services:
-            response = requests.get(f"{url}/health")
+            response = requests.get(f"{url}/health", timeout=10)
             assert response.status_code == 200, f"{name} service is not healthy"
             
             data = response.json()

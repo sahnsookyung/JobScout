@@ -108,7 +108,6 @@ def get_pipeline_status(task_id: str):
         result = orchestrator_client.get_task_status(task_id)
 
         if not result.get("success"):
-            from fastapi import HTTPException
             raise HTTPException(status_code=404, detail="Task not found")
 
         # Map orchestrator response to PipelineStatusResponse
@@ -127,7 +126,6 @@ def get_pipeline_status(task_id: str):
         raise
     except Exception:
         logger.exception("Failed to get pipeline status for task %s", task_id)
-        from fastapi import HTTPException
         raise HTTPException(status_code=500, detail="Failed to get pipeline status")
 
 
@@ -183,7 +181,7 @@ def stop_matching_pipeline():
         return PipelineTaskResponse(
             success=False,
             task_id="",
-            message=f"Failed to stop pipeline: {str(e)}"
+            message="Failed to stop pipeline. Please try again."
         )
 
 
@@ -196,8 +194,7 @@ async def pipeline_events(task_id: str):
     Proxies to the orchestrator service.
     """
     import httpx
-    from fastapi.responses import StreamingResponse
-    
+
     orchestrator_url = os.getenv("ORCHESTRATOR_URL", "http://localhost:8084")
     
     async def event_generator():
@@ -377,7 +374,7 @@ def _process_resume_background(
         logger.exception("Background resume processing failed")
         if task:
             task.status = "failed"
-            task.message = f"Resume processing failed: {str(e)}"
+            task.message = "Resume processing failed. Please try again or contact support."
             task.phases = {"resume_etl": {"status": "failed", "progress": 0}}
     finally:
         try:
