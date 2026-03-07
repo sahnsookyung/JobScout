@@ -355,6 +355,7 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, user_want_
     return scored_matches
 
 
+# pylint: disable=too-many-branches
 def _run_matching_and_scoring(
     ctx: AppContext,
     resume_data: dict,

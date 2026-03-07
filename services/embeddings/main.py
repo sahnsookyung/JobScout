@@ -164,6 +164,7 @@ if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8082)
 
 
+# pylint: disable=too-many-branches
 async def consume_embeddings_jobs():
     """Background task that consumes embeddings jobs from Redis Streams."""
     from services.base.embeddings import generate_resume_embedding

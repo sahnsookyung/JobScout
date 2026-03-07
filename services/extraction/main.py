@@ -206,6 +206,7 @@ def _validate_resume_path(resume_file: str) -> tuple[bool, str]:
     return True, resume_path
 
 
+# pylint: disable=too-many-branches
 async def consume_extraction_jobs():
     """Background task that consumes extraction jobs from Redis Streams."""
     from services.base.extraction import process_resume
