@@ -1,22 +1,45 @@
-FROM python:3.13-slim
+# syntax=docker/dockerfile:1
+
+FROM python:3.14-slim AS builder
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 WORKDIR /app
 
-# Create non-root user for security
-RUN useradd --create-home --shell /bin/bash appuser
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
 
-COPY pyproject.toml uv.lock ./
+# Install dependencies first for layer caching
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --no-dev --no-install-project --group web
+
+# Copy application source
 COPY core/ ./core/
 COPY database/ ./database/
 COPY etl/ ./etl/
-COPY web/backend/models/ ./web/backend/models/
+COPY notification/ ./notification/
 COPY pipeline/ ./pipeline/
+COPY web/backend/models/ ./web/backend/models/
+COPY services/base/ ./services/base/
 COPY services/extraction/ ./services/extraction/
 COPY config.yaml ./
 
-RUN pip install uv && \
-    uv sync --no-dev --group web && \
-    chown -R appuser:appuser /app
+RUN uv sync --frozen --no-dev --group web
+
+# ---------------------------------------------------------
+# Runtime Stage
+FROM python:3.14-slim AS runtime
+
+RUN useradd --create-home --shell /bin/bash appuser
+
+WORKDIR /app
+
+COPY --from=builder --chown=root:root /app /app
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH=/app
 
 USER appuser
 EXPOSE 8081
-CMD ["uv", "run", "uvicorn", "services.extraction.main:app", "--host", "0.0.0.0", "--port", "8081"]
+
+CMD ["uvicorn", "services.extraction.main:app", "--host", "0.0.0.0", "--port", "8081"]
