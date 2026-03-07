@@ -6,7 +6,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 
 RUN pip install --no-cache-dir uv==0.10.8 && \
-    uv sync --frozen --no-dev --group web
+  uv sync --frozen --no-dev --group web
 
 # Copy application code (specific directories to avoid sensitive files)
 COPY core/ ./core/
@@ -16,12 +16,10 @@ COPY services/orchestrator/ ./services/orchestrator/
 COPY config.yaml ./
 
 RUN adduser --disabled-password --gecos '' appuser && \
-    chown -R appuser:appuser /app
+  chown -R appuser:appuser /app
 
 USER appuser
-
 EXPOSE 8084
-
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8084/health')" || exit 1
 

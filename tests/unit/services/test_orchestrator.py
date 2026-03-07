@@ -51,12 +51,15 @@ class TestOrchestratorSubscriptionOrder:
         mock_state = AsyncMock()
         mock_state.status = "pending"
         mock_state.notify = AsyncMock()
-        mock_state._save_to_redis = Mock()
+        mock_state._save_to_redis = AsyncMock()
+        
+        mock_registry = MagicMock()
+        mock_registry.lock = AsyncMock()
         
         with patch('services.orchestrator.main.get_or_create_orchestration', return_value=mock_state):
             with patch('services.orchestrator.main.redis_async.from_url', return_value=mock_client):
                 with patch('services.orchestrator.main.enqueue_job') as mock_enqueue:
-                    with patch('services.orchestrator.main._orchestration_lock'):
+                    with patch('services.orchestrator.main.OrchestrationState'):
                         # Import after mocks are set up
                         from services.orchestrator.main import orchestrate_match
                         
@@ -66,7 +69,7 @@ class TestOrchestratorSubscriptionOrder:
                         # Run orchestration (will timeout, but we check order)
                         try:
                             await asyncio.wait_for(
-                                orchestrate_match(task_id, "/app/resume.pdf"),
+                                orchestrate_match(task_id, "/app/resume.pdf", mock_registry),
                                 timeout=0.1
                             )
                         except Exception:
@@ -93,7 +96,7 @@ class TestOrchestratorSubscriptionOrder:
         mock_state = AsyncMock()
         mock_state.status = "pending"
         mock_state.notify = AsyncMock()
-        mock_state._save_to_redis = Mock()
+        mock_state._save_to_redis = AsyncMock()
         mock_state.resume_fingerprint = None
         
         # Mock extraction response
@@ -104,17 +107,20 @@ class TestOrchestratorSubscriptionOrder:
             }
         ]
         
+        mock_registry = MagicMock()
+        mock_registry.lock = AsyncMock()
+        
         with patch('services.orchestrator.main.get_or_create_orchestration', return_value=mock_state):
             with patch('services.orchestrator.main.redis_async.from_url', return_value=mock_client):
                 with patch('services.orchestrator.main.enqueue_job'):
-                    with patch('services.orchestrator.main._orchestration_lock'):
+                    with patch('services.orchestrator.main.OrchestrationState'):
                         from services.orchestrator.main import orchestrate_match
 
                         task_id = f"test-{uuid.uuid4().hex[:8]}"
 
                         try:
                             await asyncio.wait_for(
-                                orchestrate_match(task_id, "/app/resume.pdf"),
+                                orchestrate_match(task_id, "/app/resume.pdf", mock_registry),
                                 timeout=0.1
                             )
                         except Exception:
@@ -135,7 +141,7 @@ class TestOrchestratorSubscriptionOrder:
         mock_state = AsyncMock()
         mock_state.status = "pending"
         mock_state.notify = AsyncMock()
-        mock_state._save_to_redis = Mock()
+        mock_state._save_to_redis = AsyncMock()
         mock_state.resume_fingerprint = "abc123"
         
         # Mock extraction and embeddings responses
@@ -155,17 +161,20 @@ class TestOrchestratorSubscriptionOrder:
             []  # Matching will timeout
         ]
         
+        mock_registry = MagicMock()
+        mock_registry.lock = AsyncMock()
+        
         with patch('services.orchestrator.main.get_or_create_orchestration', return_value=mock_state):
             with patch('services.orchestrator.main.redis_async.from_url', return_value=mock_client):
                 with patch('services.orchestrator.main.enqueue_job'):
-                    with patch('services.orchestrator.main._orchestration_lock'):
+                    with patch('services.orchestrator.main.OrchestrationState'):
                         from services.orchestrator.main import orchestrate_match
 
                         task_id = f"test-{uuid.uuid4().hex[:8]}"
 
                         try:
                             await asyncio.wait_for(
-                                orchestrate_match(task_id, "/app/resume.pdf"),
+                                orchestrate_match(task_id, "/app/resume.pdf", mock_registry),
                                 timeout=0.1
                             )
                         except Exception:
@@ -188,7 +197,7 @@ class TestOrchestratorLogging:
         mock_state = AsyncMock()
         mock_state.status = "pending"
         mock_state.notify = AsyncMock()
-        mock_state._save_to_redis = Mock()
+        mock_state._save_to_redis = AsyncMock()
         
         mock_pubsub = AsyncMock()
         mock_pubsub.subscribe = AsyncMock()
@@ -200,16 +209,19 @@ class TestOrchestratorLogging:
         mock_client.pubsub = Mock(return_value=mock_pubsub)
         mock_client.close = AsyncMock()
         
+        mock_registry = MagicMock()
+        mock_registry.lock = AsyncMock()
+        
         with patch('services.orchestrator.main.get_or_create_orchestration', return_value=mock_state):
             with patch('services.orchestrator.main.redis_async.from_url', return_value=mock_client):
                 with patch('services.orchestrator.main.enqueue_job'):
-                    with patch('services.orchestrator.main._orchestration_lock'):
+                    with patch('services.orchestrator.main.OrchestrationState'):
                         from services.orchestrator.main import orchestrate_match
                         
                         with caplog.at_level(logging.INFO):
                             try:
                                 await asyncio.wait_for(
-                                    orchestrate_match("test-123", "/app/resume.pdf"),
+                                    orchestrate_match("test-123", "/app/resume.pdf", mock_registry),
                                     timeout=0.1
                                 )
                             except Exception:
@@ -226,7 +238,7 @@ class TestOrchestratorLogging:
         mock_state = AsyncMock()
         mock_state.status = "pending"
         mock_state.notify = AsyncMock()
-        mock_state._save_to_redis = Mock()
+        mock_state._save_to_redis = AsyncMock()
         
         mock_pubsub = AsyncMock()
         mock_pubsub.subscribe = AsyncMock()
@@ -238,16 +250,19 @@ class TestOrchestratorLogging:
         mock_client.pubsub = Mock(return_value=mock_pubsub)
         mock_client.close = AsyncMock()
         
+        mock_registry = MagicMock()
+        mock_registry.lock = AsyncMock()
+        
         with patch('services.orchestrator.main.get_or_create_orchestration', return_value=mock_state):
             with patch('services.orchestrator.main.redis_async.from_url', return_value=mock_client):
                 with patch('services.orchestrator.main.enqueue_job') as mock_enqueue:
-                    with patch('services.orchestrator.main._orchestration_lock'):
+                    with patch('services.orchestrator.main.OrchestrationState'):
                         from services.orchestrator.main import orchestrate_match
                         
                         with caplog.at_level(logging.INFO):
                             try:
                                 await asyncio.wait_for(
-                                    orchestrate_match("test-123", "/app/resume.pdf"),
+                                    orchestrate_match("test-123", "/app/resume.pdf", mock_registry),
                                     timeout=0.1
                                 )
                             except asyncio.TimeoutError:
@@ -269,7 +284,7 @@ class TestOrchestratorErrorHandling:
         mock_state.status = "extracting"
         mock_state.error = None
         mock_state.notify = AsyncMock()
-        mock_state._save_to_redis = Mock()
+        mock_state._save_to_redis = AsyncMock()
         
         mock_pubsub = AsyncMock()
         mock_pubsub.subscribe = AsyncMock()
@@ -282,16 +297,19 @@ class TestOrchestratorErrorHandling:
         mock_client.pubsub = Mock(return_value=mock_pubsub)
         mock_client.close = AsyncMock()
         
+        mock_registry = MagicMock()
+        mock_registry.lock = AsyncMock()
+        
         with patch('services.orchestrator.main.get_or_create_orchestration', return_value=mock_state):
             with patch('services.orchestrator.main.redis_async.from_url', return_value=mock_client):
                 with patch('services.orchestrator.main.enqueue_job'):
-                    with patch('services.orchestrator.main._orchestration_lock'):
+                    with patch('services.orchestrator.main.OrchestrationState'):
                         from services.orchestrator.main import orchestrate_match
                         
                         # Run with very short timeout
                         try:
                             await asyncio.wait_for(
-                                orchestrate_match("test-123", "/app/resume.pdf"),
+                                orchestrate_match("test-123", "/app/resume.pdf", mock_registry),
                                 timeout=0.01
                             )
                         except asyncio.TimeoutError:
@@ -312,7 +330,7 @@ class TestOrchestratorErrorHandling:
         mock_state.status = "extracting"
         mock_state.error = None
         mock_state.notify = AsyncMock()
-        mock_state._save_to_redis = Mock()
+        mock_state._save_to_redis = AsyncMock()
         
         mock_pubsub = AsyncMock()
         mock_pubsub.subscribe = AsyncMock()
@@ -330,13 +348,16 @@ class TestOrchestratorErrorHandling:
         mock_client.pubsub = Mock(return_value=mock_pubsub)
         mock_client.close = AsyncMock()
         
+        mock_registry = MagicMock()
+        mock_registry.lock = AsyncMock()
+        
         with patch('services.orchestrator.main.get_or_create_orchestration', return_value=mock_state):
             with patch('services.orchestrator.main.redis_async.from_url', return_value=mock_client):
                 with patch('services.orchestrator.main.enqueue_job'):
-                    with patch('services.orchestrator.main._orchestration_lock'):
+                    with patch('services.orchestrator.main.OrchestrationState'):
                         from services.orchestrator.main import orchestrate_match
                         
-                        await orchestrate_match("test-123", "/app/resume.pdf")
+                        await orchestrate_match("test-123", "/app/resume.pdf", mock_registry)
                         
                         # Verify error was set (notify should be called with failed status)
                         notify_calls = mock_state.notify.call_args_list
@@ -351,7 +372,7 @@ class TestOrchestratorErrorHandling:
         mock_state.error = None
         mock_state.resume_fingerprint = None
         mock_state.notify = AsyncMock()
-        mock_state._save_to_redis = Mock()
+        mock_state._save_to_redis = AsyncMock()
         
         mock_pubsub = AsyncMock()
         mock_pubsub.subscribe = AsyncMock()
@@ -369,13 +390,16 @@ class TestOrchestratorErrorHandling:
         mock_client.pubsub = Mock(return_value=mock_pubsub)
         mock_client.close = AsyncMock()
         
+        mock_registry = MagicMock()
+        mock_registry.lock = AsyncMock()
+        
         with patch('services.orchestrator.main.get_or_create_orchestration', return_value=mock_state):
             with patch('services.orchestrator.main.redis_async.from_url', return_value=mock_client):
                 with patch('services.orchestrator.main.enqueue_job'):
-                    with patch('services.orchestrator.main._orchestration_lock'):
+                    with patch('services.orchestrator.main.OrchestrationState'):
                         from services.orchestrator.main import orchestrate_match
                         
-                        await orchestrate_match("test-123", "/app/resume.pdf")
+                        await orchestrate_match("test-123", "/app/resume.pdf", mock_registry)
                         
                         # Verify error about missing fingerprint (notify should be called with failed status)
                         notify_calls = mock_state.notify.call_args_list
@@ -390,7 +414,7 @@ class TestOrchestrationState:
         """Test OrchestrationState initializes with correct defaults."""
         from services.orchestrator.main import OrchestrationState
         
-        state = OrchestrationState("test-123", load_from_redis=False)
+        state = OrchestrationState("test-123")
         
         assert state.task_id == "test-123"
         assert state.status == "pending"
@@ -410,7 +434,7 @@ class TestOrchestrationState:
         
         from services.orchestrator.main import OrchestrationState
         
-        state = OrchestrationState("test-123", load_from_redis=True)
+        state = asyncio.run(OrchestrationState.create("test-123", load_from_redis=True))
         
         assert state.status == "embedding"
         assert state.resume_fingerprint == "abc123"
@@ -421,10 +445,10 @@ class TestOrchestrationState:
         """Test OrchestrationState saves state to Redis."""
         from services.orchestrator.main import OrchestrationState
         
-        state = OrchestrationState("test-123", load_from_redis=False)
+        state = OrchestrationState("test-123")
         state.status = "completed"
         state.matches_count = 10
-        state._save_to_redis()
+        asyncio.run(state._save_to_redis())
         
         mock_set_state.assert_called_once()
         call_args = mock_set_state.call_args[0]
@@ -437,7 +461,7 @@ class TestOrchestrationState:
         """Test OrchestrationState notifies all subscribers."""
         from services.orchestrator.main import OrchestrationState
         
-        state = OrchestrationState("test-123", load_from_redis=False)
+        state = OrchestrationState("test-123")
         
         # Create mock subscribers
         queue1 = asyncio.Queue()
@@ -457,15 +481,16 @@ class TestOrchestrationState:
     @pytest.mark.asyncio
     async def test_state_close_removes_from_cache(self):
         """Test OrchestrationState.close removes from global cache."""
-        from services.orchestrator.main import OrchestrationState, orchestrations
+        from services.orchestrator.main import OrchestrationState, OrchestratorRegistry
         
-        state = OrchestrationState("test-123", load_from_redis=False)
-        orchestrations["test-123"] = state
+        registry = OrchestratorRegistry()
+        state = OrchestrationState("test-123")
+        registry.orchestrations["test-123"] = state
         
-        await state.close()
+        await state.close(registry)
         
         # Should be removed from cache
-        assert "test-123" not in orchestrations
+        assert "test-123" not in registry.orchestrations
 
 
 class TestOrchestratorCleanup:
@@ -475,34 +500,34 @@ class TestOrchestratorCleanup:
     async def test_cleanup_removes_old_entries(self):
         """Test cleanup removes orchestrations older than TTL."""
         import time
-        from services.orchestrator.main import (
-            orchestrations, orchestration_timestamps, _orchestration_lock
-        )
+        from services.orchestrator.main import OrchestratorRegistry
+        
+        registry = OrchestratorRegistry()
         
         # Add stale entry
         old_task_id = "old-task"
-        async with _orchestration_lock:
-            orchestrations[old_task_id] = Mock()
-            orchestration_timestamps[old_task_id] = time.time() - 3601  # Older than TTL (1 hour)
+        async with registry.lock:
+            registry.orchestrations[old_task_id] = Mock()
+            registry.timestamps[old_task_id] = time.time() - 3601  # Older than TTL (1 hour)
             
             # Add recent entry
             new_task_id = "new-task"
-            orchestrations[new_task_id] = Mock()
-            orchestration_timestamps[new_task_id] = time.time()
+            registry.orchestrations[new_task_id] = Mock()
+            registry.timestamps[new_task_id] = time.time()
         
         # Manually run cleanup logic (not the background task)
         now = time.time()
-        stale = [k for k, v in orchestration_timestamps.items()
+        stale = [k for k, v in registry.timestamps.items()
                  if now - v > 3600]  # ORCHESTRATION_TTL
         
-        async with _orchestration_lock:
+        async with registry.lock:
             for task_id in stale:
-                orchestrations.pop(task_id, None)
-                orchestration_timestamps.pop(task_id, None)
+                registry.orchestrations.pop(task_id, None)
+                registry.timestamps.pop(task_id, None)
         
         # Old entry should be removed, new entry should remain
-        assert old_task_id not in orchestrations
-        assert new_task_id in orchestrations
+        assert old_task_id not in registry.orchestrations
+        assert new_task_id in registry.orchestrations
 
 
 if __name__ == "__main__":

@@ -73,77 +73,65 @@ def enqueue_job(stream: str, payload: dict) -> str:
 
 # pylint: disable=too-many-branches
 def _claim_stale_messages(stream: str, group: str, consumer: str, count: int = 10) -> list[tuple[str, dict]]:
-    """Claim stale pending messages from dead consumers.
-    
-    Uses XCLAIM to claim messages that have been pending for too long (>= 1 minute)
-    from consumers that may have died.
-    
-    Args:
-        stream: Stream name
-        group: Consumer group name
-        consumer: Consumer name to claim messages to
-        count: Max messages to claim
-        
-    Returns:
-        List of (message_id, message_data) tuples
-    """
+    """Claim pending messages from dead consumers that have been idle >= 60 seconds."""
     client = get_redis_client()
     claimed = []
-    
+
     try:
-        # Get all pending messages summary
         pending_summary = client.xpending(stream, group)
-        if isinstance(pending_summary, dict):
-            total_pending = pending_summary.get("pending", 0)
-        else:
-            total_pending = 0
-        
+        # redis-py returns a dict in newer versions, an int in older ones
+        total_pending = pending_summary.get("pending", 0) if isinstance(pending_summary, dict) else 0
+
         if total_pending == 0:
             return claimed
-            
-        # Get detailed pending messages
+
+        # Fetch 2x target count to account for entries we'll skip in _is_claimable
         pending_details = client.xpending_range(
             stream, group,
             min="-", max="+",
             count=min(total_pending, count * 2)
         )
-        
+
         for p in pending_details:
-            msg_id = p["message_id"]
-            consumer_name = p.get("consumer")
-            
-            # Skip if already claimed to our consumer
-            if consumer_name == consumer:
-                continue
-                
-            # Skip if not stale (less than 60 seconds idle)
-            time_since_delivered = p.get("time_since_delivered", 0)
-            if time_since_delivered < 60000:  # 60 seconds in milliseconds
-                continue
-                
-            try:
-                # Try to claim the message
-                claimed_msgs = client.xclaim(
-                    stream, group, consumer,
-                    min_idle_time=60000,
-                    message_ids=[msg_id]
-                )
-                # xclaim returns list of tuples: [(msg_id, msg_data), ...]
-                for claimed_msg in claimed_msgs:
-                    if isinstance(claimed_msg, tuple) and len(claimed_msg) == 2:
-                        claimed_msg_id, msg_data = claimed_msg
-                        claimed.append((claimed_msg_id, msg_data))
-                        logger.info(f"Claimed stale message {claimed_msg_id} from consumer {consumer_name}")
-                    else:
-                        # Fallback for unexpected format
-                        claimed.append((msg_id, claimed_msg))
-            except Exception as e:
-                logger.debug(f"Could not claim message {msg_id}: {e}")
-                
+            if _is_claimable(p, consumer):
+                claimed.extend(_try_xclaim(client, stream, group, consumer, p))
+
     except Exception as e:
         logger.warning("Error claiming stale messages: %s", e)
 
     return claimed
+
+
+def _is_claimable(p: dict, consumer: str) -> bool:
+    """Return True if the message is owned by another consumer and has been idle >= 60 seconds."""
+    return p.get("consumer") != consumer and p.get("time_since_delivered", 0) >= 60_000
+
+
+def _try_xclaim(client, stream: str, group: str, consumer: str, p: dict) -> list[tuple]:
+    """Attempt to claim a single pending message. Returns an empty list on failure."""
+    msg_id = p["message_id"]
+    consumer_name = p.get("consumer")
+
+    try:
+        claimed_msgs = client.xclaim(
+            stream, group, consumer,
+            min_idle_time=60_000,  # guards against racing another consumer
+            message_ids=[msg_id]
+        )
+
+        result = []
+        for msg in claimed_msgs:
+            if isinstance(msg, tuple) and len(msg) == 2:
+                result.append(msg)
+                logger.info("Claimed stale message %s from consumer %s", msg[0], consumer_name)
+            else:
+                result.append((msg_id, msg))  # unexpected xclaim return shape, reconstruct tuple
+
+        return result
+
+    except Exception as e:
+        logger.debug("Could not claim message %s: %s", msg_id, e)
+        return []
 
 
 def _deserialize_message(msg: dict) -> dict:
@@ -157,7 +145,33 @@ def _deserialize_message(msg: dict) -> dict:
     return deserialized
 
 
-# pylint: disable=too-many-branches,too-many-statements
+def _is_running(shutdown_event: Optional[threading.Event]) -> bool:
+    """Check whether the stream loop should keep running."""
+    return shutdown_event is None or not shutdown_event.is_set()
+
+
+def _yield_claimed_messages(
+    stream: str, group: str, consumer: str, count: int
+) -> Generator[tuple[str, dict], None, None]:
+    """Yield any stale pending messages claimable from dead consumers."""
+    try:
+        for msg_id, msg in _claim_stale_messages(stream, group, consumer, count):
+            logger.info("🔄 Claimed stale message %s from %s", msg_id, stream)
+            yield msg_id, _deserialize_message(msg)
+    except Exception as e:
+        logger.error("❌ Error claiming stale messages: %s: %s", type(e).__name__, e)
+
+
+def _yield_new_messages(
+    messages: list, stream: str
+) -> Generator[tuple[str, dict], None, None]:
+    """Yield deserialized messages from an xreadgroup result."""
+    for _stream_name, msgs in messages:
+        for msg_id, msg in msgs:
+            logger.debug("📨 Read new message %s from %s", msg_id, stream)
+            yield msg_id, _deserialize_message(msg)
+
+
 def _read_stream_loop(
     client,
     stream: str,
@@ -166,51 +180,35 @@ def _read_stream_loop(
     count: int,
     block: Optional[int],
     shutdown_event: Optional[threading.Event],
-    read_pending: bool
+    read_pending: bool,
 ) -> Generator[tuple[str, dict], None, None]:
-    """Main loop for reading messages from Redis stream."""
-    while shutdown_event is None or not shutdown_event.is_set():
-        # First, try to claim stale pending messages from dead consumers
-        if read_pending:
-            try:
-                claimed = _claim_stale_messages(stream, group, consumer, count)
-                for msg_id, msg in claimed:
-                    logger.info("🔄 Claimed stale message %s from %s", msg_id, stream)
-                    yield msg_id, _deserialize_message(msg)
-            except Exception as e:
-                logger.error("❌ Error claiming stale messages: %s: %s", type(e).__name__, e)
+    """Main loop for reading messages from a Redis stream."""
+    while _is_running(shutdown_event):                              # +1
+        if read_pending:                                            # +2 (+1 nest)
+            yield from _yield_claimed_messages(stream, group, consumer, count)
 
         try:
             logger.debug("⏳ Reading from stream %s (blocking for %sms)...", stream, block)
             messages = client.xreadgroup(
-                group,
-                consumer,
-                {stream: ">"},  # ">" = read new messages only
-                count=count,
-                block=block
+                group, consumer, {stream: ">"}, count=count, block=block
             )
 
-            if not messages:
+            if not messages:                                        # +2 (+1 nest)
                 logger.debug("⏰ No messages from %s (timeout after %sms)", stream, block)
-                if block is None:
-                    time.sleep(0.1)  # Prevent CPU spin in non-blocking mode
+                if block is None:                                   # +3 (+2 nest)
+                    time.sleep(0.1)  # prevent CPU spin in non-blocking mode
                 continue
 
-            for stream_name, msgs in messages:
-                for msg_id, msg in msgs:
-                    logger.debug("📨 Read new message %s from %s", msg_id, stream)
-                    yield msg_id, _deserialize_message(msg)
+            yield from _yield_new_messages(messages, stream)
 
-        except redis.ConnectionError as e:
-            logger.error("❌ Connection error reading from stream %s: %s: %s", stream, type(e).__name__, e)
-            time.sleep(1)  # Back off on connection errors
-            continue
-        except redis.TimeoutError as e:
-            logger.warning("⚠️ Timeout reading from stream %s: %s: %s", stream, type(e).__name__, e)
-            time.sleep(1)  # Brief backoff for transient errors
-            continue
-        except Exception as e:
-            logger.error("❌ Fatal error reading from stream %s: %s: %s", stream, type(e).__name__, e)
+        except redis.ConnectionError as e:                          # +2 (+1 nest)
+            logger.error("❌ Connection error reading from %s: %s: %s", stream, type(e).__name__, e)
+            time.sleep(1)
+        except redis.TimeoutError as e:                             # +2 (+1 nest)
+            logger.warning("⚠️ Timeout reading from %s: %s: %s", stream, type(e).__name__, e)
+            time.sleep(1)
+        except Exception as e:                                      # +2 (+1 nest)
+            logger.error("❌ Fatal error reading from %s: %s: %s", stream, type(e).__name__, e)
             raise
 
 

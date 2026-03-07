@@ -36,52 +36,79 @@ def _format_http_error(e: Exception) -> str:
     return "N/A"
 
 
-def _extract_single_job(ctx: AppContext, job_id: int, retry_intervals: list, stop_event: threading.Event) -> bool:
+def _mark_job_failed(job_id: int, exc_type: str, exc_message: str) -> None:
+    """Persist failure state so the job isn't retried indefinitely."""
+    try:
+        with job_uow() as repo:
+            repo.mark_extraction_failed(job_id, f"{exc_type}: {exc_message}")
+    except Exception as mark_err:
+        logger.warning("Failed to mark job %s as failed: %s", job_id, mark_err)
+
+
+def _on_extraction_error(
+    e: Exception,
+    job_id: int,
+    job_title: Optional[str],
+    attempt: int,
+    retry_intervals: list,
+    wait_time: int,
+    stop_event: threading.Event,
+) -> bool:
+    """Log a failed attempt and decide whether the retry loop should stop.
+
+    Returns True if the caller should break out of the retry loop.
+    """
+    http_details = _format_http_error(e)
+    job_title_str = job_title[:50] if job_title else "unknown"
+    exc_type = type(e).__name__
+    exc_message = str(e)
+    is_last_attempt = attempt == len(retry_intervals) - 1
+
+    if is_last_attempt:
+        logger.error(
+            "Extraction failed after %d retries, job_id=%s (title: %r): %s - %s. %s. Giving up.",
+            len(retry_intervals), job_id, job_title_str, exc_type, exc_message, http_details,
+        )
+        _mark_job_failed(job_id, exc_type, exc_message)
+        return True
+    else:
+        logger.warning(
+            "Extraction attempt %d/%d failed for job %s (title: %r): %s - %s. %s. Retrying in %ds...",
+            attempt + 1, len(retry_intervals), job_id, job_title_str, exc_type, exc_message, http_details, wait_time,
+        )
+        return stop_event.wait(wait_time)
+
+
+def _extract_single_job(
+    ctx: AppContext,
+    job_id: int,
+    retry_intervals: list,
+    stop_event: threading.Event,
+) -> bool:
     """Extract a single job with retries. Returns True if successful."""
     job_title = None
-    
+
     for attempt, wait_time in enumerate(retry_intervals):
         if stop_event.is_set():
             break
-            
+
         try:
             with job_uow() as repo:
                 job = repo.get_by_id(job_id)
                 if job is None:
                     logger.warning("Job %s not found, may have been deleted", job_id)
                     return False
-                job_title = job.title  # Capture before context exits
+                job_title = job.title
                 ctx.job_etl_service.extract_one(repo, job)
             return True
-        except Exception as e:
-            http_details = _format_http_error(e)
-            job_title_str = job_title[:50] if job_title else "unknown"
-            exc_type = type(e).__name__
-            exc_message = str(e)
 
-            if attempt == len(retry_intervals) - 1:
-                logger.error(
-                    "Extraction failed after %d retries, job_id=%s (title: %r): %s - %s. %s. Giving up.",
-                    len(retry_intervals), job_id, job_title_str, exc_type, exc_message, http_details
-                )
-                # Mark job as failed to prevent infinite retries
-                try:
-                    with job_uow() as repo:
-                        repo.mark_extraction_failed(job_id, f"{exc_type}: {exc_message}")
-                except Exception as mark_err:
-                    logger.warning("Failed to mark job %s as failed: %s", job_id, mark_err)
-            else:
-                logger.warning(
-                    "Extraction attempt %d/%d failed for job %s (title: %r): %s - %s. %s. Retrying in %ds...",
-                    attempt + 1, len(retry_intervals), job_id, job_title_str, exc_type, exc_message, http_details, wait_time
-                )
-                if stop_event.wait(wait_time):
-                    break
-    
+        except Exception as e:
+            if _on_extraction_error(e, job_id, job_title, attempt, retry_intervals, wait_time, stop_event):
+                break
+
     return False
 
 
-# pylint: disable=too-many-branches,too-many-statements
 def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 200):
     """Run extraction batch with per-job transactions."""
     with job_uow() as repo:
@@ -179,7 +206,27 @@ def _run_facet_recovery_batch(ctx: AppContext, stop_event: threading.Event, limi
     return recovered
 
 
-# pylint: disable=too-many-branches
+def _process_facet_job(ctx: AppContext, job_id: int) -> int:
+    """Extract facets for a single in-progress job. Returns 1 if processed, 0 otherwise."""
+    with job_uow() as repo:
+        job = repo.get_by_id(job_id)
+        if job and job.facet_status == 'in_progress':
+            ctx.job_etl_service.extract_facets_one(repo, job)
+            return 1
+    return 0
+
+
+def _handle_facet_error(job_id: int) -> None:
+    """Log and persist a facet extraction failure."""
+    error_msg = traceback.format_exc()
+    logger.exception("Facet extraction error job_id=%s", job_id)
+    try:
+        with job_uow() as repo:
+            repo.mark_job_facets_failed(job_id, error_msg)
+    except Exception as mark_err:
+        logger.warning("Failed to mark job %s facets as failed: %s", job_id, mark_err)
+
+
 def _run_facet_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100) -> int:
     """Run facet extraction batch with atomic claiming."""
     worker_id = f"worker_{os.getpid()}"
@@ -196,21 +243,11 @@ def _run_facet_extraction_batch(ctx: AppContext, stop_event: threading.Event, li
             if stop_event.is_set():
                 break
             try:
-                with job_uow() as repo:
-                    job = repo.get_by_id(job_id)
-                    if job and job.facet_status == 'in_progress':
-                        ctx.job_etl_service.extract_facets_one(repo, job)
-                        processed += 1
+                processed += _process_facet_job(ctx, job_id)
             except Exception:
-                error_msg = traceback.format_exc()
-                try:
-                    with job_uow() as repo:
-                        repo.mark_job_facets_failed(job_id, error_msg)
-                except Exception as mark_err:
-                    logger.warning("Failed to mark job %s facets as failed: %s", job_id, mark_err)
-                logger.exception("Facet extraction error job_id=%s", job_id)
+                _handle_facet_error(job_id)
 
-    logger.info(f"Facet extraction batch completed: processed={processed}")
+    logger.info("Facet extraction batch completed: processed=%d", processed)
     return processed
 
 
@@ -230,10 +267,7 @@ def run_job_extraction(ctx: AppContext, stop_event: threading.Event, limit: int 
     extraction_count = _run_extraction_batch(ctx, stop_event, limit)
     facet_count = _run_facet_extraction_batch(ctx, stop_event, limit)
     return recovery_count + extraction_count + facet_count
-
-
-
-
+    
 
 def run_resume_extraction(ctx: AppContext, resume_file: str) -> tuple[Optional[dict], str]:
     """
