@@ -30,7 +30,7 @@ ORCHESTRATOR_PORT = os.environ.get("TEST_ORCHESTRATOR_PORT", "18084")
 
 # Service URLs - use configured ports
 REDIS_URL = f"redis://localhost:{REDIS_PORT}/1"
-REDIS_URL_DOCKER = f"redis://redis-test:6379/1"  # For containers
+REDIS_URL_DOCKER = "redis://redis-test:6379/1"  # For containers
 EXTRACTION_URL = f"http://localhost:{EXTRACTION_PORT}"
 EMBEDDINGS_URL = f"http://localhost:{EMBEDDINGS_PORT}"
 MATCHER_URL = f"http://localhost:{MATCHER_PORT}"

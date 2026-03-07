@@ -11,6 +11,9 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Health endpoint constant (avoids string duplication S1192)
+HEALTH_ENDPOINT = "/health"
+
 # Environment variables - validated at client instantiation time
 EXTRACTION_URL = os.getenv("EXTRACTION_URL", "")
 EMBEDDINGS_URL = os.getenv("EMBEDDINGS_URL", "")
@@ -84,7 +87,7 @@ class ExtractionClient(ServiceClient):
     
     def health(self) -> dict:
         """Check service health."""
-        return self.get("/health")
+        return self.get(HEALTH_ENDPOINT)
 
 
 class EmbeddingsClient(ServiceClient):
@@ -103,7 +106,7 @@ class EmbeddingsClient(ServiceClient):
     
     def health(self) -> dict:
         """Check service health."""
-        return self.get("/health")
+        return self.get(HEALTH_ENDPOINT)
 
 
 class ScorerMatcherClient(ServiceClient):
@@ -122,7 +125,7 @@ class ScorerMatcherClient(ServiceClient):
     
     def health(self) -> dict:
         """Check service health."""
-        return self.get("/health")
+        return self.get(HEALTH_ENDPOINT)
 
 
 class OrchestratorClient(ServiceClient):
@@ -188,7 +191,7 @@ class OrchestratorClient(ServiceClient):
 
     def health(self) -> dict:
         """Check service health."""
-        return self.get("/health")
+        return self.get(HEALTH_ENDPOINT)
 
 
 # Lazy singleton instances - created on first access via __getattr__
