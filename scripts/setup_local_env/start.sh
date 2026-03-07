@@ -206,10 +206,10 @@ stop_services() {
 
     # Build compose args to stop all potential services (using array for paths with spaces)
     local compose_args=(-f "${DOCKER_COMPOSE_FILE}")
-    if [ -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]; then
+    if [[ -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]]; then
         compose_args+=(-f "${PROJECT_ROOT}/docker-compose.pipeline.yml")
     fi
-    if [ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]; then
+    if [[ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]]; then
         compose_args+=(-f "${PROJECT_ROOT}/docker-compose.web.yml")
     fi
 
@@ -289,7 +289,7 @@ start_docker() {
 
     # Add web compose file if web app requested
     if [[ "$WEB_APP" == true ]]; then
-        if [ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]; then
+        if [[ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]]; then
             compose_files+=(-f "${PROJECT_ROOT}/docker-compose.web.yml")
         else
             log_warn "docker-compose.web.yml not found, skipping web compose file"
@@ -544,7 +544,7 @@ main() {
             tail -f "${LOGS_DIR}/web-ui.log" &
             TAIL_PIDS+=($!)
         fi
-        if [ ${#TAIL_PIDS[@]} -gt 0 ]; then
+        if [[ ${#TAIL_PIDS[@]} -gt 0 ]]; then
             wait "${TAIL_PIDS[@]}"
         fi
     fi
