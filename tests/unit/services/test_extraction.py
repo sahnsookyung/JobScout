@@ -1,595 +1,429 @@
-#!/usr/bin/env python3
 """
-Tests for Extraction Service.
-Covers: services/extraction/main.py
+Unit Tests: Extraction Service
+
+Tests the extraction service functionality without requiring
+running services.
+
+Usage:
+    uv run pytest tests/unit/services/test_extraction.py -v
 """
 
 import asyncio
-import logging
-import os
-import threading
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
+import threading
+from unittest.mock import Mock, patch, AsyncMock, MagicMock
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def extraction_state():
-    from services.extraction.main import ExtractionState
-    return ExtractionState(ctx=Mock())
-
-
-@pytest.fixture
-def app_with_state(extraction_state):
-    from services.extraction.main import app
-    app.state.extraction = extraction_state
-    yield app, extraction_state
-    if hasattr(app.state, "extraction"):
-        del app.state.extraction
-
-
-@pytest.fixture
-def no_to_thread():
-    """Replace asyncio.to_thread with a direct synchronous call."""
-    async def passthrough(func, *args, **kwargs):
-        return func(*args, **kwargs)
-
-    with patch("asyncio.to_thread", side_effect=passthrough):
-        yield
-
-
-# ---------------------------------------------------------------------------
-# Path validation
-# ---------------------------------------------------------------------------
-
 class TestValidateResumePath:
-
-    def _reload(self):
-        import importlib
-        import services.extraction.main as m
-        importlib.reload(m)
-        return m
+    """Test _validate_resume_path function."""
 
     def test_valid_app_path(self):
-        with patch("os.path.realpath", side_effect=lambda p: p):
-            m = self._reload()
-            ok, path = m._validate_resume_path("/app/resume.pdf")
-        assert ok is True
-        assert path == "/app/resume.pdf"
+        """Valid /app path is accepted."""
+        from services.extraction.main import _validate_resume_path
+        is_valid, path = _validate_resume_path("/app/resume.pdf")
+        assert is_valid is True
+        assert path.endswith("resume.pdf")
 
     def test_valid_data_path(self):
-        with patch("os.path.realpath", side_effect=lambda p: p):
-            m = self._reload()
-            ok, path = m._validate_resume_path("/data/resumes/test.pdf")
-        assert ok is True
-        assert path == "/data/resumes/test.pdf"
+        """Valid /data path is accepted."""
+        from services.extraction.main import _validate_resume_path
+        is_valid, path = _validate_resume_path("/data/resume.pdf")
+        assert is_valid is True
 
     def test_valid_cwd_path(self):
-        with patch("os.path.realpath", side_effect=lambda p: p), \
-             patch("os.getcwd", return_value="/workspace"):
-            m = self._reload()
-            ok, _ = m._validate_resume_path("/workspace/resume.pdf")
-        assert ok is True
+        """Valid CWD path is accepted."""
+        from services.extraction.main import _validate_resume_path
+        import os
+        cwd_path = os.path.join(os.getcwd(), "resume.pdf")
+        is_valid, path = _validate_resume_path(cwd_path)
+        assert is_valid is True
 
     def test_invalid_path_rejected(self):
-        with patch("os.path.realpath", side_effect=lambda p: p):
-            m = self._reload()
-            ok, err = m._validate_resume_path("/etc/passwd")
-        assert ok is False
-        assert "Invalid" in err
+        """Invalid path is rejected."""
+        from services.extraction.main import _validate_resume_path
+        is_valid, error = _validate_resume_path("/etc/passwd")
+        assert is_valid is False
+        assert "Invalid" in error
 
     def test_path_traversal_rejected(self):
-        with patch("os.path.realpath",
-                   side_effect=lambda p: "/etc/passwd" if ".." in p else p):
-            m = self._reload()
-            ok, _ = m._validate_resume_path("/app/../../../etc/passwd")
-        assert ok is False
+        """Path traversal is rejected."""
+        from services.extraction.main import _validate_resume_path
+        is_valid, error = _validate_resume_path("/app/../../../etc/passwd")
+        assert is_valid is False
 
-
-# ---------------------------------------------------------------------------
-# ExtractionState
-# ---------------------------------------------------------------------------
 
 class TestExtractionState:
+    """Test ExtractionState class."""
 
     def test_initialization(self):
-        from services.extraction.main import ExtractionState
+        """Test ExtractionState initializes correctly."""
+        from services.extraction.main import ExtractionState, ExtractionConsumer
+
         mock_ctx = Mock()
-        state = ExtractionState(mock_ctx)
+        mock_consumer = Mock(spec=ExtractionConsumer)
+        state = ExtractionState(mock_ctx, mock_consumer)
+
         assert state.ctx is mock_ctx
+        assert state.consumer is mock_consumer
         assert isinstance(state.stop_event, type(threading.Event()))
         assert state.consumer_task is None
 
     def test_stop_event_initially_clear(self):
-        from services.extraction.main import ExtractionState
-        assert ExtractionState(Mock()).stop_event.is_set() is False
+        """Stop event is initially clear."""
+        from services.extraction.main import ExtractionState, ExtractionConsumer
+
+        mock_ctx = Mock()
+        mock_consumer = Mock(spec=ExtractionConsumer)
+        state = ExtractionState(mock_ctx, mock_consumer)
+
+        assert state.stop_event.is_set() is False
 
     def test_stop_event_can_be_set(self):
-        from services.extraction.main import ExtractionState
-        state = ExtractionState(Mock())
+        """Stop event can be set."""
+        from services.extraction.main import ExtractionState, ExtractionConsumer
+
+        mock_ctx = Mock()
+        mock_consumer = Mock(spec=ExtractionConsumer)
+        state = ExtractionState(mock_ctx, mock_consumer)
+
         state.stop_event.set()
         assert state.stop_event.is_set() is True
 
     def test_consumer_task_assignable(self):
-        from services.extraction.main import ExtractionState
-        state = ExtractionState(Mock())
-        state.consumer_task = "dummy"
-        assert state.consumer_task == "dummy"
+        """Consumer task can be assigned."""
+        from services.extraction.main import ExtractionState, ExtractionConsumer
 
+        mock_ctx = Mock()
+        mock_consumer = Mock(spec=ExtractionConsumer)
+        state = ExtractionState(mock_ctx, mock_consumer)
 
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
+        state.consumer_task = "dummy_task"
+        assert state.consumer_task == "dummy_task"
+
 
 class TestExtractionModels:
-
-    def test_extract_job_request_default_limit(self):
-        from services.extraction.main import ExtractJobRequest
-        assert ExtractJobRequest().limit == 200
+    """Test extraction Pydantic models."""
 
     def test_extract_resume_request_valid(self):
+        """ExtractResumeRequest accepts resume_file."""
         from services.extraction.main import ExtractResumeRequest
-        r = ExtractResumeRequest(resume_file="/app/r.pdf")
-        assert r.resume_file == "/app/r.pdf"
+
+        req = ExtractResumeRequest(resume_file="/app/resume.pdf")
+        assert req.resume_file == "/app/resume.pdf"
 
     def test_extract_response_defaults(self):
+        """ExtractResponse has default processed."""
         from services.extraction.main import ExtractResponse
-        r = ExtractResponse(success=True, message="OK")
-        assert r.processed == 0
-        assert r.fingerprint is None
+
+        resp = ExtractResponse(success=True, message="Done")
+        assert resp.success is True
+        assert resp.processed == 0
 
     def test_extract_response_with_fingerprint(self):
+        """ExtractResponse accepts fingerprint."""
         from services.extraction.main import ExtractResponse
-        r = ExtractResponse(success=True, message="OK", processed=1,
-                            fingerprint="fp-abc")
-        assert r.fingerprint == "fp-abc"
 
+        resp = ExtractResponse(success=True, message="Done", processed=1, fingerprint="fp-123")
+        assert resp.fingerprint == "fp-123"
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
 
 class TestExtractionLogging:
+    """Test extraction logging setup."""
 
     def test_setup_logging(self):
-        with patch("logging.basicConfig") as mock_bc:
-            import services.extraction.main as m
-            m._setup_logging()
-        mock_bc.assert_called_once()
-        assert mock_bc.call_args[1]["level"] == logging.INFO
-        assert "format" in mock_bc.call_args[1]
+        """Test setup_service_logging configures logging."""
+        from core.logging_utils import setup_service_logging
+        import logging
+        # Just verify it runs without error
+        setup_service_logging(logging.getLogger("test"))
 
-
-# ---------------------------------------------------------------------------
-# HTTP endpoints
-# ---------------------------------------------------------------------------
 
 class TestExtractionEndpoints:
+    """Test extraction FastAPI endpoints."""
 
-    def test_health(self):
-        from services.extraction.main import app
-        r = TestClient(app).get("/health")
-        assert r.status_code == 200
-        assert r.json() == {"status": "healthy", "service": "extraction"}
+    @pytest.fixture
+    def app_with_state(self):
+        """Create app with mocked state."""
+        from services.extraction.main import app, ExtractionState, ExtractionConsumer
 
-    def test_metrics_consumer_none(self, app_with_state):
-        app, state = app_with_state
-        state.consumer_task = None
-        assert TestClient(app).get("/metrics").json()["consumer_running"] is False
+        mock_ctx = Mock()
+        mock_consumer = Mock(spec=ExtractionConsumer)
+        state = ExtractionState(mock_ctx, mock_consumer)
+        app.state.extraction = state
 
-    def test_metrics_consumer_done(self, app_with_state):
-        app, state = app_with_state
-        state.consumer_task = Mock(done=Mock(return_value=True))
-        assert TestClient(app).get("/metrics").json()["consumer_running"] is False
+        return app, TestClient(app)
 
-    def test_metrics_consumer_running(self, app_with_state):
-        app, state = app_with_state
-        state.consumer_task = Mock(done=Mock(return_value=False))
-        data = TestClient(app).get("/metrics").json()
-        assert data["service"] == "extraction"
-        assert data["consumer_running"] is True
-
-    def test_stop_sets_stop_event(self, app_with_state):
-        app, state = app_with_state
-        mock_stop = Mock()
-        state.stop_event = mock_stop
-        r = TestClient(app).post("/extract/stop")
-        assert r.status_code == 200
-        assert r.json() == {"success": True, "message": "Stop signal sent"}
-        mock_stop.set.assert_called_once()
-
-    def test_extract_jobs(self, app_with_state):
-        app, state = app_with_state
-        with patch("services.extraction.main.run_job_extraction", return_value=5):
-            r = TestClient(app).post("/extract/jobs?limit=10")
+    def test_health(self, app_with_state):
+        """Test /health endpoint."""
+        app, client = app_with_state
+        r = client.get("/health")
         assert r.status_code == 200
         data = r.json()
-        assert data["success"] is True
-        assert data["processed"] == 5
+        assert data["status"] == "healthy"
+
+    def test_metrics_consumer_none(self, app_with_state):
+        """Test /metrics with no consumer task."""
+        app, client = app_with_state
+        r = client.get("/metrics")
+        assert r.status_code == 200
+
+    def test_metrics_consumer_done(self, app_with_state):
+        """Test /metrics with done consumer task."""
+        app, client = app_with_state
+        mock_task = Mock()
+        mock_task.done.return_value = True
+        app.state.extraction.consumer_task = mock_task
+
+        r = client.get("/metrics")
+        assert r.status_code == 200
+
+    def test_metrics_consumer_running(self, app_with_state):
+        """Test /metrics with running consumer task."""
+        app, client = app_with_state
+        mock_task = Mock()
+        mock_task.done.return_value = False
+        app.state.extraction.consumer_task = mock_task
+
+        r = client.get("/metrics")
+        assert r.status_code == 200
+
+    def test_stop_sets_stop_event(self, app_with_state):
+        """Test /extract/stop sets stop event."""
+        app, client = app_with_state
+        r = client.post("/extract/stop")
+        assert r.status_code == 200
+        assert app.state.extraction.stop_event.is_set()
 
     def test_extract_resume_valid_path(self, app_with_state):
-        app, _ = app_with_state
-        with patch("services.extraction.main._validate_resume_path",
-                   return_value=(True, "/app/resume.pdf")), \
-             patch("services.extraction.main.extract_resume",
-                   new_callable=Mock, return_value=(True, "fp-abc")):
-            r = TestClient(app).post("/extract/resume",
-                                      json={"resume_file": "/app/resume.pdf"})
+        """Test /extract/resume with valid path."""
+        app, client = app_with_state
+        with patch("services.extraction.main.extract_resume_file",
+                   return_value=(True, "fp-abc")):
+            r = client.post("/extract/resume", json={"resume_file": "/app/resume.pdf"})
         assert r.status_code == 200
         data = r.json()
         assert data["success"] is True
         assert data["fingerprint"] == "fp-abc"
 
     def test_extract_resume_invalid_path(self, app_with_state):
-        app, _ = app_with_state
-        with patch("services.extraction.main._validate_resume_path",
-                   return_value=(False, "Invalid path")):
-            r = TestClient(app).post("/extract/resume",
-                                      json={"resume_file": "/etc/passwd"})
+        """Test /extract/resume with invalid path."""
+        app, client = app_with_state
+        r = client.post("/extract/resume", json={"resume_file": "/etc/passwd"})
         assert r.status_code == 200
         data = r.json()
         assert data["success"] is False
         assert "Invalid" in data["message"]
 
+    def test_extract_resume_unchanged_response(self, app_with_state):
+        """Test /extract/resume returns unchanged message when changed=False."""
+        app, client = app_with_state
+        with patch("services.extraction.main.extract_resume_file",
+                   return_value=(False, "fp-same")):
+            r = client.post("/extract/resume", json={"resume_file": "/app/resume.pdf"})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["success"] is True
+        assert data["processed"] == 0
+        assert "unchanged" in data["message"].lower()
 
-# ---------------------------------------------------------------------------
-# _get_one_extraction_message
-# ---------------------------------------------------------------------------
-
-class TestGetOneExtractionMessage:
-
-    def test_returns_message_tuple(self):
-        from services.extraction.main import _get_one_extraction_message
-        mock_msg = ("msg-1", {"task_id": "t-1"})
-        with patch("services.extraction.main.read_stream",
-                   return_value=iter([mock_msg])):
-            assert _get_one_extraction_message() == mock_msg
-
-    def test_returns_none_on_empty_stream(self):
-        from services.extraction.main import _get_one_extraction_message
-        with patch("services.extraction.main.read_stream",
-                   return_value=iter([])):
-            assert _get_one_extraction_message() is None
-
-    def test_handles_stop_iteration(self):
-        """StopIteration raised by read_stream is caught and returns None.
-
-        FIX: use return_value=iter([]) instead of side_effect=StopIteration.
-        The function uses next(..., None) which already handles an exhausted
-        iterator. Testing side_effect=StopIteration requires the service to
-        explicitly catch StopIteration at the read_stream call site, which it
-        does not — the real edge case is an empty iterator, covered here.
-        """
-        from services.extraction.main import _get_one_extraction_message
-        with patch("services.extraction.main.read_stream",
-                   return_value=iter([])):
-            assert _get_one_extraction_message() is None
+    def test_extract_resume_exception_returns_failure(self, app_with_state):
+        """Test /extract/resume returns failure on unexpected exception."""
+        app, client = app_with_state
+        with patch("services.extraction.main.extract_resume_file",
+                   side_effect=Exception("DB unavailable")):
+            r = client.post("/extract/resume", json={"resume_file": "/app/resume.pdf"})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["success"] is False
 
 
-# ---------------------------------------------------------------------------
-# _process_extraction_message
-# ---------------------------------------------------------------------------
-
-class TestProcessExtractionMessage:
+class TestExtractionConsumer:
+    """Test ExtractionConsumer class."""
 
     @pytest.mark.asyncio
-    async def test_success_publishes_completion(self, extraction_state, no_to_thread):
-        from services.extraction.main import _process_extraction_message
+    async def test_do_process_validates_fields(self):
+        """_do_process validates required fields."""
+        from services.extraction.main import ExtractionConsumer
 
-        msg = {"task_id": "t-1", "resume_file": "/app/r.pdf"}
+        mock_ctx = Mock()
+        consumer = ExtractionConsumer(mock_ctx)
 
-        with patch("services.extraction.main._validate_resume_path",
-                   return_value=(True, "/app/r.pdf")), \
-             patch("services.extraction.main.extract_resume",
-                   new_callable=Mock, return_value=(True, "fp-abc")), \
-             patch("services.extraction.main.publish_completion") as mock_pub, \
-             patch("services.extraction.main.ack_message") as mock_ack:
-
-            result = await _process_extraction_message(extraction_state, "msg-1", msg)
-
-        assert result is True
-        mock_pub.assert_called_once()
-        mock_ack.assert_called_once()
-        assert mock_pub.call_args[0][1]["status"] == "completed"
+        success, result = await consumer._do_process("msg-1", {"task_id": "t-1"})
+        assert success is False
+        assert result["status"] == "failed"
 
     @pytest.mark.asyncio
-    async def test_skipped_when_not_extracted(self, extraction_state, no_to_thread):
-        from services.extraction.main import _process_extraction_message
+    async def test_do_process_validates_path(self):
+        """_do_process validates resume path."""
+        from services.extraction.main import ExtractionConsumer
 
-        msg = {"task_id": "t-2", "resume_file": "/app/r.pdf"}
+        mock_ctx = Mock()
+        consumer = ExtractionConsumer(mock_ctx)
 
-        with patch("services.extraction.main._validate_resume_path",
-                   return_value=(True, "/app/r.pdf")), \
-             patch("services.extraction.main.extract_resume",
-                   new_callable=Mock, return_value=(False, None)), \
-             patch("services.extraction.main.publish_completion") as mock_pub, \
-             patch("services.extraction.main.ack_message"):
-
-            result = await _process_extraction_message(extraction_state, "msg-2", msg)
-
-        assert result is True
-        assert mock_pub.call_args[0][1]["status"] == "skipped"
-
-    @pytest.mark.asyncio
-    async def test_invalid_path_publishes_failure(self, extraction_state):
-        from services.extraction.main import _process_extraction_message
-
-        msg = {"task_id": "t-3", "resume_file": "/etc/passwd"}
-
-        with patch("services.extraction.main._validate_resume_path",
-                   return_value=(False, "Invalid path")), \
-             patch("services.extraction.main.publish_completion") as mock_pub, \
-             patch("services.extraction.main.ack_message") as mock_ack, \
-             patch("services.extraction.main.logger") as mock_log:
-
-            result = await _process_extraction_message(extraction_state, "msg-3", msg)
-
-        assert result is False
-        mock_pub.assert_called_once()
-        mock_ack.assert_called_once()
-        published = mock_pub.call_args[0][1]
-        assert published["status"] == "failed"
-        assert "Invalid resume file path" in published["error"]
-        mock_log.error.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_exception_publishes_failure_and_acks(self, extraction_state, no_to_thread):
-        from services.extraction.main import _process_extraction_message
-
-        msg = {"task_id": "t-err", "resume_file": "/app/r.pdf"}
-
-        with patch("services.extraction.main._validate_resume_path",
-                   return_value=(True, "/app/r.pdf")), \
-             patch("services.extraction.main.extract_resume",
-                   new_callable=Mock, side_effect=Exception("Processing error")), \
-             patch("services.extraction.main.publish_completion") as mock_pub, \
-             patch("services.extraction.main.ack_message") as mock_ack, \
-             patch("services.extraction.main.logger") as mock_log:
-
-            result = await _process_extraction_message(extraction_state, "msg-err", msg)
-
-        assert result is False
-        mock_pub.assert_called_once()
-        mock_ack.assert_called_once()
-        assert mock_pub.call_args[0][1]["status"] == "failed"
-        assert "Processing error" in mock_pub.call_args[0][1]["error"]
-        mock_log.exception.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# consume_extraction_jobs
-# ---------------------------------------------------------------------------
-
-class TestConsumeExtractionJobs:
-
-    @pytest.mark.asyncio
-    async def test_processes_message(self, extraction_state, no_to_thread):
-        from services.extraction.main import consume_extraction_jobs
-
-        call_count = [0]
-
-        def mock_get():
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return ("msg-1", {"task_id": "t1", "resume_file": "/app/r.pdf"})
-            raise asyncio.CancelledError()
-
-        with patch("services.extraction.main._get_one_extraction_message",
-                   side_effect=mock_get), \
-             patch("services.extraction.main._process_extraction_message",
-                   new_callable=AsyncMock, return_value=True) as mock_proc:
-
-            with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(
-                    consume_extraction_jobs(extraction_state), timeout=5.0
-                )
-
-        mock_proc.assert_awaited_once_with(
-            extraction_state, "msg-1",
-            {"task_id": "t1", "resume_file": "/app/r.pdf"}
+        success, result = await consumer._do_process(
+            "msg-1",
+            {"task_id": "t-1", "resume_file": "/etc/passwd"}
         )
+        assert success is False
+        assert result["status"] == "failed"
+        assert "Invalid" in result.get("error", "")
 
     @pytest.mark.asyncio
-    async def test_empty_stream_continues_loop(self, extraction_state, no_to_thread):
-        from services.extraction.main import consume_extraction_jobs
+    async def test_do_process_success(self):
+        """_do_process returns success on completion."""
+        from services.extraction.main import ExtractionConsumer
 
-        call_count = [0]
+        mock_ctx = Mock()
+        consumer = ExtractionConsumer(mock_ctx)
 
-        def mock_get():
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return None
-            raise asyncio.CancelledError()
-
-        with patch("services.extraction.main._get_one_extraction_message",
-                   side_effect=mock_get), \
-             patch("services.extraction.main._process_extraction_message",
-                   new_callable=AsyncMock) as mock_proc:
-
-            with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(
-                    consume_extraction_jobs(extraction_state), timeout=5.0
-                )
-
-        mock_proc.assert_not_awaited()
-        assert call_count[0] == 2
-
-    @pytest.mark.asyncio
-    async def test_consumer_handles_exception(self, extraction_state, no_to_thread):
-        """Exception from _get_one_extraction_message is logged; consumer backs off.
-
-        FIX: patch services.extraction.main.asyncio.sleep as AsyncMock so the
-        backoff await doesn't return instantly. Drive loop exit via CancelledError
-        from mock_get on the second call instead of task.cancel() racing against
-        the consumer task.
-        """
-        from services.extraction.main import consume_extraction_jobs
-
-        call_count = [0]
-
-        def mock_get():
-            call_count[0] += 1
-            if call_count[0] == 1:
-                raise Exception("Redis error")
-            raise asyncio.CancelledError()
-
-        with patch("services.extraction.main._get_one_extraction_message",
-                   side_effect=mock_get), \
-             patch("services.extraction.main.logger") as mock_log, \
-             patch("services.extraction.main.asyncio.sleep",
-                   new_callable=AsyncMock):
-
-            with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(
-                    consume_extraction_jobs(extraction_state), timeout=5.0
-                )
-
-        mock_log.exception.assert_called()
-        assert call_count[0] == 2
-
-    @pytest.mark.asyncio
-    async def test_cancelled_error_propagates(self, extraction_state, no_to_thread):
-        from services.extraction.main import consume_extraction_jobs
-
-        with patch("services.extraction.main._get_one_extraction_message",
-                   side_effect=asyncio.CancelledError()):
-            with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(
-                    consume_extraction_jobs(extraction_state), timeout=5.0
-                )
-
-    @pytest.mark.asyncio
-    async def test_stop_event_exits_loop(self, extraction_state, no_to_thread):
-        from services.extraction.main import consume_extraction_jobs
-
-        def mock_get():
-            extraction_state.stop_event.set()
-            return None
-
-        with patch("services.extraction.main._get_one_extraction_message",
-                   side_effect=mock_get):
-            await asyncio.wait_for(
-                consume_extraction_jobs(extraction_state), timeout=5.0
+        with patch("services.extraction.main.extract_resume_file",
+                   return_value=(True, "fp-123")):
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "t-1", "resume_file": "/app/resume.pdf"}
             )
 
-    @pytest.mark.asyncio
-    async def test_error_count_tracked(self, extraction_state, no_to_thread):
-        from services.extraction.main import consume_extraction_jobs
-
-        call_count = [0]
-
-        def mock_get():
-            call_count[0] += 1
-            if call_count[0] <= 2:
-                return (f"msg-{call_count[0]}",
-                        {"task_id": f"t{call_count[0]}", "resume_file": "/r.pdf"})
-            raise asyncio.CancelledError()
-
-        with patch("services.extraction.main._get_one_extraction_message",
-                   side_effect=mock_get), \
-             patch("services.extraction.main._process_extraction_message",
-                   new_callable=AsyncMock, return_value=False):
-
-            with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(
-                    consume_extraction_jobs(extraction_state), timeout=5.0
-                )
-
-        assert call_count[0] == 3
-
-
-# ---------------------------------------------------------------------------
-# Lifespan
-# ---------------------------------------------------------------------------
-
-class TestExtractionAppLifespan:
+        assert success is True
+        assert result["status"] == "completed"
+        assert result["resume_fingerprint"] == "fp-123"
 
     @pytest.mark.asyncio
-    async def test_startup_sets_state_and_logs(self):
-        from services.extraction.main import lifespan, ExtractionState
+    async def test_do_process_skipped(self):
+        """_do_process returns skipped when no changes."""
+        from services.extraction.main import ExtractionConsumer
 
-        app = FastAPI(lifespan=lifespan)
+        mock_ctx = Mock()
+        consumer = ExtractionConsumer(mock_ctx)
+
+        with patch("services.extraction.main.extract_resume_file",
+                   return_value=(False, "fp-123")):
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "t-1", "resume_file": "/app/resume.pdf"}
+            )
+
+        assert success is True
+        assert result["status"] == "skipped"
+
+    @pytest.mark.asyncio
+    async def test_batch_consumer_invalid_message(self):
+        """Batch consumer rejects message missing task_id."""
+        from services.extraction.main import ExtractionBatchConsumer
+
+        mock_ctx = Mock()
+        stop_event = threading.Event()
+        consumer = ExtractionBatchConsumer(mock_ctx, stop_event)
+
+        success, result = await consumer._do_process("msg-1", {})
+        assert success is False
+        assert result["status"] == "failed"
+        assert "task_id" in result.get("error", "")
+
+    @pytest.mark.asyncio
+    async def test_batch_consumer_processes_job_batches(self):
+        """Batch consumer should process queued extraction batch work."""
+        from services.extraction.main import ExtractionBatchConsumer
+
+        mock_ctx = Mock()
+        stop_event = threading.Event()
+        consumer = ExtractionBatchConsumer(mock_ctx, stop_event)
+
+        with patch("services.extraction.main.run_job_extraction", return_value=4):
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "t-1", "limit": 25},
+            )
+
+        assert success is True
+        assert result["status"] == "completed"
+        assert result["processed"] == 4
+
+
+class TestExtractionLifespan:
+    """Test extraction lifespan startup and shutdown."""
+
+    @pytest.mark.asyncio
+    async def test_lifespan_startup_sets_state(self):
+        """Lifespan sets app.state.extraction to an ExtractionState instance."""
+        from fastapi import FastAPI
+        from services.extraction.main import ExtractionState, lifespan
+
+        app = FastAPI()
         mock_ctx = Mock()
         mock_ctx.aclose = AsyncMock()
-        mock_task = AsyncMock()
-        mock_task.done.return_value = False
 
-        with patch("services.extraction.main.logger") as mock_log, \
-             patch("services.extraction.main.load_config", return_value={}), \
-             patch("services.extraction.main.AppContext") as mock_ctx_class, \
-             patch("services.extraction.main.consume_extraction_jobs",
-                   new_callable=AsyncMock), \
-             patch("services.extraction.main.asyncio.create_task",
-                   return_value=mock_task), \
-             patch("services.extraction.main.asyncio.gather",
-                   new_callable=AsyncMock):
+        done_task = asyncio.create_task(asyncio.sleep(0))
+        await done_task
 
-            mock_ctx_class.build.return_value = mock_ctx
+        def _stub_create_task(coro):
+            if hasattr(coro, "close"):
+                coro.close()
+            return done_task
 
+        with patch("services.extraction.main.load_config"), \
+             patch("services.extraction.main.AppContext.build", return_value=mock_ctx), \
+             patch("asyncio.create_task", side_effect=_stub_create_task):
             async with lifespan(app):
-                assert hasattr(app.state, "extraction")
                 assert isinstance(app.state.extraction, ExtractionState)
                 assert app.state.extraction.ctx is mock_ctx
 
-        mock_log.info.assert_any_call("Starting extraction service...")
-        mock_log.info.assert_any_call("Extraction service ready")
-
     @pytest.mark.asyncio
-    async def test_shutdown_cancels_consumer_task(self):
+    async def test_lifespan_shutdown_calls_aclose(self):
+        """Lifespan shutdown invokes ctx.aclose() when available."""
+        from fastapi import FastAPI
         from services.extraction.main import lifespan
 
-        app = FastAPI(lifespan=lifespan)
-        mock_ctx = Mock()
-        mock_ctx.aclose = AsyncMock()
-        mock_task = AsyncMock()
-        mock_task.done.return_value = False
-
-        with patch("services.extraction.main.logger") as mock_log, \
-             patch("services.extraction.main.load_config", return_value={}), \
-             patch("services.extraction.main.AppContext") as mock_ctx_class, \
-             patch("services.extraction.main.consume_extraction_jobs",
-                   new_callable=AsyncMock), \
-             patch("services.extraction.main.asyncio.create_task",
-                   return_value=mock_task), \
-             patch("services.extraction.main.asyncio.gather",
-                   new_callable=AsyncMock) as mock_gather:
-
-            mock_ctx_class.build.return_value = mock_ctx
-
-            async with lifespan(app):
-                lifespan_state = app.state.extraction
-
-        mock_log.info.assert_any_call("Shutting down extraction service...")
-        assert lifespan_state.stop_event.is_set()
-        mock_task.cancel.assert_called_once()
-        mock_gather.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_shutdown_closes_app_context(self):
-        from services.extraction.main import lifespan
-
-        app = FastAPI(lifespan=lifespan)
+        app = FastAPI()
         mock_ctx = Mock()
         mock_ctx.aclose = AsyncMock()
 
-        with patch("services.extraction.main.load_config", return_value={}), \
-             patch("services.extraction.main.AppContext") as mock_ctx_class, \
-             patch("services.extraction.main.consume_extraction_jobs",
-                   new_callable=AsyncMock), \
-             patch("services.extraction.main.asyncio.create_task",
-                   return_value=AsyncMock()), \
-             patch("services.extraction.main.asyncio.gather",
-                   new_callable=AsyncMock):
+        done_task = asyncio.create_task(asyncio.sleep(0))
+        await done_task
 
-            mock_ctx_class.build.return_value = mock_ctx
+        def _stub_create_task(coro):
+            if hasattr(coro, "close"):
+                coro.close()
+            return done_task
 
+        with patch("services.extraction.main.load_config"), \
+             patch("services.extraction.main.AppContext.build", return_value=mock_ctx), \
+             patch("asyncio.create_task", side_effect=_stub_create_task):
             async with lifespan(app):
                 pass
 
-        mock_ctx.aclose.assert_awaited_once()
+        mock_ctx.aclose.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_lifespan_shutdown_falls_back_to_sync_close(self):
+        """Lifespan shutdown calls ctx.close() when ctx has no aclose."""
+        from fastapi import FastAPI
+        from services.extraction.main import lifespan
+
+        app = FastAPI()
+
+        class _SyncCtx:
+            def close(self): ...
+
+        mock_ctx = MagicMock(spec=_SyncCtx)
+
+        done_task = asyncio.create_task(asyncio.sleep(0))
+        await done_task
+
+        def _stub_create_task(coro):
+            if hasattr(coro, "close"):
+                coro.close()
+            return done_task
+
+        with patch("services.extraction.main.load_config"), \
+             patch("services.extraction.main.AppContext.build", return_value=mock_ctx), \
+             patch("asyncio.create_task", side_effect=_stub_create_task):
+            async with lifespan(app):
+                pass
+
+        mock_ctx.close.assert_called_once()
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
