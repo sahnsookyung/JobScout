@@ -133,7 +133,7 @@ async def extract_jobs(request: ExtractJobRequest = ExtractJobRequest(limit=200)
 async def extract_resume(request: ExtractResumeRequest):
     """Extract resume data from file."""
     global ctx
-    logger.info(f"Processing resume: {request.resume_file}")
+    logger.info("Processing resume extraction request")
 
     if ctx is None:
         return ExtractResponse(
@@ -182,7 +182,7 @@ async def extract_resume(request: ExtractResumeRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8081)
+    uvicorn.run(app, host="127.0.0.1", port=8081)
 
 
 def _validate_resume_path(resume_file: str) -> tuple[bool, str]:

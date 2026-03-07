@@ -101,8 +101,8 @@ async def metrics():
 async def match_resume(request: MatchResumeRequest):
     """Run matching for a resume."""
     global ctx
-    logger.info(f"Running matching for resume: {request.resume_fingerprint}")
-    
+    logger.info("Running matching for resume request")
+
     if ctx is None:
         return MatchResponse(
             success=False,
@@ -177,7 +177,7 @@ async def match_jobs(request: MatchJobRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8083)
+    uvicorn.run(app, host="127.0.0.1", port=8083)
 
 
 async def consume_matching_jobs():
