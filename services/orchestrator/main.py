@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
     try:
         await cleanup_task
     except asyncio.CancelledError:
-        pass
+        raise  # Re-raise to allow proper cancellation propagation
 
     logger.info("=" * 60)
     logger.info("SHUTTING DOWN ORCHESTRATOR SERVICE")
@@ -492,7 +492,7 @@ async def _wait_for_next_message(pubsub, timeout: float = 300.0) -> dict:
     Raises:
         asyncio.TimeoutError: If no message received within timeout
     """
-    with asyncio.timeout(timeout):
+    async with asyncio.timeout(timeout):
         async for message in pubsub.listen():
             if message["type"] == "message":
                 return json.loads(message["data"])
@@ -588,7 +588,8 @@ async def orchestrate_match_endpoint():
 
     def safe_done_callback(t: asyncio.Task) -> None:
         try:
-            asyncio.create_task(_handle_task_done(task_id, t))
+            cleanup_task = asyncio.create_task(_handle_task_done(task_id, t))
+            cleanup_task.add_done_callback(lambda t: None)  # Prevent unhandled exception
         except RuntimeError:
             logger.warning("Could not handle task completion for %s: no running loop", task_id)
 

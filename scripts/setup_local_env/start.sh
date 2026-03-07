@@ -181,9 +181,9 @@ parse_args() {
 
     # Default: start common dev stack (infra + web-app + web-ui + microservices) if nothing specified
     # This ensures the frontend has data to display and all services are available
-    if [ "$INFRA" = false ] && [ "$DATABASE" = false ] && [ "$REDIS" = false ] && \
-       [ "$WEB_APP" = false ] && [ "$WEB_UI" = false ] && \
-       [ "$MICROSERVICES" = false ] && [ "$ALL" = false ]; then
+    if [[ "$INFRA" == false ]] && [[ "$DATABASE" == false ]] && [[ "$REDIS" == false ]] && \
+       [[ "$WEB_APP" == false ]] && [[ "$WEB_UI" == false ]] && \
+       [[ "$MICROSERVICES" == false ]] && [[ "$ALL" == false ]]; then
         INFRA=true
         WEB_APP=true
         WEB_UI=true
@@ -192,7 +192,7 @@ parse_args() {
     fi
     
     # --all flag enables everything
-    if [ "$ALL" = true ]; then
+    if [[ "$ALL" == true ]]; then
         INFRA=true
         WEB_APP=true
         WEB_UI=true
@@ -241,21 +241,21 @@ start_docker() {
     # Determine which services to start
     SERVICES_TO_START=""
 
-    if [ "$DATABASE" = true ] || [ "$REDIS" = true ]; then
+    if [[ "$DATABASE" == true ]] || [[ "$REDIS" == true ]]; then
         # Selective start - only start specific services
-        if [ "$DATABASE" = true ]; then
+        if [[ "$DATABASE" == true ]]; then
             SERVICES_TO_START="${SERVICES_TO_START} postgres"
             log_info "Starting PostgreSQL only..."
         fi
-        if [ "$REDIS" = true ]; then
+        if [[ "$REDIS" == true ]]; then
             SERVICES_TO_START="${SERVICES_TO_START} redis"
             log_info "Starting Redis only..."
         fi
-    elif [ "$INFRA" = true ]; then
+    elif [[ "$INFRA" == true ]]; then
         # Start all default infra services
         log_info "Starting all Docker services (postgres, redis)..."
-    elif [ "$MICROSERVICES" = true ]; then
-        if [[ "$INFRA" = false ]] && [[ "$DATABASE" = false ]] && [[ "$REDIS" = false ]]; then
+    elif [[ "$MICROSERVICES" == true ]]; then
+        if [[ "$INFRA" == false ]] && [[ "$DATABASE" == false ]] && [[ "$REDIS" == false ]]; then
             log_info "Microservices require infrastructure, enabling postgres and redis..."
             INFRA=true
             SERVICES_TO_START="postgres redis extraction embeddings scorer-matcher orchestrator"
@@ -278,7 +278,7 @@ start_docker() {
     fi
 
     # Add pipeline compose file if microservices requested
-    if [ "$MICROSERVICES" = true ]; then
+    if [[ "$MICROSERVICES" == true ]]; then
         if [[ ! -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]]; then
             log_error "docker-compose.pipeline.yml not found at ${PROJECT_ROOT}"
             exit 1
@@ -288,7 +288,7 @@ start_docker() {
     fi
 
     # Add web compose file if web app requested
-    if [ "$WEB_APP" = true ]; then
+    if [[ "$WEB_APP" == true ]]; then
         if [ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]; then
             compose_files+=(-f "${PROJECT_ROOT}/docker-compose.web.yml")
         else
@@ -297,7 +297,7 @@ start_docker() {
     fi
 
     # Set profile for Ollama if requested
-    if [ "$OLLAMA" = true ]; then
+    if [[ "$OLLAMA" == true ]]; then
         DOCKER_COMPOSE_PROFILE="--profile docker-ollama"
         log_info "Ollama profile enabled"
     fi
@@ -310,7 +310,7 @@ start_docker() {
     fi
 
     # Wait for PostgreSQL if it was started
-    if [ "$DATABASE" = true ] || [ "$INFRA" = true ]; then
+    if [[ "$DATABASE" == true ]] || [[ "$INFRA" == true ]]; then
         log_info "Waiting for PostgreSQL..."
         timeout 30 bash -c "until docker compose -f '${DOCKER_COMPOSE_FILE}' exec -T postgres pg_isready -U '${POSTGRES_USER:-user}' -d '${POSTGRES_DB:-jobscout}'; do sleep 1; done" 2>/dev/null || {
             log_warn "PostgreSQL may not be ready yet, continuing..."
@@ -320,7 +320,7 @@ start_docker() {
     log_success "Docker services started"
     log_info "  - PostgreSQL: localhost:5432"
     log_info "  - Redis: localhost:6379"
-    if [ "$OLLAMA" = true ]; then
+    if [[ "$OLLAMA" == true ]]; then
         log_info "  - Ollama: localhost:11434"
     fi
 
@@ -448,14 +448,14 @@ print_summary() {
     echo "  JobScout is running!"
     echo "============================================================================="
     echo ""
-    if [ "$WEB_UI" = true ]; then
+    if [[ "$WEB_UI" == true ]]; then
         echo -e "  ${GREEN}Web UI${NC}:      http://localhost:${FRONTEND_PORT}"
     fi
-    if [ "$WEB_APP" = true ]; then
+    if [[ "$WEB_APP" == true ]]; then
         echo -e "  ${GREEN}Web App${NC}:     http://localhost:${BACKEND_PORT}"
         echo -e "  ${GREEN}API Docs${NC}:    http://localhost:${BACKEND_PORT}/docs"
     fi
-    if [ "$MICROSERVICES" = true ]; then
+    if [[ "$MICROSERVICES" == true ]]; then
         echo -e "  ${GREEN}Microservices:${NC}"
         echo -e "    - Extraction:     http://localhost:8081"
         echo -e "    - Embeddings:     http://localhost:8082"
@@ -464,27 +464,27 @@ print_summary() {
     fi
     echo ""
     echo "  Logs:"
-    if [ "$WEB_APP" = true ]; then
+    if [[ "$WEB_APP" == true ]]; then
         echo -e "    ${BLUE}Web App${NC}:     ${LOGS_DIR}/web-app.log"
     fi
-    if [ "$WEB_UI" = true ]; then
+    if [[ "$WEB_UI" == true ]]; then
         echo -e "    ${BLUE}Web UI${NC}:      ${LOGS_DIR}/web-ui.log"
     fi
-    if [ "$INFRA" = true ] || [ "$DATABASE" = true ]; then
+    if [[ "$INFRA" == true ]] || [[ "$DATABASE" == true ]]; then
         echo -e "    ${BLUE}PostgreSQL${NC}:  ${LOGS_DIR}/postgres.log"
     fi
-    if [ "$INFRA" = true ]; then
+    if [[ "$INFRA" == true ]]; then
         echo -e "    ${BLUE}Main Driver${NC}: ${LOGS_DIR}/main-driver.log"
     fi
     echo ""
     echo "  To view logs in real-time:"
-    if [ "$WEB_APP" = true ]; then
+    if [[ "$WEB_APP" == true ]]; then
         echo -e "    ${YELLOW}tail -f ${LOGS_DIR}/web-app.log${NC}"
     fi
-    if [ "$WEB_UI" = true ]; then
+    if [[ "$WEB_UI" == true ]]; then
         echo -e "    ${YELLOW}tail -f ${LOGS_DIR}/web-ui.log${NC}"
     fi
-    if [ "$INFRA" = true ] || [ "$DATABASE" = true ]; then
+    if [[ "$INFRA" == true ]] || [[ "$DATABASE" == true ]]; then
         echo -e "    ${YELLOW}tail -f ${LOGS_DIR}/postgres.log${NC}"
     fi
     echo ""
@@ -508,38 +508,38 @@ main() {
     echo "============================================================================="
     echo ""
 
-    if [ "$CLEAN" = true ]; then
+    if [[ "$CLEAN" == true ]]; then
         stop_services
         echo ""
     fi
 
-    if [ "$INFRA" = true ] || [ "$DATABASE" = true ] || [ "$REDIS" = true ] || [ "$MICROSERVICES" = true ]; then
+    if [[ "$INFRA" == true ]] || [[ "$DATABASE" == true ]] || [[ "$REDIS" == true ]] || [[ "$MICROSERVICES" == true ]]; then
         start_docker
         echo ""
     fi
 
-    if [ "$WEB_APP" = true ]; then
+    if [[ "$WEB_APP" == true ]]; then
         start_web_app
         echo ""
     fi
 
-    if [ "$WEB_UI" = true ]; then
+    if [[ "$WEB_UI" == true ]]; then
         start_web_ui
         echo ""
     fi
 
     print_summary
 
-    if [ "$BLOCK" = true ]; then
+    if [[ "$BLOCK" == true ]]; then
         log_info "Blocking and showing logs (Ctrl+C to stop)..."
         echo ""
         TAIL_PIDS=()
-        if [ "$WEB_APP" = true ]; then
+        if [[ "$WEB_APP" == true ]]; then
             echo "--- Web App Log ---"
             tail -f "${LOGS_DIR}/web-app.log" &
             TAIL_PIDS+=($!)
         fi
-        if [ "$WEB_UI" = true ]; then
+        if [[ "$WEB_UI" == true ]]; then
             echo "--- Web UI Log ---"
             tail -f "${LOGS_DIR}/web-ui.log" &
             TAIL_PIDS+=($!)

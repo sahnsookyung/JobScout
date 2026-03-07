@@ -155,14 +155,14 @@ parse_args() {
     done
 
     # Default: stop all if nothing specified
-    if [ "$STOP_INFRA" = false ] && [ "$STOP_DATABASE" = false ] && [ "$STOP_REDIS" = false ] && \
-       [ "$STOP_WEB_APP" = false ] && [ "$STOP_WEB_UI" = false ] && \
-       [ "$STOP_MICROSERVICES" = false ] && [ "$STOP_ALL" = false ]; then
+    if [[ "$STOP_INFRA" == false ]] && [[ "$STOP_DATABASE" == false ]] && [[ "$STOP_REDIS" == false ]] && \
+       [[ "$STOP_WEB_APP" == false ]] && [[ "$STOP_WEB_UI" == false ]] && \
+       [[ "$STOP_MICROSERVICES" == false ]] && [[ "$STOP_ALL" == false ]]; then
         STOP_ALL=true
     fi
     
     # --all flag enables everything
-    if [ "$STOP_ALL" = true ]; then
+    if [[ "$STOP_ALL" == true ]]; then
         STOP_INFRA=true
         STOP_WEB_APP=true
         STOP_WEB_UI=true
@@ -186,12 +186,12 @@ stop_docker() {
     # Determine which services to stop
     SERVICES_TO_STOP=""
 
-    if [ "$STOP_DATABASE" = true ] || [ "$STOP_REDIS" = true ]; then
-        if [ "$STOP_DATABASE" = true ]; then
+    if [[ "$STOP_DATABASE" == true ]] || [[ "$STOP_REDIS" == true ]]; then
+        if [[ "$STOP_DATABASE" == true ]]; then
             SERVICES_TO_STOP="${SERVICES_TO_STOP} postgres"
             log_info "Stopping PostgreSQL..."
         fi
-        if [ "$STOP_REDIS" = true ]; then
+        if [[ "$STOP_REDIS" == true ]]; then
             SERVICES_TO_STOP="${SERVICES_TO_STOP} redis"
             log_info "Stopping Redis..."
         fi
@@ -354,22 +354,22 @@ main() {
     echo "============================================================================="
     echo ""
 
-    if [ "$STOP_INFRA" = true ] || [ "$STOP_DATABASE" = true ] || [ "$STOP_REDIS" = true ]; then
+    if [[ "$STOP_INFRA" == true ]] || [[ "$STOP_DATABASE" == true ]] || [[ "$STOP_REDIS" == true ]]; then
         stop_docker
         echo ""
     fi
 
-    if [ "$STOP_WEB_APP" = true ]; then
+    if [[ "$STOP_WEB_APP" == true ]]; then
         stop_web_app
         echo ""
     fi
 
-    if [ "$STOP_WEB_UI" = true ]; then
+    if [[ "$STOP_WEB_UI" == true ]]; then
         stop_web_ui
         echo ""
     fi
 
-    if [ "$STOP_MICROSERVICES" = true ]; then
+    if [[ "$STOP_MICROSERVICES" == true ]]; then
         log_info "Stopping microservices..."
         if [[ ! -f "${DOCKER_COMPOSE_FILE}" ]]; then
             log_warn "docker-compose.yml not found, skipping microservices"
