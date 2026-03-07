@@ -60,7 +60,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          # Run all tests with coverage
+          # Run ALL tests with coverage - no test left behind!
           # Redis available on localhost:6379 (service) and localhost:6380 (test container)
           uv run pytest tests/ \
             --cov=services \
@@ -74,16 +74,12 @@ jobs:
             --cov-report=xml:coverage.xml \
             --cov-report=html:htmlcov \
             --cov-report=term \
-            -v --tb=short \
-            --ignore=tests/integration/test_full_pipeline.py \
-            --ignore=tests/integration/test_etl_real_data.py \
-            --ignore=tests/integration/test_openai_schema_validation.py \
-            --ignore=tests/integration/test_resume_schema.py \
-            --ignore=tests/integration/test_user_wants_pipeline.py
+            -v --tb=short
         env:
           PYTHONPATH: ${{ github.workspace }}
           REDIS_URL: redis://localhost:6379/1
           TEST_REDIS_PORT: 6380
+          USE_DOCKER_CONTAINERS: "1"
 
       - name: Cleanup test containers
         if: always()
