@@ -92,7 +92,7 @@ def run_matching_pipeline_endpoint():
         )
 
 
-@router.get("/status/{task_id}", response_model=PipelineStatusResponse)
+@router.get("/status/{task_id}", response_model=PipelineStatusResponse, responses={500: {"description": "Internal server error"}})
 def get_pipeline_status(task_id: str):
     """
     Get the status of a pipeline task.

@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI):
         try:
             await consumer_task
         except asyncio.CancelledError:
-            pass
+            raise
     logger.info("Extraction service shutdown complete")
 
 
@@ -117,7 +117,7 @@ async def extract_jobs(request: ExtractJobRequest = ExtractJobRequest(limit=200)
         )
         return ExtractResponse(
             success=True,
-            message=f"Job extraction completed",
+            message="Job extraction completed",
             processed=processed
         )
     except Exception as e:
@@ -286,8 +286,8 @@ async def consume_extraction_jobs():
                 logger.info(f"✅ Acknowledged failed job: msg_id={msg_id}")
 
         except asyncio.CancelledError:
-            logger.info(f"🛑 Extraction consumer cancelled (processed: {message_count}, errors: {error_count})")
-            break
+            logger.info("🛑 Extraction consumer cancelled (processed: %d, errors: %d)", message_count, error_count)
+            raise
         except Exception as e:
             error_count += 1
             logger.exception(f"❌ Error in extraction consumer: {type(e).__name__}: {e}")

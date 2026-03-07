@@ -128,6 +128,7 @@ class ResumeProfiler:
 
     def _create_experience_tech_unit(self, exp, idx: int, tech: str) -> ResumeEvidenceUnit:
         """Create evidence unit from experience tech keyword."""
+        del idx  # Unused parameter - kept for API consistency
         has_tech = tech in (exp.description or '').lower()
         return ResumeEvidenceUnit(
             id="",

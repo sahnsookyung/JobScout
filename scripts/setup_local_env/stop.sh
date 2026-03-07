@@ -66,12 +66,13 @@ log_error() {
 # Build compose args from available compose files
 build_compose_args() {
     COMPOSE_ARGS=(-f "${DOCKER_COMPOSE_FILE}")
-    if [ -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]; then
+    if [[ -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]]; then
         COMPOSE_ARGS+=(-f "${PROJECT_ROOT}/docker-compose.pipeline.yml")
     fi
-    if [ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]; then
+    if [[ -f "${PROJECT_ROOT}/docker-compose.web.yml" ]]; then
         COMPOSE_ARGS+=(-f "${PROJECT_ROOT}/docker-compose.web.yml")
     fi
+    return 0
 }
 
 # Print help message
@@ -312,6 +313,7 @@ stop_web_app() {
             log_info "Web application not running on port ${BACKEND_PORT}"
         fi
     fi
+    return 0
 }
 
 # Stop Web UI
@@ -334,6 +336,7 @@ stop_web_ui() {
             log_info "Web UI not running on port ${FRONTEND_PORT}"
         fi
     fi
+    return 0
 }
 
 # Print status summary

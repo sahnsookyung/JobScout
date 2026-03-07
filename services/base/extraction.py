@@ -238,13 +238,14 @@ def run_resume_extraction(ctx: AppContext, resume_file: str) -> tuple[Optional[d
     Extract resume data from file.
 
     Args:
-        ctx: Application context
+        ctx: Application context (unused - kept for API consistency)
         resume_file: Path to resume file
 
     Returns:
         Tuple of (resume_data, fingerprint)
     """
-    logger.info(f"Extracting resume from {resume_file}")
+    del ctx  # Unused parameter - kept for API consistency
+    logger.info("Extracting resume from %s", resume_file)
 
     # Load and parse resume with error handling
     try:

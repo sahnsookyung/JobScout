@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI):
         try:
             await consumer_task
         except asyncio.CancelledError:
-            pass
+            raise
     logger.info("Embeddings service shutdown complete")
 
 
@@ -116,7 +116,7 @@ async def embed_jobs(request: EmbedJobRequest = EmbedJobRequest(limit=100)):
         )
         return EmbedResponse(
             success=True,
-            message=f"Job embedding completed",
+            message="Job embedding completed",
             processed=processed
         )
     except Exception as e:
@@ -219,8 +219,8 @@ async def consume_embeddings_jobs():
                     logger.info(f"✅ Acknowledged failed job: msg_id={msg_id}")
 
         except asyncio.CancelledError:
-            logger.info(f"🛑 Embeddings consumer cancelled (processed: {message_count}, errors: {error_count})")
-            break
+            logger.info("🛑 Embeddings consumer cancelled (processed: %d, errors: %d)", message_count, error_count)
+            raise
         except Exception as e:
             error_count += 1
             logger.exception(f"❌ Error in embeddings consumer: {type(e).__name__}: {e}")
