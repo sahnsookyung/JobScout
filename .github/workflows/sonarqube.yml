@@ -47,11 +47,21 @@ jobs:
           uv sync --all-extras
           uv pip install pytest pytest-asyncio pytest-cov
 
+      - name: Start integration test containers
+        run: |
+          # Build Docker image for microservices
+          docker build -t jobscout-orchestrator:latest .
+          
+          # Start Redis test container on port 6380
+          docker run -d --name redis-test -p 6380:6379 redis:7-alpine
+          # Wait for Redis to be ready
+          sleep 2
+          docker exec redis-test redis-cli ping
+
       - name: Run tests with coverage
         run: |
           # Run all tests with coverage
-          # Redis is available on localhost:6379 from GitHub Actions service
-          # Skip integration tests that require Docker containers for microservices
+          # Redis available on localhost:6379 (service) and localhost:6380 (test container)
           uv run pytest tests/ \
             --cov=services \
             --cov=core \
@@ -69,11 +79,18 @@ jobs:
             --ignore=tests/integration/test_etl_real_data.py \
             --ignore=tests/integration/test_openai_schema_validation.py \
             --ignore=tests/integration/test_resume_schema.py \
-            --ignore=tests/integration/test_user_wants_pipeline.py \
-            --ignore=tests/integration/test_orchestrator_pipeline.py
+            --ignore=tests/integration/test_user_wants_pipeline.py
         env:
           PYTHONPATH: ${{ github.workspace }}
           REDIS_URL: redis://localhost:6379/1
+          TEST_REDIS_PORT: 6380
+
+      - name: Cleanup test containers
+        if: always()
+        run: |
+          docker stop redis-test || true
+          docker rm redis-test || true
+          docker rmi jobscout-orchestrator:latest || true
 
       - name: Verify coverage file exists
         run: |
