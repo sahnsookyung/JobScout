@@ -79,14 +79,14 @@ jobs:
           ls -la htmlcov/
 
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v5
+        uses: SonarSource/sonarqube-scan-action@7819713a3a77872d61c353cb89b93758184688f7
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@65c4c2f01240a26b6734856e5c3a001b8c136381
         with:
           name: test-results
           path: |
