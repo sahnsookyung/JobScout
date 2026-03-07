@@ -17,7 +17,7 @@ import time
 import json
 import uuid
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, Tuple
 import redis.asyncio as redis_async
 
 from fastapi import FastAPI
@@ -235,12 +235,88 @@ async def _wait_for_task_message(pubsub, task_id: str, timeout: float) -> Option
         logger.debug(f"Skipping message for task {data.get('task_id')}, waiting for {task_id}")
 
 
+async def _run_pipeline_stage(
+    state: OrchestrationState,
+    pubsub,
+    stream: str,
+    channel: str,
+    job_payload: dict,
+    stage_name: str,
+    timeout: float
+) -> Tuple[bool, Optional[dict]]:
+    """Run a single pipeline stage (extract/embed/match).
+    
+    Args:
+        state: Orchestration state
+        pubsub: Redis pubsub instance
+        stream: Redis stream name
+        channel: Completion channel to subscribe to
+        job_payload: Payload for the job
+        stage_name: Name of stage for logging
+        timeout: Timeout in seconds
+        
+    Returns:
+        Tuple of (success, response_data)
+    """
+    # Subscribe to completion channel
+    logger.info("📡 Subscribing to channel: %s", channel)
+    await pubsub.subscribe(channel)
+    logger.info("📡 Subscribed to channels: %s", pubsub.channels)
+    
+    # Enqueue the job
+    logger.info("📤 Enqueueing %s job to %s", stage_name, stream)
+    enqueue_job(stream, job_payload)
+    logger.info("✅ %s job enqueued successfully", stage_name.capitalize())
+    
+    # Wait for completion
+    logger.info("⏳ Waiting for %s completion (timeout: %ss)...", stage_name, timeout)
+    try:
+        data = await _wait_for_task_message(pubsub, state.task_id, timeout)
+        logger.info("📨 Received %s response: status=%s", stage_name, data.get("status"))
+    except asyncio.TimeoutError:
+        logger.error("❌ Timeout waiting for %s completion for task: %s", stage_name, state.task_id)
+        state.status = "failed"
+        state.error = f"Timeout waiting for {stage_name} completion"
+        state._save_to_redis()
+        await state.notify({"task_id": state.task_id, "status": "failed", "error": state.error})
+        return False, None
+    
+    # Handle response
+    status = data.get("status")
+    if status == "failed":
+        logger.error("❌ %s failed for task %s: %s", stage_name, state.task_id, data.get("error"))
+        state.status = "failed"
+        state.error = data.get("error", f"{stage_name.capitalize()} failed")
+        state._save_to_redis()
+        await state.notify({"task_id": state.task_id, "status": "failed", "error": state.error})
+        return False, data
+    
+    if status not in ("skipped", "completed"):
+        logger.warning("❌ Unexpected status in %s response: %s", stage_name, status)
+        state.status = "failed"
+        state.error = f"Unexpected status from {stage_name}: {status}"
+        state._save_to_redis()
+        await state.notify({"task_id": state.task_id, "status": "failed", "error": state.error})
+        return False, data
+    
+    return True, data
+
+
+async def _switch_channel(pubsub, old_channel: str, new_channel: str):
+    """Switch pubsub subscription from one channel to another."""
+    logger.info("📡 Unsubscribing from %s", old_channel)
+    await pubsub.unsubscribe(old_channel)
+    logger.info("📡 Subscribing to channel: %s", new_channel)
+    await pubsub.subscribe(new_channel)
+    logger.info("📡 Now subscribed to channels: %s", pubsub.channels)
+
+
 async def orchestrate_match(task_id: str, resume_file: str):
     """Run the orchestration flow: extraction -> embeddings -> matching."""
     import redis.asyncio as redis_async
     global active_task_ids
     async with _orchestration_lock:
-        active_task_ids.add(task_id)  # Mark as active
+        active_task_ids.add(task_id)
 
     state = await get_or_create_orchestration(task_id)
     state.status = "extracting"
@@ -251,191 +327,89 @@ async def orchestrate_match(task_id: str, resume_file: str):
     redis_client = None
     pubsub = None
     try:
-        logger.info(f"🚀 Starting pipeline for task: {task_id}")
-        
+        logger.info("🚀 Starting pipeline for task: %s", task_id)
+
         # Create Redis client and pubsub BEFORE enqueueing job
         redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
         pubsub = redis_client.pubsub()
-        
-        # Subscribe to completion channel FIRST (before enqueueing)
-        logger.info(f"📡 Subscribing to completion channel: {CHANNEL_EXTRACTION_DONE}")
-        await pubsub.subscribe(CHANNEL_EXTRACTION_DONE)
 
-        # Verify subscription
-        channels = pubsub.channels  # Property, not method
-        logger.info(f"📡 Subscribed to channels: {channels}")
+        # Stage 1: Extraction
+        success, extraction_data = await _run_pipeline_stage(
+            state=state,
+            pubsub=pubsub,
+            stream=STREAM_EXTRACTION,
+            channel=CHANNEL_EXTRACTION_DONE,
+            job_payload={"task_id": task_id, "resume_file": resume_file},
+            stage_name="extraction",
+            timeout=LISTENER_TIMEOUT
+        )
+        if not success:
+            return
         
-        # Now enqueue the job
-        logger.info(f"📤 Enqueueing extraction job to {STREAM_EXTRACTION}")
-        enqueue_job(STREAM_EXTRACTION, {
-            "task_id": task_id,
-            "resume_file": resume_file
-        })
-        logger.info("✅ Extraction job enqueued successfully")
-
-        # Wait for extraction completion
-        logger.info(f"⏳ Waiting for extraction completion (timeout: {LISTENER_TIMEOUT}s)...")
-        try:
-            data = await _wait_for_task_message(pubsub, task_id, LISTENER_TIMEOUT)
-            logger.info(f"📨 Received extraction response: status={data.get('status')}")
-        except asyncio.TimeoutError:
-            logger.error(f"❌ Timeout waiting for extraction completion for task: {task_id}")
+        # Validate extraction response
+        fp = extraction_data.get("resume_fingerprint")
+        if not fp and extraction_data.get("status") != "skipped":
+            logger.error("❌ No fingerprint in extraction response for task: %s", task_id)
             state.status = "failed"
-            state.error = "Timeout waiting for extraction completion"
+            state.error = "No fingerprint in extraction response"
             state._save_to_redis()
             await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
             return
-
-        if data.get("status") == "failed":
-            logger.error(f"❌ Extraction failed for task {task_id}: {data.get('error')}")
-            state.status = "failed"
-            state.error = data.get("error", "Extraction failed")
-            state._save_to_redis()
-            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
-            return
-
-        if data.get("status") in ("skipped", "completed"):
-            fp = data.get("resume_fingerprint")
-            if not fp:
-                logger.error(f"❌ No fingerprint in extraction response for task: {task_id}")
-                state.status = "failed"
-                state.error = "No fingerprint in extraction response"
-                state._save_to_redis()
-                await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
-                return
-
+        
+        if fp:
             state.resume_fingerprint = fp
-
-            if data.get("status") == "skipped":
-                logger.info(f"ℹ️ Resume unchanged, using existing: {fp[:16]}...")
-            else:
-                logger.info(f"✅ Extraction complete: {fp[:16]}...")
-
-            state.status = "embedding"
-            state._save_to_redis()
-            await state.notify({"task_id": task_id, "status": "embedding", "message": "Starting embeddings"})
-
-            # Switch to embeddings channel
-            logger.info(f"📡 Unsubscribing from {CHANNEL_EXTRACTION_DONE}")
-            await pubsub.unsubscribe(CHANNEL_EXTRACTION_DONE)
-            logger.info(f"📡 Subscribing to channel: {CHANNEL_EMBEDDINGS_DONE}")
-            await pubsub.subscribe(CHANNEL_EMBEDDINGS_DONE)
-            
-            # Verify subscription
-            channels = pubsub.channels  # Property, not method
-            logger.info(f"📡 Now subscribed to channels: {channels}")
-
-            logger.info(f"📤 Enqueueing embeddings job to {STREAM_EMBEDDINGS}")
-            enqueue_job(STREAM_EMBEDDINGS, {
-                "task_id": task_id,
-                "resume_fingerprint": state.resume_fingerprint
-            })
-            logger.info("✅ Embeddings job enqueued successfully")
-        else:
-            # Unexpected status - treat as error
-            logger.warning(f"❌ Unexpected status in extraction response: {data.get('status')}")
-            state.status = "failed"
-            state.error = f"Unexpected status from extraction: {data.get('status')}"
-            state._save_to_redis()
-            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+            status_msg = "Resume unchanged, using existing" if extraction_data.get("status") == "skipped" else "Extraction complete"
+            logger.info("ℹ️ %s: %s...", status_msg, fp[:16])
+        
+        # Stage 2: Embeddings
+        state.status = "embedding"
+        state._save_to_redis()
+        await state.notify({"task_id": task_id, "status": "embedding", "message": "Starting embeddings"})
+        
+        await _switch_channel(pubsub, CHANNEL_EXTRACTION_DONE, CHANNEL_EMBEDDINGS_DONE)
+        
+        success, embeddings_data = await _run_pipeline_stage(
+            state=state,
+            pubsub=pubsub,
+            stream=STREAM_EMBEDDINGS,
+            channel=CHANNEL_EMBEDDINGS_DONE,
+            job_payload={"task_id": task_id, "resume_fingerprint": state.resume_fingerprint},
+            stage_name="embeddings",
+            timeout=LISTENER_TIMEOUT
+        )
+        if not success:
             return
-
-        # Wait for embeddings completion
-        logger.info(f"⏳ Waiting for embeddings completion (timeout: {LISTENER_TIMEOUT}s)...")
-        try:
-            data = await _wait_for_task_message(pubsub, task_id, LISTENER_TIMEOUT)
-            logger.info(f"📨 Received embeddings response: status={data.get('status')}")
-        except asyncio.TimeoutError:
-            logger.error(f"❌ Timeout waiting for embeddings completion for task: {task_id}")
-            state.status = "failed"
-            state.error = "Timeout waiting for embeddings completion"
-            state._save_to_redis()
-            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
+        
+        # Stage 3: Matching
+        state.status = "matching"
+        state._save_to_redis()
+        await state.notify({"task_id": task_id, "status": "matching", "message": "Starting matching"})
+        
+        await _switch_channel(pubsub, CHANNEL_EMBEDDINGS_DONE, CHANNEL_MATCHING_DONE)
+        
+        success, matching_data = await _run_pipeline_stage(
+            state=state,
+            pubsub=pubsub,
+            stream=STREAM_MATCHING,
+            channel=CHANNEL_MATCHING_DONE,
+            job_payload={"task_id": task_id, "resume_fingerprint": state.resume_fingerprint},
+            stage_name="matching",
+            timeout=LISTENER_TIMEOUT
+        )
+        if not success:
             return
-
-        if data.get("status") == "failed":
-            logger.error(f"❌ Embeddings failed for task {task_id}: {data.get('error')}")
-            state.status = "failed"
-            state.error = data.get("error", "Embeddings failed")
-            state._save_to_redis()
-            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
-            return
-
-        if data.get("status") == "completed":
-            fp = state.resume_fingerprint
-            if fp:
-                logger.info(f"✅ Embeddings complete: {fp[:16]}...")
-
-            state.status = "matching"
-            state._save_to_redis()
-            await state.notify({"task_id": task_id, "status": "matching", "message": "Starting matching"})
-
-            # Switch to matching channel
-            logger.info(f"📡 Unsubscribing from {CHANNEL_EMBEDDINGS_DONE}")
-            await pubsub.unsubscribe(CHANNEL_EMBEDDINGS_DONE)
-            logger.info(f"📡 Subscribing to channel: {CHANNEL_MATCHING_DONE}")
-            await pubsub.subscribe(CHANNEL_MATCHING_DONE)
-            
-            # Verify subscription
-            channels = pubsub.channels  # Property, not method
-            logger.info(f"📡 Now subscribed to channels: {channels}")
-
-            logger.info(f"📤 Enqueueing matching job to {STREAM_MATCHING}")
-            enqueue_job(STREAM_MATCHING, {
-                "task_id": task_id,
-                "resume_fingerprint": state.resume_fingerprint
-            })
-            logger.info("✅ Matching job enqueued successfully")
-        else:
-            # Unexpected status - treat as error
-            logger.warning(f"❌ Unexpected status in embeddings response: {data.get('status')}")
-            state.status = "failed"
-            state.error = f"Unexpected status from embeddings: {data.get('status')}"
-            state._save_to_redis()
-            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
-            return
-
-        # Wait for matching completion
-        logger.info(f"⏳ Waiting for matching completion (timeout: {LISTENER_TIMEOUT}s)...")
-        try:
-            data = await _wait_for_task_message(pubsub, task_id, LISTENER_TIMEOUT)
-            logger.info(f"📨 Received matching response: status={data.get('status')}, matches={data.get('matches_count')}")
-        except asyncio.TimeoutError:
-            logger.error(f"❌ Timeout waiting for matching completion for task: {task_id}")
-            state.status = "failed"
-            state.error = "Timeout waiting for matching completion"
-            state._save_to_redis()
-            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
-            return
-
-        if data.get("status") == "failed":
-            logger.error(f"❌ Matching failed for task {task_id}: {data.get('error')}")
-            state.status = "failed"
-            state.error = data.get("error", "Matching failed")
-            state._save_to_redis()
-            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
-            return
-
-        if data.get("status") == "completed":
-            state.status = "completed"
-            state.matches_count = data.get("matches_count", 0)
-            state._save_to_redis()
-            logger.info(f"🎉 Pipeline completed successfully for task {task_id}: {state.matches_count} matches")
-            await state.notify({
-                "task_id": task_id,
-                "status": "completed",
-                "matches_count": state.matches_count,
-                "message": f"Matching complete, {state.matches_count} matches"
-            })
-            return
-        else:
-            # Unexpected status - treat as error
-            logger.warning(f"❌ Unexpected status in matching response: {data.get('status')}")
-            state.status = "failed"
-            state.error = f"Unexpected status from matching: {data.get('status')}"
-            state._save_to_redis()
-            await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
-            return
+        
+        # Pipeline completed successfully
+        state.status = "completed"
+        state.matches_count = matching_data.get("matches_count", 0)
+        state._save_to_redis()
+        logger.info("🎉 Pipeline completed successfully for task %s: %s matches", task_id, state.matches_count)
+        await state.notify({
+            "task_id": task_id,
+            "status": "completed",
+            "matches_count": state.matches_count,
+            "message": f"Matching complete, {state.matches_count} matches"
+        })
 
     except asyncio.TimeoutError as e:
         logger.exception(f"❌ Orchestration timeout for task {task_id}")
