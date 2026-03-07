@@ -252,31 +252,23 @@ async def cleanup_stale_orchestrations(registry: OrchestratorRegistry) -> None:
 # Pipeline helpers
 # ---------------------------------------------------------------------------
 
-async def _wait_for_next_message(pubsub, timeout: float = 300.0) -> dict:
-    """Wait for the next pubsub message within *timeout* seconds.
-
-    Raises:
-        asyncio.TimeoutError: If no message arrives in time.
-    """
-    async with asyncio.timeout(timeout):
-        async for message in pubsub.listen():
-            if message["type"] == "message":
-                return json.loads(message["data"])
-    # asyncio.timeout raises before reaching here; this keeps the return type non-optional
-    raise asyncio.TimeoutError("No message received")  # pragma: no cover
+async def _wait_for_next_message(pubsub) -> dict:
+    """Read the next pubsub message. Caller owns the timeout."""
+    async for message in pubsub.listen():
+        if message["type"] == "message":
+            return json.loads(message["data"])
 
 
-async def _wait_for_task_message(pubsub, task_id: str, timeout: float) -> dict:
-    """Wait for the pubsub message matching *task_id*, skipping unrelated messages."""
-    deadline = asyncio.get_running_loop().time() + timeout
+async def _wait_for_task_message(pubsub, task_id: str) -> dict:
+    """Skip messages until one matches task_id. Caller owns the timeout."""
     while True:
-        remaining = deadline - asyncio.get_running_loop().time()
-        if remaining <= 0:
-            raise asyncio.TimeoutError(f"Timeout waiting for task {task_id}")
-        data = await _wait_for_next_message(pubsub, timeout=remaining)
+        data = await _wait_for_next_message(pubsub)
         if data.get("task_id") == task_id:
             return data
-        logger.debug("Skipping message for task %s, waiting for %s", data.get("task_id"), task_id)
+        logger.debug(
+            "Skipping message for task %s, waiting for %s",
+            data.get("task_id"), task_id,
+        )
 
 
 async def _run_pipeline_stage(
@@ -285,28 +277,19 @@ async def _run_pipeline_stage(
     stream: str,
     job_payload: dict,
     stage_name: str,
-    timeout: float,
 ) -> Tuple[bool, Optional[dict]]:
     """Enqueue a job and wait for its completion notification.
 
     The caller is responsible for subscribing pubsub to the correct channel
-    before calling this function.
+    and wrapping this call in asyncio.timeout().
     """
     logger.info("📤 Enqueueing %s job to %s", stage_name, stream)
     await asyncio.to_thread(enqueue_job, stream, job_payload)
     logger.info("✅ %s job enqueued", stage_name.capitalize())
 
-    logger.info("⏳ Waiting for %s completion (timeout: %ss)...", stage_name, timeout)
-    try:
-        data = await _wait_for_task_message(pubsub, state.task_id, timeout)
-        logger.info("📨 %s response: status=%s", stage_name, data.get("status"))
-    except asyncio.TimeoutError:
-        logger.error("❌ Timeout waiting for %s for task: %s", stage_name, state.task_id)
-        state.status = "failed"
-        state.error = f"Timeout waiting for {stage_name} completion"
-        await state._save_to_redis()
-        await state.notify({"task_id": state.task_id, "status": "failed", "error": state.error})
-        return False, None
+    logger.info("⏳ Waiting for %s completion...", stage_name)
+    data = await _wait_for_task_message(pubsub, state.task_id)
+    logger.info("📨 %s response: status=%s", stage_name, data.get("status"))
 
     status = data.get("status")
     if status == "failed":
@@ -396,12 +379,13 @@ async def orchestrate_match(
         logger.info("📡 Subscribing to %s", CHANNEL_EXTRACTION_DONE)
         await pubsub.subscribe(CHANNEL_EXTRACTION_DONE)
 
-        success, extraction_data = await _run_pipeline_stage(
-            state=state, pubsub=pubsub,
-            stream=STREAM_EXTRACTION,
-            job_payload={"task_id": task_id, "resume_file": resume_file},
-            stage_name="extraction", timeout=LISTENER_TIMEOUT,
-        )
+        async with asyncio.timeout(LISTENER_TIMEOUT):
+            success, extraction_data = await _run_pipeline_stage(
+                state=state, pubsub=pubsub,
+                stream=STREAM_EXTRACTION,
+                job_payload={"task_id": task_id, "resume_file": resume_file},
+                stage_name="extraction",
+            )
         if not success:
             return
         if not await _handle_extraction_fingerprint(state, task_id, extraction_data):
@@ -416,12 +400,13 @@ async def orchestrate_match(
         await pubsub.subscribe(CHANNEL_EMBEDDINGS_DONE)
         logger.info("📡 Switched to %s", CHANNEL_EMBEDDINGS_DONE)
 
-        success, _ = await _run_pipeline_stage(
-            state=state, pubsub=pubsub,
-            stream=STREAM_EMBEDDINGS,
-            job_payload={"task_id": task_id, "resume_fingerprint": state.resume_fingerprint},
-            stage_name="embeddings", timeout=LISTENER_TIMEOUT,
-        )
+        async with asyncio.timeout(LISTENER_TIMEOUT):
+            success, _ = await _run_pipeline_stage(
+                state=state, pubsub=pubsub,
+                stream=STREAM_EMBEDDINGS,
+                job_payload={"task_id": task_id, "resume_fingerprint": state.resume_fingerprint},
+                stage_name="embeddings",
+            )
         if not success:
             return
 
@@ -434,12 +419,13 @@ async def orchestrate_match(
         await pubsub.subscribe(CHANNEL_MATCHING_DONE)
         logger.info("📡 Switched to %s", CHANNEL_MATCHING_DONE)
 
-        success, matching_data = await _run_pipeline_stage(
-            state=state, pubsub=pubsub,
-            stream=STREAM_MATCHING,
-            job_payload={"task_id": task_id, "resume_fingerprint": state.resume_fingerprint},
-            stage_name="matching", timeout=LISTENER_TIMEOUT,
-        )
+        async with asyncio.timeout(LISTENER_TIMEOUT):
+            success, matching_data = await _run_pipeline_stage(
+                state=state, pubsub=pubsub,
+                stream=STREAM_MATCHING,
+                job_payload={"task_id": task_id, "resume_fingerprint": state.resume_fingerprint},
+                stage_name="matching",
+            )
         if not success:
             return
 
@@ -454,10 +440,11 @@ async def orchestrate_match(
             "message": f"Matching complete, {state.matches_count} matches",
         })
 
-    except asyncio.TimeoutError as e:
+    except asyncio.TimeoutError:
+        # Fired by one of the asyncio.timeout() blocks above
         logger.exception("❌ Orchestration timeout for task %s", task_id)
         state.status = "failed"
-        state.error = f"Orchestration timeout: {e}"
+        state.error = "Stage timeout"
         await state._save_to_redis()
         await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
 

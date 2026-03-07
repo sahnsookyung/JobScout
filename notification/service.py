@@ -475,7 +475,7 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
         
         try:
             return _send_and_record_notification(
-                notification_id, notification_data, rate_limiter
+                notification_id, notification_data
             )
         except RateLimitException as e:
             rate_limit_retries += 1
