@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI):
         try:
             await consumer_task
         except asyncio.CancelledError:
-            raise
+            raise  # Re-raise after cleanup to allow proper cancellation
     logger.info("Extraction service shutdown complete")
 
 

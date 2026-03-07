@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
     try:
         await cleanup_task
     except asyncio.CancelledError:
-        raise  # Re-raise to allow proper cancellation propagation
+        raise  # Re-raise after cleanup to allow proper cancellation propagation
 
     logger.info("=" * 60)
     logger.info("SHUTTING DOWN ORCHESTRATOR SERVICE")
