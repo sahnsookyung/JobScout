@@ -27,7 +27,7 @@ def get_notification_service(db: Annotated[Session, Depends(get_db)]) -> Notific
 @router.post("/send", response_model=NotificationResponse)
 def send_notification(
     request: NotificationRequest,
-    notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)],
+    notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)]
 ):
     """
     Send a notification via the message queue.
@@ -60,9 +60,7 @@ def send_notification(
 
 
 @router.get("/queue-status", response_model=QueueStatusResponse)
-def get_queue_status(
-    notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)],
-):
+def get_queue_status(notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)]):
     """
     Get the status of the notification queue.
     
