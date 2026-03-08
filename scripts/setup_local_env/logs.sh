@@ -4,13 +4,14 @@
 # =============================================================================
 # Usage:
 #   ./logs.sh                    Show all logs
+#   ./logs.sh --split            Show split topology logs
 #   ./logs.sh -f                 Follow all logs in real-time
-#   ./logs.sh web-app            Show web app log
+#   ./logs.sh web-backend        Show web backend log
 #   ./logs.sh web-ui             Show web UI log
 #   ./logs.sh microservices      Show all microservice logs
 #   ./logs.sh postgres           Show PostgreSQL logs
 #   ./logs.sh redis              Show Redis logs
-#   ./logs.sh -c                 Clear all logs
+#   ./logs.sh -c                 Clear logs
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,7 +31,7 @@ LINES=50
 get_log_info() {
     local filename="$1"
     case "$filename" in
-        web-app)      echo "Web App:${GREEN}";;
+        web-app|web-backend) echo "Web Backend:${GREEN}";;
         web-ui)       echo "Web UI:${CYAN}";;
         extraction)   echo "Extraction:${YELLOW}";;
         embeddings)   echo "Embeddings:${YELLOW}";;
@@ -74,6 +75,7 @@ main() {
     local follow=false
     local clear=false
     local service=""
+    local topology=""  # "split" or "" (auto-detect)
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -83,6 +85,10 @@ main() {
                 ;;
             -c|--clear)
                 clear=true
+                shift
+                ;;
+            --split)
+                topology="split"
                 shift
                 ;;
             -h|--help)
@@ -101,20 +107,31 @@ main() {
         esac
     done
 
+    # Resolve LOGS_DIR based on topology flag or auto-detect
+    if [[ "$topology" == "split" ]]; then
+        LOGS_DIR="${SCRIPT_DIR}/logs/split"
+    else
+        # Auto-detect: prefer split subdir if it contains log files
+        if compgen -G "${SCRIPT_DIR}/logs/split/*.log" > /dev/null 2>&1; then
+            LOGS_DIR="${SCRIPT_DIR}/logs/split"
+        fi
+        # else keep flat logs/ as fallback
+    fi
+
     if [[ ! -d "${LOGS_DIR}" ]]; then
         echo -e "${YELLOW}Logs directory not found: ${LOGS_DIR}${NC}"
         exit 1
     fi
 
     if [[ "$clear" = true ]]; then
-        echo -e "${YELLOW}Clearing all logs...${NC}"
+        echo -e "${YELLOW}Clearing logs in ${LOGS_DIR}...${NC}"
         rm -f "${LOGS_DIR}"/*.log
         echo -e "${GREEN}Logs cleared!${NC}"
         exit 0
     fi
 
     if [[ -z "$service" ]] || [[ "$service" == "all" ]]; then
-        echo -e "${BLUE}=== JobScout All Logs ===${NC}"
+        echo -e "${BLUE}=== JobScout Logs (${LOGS_DIR##*/}) ===${NC}"
         echo ""
         for logfile in "${LOGS_DIR}"/*.log; do
             [[ -f "$logfile" ]] || continue
@@ -136,11 +153,14 @@ main() {
     fi
 
     case "$service" in
-        web-app)
+        web-app|web-backend)
+            # Try web-backend.log first (Docker mode), fall back to web-app.log (dev mode)
+            local wb_log="${LOGS_DIR}/web-backend.log"
+            [[ -f "$wb_log" ]] || wb_log="${LOGS_DIR}/web-app.log"
             if [[ "$follow" = true ]]; then
-                print_log_follow "Web App" "${LOGS_DIR}/web-app.log" "$GREEN"
+                print_log_follow "Web Backend" "$wb_log" "$GREEN"
             else
-                print_log "Web App" "${LOGS_DIR}/web-app.log" "$GREEN"
+                print_log "Web Backend" "$wb_log" "$GREEN"
             fi
             ;;
         web-ui)
@@ -167,7 +187,14 @@ main() {
             fi
             ;;
         postgres)
-            if [[ -f "${DOCKER_COMPOSE_FILE}" ]]; then
+            local pg_log="${LOGS_DIR}/postgres.log"
+            if [[ -f "$pg_log" ]]; then
+                if [[ "$follow" = true ]]; then
+                    print_log_follow "PostgreSQL" "$pg_log" "$BLUE"
+                else
+                    print_log "PostgreSQL" "$pg_log" "$BLUE"
+                fi
+            elif [[ -f "${DOCKER_COMPOSE_FILE}" ]]; then
                 if [[ "$follow" = true ]]; then
                     docker compose -f "${DOCKER_COMPOSE_FILE}" logs -f postgres
                 else
