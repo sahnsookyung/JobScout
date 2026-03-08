@@ -2,9 +2,9 @@ name: SonarQube Code Quality
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, refactor-microservices ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, develop, refactor-microservices ]
   schedule:
     # Run daily at 2 AM UTC to catch regressions
     - cron: '0 2 * * *'
@@ -46,19 +46,22 @@ jobs:
         run: |
           uv sync --all-extras
           uv pip install pytest pytest-asyncio pytest-cov
+          
+          # Install frontend dependencies
+          cd web/frontend && npm ci
 
       - name: Start integration test containers
         run: |
           # Build Docker image for microservices
           docker build -t jobscout-orchestrator:latest .
-          
+
           # Start Redis test container on port 6380
           docker run -d --name redis-test -p 6380:6379 redis:7-alpine
           # Wait for Redis to be ready
           sleep 2
           docker exec redis-test redis-cli ping
 
-      - name: Run tests with coverage
+      - name: Run backend tests with coverage
         run: |
           # Run ALL tests with coverage - no test left behind!
           # Redis available on localhost:6379 (service) and localhost:6380 (test container)
@@ -81,6 +84,22 @@ jobs:
           TEST_REDIS_PORT: 6380
           USE_DOCKER_CONTAINERS: "1"
 
+      - name: Run frontend tests with coverage
+        run: |
+          cd web/frontend
+          npm run test:coverage
+        env:
+          CI: true
+
+      - name: Verify coverage reports exist
+        run: |
+          echo "=== Backend Coverage ==="
+          ls -la coverage.xml
+          head -20 coverage.xml
+          echo ""
+          echo "=== Frontend Coverage ==="
+          ls -la web/frontend/coverage/
+
       - name: Cleanup test containers
         if: always()
         run: |
@@ -88,19 +107,12 @@ jobs:
           docker rm redis-test || true
           docker rmi jobscout-orchestrator:latest || true
 
-      - name: Verify coverage file exists
-        run: |
-          ls -la coverage.xml
-          ls -la htmlcov/
-
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Include coverage report from pytest-cov
-          SONAR_COVERAGE_REPORT_PATHS: coverage.xml
 
       - name: Upload test results
         if: always()
@@ -110,4 +122,5 @@ jobs:
           path: |
             coverage.xml
             htmlcov/
+            web/frontend/coverage/
           retention-days: 7
