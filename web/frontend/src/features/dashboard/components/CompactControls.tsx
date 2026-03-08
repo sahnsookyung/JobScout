@@ -5,34 +5,7 @@ import { useStats } from '@/hooks/useStats';
 import { toast } from 'sonner';
 import { pipelineApi } from '@/services/pipelineApi';
 import { saveResume, hasResume, getResumeFilename } from '@/utils/indexedDB';
-import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
-
-import xxhash from 'xxhash-wasm';
-
-import { StatsPanel } from './StatsPanel';
-import { ResumeUploadSection } from './ResumeUploadSection';
-import { ActionButton } from './ActionButton';
-import { StatusBanner } from './StatusBanner';
-import { DashboardWrapper } from './DashboardWrapper';
-
-const isDev = import.meta.env.DEV;
-
-let xxhPromise: ReturnType<typeof xxhash> | null = null;
-
-async function getXxh() {
-    if (!xxhPromise) {
-        xxhPromise = xxhash();
-    }
-    return xxhPromise;
-}
-
-async function computeFileHash(file: File): Promise<string> {
-    const xxh = await getXxh();
-    const buffer = await file.arrayBuffer();
-    const hasher = xxh.create64();
-    hasher.update(new Uint8Array(buffer));
-    return hasher.digest().toString(16).padStart(16, '0');
-}
+import { computeFileHash, validateFileSize } from '@/utils/fileUtils';
 
 export const CompactControls: React.FC = () => {
     const { runPipeline, stopPipeline, isRunning, isStopping, status, isUploading } = usePipeline();
