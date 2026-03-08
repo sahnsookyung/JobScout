@@ -422,7 +422,7 @@ describe('usePipelineEvents', () => {
         });
 
         it('should not update state after unmount', async () => {
-            const { result, unmount, rerender } = renderHook(
+            const { result, unmount } = renderHook(
                 ({ taskId }) => usePipelineEvents(taskId),
                 { initialProps: { taskId: 'test-123' } }
             );
