@@ -49,18 +49,22 @@ NC='\033[0m' # No Color
 # Logging functions
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    return 0
 }
 
 log_success() {
     echo -e "${GREEN}[SUCCESS]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    return 0
 }
 
 log_warn() {
     echo -e "${YELLOW}[WARN]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    return 0
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1" >&2
+    return 0
 }
 
 # Build compose args from available compose files
@@ -78,20 +82,23 @@ build_compose_args() {
 # Print help message
 show_help() {
     head -25 "$0" | tail -23
+    return 0
 }
 
 # Parse command line arguments
 parse_args() {
-    STOP_INFRA=false
-    STOP_WEB_APP=false
-    STOP_WEB_UI=false
-    STOP_MICROSERVICES=false
-    STOP_DATABASE=false
-    STOP_REDIS=false
-    STOP_ALL=false
+    local STOP_INFRA=false
+    local STOP_WEB_APP=false
+    local STOP_WEB_UI=false
+    local STOP_MICROSERVICES=false
+    local STOP_DATABASE=false
+    local STOP_REDIS=false
+    local STOP_ALL=false
+    local option
 
     while [[ $# -gt 0 ]]; do
-        case $1 in
+        option="$1"
+        case $option in
             # Stop everything
             -A|--all)
                 STOP_ALL=true
@@ -148,7 +155,7 @@ parse_args() {
                 exit 0
                 ;;
             *)
-                log_error "Unknown option: $1"
+                log_error "Unknown option: $option" >&2
                 show_help
                 exit 1
                 ;;
@@ -161,7 +168,7 @@ parse_args() {
        [[ "$STOP_MICROSERVICES" == false ]] && [[ "$STOP_ALL" == false ]]; then
         STOP_ALL=true
     fi
-    
+
     # --all flag enables everything
     if [[ "$STOP_ALL" == true ]]; then
         STOP_INFRA=true
@@ -169,6 +176,7 @@ parse_args() {
         STOP_WEB_UI=true
         STOP_MICROSERVICES=true
     fi
+    return 0
 }
 
 # Stop Docker services
@@ -177,15 +185,15 @@ stop_docker() {
 
     # Check if docker-compose.yml exists
     if [[ ! -f "${DOCKER_COMPOSE_FILE}" ]]; then
-        log_warn "docker-compose.yml not found at ${DOCKER_COMPOSE_FILE}, skipping Docker services"
-        return
+        log_warn "docker-compose.yml not found at ${DOCKER_COMPOSE_FILE}, skipping Docker services" >&2
+        return 0
     fi
 
     # Build Compose args
     build_compose_args
 
     # Determine which services to stop
-    SERVICES_TO_STOP=""
+    local SERVICES_TO_STOP=""
 
     if [[ "$STOP_DATABASE" == true ]] || [[ "$STOP_REDIS" == true ]]; then
         if [[ "$STOP_DATABASE" == true ]]; then
@@ -209,61 +217,68 @@ stop_docker() {
     else
         log_info "No Docker services running"
     fi
+    return 0
 }
 
 # Kill only child processes by port (don't kill parent like npm)
 # This is used for frontend to avoid killing npm which can affect browser
 kill_child_only_by_port() {
-    local port=$1
-    
-    # Get PIDs listening on port
+    local port="$1"
     local pids
+    local pid
+    local process_name
+
+    # Get PIDs listening on port
     pids=$(lsof -ti:${port} 2>/dev/null)
-    
+
     if [[ -z "$pids" ]]; then
         return 1
     fi
-    
+
     # Only kill child processes (node, vite), not parent (npm)
     for pid in $pids; do
-        local process_name
         process_name=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ')
         # Kill node/vite processes but not npm
         if [[ "$process_name" = "node" ]] || [[ "$process_name" = "vite" ]]; then
             kill -9 "$pid" 2>/dev/null || true
         fi
     done
-    
+
     sleep 1
-    
+
     # Kill any remaining processes on port
     lsof -ti:${port} 2>/dev/null | xargs kill -9 2>/dev/null || true
-    
+
     return 0
 }
 
 # Kill a process tree by port (kills parent wrapper processes like uv and their children)
 # This is more aggressive - use for backend only
 kill_process_tree_by_port() {
-    local port=$1
+    local port="$1"
     local pids_file
+    local pid
+    local parent
+    local found
+    local existing
+
     pids_file=$(mktemp)
-    
+
     # Get PIDs listening on port
     lsof -ti:${port} 2>/dev/null > "$pids_file"
-    
+
     if [[ ! -s "$pids_file" ]]; then
         rm -f "$pids_file"
         return 1
     fi
-    
+
     # Collect all parent PIDs to avoid duplicates
     declare -a parents=()
     while read -r pid; do
         parent=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
         if [[ -n "$parent" ]] && [[ "$parent" -ne 1 ]] && [[ "$parent" -ne $$ ]]; then
             # Check if parent is already in list
-            local found=false
+            found=false
             for existing in "${parents[@]}"; do
                 if [[ "$existing" = "$parent" ]]; then
                     found=true
@@ -275,18 +290,18 @@ kill_process_tree_by_port() {
             fi
         fi
     done < "$pids_file"
-    
+
     # Kill parents first (top-down) with SIGKILL for reliability
     for parent in "${parents[@]}"; do
         kill -9 "$parent" 2>/dev/null || true
     done
     sleep 1
-    
+
     # Kill all child processes with SIGKILL for reliability
     while read -r pid; do
         kill -9 "$pid" 2>/dev/null || true
     done < "$pids_file"
-    
+
     rm -f "$pids_file"
     return 0
 }
@@ -297,10 +312,10 @@ stop_web_app() {
 
     # Kill by port - kill entire process tree to catch parent (uv) and child (uvicorn)
     if lsof -ti:${BACKEND_PORT} >/dev/null 2>&1; then
-        if kill_process_tree_by_port ${BACKEND_PORT}; then
+        if kill_process_tree_by_port "${BACKEND_PORT}"; then
             log_success "Web application stopped"
         else
-            log_error "Failed to stop web application"
+            log_error "Failed to stop web application" >&2
         fi
     else
         # Also try by process name as fallback
@@ -322,10 +337,10 @@ stop_web_ui() {
 
     # Kill only child processes (node/vite) without killing npm parent
     if lsof -ti:${FRONTEND_PORT} >/dev/null 2>&1; then
-        if kill_child_only_by_port ${FRONTEND_PORT}; then
+        if kill_child_only_by_port "${FRONTEND_PORT}"; then
             log_success "Web UI stopped"
         else
-            log_error "Failed to stop web UI"
+            log_error "Failed to stop web UI" >&2
         fi
     else
         # Also try by process name as fallback
@@ -346,6 +361,7 @@ print_summary() {
     echo "  JobScout Services Stopped"
     echo "============================================================================="
     echo ""
+    return 0
 }
 
 # Main function
@@ -375,9 +391,9 @@ main() {
     if [[ "$STOP_MICROSERVICES" == true ]]; then
         log_info "Stopping microservices..."
         if [[ ! -f "${DOCKER_COMPOSE_FILE}" ]]; then
-            log_warn "docker-compose.yml not found, skipping microservices"
+            log_warn "docker-compose.yml not found, skipping microservices" >&2
         elif [[ ! -f "${PROJECT_ROOT}/docker-compose.pipeline.yml" ]]; then
-            log_warn "docker-compose.pipeline.yml not found, skipping microservices"
+            log_warn "docker-compose.pipeline.yml not found, skipping microservices" >&2
         else
             # Stop pipeline services via docker compose
             build_compose_args
@@ -388,6 +404,7 @@ main() {
     fi
 
     print_summary
+    return 0
 }
 
 main "$@"

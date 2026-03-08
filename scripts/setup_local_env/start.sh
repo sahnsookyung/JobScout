@@ -53,18 +53,22 @@ NC='\033[0m' # No Color
 # Logging functions
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    return 0
 }
 
 log_success() {
     echo -e "${GREEN}[SUCCESS]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    return 0
 }
 
 log_warn() {
     echo -e "${YELLOW}[WARN]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    return 0
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1" >&2
+    return 0
 }
 
 # Ensure logs directory exists
@@ -73,29 +77,33 @@ ensure_logs_dir() {
         mkdir -p "${LOGS_DIR}"
         log_info "Created logs directory: ${LOGS_DIR}"
     fi
+    return 0
 }
 
 # Print help message
 show_help() {
     head -32 "$0" | tail -28
+    return 0
 }
 
 # Parse command line arguments
 parse_args() {
     # New descriptive names
-    INFRA=false
-    WEB_APP=false
-    WEB_UI=false
-    MICROSERVICES=false
-    OLLAMA=false
-    CLEAN=false
-    BLOCK=false
-    DATABASE=false
-    REDIS=false
-    ALL=false
+    local INFRA=false
+    local WEB_APP=false
+    local WEB_UI=false
+    local MICROSERVICES=false
+    local OLLAMA=false
+    local CLEAN=false
+    local BLOCK=false
+    local DATABASE=false
+    local REDIS=false
+    local ALL=false
+    local option
 
     while [[ $# -gt 0 ]]; do
-        case $1 in
+        option="$1"
+        case $option in
             # Start everything (all services including microservices)
             --all)
                 ALL=true
@@ -172,7 +180,7 @@ parse_args() {
                 exit 0
                 ;;
             *)
-                log_error "Unknown option: $1"
+                log_error "Unknown option: $option" >&2
                 show_help
                 exit 1
                 ;;
@@ -190,7 +198,7 @@ parse_args() {
         MICROSERVICES=true
         log_info "No options specified, starting full stack (infra + web-app + web-ui + microservices)"
     fi
-    
+
     # --all flag enables everything
     if [[ "$ALL" == true ]]; then
         INFRA=true
@@ -198,6 +206,7 @@ parse_args() {
         WEB_UI=true
         MICROSERVICES=true
     fi
+    return 0
 }
 
 # Stop existing services
@@ -346,15 +355,18 @@ start_docker() {
             log_info "Capturing ${service} logs to ${LOGS_DIR}/${service}.log"
         fi
     done
+    return 0
 }
 
 # Start Web Application (FastAPI backend)
 start_web_app() {
+    local WEB_APP_PID
+
     log_info "Starting FastAPI web application..."
 
     # Check if uv is available
     if ! command -v uv &> /dev/null; then
-        log_error "uv is not installed. Install with: pip install uv"
+        log_error "uv is not installed. Install with: pip install uv" >&2
         exit 1
     fi
 
@@ -367,7 +379,7 @@ start_web_app() {
 
     # Check if port is already in use
     if lsof -ti:${BACKEND_PORT} >/dev/null 2>&1; then
-        log_warn "Port ${BACKEND_PORT} is already in use. Attempting to kill..."
+        log_warn "Port ${BACKEND_PORT} is already in use. Attempting to kill..." >&2
         kill $(lsof -ti:${BACKEND_PORT}) 2>/dev/null || true
         sleep 2
     fi
@@ -383,6 +395,7 @@ start_web_app() {
 
     # Wait for web app to be ready
     log_info "Waiting for web application to be ready..."
+    local i
     for i in {1..30}; do
         if curl -s "http://localhost:${BACKEND_PORT}/health" >/dev/null 2>&1; then
             log_success "Web application is ready!"
@@ -391,23 +404,26 @@ start_web_app() {
         sleep 1
     done
 
-    log_error "Web application failed to start. Check logs at: ${LOGS_DIR}/web-app.log"
+    log_error "Web application failed to start. Check logs at: ${LOGS_DIR}/web-app.log" >&2
     return 1
 }
 
 # Start Web UI (Vite frontend)
 start_web_ui() {
+    local WEB_UI_PID
+    local i
+
     log_info "Starting Vite web UI..."
 
     # Check if package.json exists
     if [[ ! -f "${PROJECT_ROOT}/web/frontend/package.json" ]]; then
-        log_error "Web UI package.json not found"
+        log_error "Web UI package.json not found" >&2
         return 1
     fi
 
     # Check if port is already in use
     if lsof -ti:${FRONTEND_PORT} >/dev/null 2>&1; then
-        log_warn "Port ${FRONTEND_PORT} is already in use. Attempting to kill..."
+        log_warn "Port ${FRONTEND_PORT} is already in use. Attempting to kill..." >&2
         kill $(lsof -ti:${FRONTEND_PORT}) 2>/dev/null || true
         sleep 2
     fi
@@ -415,7 +431,7 @@ start_web_ui() {
     # Start web UI
     # Check if npm is available
     if ! command -v npm &> /dev/null; then
-        log_error "npm is not installed. Install Node.js and npm first."
+        log_error "npm is not installed. Install Node.js and npm first." >&2
         return 1
     fi
 
@@ -437,7 +453,7 @@ start_web_ui() {
         sleep 1
     done
 
-    log_error "Web UI failed to start. Check logs at: ${LOGS_DIR}/web-ui.log"
+    log_error "Web UI failed to start. Check logs at: ${LOGS_DIR}/web-ui.log" >&2
     return 1
 }
 
@@ -496,6 +512,7 @@ print_summary() {
     echo "  To stop:"
     echo -e "    ${YELLOW}./scripts/setup_local_env/start.sh --clean${NC}  (all services)"
     echo ""
+    return 0
 }
 
 # Main function
@@ -533,7 +550,7 @@ main() {
     if [[ "$BLOCK" == true ]]; then
         log_info "Blocking and showing logs (Ctrl+C to stop)..."
         echo ""
-        TAIL_PIDS=()
+        local TAIL_PIDS=()
         if [[ "$WEB_APP" == true ]]; then
             echo "--- Web App Log ---"
             tail -f "${LOGS_DIR}/web-app.log" &
@@ -548,6 +565,7 @@ main() {
             wait "${TAIL_PIDS[@]}"
         fi
     fi
+    return 0
 }
 
 main "$@"

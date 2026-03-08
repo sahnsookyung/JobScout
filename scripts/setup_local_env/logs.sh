@@ -42,13 +42,14 @@ LINES=50
 # Print help message
 show_help() {
     head -22 "$0" | tail -18
+    return 0
 }
 
 # Print log file with header
 print_log() {
-    local label=$1
-    local file=$2
-    local color=$3
+    local label="$1"
+    local file="$2"
+    local color="$3"
 
     if [[ -f "$file" ]]; then
         echo -e "${color}=== ${label} ===${NC}"
@@ -58,8 +59,9 @@ print_log() {
             tail -n ${LINES} "$file"
         fi
     else
-        echo -e "${YELLOW}[${label}]${NC} Log file not found: $file"
+        echo -e "${YELLOW}[${label}]${NC} Log file not found: $file" >&2
     fi
+    return 0
 }
 
 # List all logs
@@ -71,13 +73,14 @@ list_logs() {
         echo -e "  ${GREEN}Application Logs:${NC}"
         ls -lh "${LOGS_DIR}"/*.log 2>/dev/null | awk '{print "    " $9 " (" $5 ")"}' || echo "    (empty)"
     else
-        echo -e "  ${YELLOW}Logs directory not found: ${LOGS_DIR}${NC}"
+        echo -e "  ${YELLOW}Logs directory not found: ${LOGS_DIR}${NC}" >&2
     fi
 
     echo ""
     echo -e "  ${CYAN}Docker Logs:${NC}"
     echo "    Run: ${YELLOW}docker compose logs${NC}"
     echo "    Or: ${YELLOW}./logs.sh docker${NC}"
+    return 0
 }
 
 # Main function
@@ -85,10 +88,12 @@ main() {
     local follow=false
     local clear=false
     local service="all"
+    local option
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
-        case $1 in
+        option="$1"
+        case $option in
             -f|--follow)
                 follow=true
                 shift
@@ -102,11 +107,11 @@ main() {
                 exit 0
                 ;;
             backend|frontend|docker|postgres|redis)
-                service=$1
+                service="$option"
                 shift
                 ;;
             -*)
-                echo -e "${RED}Unknown option: $1${NC}"
+                echo -e "${RED}Unknown option: $1${NC}" >&2
                 show_help
                 exit 1
                 ;;
@@ -224,10 +229,11 @@ main() {
                     docker compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES} redis
                 fi
             else
-                echo -e "${RED}docker-compose.yml not found${NC}"
+                echo -e "${RED}docker-compose.yml not found${NC}" >&2
             fi
             ;;
     esac
+    return 0
 }
 
 main "$@"
