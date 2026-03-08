@@ -7,6 +7,7 @@ import json
 import os
 import asyncio
 import logging
+import re
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -35,6 +36,40 @@ logger = logging.getLogger(__name__)
 limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
+
+# Pre-compiled pattern for task_id validation
+# Format used by orchestrator: "match-{8 hex chars}" e.g., "match-a1b2c3d4"
+TASK_ID_PATTERN = re.compile(r'^[a-zA-Z0-9-]{1,50}$')
+
+
+def _sanitize_for_logging(value: str) -> str:
+    """Remove log injection characters (CRLF) from user input.
+    
+    Prevents CWE-117: Improper Output Neutralization for Logs.
+    """
+    if not isinstance(value, str):
+        return str(value)
+    # Remove CR, LF, and null bytes to prevent log forging
+    # Using chr(13), chr(10), chr(0) to ensure actual control characters
+    return value.replace(chr(13), '').replace(chr(10), '').replace(chr(0), '')
+
+
+def _validate_task_id(task_id: str) -> bool:
+    """Validate task_id using allowlist validation.
+    
+    Prevents CWE-952: URL manipulation and path injection attacks.
+    
+    Args:
+        task_id: The task identifier from user input
+        
+    Returns:
+        True if valid, False otherwise
+    """
+    if not task_id or not isinstance(task_id, str):
+        return False
+    if len(task_id) > 50:
+        return False
+    return bool(TASK_ID_PATTERN.match(task_id))
 
 
 def add_rate_limit_handlers(app):
@@ -208,18 +243,18 @@ async def _stream_orchestrator_sse(orchestrator_url: str, task_id: str):
                 f"{orchestrator_url}/orchestrate/status/{task_id}"
             ) as response:
                 if response.status_code == 404:
-                    logger.error("Orchestrator: task %s not found", task_id)
+                    logger.error("Orchestrator: task %s not found", _sanitize_for_logging(task_id))
                     yield f"data: {json.dumps({'error': 'Task not found', 'status': 'failed'})}\n\n"
                     return
                 if response.is_error:
-                    logger.error("Orchestrator returned %s for task %s", response.status_code, task_id)
+                    logger.error("Orchestrator returned %s for task %s", response.status_code, _sanitize_for_logging(task_id))
                     yield f"data: {json.dumps({'error': 'Failed to get pipeline status'})}\n\n"
                     return
                 async for chunk in response.aiter_raw():
                     if chunk:
                         yield chunk
     except Exception:
-        logger.exception("Failed to connect to orchestrator for task %s", task_id)
+        logger.exception("Failed to connect to orchestrator for task %s", _sanitize_for_logging(task_id))
         yield f"data: {json.dumps({'error': 'Failed to connect to pipeline service'})}\n\n"
 
 
@@ -240,13 +275,14 @@ async def _preflight_task_check(orchestrator_url: str, task_id: str) -> None:
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning("Pre-flight check failed for task %s: %s", task_id, e)
+        logger.warning("Pre-flight check failed for task %s: %s", _sanitize_for_logging(task_id), _sanitize_for_logging(str(e)))
 
 
 @router.get(
     "/events/{task_id}",
     responses={
         404: {"description": "Task not found"},
+        400: {"description": "Invalid task_id format"},
     }
 )
 async def pipeline_events(task_id: str):
@@ -258,7 +294,15 @@ async def pipeline_events(task_id: str):
 
     Raises:
         404: Task does not exist in the orchestrator.
+        400: Invalid task_id format.
     """
+    # Validate task_id BEFORE any use (OWASP: Validate Early)
+    if not _validate_task_id(task_id):
+        raise HTTPException(
+            status_code=400, 
+            detail="Invalid task_id format. Must be alphanumeric with hyphens, max 50 characters."
+        )
+    
     orchestrator_url = os.getenv("ORCHESTRATOR_URL", "http://localhost:8084")
     await _preflight_task_check(orchestrator_url, task_id)
 
@@ -293,7 +337,16 @@ def check_resume_hash_endpoint(request: Request, body: ResumeHashCheckRequest):
     )
 
 
-@router.post("/upload-resume", response_model=ResumeUploadResponse)
+@router.post(
+    "/upload-resume", 
+    response_model=ResumeUploadResponse,
+    responses={
+        400: {"description": "Invalid file, empty file, or hash mismatch"},
+        413: {"description": "File size exceeds 2MB limit"},
+        415: {"description": "Unsupported file format"},
+        429: {"description": "Rate limit exceeded"},
+    }
+)
 @limiter.limit("5/minute")
 async def upload_resume_endpoint(
     request: Request,

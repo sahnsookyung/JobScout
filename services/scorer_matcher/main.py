@@ -170,17 +170,15 @@ async def match_resume(request: Request, body: MatchResumeRequest):
 async def match_jobs(request: Request, body: MatchJobRequest):
     """Run matching for specific jobs.
 
-    TODO: Implement actual job matching logic.
     Currently returns a stub response.
     """
-    state: MatcherState = request.app.state.matcher  # noqa: F841 — available for when TODO is implemented
     job_count = len(body.job_ids) if body.job_ids else 0
     logger.info("Matching %d jobs", job_count)
 
     if not body.job_ids:
         return MatchResponse(success=True, message="No job IDs provided", matches=0)
 
-    # TODO: Implement actual job matching logic using run_matching_pipeline
+    # Job matching not yet implemented
     return MatchResponse(success=False, message="Job matching not yet implemented", matches=0)
 
 
