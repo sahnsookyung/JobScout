@@ -330,6 +330,32 @@ class TestEmbedFacetsOne:
         assert mock_ai.generate_embedding.call_count == 1
         mock_repo.update_facet_embedding.assert_called_once()
 
+    def test_embed_facets_uses_facet_text_field(self):
+        """Test embedding uses JobFacetEmbedding.facet_text field."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        mock_ai.generate_embedding.return_value = [0.1, 0.2, 0.3]
+
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+        mock_job = Mock()
+        mock_job.id = "job-123"
+        mock_job.content_hash = "hash123"
+
+        mock_facet = Mock()
+        mock_facet.id = "facet-1"
+        mock_facet.facet_text = "Remote work available"
+        mock_facet.embedding = None
+
+        mock_repo.get_facets_for_job.return_value = [mock_facet]
+
+        service.embed_facets_one(mock_repo, mock_job)
+
+        mock_ai.generate_embedding.assert_called_once_with("Remote work available")
+        mock_repo.update_facet_embedding.assert_called_once()
+
     def test_embed_facets_no_facets(self):
         """Test embedding with no facets."""
         from etl.orchestrator import JobETLService
@@ -459,6 +485,27 @@ class TestEmbedJobOne:
 
         mock_ai.generate_embedding.assert_called_once()
 
+    def test_embed_job_rejects_invalid_vector(self):
+        """Test job embedding rejects invalid vectors."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        mock_ai.generate_embedding.return_value = []
+
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+        mock_job = Mock()
+        mock_job.id = "job-123"
+        mock_job.requirements = []
+        mock_job.benefits = []
+        mock_job.description = "description"
+
+        with pytest.raises(ValueError, match="Invalid embedding vector"):
+            service.embed_job_one(mock_repo, mock_job)
+
+        mock_repo.save_job_embedding.assert_not_called()
+
 
 class TestEmbedRequirementOne:
     """Test embed_requirement_one method."""
@@ -481,6 +528,25 @@ class TestEmbedRequirementOne:
 
         mock_ai.generate_embedding.assert_called_once_with(mock_req.text)
         mock_repo.save_requirement_embedding.assert_called_once()
+
+    def test_embed_requirement_rejects_invalid_vector(self):
+        """Test requirement embedding rejects invalid vectors."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        mock_ai.generate_embedding.return_value = [0.1, float("nan")]
+
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+        mock_req = Mock()
+        mock_req.id = "req-123"
+        mock_req.text = "Python programming skills"
+
+        with pytest.raises(ValueError, match="Invalid embedding vector"):
+            service.embed_requirement_one(mock_repo, mock_req)
+
+        mock_repo.save_requirement_embedding.assert_not_called()
 
 
 class TestExtractAndEmbedResume:
@@ -851,6 +917,270 @@ class TestUnloadModels:
         service.unload_models()
 
         # Should not raise any error
+
+
+class TestEmbedFacetsOneAdditional:
+    """Additional coverage tests for embed_facets_one edge cases."""
+
+    def test_all_facets_already_embedded_returns_zero(self):
+        """When every facet already has an embedding, returns 0 without API calls."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+        mock_job = Mock()
+        mock_job.id = "job-123"
+        mock_job.content_hash = "hash123"
+
+        # All facets already have embeddings
+        mock_facet1 = Mock()
+        mock_facet1.id = "facet-1"
+        mock_facet1.embedding = [0.1, 0.2]
+        mock_facet2 = Mock()
+        mock_facet2.id = "facet-2"
+        mock_facet2.embedding = [0.3, 0.4]
+
+        mock_repo.get_facets_for_job.return_value = [mock_facet1, mock_facet2]
+
+        result = service.embed_facets_one(mock_repo, mock_job)
+
+        assert result == 0
+        mock_ai.generate_embedding.assert_not_called()
+
+    def test_facet_with_no_text_is_skipped(self):
+        """Facets with neither facet_text nor text are skipped (no embedding call)."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        mock_ai.generate_embedding.return_value = [0.1, 0.2, 0.3]
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+        mock_job = Mock()
+        mock_job.id = "job-123"
+        mock_job.content_hash = "hash123"
+
+        # Facet with no text: both facet_text and text explicitly None
+        mock_facet = Mock(spec=["id", "facet_text", "text", "embedding"])
+        mock_facet.id = "facet-1"
+        mock_facet.facet_text = None
+        mock_facet.text = None
+        mock_facet.embedding = None
+
+        mock_repo.get_facets_for_job.return_value = [mock_facet]
+
+        result = service.embed_facets_one(mock_repo, mock_job)
+
+        assert result == 0
+        mock_ai.generate_embedding.assert_not_called()
+
+
+class TestLoadAndCheckResumeAdditional:
+    """Additional coverage tests for _load_and_check_resume."""
+
+    def test_known_fingerprint_skips_file_read_when_unchanged(self):
+        """When known_fingerprint is provided and DB has a match, returns unchanged."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+        mock_repo.resume.get_structured_resume_by_fingerprint.return_value = Mock()
+
+        changed, fp, data = service._load_and_check_resume(
+            mock_repo, "resume.pdf", known_fingerprint="fp-known"
+        )
+
+        assert changed is False
+        assert fp == "fp-known"
+        assert data is None
+        # File should never have been opened
+        mock_repo.resume.get_structured_resume_by_fingerprint.assert_called_once_with("fp-known")
+
+    def test_known_fingerprint_parses_file_when_changed(self):
+        """When known_fingerprint is provided but DB has no match, parses the file."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+        mock_repo.resume.get_structured_resume_by_fingerprint.return_value = None
+
+        mock_parsed = Mock()
+        mock_parsed.data = {"name": "Jane"}
+        mock_parsed.text = "resume text"
+
+        with patch("etl.orchestrator.ResumeParser") as mock_parser_class:
+            mock_parser_class.return_value.parse.return_value = mock_parsed
+
+            changed, fp, data = service._load_and_check_resume(
+                mock_repo, "resume.pdf", known_fingerprint="fp-known"
+            )
+
+        assert changed is True
+        assert fp == "fp-known"
+        assert data == {"name": "Jane"}
+
+    def test_parsed_data_none_falls_back_to_raw_text(self):
+        """When parser returns data=None, resume_data uses raw_text from parsed.text."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+        mock_repo.resume.get_structured_resume_by_fingerprint.return_value = None
+
+        mock_parsed = Mock()
+        mock_parsed.data = None
+        mock_parsed.text = "raw resume content"
+
+        with patch("os.path.exists", return_value=True):
+            with patch("etl.orchestrator.generate_file_fingerprint", return_value="fp-abc"):
+                with patch("builtins.open", mock_open(read_data=b"bytes")):
+                    with patch("etl.orchestrator.ResumeParser") as mock_parser_class:
+                        mock_parser_class.return_value.parse.return_value = mock_parsed
+
+                        changed, fp, data = service._load_and_check_resume(
+                            mock_repo, "resume.pdf"
+                        )
+
+        assert changed is True
+        assert data == {"raw_text": "raw resume content"}
+
+
+class TestExtractAndEmbedResumeAdditional:
+    """Additional coverage for extract_and_embed_resume edge cases."""
+
+    def test_extraction_returns_false_returns_failure_tuple(self):
+        """When _extract_resume_data returns extracted=False, returns (False, fp, None)."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+        mock_repo.resume.get_structured_resume_by_fingerprint.return_value = None
+
+        with patch.object(
+            service, "_load_and_check_resume",
+            return_value=(True, "fp-123", {"name": "J"}),
+        ):
+            with patch.object(
+                service, "_extract_resume_data",
+                return_value=(False, "fp-123", None),
+            ):
+                result = service.extract_and_embed_resume(mock_repo, "resume.pdf")
+
+        assert result == (False, "fp-123", None)
+
+    def test_exception_in_extract_is_reraised(self):
+        """An exception raised by _extract_resume_data propagates out."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+
+        with patch.object(
+            service, "_load_and_check_resume",
+            return_value=(True, "fp-123", {"name": "J"}),
+        ):
+            with patch.object(
+                service, "_extract_resume_data",
+                side_effect=RuntimeError("extraction boom"),
+            ):
+                with pytest.raises(RuntimeError, match="extraction boom"):
+                    service.extract_and_embed_resume(mock_repo, "resume.pdf")
+
+
+class TestExtractResumeDataAdditional:
+    """Additional coverage for _extract_resume_data exception path."""
+
+    def test_profiler_exception_is_reraised(self):
+        """An exception from ResumeProfiler.extract_only propagates out."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+
+        with patch("etl.orchestrator.ResumeProfiler") as mock_profiler_class:
+            mock_profiler_class.return_value.extract_only.side_effect = RuntimeError("LLM down")
+
+            with pytest.raises(RuntimeError, match="LLM down"):
+                service._extract_resume_data(mock_repo, "fp-123", {"name": "J"})
+
+
+class TestExtractResumeWithKnownFingerprint:
+    """Tests for extract_resume when known_fingerprint is supplied."""
+
+    def test_known_fingerprint_existing_returns_unchanged(self):
+        """When known_fingerprint is provided and DB already has it, returns unchanged."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+        mock_repo.resume.get_structured_resume_by_fingerprint.return_value = Mock()
+
+        result = service.extract_resume(mock_repo, "resume.pdf", known_fingerprint="fp-known")
+
+        assert result == (False, "fp-known", None)
+
+    def test_known_fingerprint_not_in_db_parses_and_extracts(self):
+        """When known_fingerprint not in DB, parses file and runs extraction."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+        mock_repo.resume.get_structured_resume_by_fingerprint.return_value = None
+
+        mock_parsed = Mock()
+        mock_parsed.data = {"skills": ["Python"]}
+        mock_parsed.text = "text"
+
+        with patch("etl.orchestrator.ResumeParser") as mock_parser_class:
+            mock_parser_class.return_value.parse.return_value = mock_parsed
+            with patch.object(
+                service,
+                "_extract_resume_data",
+                return_value=(True, "fp-known", {"skills": ["Python"]}),
+            ) as mock_extract:
+                result = service.extract_resume(
+                    mock_repo, "resume.pdf", known_fingerprint="fp-known"
+                )
+
+        mock_extract.assert_called_once()
+        assert result == (True, "fp-known", {"skills": ["Python"]})
+
+    def test_known_fingerprint_parse_error_returns_failure(self):
+        """When known_fingerprint provided but parse fails, returns (False, fp, None)."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+        mock_repo.resume.get_structured_resume_by_fingerprint.return_value = None
+
+        with patch("etl.orchestrator.ResumeParser") as mock_parser_class:
+            mock_parser_class.return_value.parse.side_effect = ValueError("bad file")
+
+            result = service.extract_resume(
+                mock_repo, "resume.pdf", known_fingerprint="fp-known"
+            )
+
+        assert result == (False, "fp-known", None)
 
 
 if __name__ == "__main__":

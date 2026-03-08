@@ -58,7 +58,9 @@ class TestMarkJobFailed:
 
             _mark_job_failed(123, "ValueError", "Test error")
 
-            mock_repo.mark_extraction_failed.assert_called_once_with(123, "ValueError: Test error")
+            mock_repo.mark_extraction_retryable_failed.assert_called_once_with(
+                123, "ValueError: Test error"
+            )
 
     def test_mark_job_failed_handles_exception(self):
         """Test marking job as failed handles exception."""
@@ -367,7 +369,7 @@ class TestRunResumeExtraction:
         from unittest.mock import mock_open
         with patch('services.base.extraction.generate_file_fingerprint') as mock_fingerprint:
             with patch('builtins.open', mock_open(read_data=b'test content')):
-                with patch('services.base.extraction._load_resume_with_parser') as mock_load:
+                with patch('services.base.extraction.load_resume_with_parser') as mock_load:
                     mock_load.return_value = {"name": "Test"}
                     mock_fingerprint.return_value = "abc123"
 
@@ -379,7 +381,7 @@ class TestRunResumeExtraction:
     def test_run_resume_extraction_with_known_fingerprint(self):
         """Test resume extraction with pre-computed fingerprint (skips file read)."""
         from services.base.extraction import run_resume_extraction
-        with patch('services.base.extraction._load_resume_with_parser') as mock_load:
+        with patch('services.base.extraction.load_resume_with_parser') as mock_load:
             mock_load.return_value = {"name": "Test"}
 
             result = run_resume_extraction(Mock(), "/path/to/resume.json", known_fingerprint="precomputed-fp")
@@ -390,7 +392,7 @@ class TestRunResumeExtraction:
     def test_run_resume_extraction_file_not_found(self):
         """Test resume extraction file not found."""
         from services.base.extraction import run_resume_extraction
-        with patch('services.base.extraction._load_resume_with_parser') as mock_load:
+        with patch('services.base.extraction.load_resume_with_parser') as mock_load:
             mock_load.side_effect = FileNotFoundError("File not found")
 
             result = run_resume_extraction(Mock(), "/nonexistent/resume.json")
@@ -403,7 +405,7 @@ class TestRunResumeExtraction:
         from unittest.mock import mock_open
         with patch('services.base.extraction.generate_file_fingerprint') as mock_fingerprint:
             with patch('builtins.open', mock_open(read_data=b'test content')):
-                with patch('services.base.extraction._load_resume_with_parser') as mock_load:
+                with patch('services.base.extraction.load_resume_with_parser') as mock_load:
                     mock_fingerprint.return_value = "abc123"
                     mock_load.side_effect = ValueError("Parse error")
 
@@ -446,3 +448,273 @@ class TestExtractResume:
             result = extract_resume(mock_ctx, "/path/to/resume.json")
 
             assert result == (False, "")
+
+
+class TestRunExtractionBatchAdditional:
+    """Additional branch coverage for _run_extraction_batch."""
+
+    def test_no_jobs_returns_zero(self):
+        """When no unextracted jobs exist, returns 0."""
+        from services.base.extraction import _run_extraction_batch
+        with patch('services.base.extraction.job_uow') as mock_uow:
+            mock_repo = MagicMock()
+            mock_repo.get_unextracted_jobs.return_value = []
+            mock_uow.return_value.__enter__ = Mock(return_value=mock_repo)
+            mock_uow.return_value.__exit__ = Mock(return_value=False)
+
+            result = _run_extraction_batch(Mock(), threading.Event(), limit=10)
+
+            assert result == 0
+
+    def test_stop_event_breaks_mid_loop(self):
+        """When stop_event is set before processing, the loop exits early."""
+        from services.base.extraction import _run_extraction_batch
+        with patch('services.base.extraction.job_uow') as mock_uow:
+            with patch('services.base.extraction._extract_single_job', return_value=True) as mock_extract:
+                mock_repo = MagicMock()
+                job1, job2 = MagicMock(id=1), MagicMock(id=2)
+                mock_repo.get_unextracted_jobs.return_value = [job1, job2]
+                mock_uow.return_value.__enter__ = Mock(return_value=mock_repo)
+                mock_uow.return_value.__exit__ = Mock(return_value=False)
+
+                stop_event = threading.Event()
+                stop_event.set()  # set before starting
+
+                result = _run_extraction_batch(Mock(), stop_event, limit=10)
+
+                assert result == 0
+                mock_extract.assert_not_called()
+
+
+class TestExtractSingleJobAdditional:
+    """Additional branch coverage for _extract_single_job."""
+
+    def test_stop_event_set_before_attempt(self):
+        """When stop_event is set, the retry loop never runs."""
+        from services.base.extraction import _extract_single_job
+        stop = threading.Event()
+        stop.set()
+
+        result = _extract_single_job(Mock(), 42, [30, 60], stop)
+
+        assert result is False
+
+
+class TestRetryFailedFacetExtractionsAdditional:
+    """Additional branch coverage for _retry_failed_facet_extractions."""
+
+    def test_no_failed_jobs_returns_zero(self):
+        """When no failed jobs exist, returns 0."""
+        from services.base.extraction import _retry_failed_facet_extractions
+        with patch('services.base.extraction.job_uow') as mock_uow:
+            mock_repo = MagicMock()
+            mock_repo.get_jobs_with_failed_facets.return_value = []
+            mock_uow.return_value.__enter__ = Mock(return_value=mock_repo)
+            mock_uow.return_value.__exit__ = Mock(return_value=False)
+
+            result = _retry_failed_facet_extractions(10, 5, threading.Event())
+
+            assert result == 0
+
+    def test_stop_event_breaks_loop(self):
+        """When stop_event is set, loop exits before processing any job."""
+        from services.base.extraction import _retry_failed_facet_extractions
+        with patch('services.base.extraction.job_uow') as mock_uow:
+            mock_repo = MagicMock()
+            mock_job = MagicMock(id=1, facet_status='failed')
+            mock_repo.get_jobs_with_failed_facets.return_value = [mock_job]
+            mock_repo.get_by_id.return_value = mock_job
+            mock_uow.return_value.__enter__ = Mock(return_value=mock_repo)
+            mock_uow.return_value.__exit__ = Mock(return_value=False)
+
+            stop = threading.Event()
+            stop.set()
+
+            result = _retry_failed_facet_extractions(10, 5, stop)
+
+            assert result == 0
+
+    def test_job_not_failed_status_is_skipped(self):
+        """Job whose status changed away from 'failed' is not reset."""
+        from services.base.extraction import _retry_failed_facet_extractions
+        with patch('services.base.extraction.job_uow') as mock_uow:
+            mock_repo = MagicMock()
+            mock_job = MagicMock(id=1, facet_status='done')  # already recovered
+            mock_repo.get_jobs_with_failed_facets.return_value = [mock_job]
+            mock_repo.get_by_id.return_value = mock_job
+            mock_uow.return_value.__enter__ = Mock(return_value=mock_repo)
+            mock_uow.return_value.__exit__ = Mock(return_value=False)
+
+            result = _retry_failed_facet_extractions(10, 5, threading.Event())
+
+            assert result == 0
+            mock_repo.update_job_facet_status.assert_not_called()
+
+    def test_exception_during_processing_is_swallowed(self):
+        """An exception inside the per-job UOW is caught and logged."""
+        from services.base.extraction import _retry_failed_facet_extractions
+        with patch('services.base.extraction.job_uow') as mock_uow:
+            mock_repo = MagicMock()
+            mock_job = MagicMock(id=1, facet_status='failed')
+            mock_repo.get_jobs_with_failed_facets.return_value = [mock_job]
+            # First call (get failed jobs) succeeds; second call (update status) raises
+            mock_uow.return_value.__enter__ = Mock(
+                side_effect=[mock_repo, Exception("DB error")]
+            )
+            mock_uow.return_value.__exit__ = Mock(return_value=False)
+
+            result = _retry_failed_facet_extractions(10, 5, threading.Event())
+
+            assert result == 0
+
+
+class TestRetryMissingFacetEmbeddingsAdditional:
+    """Additional branch coverage for _retry_missing_facet_embeddings."""
+
+    def test_no_missing_embeddings_returns_zero(self):
+        """When no jobs have missing embeddings, returns 0."""
+        from services.base.extraction import _retry_missing_facet_embeddings
+        with patch('services.base.extraction.job_uow') as mock_uow:
+            mock_repo = MagicMock()
+            mock_repo.get_jobs_with_missing_facet_embeddings.return_value = []
+            mock_uow.return_value.__enter__ = Mock(return_value=mock_repo)
+            mock_uow.return_value.__exit__ = Mock(return_value=False)
+
+            result = _retry_missing_facet_embeddings(Mock(), 10, 5, threading.Event())
+
+            assert result == 0
+
+    def test_job_not_done_status_is_skipped(self):
+        """Job whose facet_status is not 'done' is not re-embedded."""
+        from services.base.extraction import _retry_missing_facet_embeddings
+        with patch('services.base.extraction.job_uow') as mock_uow:
+            mock_repo = MagicMock()
+            mock_job = MagicMock(id=1, facet_status='failed')
+            mock_repo.get_jobs_with_missing_facet_embeddings.return_value = [mock_job]
+            mock_repo.get_by_id.return_value = mock_job
+            mock_uow.return_value.__enter__ = Mock(return_value=mock_repo)
+            mock_uow.return_value.__exit__ = Mock(return_value=False)
+
+            mock_ctx = Mock()
+            result = _retry_missing_facet_embeddings(mock_ctx, 10, 5, threading.Event())
+
+            assert result == 0
+            mock_ctx.job_etl_service.embed_facets_one.assert_not_called()
+
+    def test_exception_is_swallowed_and_logged(self):
+        """An exception during embed_facets_one is caught and logged."""
+        from services.base.extraction import _retry_missing_facet_embeddings
+        with patch('services.base.extraction.job_uow') as mock_uow:
+            mock_repo = MagicMock()
+            mock_job = MagicMock(id=1, facet_status='done')
+            mock_repo.get_jobs_with_missing_facet_embeddings.return_value = [mock_job]
+            mock_repo.get_by_id.return_value = mock_job
+            mock_uow.return_value.__enter__ = Mock(return_value=mock_repo)
+            mock_uow.return_value.__exit__ = Mock(return_value=False)
+
+            mock_ctx = Mock()
+            mock_ctx.job_etl_service.embed_facets_one.side_effect = Exception("GPU OOM")
+
+            result = _retry_missing_facet_embeddings(mock_ctx, 10, 5, threading.Event())
+
+            assert result == 0
+
+
+class TestRunFacetExtractionBatchAdditional:
+    """Additional branch coverage for _run_facet_extraction_batch."""
+
+    def test_no_jobs_claimed_returns_zero(self):
+        """When no jobs are claimed, the while loop breaks immediately."""
+        from services.base.extraction import _run_facet_extraction_batch
+        with patch('services.base.extraction.job_uow') as mock_uow:
+            mock_repo = MagicMock()
+            mock_repo.get_and_claim_jobs_for_facet_extraction.return_value = []
+            mock_uow.return_value.__enter__ = Mock(return_value=mock_repo)
+            mock_uow.return_value.__exit__ = Mock(return_value=False)
+
+            result = _run_facet_extraction_batch(Mock(), threading.Event(), limit=10)
+
+            assert result == 0
+
+    def test_stop_event_set_initially_returns_zero(self):
+        """When stop_event is set before entry, while loop never runs."""
+        from services.base.extraction import _run_facet_extraction_batch
+        stop = threading.Event()
+        stop.set()
+
+        result = _run_facet_extraction_batch(Mock(), stop, limit=10)
+
+        assert result == 0
+
+    def test_exception_in_process_calls_handle_error(self):
+        """Exception from _process_facet_job triggers _handle_facet_error."""
+        from services.base.extraction import _run_facet_extraction_batch
+        with patch('services.base.extraction.job_uow') as mock_uow:
+            with patch('services.base.extraction._process_facet_job',
+                       side_effect=Exception("extract boom")) as mock_process:
+                with patch('services.base.extraction._handle_facet_error') as mock_handle:
+                    mock_repo = MagicMock()
+                    mock_job = MagicMock(id=1)
+                    # Return one batch, then empty to break
+                    mock_repo.get_and_claim_jobs_for_facet_extraction.side_effect = [
+                        [mock_job], []
+                    ]
+                    mock_uow.return_value.__enter__ = Mock(return_value=mock_repo)
+                    mock_uow.return_value.__exit__ = Mock(return_value=False)
+
+                    result = _run_facet_extraction_batch(Mock(), threading.Event(), limit=10)
+
+                    mock_handle.assert_called_once_with(1)
+                    assert result == 0
+
+
+class TestHandleFacetError:
+    """Tests for _handle_facet_error."""
+
+    def test_marks_job_facets_failed(self):
+        """Normal path: logs error and marks job facets as failed."""
+        from services.base.extraction import _handle_facet_error
+        with patch('services.base.extraction.job_uow') as mock_uow:
+            mock_repo = MagicMock()
+            mock_uow.return_value.__enter__ = Mock(return_value=mock_repo)
+            mock_uow.return_value.__exit__ = Mock(return_value=False)
+
+            _handle_facet_error(42)
+
+            mock_repo.mark_job_facets_failed.assert_called_once()
+
+    def test_mark_fails_logs_warning(self, caplog):
+        """When mark_job_facets_failed raises, logs a warning without re-raising."""
+        import logging
+        from services.base.extraction import _handle_facet_error
+        with patch('services.base.extraction.job_uow') as mock_uow:
+            mock_uow.return_value.__enter__ = Mock(side_effect=Exception("DB down"))
+            mock_uow.return_value.__exit__ = Mock(return_value=False)
+
+            with caplog.at_level(logging.WARNING, logger='services.base.extraction'):
+                _handle_facet_error(42)  # must not raise
+
+            assert "Failed to mark job" in caplog.text
+
+
+class TestRunResumeExtractionAdditional:
+    """Additional branch coverage for run_resume_extraction."""
+
+    def test_parser_returns_none_returns_none_with_fp(self):
+        """When load_resume_with_parser returns None, returns (None, fingerprint)."""
+        from services.base.extraction import run_resume_extraction
+        from unittest.mock import mock_open
+        with patch('services.base.extraction.generate_file_fingerprint', return_value="fp-123"):
+            with patch('builtins.open', mock_open(read_data=b'bytes')):
+                with patch('services.base.extraction.load_resume_with_parser', return_value=None):
+                    result = run_resume_extraction(Mock(), "/resume.pdf")
+
+        assert result == (None, "fp-123")
+
+    def test_ioerror_reading_file_returns_empty_fp(self):
+        """IOError when opening the file returns (None, '')."""
+        from services.base.extraction import run_resume_extraction
+        with patch('builtins.open', side_effect=IOError("Permission denied")):
+            result = run_resume_extraction(Mock(), "/resume.pdf")
+
+        assert result == (None, "")
