@@ -11,6 +11,14 @@ from pgvector.sqlalchemy import Vector
 from .base import Base
 
 
+# ============================================================================
+# Constants - avoid duplication across models
+# ============================================================================
+
+# Server default for UTC timestamps
+UTC_NOW = sql_text("timezone('UTC', now())")
+
+
 class ResumeSectionEmbedding(Base):
     """
     Stores embeddings for individual resume sections.
@@ -33,9 +41,9 @@ class ResumeSectionEmbedding(Base):
     
     # Embedding
     embedding = Column(Vector(1024), nullable=False)
-    
+
     # Metadata
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
     
     __table_args__ = (
         # Composite index for retrieving all sections of a resume
@@ -66,7 +74,7 @@ class ResumeEvidenceUnitEmbedding(Base):
     years_context = Column(Text)  # What the years refer to (e.g., "Python", "total experience")
     is_total_years_claim = Column(Boolean, default=False)  # Whether this is a total years claim
 
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
 
     __table_args__ = (
         Index('idx_rfue_fingerprint', 'resume_fingerprint'),
@@ -99,8 +107,8 @@ class StructuredResume(Base):
     extraction_warnings = Column(JSONB, default=[])  # List of warning messages
     
     # Timestamps
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
-    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"), onupdate=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW, onupdate=UTC_NOW)
 
     __table_args__ = (
         # Index for finding resumes by fingerprint
