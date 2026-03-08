@@ -47,7 +47,7 @@ if command -v python3 &> /dev/null; then
     PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
     MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
     MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
-    if [ "$MAJOR" -ge 3 ] && [ "$MINOR" -ge 11 ]; then
+    if [[ "$MAJOR" -ge 3 ]] && [[ "$MINOR" -ge 11 ]]; then
         log_ok "Python $PYTHON_VERSION (requires 3.11+)"
     else
         log_error "Python $PYTHON_VERSION found, but 3.11+ required"
@@ -82,7 +82,7 @@ log_check "Checking Node.js..."
 if command -v node &> /dev/null; then
     NODE_VERSION=$(node --version 2>&1 | sed 's/v//')
     MAJOR=$(echo $NODE_VERSION | cut -d. -f1)
-    if [ "$MAJOR" -ge 18 ]; then
+    if [[ "$MAJOR" -ge 18 ]]; then
         log_ok "Node.js $NODE_VERSION (requires 18+)"
     else
         log_warn "Node.js $NODE_VERSION found, but 18+ recommended"
@@ -93,7 +93,7 @@ fi
 
 # Check resume.json
 log_check "Checking resume.json..."
-if [ -f "resume.json" ]; then
+if [[ -f "resume.json" ]]; then
     if python3 -m json.tool resume.json > /dev/null 2>&1; then
         log_ok "resume.json exists and is valid JSON"
     else
@@ -105,10 +105,10 @@ fi
 
 # Check config.yaml
 log_check "Checking config.yaml..."
-if [ -f "config.yaml" ]; then
+if [[ -f "config.yaml" ]]; then
     # Try to parse with PyYAML (use uv run python since system python may not have PyYAML)
     YAML_ERROR=$(uv run python -c "import yaml; yaml.safe_load(open('config.yaml'))" 2>&1)
-    if [ $? -eq 0 ]; then
+    if [[ $? -eq 0 ]]; then
         log_ok "config.yaml exists and is valid YAML"
     else
         log_error "config.yaml is invalid YAML:"
@@ -120,7 +120,7 @@ fi
 
 # Check .env
 log_check "Checking .env file..."
-if [ -f ".env" ]; then
+if [[ -f ".env" ]]; then
     log_ok ".env file exists"
     
     # Check for Discord webhook if notifications are enabled
@@ -181,11 +181,11 @@ fi
 # Summary
 echo ""
 echo "============================================================================="
-if [ $ERRORS -eq 0 ] && [ $WARNINGS -eq 0 ]; then
+if [[ $ERRORS -eq 0 ]] && [[ $WARNINGS -eq 0 ]]; then
     echo -e "${GREEN}✓ All checks passed!${NC} You're ready to run JobScout."
     echo ""
     echo "  Start with: ./scripts/setup_local_env/start.sh --docker --backend --frontend"
-elif [ $ERRORS -eq 0 ]; then
+elif [[ $ERRORS -eq 0 ]]; then
     echo -e "${YELLOW}⚠ $WARNINGS warning(s) found.${NC} JobScout may run, but some features might not work."
 else
     echo -e "${RED}✗ $ERRORS error(s) and $WARNINGS warning(s) found.${NC} Fix errors before running."
