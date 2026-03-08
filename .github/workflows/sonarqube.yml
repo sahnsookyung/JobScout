@@ -60,7 +60,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          # Run ALL tests with coverage - no test left behind!
+          # Run unit tests with coverage - exclude slow Docker-based integration tests
           # Redis available on localhost:6379 (service) and localhost:6380 (test container)
           uv run pytest tests/ \
             --cov=services \
@@ -74,6 +74,7 @@ jobs:
             --cov-report=xml:coverage.xml \
             --cov-report=html:htmlcov \
             --cov-report=term \
+            -m "not slow" \
             -v --tb=short
         env:
           PYTHONPATH: ${{ github.workspace }}

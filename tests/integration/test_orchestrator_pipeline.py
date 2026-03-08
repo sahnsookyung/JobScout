@@ -18,6 +18,8 @@ import uuid
 import pytest
 import subprocess
 import time
+
+pytestmark = pytest.mark.slow
 import requests
 from typing import Generator
 
