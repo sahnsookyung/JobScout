@@ -3,7 +3,6 @@
  * Covers: api.ts
  */
 
-import axios, { AxiosError } from 'axios';
 import { getMockHandlers, createMockError, testErrorInterceptor } from './api.test.utils';
 
 // Mock axios with interceptors support - must be before apiClient import

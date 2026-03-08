@@ -595,3 +595,59 @@ class TestMatchServiceHelpers:
         penalty_details = 123
         result = service._parse_penalty_details(penalty_details)
         assert result == {}
+
+    def test_to_match_summary_exception_in_job_field_access(self, service):
+        """_to_match_summary falls back to Unknown when job field access raises."""
+        from unittest.mock import PropertyMock
+
+        mock_match = Mock()
+        mock_match.id = "match-1"
+        mock_match.fit_score = None
+        mock_match.want_score = None
+        mock_match.overall_score = None
+        mock_match.base_score = None
+        mock_match.penalties = None
+        mock_match.required_coverage = None
+        mock_match.preferred_coverage = None
+        mock_match.match_type = None
+        mock_match.is_hidden = None
+        mock_match.created_at = None
+        mock_match.calculated_at = None
+
+        # job_post is a truthy object whose .id property raises
+        mock_job = Mock()
+        type(mock_job).id = PropertyMock(side_effect=RuntimeError("connection lost"))
+        mock_match.job_post = mock_job
+
+        result = service._to_match_summary(mock_match)
+
+        assert result.title == "Unknown"
+        assert result.company == "Unknown"
+        assert result.job_id is None
+        assert result.location is None
+        assert result.is_remote is False
+
+
+class TestMatchServiceGetMatchDetailException:
+    """Test exception path in get_match_detail."""
+
+    @pytest.fixture
+    def mock_db(self):
+        return Mock(spec=Session)
+
+    @pytest.fixture
+    def service(self, mock_db):
+        from web.backend.services.match_service import MatchService
+        return MatchService(mock_db)
+
+    def test_get_match_detail_reraises_db_exception(self, service, mock_db):
+        """get_match_detail logs and re-raises when try block raises."""
+        mock_match = Mock()
+        mock_match.id = "match-1"
+        mock_match.job_post_id = "job-1"
+
+        # First .get() returns the match; second .get() raises
+        mock_db.query.return_value.get.side_effect = [mock_match, RuntimeError("DB gone")]
+
+        with pytest.raises(RuntimeError, match="DB gone"):
+            service.get_match_detail("match-1")

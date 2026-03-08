@@ -31,29 +31,38 @@ class TestPipelineRouter:
         return TestClient(app, raise_server_exceptions=False)
 
     def test_run_matching_pipeline_success(self, client):
-        """Test successful pipeline start."""
-        with patch('web.backend.services.clients.orchestrator_client') as mock_client:
-            mock_client.start_matching.return_value = {
-                'success': True,
-                'task_id': 'test-task-123',
-                'message': 'Pipeline started'
-            }
+        """Test successful pipeline start via Redis stream."""
+        mock_r = Mock()
+        mock_r.get.return_value = None  # no active task, no resume upload in progress
+        with patch('web.backend.routers.pipeline.get_redis_client', return_value=mock_r), \
+             patch('web.backend.routers.pipeline.set_task_state') as mock_set_task_state, \
+             patch('web.backend.routers.pipeline.get_task_state', return_value=None), \
+             patch('web.backend.routers.pipeline.enqueue_job'), \
+             patch('web.backend.routers.pipeline.job_uow') as mock_uow:
+            mock_repo = Mock()
+            mock_repo.resume.get_latest_stored_resume_fingerprint.return_value = 'abc123'
+            mock_uow.return_value.__enter__ = Mock(return_value=mock_repo)
+            mock_uow.return_value.__exit__ = Mock(return_value=False)
 
             response = client.post('/api/pipeline/run-matching')
 
             assert response.status_code == 200
             data = response.json()
             assert data['success'] is True
-            assert data['task_id'] == 'test-task-123'
+            assert data['task_id']
+            task_id = data['task_id']
+            mock_set_task_state.assert_called_with(
+                task_id,
+                {"status": "pending", "step": "initializing"},
+                ttl=3600,
+            )
 
     def test_run_matching_pipeline_locked(self, client):
-        """Test pipeline start when locked."""
-        from web.backend.exceptions import PipelineLockedException
-
-        with patch('web.backend.services.clients.orchestrator_client') as mock_client:
-            mock_client.start_matching.side_effect = PipelineLockedException(
-                "Pipeline is already running"
-            )
+        """Test pipeline start returns 409 when a task is already running in Redis."""
+        mock_r = Mock()
+        mock_r.get.return_value = b'existing-task-id'
+        with patch('web.backend.routers.pipeline.get_redis_client', return_value=mock_r), \
+             patch('web.backend.routers.pipeline.get_task_state', return_value={'status': 'running'}):
 
             response = client.post('/api/pipeline/run-matching')
 
@@ -61,23 +70,30 @@ class TestPipelineRouter:
             assert 'already running' in response.json()['detail'].lower()
 
     def test_run_matching_pipeline_already_running(self, client):
-        """Test pipeline start when already running (from orchestrator)."""
-        with patch('web.backend.services.clients.orchestrator_client') as mock_client:
-            mock_client.start_matching.return_value = {
-                'success': False,
-                'task_id': '',
-                'message': 'Pipeline is already running'
-            }
+        """Test pipeline start returns 409 when a task is pending in Redis."""
+        mock_r = Mock()
+        mock_r.get.return_value = b'existing-task-id'
+        with patch('web.backend.routers.pipeline.get_redis_client', return_value=mock_r), \
+             patch('web.backend.routers.pipeline.get_task_state', return_value={'status': 'pending'}):
 
             response = client.post('/api/pipeline/run-matching')
 
             assert response.status_code == 409
-            assert 'already running' in response.json()['detail']
+            assert 'already running' in response.json()['detail'].lower()
 
     def test_run_matching_pipeline_internal_error(self, client):
-        """Test pipeline start with internal error."""
-        with patch('web.backend.services.clients.orchestrator_client') as mock_client:
-            mock_client.start_matching.side_effect = Exception("Database error")
+        """Test pipeline start returns 500 when enqueue fails."""
+        mock_r = Mock()
+        mock_r.get.return_value = None
+        with patch('web.backend.routers.pipeline.get_redis_client', return_value=mock_r), \
+             patch('web.backend.routers.pipeline.set_task_state'), \
+             patch('web.backend.routers.pipeline.get_task_state', return_value=None), \
+             patch('web.backend.routers.pipeline.enqueue_job', side_effect=Exception("Stream error")), \
+             patch('web.backend.routers.pipeline.job_uow') as mock_uow:
+            mock_repo = Mock()
+            mock_repo.resume.get_latest_stored_resume_fingerprint.return_value = 'abc123'
+            mock_uow.return_value.__enter__ = Mock(return_value=mock_repo)
+            mock_uow.return_value.__exit__ = Mock(return_value=False)
 
             response = client.post('/api/pipeline/run-matching')
 
@@ -85,30 +101,38 @@ class TestPipelineRouter:
             assert 'Failed to start' in response.json()['detail']
 
     def test_stop_pipeline_success(self, client):
-        """Test successful pipeline stop - verifies endpoint exists and returns correct structure."""
-        # Note: Full integration test requires running orchestrator service
-        # This test verifies the endpoint structure and error handling
-        with patch('web.backend.services.clients.get_orchestrator_client') as mock_get_client:
-            mock_client = Mock()
-            mock_client.stop_task.return_value = {
-                'success': True,
-                'task_id': 'test-task-123'
-            }
-            mock_get_client.return_value = mock_client
+        """Cancels running pipeline by marking it cancelled in Redis."""
+        with patch('web.backend.routers.pipeline.get_redis_client') as mock_redis_fn:
+            with patch('web.backend.routers.pipeline.get_task_state') as mock_state:
+                with patch('web.backend.routers.pipeline.set_task_state') as mock_set_task_state:
+                    mock_r = Mock()
+                    mock_r.get.return_value = b'task-xyz'
+                    mock_redis_fn.return_value = mock_r
+                    mock_state.return_value = {'status': 'running', 'step': 'vector_matching'}
 
-            response = client.post('/api/pipeline/stop-matching')
+                    response = client.post('/api/pipeline/stop')
 
-            # Endpoint should exist and accept POST requests
-            assert response.status_code in [200, 404, 500]
+                    assert response.status_code == 200
+                    data = response.json()
+                    assert data['success'] is True
+                    assert data['task_id'] == 'task-xyz'
+                    mock_set_task_state.assert_called_once_with(
+                        'task-xyz',
+                        {'status': 'cancelled', 'step': 'vector_matching'},
+                        ttl=3600,
+                    )
 
     def test_stop_pipeline_not_found(self, client):
-        """Test stop when no pipeline running."""
-        with patch('web.backend.services.clients.orchestrator_client') as mock_client:
-            mock_client.stop_matching.side_effect = Exception("No pipeline running")
+        """Returns 404 when no active pipeline task is in Redis."""
+        with patch('web.backend.routers.pipeline.get_redis_client') as mock_redis_fn:
+            mock_r = Mock()
+            mock_r.get.return_value = None
+            mock_redis_fn.return_value = mock_r
 
-            response = client.post('/api/pipeline/stop-matching')
+            response = client.post('/api/pipeline/stop')
 
             assert response.status_code == 404
+            assert 'No active pipeline' in response.json()['detail']
 
     def test_check_resume_hash_exists(self, client):
         """Test resume hash check when exists."""
@@ -255,6 +279,75 @@ class TestPipelineRouter:
                 )
 
                 assert response.status_code == 400
+
+
+class TestGetActivePipelineTask:
+    """Test GET /api/pipeline/active."""
+
+    @pytest.fixture
+    def app(self):
+        from web.backend.routers.pipeline import router
+        app = FastAPI()
+        app.include_router(router)
+        return app
+
+    @pytest.fixture
+    def client(self, app):
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_no_active_task(self, client):
+        """Returns null when no active_task_id in Redis."""
+        with patch('web.backend.routers.pipeline.get_redis_client') as mock_redis_fn:
+            mock_r = Mock()
+            mock_r.get.return_value = None
+            mock_redis_fn.return_value = mock_r
+
+            response = client.get('/api/pipeline/active')
+
+            assert response.status_code == 200
+            assert response.json() is None
+
+    def test_has_running_task(self, client):
+        """Returns running task found in Redis."""
+        with patch('web.backend.routers.pipeline.get_redis_client') as mock_redis_fn:
+            with patch('web.backend.routers.pipeline.get_task_state') as mock_state:
+                mock_r = Mock()
+                mock_r.get.return_value = b'task-abc'
+                mock_redis_fn.return_value = mock_r
+                mock_state.return_value = {'status': 'running', 'step': 'vector_matching'}
+
+                response = client.get('/api/pipeline/active')
+
+                assert response.status_code == 200
+                data = response.json()
+                assert data['task_id'] == 'task-abc'
+                assert data['status'] == 'running'
+                assert data['step'] == 'vector_matching'
+
+    def test_completed_task_returns_none(self, client):
+        """Completed task is not considered active."""
+        with patch('web.backend.routers.pipeline.get_redis_client') as mock_redis_fn:
+            with patch('web.backend.routers.pipeline.get_task_state') as mock_state:
+                mock_r = Mock()
+                mock_r.get.return_value = b'task-abc'
+                mock_redis_fn.return_value = mock_r
+                mock_state.return_value = {'status': 'completed'}
+
+                response = client.get('/api/pipeline/active')
+
+                assert response.status_code == 200
+                assert response.json() is None
+
+    def test_redis_error_returns_none(self, client):
+        """Redis failure is swallowed — returns null, no 500."""
+        with patch('web.backend.routers.pipeline.get_redis_client') as mock_redis_fn:
+            mock_redis_fn.side_effect = Exception("Redis unavailable")
+
+            response = client.get('/api/pipeline/active')
+
+            assert response.status_code == 200
+            assert response.json() is None
+
 
 
 class TestValidateResumeFile:
@@ -510,31 +603,35 @@ class TestPipelineEventsEndpoint:
 
     @pytest.mark.asyncio
     async def test_events_success(self):
-        """Test SSE events endpoint."""
+        """Test SSE events endpoint proxies to orchestrator when no Redis state."""
         from web.backend.routers.pipeline import pipeline_events
 
-        with patch('web.backend.routers.pipeline._preflight_task_check', new_callable=AsyncMock):
-            with patch('web.backend.routers.pipeline._stream_orchestrator_sse') as mock_stream:
-                mock_stream.return_value = iter([b"data: test\n\n"])
+        with patch.dict('os.environ', {'ORCHESTRATOR_URL': 'http://localhost:8084'}):
+            with patch('web.backend.routers.pipeline.get_task_state', return_value=None):
+                with patch('web.backend.routers.pipeline._preflight_task_check', new_callable=AsyncMock):
+                    with patch('web.backend.routers.pipeline._stream_orchestrator_sse') as mock_stream:
+                        mock_stream.return_value = iter([b"data: test\n\n"])
 
-                response = await pipeline_events("task-123")
+                        response = await pipeline_events("task-123")
 
-                assert response is not None
-                assert response.media_type == "text/event-stream"
+                        assert response is not None
+                        assert response.media_type == "text/event-stream"
 
     @pytest.mark.asyncio
     async def test_events_task_not_found(self):
-        """Test SSE events endpoint when task not found."""
+        """Test SSE events endpoint when task not found (split mode via orchestrator)."""
+        import os
         from web.backend.routers.pipeline import pipeline_events
         from fastapi import HTTPException
 
-        with patch('web.backend.routers.pipeline._preflight_task_check', new_callable=AsyncMock) as mock_check:
-            mock_check.side_effect = HTTPException(status_code=404, detail="Task not found")
+        with patch.dict('os.environ', {'ORCHESTRATOR_URL': 'http://localhost:8084'}):
+            with patch('web.backend.routers.pipeline._preflight_task_check', new_callable=AsyncMock) as mock_check:
+                mock_check.side_effect = HTTPException(status_code=404, detail="Task not found")
 
-            with pytest.raises(HTTPException) as exc_info:
-                await pipeline_events("nonexistent")
+                with pytest.raises(HTTPException) as exc_info:
+                    await pipeline_events("nonexistent")
 
-            assert exc_info.value.status_code == 404
+                assert exc_info.value.status_code == 404
 
 
 class TestProcessResumeBackground:
@@ -550,15 +647,18 @@ class TestProcessResumeBackground:
         mock_manager.get_task.return_value = mock_task
 
         # Function should not raise with valid params
-        _process_resume_background(
-            file_content=b'{"name": "test"}',
-            filename='resume.json',
-            task_id='task-123',
-            manager=mock_manager,
-            known_fingerprint='test-fp-123'
-        )
+        with patch('pathlib.Path.mkdir'), \
+             patch('pathlib.Path.write_bytes'), \
+             patch('web.backend.routers.pipeline.set_task_state'), \
+             patch('web.backend.routers.pipeline.orchestrator_client', create=True):
+            _process_resume_background(
+                file_content=b'{"name": "test"}',
+                filename='resume.json',
+                task_id='task-123',
+                manager=mock_manager,
+                known_fingerprint='test-fp-123'
+            )
 
-        # Verify function executed without error
         assert True
 
     def test_processing_error(self):
@@ -569,13 +669,16 @@ class TestProcessResumeBackground:
         mock_manager.process_resume.side_effect = Exception("Processing failed")
 
         # Should not raise, just log error
-        _process_resume_background(
-            file_content=b'invalid json',
-            filename='resume.json',
-            task_id='task-123',
-            manager=mock_manager,
-            known_fingerprint='test-fp-123'
-        )
+        with patch('pathlib.Path.mkdir'), \
+             patch('pathlib.Path.write_bytes'), \
+             patch('web.backend.routers.pipeline.set_task_state'), \
+             patch('web.backend.routers.pipeline.orchestrator_client', create=True):
+            _process_resume_background(
+                file_content=b'invalid json',
+                filename='resume.json',
+                task_id='task-123',
+                manager=mock_manager,
+                known_fingerprint='test-fp-123'
+            )
 
-        # Verify function handled error without raising
         assert True
