@@ -221,7 +221,7 @@ def _determine_resume_extraction(
 
     with open(resume_file, 'rb') as f:
         current_fingerprint = generate_file_fingerprint(f.read())
-    logger.info(f"Current resume fingerprint: {current_fingerprint[:16]}...")
+    logger.info(f"Current resume fingerprint: {current_fingerprint}")
 
     # Get stored fingerprint from DB
     with job_uow() as repo:
@@ -241,13 +241,13 @@ def _determine_resume_extraction(
         if not stored_fingerprint:
             logger.info("No stored resume found - will extract")
         elif current_fingerprint != stored_fingerprint:
-            logger.info(f"Resume file changed (stored: {stored_fingerprint[:16]}..., current: {current_fingerprint[:16]}...) - will re-extract")
+            logger.info(f"Resume file changed (stored: {stored_fingerprint}, current: {current_fingerprint}) - will re-extract")
         else:
             logger.info("Force re-extraction enabled in config - will re-extract")
     else:
         should_re_extract = False
         resume_fingerprint = stored_fingerprint
-        logger.info(f"Resume unchanged (fingerprint: {current_fingerprint[:16]}...) - using stored data")
+        logger.info(f"Resume unchanged (fingerprint: {current_fingerprint}) - using stored data")
 
     return resume_fingerprint, should_re_extract
 
@@ -302,10 +302,10 @@ def _get_pre_extracted_resume(structured_resume, should_re_extract: bool):
         
     if not structured_resume or not structured_resume.extracted_data:
         return None
-        
+
     try:
         pre_extracted = ResumeSchema.model_validate(structured_resume.extracted_data)
-        logger.info("Using stored structured resume (fingerprint: %s...)", structured_resume.fingerprint[:16] if structured_resume.fingerprint else '')
+        logger.info("Using stored structured resume (fingerprint: %s)", structured_resume.fingerprint if structured_resume.fingerprint else '')
         return pre_extracted
     except Exception as e:
         logger.warning("Failed to parse stored resume: %s. Will re-extract.", e)
@@ -384,13 +384,13 @@ def _run_matching_and_scoring(
 
         if not structured_resume:
             if should_re_extract:
-                logger.info("Will re-extract resume (fingerprint: %s...)", resume_fingerprint[:16])
+                logger.info("Will re-extract resume (fingerprint: %s)", resume_fingerprint)
             else:
-                logger.error("Resume not found in database for fingerprint: %s...", resume_fingerprint[:16])
+                logger.error("Resume not found in database for fingerprint: %s", resume_fingerprint)
                 logger.error("Make sure Resume ETL has been run")
                 return []
 
-        logger.info("Loaded resume from database (fingerprint: %s...)", resume_fingerprint[:16])
+        logger.info("Loaded resume from database (fingerprint: %s)", resume_fingerprint)
         logger.info("Resume experience: %s years", structured_resume.total_experience_years)
 
         # Create matcher with store to persist resume embeddings
