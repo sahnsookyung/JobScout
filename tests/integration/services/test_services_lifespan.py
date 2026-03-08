@@ -19,13 +19,14 @@ class TestEmbeddingsMetrics:
 
     def test_metrics_reflects_consumer_state(self):
         """Test metrics endpoint reflects consumer running state."""
-        from services.embeddings.main import app, EmbeddingsState
-        
-        mock_state = EmbeddingsState(ctx=Mock())
+        from services.embeddings.main import app, EmbeddingsState, EmbeddingsConsumer
+
+        mock_consumer = Mock(spec=EmbeddingsConsumer)
+        mock_state = EmbeddingsState(ctx=Mock(), consumer=mock_consumer)
         mock_task = Mock()
         mock_task.done.return_value = False
         mock_state.consumer_task = mock_task
-        
+
         # Set state BEFORE creating TestClient - don't use context manager
         # to avoid triggering lifespan which would require Redis
         app.state.embeddings = mock_state
@@ -41,11 +42,12 @@ class TestEmbeddingsMetrics:
 
     def test_metrics_consumer_not_running(self):
         """Test metrics when consumer is not running."""
-        from services.embeddings.main import app, EmbeddingsState
-        
-        mock_state = EmbeddingsState(ctx=Mock())
+        from services.embeddings.main import app, EmbeddingsState, EmbeddingsConsumer
+
+        mock_consumer = Mock(spec=EmbeddingsConsumer)
+        mock_state = EmbeddingsState(ctx=Mock(), consumer=mock_consumer)
         mock_state.consumer_task = None
-        
+
         app.state.embeddings = mock_state
         try:
             client = TestClient(app)
@@ -63,13 +65,14 @@ class TestExtractionMetrics:
 
     def test_metrics_reflects_consumer_state(self):
         """Test metrics endpoint reflects consumer running state."""
-        from services.extraction.main import app, ExtractionState
-        
-        mock_state = ExtractionState(ctx=Mock())
+        from services.extraction.main import app, ExtractionState, ExtractionConsumer
+
+        mock_consumer = Mock(spec=ExtractionConsumer)
+        mock_state = ExtractionState(ctx=Mock(), consumer=mock_consumer)
         mock_task = Mock()
         mock_task.done.return_value = False
         mock_state.consumer_task = mock_task
-        
+
         app.state.extraction = mock_state
         try:
             client = TestClient(app)  # No context manager
@@ -83,9 +86,10 @@ class TestExtractionMetrics:
 
     def test_metrics_consumer_not_running(self):
         """Test metrics when consumer is not running."""
-        from services.extraction.main import app, ExtractionState
-        
-        mock_state = ExtractionState(ctx=Mock())
+        from services.extraction.main import app, ExtractionState, ExtractionConsumer
+
+        mock_consumer = Mock(spec=ExtractionConsumer)
+        mock_state = ExtractionState(ctx=Mock(), consumer=mock_consumer)
         mock_state.consumer_task = None
         
         app.state.extraction = mock_state
@@ -105,13 +109,14 @@ class TestMatcherMetrics:
 
     def test_metrics_reflects_consumer_state(self):
         """Test metrics endpoint reflects consumer running state."""
-        from services.scorer_matcher.main import app, MatcherState
-        
-        mock_state = MatcherState(ctx=Mock())
+        from services.scorer_matcher.main import app, MatcherState, MatcherConsumer
+
+        mock_consumer = Mock(spec=MatcherConsumer)
+        mock_state = MatcherState(ctx=Mock(), consumer=mock_consumer)
         mock_task = Mock()
         mock_task.done.return_value = False
         mock_state.consumer_task = mock_task
-        
+
         app.state.matcher = mock_state
         try:
             client = TestClient(app)  # No context manager
@@ -125,11 +130,12 @@ class TestMatcherMetrics:
 
     def test_metrics_consumer_not_running(self):
         """Test metrics when consumer is not running."""
-        from services.scorer_matcher.main import app, MatcherState
-        
-        mock_state = MatcherState(ctx=Mock())
+        from services.scorer_matcher.main import app, MatcherState, MatcherConsumer
+
+        mock_consumer = Mock(spec=MatcherConsumer)
+        mock_state = MatcherState(ctx=Mock(), consumer=mock_consumer)
         mock_state.consumer_task = None
-        
+
         app.state.matcher = mock_state
         try:
             client = TestClient(app)
