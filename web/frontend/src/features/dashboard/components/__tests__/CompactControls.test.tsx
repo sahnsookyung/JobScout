@@ -3,19 +3,30 @@ import userEvent from '@testing-library/user-event';
 import { CompactControls } from '../CompactControls';
 import { usePipeline } from '@/hooks/usePipeline';
 import { toast } from 'sonner';
+import { vi } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-jest.mock('@/hooks/usePipeline');
-jest.mock('sonner');
+vi.mock('@/hooks/usePipeline');
+vi.mock('sonner');
 
-const mockUsePipeline = usePipeline as jest.MockedFunction<typeof usePipeline>;
+const mockUsePipeline = usePipeline as ReturnType<typeof vi.fn>;
+
+const createWrapper = () => {
+    const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+    });
+    return ({ children }: { children: React.ReactNode }) => (
+        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+};
 
 describe('CompactControls', () => {
-    const mockRunPipeline = jest.fn();
-    const mockStopPipeline = jest.fn();
-    const mockUploadResume = jest.fn();
+    const mockRunPipeline = vi.fn();
+    const mockStopPipeline = vi.fn();
+    const mockUploadResume = vi.fn();
 
     beforeEach(() => {
-        jest.clearAllMocks();
+        vi.clearAllMocks();
 
         mockUsePipeline.mockReturnValue({
             runPipeline: mockRunPipeline,
@@ -30,7 +41,7 @@ describe('CompactControls', () => {
 
     describe('Resume Upload Button', () => {
         it('displays "Upload Resume" when no resume is uploaded', () => {
-            render(<CompactControls />);
+            render(<CompactControls />, { wrapper: createWrapper() });
 
             expect(screen.getByText('Upload Resume')).toBeInTheDocument();
         });
@@ -38,7 +49,7 @@ describe('CompactControls', () => {
         it('displays "Update Resume" with filename after successful upload', async () => {
             mockUploadResume.mockResolvedValue({ success: true });
 
-            render(<CompactControls />);
+            render(<CompactControls />, { wrapper: createWrapper() });
 
             const fileInput = screen.getByTestId('resume-file-input');
             const file = new File([JSON.stringify({ name: 'Test' })], 'my-resume.json', { type: 'application/json' });
@@ -56,7 +67,7 @@ describe('CompactControls', () => {
         it('shows error toast on upload failure', async () => {
             mockUploadResume.mockRejectedValue(new Error('Network error'));
 
-            render(<CompactControls />);
+            render(<CompactControls />, { wrapper: createWrapper() });
 
             const fileInput = screen.getByTestId('resume-file-input');
             const file = new File([JSON.stringify({ name: 'Test' })], 'resume.json', { type: 'application/json' });
@@ -71,7 +82,7 @@ describe('CompactControls', () => {
         it('truncates long filenames at 120 characters', async () => {
             mockUploadResume.mockResolvedValue({ success: true });
 
-            render(<CompactControls />);
+            render(<CompactControls />, { wrapper: createWrapper() });
 
             const longFilename = 'a'.repeat(150) + '.json';
             const file = new File([JSON.stringify({ name: 'Test' })], longFilename, { type: 'application/json' });
@@ -98,7 +109,7 @@ describe('CompactControls', () => {
                 isUploading: true,
             });
 
-            render(<CompactControls />);
+            render(<CompactControls />, { wrapper: createWrapper() });
 
             const uploadButton = screen.getByText('Upload Resume');
             expect(uploadButton.closest('button')).toBeDisabled();
@@ -116,7 +127,7 @@ describe('CompactControls', () => {
                 isUploading: true,
             });
 
-            render(<CompactControls />);
+            render(<CompactControls />, { wrapper: createWrapper() });
 
             expect(screen.getByTestId('resume-file-input')).toBeDisabled();
         });
@@ -132,21 +143,21 @@ describe('CompactControls', () => {
                 isUploading: false,
             });
 
-            render(<CompactControls />);
+            render(<CompactControls />, { wrapper: createWrapper() });
 
             const uploadButton = screen.getByText('Upload Resume');
             expect(uploadButton.closest('button')).toBeDisabled();
         });
 
         it('accepts only JSON files', () => {
-            render(<CompactControls />);
+            render(<CompactControls />, { wrapper: createWrapper() });
 
             const fileInput = screen.getByTestId('resume-file-input');
             expect(fileInput).toHaveAttribute('accept', '.json');
         });
 
         it('calls uploadResume with selected file', async () => {
-            render(<CompactControls />);
+            render(<CompactControls />, { wrapper: createWrapper() });
 
             const file = new File([JSON.stringify({ name: 'Test' })], 'resume.json', { type: 'application/json' });
             const fileInput = screen.getByTestId('resume-file-input');
@@ -161,7 +172,7 @@ describe('CompactControls', () => {
         it('resets file input after successful upload', async () => {
             mockUploadResume.mockResolvedValue({ success: true });
 
-            render(<CompactControls />);
+            render(<CompactControls />, { wrapper: createWrapper() });
 
             const file = new File([JSON.stringify({ name: 'Test' })], 'resume.json', { type: 'application/json' });
             const fileInput = screen.getByTestId('resume-file-input');
@@ -175,7 +186,7 @@ describe('CompactControls', () => {
         it('resets file input after failed upload', async () => {
             mockUploadResume.mockRejectedValue(new Error('Upload failed'));
 
-            render(<CompactControls />);
+            render(<CompactControls />, { wrapper: createWrapper() });
 
             const file = new File([JSON.stringify({ name: 'Test' })], 'resume.json', { type: 'application/json' });
             const fileInput = screen.getByTestId('resume-file-input');
@@ -189,7 +200,7 @@ describe('CompactControls', () => {
         it('displays filename on multiple uploads', async () => {
             mockUploadResume.mockResolvedValue({ success: true });
 
-            render(<CompactControls />);
+            render(<CompactControls />, { wrapper: createWrapper() });
 
             const file1 = new File([JSON.stringify({ name: 'First' })], 'first-resume.json', { type: 'application/json' });
             const fileInput = screen.getByTestId('resume-file-input');
