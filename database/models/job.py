@@ -53,6 +53,16 @@ class JobPost(Base):
     # State Flags
     is_extracted = Column(Boolean, nullable=False, default=False)
     is_embedded = Column(Boolean, nullable=False, default=False)
+    extraction_status = Column(Text, nullable=False, default='pending')
+    extraction_attempts = Column(Integer, nullable=False, default=0)
+    extraction_last_error = Column(Text)
+    extraction_last_attempt_at = Column(TIMESTAMP(timezone=True))
+    extraction_next_retry_at = Column(TIMESTAMP(timezone=True))
+    embedding_status = Column(Text, nullable=False, default='pending')
+    embedding_attempts = Column(Integer, nullable=False, default=0)
+    embedding_last_error = Column(Text)
+    embedding_last_attempt_at = Column(TIMESTAMP(timezone=True))
+    embedding_next_retry_at = Column(TIMESTAMP(timezone=True))
 
     # Facet Extraction State
     facet_status = Column(Text, default='pending')  # pending|in_progress|done|failed|quarantined
@@ -111,6 +121,8 @@ class JobPost(Base):
         Index('idx_job_post_remote', 'is_remote'),
         Index('idx_job_post_tenant', 'tenant_id'),
         Index('idx_job_post_content_hash', 'content_hash'),
+        Index('idx_job_post_extraction_retry', 'extraction_status', 'extraction_next_retry_at'),
+        Index('idx_job_post_embedding_retry', 'embedding_status', 'embedding_next_retry_at'),
         # HNSW index for vector similarity search on summary_embedding
         Index('idx_job_post_summary_embedding_hnsw', 'summary_embedding', postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}, postgresql_ops={'summary_embedding': 'vector_cosine_ops'}),
     )
@@ -216,7 +228,7 @@ class JobFacetEmbedding(Base):
 
     facet_key = Column(Text, nullable=False)
     facet_text = Column(Text, nullable=False)
-    embedding = Column(Vector(1024), nullable=False)
+    embedding = Column(Vector(1024), nullable=True)
 
     content_hash = Column(Text)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
