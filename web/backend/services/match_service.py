@@ -96,12 +96,13 @@ class MatchService:
 
         Raises:
             MatchNotFoundException: If match is not found.
+            Exception: If a database error occurs (maps to 500).
         """
-        try:
-            match = self.db.query(JobMatch).get(match_id)
-            if not match:
-                raise MatchNotFoundException(f"Match {match_id} not found")
+        match = self.db.query(JobMatch).get(match_id)
+        if not match:
+            raise MatchNotFoundException(f"Match {match_id} not found")
 
+        try:
             job = self.db.query(JobPost).get(match.job_post_id)
 
             req_matches = self.db.query(JobMatchRequirement).options(
@@ -111,7 +112,6 @@ class MatchService:
             ).all()
 
             requirements = [self._to_requirement_detail(req) for req in req_matches]
-
             penalty_details = self._parse_penalty_details(match.penalty_details)
 
             return MatchDetailResponse(
@@ -120,11 +120,9 @@ class MatchService:
                 job=self._to_job_details(job),
                 requirements=requirements
             )
-        except MatchNotFoundException:
-            raise
         except Exception as e:
-            logger.error(f"Error fetching match details for {match_id}: {e}", exc_info=True)
-            raise MatchNotFoundException(f"Error fetching match details: {str(e)}") from e
+            logger.error(f"Database error fetching match details for {match_id}: {e}", exc_info=True)
+            raise
     
     def toggle_hidden(self, match_id: str) -> bool:
         """
@@ -329,7 +327,7 @@ class MatchService:
         if isinstance(penalty_details, str):
             try:
                 return json.loads(penalty_details)
-            except (json.JSONDecodeError, ValueError):
+            except ValueError:
                 return {}
         
         return {}

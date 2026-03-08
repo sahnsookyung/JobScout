@@ -101,7 +101,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
 
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 415)  # Unsupported Media Type
         self.assertIn('Unsupported file format', response.json()['detail'])
 
     def test_upload_without_extension_rejected(self):
@@ -110,7 +110,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
 
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 415)  # Unsupported Media Type
         self.assertIn('Unsupported file format', response.json()['detail'])
 
     def test_upload_txt_file_accepted(self):
@@ -194,7 +194,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
 
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 413)  # Payload Too Large
         self.assertIn('2', response.json()['detail'])
 
     def test_response_message_includes_fingerprint(self):
@@ -323,7 +323,7 @@ class TestResumeUploadSecurity(unittest.TestCase):
 
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 413)  # Payload Too Large
         self.assertIn('2', response.json()['detail'])
 
     def test_upload_hash_mismatch_rejected(self):

@@ -50,7 +50,14 @@ async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded)
     )
 
 
-@router.post("/run-matching", response_model=PipelineTaskResponse)
+@router.post(
+    "/run-matching",
+    response_model=PipelineTaskResponse,
+    responses={
+        409: {"description": "Pipeline is already running"},
+        500: {"description": "Internal server error"},
+    }
+)
 def run_matching_pipeline_endpoint():
     """
     Trigger the full matching pipeline in the background.
@@ -63,33 +70,34 @@ def run_matching_pipeline_endpoint():
     - Calculate fit/want scores
     - Save results to database
     - Send notifications (if configured)
+    
+    Raises:
+        409: Pipeline is already running.
+        500: Internal error starting the pipeline.
     """
-    # Call orchestrator service - it will handle the full pipeline
+    from web.backend.services.clients import orchestrator_client
     try:
-        from web.backend.services.clients import orchestrator_client
         result = orchestrator_client.start_matching()
-        
-        task_id = result.get("task_id", "")
-        
-        if result.get("success"):
-            return PipelineTaskResponse(
-                success=True,
-                task_id=task_id,
-                message="Matching pipeline started. Use SSE /api/pipeline/events/{task_id} to track progress."
-            )
-        else:
-            return PipelineTaskResponse(
-                success=False,
-                task_id=task_id,
-                message=result.get("message", "Failed to start pipeline")
-            )
+    except PipelineLockedException as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception:
         logger.exception("Failed to start matching pipeline")
-        return PipelineTaskResponse(
-            success=False,
-            task_id="",
-            message="Failed to start matching pipeline. Please try again or check server logs."
-        )
+        raise HTTPException(status_code=500, detail="Failed to start matching pipeline")
+
+    task_id = result.get("task_id", "")
+    message = result.get("message", "")
+
+    if not result.get("success"):
+        # Orchestrator reports already-running state
+        if "already" in message.lower() or "running" in message.lower():
+            raise HTTPException(status_code=409, detail=message or "Pipeline is already running")
+        raise HTTPException(status_code=500, detail=message or "Failed to start pipeline")
+
+    return PipelineTaskResponse(
+        success=True,
+        task_id=task_id,
+        message="Matching pipeline started. Use SSE /api/pipeline/events/{task_id} to track progress."
+    )
 
 
 @router.get("/status/{task_id}", response_model=PipelineStatusResponse, responses={500: {"description": "Internal server error"}})
@@ -155,68 +163,107 @@ def get_active_pipeline_task():
         return None
 
 
-@router.post("/stop", response_model=PipelineTaskResponse)
+@router.post(
+    "/stop",
+    response_model=PipelineTaskResponse,
+    responses={
+        404: {"description": "No active pipeline to stop"},
+        500: {"description": "Internal server error"},
+    }
+)
 def stop_matching_pipeline():
     """
     Stop the currently running pipeline task.
+
+    Raises:
+        404: No active pipeline is running.
+        500: Internal error stopping the pipeline.
     """
     try:
         from web.backend.services.clients import orchestrator_client
         result = orchestrator_client.stop_task()
-
-        if not result or not result.get("success"):
-            return PipelineTaskResponse(
-                success=False,
-                task_id="",
-                message="No active pipeline to stop."
-            )
-
-        return PipelineTaskResponse(
-            success=True,
-            task_id=result.get("task_id", ""),
-            message="Pipeline cancellation requested."
-        )
     except Exception:
         logger.exception("Failed to stop pipeline")
-        return PipelineTaskResponse(
-            success=False,
-            task_id="",
-            message="Failed to stop pipeline. Please try again."
-        )
+        raise HTTPException(status_code=500, detail="Failed to stop pipeline")
+
+    if not result or not result.get("success"):
+        raise HTTPException(status_code=404, detail="No active pipeline to stop")
+
+    return PipelineTaskResponse(
+        success=True,
+        task_id=result.get("task_id", ""),
+        message="Pipeline cancellation requested."
+    )
 
 
-@router.get("/events/{task_id}")
-async def pipeline_events(task_id: str):
-    """
-    Server-Sent Events endpoint for real-time pipeline status updates.
-    
-    Streams status updates for the specified task in real-time.
-    Proxies to the orchestrator service.
+
+async def _stream_orchestrator_sse(orchestrator_url: str, task_id: str):
+    """Async generator that proxies SSE bytes from the orchestrator."""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
+            async with client.stream(
+                "GET",
+                f"{orchestrator_url}/orchestrate/status/{task_id}"
+            ) as response:
+                if response.status_code == 404:
+                    logger.error("Orchestrator: task %s not found", task_id)
+                    yield f"data: {json.dumps({'error': 'Task not found', 'status': 'failed'})}\n\n"
+                    return
+                if response.is_error:
+                    logger.error("Orchestrator returned %s for task %s", response.status_code, task_id)
+                    yield f"data: {json.dumps({'error': 'Failed to get pipeline status'})}\n\n"
+                    return
+                async for chunk in response.aiter_raw():
+                    if chunk:
+                        yield chunk
+    except Exception:
+        logger.exception("Failed to connect to orchestrator for task %s", task_id)
+        yield f"data: {json.dumps({'error': 'Failed to connect to pipeline service'})}\n\n"
+
+
+async def _preflight_task_check(orchestrator_url: str, task_id: str) -> None:
+    """Quick probe to verify task existence before opening a long-lived SSE stream.
+
+    Raises HTTPException(404) only if the orchestrator definitively reports
+    the task does not exist. Failures during the probe are logged and ignored
+    so the SSE stream can surface errors itself.
     """
     import httpx
 
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as probe:
+            probe_resp = await probe.get(f"{orchestrator_url}/orchestrate/active")
+            if probe_resp.status_code == 404:
+                raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("Pre-flight check failed for task %s: %s", task_id, e)
+
+
+@router.get(
+    "/events/{task_id}",
+    responses={
+        404: {"description": "Task not found"},
+    }
+)
+async def pipeline_events(task_id: str):
+    """
+    Server-Sent Events endpoint for real-time pipeline status updates.
+
+    Validates task existence before opening the stream.
+    Proxies to the orchestrator service.
+
+    Raises:
+        404: Task does not exist in the orchestrator.
+    """
     orchestrator_url = os.getenv("ORCHESTRATOR_URL", "http://localhost:8084")
-    
-    async def event_generator():
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
-                async with client.stream(
-                    "GET",
-                    f"{orchestrator_url}/orchestrate/status/{task_id}"
-                ) as response:
-                    if response.is_error:
-                        logger.error(f"Orchestrator returned {response.status_code} for task {task_id}")
-                        yield f"data: {json.dumps({'error': 'Failed to get pipeline status'})}\n\n"
-                        return
-                    async for chunk in response.aiter_raw():
-                        if chunk:
-                            yield chunk
-        except Exception as e:
-            logger.exception(f"Failed to connect to orchestrator: {e}")
-            yield f"data: {json.dumps({'error': 'Failed to connect to pipeline service'})}\n\n"
-    
+    await _preflight_task_check(orchestrator_url, task_id)
+
     return StreamingResponse(
-        event_generator(),
+        _stream_orchestrator_sse(orchestrator_url, task_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -293,12 +340,12 @@ async def _validate_resume_file(file: UploadFile) -> bytes:
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
 
-    # Validate file format
+    # Validate file format — 415 Unsupported Media Type
     parser = ResumeParser()
     if not parser.is_supported(file.filename):
         supported = ', '.join(ResumeParser.get_supported_formats())
         raise HTTPException(
-            status_code=400,
+            status_code=415,
             detail=f"Unsupported file format. Supported formats: {supported}"
         )
 
@@ -307,10 +354,11 @@ async def _validate_resume_file(file: UploadFile) -> bytes:
     if len(content) == 0:
         raise HTTPException(status_code=400, detail="Empty file")
 
+    # File too large — 413 Payload Too Large
     if len(content) > RESUME_MAX_SIZE:
         limit_mb = RESUME_MAX_SIZE / (1024 * 1024)
         limit_str = f"{limit_mb:.1f}MB" if limit_mb >= 1 else f"{RESUME_MAX_SIZE // 1024}KB"
-        raise HTTPException(status_code=400, detail=f"File size exceeds {limit_str} limit")
+        raise HTTPException(status_code=413, detail=f"File size exceeds {limit_str} limit")
 
     return content
 
