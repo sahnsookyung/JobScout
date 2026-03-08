@@ -47,7 +47,7 @@ def get_matches(
     top_k: int = Query(default=None, ge=1, le=500, description="Maximum results to return"),
     remote_only: bool = Query(default=False, description="Filter to remote jobs only"),
     show_hidden: bool = Query(default=False, description="Include hidden matches in results"),
-    db: Session = Depends(get_db)
+    db: Annotated[Session, Depends(get_db)] = None
 ):
     """
     Get a list of job matches filtered by result policy.
@@ -90,10 +90,7 @@ def get_matches(
 
 
 @router.get("/{match_id}", response_model=MatchDetailResponse)
-def get_match_details(
-    match_id: str,
-    db: Annotated[Session, Depends(get_db)]
-):
+def get_match_details(match_id: str, db: Annotated[Session, Depends(get_db)]):
     """
     Get detailed information about a specific match.
     
@@ -105,10 +102,7 @@ def get_match_details(
 
 
 @router.post("/{match_id}/hide", response_model=HideMatchResponse)
-def toggle_match_hidden(
-    match_id: str,
-    db: Annotated[Session, Depends(get_db)]
-):
+def toggle_match_hidden(match_id: str, db: Annotated[Session, Depends(get_db)]):
     """
     Toggle the hidden status of a match.
     
@@ -126,10 +120,7 @@ def toggle_match_hidden(
 
 
 @router.get("/{match_id}/explanation", response_model=MatchExplanationResponse)
-def get_match_explanation(
-    match_id: str,
-    db: Annotated[Session, Depends(get_db)]
-):
+def get_match_explanation(match_id: str, db: Annotated[Session, Depends(get_db)]):
     """
     Get explainability details for a specific match.
     

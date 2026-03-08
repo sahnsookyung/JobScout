@@ -11,8 +11,9 @@ import re
 from pathlib import Path
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Request
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Request, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
+from sqlalchemy.orm import Session
 
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -20,6 +21,7 @@ from slowapi.errors import RateLimitExceeded
 
 from ..services.pipeline_service import get_pipeline_manager
 from core.config_loader import load_config
+from ..dependencies import get_db
 from ..models.responses import (
     PipelineTaskResponse,
     PipelineStatusResponse,
@@ -294,7 +296,7 @@ async def _preflight_task_check(orchestrator_url: str, task_id: str) -> None:
         400: {"description": "Invalid task_id format"},
     }
 )
-async def pipeline_events(task_id: str):
+async def pipeline_events(task_id: str, db: Annotated[Session, Depends(get_db)] = None):
     """
     Server-Sent Events endpoint for real-time pipeline status updates.
 
