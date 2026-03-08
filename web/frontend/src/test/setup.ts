@@ -119,32 +119,18 @@ vi.mock('idb-keyval', () => ({
     createStore: vi.fn(),
 }));
 
-// Polyfill File.arrayBuffer() for jsdom (required for hash computation tests)
-// Note: Uses native arrayBuffer() if available, otherwise falls back to FileReader
-if (!File.prototype.arrayBuffer) {
-    File.prototype.arrayBuffer = async function() {
-        // Try native method first (preferred by SonarCloud)
-        if (this instanceof Blob && typeof Blob.prototype.arrayBuffer === 'function') {
-            return Blob.prototype.arrayBuffer.call(this);
-        }
-        // Fallback to FileReader for jsdom
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as ArrayBuffer);
-            reader.onerror = () => reject(new Error('FileReader error'));
-            reader.readAsArrayBuffer(this);
-        });
-    };
-}
-
-// Polyfill Blob.arrayBuffer() for jsdom
+// Polyfill Blob.arrayBuffer() for jsdom (also covers File since File extends Blob)
+// Required for computeFileHash() tests in jsdom environment
+// This is a polyfill for older browsers - uses FileReader as fallback since
+// native Blob.arrayBuffer() is not available in these environments
+// eslint-disable-next-line prefer-blob-array-methods
 if (!Blob.prototype.arrayBuffer) {
-    Blob.prototype.arrayBuffer = async function() {
+    Blob.prototype.arrayBuffer = async function(): Promise<ArrayBuffer> {
         return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as ArrayBuffer);
-            reader.onerror = () => reject(new Error('FileReader error'));
-            reader.readAsArrayBuffer(this);
+            const fileReader = new FileReader();
+            fileReader.onload = () => resolve(fileReader.result as ArrayBuffer);
+            fileReader.onerror = () => reject(new Error('FileReader error'));
+            fileReader.readAsArrayBuffer(this);
         });
     };
 }

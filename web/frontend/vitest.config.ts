@@ -50,6 +50,13 @@ export default defineConfig({
                 'src/App.tsx',
                 // indexedDB tests require actual browser IndexedDB implementation
                 'src/utils/__tests__/indexedDB.test.ts',
+                // Browser-only API — not testable in jsdom
+                'src/utils/indexedDB.ts',
+                // Pure TypeScript interfaces — no runtime code to cover
+                'src/types/**',
+                // Test helper utilities — not application code
+                'src/**/__tests__/*.utils.ts',
+                'src/**/__tests__/*.utils.tsx',
                 // Config files (not application code)
                 'vite.config.ts',
                 'vitest.config.ts',
