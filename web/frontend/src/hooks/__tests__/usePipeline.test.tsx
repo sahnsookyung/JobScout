@@ -29,8 +29,9 @@ class MockEventSource {
     onmessage: ((event: MessageEvent) => void) | null = null;
     onerror: (() => void) | null = null;
     constructor(public url: string) {}
-    // eslint-disable-next-line @typescript-eslint/no-empty-function
-    close(): void {}
+    close(): void {
+        // Mock implementation - required by EventSource interface
+    }
 }
 
 vi.stubGlobal('EventSource', MockEventSource);

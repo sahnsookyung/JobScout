@@ -12,10 +12,10 @@ afterEach(() => {
     cleanup();
 });
 
-// Mock window.matchMedia for components that use it
+// Mock globalThis.matchMedia for components that use it
 // Note: Using Object.defineProperty because jsdom doesn't implement matchMedia
 // This is the recommended Jest/Vitest pattern for missing browser APIs
-Object.defineProperty(window, 'matchMedia', {
+Object.defineProperty(globalThis, 'matchMedia', {
     writable: true,
     value: vi.fn().mockImplementation(query => ({
         matches: false,
@@ -60,23 +60,43 @@ vi.stubGlobal('EventSource', MockEventSource);
 // Mock IndexedDB for indexedDB.ts tests
 const mockIndexedDB = {
     open: vi.fn().mockImplementation(() => {
+        const makeRequest = (result?: any) => ({
+            onsuccess: null as (() => void) | null,
+            onerror: null as (() => void) | null,
+            result,
+        });
+        
+        const store = {
+            add: vi.fn().mockImplementation((value) => makeRequest(value)),
+            put: vi.fn().mockImplementation((value) => makeRequest(value)),
+            get: vi.fn().mockImplementation((key) => makeRequest(key === 'testHash' ? { file: new Blob(['test']), timestamp: Date.now(), hash: key } : undefined)),
+            getAll: vi.fn().mockImplementation(() => makeRequest([])),
+            delete: vi.fn().mockImplementation(() => makeRequest()),
+            clear: vi.fn().mockImplementation(() => makeRequest()),
+            count: vi.fn().mockImplementation(() => makeRequest(0)),
+            getAllKeys: vi.fn().mockImplementation(() => makeRequest([])),
+        };
+        
+        const transaction = {
+            objectStore: vi.fn().mockReturnValue(store),
+            oncomplete: null as (() => void) | null,
+            onerror: null as (() => void) | null,
+        };
+        
+        const db = {
+            createObjectStore: vi.fn().mockReturnValue(store),
+            objectStoreNames: {
+                contains: vi.fn().mockReturnValue(true),
+            },
+            deleteObjectStore: vi.fn(),
+            transaction: vi.fn().mockReturnValue(transaction),
+            close: vi.fn(),
+        };
+        
         const request = {
             onsuccess: null as ((event: any) => void) | null,
             onerror: null as ((event: any) => void) | null,
-            result: {
-                createObjectStore: vi.fn().mockReturnValue({
-                    add: vi.fn(),
-                    put: vi.fn(),
-                    get: vi.fn(),
-                    getAll: vi.fn(),
-                    delete: vi.fn(),
-                    clear: vi.fn(),
-                }),
-                objectStoreNames: {
-                    contains: vi.fn(),
-                },
-                deleteObjectStore: vi.fn(),
-            },
+            result: db,
         };
         setTimeout(() => request.onsuccess?.({ target: request }), 0);
         return request;
