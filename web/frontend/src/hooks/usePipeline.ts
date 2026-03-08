@@ -19,11 +19,11 @@ export const usePipeline = () => {
         },
     });
 
-    const { 
-        status: sseStatus, 
-        connectionState, 
+    const {
+        status: sseStatus,
+        connectionState,
         error: sseError,
-        retry: retrySSE 
+        retry: retrySSE
     } = usePipelineEvents(activePipeline?.task_id ?? null);
 
     const runPipelineMutation = useMutation({
@@ -31,20 +31,29 @@ export const usePipeline = () => {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['pipeline', 'active'] });
         },
+        onError: (error: Error) => {
+            console.error('[Pipeline] Failed to start matching:', error.message);
+        },
     });
 
     const stopPipelineMutation = useMutation({
         mutationFn: () => pipelineApi.stopMatching(),
+        onError: (error: Error) => {
+            console.error('[Pipeline] Failed to stop pipeline:', error.message);
+        },
     });
 
     const clearTaskMutation = useMutation({
-        mutationFn: async () => {},
+        mutationFn: async () => { },
     });
 
     const uploadResumeMutation = useMutation({
         mutationFn: ({ file, hash }: { file: File; hash?: string }) => pipelineApi.uploadResume(file, hash),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['resume'] });
+        },
+        onError: (error: Error) => {
+            console.error('[Pipeline] Resume upload failed:', error.message);
         },
     });
 
@@ -62,11 +71,14 @@ export const usePipeline = () => {
         sseError,
         isLoading,
         runPipeline: runPipelineMutation.mutate,
+        runPipelineError: runPipelineMutation.error,
         stopPipeline: stopPipelineMutation.mutate,
+        stopPipelineError: stopPipelineMutation.error,
         isRunning: sseStatus?.status === 'running' || sseStatus?.status === 'pending',
         isStopping: stopPipelineMutation.isPending,
         clearTask: clearTaskMutation.mutate,
         uploadResume: uploadResumeMutation.mutate,
+        uploadResumeError: uploadResumeMutation.error,
         isUploading: uploadResumeMutation.isPending,
         retrySSE: retrySSE,
     };

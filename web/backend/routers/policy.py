@@ -3,7 +3,7 @@
 Policy endpoints - manage result filtering policies.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from ..services.policy_service import get_policy_service
 from ..models.requests import PolicyUpdate
@@ -55,7 +55,11 @@ def update_policy(policy_update: PolicyUpdate):
     )
 
 
-@router.post("/v1/policy/preset/{preset_name}", response_model=PolicyResponse)
+@router.post(
+    "/v1/policy/preset/{preset_name}",
+    response_model=PolicyResponse,
+    responses={400: {"description": "Unknown preset name"}}
+)
 def apply_preset(preset_name: str):
     """
     Apply a result policy preset.
@@ -64,7 +68,17 @@ def apply_preset(preset_name: str):
     - strict: min_fit=70, min_required_coverage=0.80, top_k=25
     - balanced: min_fit=55, min_required_coverage=0.60, top_k=50
     - discovery: min_fit=40, min_required_coverage=null, top_k=100
+
+    Raises:
+        400: Unknown preset name.
     """
+    _VALID_PRESETS = {"strict", "balanced", "discovery"}
+    if preset_name.lower() not in _VALID_PRESETS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown preset '{preset_name}'. Valid presets: {', '.join(sorted(_VALID_PRESETS))}"
+        )
+
     policy_service = get_policy_service()
     policy = policy_service.apply_preset(preset_name)
     

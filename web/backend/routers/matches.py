@@ -36,14 +36,18 @@ def validate_uuid(match_id: str) -> str:
         )
 
 
-@router.get("", response_model=MatchesResponse)
+@router.get(
+    "",
+    response_model=MatchesResponse,
+    responses={422: {"description": "Invalid query parameter"}}
+)
 def get_matches(
-    db: Annotated[Session, Depends(get_db)],
-    status: Annotated[str, Query(description="Match status: active, stale, or all")] = "active",
-    min_fit: Annotated[float | None, Query(ge=0, le=100, description="Minimum fit score filter")] = None,
-    top_k: Annotated[int | None, Query(ge=1, le=500, description="Maximum results to return")] = None,
-    remote_only: Annotated[bool, Query(description="Filter to remote jobs only")] = False,
-    show_hidden: Annotated[bool, Query(description="Include hidden matches in results")] = False
+    status: str = Query(default="active", description="Match status: active, stale, or all"),
+    min_fit: float = Query(default=None, ge=0, le=100, description="Minimum fit score filter"),
+    top_k: int = Query(default=None, ge=1, le=500, description="Maximum results to return"),
+    remote_only: bool = Query(default=False, description="Filter to remote jobs only"),
+    show_hidden: bool = Query(default=False, description="Include hidden matches in results"),
+    db: Session = Depends(get_db)
 ):
     """
     Get a list of job matches filtered by result policy.
@@ -51,7 +55,17 @@ def get_matches(
     Uses the current policy settings by default (min_fit, top_k).
     Both can be overridden via query parameters.
     Returns matches sorted by overall score (highest first).
+
+    Raises:
+        422: Invalid `status` value.
     """
+    _VALID_STATUSES = {"active", "stale", "all"}
+    if status not in _VALID_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid status '{status}'. Valid values: {', '.join(sorted(_VALID_STATUSES))}"
+        )
+
     policy_service = get_policy_service()
     current_policy = policy_service.get_current_policy()
     
