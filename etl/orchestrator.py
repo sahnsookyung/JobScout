@@ -235,12 +235,12 @@ class JobETLService:
             logger.error(f"Failed to read resume file: {e}")
             return False, "", None
 
-        logger.info(f"Resume fingerprint: {fingerprint[:16]}")
+        logger.info(f"Resume fingerprint: {fingerprint}")
 
         # Check if resume already exists (unchanged)
         existing = repo.resume.get_structured_resume_by_fingerprint(fingerprint)
         if existing:
-            logger.info(f"Resume unchanged (fingerprint: {fingerprint[:16]}), skipping ETL")
+            logger.info(f"Resume unchanged (fingerprint: {fingerprint}), skipping ETL")
             return False, fingerprint, None
 
         # Parse for processing
@@ -252,12 +252,12 @@ class JobETLService:
             logger.error(f"Failed to parse resume file: {e}")
             return False, fingerprint, None
 
-        logger.info(f"Resume changed (fingerprint: {fingerprint[:16]}), processing...")
+        logger.info(f"Resume changed (fingerprint: {fingerprint}), processing...")
 
         # Process the resume
         try:
             self.extract_resume_one(repo, resume_data, fingerprint)
-            logger.info(f"Resume ETL completed for fingerprint: {fingerprint[:16]}")
+            logger.info(f"Resume ETL completed for fingerprint: {fingerprint}")
             return True, fingerprint, resume_data
         except Exception as e:
             logger.error(f"Failed to process resume: {e}")
@@ -292,11 +292,11 @@ class JobETLService:
             logger.error(f"Failed to read resume file: {e}")
             return False, "", None
 
-        logger.info(f"Resume fingerprint: {fingerprint[:16]}")
+        logger.info(f"Resume fingerprint: {fingerprint}")
 
         existing = repo.resume.get_structured_resume_by_fingerprint(fingerprint)
         if existing:
-            logger.info(f"Resume unchanged (fingerprint: {fingerprint[:16]}), skipping extraction")
+            logger.info(f"Resume unchanged (fingerprint: {fingerprint}), skipping extraction")
             return False, fingerprint, None
 
         try:
@@ -307,14 +307,14 @@ class JobETLService:
             logger.error(f"Failed to parse resume file: {e}")
             return False, fingerprint, None
 
-        logger.info(f"Resume changed (fingerprint: {fingerprint[:16]}), extracting...")
+        logger.info(f"Resume changed (fingerprint: {fingerprint}), extracting...")
 
         try:
             profiler = ResumeProfiler(ai_service=self.ai)
             resume_schema = profiler.extract_only(resume_data)
 
             if resume_schema:
-                logger.info(f"Resume extraction completed for fingerprint: {fingerprint[:16]}")
+                logger.info(f"Resume extraction completed for fingerprint: {fingerprint}")
                 
                 # Save structured resume to database
                 repo.save_structured_resume(
@@ -353,14 +353,14 @@ class JobETLService:
         """
         existing = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
         if not existing:
-            logger.error(f"Resume not found in DB: {resume_fingerprint[:16]}")
+            logger.error(f"Resume not found in DB: {resume_fingerprint}")
             return False, resume_fingerprint
 
         if not existing.extracted_data:
-            logger.error(f"No extracted data for resume: {resume_fingerprint[:16]}")
+            logger.error(f"No extracted data for resume: {resume_fingerprint}")
             return False, resume_fingerprint
 
-        logger.info(f"Generating embeddings for resume: {resume_fingerprint[:16]}")
+        logger.info(f"Generating embeddings for resume: {resume_fingerprint}")
 
         from etl.resume.embedding_store import JobRepositoryAdapter
         from core.llm.schema_models import ResumeSchema
@@ -371,7 +371,7 @@ class JobETLService:
             profiler = ResumeProfiler(ai_service=self.ai, store=store)
 
             profiler.embed_only(resume_fingerprint, resume)
-            logger.info(f"Resume embeddings completed for fingerprint: {resume_fingerprint[:16]}")
+            logger.info(f"Resume embeddings completed for fingerprint: {resume_fingerprint}")
             return True, resume_fingerprint
         except Exception as e:
             logger.error(f"Failed to embed resume: {e}")
