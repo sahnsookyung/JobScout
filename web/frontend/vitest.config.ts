@@ -28,13 +28,14 @@ export default defineConfig({
         environment: 'jsdom',
         setupFiles: ['./src/test/setup.ts'],
         include: ['src/**/*.{test,spec}.{ts,tsx}'],
-        // Exclude problematic pre-existing tests that need Jest-to-Vitest conversion
+        // Exclude tests that require browser environment or need Jest-to-Vitest conversion
         exclude: [
             'src/test/**',
             'src/**/*.d.ts',
             'src/main.tsx',
             'src/App.tsx',
             'src/features/dashboard/components/__tests__/**',
+            // indexedDB tests require actual browser IndexedDB implementation
             'src/utils/__tests__/indexedDB.test.ts',
         ],
         testTimeout: 10000,
@@ -49,6 +50,7 @@ export default defineConfig({
                 'src/main.tsx',
                 'src/App.tsx',
                 'src/features/dashboard/components/__tests__/**',
+                // indexedDB tests require actual browser IndexedDB implementation
                 'src/utils/__tests__/indexedDB.test.ts',
             ],
         },
