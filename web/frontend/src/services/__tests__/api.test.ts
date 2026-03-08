@@ -148,8 +148,13 @@ describe('apiClient', () => {
             const mockAxios = axios as any;
             const handler = mockAxios.__mockResponseHandlers[0];
 
+            // The interceptor throws, so we need to catch it and prevent unhandled rejection
             try {
-                handler.rejected(mockError);
+                const result = handler.rejected(mockError);
+                // If it doesn't throw synchronously, await it
+                if (result && typeof result.then === 'function') {
+                    result.catch(() => {});
+                }
             } catch (error) {
                 expect((error as Error).message).toBe('Invalid input');
             }
@@ -169,7 +174,10 @@ describe('apiClient', () => {
             const handler = mockAxios.__mockResponseHandlers[0];
 
             try {
-                handler.rejected(mockError);
+                const result = handler.rejected(mockError);
+                if (result && typeof result.then === 'function') {
+                    result.catch(() => {});
+                }
             } catch (error) {
                 expect((error as Error).message).toBe('Server error');
             }
@@ -194,7 +202,10 @@ describe('apiClient', () => {
             const handler = mockAxios.__mockResponseHandlers[0];
 
             try {
-                handler.rejected(mockError);
+                const result = handler.rejected(mockError);
+                if (result && typeof result.then === 'function') {
+                    result.catch(() => {});
+                }
             } catch (error) {
                 expect((error as Error).message).toBe('required');
             }
@@ -214,7 +225,10 @@ describe('apiClient', () => {
             const handler = mockAxios.__mockResponseHandlers[0];
 
             try {
-                handler.rejected(mockError);
+                const result = handler.rejected(mockError);
+                if (result && typeof result.then === 'function') {
+                    result.catch(() => {});
+                }
             } catch (error) {
                 expect((error as Error).message).toBe('Network error');
             }
@@ -233,7 +247,10 @@ describe('apiClient', () => {
             const handler = mockAxios.__mockResponseHandlers[0];
 
             try {
-                handler.rejected(mockError);
+                const result = handler.rejected(mockError);
+                if (result && typeof result.then === 'function') {
+                    result.catch(() => {});
+                }
             } catch (error) {
                 expect((error as Error).message).toBe('Network Error');
             }

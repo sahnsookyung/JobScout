@@ -176,7 +176,7 @@ stop_docker() {
     log_info "Stopping Docker infrastructure..."
 
     # Check if docker-compose.yml exists
-    if [ ! -f "${DOCKER_COMPOSE_FILE}" ]; then
+    if [[ ! -f "${DOCKER_COMPOSE_FILE}" ]]; then
         log_warn "docker-compose.yml not found at ${DOCKER_COMPOSE_FILE}, skipping Docker services"
         return
     fi
@@ -200,7 +200,7 @@ stop_docker() {
 
     # Check if any containers are running
     if docker compose "${COMPOSE_ARGS[@]}" ps -q 2>/dev/null | grep -q .; then
-        if [ -n "$SERVICES_TO_STOP" ]; then
+        if [[ -n "$SERVICES_TO_STOP" ]]; then
             docker compose "${COMPOSE_ARGS[@]}" stop ${SERVICES_TO_STOP} 2>/dev/null || true
         else
             docker compose "${COMPOSE_ARGS[@]}" down --remove-orphans 2>/dev/null || true
@@ -220,7 +220,7 @@ kill_child_only_by_port() {
     local pids
     pids=$(lsof -ti:${port} 2>/dev/null)
     
-    if [ -z "$pids" ]; then
+    if [[ -z "$pids" ]]; then
         return 1
     fi
     
@@ -229,7 +229,7 @@ kill_child_only_by_port() {
         local process_name
         process_name=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ')
         # Kill node/vite processes but not npm
-        if [ "$process_name" = "node" ] || [ "$process_name" = "vite" ]; then
+        if [[ "$process_name" = "node" ]] || [[ "$process_name" = "vite" ]]; then
             kill -9 "$pid" 2>/dev/null || true
         fi
     done
@@ -252,7 +252,7 @@ kill_process_tree_by_port() {
     # Get PIDs listening on port
     lsof -ti:${port} 2>/dev/null > "$pids_file"
     
-    if [ ! -s "$pids_file" ]; then
+    if [[ ! -s "$pids_file" ]]; then
         rm -f "$pids_file"
         return 1
     fi
@@ -261,16 +261,16 @@ kill_process_tree_by_port() {
     declare -a parents=()
     while read -r pid; do
         parent=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-        if [ -n "$parent" ] && [ "$parent" -ne 1 ] && [ "$parent" -ne $$ ]; then
+        if [[ -n "$parent" ]] && [[ "$parent" -ne 1 ]] && [[ "$parent" -ne $$ ]]; then
             # Check if parent is already in list
             local found=false
             for existing in "${parents[@]}"; do
-                if [ "$existing" = "$parent" ]; then
+                if [[ "$existing" = "$parent" ]]; then
                     found=true
                     break
                 fi
             done
-            if [ "$found" = false ]; then
+            if [[ "$found" = false ]]; then
                 parents+=("$parent")
             fi
         fi

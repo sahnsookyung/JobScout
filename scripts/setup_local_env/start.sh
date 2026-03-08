@@ -69,7 +69,7 @@ log_error() {
 
 # Ensure logs directory exists
 ensure_logs_dir() {
-    if [ ! -d "${LOGS_DIR}" ]; then
+    if [[ ! -d "${LOGS_DIR}" ]]; then
         mkdir -p "${LOGS_DIR}"
         log_info "Created logs directory: ${LOGS_DIR}"
     fi
@@ -303,7 +303,7 @@ start_docker() {
     fi
 
     # Start services
-    if [ -n "$SERVICES_TO_START" ]; then
+    if [[ -n "$SERVICES_TO_START" ]]; then
         docker compose "${compose_files[@]}" up -d ${DOCKER_COMPOSE_PROFILE} ${SERVICES_TO_START}
     else
         docker compose "${compose_files[@]}" up -d ${DOCKER_COMPOSE_PROFILE}
@@ -400,7 +400,7 @@ start_web_ui() {
     log_info "Starting Vite web UI..."
 
     # Check if package.json exists
-    if [ ! -f "${PROJECT_ROOT}/web/frontend/package.json" ]; then
+    if [[ ! -f "${PROJECT_ROOT}/web/frontend/package.json" ]]; then
         log_error "Web UI package.json not found"
         return 1
     fi
