@@ -113,18 +113,15 @@ class TestServiceClient:
 
         mock_response = Mock()
         mock_response.json.return_value = {"status": "ok"}
+        client._http_client = Mock()
+        client._http_client.request.return_value = mock_response
 
-        with patch('httpx.Client') as mock_client_class:
-            mock_client_instance = Mock()
-            mock_client_instance.request.return_value = mock_response
-            mock_client_class.return_value.__enter__.return_value = mock_client_instance
+        result = client._request("GET", "/health")
 
-            result = client._request("GET", "/health")
-
-            assert result == {"status": "ok"}
-            mock_client_instance.request.assert_called_once_with(
-                "GET", "http://localhost:8080/health"
-            )
+        assert result == {"status": "ok"}
+        client._http_client.request.assert_called_once_with(
+            "GET", "http://localhost:8080/health"
+        )
 
     def test_request_post_success(self):
         """Test successful POST request."""
@@ -132,20 +129,17 @@ class TestServiceClient:
 
         mock_response = Mock()
         mock_response.json.return_value = {"success": True}
+        client._http_client = Mock()
+        client._http_client.request.return_value = mock_response
 
-        with patch('httpx.Client') as mock_client_class:
-            mock_client_instance = Mock()
-            mock_client_instance.request.return_value = mock_response
-            mock_client_class.return_value.__enter__.return_value = mock_client_instance
+        result = client._request(
+            "POST", "/api/test", json={"data": "value"}
+        )
 
-            result = client._request(
-                "POST", "/api/test", json={"data": "value"}
-            )
-
-            assert result == {"success": True}
-            mock_client_instance.request.assert_called_once_with(
-                "POST", "http://localhost:8080/api/test", json={"data": "value"}
-            )
+        assert result == {"success": True}
+        client._http_client.request.assert_called_once_with(
+            "POST", "http://localhost:8080/api/test", json={"data": "value"}
+        )
 
     def test_request_no_base_url_raises(self):
         """Test request without base URL raises RuntimeError."""
@@ -160,35 +154,31 @@ class TestServiceClient:
         """Test request with HTTP status error."""
         client = ServiceClient("http://localhost:8080")
 
-        with patch('httpx.Client') as mock_client_class:
-            mock_client_instance = Mock()
-            mock_error = httpx.HTTPStatusError(
-                "Not Found",
-                request=Mock(),
-                response=Mock(status_code=404)
-            )
-            mock_client_instance.request.side_effect = mock_error
-            mock_client_class.return_value.__enter__.return_value = mock_client_instance
+        mock_error = httpx.HTTPStatusError(
+            "Not Found",
+            request=Mock(),
+            response=Mock(status_code=404)
+        )
+        client._http_client = Mock()
+        client._http_client.request.side_effect = mock_error
 
-            with pytest.raises(httpx.HTTPStatusError):
-                client._request("GET", "/not-found")
+        with pytest.raises(httpx.HTTPStatusError):
+            client._request("GET", "/not-found")
 
-            assert "Service returned error" in caplog.text
+        assert "Service returned error" in caplog.text
 
     def test_request_connection_error(self, caplog):
         """Test request with connection error."""
         client = ServiceClient("http://localhost:8080")
 
-        with patch('httpx.Client') as mock_client_class:
-            mock_client_instance = Mock()
-            mock_error = httpx.RequestError("Connection refused", request=Mock())
-            mock_client_instance.request.side_effect = mock_error
-            mock_client_class.return_value.__enter__.return_value = mock_client_instance
+        mock_error = httpx.RequestError("Connection refused", request=Mock())
+        client._http_client = Mock()
+        client._http_client.request.side_effect = mock_error
 
-            with pytest.raises(httpx.RequestError):
-                client._request("GET", "/health")
+        with pytest.raises(httpx.RequestError):
+            client._request("GET", "/health")
 
-            assert "Service call failed" in caplog.text
+        assert "Service call failed" in caplog.text
 
     def test_request_invalid_json(self, caplog):
         """Test request with invalid JSON response."""
@@ -196,16 +186,13 @@ class TestServiceClient:
 
         mock_response = Mock()
         mock_response.json.side_effect = ValueError("Invalid JSON")
+        client._http_client = Mock()
+        client._http_client.request.return_value = mock_response
 
-        with patch('httpx.Client') as mock_client_class:
-            mock_client_instance = Mock()
-            mock_client_instance.request.return_value = mock_response
-            mock_client_class.return_value.__enter__.return_value = mock_client_instance
+        with pytest.raises(ValueError):
+            client._request("GET", "/health")
 
-            with pytest.raises(ValueError):
-                client._request("GET", "/health")
-
-            assert "Invalid JSON response" in caplog.text
+        assert "Invalid JSON response" in caplog.text
 
     def test_get_wrapper(self):
         """Test GET method wrapper."""
@@ -246,18 +233,6 @@ class TestExtractionClient:
         """Test initialization with custom URL."""
         client = ExtractionClient("http://extraction:8081")
         assert client.base_url == "http://extraction:8081"
-
-    def test_extract_jobs(self):
-        """Test extract_jobs method."""
-        client = ExtractionClient("http://extraction:8081")
-
-        with patch.object(client, 'post') as mock_post:
-            mock_post.return_value = {"success": True, "jobs_extracted": 100}
-
-            result = client.extract_jobs(limit=100)
-
-            mock_post.assert_called_once_with("/extract/jobs", json={"limit": 100})
-            assert result == {"success": True, "jobs_extracted": 100}
 
     def test_extract_resume(self):
         """Test extract_resume method."""
@@ -300,18 +275,6 @@ class TestEmbeddingsClient:
         """Test initialization with custom URL."""
         client = EmbeddingsClient("http://embeddings:8082")
         assert client.base_url == "http://embeddings:8082"
-
-    def test_embed_jobs(self):
-        """Test embed_jobs method."""
-        client = EmbeddingsClient("http://embeddings:8082")
-
-        with patch.object(client, 'post') as mock_post:
-            mock_post.return_value = {"success": True, "jobs_embedded": 50}
-
-            result = client.embed_jobs(limit=50)
-
-            mock_post.assert_called_once_with("/embed/jobs", json={"limit": 50})
-            assert result == {"success": True, "jobs_embedded": 50}
 
     def test_embed_resume(self):
         """Test embed_resume method."""
@@ -423,6 +386,34 @@ class TestOrchestratorClient:
             mock_post.assert_called_once_with("/orchestrate/match", json={})
             assert result == {"success": True, "task_id": "match-abc123"}
 
+    def test_start_stage(self):
+        """Test start_stage method."""
+        client = OrchestratorClient("http://orchestrator:8084")
+
+        with patch.object(client, 'post') as mock_post:
+            mock_post.return_value = {"success": True, "task_id": "extract-abc123"}
+
+            result = client.start_stage("extract", limit=50)
+
+            mock_post.assert_called_once_with(
+                "/orchestrate/stages/extract", json={"limit": 50}
+            )
+            assert result["task_id"] == "extract-abc123"
+
+    def test_start_scrape_extract_embed_pipeline(self):
+        """Test canonical scrape-extract-embed pipeline trigger."""
+        client = OrchestratorClient("http://orchestrator:8084")
+
+        with patch.object(client, 'post') as mock_post:
+            mock_post.return_value = {"success": True, "task_id": "pipeline-abc123"}
+
+            result = client.start_scrape_extract_embed_pipeline()
+
+            mock_post.assert_called_once_with(
+                "/orchestrate/pipelines/scrape-extract-embed", json={}
+            )
+            assert result["task_id"] == "pipeline-abc123"
+
     def test_get_task_status(self):
         """Test get_task_status method."""
         client = OrchestratorClient("http://orchestrator:8084")
@@ -436,7 +427,7 @@ class TestOrchestratorClient:
 
             result = client.get_task_status("match-abc123")
 
-            mock_get.assert_called_once_with("/orchestrate/status/match-abc123")
+            mock_get.assert_called_once_with("/orchestrate/tasks/match-abc123")
             assert result["status"] == "running"
 
     def test_get_active_task(self):
@@ -475,7 +466,7 @@ class TestOrchestratorClient:
 
             result = client.wait_for_completion("match-abc123", timeout=1.0, poll_interval=0.1)
 
-            mock_get.assert_called_once_with("/orchestrate/status/match-abc123")
+            mock_get.assert_called_once_with("/orchestrate/tasks/match-abc123")
             assert result["success"] is True
             assert result["status"] == "completed"
 

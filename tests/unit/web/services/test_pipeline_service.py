@@ -71,10 +71,7 @@ class TestPipelineTaskManager:
         """Create a fresh PipelineTaskManager instance."""
         return PipelineTaskManager()
 
-    # FIX 1: add @patch to prevent the background thread from changing status
-    # before the assertion runs — all other tests in this class already do this
-    @patch('web.backend.services.pipeline_service.PipelineTaskManager._run_pipeline_background')
-    def test_create_task_when_no_running_tasks(self, mock_run, manager):
+    def test_create_task_when_no_running_tasks(self, manager):
         """Test creating a new task when no tasks are running."""
         task_id = manager.create_task()
 
@@ -88,35 +85,11 @@ class TestPipelineTaskManager:
         assert task.step == "initializing"
 
 
-    def test_create_task_starts_background_thread(self):
-        """Test that create_task starts a background thread."""
-        manager = PipelineTaskManager()
-
+    def test_create_task_does_not_start_background_thread(self, manager):
+        """Test that create_task only registers the task without starting execution."""
         with patch('web.backend.services.pipeline_service.threading.Thread') as mock_thread_cls:
-            mock_thread_instance = Mock()
-            mock_thread_cls.return_value = mock_thread_instance
-
-            task_id = manager.create_task()
-
-            mock_thread_cls.assert_called_once()
-
-            # Use .call_args.kwargs (the named attribute) instead of [1] indexing —
-            # more reliable across mock versions and avoids KeyError if positional
-            # args are present
-            call_kwargs = mock_thread_cls.call_args.kwargs
-
-            # Thread uses a closure so task_id is captured, not passed as args
-            assert 'args' not in call_kwargs
-            assert call_kwargs['daemon'] is True
-            assert callable(call_kwargs['target'])
-
-            # Invoke the closure under a patch to confirm it calls
-            # _run_pipeline_background with the correct task_id
-            with patch.object(manager, '_run_pipeline_background') as mock_run:
-                call_kwargs['target']()
-                mock_run.assert_called_once_with(task_id)
-
-            mock_thread_instance.start.assert_called_once()
+            manager.create_task()
+            mock_thread_cls.assert_not_called()
 
     def test_create_task_returns_existing_pending_task(self, manager):
         """Test that create_task returns existing task ID when one is pending."""
@@ -125,8 +98,7 @@ class TestPipelineTaskManager:
 
         assert second_task_id == first_task_id
 
-    @patch('web.backend.services.pipeline_service.PipelineTaskManager._run_pipeline_background')
-    def test_get_task_exists(self, mock_run, manager):
+    def test_get_task_exists(self, manager):
         """Test getting an existing task."""
         task_id = manager.create_task()
         task = manager.get_task(task_id)
@@ -135,14 +107,12 @@ class TestPipelineTaskManager:
         assert task.task_id == task_id
         assert task.status == "pending"
 
-    @patch('web.backend.services.pipeline_service.PipelineTaskManager._run_pipeline_background')
-    def test_get_task_not_exists(self, mock_run, manager):
+    def test_get_task_not_exists(self, manager):
         """Test getting a non-existent task."""
         task = manager.get_task("non-existent-id")
         assert task is None
 
-    @patch('web.backend.services.pipeline_service.PipelineTaskManager._run_pipeline_background')
-    def test_get_active_task_running(self, mock_run, manager):
+    def test_get_active_task_running(self, manager):
         """Test getting active task when one is running."""
         task_id = manager.create_task()
         manager.update_task_status(task_id, "running", step="matching")
@@ -153,8 +123,7 @@ class TestPipelineTaskManager:
         assert active_task.task_id == task_id
         assert active_task.status == "running"
 
-    @patch('web.backend.services.pipeline_service.PipelineTaskManager._run_pipeline_background')
-    def test_get_active_task_pending(self, mock_run, manager):
+    def test_get_active_task_pending(self, manager):
         """Test getting active task when one is pending."""
         task_id = manager.create_task()
 
@@ -164,8 +133,7 @@ class TestPipelineTaskManager:
         assert active_task.task_id == task_id
         assert active_task.status == "pending"
 
-    @patch('web.backend.services.pipeline_service.PipelineTaskManager._run_pipeline_background')
-    def test_get_active_task_none(self, mock_run, manager):
+    def test_get_active_task_none(self, manager):
         """Test getting active task when none are active."""
         task_id = manager.create_task()
         manager.update_task_status(task_id, "completed")
@@ -173,8 +141,7 @@ class TestPipelineTaskManager:
         active_task = manager.get_active_task()
         assert active_task is None
 
-    @patch('web.backend.services.pipeline_service.PipelineTaskManager._run_pipeline_background')
-    def test_update_task_status_basic(self, mock_run, manager):
+    def test_update_task_status_basic(self, manager):
         """Test basic task status update."""
         task_id = manager.create_task()
 
@@ -184,8 +151,7 @@ class TestPipelineTaskManager:
         assert task.status == "running"
         assert task.step == "vector_matching"
 
-    @patch('web.backend.services.pipeline_service.PipelineTaskManager._run_pipeline_background')
-    def test_update_task_status_with_error(self, mock_run, manager):
+    def test_update_task_status_with_error(self, manager):
         """Test task status update with error."""
         task_id = manager.create_task()
 
@@ -204,8 +170,7 @@ class TestPipelineTaskManager:
         manager.update_task_status("non-existent", "running")
         assert True
 
-    @patch('web.backend.services.pipeline_service.PipelineTaskManager._run_pipeline_background')
-    def test_request_stop_existing_task(self, mock_run, manager):
+    def test_request_stop_existing_task(self, manager):
         """Test requesting stop of existing task."""
         task_id = manager.create_task()
 
@@ -221,8 +186,7 @@ class TestPipelineTaskManager:
 
         assert result is False
 
-    @patch('web.backend.services.pipeline_service.PipelineTaskManager._run_pipeline_background')
-    def test_stop_active_task_running(self, mock_run, manager):
+    def test_stop_active_task_running(self, manager):
         """Test stopping active running task."""
         task_id = manager.create_task()
         manager.update_task_status(task_id, "running")
@@ -233,8 +197,7 @@ class TestPipelineTaskManager:
         task = manager.get_task(task_id)
         assert task.stop_event.is_set() is True
 
-    @patch('web.backend.services.pipeline_service.PipelineTaskManager._run_pipeline_background')
-    def test_stop_active_task_pending(self, mock_run, manager):
+    def test_stop_active_task_pending(self, manager):
         """Test stopping active pending task."""
         task_id = manager.create_task()
 
@@ -244,8 +207,7 @@ class TestPipelineTaskManager:
         task = manager.get_task(task_id)
         assert task.stop_event.is_set() is True
 
-    @patch('web.backend.services.pipeline_service.PipelineTaskManager._run_pipeline_background')
-    def test_stop_active_task_none(self, mock_run, manager):
+    def test_stop_active_task_none(self, manager):
         """Test stopping when no active task."""
         task_id = manager.create_task()
         manager.update_task_status(task_id, "completed")
@@ -323,8 +285,7 @@ class TestPipelineTaskManager:
             # Should not raise, just log error
             manager.publish_update(task_id, {"status": "running"})
 
-    @patch('web.backend.services.pipeline_service.PipelineTaskManager._run_pipeline_background')
-    def test_cleanup_completed_tasks_keeps_recent(self, mock_run, manager):
+    def test_cleanup_completed_tasks_keeps_recent(self, manager):
         """Test cleanup keeps recent completed tasks."""
         # Create multiple tasks and complete them
         task_ids = []
@@ -340,8 +301,7 @@ class TestPipelineTaskManager:
         remaining = len([t for t in manager._tasks.values()])
         assert remaining == 5
 
-    @patch('web.backend.services.pipeline_service.PipelineTaskManager._run_pipeline_background')
-    def test_cleanup_completed_tasks_all_completed(self, mock_run, manager):
+    def test_cleanup_completed_tasks_all_completed(self, manager):
         """Test cleanup with all completed tasks."""
         task_id = manager.create_task()
         manager._tasks[task_id].status = "completed"
@@ -351,8 +311,7 @@ class TestPipelineTaskManager:
         # Should keep the task since it's under keep_count
         assert manager.get_task(task_id) is not None
 
-    @patch('web.backend.services.pipeline_service.PipelineTaskManager._run_pipeline_background')
-    def test_cleanup_completed_tasks_mixed_status(self, mock_run, manager):
+    def test_cleanup_completed_tasks_mixed_status(self, manager):
         """Test cleanup with mixed task statuses."""
         # Create running task directly without triggering background thread
         running_id = "running-task-id"
