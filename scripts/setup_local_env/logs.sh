@@ -50,9 +50,9 @@ print_log() {
     local file=$2
     local color=$3
 
-    if [ -f "$file" ]; then
+    if [[ -f "$file" ]]; then
         echo -e "${color}=== ${label} ===${NC}"
-        if [ "$1" = "follow" ]; then
+        if [[ "$1" = "follow" ]]; then
             tail -n ${LINES} -f "$file"
         else
             tail -n ${LINES} "$file"
@@ -67,7 +67,7 @@ list_logs() {
     echo -e "${BLUE}Available logs:${NC}"
     echo ""
 
-    if [ -d "${LOGS_DIR}" ]; then
+    if [[ -d "${LOGS_DIR}" ]]; then
         echo -e "  ${GREEN}Application Logs:${NC}"
         ls -lh "${LOGS_DIR}"/*.log 2>/dev/null | awk '{print "    " $9 " (" $5 ")"}' || echo "    (empty)"
     else
@@ -117,13 +117,13 @@ main() {
     done
 
     # Ensure logs directory exists
-    if [ ! -d "${LOGS_DIR}" ]; then
+    if [[ ! -d "${LOGS_DIR}" ]]; then
         echo -e "${YELLOW}No logs directory found: ${LOGS_DIR}${NC}"
         exit 1
     fi
 
     # Clear logs if requested
-    if [ "$clear" = true ]; then
+    if [[ "$clear" = true ]]; then
         echo -e "${YELLOW}Clearing all logs...${NC}"
         rm -f "${LOGS_DIR}"/*.log
         echo -e "${GREEN}Logs cleared!${NC}"
@@ -135,7 +135,7 @@ main() {
         all)
             echo -e "${BLUE}=== JobScout All Logs ===${NC}"
             echo ""
-            if [ "$follow" = true ]; then
+            if [[ "$follow" = true ]]; then
                 # Follow all logs using tail with multiple files
                 tail -n ${LINES} -f "${LOGS_DIR}"/*.log 2>/dev/null || {
                     echo -e "${YELLOW}No log files found${NC}"
@@ -143,7 +143,7 @@ main() {
             else
                 # Show last 50 lines of each log
                 for logfile in "${LOGS_DIR}"/*.log; do
-                    if [ -f "$logfile" ]; then
+                    if [[ -f "$logfile" ]]; then
                         filename=$(basename "$logfile")
                         case "$filename" in
                             backend.log)
@@ -167,10 +167,10 @@ main() {
             ;;
 
         backend)
-            if [ "$follow" = true ]; then
+            if [[ "$follow" = true ]]; then
                 print_log "Backend" "${LOGS_DIR}/backend.log" "$GREEN"
             else
-                if [ -f "${LOGS_DIR}/backend.log" ]; then
+                if [[ -f "${LOGS_DIR}/backend.log" ]]; then
                     tail -n ${LINES} "${LOGS_DIR}/backend.log"
                 else
                     echo -e "${YELLOW}Backend log not found: ${LOGS_DIR}/backend.log${NC}"
@@ -180,10 +180,10 @@ main() {
             ;;
 
         frontend)
-            if [ "$follow" = true ]; then
+            if [[ "$follow" = true ]]; then
                 print_log "Frontend" "${LOGS_DIR}/frontend.log" "$CYAN"
             else
-                if [ -f "${LOGS_DIR}/frontend.log" ]; then
+                if [[ -f "${LOGS_DIR}/frontend.log" ]]; then
                     tail -n ${LINES} "${LOGS_DIR}/frontend.log"
                 else
                     echo -e "${YELLOW}Frontend log not found: ${LOGS_DIR}/frontend.log${NC}"
@@ -193,8 +193,8 @@ main() {
             ;;
 
         docker)
-            if [ -f "${DOCKER_COMPOSE_FILE}" ]; then
-                if [ "$follow" = true ]; then
+            if [[ -f "${DOCKER_COMPOSE_FILE}" ]]; then
+                if [[ "$follow" = true ]]; then
                     docker compose -f "${DOCKER_COMPOSE_FILE}" logs -f
                 else
                     docker compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES}
@@ -205,8 +205,8 @@ main() {
             ;;
 
         postgres)
-            if [ -f "${DOCKER_COMPOSE_FILE}" ]; then
-                if [ "$follow" = true ]; then
+            if [[ -f "${DOCKER_COMPOSE_FILE}" ]]; then
+                if [[ "$follow" = true ]]; then
                     docker compose -f "${DOCKER_COMPOSE_FILE}" logs -f postgres
                 else
                     docker compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES} postgres
@@ -217,8 +217,8 @@ main() {
             ;;
 
         redis)
-            if [ -f "${DOCKER_COMPOSE_FILE}" ]; then
-                if [ "$follow" = true ]; then
+            if [[ -f "${DOCKER_COMPOSE_FILE}" ]]; then
+                if [[ "$follow" = true ]]; then
                     docker compose -f "${DOCKER_COMPOSE_FILE}" logs -f redis
                 else
                     docker compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES} redis
