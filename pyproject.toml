@@ -66,6 +66,3 @@ filterwarnings = [
     "ignore:coroutine 'AsyncMockMixin.*was never awaited",
     "ignore::DeprecationWarning:testcontainers",
 ]
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-]
