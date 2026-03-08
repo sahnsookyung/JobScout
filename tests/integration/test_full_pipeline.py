@@ -30,12 +30,9 @@ import json
 import time
 import uuid
 import numpy as np
-import pytest
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from unittest.mock import patch
-
-pytestmark = pytest.mark.slow
 
 # Check if we should run with Docker containers
 USE_DOCKER = os.environ.get('USE_DOCKER_CONTAINERS', '1') == '1'
