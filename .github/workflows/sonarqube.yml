@@ -1,0 +1,113 @@
+name: SonarQube Code Quality
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run daily at 2 AM UTC to catch regressions
+    - cron: '0 2 * * *'
+
+jobs:
+  sonarqube:
+    name: SonarQube Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for better analysis
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          uv sync --all-extras
+          uv pip install pytest pytest-asyncio pytest-cov
+
+      - name: Start integration test containers
+        run: |
+          # Build Docker image for microservices
+          docker build -t jobscout-orchestrator:latest .
+          
+          # Start Redis test container on port 6380
+          docker run -d --name redis-test -p 6380:6379 redis:7-alpine
+          # Wait for Redis to be ready
+          sleep 2
+          docker exec redis-test redis-cli ping
+
+      - name: Run tests with coverage
+        run: |
+          # Run ALL tests with coverage - no test left behind!
+          # Redis available on localhost:6379 (service) and localhost:6380 (test container)
+          uv run pytest tests/ \
+            --cov=services \
+            --cov=core \
+            --cov=database \
+            --cov=etl \
+            --cov=pipeline \
+            --cov=notification \
+            --cov=web \
+            --cov=modal \
+            --cov-report=xml:coverage.xml \
+            --cov-report=html:htmlcov \
+            --cov-report=term \
+            -v --tb=short
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          REDIS_URL: redis://localhost:6379/1
+          TEST_REDIS_PORT: 6380
+          USE_DOCKER_CONTAINERS: "1"
+
+      - name: Cleanup test containers
+        if: always()
+        run: |
+          docker stop redis-test || true
+          docker rm redis-test || true
+          docker rmi jobscout-orchestrator:latest || true
+
+      - name: Verify coverage file exists
+        run: |
+          ls -la coverage.xml
+          ls -la htmlcov/
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Include coverage report from pytest-cov
+          SONAR_COVERAGE_REPORT_PATHS: coverage.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            coverage.xml
+            htmlcov/
+          retention-days: 7

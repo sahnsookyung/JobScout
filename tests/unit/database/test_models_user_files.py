@@ -16,6 +16,20 @@ from sqlalchemy.orm import sessionmaker
 
 from database.models import Base, User, UserFile
 
+# Test constants (not production credentials)
+TEST_PASSWORD_HASH = "test_password_hash"
+TEST_PASSWORD_HASH2 = "test_password_hash_2"
+TEST_EMAIL = "test@example.com"
+TEST_EMAIL2 = "test2@example.com"
+TEST_EMAIL_UNIQUE = "unique@example.com"
+TEST_EMAIL_DEFAULTS = "defaults@example.com"
+TEST_EMAIL_FILES = "files@example.com"
+TEST_EMAIL_FULL = "full@example.com"
+TEST_EMAIL_SOFTDELETE = "softdelete@example.com"
+TEST_EMAIL_FILEOWNER = "fileowner@example.com"
+TEST_EMAIL_DEFAULTSTATUS = "defaultstatus@example.com"
+TEST_EMAIL_STORAGEKEY = "storagekey@example.com"
+
 
 @pytest.fixture(scope="function")
 def db_session(test_database):
@@ -40,15 +54,15 @@ class TestUserModel:
     def test_user_creation_basic(self, db_session):
         """Test creating a basic user."""
         user = User(
-            email="test@example.com",
-            password_hash="bcrypt_hash_here"
+            email=TEST_EMAIL,
+            password_hash=TEST_PASSWORD_HASH
         )
         db_session.add(user)
         db_session.commit()
-        
+
         assert user.id is not None, "User ID should be generated"  # type: ignore
-        assert user.email == "test@example.com"  # type: ignore
-        assert user.password_hash == "bcrypt_hash_here"  # type: ignore
+        assert user.email == TEST_EMAIL  # type: ignore
+        assert user.password_hash == TEST_PASSWORD_HASH  # type: ignore
         assert user.is_active == True, "User should be active by default"  # type: ignore
         assert user.failed_login_attempts == 0, "Failed attempts should be 0 by default"  # type: ignore
         assert user.created_at is not None, "Created at should be set"  # type: ignore
@@ -56,10 +70,10 @@ class TestUserModel:
     def test_user_creation_with_all_fields(self, db_session):
         """Test creating a user with all fields populated."""
         now = datetime.now(timezone.utc)
-        
+
         user = User(
-            email="full@example.com",
-            password_hash="argon2_hash",
+            email=TEST_EMAIL_FULL,
+            password_hash=TEST_PASSWORD_HASH,
             display_name="Test User",
             email_verified_at=now,
             is_active=True,
@@ -81,37 +95,37 @@ class TestUserModel:
     def test_user_default_values(self, db_session):
         """Test that default values are set correctly."""
         user = User(
-            email="defaults@example.com",
-            password_hash="hash"
+            email=TEST_EMAIL_DEFAULTS,
+            password_hash=TEST_PASSWORD_HASH
         )
         db_session.add(user)
         db_session.commit()
-        
+
         db_session.refresh(user)
-        
+
         assert user.is_active == True  # type: ignore
         assert user.failed_login_attempts == 0  # type: ignore
         assert user.created_at is not None  # type: ignore
         assert user.updated_at is not None  # type: ignore
         assert user.deleted_at is None  # type: ignore
-    
+
     def test_user_email_unique_constraint(self, db_session):
         """Test that email must be unique."""
-        user1 = User(email="unique@example.com", password_hash="hash1")
+        user1 = User(email=TEST_EMAIL_UNIQUE, password_hash=TEST_PASSWORD_HASH)
         db_session.add(user1)
         db_session.commit()
-        
-        user2 = User(email="unique@example.com", password_hash="hash2")
+
+        user2 = User(email=TEST_EMAIL_UNIQUE, password_hash=TEST_PASSWORD_HASH)
         db_session.add(user2)
-        
+
         with pytest.raises(Exception) as exc_info:
             db_session.commit()
-        
+
         assert "unique" in str(exc_info.value).lower() or "duplicate" in str(exc_info.value).lower()
-    
+
     def test_user_relationship_to_files(self, db_session):
         """Test user relationship to files."""
-        user = User(email="files@example.com", password_hash="hash")
+        user = User(email=TEST_EMAIL_FILES, password_hash=TEST_PASSWORD_HASH)
         db_session.add(user)
         db_session.commit()
         
@@ -144,7 +158,7 @@ class TestUserModel:
     
     def test_user_soft_delete(self, db_session):
         """Test that users support soft delete via deleted_at."""
-        user = User(email="softdelete@example.com", password_hash="hash")
+        user = User(email=TEST_EMAIL_SOFTDELETE, password_hash=TEST_PASSWORD_HASH)
         db_session.add(user)
         db_session.commit()
         
@@ -161,7 +175,7 @@ class TestUserFileModel:
     
     def test_userfile_creation_basic(self, db_session):
         """Test creating a basic user file."""
-        user = User(email="fileowner@example.com", password_hash="hash")
+        user = User(email=TEST_EMAIL_FILEOWNER, password_hash=TEST_PASSWORD_HASH)
         db_session.add(user)
         db_session.commit()
         
@@ -189,7 +203,7 @@ class TestUserFileModel:
     
     def test_userfile_default_upload_status(self, db_session):
         """Test that upload_status defaults to 'pending'."""
-        user = User(email="defaultstatus@example.com", password_hash="hash")
+        user = User(email=TEST_EMAIL_DEFAULTSTATUS, password_hash=TEST_PASSWORD_HASH)
         db_session.add(user)
         db_session.commit()
         
@@ -210,7 +224,7 @@ class TestUserFileModel:
     
     def test_userfile_storage_key_unique_constraint(self, db_session):
         """Test that storage_key must be unique."""
-        user = User(email="storagekey@example.com", password_hash="hash")
+        user = User(email=TEST_EMAIL_STORAGEKEY, password_hash=TEST_PASSWORD_HASH)
         db_session.add(user)
         db_session.commit()
         
@@ -265,7 +279,7 @@ class TestUserFileModel:
     
     def test_userfile_relationship_to_owner(self, db_session):
         """Test file relationship back to owner."""
-        user = User(email="relationship@example.com", password_hash="hash")
+        user = User(email="relationship@example.com", password_hash=TEST_PASSWORD_HASH)
         db_session.add(user)
         db_session.commit()
         
@@ -288,7 +302,7 @@ class TestUserFileModel:
     
     def test_userfile_file_type_must_be_valid_enum(self, db_session):
         """Test that file_type must be a valid ENUM value ('resume')."""
-        user = User(email="filetype@example.com", password_hash="hash")
+        user = User(email="filetype@example.com", password_hash=TEST_PASSWORD_HASH)
         db_session.add(user)
         db_session.commit()
         
@@ -309,7 +323,7 @@ class TestUserFileModel:
     
     def test_userfile_storage_key_format(self, db_session):
         """Test that storage_key follows the expected format: {type}/{uuid}."""
-        user = User(email="storageformat@example.com", password_hash="hash")
+        user = User(email="storageformat@example.com", password_hash=TEST_PASSWORD_HASH)
         db_session.add(user)
         db_session.commit()
         
@@ -334,7 +348,7 @@ class TestUserFileModel:
     
     def test_userfile_cascade_delete(self, db_session):
         """Test that files are deleted when user is deleted."""
-        user = User(email="cascade@example.com", password_hash="hash")
+        user = User(email="cascade@example.com", password_hash=TEST_PASSWORD_HASH)
         db_session.add(user)
         db_session.commit()
         

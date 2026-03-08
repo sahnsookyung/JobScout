@@ -1,38 +1,44 @@
+# Core Infrastructure
+# Run: docker-compose -f docker-compose.yml --profile driver up -d
+
 services:
   jobspy-service:
-    # Job Fetching API Service
     image: sahnsookyung/jobspy:1.0.1
-    platform: linux/amd64 # only linux/amd64 version exists for now.
+    platform: linux/amd64
     ports:
       - "8000:8000"
 
-  # Redis for async notification queue
-  redis:
-    image: redis:7-alpine
-    container_name: jobscout-redis
-    ports:
-      - "127.0.0.1:6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  # Postgres with pgvector
   postgres:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: jobscout
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-jobscout}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-jobscout}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
-  # This is your Main Driver container (renamed context, kept service name for now)
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD:-jobscoutredis}
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-jobscoutredis}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "sh", "-c", "REDISCLI_AUTH=${REDIS_PASSWORD:-jobscoutredis} redis-cli ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   main-driver:
     build:
       context: .
@@ -44,73 +50,23 @@ services:
     env_file:
       - .env
     environment:
-      # These override .env values for Docker networking
       - JOBSPY_URL=http://jobspy-service:8000
-      - DATABASE_URL=postgresql://user:password@postgres:5432/jobscout
-      - REDIS_URL=redis://redis:6379/0
-      # Default to local host Ollama
-      - ETL_LLM_BASE_URL=${ETL_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${POSTGRES_DB:-jobscout}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-jobscoutredis}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-jobscout}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-jobscoutredis}@redis:6379/0
     volumes:
-      - ./api_responses.json:/app/api_responses.json # Mount for testing
-      - ./config.yaml:/app/config.yaml
-      - ./main.py:/app/main.py:ro # Only mount specific files for live reload
-      - ./core:/app/core:ro
-      - ./database:/app/database:ro
-      - ./etl:/app/etl:ro
-      - ./pipeline:/app/pipeline:ro
-
-  pgadmin:
-    image: dpage/pgadmin4
-    environment:
-      PGADMIN_DEFAULT_EMAIL: user@example.com
-      PGADMIN_DEFAULT_PASSWORD: password
-    ports:
-      - "5050:80"
-    depends_on:
-      - postgres
-
-  # Notification Worker - processes async notifications from Redis queue
-  notification-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: ["python", "-m", "notification.worker"]
-    depends_on:
-      - redis
-      - postgres
-    env_file:
-      - .env
-    environment:
-      - DATABASE_URL=postgresql://user:password@postgres:5432/jobscout
-      - REDIS_URL=redis://redis:6379/0
-    restart: unless-stopped
-
-  # Ollama for local embeddings
-  # Ollama for local embeddings (Optional Profile)
-  # Run with: docker compose --profile docker-ollama up
-  ollama:
-    image: ollama/ollama:${OLLAMA_IMAGE:-0.15.2}
-    environment:
-      - OLLAMA_HOST=0.0.0.0:11434
-      - OLLAMA_EMBEDDING_MODEL=${OLLAMA_EMBEDDING_MODEL:-qwen3-embedding:4b}
-      - OLLAMA_EXTRACTION_MODEL=${OLLAMA_EXTRACTION_MODEL:-qwen3:14b}
-    volumes:
-      - ollama_models:/root/.ollama
-      - ./scripts:/scripts:ro
-    entrypoint: [ "/bin/bash", "/scripts/ollama-entrypoint.sh" ]
-    healthcheck:
-      test: [ "CMD", "ollama", "list" ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+      - ./resume.json:/app/resume.json
+      - ./config.yaml:/app/config.yaml:ro
     profiles:
-      - docker-ollama
-      - expose # Optional port exposure
+      - driver
 
 volumes:
   postgres_data:
   redis_data:
-  ollama_models:

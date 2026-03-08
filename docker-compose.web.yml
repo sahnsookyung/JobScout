@@ -1,0 +1,27 @@
+# Web API Service
+# Run: docker-compose -f docker-compose.yml -f docker-compose.web.yml up -d
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: web/frontend/Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Note: Defaults match postgres/redis service defaults for development
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-jobscout}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-jobscoutredis}@redis:6379/0
+      - EXTRACTION_URL=http://extraction:8081
+      - EMBEDDINGS_URL=http://embeddings:8082
+      - SCORER_MATCHER_URL=http://scorer-matcher:8083
+      - ORCHESTRATOR_URL=http://orchestrator:8084
+    env_file:
+      - .env
+    profiles:
+      - web

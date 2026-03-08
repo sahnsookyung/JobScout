@@ -650,7 +650,6 @@ class WebhookChannel(NotificationChannel):
                     ],
                     'metadata': {
                         'user_id': metadata.get('user_id'),
-                        'notification_type': metadata.get('notification_type'),
                     }
                 }
             else:

@@ -76,7 +76,7 @@ list_logs() {
 
     echo ""
     echo -e "  ${CYAN}Docker Logs:${NC}"
-    echo "    Run: ${YELLOW}docker-compose logs${NC}"
+    echo "    Run: ${YELLOW}docker compose logs${NC}"
     echo "    Or: ${YELLOW}./logs.sh docker${NC}"
 }
 
@@ -195,9 +195,9 @@ main() {
         docker)
             if [ -f "${DOCKER_COMPOSE_FILE}" ]; then
                 if [ "$follow" = true ]; then
-                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs -f
+                    docker compose -f "${DOCKER_COMPOSE_FILE}" logs -f
                 else
-                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES}
+                    docker compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES}
                 fi
             else
                 echo -e "${RED}docker-compose.yml not found${NC}"
@@ -207,9 +207,9 @@ main() {
         postgres)
             if [ -f "${DOCKER_COMPOSE_FILE}" ]; then
                 if [ "$follow" = true ]; then
-                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs -f postgres
+                    docker compose -f "${DOCKER_COMPOSE_FILE}" logs -f postgres
                 else
-                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES} postgres
+                    docker compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES} postgres
                 fi
             else
                 echo -e "${RED}docker-compose.yml not found${NC}"
@@ -219,9 +219,9 @@ main() {
         redis)
             if [ -f "${DOCKER_COMPOSE_FILE}" ]; then
                 if [ "$follow" = true ]; then
-                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs -f redis
+                    docker compose -f "${DOCKER_COMPOSE_FILE}" logs -f redis
                 else
-                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES} redis
+                    docker compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES} redis
                 fi
             else
                 echo -e "${RED}docker-compose.yml not found${NC}"

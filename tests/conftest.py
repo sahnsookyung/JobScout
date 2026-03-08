@@ -8,6 +8,11 @@ For standard test utilities, see tests/__init__.py
 import os
 import pytest
 
+# Test database credentials (not production credentials)
+TEST_DB_USER = "testuser"
+TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD", "testpass")
+TEST_DB_NAME = "jobscout_test"
+
 
 def pytest_configure(config):
     """Configure pytest markers."""
@@ -42,9 +47,9 @@ def test_database():
         # Start PostgreSQL with pgvector
         postgres = PostgresContainer(
             image="ankane/pgvector:latest",
-            username="testuser",
-            password="testpass",
-            dbname="jobscout_test",
+            username=TEST_DB_USER,
+            password=TEST_DB_PASSWORD,
+            dbname=TEST_DB_NAME,
             port=5432
         )
         postgres.start()

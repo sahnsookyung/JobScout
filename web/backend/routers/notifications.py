@@ -3,6 +3,7 @@
 Notification endpoints - send and manage notifications.
 """
 
+from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
@@ -18,7 +19,7 @@ from notification import NotificationPriority
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
 
-def get_notification_service(db: Session = Depends(get_db)) -> NotificationServiceWrapper:
+def get_notification_service(db: Annotated[Session, Depends(get_db)]) -> NotificationServiceWrapper:
     """Dependency to get notification service."""
     return NotificationServiceWrapper(db)
 
@@ -26,7 +27,7 @@ def get_notification_service(db: Session = Depends(get_db)) -> NotificationServi
 @router.post("/send", response_model=NotificationResponse)
 def send_notification(
     request: NotificationRequest,
-    notification_service: NotificationServiceWrapper = Depends(get_notification_service)
+    notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)],
 ):
     """
     Send a notification via the message queue.
@@ -60,7 +61,7 @@ def send_notification(
 
 @router.get("/queue-status", response_model=QueueStatusResponse)
 def get_queue_status(
-    notification_service: NotificationServiceWrapper = Depends(get_notification_service)
+    notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)],
 ):
     """
     Get the status of the notification queue.
