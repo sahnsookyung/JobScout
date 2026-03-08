@@ -22,14 +22,11 @@ import unittest
 import os
 import sys
 import time
-import pytest
 from datetime import datetime
 from unittest.mock import Mock, patch
 from redis import Redis
 from rq import Queue, Worker, SimpleWorker
 from rq.job import Job
-
-pytestmark = pytest.mark.slow
 
 from notification import (
     NotificationService, NotificationPriority,
