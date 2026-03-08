@@ -9,6 +9,20 @@ from pgvector.sqlalchemy import Vector
 from .base import Base
 
 
+# ============================================================================
+# Constants - avoid duplication across models
+# ============================================================================
+
+# SQLAlchemy cascade specification
+CASCADE_DELETE_ORPHAN = "all, delete-orphan"
+
+# Server default for UTC timestamps
+UTC_NOW = sql_text("timezone('UTC', now())")
+
+# Common foreign key references
+JOB_POST_ID_FK = 'job_post.id'
+
+
 class JobPost(Base):
     __tablename__ = 'job_post'
 
@@ -24,8 +38,8 @@ class JobPost(Base):
     # Fingerprinting / Tracking
     canonical_fingerprint = Column(Text, nullable=False)
     fingerprint_version = Column(Integer, nullable=False, default=1)
-    first_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
-    last_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    first_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
+    last_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
     status = Column(Text, nullable=False, default='active') # active|expired|unknown
     
     # State Flags
@@ -77,10 +91,10 @@ class JobPost(Base):
     summary_embedding = Column(Vector(1024))
 
     # Relationships
-    sources = relationship("JobPostSource", back_populates="job_post", cascade="all, delete-orphan")
-    requirements = relationship("JobRequirementUnit", back_populates="job_post", cascade="all, delete-orphan")
-    benefits = relationship("JobBenefit", back_populates="job_post", cascade="all, delete-orphan")
-    matches = relationship("JobMatch", back_populates="job_post", cascade="all, delete-orphan")
+    sources = relationship("JobPostSource", back_populates="job_post", cascade=CASCADE_DELETE_ORPHAN)
+    requirements = relationship("JobRequirementUnit", back_populates="job_post", cascade=CASCADE_DELETE_ORPHAN)
+    benefits = relationship("JobBenefit", back_populates="job_post", cascade=CASCADE_DELETE_ORPHAN)
+    matches = relationship("JobMatch", back_populates="job_post", cascade=CASCADE_DELETE_ORPHAN)
 
     __table_args__ = (
         UniqueConstraint('tenant_id', 'fingerprint_version', 'canonical_fingerprint', name='uq_job_post_fingerprint'),
@@ -105,8 +119,8 @@ class JobPostSource(Base):
     source_job_id = Column(Text)
     date_posted = Column(Date)
     
-    first_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
-    last_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    first_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
+    last_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
     is_active = Column(Boolean, nullable=False, default=True)
 
     job_post = relationship("JobPost", back_populates="sources")
@@ -132,11 +146,11 @@ class JobRequirementUnit(Base):
     min_years = Column(Integer)  # Minimum years required
     years_context = Column(Text)  # What the years refer to (e.g., "Python", "total")
     
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
 
     job_post = relationship("JobPost", back_populates="requirements")
-    embedding_row = relationship("JobRequirementUnitEmbedding", uselist=False, back_populates="unit", cascade="all, delete-orphan")
-    match_requirements = relationship("JobMatchRequirement", back_populates="requirement", cascade="all, delete-orphan")
+    embedding_row = relationship("JobRequirementUnitEmbedding", uselist=False, back_populates="unit", cascade=CASCADE_DELETE_ORPHAN)
+    match_requirements = relationship("JobMatchRequirement", back_populates="requirement", cascade=CASCADE_DELETE_ORPHAN)
 
     __table_args__ = (
         Index('idx_jru_job', 'job_post_id'),
@@ -145,9 +159,9 @@ class JobRequirementUnit(Base):
 class JobRequirementUnitEmbedding(Base):
     __tablename__ = 'job_requirement_unit_embedding'
 
-    job_requirement_unit_id = Column(UUID(as_uuid=True), ForeignKey('job_requirement_unit.id', ondelete='CASCADE'), primary_key=True)
+    job_requirement_unit_id = Column(UUID(as_uuid=True), ForeignKey(JOB_POST_ID_FK, ondelete='CASCADE'), primary_key=True)
     embedding = Column(Vector(1024), nullable=False)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
 
     unit = relationship("JobRequirementUnit", back_populates="embedding_row")
 
@@ -165,7 +179,7 @@ class JobBenefit(Base):
     text = Column(Text, nullable=False)
     ordinal = Column(Integer)
 
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
 
     job_post = relationship("JobPost", back_populates="benefits")
 
@@ -197,7 +211,7 @@ class JobFacetEmbedding(Base):
     embedding = Column(Vector(1024), nullable=False)
 
     content_hash = Column(Text)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
 
     __table_args__ = (
         UniqueConstraint('job_post_id', 'facet_key', name='uq_job_facet_job_key'),
