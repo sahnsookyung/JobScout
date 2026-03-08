@@ -9,6 +9,7 @@ Usage:
     uv run pytest tests/unit/services/test_extraction.py -v
 """
 
+import asyncio
 import os
 import pytest
 import threading
@@ -280,6 +281,119 @@ class TestExtractionEndpoints:
             mock_state.stop_event.set.assert_called_once()
         finally:
             del app.state.extraction
+
+
+class TestProcessExtractionMessage:
+    """Test _process_extraction_message function."""
+
+    @pytest.mark.asyncio
+    async def test_process_extraction_message_success(self):
+        """Test successful extraction processing."""
+        from services.extraction.main import _process_extraction_message, ExtractionState
+        
+        mock_ctx = Mock()
+        state = ExtractionState(ctx=mock_ctx)
+        msg = {"task_id": "task-123", "resume_file": "/app/resume.pdf"}
+
+        with patch('services.extraction.main._validate_resume_path', return_value=(True, "/app/resume.pdf")), \
+             patch('services.extraction.main.process_resume', return_value=(True, "fp-abc123")), \
+             patch('services.extraction.main.publish_completion') as mock_publish, \
+             patch('services.extraction.main.ack_message') as mock_ack:
+
+            result = await _process_extraction_message(state, "msg-1", msg)
+
+        assert result is True
+        mock_publish.assert_called_once()
+        mock_ack.assert_called_once()
+        # Check completed status was published
+        published_payload = mock_publish.call_args[0][1]
+        assert published_payload["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_process_extraction_message_skipped(self):
+        """Test extraction skipped when resume unchanged."""
+        from services.extraction.main import _process_extraction_message, ExtractionState
+        
+        mock_ctx = Mock()
+        state = ExtractionState(ctx=mock_ctx)
+        msg = {"task_id": "task-123", "resume_file": "/app/resume.pdf"}
+
+        with patch('services.extraction.main._validate_resume_path', return_value=(True, "/app/resume.pdf")), \
+             patch('services.extraction.main.process_resume', return_value=(False, None)), \
+             patch('services.extraction.main.publish_completion') as mock_publish, \
+             patch('services.extraction.main.ack_message') as mock_ack:
+
+            result = await _process_extraction_message(state, "msg-1", msg)
+
+        assert result is True
+        mock_publish.assert_called_once()
+        # Check skipped status was published
+        published_payload = mock_publish.call_args[0][1]
+        assert published_payload["status"] == "skipped"
+
+    @pytest.mark.asyncio
+    async def test_process_extraction_message_invalid_path(self):
+        """Test extraction fails with invalid path."""
+        from services.extraction.main import _process_extraction_message, ExtractionState
+        
+        mock_ctx = Mock()
+        state = ExtractionState(ctx=mock_ctx)
+        msg = {"task_id": "task-456", "resume_file": "/etc/passwd"}
+
+        with patch('services.extraction.main._validate_resume_path', return_value=(False, "Invalid path")), \
+             patch('services.extraction.main.publish_completion') as mock_publish, \
+             patch('services.extraction.main.ack_message') as mock_ack:
+
+            result = await _process_extraction_message(state, "msg-2", msg)
+
+        assert result is False
+        mock_ack.assert_called_once()
+        published_payload = mock_publish.call_args[0][1]
+        assert published_payload["status"] == "failed"
+        assert "Invalid" in published_payload["error"]
+
+    @pytest.mark.asyncio
+    async def test_process_extraction_message_failure(self):
+        """Test extraction processing failure."""
+        from services.extraction.main import _process_extraction_message, ExtractionState
+        
+        mock_ctx = Mock()
+        state = ExtractionState(ctx=mock_ctx)
+        msg = {"task_id": "task-789", "resume_file": "/app/resume.pdf"}
+
+        with patch('services.extraction.main._validate_resume_path', return_value=(True, "/app/resume.pdf")), \
+             patch('services.extraction.main.process_resume', side_effect=RuntimeError("parse failed")), \
+             patch('services.extraction.main.publish_completion') as mock_publish, \
+             patch('services.extraction.main.ack_message') as mock_ack:
+
+            result = await _process_extraction_message(state, "msg-3", msg)
+
+        assert result is False
+        mock_ack.assert_called_once()
+        published_payload = mock_publish.call_args[0][1]
+        assert published_payload["status"] == "failed"
+        assert "parse failed" in published_payload["error"]
+
+
+class TestConsumeExtractionJobs:
+    """Test consume_extraction_jobs consumer loop."""
+
+    @pytest.mark.asyncio
+    async def test_consumer_handles_empty_stream(self):
+        """Test consumer handles empty stream (no messages)."""
+        from services.extraction.main import consume_extraction_jobs, ExtractionState
+        
+        mock_ctx = Mock()
+        state = ExtractionState(ctx=mock_ctx)
+        
+        with patch('services.extraction.main.read_stream', return_value=[]):
+            task = asyncio.create_task(consume_extraction_jobs(state))
+            await asyncio.sleep(0.1)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 if __name__ == "__main__":
