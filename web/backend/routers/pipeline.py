@@ -243,18 +243,24 @@ async def _stream_orchestrator_sse(orchestrator_url: str, task_id: str):
                 f"{orchestrator_url}/orchestrate/status/{task_id}"
             ) as response:
                 if response.status_code == 404:
-                    logger.error("Orchestrator: task %s not found", _sanitize_for_logging(task_id))
+                    # Sanitize task_id before logging to prevent log injection (CWE-117)
+                    safe_task_id = _sanitize_for_logging(task_id)
+                    logger.error("Orchestrator: task %s not found", safe_task_id)
                     yield f"data: {json.dumps({'error': 'Task not found', 'status': 'failed'})}\n\n"
                     return
                 if response.is_error:
-                    logger.error("Orchestrator returned %s for task %s", response.status_code, _sanitize_for_logging(task_id))
+                    # Sanitize task_id before logging to prevent log injection (CWE-117)
+                    safe_task_id = _sanitize_for_logging(task_id)
+                    logger.error("Orchestrator returned %s for task %s", response.status_code, safe_task_id)
                     yield f"data: {json.dumps({'error': 'Failed to get pipeline status'})}\n\n"
                     return
                 async for chunk in response.aiter_raw():
                     if chunk:
                         yield chunk
     except Exception:
-        logger.exception("Failed to connect to orchestrator for task %s", _sanitize_for_logging(task_id))
+        # Sanitize task_id before logging to prevent log injection (CWE-117)
+        safe_task_id = _sanitize_for_logging(task_id)
+        logger.exception("Failed to connect to orchestrator for task %s", safe_task_id)
         yield f"data: {json.dumps({'error': 'Failed to connect to pipeline service'})}\n\n"
 
 
@@ -275,7 +281,10 @@ async def _preflight_task_check(orchestrator_url: str, task_id: str) -> None:
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning("Pre-flight check failed for task %s: %s", _sanitize_for_logging(task_id), _sanitize_for_logging(str(e)))
+        # Sanitize task_id and error message before logging to prevent log injection (CWE-117)
+        safe_task_id = _sanitize_for_logging(task_id)
+        safe_error = _sanitize_for_logging(str(e))
+        logger.warning("Pre-flight check failed for task %s: %s", safe_task_id, safe_error)
 
 
 @router.get(

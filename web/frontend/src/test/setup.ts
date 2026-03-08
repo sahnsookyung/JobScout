@@ -13,6 +13,8 @@ afterEach(() => {
 });
 
 // Mock window.matchMedia for components that use it
+// Note: Using Object.defineProperty because jsdom doesn't implement matchMedia
+// This is the recommended Jest/Vitest pattern for missing browser APIs
 Object.defineProperty(window, 'matchMedia', {
     writable: true,
     value: vi.fn().mockImplementation(query => ({

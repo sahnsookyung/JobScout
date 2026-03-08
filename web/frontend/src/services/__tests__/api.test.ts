@@ -3,7 +3,7 @@
  * Covers: api.ts
  */
 
-import { AxiosError } from 'axios';
+import axios, { AxiosError } from 'axios';
 
 // Mock axios with interceptors support - must be before apiClient import
 vi.mock('axios', () => {
@@ -64,7 +64,6 @@ vi.mock('axios', () => {
 });
 
 // Now import apiClient - it will use our mocked axios
-import axios from 'axios';
 import { apiClient } from '../api';
 
 describe('apiClient', () => {
