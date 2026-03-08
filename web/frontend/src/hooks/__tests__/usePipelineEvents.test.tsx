@@ -12,7 +12,7 @@ const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0));
 
 // Mock EventSource with precise typing
 class MockEventSource {
-    static instances: MockEventSource[] = [];
+    static readonly instances: MockEventSource[] = [];
     static readonly CONNECTING = 0;
     static readonly OPEN = 1;
     static readonly CLOSED = 2;
