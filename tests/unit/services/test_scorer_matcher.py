@@ -173,5 +173,108 @@ class TestMatcherConstants:
         assert 'matching' in matcher_module.CHANNEL_MATCHING_DONE.lower()
 
 
+class TestMatcherEndpoints:
+    """Test scorer/matcher service HTTP endpoints using TestClient."""
+
+    def test_health_endpoint(self):
+        """Test health endpoint returns correct status."""
+        from fastapi.testclient import TestClient
+        from services.scorer_matcher.main import app
+        
+        client = TestClient(app)
+        response = client.get("/health")
+        
+        assert response.status_code == 200
+        assert response.json() == {"status": "healthy", "service": "matcher"}
+
+    def test_metrics_endpoint(self):
+        """Test metrics endpoint returns correct info."""
+        from fastapi.testclient import TestClient
+        from services.scorer_matcher.main import app
+        
+        mock_task = Mock()
+        mock_task.done.return_value = False
+        
+        mock_state = Mock()
+        mock_state.consumer_task = mock_task
+        
+        app.state.matcher = mock_state
+        try:
+            client = TestClient(app)
+            response = client.get("/metrics")
+            
+            assert response.status_code == 200
+            data = response.json()
+            assert data["service"] == "matcher"
+            assert data["consumer_running"] is True
+        finally:
+            del app.state.matcher
+
+    def test_match_resume_endpoint(self):
+        """Test match/resume endpoint."""
+        from fastapi.testclient import TestClient
+        from services.scorer_matcher.main import app
+        
+        mock_result = Mock()
+        mock_result.saved_count = 5
+        
+        mock_state = Mock()
+        mock_state.ctx = Mock()
+        mock_state.stop_event = Mock()
+        
+        with patch('services.scorer_matcher.main._run_matching_pipeline_sync', return_value=mock_result):
+            app.state.matcher = mock_state
+            try:
+                client = TestClient(app)
+                response = client.post("/match/resume", json={"resume_fingerprint": "abc123"})
+                
+                assert response.status_code == 200
+                data = response.json()
+                assert data["success"] is True
+                assert data["matches"] == 5
+            finally:
+                del app.state.matcher
+
+    def test_match_jobs_endpoint(self):
+        """Test match/jobs endpoint - currently returns not implemented."""
+        from fastapi.testclient import TestClient
+        from services.scorer_matcher.main import app
+        
+        mock_state = Mock()
+        
+        app.state.matcher = mock_state
+        try:
+            client = TestClient(app)
+            response = client.post("/match/jobs", json={"resume_fingerprint": "abc123", "job_ids": ["1", "2", "3"]})
+            
+            assert response.status_code == 200
+            data = response.json()
+            # Endpoint returns success=False because job matching is not implemented yet
+            assert data["success"] is False
+            assert "not yet implemented" in data["message"]
+        finally:
+            del app.state.matcher
+
+    def test_stop_endpoint(self):
+        """Test stop endpoint."""
+        from fastapi.testclient import TestClient
+        from services.scorer_matcher.main import app
+        
+        mock_state = Mock()
+        mock_state.consumer_task = Mock()
+        
+        app.state.matcher = mock_state
+        try:
+            client = TestClient(app)
+            response = client.post("/match/stop")
+            
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            mock_state.stop_event.set.assert_called_once()
+        finally:
+            del app.state.matcher
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

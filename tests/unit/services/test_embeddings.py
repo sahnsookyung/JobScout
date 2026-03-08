@@ -148,5 +148,103 @@ class TestEmbeddingsConsumer:
             os.environ['HOSTNAME'] = env_backup
 
 
+class TestEmbeddingsEndpoints:
+    """Test embeddings service HTTP endpoints using TestClient."""
+
+    def test_health_endpoint(self):
+        """Test health endpoint returns correct status."""
+        from fastapi.testclient import TestClient
+        from services.embeddings.main import app
+        
+        client = TestClient(app)
+        response = client.get("/health")
+        
+        assert response.status_code == 200
+        assert response.json() == {"status": "healthy", "service": "embeddings"}
+
+    def test_metrics_endpoint(self):
+        """Test metrics endpoint returns correct info."""
+        from fastapi.testclient import TestClient
+        from services.embeddings.main import app
+        
+        mock_task = Mock()
+        mock_task.done.return_value = False
+        
+        mock_state = Mock()
+        mock_state.consumer_task = mock_task
+        
+        app.state.embeddings = mock_state
+        try:
+            client = TestClient(app)
+            response = client.get("/metrics")
+            
+            assert response.status_code == 200
+            data = response.json()
+            assert data["service"] == "embeddings"
+            assert data["consumer_running"] is True
+        finally:
+            del app.state.embeddings
+
+    def test_embed_jobs_endpoint(self):
+        """Test embed/jobs endpoint."""
+        from fastapi.testclient import TestClient
+        from services.embeddings.main import app
+        
+        mock_state = Mock()
+        mock_state.ctx = Mock()
+        
+        with patch('services.embeddings.main.run_embedding_extraction', return_value=10):
+            app.state.embeddings = mock_state
+            try:
+                client = TestClient(app)
+                response = client.post("/embed/jobs?limit=5")
+                
+                assert response.status_code == 200
+                data = response.json()
+                assert data["success"] is True
+            finally:
+                del app.state.embeddings
+
+    def test_embed_resume_endpoint(self):
+        """Test embed/resume endpoint."""
+        from fastapi.testclient import TestClient
+        from services.embeddings.main import app
+        
+        mock_state = Mock()
+        mock_state.ctx = Mock()
+        
+        with patch('services.embeddings.main.generate_resume_embedding', return_value=[0.1] * 768):
+            app.state.embeddings = mock_state
+            try:
+                client = TestClient(app)
+                response = client.post("/embed/resume", json={"resume_fingerprint": "abc123"})
+                
+                assert response.status_code == 200
+                data = response.json()
+                assert data["success"] is True
+            finally:
+                del app.state.embeddings
+
+    def test_stop_endpoint(self):
+        """Test stop endpoint."""
+        from fastapi.testclient import TestClient
+        from services.embeddings.main import app
+        
+        mock_state = Mock()
+        mock_state.consumer_task = Mock()
+        
+        app.state.embeddings = mock_state
+        try:
+            client = TestClient(app)
+            response = client.post("/embed/stop")
+            
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            mock_state.stop_event.set.assert_called_once()
+        finally:
+            del app.state.embeddings
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

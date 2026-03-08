@@ -141,6 +141,147 @@ class TestExtractionLifespan:
             assert 'format' in call_kwargs
 
 
+class TestExtractionEndpoints:
+    """Test extraction service HTTP endpoints using TestClient."""
+
+    def test_health_endpoint(self):
+        """Test health endpoint returns correct status."""
+        from fastapi.testclient import TestClient
+        from services.extraction.main import app
+        
+        client = TestClient(app)
+        response = client.get("/health")
+        
+        assert response.status_code == 200
+        assert response.json() == {"status": "healthy", "service": "extraction"}
+
+    def test_metrics_endpoint(self):
+        """Test metrics endpoint returns correct info."""
+        from fastapi.testclient import TestClient
+        from services.extraction.main import app
+        
+        mock_task = Mock()
+        mock_task.done.return_value = False
+        
+        mock_state = Mock()
+        mock_state.consumer_task = mock_task
+        
+        app.state.extraction = mock_state
+        try:
+            client = TestClient(app)
+            response = client.get("/metrics")
+            
+            assert response.status_code == 200
+            data = response.json()
+            assert data["service"] == "extraction"
+            assert data["consumer_running"] is True
+        finally:
+            del app.state.extraction
+
+    def test_metrics_endpoint_no_consumer(self):
+        """Test metrics endpoint when no consumer is running."""
+        from fastapi.testclient import TestClient
+        from services.extraction.main import app
+        
+        mock_state = Mock()
+        mock_state.consumer_task = None
+        
+        app.state.extraction = mock_state
+        try:
+            client = TestClient(app)
+            response = client.get("/metrics")
+            
+            assert response.status_code == 200
+            data = response.json()
+            assert data["consumer_running"] is False
+        finally:
+            del app.state.extraction
+
+    def test_extract_jobs_endpoint(self):
+        """Test extract/jobs endpoint."""
+        from fastapi.testclient import TestClient
+        from services.extraction.main import app
+        
+        mock_state = Mock()
+        mock_state.ctx = Mock()
+        mock_state.stop_event = Mock()
+        
+        with patch('services.extraction.main.run_job_extraction', return_value=5):
+            app.state.extraction = mock_state
+            try:
+                client = TestClient(app)
+                response = client.post("/extract/jobs?limit=10")
+                
+                assert response.status_code == 200
+                data = response.json()
+                assert data["success"] is True
+                assert data["processed"] == 5
+            finally:
+                del app.state.extraction
+
+    def test_extract_resume_endpoint_valid_path(self):
+        """Test extract/resume endpoint with valid path."""
+        from fastapi.testclient import TestClient
+        from services.extraction.main import app
+        
+        mock_state = Mock()
+        mock_state.ctx = Mock()
+        
+        with patch('services.extraction.main._validate_resume_path', return_value=(True, "/app/resume.pdf")):
+            with patch('services.extraction.main.process_resume', return_value=(True, "abc123")):
+                app.state.extraction = mock_state
+                try:
+                    client = TestClient(app)
+                    response = client.post("/extract/resume", json={"resume_file": "/app/resume.pdf"})
+                    
+                    assert response.status_code == 200
+                    data = response.json()
+                    assert data["success"] is True
+                    assert data["fingerprint"] == "abc123"
+                finally:
+                    del app.state.extraction
+
+    def test_extract_resume_endpoint_invalid_path(self):
+        """Test extract/resume endpoint with invalid path."""
+        from fastapi.testclient import TestClient
+        from services.extraction.main import app
+        
+        mock_state = Mock()
+        
+        with patch('services.extraction.main._validate_resume_path', return_value=(False, "Invalid path")):
+            app.state.extraction = mock_state
+            try:
+                client = TestClient(app)
+                response = client.post("/extract/resume", json={"resume_file": "/etc/passwd"})
+                
+                assert response.status_code == 200
+                data = response.json()
+                assert data["success"] is False
+                assert "Invalid" in data["message"]
+            finally:
+                del app.state.extraction
+
+    def test_stop_endpoint(self):
+        """Test stop endpoint."""
+        from fastapi.testclient import TestClient
+        from services.extraction.main import app
+        
+        mock_state = Mock()
+        mock_state.consumer_task = Mock()
+        
+        app.state.extraction = mock_state
+        try:
+            client = TestClient(app)
+            response = client.post("/extract/stop")
+            
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            mock_state.stop_event.set.assert_called_once()
+        finally:
+            del app.state.extraction
+
+
 if __name__ == "__main__":
     import threading
     pytest.main([__file__, "-v"])
