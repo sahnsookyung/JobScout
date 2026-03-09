@@ -174,3 +174,29 @@ migrations/     - Database migration scripts
 - **Queue**: redis, rq
 - **Testing**: pytest
 - **Utils**: pyyaml, requests, tenacity
+
+## RTK — Token-Optimized Commands
+Always use rtk equivalents instead of raw commands. rtk passes through
+anything it doesn't recognize, so when in doubt, prefix with rtk anyway.
+
+### Files
+- `cat <file>` → `rtk read <file>`
+- `ls <dir>` → `rtk ls <dir>`
+- `find "*.rs" <dir>` → `rtk find "*.rs" <dir>`
+- `rg / grep <pat>` → `rtk grep <pat> <dir>`
+
+### Git
+- `git status/diff/log/add/commit/push/pull/fetch/stash` → `rtk git <subcommand>`
+
+### GitHub CLI
+- `gh pr/issue/run <cmd>` → `rtk gh <cmd>`
+
+### Tests & Linting
+- `cargo test/build/clippy` → `rtk cargo <subcommand>`
+- `pytest` → `rtk pytest`
+- `go test` → `rtk go test`
+- `eslint/biome/ruff check/tsc` → `rtk lint`
+
+### Containers & Infra
+- `docker ps/images/logs` → `rtk docker <subcommand>`
+- `kubectl get pods/logs/services` → `rtk kubectl <subcommand>`
