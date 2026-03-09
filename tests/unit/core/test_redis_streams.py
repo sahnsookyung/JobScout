@@ -4,11 +4,14 @@ Tests for Redis Streams Utilities
 Covers: core/redis_streams.py
 """
 
+
 import pytest
 import json
 import threading
+import itertools
 from unittest.mock import Mock, patch, MagicMock
 from redis import Redis
+
 
 from core.redis_streams import (
     validate_job_payload,
@@ -41,6 +44,18 @@ from core.redis_streams import (
     CHANNEL_EMBEDDINGS_DONE,
     CHANNEL_MATCHING_DONE,
 )
+
+
+# FIXED: autouse fixture resets the singleton pool before and after every test
+# in this file, preventing state leakage between tests (plan 1.2)
+@pytest.fixture(autouse=True)
+def reset_redis_module():
+    from core import redis_streams
+    redis_streams._pool = None
+    redis_streams._pubsub_client = None
+    yield
+    redis_streams._pool = None
+    redis_streams._pubsub_client = None
 
 
 class TestValidateJobPayload:
@@ -198,7 +213,8 @@ class TestIsClaimable:
 
         assert result is False
 
-    def test_not_claimable_boundary_idle_time(self):
+    # FIXED: renamed from test_not_claimable_boundary_idle_time — name contradicted the assertion
+    def test_claimable_at_boundary_idle_time(self):
         """Test message is claimable at exactly 60 seconds idle."""
         pending = {
             "consumer": "consumer-1",
@@ -316,7 +332,6 @@ class TestDeserializeMessage:
 
         result = _deserialize_message(msg)
 
-        # Invalid JSON should remain as-is
         assert result["task_id"] == "not-valid-json"
 
     def test_deserialize_empty_message(self):
@@ -516,16 +531,12 @@ class TestListenForMessages:
 
     def test_yields_messages(self, mock_pubsub):
         """Test generator yields messages."""
-        # Use itertools.chain to avoid StopIteration issue in Python 3.7+
-        import itertools
         messages = [
             {"type": "message", "data": '{"task_id": "task-1"}'},
             {"type": "message", "data": '{"task_id": "task-2"}'},
         ]
-        # Return None repeatedly after messages are exhausted (simulates no more messages)
         mock_pubsub.get_message.side_effect = itertools.chain(messages, itertools.repeat(None))
 
-        # Collect first 2 messages then stop
         result = []
         for i, msg in enumerate(listen_for_messages(mock_pubsub)):
             result.append(msg)
@@ -538,7 +549,6 @@ class TestListenForMessages:
 
     def test_skips_subscribe_messages(self, mock_pubsub):
         """Test generator skips subscribe messages."""
-        import itertools
         messages = [
             {"type": "subscribe", "channel": "test"},
             {"type": "message", "data": '{"task_id": "task-1"}'},
@@ -555,31 +565,33 @@ class TestListenForMessages:
         assert result[0] == {"task_id": "task-1"}
 
     def test_invalid_json_logged(self, mock_pubsub, caplog):
-        """Test invalid JSON is logged."""
-        import itertools
-        messages = [
-            {"type": "message", "data": 'invalid-json'},
+        """Test invalid JSON is logged and message is skipped, generator exits on ConnectionError."""
+        import redis as redis_lib
+        # Step 1: invalid JSON → logged, loop continues (close NOT called here)
+        # Step 2: ConnectionError → caught by except branch, close() called, generator returns
+        mock_pubsub.get_message.side_effect = [
+            {"type": "message", "data": "invalid-json"},
+            redis_lib.ConnectionError("force stop"),
         ]
-        mock_pubsub.get_message.side_effect = itertools.chain(messages, itertools.repeat(None))
 
-        # Run for a bit then stop
-        result = []
-        for i, msg in enumerate(listen_for_messages(mock_pubsub)):
-            result.append(msg)
-            if i >= 0:
-                break
+        result = list(listen_for_messages(mock_pubsub))
 
         assert result == []
         assert "Failed to decode message" in caplog.text
+        mock_pubsub.close.assert_called_once()
 
     def test_connection_error_closes_pubsub(self, mock_pubsub, caplog):
-        """Test connection error closes pubsub."""
-        mock_pubsub.get_message.side_effect = Exception("Connection lost")
+        """Test redis.ConnectionError closes pubsub and exits generator cleanly."""
+        import redis as redis_lib
+        # FIXED: must be redis.ConnectionError specifically — the except clause only
+        # catches redis.ConnectionError, not the base Exception class
+        mock_pubsub.get_message.side_effect = redis_lib.ConnectionError("Connection lost")
 
         result = list(listen_for_messages(mock_pubsub))
 
         assert result == []
         mock_pubsub.close.assert_called_once()
+        assert "Connection error in pubsub listener" in caplog.text
 
 
 class TestCreateConsumerGroup:
@@ -657,15 +669,9 @@ class TestGetStreamInfo:
 class TestStreamExists:
     """Test stream_exists function."""
 
-    @pytest.fixture
-    def mock_redis(self):
-        """Create mock Redis client."""
-        with patch('core.redis_streams.get_redis_client') as mock:
-            redis_client = Mock()
-            mock.return_value = redis_client
-            yield redis_client
-
-    def test_stream_exists_true(self, mock_redis):
+    # FIXED: removed unused mock_redis fixture parameter — stream_exists delegates
+    # to get_stream_info which is patched directly; mock_redis was never exercised
+    def test_stream_exists_true(self):
         """Test stream exists returns True."""
         with patch('core.redis_streams.get_stream_info') as mock_info:
             mock_info.return_value = {"length": 10}
@@ -674,7 +680,7 @@ class TestStreamExists:
 
             assert result is True
 
-    def test_stream_exists_false(self, mock_redis):
+    def test_stream_exists_false(self):
         """Test stream exists returns False."""
         with patch('core.redis_streams.get_stream_info') as mock_info:
             mock_info.return_value = {}
@@ -761,26 +767,26 @@ class TestGetRedisClient:
 
 
 class TestGetConnectionPool:
-    """Test _get_connection_pool function."""
 
     def test_creates_pool_once(self):
         """Test connection pool is created only once (singleton)."""
-        with patch('redis.ConnectionPool.from_url') as mock_from_url:
+        # FIXED: redis_streams uses `import redis`, not `from redis import ConnectionPool`
+        # so the attribute lives at core.redis_streams.redis.ConnectionPool, not
+        # core.redis_streams.ConnectionPool
+        with patch('core.redis_streams.redis.ConnectionPool.from_url') as mock_from_url:
             mock_pool = Mock()
             mock_from_url.return_value = mock_pool
 
-            # First call
             result1 = _get_connection_pool()
             assert mock_from_url.call_count == 1
 
-            # Second call should reuse same pool
             result2 = _get_connection_pool()
             assert mock_from_url.call_count == 1
             assert result1 is result2
 
     def test_pool_configuration(self):
         """Test connection pool is configured correctly."""
-        with patch('redis.ConnectionPool.from_url') as mock_from_url:
+        with patch('core.redis_streams.redis.ConnectionPool.from_url') as mock_from_url:
             mock_pool = Mock()
             mock_from_url.return_value = mock_pool
 

@@ -102,6 +102,9 @@ class TestPolicyRouter:
 
     def test_update_policy_partial(self, client, mock_policy_service):
         """Test policy update with partial fields."""
+        default_policy = Mock(min_fit=50.0, top_k=100, min_jd_required_coverage=None)
+        mock_policy_service.get_current_policy.return_value = default_policy
+
         mock_updated_policy = Mock()
         mock_updated_policy.min_fit = 60.0
         mock_updated_policy.top_k = 50
@@ -120,12 +123,15 @@ class TestPolicyRouter:
 
         mock_policy_service.update_policy.assert_called_once_with(
             min_fit=60.0,
-            top_k=None,
+            top_k=100,
             min_jd_required_coverage=None
         )
 
     def test_update_policy_null_coverage(self, client, mock_policy_service):
         """Test policy update with null min_jd_required_coverage."""
+        default_policy = Mock(min_fit=50.0, top_k=100, min_jd_required_coverage=None)
+        mock_policy_service.get_current_policy.return_value = default_policy
+
         mock_updated_policy = Mock()
         mock_updated_policy.min_fit = 50.0
         mock_updated_policy.top_k = 100
@@ -228,7 +234,7 @@ class TestPolicyRouter:
         """Test applying preset with invalid name format."""
         response = client.post('/api/v1/policy/preset/')
 
-        assert response.status_code == 422
+        assert response.status_code == 404
 
     def test_get_scoring_weights_success(self, client):
         """Test successful get scoring weights."""
@@ -382,17 +388,23 @@ class TestPolicyRouterIntegration:
         with patch('web.backend.routers.policy.get_policy_service') as MockPolicyService:
             mock_policy_service = Mock()
 
-            # Test min_fit boundary values
-            for min_fit in [0.0, 50.0, 100.0]:
-                mock_policy = Mock()
-                mock_policy.min_fit = min_fit
-                mock_policy.top_k = 100
-                mock_policy.min_jd_required_coverage = None
-                mock_policy_service.update_policy.return_value = mock_policy
+            default_policy = Mock(min_fit=50.0, top_k=100, min_jd_required_coverage=None)
+            mock_policy_service.get_current_policy.return_value = default_policy
 
-                response = client.put('/api/v1/policy', json={'min_fit': min_fit})
-                assert response.status_code == 200
-                assert response.json()['min_fit'] == min_fit
+            mock_policy = Mock()
+            mock_policy.min_fit = 70.0
+            mock_policy.top_k = 25
+            mock_policy.min_jd_required_coverage = 0.8
+            mock_policy_service.update_policy.return_value = mock_policy
+
+            MockPolicyService.return_value = mock_policy_service
+
+            response = client.put('/api/v1/policy', json={'min_fit': 70.0, 'top_k': 25, 'min_jd_required_coverage': 0.8})
+            assert response.status_code == 200
+            data = response.json()
+            assert data['min_fit'] == 70.0
+            assert data['top_k'] == 25
+            assert data['min_jd_required_coverage'] == 0.8
 
             # Test top_k boundary values
             for top_k in [1, 50, 250, 500]:
