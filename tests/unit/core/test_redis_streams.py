@@ -516,13 +516,21 @@ class TestListenForMessages:
 
     def test_yields_messages(self, mock_pubsub):
         """Test generator yields messages."""
-        mock_pubsub.get_message.side_effect = [
+        # Use itertools.chain to avoid StopIteration issue in Python 3.7+
+        import itertools
+        messages = [
             {"type": "message", "data": '{"task_id": "task-1"}'},
             {"type": "message", "data": '{"task_id": "task-2"}'},
-            None,  # Stop iteration
         ]
+        # Return None repeatedly after messages are exhausted (simulates no more messages)
+        mock_pubsub.get_message.side_effect = itertools.chain(messages, itertools.repeat(None))
 
-        result = list(listen_for_messages(mock_pubsub))
+        # Collect first 2 messages then stop
+        result = []
+        for i, msg in enumerate(listen_for_messages(mock_pubsub)):
+            result.append(msg)
+            if i >= 1:  # Got 2 messages
+                break
 
         assert len(result) == 2
         assert result[0] == {"task_id": "task-1"}
@@ -530,25 +538,36 @@ class TestListenForMessages:
 
     def test_skips_subscribe_messages(self, mock_pubsub):
         """Test generator skips subscribe messages."""
-        mock_pubsub.get_message.side_effect = [
+        import itertools
+        messages = [
             {"type": "subscribe", "channel": "test"},
             {"type": "message", "data": '{"task_id": "task-1"}'},
-            None,
         ]
+        mock_pubsub.get_message.side_effect = itertools.chain(messages, itertools.repeat(None))
 
-        result = list(listen_for_messages(mock_pubsub))
+        result = []
+        for i, msg in enumerate(listen_for_messages(mock_pubsub)):
+            result.append(msg)
+            if i >= 0:  # Got 1 message
+                break
 
         assert len(result) == 1
         assert result[0] == {"task_id": "task-1"}
 
     def test_invalid_json_logged(self, mock_pubsub, caplog):
         """Test invalid JSON is logged."""
-        mock_pubsub.get_message.side_effect = [
+        import itertools
+        messages = [
             {"type": "message", "data": 'invalid-json'},
-            None,
         ]
+        mock_pubsub.get_message.side_effect = itertools.chain(messages, itertools.repeat(None))
 
-        result = list(listen_for_messages(mock_pubsub))
+        # Run for a bit then stop
+        result = []
+        for i, msg in enumerate(listen_for_messages(mock_pubsub)):
+            result.append(msg)
+            if i >= 0:
+                break
 
         assert result == []
         assert "Failed to decode message" in caplog.text
@@ -582,7 +601,8 @@ class TestCreateConsumerGroup:
 
     def test_create_existing_group(self, mock_redis, caplog):
         """Test creating already existing consumer group."""
-        mock_redis.xgroup_create.side_effect = Exception("BUSYGROUP Consumer Group name already exists")
+        import redis
+        mock_redis.xgroup_create.side_effect = redis.ResponseError("BUSYGROUP Consumer Group name already exists")
 
         create_consumer_group("stream-1", "group-1")
 
@@ -590,9 +610,10 @@ class TestCreateConsumerGroup:
 
     def test_create_group_other_error(self, mock_redis):
         """Test creating consumer group with other error."""
-        mock_redis.xgroup_create.side_effect = Exception("Stream does not exist")
+        import redis
+        mock_redis.xgroup_create.side_effect = redis.ResponseError("Stream does not exist")
 
-        with pytest.raises(Exception):
+        with pytest.raises(redis.ResponseError):
             create_consumer_group("stream-1", "group-1")
 
 
@@ -617,7 +638,8 @@ class TestGetStreamInfo:
 
     def test_get_info_not_found(self, mock_redis):
         """Test getting stream info when not found."""
-        mock_redis.xinfo_stream.side_effect = Exception("no such key")
+        import redis
+        mock_redis.xinfo_stream.side_effect = redis.ResponseError("no such key")
 
         result = get_stream_info("stream-1")
 
@@ -625,9 +647,10 @@ class TestGetStreamInfo:
 
     def test_get_info_other_error(self, mock_redis):
         """Test getting stream info with other error."""
-        mock_redis.xinfo_stream.side_effect = Exception("Permission denied")
+        import redis
+        mock_redis.xinfo_stream.side_effect = redis.ResponseError("Permission denied")
 
-        with pytest.raises(Exception):
+        with pytest.raises(redis.ResponseError):
             get_stream_info("stream-1")
 
 

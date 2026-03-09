@@ -232,6 +232,11 @@ def reset_redis_module_state():
 
     # Reset connection pool to force recreation
     redis_streams._connection_pool = original_connection_pool
+    if original_connection_pool is not None:
+        try:
+            original_connection_pool.disconnect()
+        except Exception:
+            pass  # Ignore errors on disconnect
 
 
 @pytest.fixture(autouse=True)
