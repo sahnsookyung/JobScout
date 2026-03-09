@@ -37,31 +37,13 @@ from notification.channels import EmailChannel
 # Check if we should use testcontainers or external Redis
 REDIS_URL = os.environ.get("TEST_REDIS_URL")
 
-# Determine if we can run tests
-RUN_TESTS = REDIS_URL is not None or DOCKER_AVAILABLE
+# Determine if we can run tests - testcontainers will be used if no external Redis
+RUN_TESTS = True
 
-if not RUN_TESTS:
+if not REDIS_URL:
     print("\n" + "=" * 70)
-    print("SKIPPING: No Redis available (set TEST_REDIS_URL or enable Docker)")
+    print("NOTE: TEST_REDIS_URL not set, will use testcontainers")
     print("=" * 70 + "\n")
-
-
-@pytest.fixture(scope="session")
-def redis_test_url():
-    """Get Redis URL from environment or testcontainers."""
-    if REDIS_URL:
-        return REDIS_URL
-    
-    # Use testcontainers if available
-    try:
-        from testcontainers.redis import RedisContainer
-        container = RedisContainer("redis:7-alpine", port=6379)
-        container.start()
-        url = container.get_connection_url()
-        yield url
-        container.stop()
-    except ImportError:
-        pytest.skip("testcontainers.redis not available")
 
 
 @unittest.skipIf(not RUN_TESTS, "No Redis available (set TEST_REDIS_URL or enable Docker)")
