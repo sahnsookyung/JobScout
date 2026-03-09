@@ -8,16 +8,11 @@ For standard test utilities, see tests/__init__.py
 import os
 import pytest
 
-# Test database credentials (not production credentials)
-TEST_DB_USER = "testuser"
-TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD", "testpass")
-TEST_DB_NAME = "jobscout_test"
-
 
 @pytest.fixture(autouse=True)
 def clean_env():
     """Backup and restore environment to prevent test pollution.
-    
+
     This fixture ensures environment variables set by one test don't
     affect other tests. It backs up os.environ before each test
     and restores it after, preventing pollution from integration
@@ -27,6 +22,26 @@ def clean_env():
     yield
     os.environ.clear()
     os.environ.update(env_backup)
+
+
+@pytest.fixture(autouse=True)
+def _block_production_db(clean_env):  # noqa: PT004  (runs after clean_env saves backup)
+    """Block production database access during tests.
+
+    Removes DATABASE_URL so tests cannot accidentally write to the production DB.
+    Tests that need a database must use the ``test_database`` fixture, which
+    provides an isolated container.  ``clean_env`` (a dependency here) has
+    already saved the env backup before this fixture removes the variable,
+    so the original value is automatically restored after each test.
+    """
+    if os.environ.pop("DATABASE_URL", None):
+        import warnings
+        warnings.warn(
+            "Test blocked from accessing production DATABASE_URL. "
+            "Use the test_database fixture for DB tests.",
+            stacklevel=2,
+        )
+    yield
 
 
 # Test database credentials (not production credentials)
@@ -185,7 +200,8 @@ def redis_container():
     # If TEST_REDIS_URL is set, use external Redis
     external_url = os.environ.get("TEST_REDIS_URL")
     if external_url:
-        yield {"url": external_url, "port": external_url.split(":")[-1].split("/")[0] if ":" in external_url else 6379}
+        port = external_url.split(":")[-1].split("/")[0] if ":" in external_url else "6379"
+        yield {"url": external_url, "port": port}
         return
 
     # Try to use testcontainers for automatic container management
@@ -193,15 +209,18 @@ def redis_container():
         from testcontainers.redis import RedisContainer
 
         # Start Redis container
-        redis = RedisContainer("redis:7-alpine", port=6379)
+        redis = RedisContainer("redis:7-alpine")
         redis.start()
 
-        # Get connection URL
-        redis_url = redis.get_connection_url()
+        # Build connection URL from exposed host/port
+        host = redis.get_container_host_ip()
+        port = redis.get_exposed_port(6379)
+        redis_url = f"redis://{host}:{port}"
+        os.environ["TEST_REDIS_URL"] = redis_url
 
         print(f"\n✓ Test Redis container started: {redis_url}")
 
-        yield {"container": redis, "url": redis_url, "port": redis.port}
+        yield {"container": redis, "url": redis_url, "port": port}
 
         # Cleanup after all tests
         redis.stop()
