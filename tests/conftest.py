@@ -221,21 +221,17 @@ def redis_url(redis_container):
 def reset_redis_module_state():
     """Reset Redis module state between tests to prevent pollution.
 
-    This fixture resets the connection pool and pubsub client in redis_streams
+    This fixture resets the connection pool in redis_streams
     to ensure tests don't share state.
     """
     from core import redis_streams
     # Backup original state
-    original_pool = redis_streams._pool
-    original_pubsub = redis_streams._pubsub_client
-    original_stream_client = redis_streams._stream_client
+    original_connection_pool = redis_streams._connection_pool
 
     yield
 
-    # Restore/reset state
-    redis_streams._pool = original_pool
-    redis_streams._pubsub_client = original_pubsub
-    redis_streams._stream_client = original_stream_client
+    # Reset connection pool to force recreation
+    redis_streams._connection_pool = original_connection_pool
 
 
 @pytest.fixture(autouse=True)
