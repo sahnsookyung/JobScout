@@ -6,6 +6,12 @@ import { toast } from 'sonner';
 import { pipelineApi } from '@/services/pipelineApi';
 import { saveResume, hasResume, getResumeFilename } from '@/utils/indexedDB';
 import { computeFileHash, validateFileSize } from '@/utils/fileUtils';
+import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
+import { DashboardWrapper } from './DashboardWrapper';
+import { ResumeUploadSection } from './ResumeUploadSection';
+import { StatsPanel } from './StatsPanel';
+import { ActionButton } from './ActionButton';
+import { StatusBanner } from './StatusBanner';
 
 export const CompactControls: React.FC = () => {
     const { runPipeline, stopPipeline, isRunning, isStopping, status, isUploading } = usePipeline();
@@ -59,10 +65,8 @@ export const CompactControls: React.FC = () => {
 
             // Check if hash already exists in backend
             const checkResponse = await pipelineApi.checkResumeHash(hash);
-            isDev && console.log('Hash check response:', checkResponse);
 
             if (checkResponse.data.exists) {
-                isDev && console.log('Hash exists, skipping upload');
                 // Hash exists, skip upload, store in IndexedDB (best effort)
                 try {
                     await saveResume(file, hash, file.name);

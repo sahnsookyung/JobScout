@@ -7,25 +7,34 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Mock pipeline API
-const mockRunMatching = vi.fn();
-const mockStopMatching = vi.fn();
-const mockGetActivePipeline = vi.fn();
-const mockUploadResume = vi.fn();
+// Mock constants first
+vi.mock('@shared/constants', () => ({
+    RESUME_MAX_SIZE_MB: 2,
+    RESUME_MAX_SIZE: 2 * 1024 * 1024,
+    RESUME_INDEXEDDB_NAME: 'jobscout-resume',
+    RESUME_MAX_AGE_DAYS: 30,
+}));
 
+// Mock pipeline API with inline functions
 vi.mock('@/services/pipelineApi', () => ({
     pipelineApi: {
-        runMatching: (...args: any[]) => mockRunMatching(...args),
-        stopMatching: (...args: any[]) => mockStopMatching(...args),
-        getActivePipeline: (...args: any[]) => mockGetActivePipeline(...args),
-        uploadResume: (...args: any[]) => mockUploadResume(...args),
+        runMatching: vi.fn(),
+        stopMatching: vi.fn(),
+        getActivePipeline: vi.fn(),
+        uploadResume: vi.fn(),
     },
 }));
 
 // Mock usePipelineEvents
-const mockUsePipelineEvents = vi.fn();
 vi.mock('../usePipelineEvents', () => ({
-    usePipelineEvents: () => mockUsePipelineEvents(),
+    usePipelineEvents: vi.fn(),
+}));
+
+// Mock matchesApi for useStats tests
+vi.mock('@/services/matchesApi', () => ({
+    matchesApi: {
+        getStats: vi.fn(),
+    },
 }));
 
 import { usePipeline } from '../usePipeline';
@@ -45,11 +54,16 @@ const createWrapper = () => {
 };
 
 describe('useStats', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         vi.clearAllMocks();
+        
+        // Get fresh reference to mocked function after clearAllMocks
+        const { matchesApi } = await import('@/services/matchesApi');
+        (matchesApi.getStats as any).mockReset();
     });
 
     it('fetches stats on mount', async () => {
+        const { matchesApi } = await import('@/services/matchesApi');
         const mockStats = {
             total_matches: 100,
             active_matches: 45,
@@ -57,17 +71,9 @@ describe('useStats', () => {
             below_threshold_count: 25,
         };
 
-        const mockGetStats = vi.fn().mockResolvedValue({ data: { stats: mockStats } });
-        vi.mock('@/services/matchesApi', () => ({
-            matchesApi: {
-                getStats: mockGetStats,
-            },
-        }));
+        (matchesApi.getStats as any).mockResolvedValue({ data: { stats: mockStats } });
 
-        // Re-import after mock
-        const { useStats: FreshUseStats } = await import('../useStats');
-
-        const { result } = renderHook(() => FreshUseStats(), { wrapper: createWrapper() });
+        const { result } = renderHook(() => useStats(), { wrapper: createWrapper() });
 
         await waitFor(() => {
             expect(result.current.isSuccess).toBe(true);
@@ -77,16 +83,10 @@ describe('useStats', () => {
     });
 
     it('handles fetch error', async () => {
-        const mockGetStats = vi.fn().mockRejectedValue(new Error('Network error'));
-        vi.mock('@/services/matchesApi', () => ({
-            matchesApi: {
-                getStats: mockGetStats,
-            },
-        }));
+        const { matchesApi } = await import('@/services/matchesApi');
+        (matchesApi.getStats as any).mockRejectedValue(new Error('Network error'));
 
-        const { useStats: FreshUseStats } = await import('../useStats');
-
-        const { result } = renderHook(() => FreshUseStats(), { wrapper: createWrapper() });
+        const { result } = renderHook(() => useStats(), { wrapper: createWrapper() });
 
         await waitFor(() => {
             expect(result.current.isError).toBe(true);
@@ -96,61 +96,62 @@ describe('useStats', () => {
     });
 
     it('uses correct staleTime', async () => {
-        const mockGetStats = vi.fn().mockResolvedValue({ data: { stats: {} } });
-        vi.mock('@/services/matchesApi', () => ({
-            matchesApi: {
-                getStats: mockGetStats,
-            },
-        }));
+        const { matchesApi } = await import('@/services/matchesApi');
+        (matchesApi.getStats as any).mockResolvedValue({ data: { stats: {} } });
 
-        const { useStats: FreshUseStats } = await import('../useStats');
-
-        renderHook(() => FreshUseStats(), { wrapper: createWrapper() });
+        renderHook(() => useStats(), { wrapper: createWrapper() });
 
         await waitFor(() => {
-            expect(mockGetStats).toHaveBeenCalled();
+            expect(matchesApi.getStats).toHaveBeenCalled();
         });
 
         // Query should have staleTime of 60000ms (1 minute)
         // This is configured in the hook, verified by checking query options
-        expect(mockGetStats).toHaveBeenCalledTimes(1);
+        expect(matchesApi.getStats).toHaveBeenCalledTimes(1);
     });
 });
 
 describe('usePipeline', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         vi.clearAllMocks();
 
-        mockUsePipelineEvents.mockReturnValue({
+        // Get fresh references to mocked functions
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        const { usePipelineEvents } = await import('../usePipelineEvents');
+        
+        (usePipelineEvents as any).mockReturnValue({
             status: null,
             connectionState: 'disconnected',
             error: null,
             retry: vi.fn(),
         });
 
-        mockGetActivePipeline.mockRejectedValue(new Error('Not found'));
+        (pipelineApi.getActivePipeline as any).mockRejectedValue(new Error('Not found'));
     });
 
     it('initializes with default values', () => {
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
-        expect(result.current.activePipeline).toBeNull();
+        // useQuery returns undefined before first fetch, not null
+        expect(result.current.activePipeline).toBeUndefined();
         expect(result.current.status).toBeNull();
         expect(result.current.connectionState).toBe('disconnected');
-        expect(result.current.isLoading).toBe(false);
+        // useQuery starts in loading state
+        expect(result.current.isLoading).toBe(true);
         expect(result.current.isRunning).toBe(false);
         expect(result.current.isStopping).toBe(false);
         expect(result.current.isUploading).toBe(false);
     });
 
     it('fetches active pipeline on mount', async () => {
+        const { pipelineApi } = await import('@/services/pipelineApi');
         const mockPipeline = {
             task_id: 'task-123',
             status: 'running',
             step: 'matching',
         };
 
-        mockGetActivePipeline.mockResolvedValue({ data: mockPipeline });
+        (pipelineApi.getActivePipeline as any).mockResolvedValue({ data: mockPipeline });
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
@@ -158,11 +159,12 @@ describe('usePipeline', () => {
             expect(result.current.activePipeline).toEqual(mockPipeline);
         });
 
-        expect(mockGetActivePipeline).toHaveBeenCalledTimes(1);
+        expect(pipelineApi.getActivePipeline).toHaveBeenCalledTimes(1);
     });
 
     it('handles pipeline fetch error gracefully', async () => {
-        mockGetActivePipeline.mockRejectedValue(new Error('Network error'));
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        (pipelineApi.getActivePipeline as any).mockRejectedValue(new Error('Network error'));
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
@@ -175,7 +177,8 @@ describe('usePipeline', () => {
     });
 
     it('runPipeline calls API and invalidates queries', async () => {
-        mockRunMatching.mockResolvedValue({ data: { task_id: 'task-123' } });
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        (pipelineApi.runMatching as any).mockResolvedValue({ data: { task_id: 'task-123' } });
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
@@ -184,12 +187,13 @@ describe('usePipeline', () => {
         });
 
         await waitFor(() => {
-            expect(mockRunMatching).toHaveBeenCalledTimes(1);
+            expect(pipelineApi.runMatching).toHaveBeenCalledTimes(1);
         });
     });
 
     it('runPipeline handles error', async () => {
-        mockRunMatching.mockRejectedValue(new Error('Pipeline already running'));
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        (pipelineApi.runMatching as any).mockRejectedValue(new Error('Pipeline already running'));
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
@@ -198,14 +202,15 @@ describe('usePipeline', () => {
         });
 
         await waitFor(() => {
-            expect(mockRunMatching).toHaveBeenCalledTimes(1);
+            expect(pipelineApi.runMatching).toHaveBeenCalledTimes(1);
         });
 
         expect(result.current.runPipelineError).toBeInstanceOf(Error);
     });
 
     it('stopPipeline calls API', async () => {
-        mockStopMatching.mockResolvedValue({ data: { success: true } });
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        (pipelineApi.stopMatching as any).mockResolvedValue({ data: { success: true } });
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
@@ -214,12 +219,13 @@ describe('usePipeline', () => {
         });
 
         await waitFor(() => {
-            expect(mockStopMatching).toHaveBeenCalledTimes(1);
+            expect(pipelineApi.stopMatching).toHaveBeenCalledTimes(1);
         });
     });
 
     it('stopPipeline handles error', async () => {
-        mockStopMatching.mockRejectedValue(new Error('No pipeline running'));
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        (pipelineApi.stopMatching as any).mockRejectedValue(new Error('No pipeline running'));
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
@@ -228,14 +234,15 @@ describe('usePipeline', () => {
         });
 
         await waitFor(() => {
-            expect(mockStopMatching).toHaveBeenCalledTimes(1);
+            expect(pipelineApi.stopMatching).toHaveBeenCalledTimes(1);
         });
 
         expect(result.current.stopPipelineError).toBeInstanceOf(Error);
     });
 
-    it('isRunning is true when SSE status is running', () => {
-        mockUsePipelineEvents.mockReturnValue({
+    it('isRunning is true when SSE status is running', async () => {
+        const { usePipelineEvents } = await import('../usePipelineEvents');
+        (usePipelineEvents as any).mockReturnValue({
             status: { status: 'running', step: 'matching' },
             connectionState: 'connected',
             error: null,
@@ -247,8 +254,9 @@ describe('usePipeline', () => {
         expect(result.current.isRunning).toBe(true);
     });
 
-    it('isRunning is true when SSE status is pending', () => {
-        mockUsePipelineEvents.mockReturnValue({
+    it('isRunning is true when SSE status is pending', async () => {
+        const { usePipelineEvents } = await import('../usePipelineEvents');
+        (usePipelineEvents as any).mockReturnValue({
             status: { status: 'pending', step: 'initializing' },
             connectionState: 'connecting',
             error: null,
@@ -260,8 +268,9 @@ describe('usePipeline', () => {
         expect(result.current.isRunning).toBe(true);
     });
 
-    it('isRunning is false when SSE status is completed', () => {
-        mockUsePipelineEvents.mockReturnValue({
+    it('isRunning is false when SSE status is completed', async () => {
+        const { usePipelineEvents } = await import('../usePipelineEvents');
+        (usePipelineEvents as any).mockReturnValue({
             status: { status: 'completed', matches_count: 10 },
             connectionState: 'connected',
             error: null,
@@ -274,16 +283,25 @@ describe('usePipeline', () => {
     });
 
     it('isStopping is true during stop mutation', async () => {
-        mockStopMatching.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 100)));
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        // Set up mock BEFORE rendering the hook
+        (pipelineApi.stopMatching as any).mockImplementation(() => new Promise(resolve => setTimeout(resolve, 100)));
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
+
+        // Wait for initial render to complete
+        await waitFor(() => {
+            expect(result.current.isLoading).toBe(false);
+        });
 
         act(() => {
             result.current.stopPipeline();
         });
 
-        // While mutation is pending
-        expect(result.current.isStopping).toBe(true);
+        // Give React time to update the mutation state
+        await waitFor(() => {
+            expect(result.current.isStopping).toBe(true);
+        }, { timeout: 100 });
 
         await waitFor(() => {
             expect(result.current.isStopping).toBe(false);
@@ -291,7 +309,8 @@ describe('usePipeline', () => {
     });
 
     it('uploadResume calls API with file and hash', async () => {
-        mockUploadResume.mockResolvedValue({ data: { success: true } });
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        (pipelineApi.uploadResume as any).mockResolvedValue({ data: { success: true } });
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
@@ -302,12 +321,13 @@ describe('usePipeline', () => {
         });
 
         await waitFor(() => {
-            expect(mockUploadResume).toHaveBeenCalledWith(file, 'abc123');
+            expect(pipelineApi.uploadResume).toHaveBeenCalledWith(file, 'abc123');
         });
     });
 
     it('uploadResume handles error', async () => {
-        mockUploadResume.mockRejectedValue(new Error('Upload failed'));
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        (pipelineApi.uploadResume as any).mockRejectedValue(new Error('Upload failed'));
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
@@ -318,16 +338,23 @@ describe('usePipeline', () => {
         });
 
         await waitFor(() => {
-            expect(mockUploadResume).toHaveBeenCalled();
+            expect(pipelineApi.uploadResume).toHaveBeenCalled();
         });
 
         expect(result.current.uploadResumeError).toBeInstanceOf(Error);
     });
 
     it('isUploading is true during upload mutation', async () => {
-        mockUploadResume.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 100)));
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        // Set up mock BEFORE rendering the hook
+        (pipelineApi.uploadResume as any).mockImplementation(() => new Promise(resolve => setTimeout(resolve, 100)));
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
+
+        // Wait for initial render to complete
+        await waitFor(() => {
+            expect(result.current.isLoading).toBe(false);
+        });
 
         const file = new File(['test'], 'resume.pdf', { type: 'application/pdf' });
 
@@ -335,7 +362,10 @@ describe('usePipeline', () => {
             result.current.uploadResume({ file });
         });
 
-        expect(result.current.isUploading).toBe(true);
+        // Give React time to update the mutation state
+        await waitFor(() => {
+            expect(result.current.isUploading).toBe(true);
+        }, { timeout: 100 });
 
         await waitFor(() => {
             expect(result.current.isUploading).toBe(false);
@@ -343,8 +373,11 @@ describe('usePipeline', () => {
     });
 
     it('invalidates matches and stats on pipeline completion', async () => {
-        mockUsePipelineEvents.mockReturnValue({
-            status: { status: 'completed', matches_count: 10 },
+        const { usePipelineEvents } = await import('../usePipelineEvents');
+        
+        // Start with null status
+        (usePipelineEvents as any).mockReturnValue({
+            status: null,
             connectionState: 'connected',
             error: null,
             retry: vi.fn(),
@@ -356,7 +389,7 @@ describe('usePipeline', () => {
         expect(result.current.status).toBeNull();
 
         // Update to completed status
-        mockUsePipelineEvents.mockReturnValue({
+        (usePipelineEvents as any).mockReturnValue({
             status: { status: 'completed', matches_count: 10 },
             connectionState: 'connected',
             error: null,
@@ -371,9 +404,10 @@ describe('usePipeline', () => {
         });
     });
 
-    it('provides retrySSE function from usePipelineEvents', () => {
+    it('provides retrySSE function from usePipelineEvents', async () => {
+        const { usePipelineEvents } = await import('../usePipelineEvents');
         const mockRetry = vi.fn();
-        mockUsePipelineEvents.mockReturnValue({
+        (usePipelineEvents as any).mockReturnValue({
             status: null,
             connectionState: 'disconnected',
             error: new Error('Connection lost'),
@@ -391,8 +425,9 @@ describe('usePipeline', () => {
         expect(mockRetry).toHaveBeenCalledTimes(1);
     });
 
-    it('connectionState reflects SSE connection state', () => {
-        mockUsePipelineEvents.mockReturnValue({
+    it('connectionState reflects SSE connection state', async () => {
+        const { usePipelineEvents } = await import('../usePipelineEvents');
+        (usePipelineEvents as any).mockReturnValue({
             status: null,
             connectionState: 'connecting',
             error: null,
@@ -404,9 +439,10 @@ describe('usePipeline', () => {
         expect(result.current.connectionState).toBe('connecting');
     });
 
-    it('sseError provides error from usePipelineEvents', () => {
+    it('sseError provides error from usePipelineEvents', async () => {
+        const { usePipelineEvents } = await import('../usePipelineEvents');
         const mockError = new Error('SSE connection failed');
-        mockUsePipelineEvents.mockReturnValue({
+        (usePipelineEvents as any).mockReturnValue({
             status: null,
             connectionState: 'disconnected',
             error: mockError,
