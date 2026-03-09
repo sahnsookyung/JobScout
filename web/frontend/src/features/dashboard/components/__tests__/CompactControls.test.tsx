@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Mock modules - create mocks inline since vi.mock is hoisted
+// Mock modules - vi.mock is hoisted, so factories run before this code
 vi.mock('@/hooks/usePipeline');
 vi.mock('sonner');
 vi.mock('@shared/constants', () => ({
@@ -15,9 +15,6 @@ vi.mock('@shared/constants', () => ({
     RESUME_INDEXEDDB_NAME: 'jobscout-resume',
     RESUME_MAX_AGE_DAYS: 30,
 }));
-
-// Create mock storage that persists across vi.mock boundaries
-const mockStorage: Record<string, any> = {};
 
 vi.mock('@/utils/indexedDB', () => ({
     saveResume: vi.fn().mockResolvedValue(undefined),
@@ -49,7 +46,12 @@ describe('CompactControls', () => {
     const mockUploadResumeFromHook = vi.fn();
 
     beforeEach(async () => {
+        // Reset all mocks to initial state
         vi.clearAllMocks();
+        
+        // Get fresh references to mocked functions and set up defaults
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        const { hasResume, getResumeFilename, saveResume } = await import('@/utils/indexedDB');
 
         mockUsePipeline.mockReturnValue({
             runPipeline: mockRunPipeline,
@@ -61,10 +63,6 @@ describe('CompactControls', () => {
             isUploading: false,
         });
 
-        // Get fresh references to mocked functions after clearAllMocks
-        const { pipelineApi } = await import('@/services/pipelineApi');
-        const { hasResume, getResumeFilename, saveResume } = await import('@/utils/indexedDB');
-        
         (pipelineApi.checkResumeHash as any).mockRejectedValue(new Error('Network error'));
         (pipelineApi.uploadResume as any).mockRejectedValue(new Error('Network error'));
         (hasResume as any).mockResolvedValue(false);
@@ -93,7 +91,8 @@ describe('CompactControls', () => {
 
             await waitFor(() => {
                 expect(screen.getByText('Update Resume')).toBeInTheDocument();
-            });
+            }, { timeout: 1000 });
+            
             // Check for filename in any element
             const filenameElements = screen.getAllByText(/my-resume\.json/i);
             expect(filenameElements.length).toBeGreaterThan(0);
@@ -114,7 +113,7 @@ describe('CompactControls', () => {
 
             await waitFor(() => {
                 expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Failed to upload resume'));
-            });
+            }, { timeout: 1000 });
         });
 
         it('disables button while uploading', () => {
@@ -172,7 +171,7 @@ describe('CompactControls', () => {
 
             await waitFor(() => {
                 expect(pipelineApi.uploadResume).toHaveBeenCalled();
-            });
+            }, { timeout: 1000 });
         });
 
         it('displays filename on upload', async () => {
@@ -189,7 +188,8 @@ describe('CompactControls', () => {
 
             await waitFor(() => {
                 expect(screen.getByText('Update Resume')).toBeInTheDocument();
-            });
+            }, { timeout: 1000 });
+            
             // Check filename is displayed
             const filenameElements = screen.getAllByText(/first-resume\.json/i);
             expect(filenameElements.length).toBeGreaterThan(0);
