@@ -22,7 +22,19 @@ vi.mock('@/services/pipelineApi', () => ({
         stopMatching: vi.fn(),
         getActivePipeline: vi.fn(),
         uploadResume: vi.fn(),
+        checkResumeHash: vi.fn(),
+        getResumeStatus: vi.fn(),
     },
+}));
+
+vi.mock('@/utils/indexedDB', () => ({
+    getResumeHash: vi.fn().mockResolvedValue(null),
+    getResume: vi.fn().mockResolvedValue(null),
+    saveResume: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('@/utils/fileUtils', () => ({
+    computeFileHash: vi.fn().mockResolvedValue('mock-hash-abc123'),
 }));
 
 // Mock usePipelineEvents
@@ -178,34 +190,36 @@ describe('usePipeline', () => {
 
     it('runPipeline calls API and invalidates queries', async () => {
         const { pipelineApi } = await import('@/services/pipelineApi');
+        const { getResumeHash } = await import('@/utils/indexedDB');
+        vi.mocked(getResumeHash).mockResolvedValue('existing-hash');
+        (pipelineApi.checkResumeHash as any).mockResolvedValue({ data: { exists: true } });
         (pipelineApi.runMatching as any).mockResolvedValue({ data: { task_id: 'task-123' } });
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
-        act(() => {
-            result.current.runPipeline();
+        await act(async () => {
+            await result.current.runPipeline();
         });
 
-        await waitFor(() => {
-            expect(pipelineApi.runMatching).toHaveBeenCalledTimes(1);
-        });
+        expect(pipelineApi.runMatching).toHaveBeenCalledTimes(1);
     });
 
     it('runPipeline handles error', async () => {
         const { pipelineApi } = await import('@/services/pipelineApi');
+        const { getResumeHash } = await import('@/utils/indexedDB');
+        vi.mocked(getResumeHash).mockResolvedValue('existing-hash');
+        (pipelineApi.checkResumeHash as any).mockResolvedValue({ data: { exists: true } });
         (pipelineApi.runMatching as any).mockRejectedValue(new Error('Pipeline already running'));
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
+        const onError = vi.fn();
 
-        act(() => {
-            result.current.runPipeline();
+        await act(async () => {
+            await result.current.runPipeline(onError);
         });
 
-        await waitFor(() => {
-            expect(pipelineApi.runMatching).toHaveBeenCalledTimes(1);
-        });
-
-        expect(result.current.runPipelineError).toBeInstanceOf(Error);
+        expect(pipelineApi.runMatching).toHaveBeenCalledTimes(1);
+        expect(onError).toHaveBeenCalledWith(expect.stringContaining('Pipeline already running'));
     });
 
     it('stopPipeline calls API', async () => {
@@ -308,50 +322,50 @@ describe('usePipeline', () => {
         });
     });
 
-    it('uploadResume calls API with file and hash', async () => {
+    it('uploadResume calls API with file when hash not on backend', async () => {
         const { pipelineApi } = await import('@/services/pipelineApi');
-        (pipelineApi.uploadResume as any).mockResolvedValue({ data: { success: true } });
+        (pipelineApi.checkResumeHash as any).mockResolvedValue({ data: { exists: false } });
+        (pipelineApi.uploadResume as any).mockResolvedValue({ data: { message: 'ok' } });
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
         const file = new File(['test'], 'resume.pdf', { type: 'application/pdf' });
 
-        act(() => {
-            result.current.uploadResume({ file, hash: 'abc123' });
+        await act(async () => {
+            await result.current.uploadResume(file);
         });
 
-        await waitFor(() => {
-            expect(pipelineApi.uploadResume).toHaveBeenCalledWith(file, 'abc123');
-        });
+        // computeFileHash is mocked to return 'mock-hash-abc123'
+        expect(pipelineApi.uploadResume).toHaveBeenCalledWith(file, 'mock-hash-abc123');
     });
 
     it('uploadResume handles error', async () => {
         const { pipelineApi } = await import('@/services/pipelineApi');
+        (pipelineApi.checkResumeHash as any).mockResolvedValue({ data: { exists: false } });
         (pipelineApi.uploadResume as any).mockRejectedValue(new Error('Upload failed'));
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
         const file = new File(['test'], 'resume.pdf', { type: 'application/pdf' });
 
-        act(() => {
-            result.current.uploadResume({ file });
+        await act(async () => {
+            await expect(result.current.uploadResume(file)).rejects.toThrow('Upload failed');
         });
 
-        await waitFor(() => {
-            expect(pipelineApi.uploadResume).toHaveBeenCalled();
-        });
-
-        expect(result.current.uploadResumeError).toBeInstanceOf(Error);
+        expect(pipelineApi.uploadResume).toHaveBeenCalled();
+        expect(result.current.isUploading).toBe(false);
     });
 
-    it('isUploading is true during upload mutation', async () => {
+    it('isUploading is true during upload', async () => {
         const { pipelineApi } = await import('@/services/pipelineApi');
-        // Set up mock BEFORE rendering the hook
-        (pipelineApi.uploadResume as any).mockImplementation(() => new Promise(resolve => setTimeout(resolve, 100)));
+        (pipelineApi.checkResumeHash as any).mockResolvedValue({ data: { exists: false } });
+        let resolveUpload!: (value: any) => void;
+        (pipelineApi.uploadResume as any).mockReturnValue(
+            new Promise(resolve => { resolveUpload = resolve; })
+        );
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
-        // Wait for initial render to complete
         await waitFor(() => {
             expect(result.current.isLoading).toBe(false);
         });
@@ -359,13 +373,16 @@ describe('usePipeline', () => {
         const file = new File(['test'], 'resume.pdf', { type: 'application/pdf' });
 
         act(() => {
-            result.current.uploadResume({ file });
+            result.current.uploadResume(file);
         });
 
-        // Give React time to update the mutation state
         await waitFor(() => {
             expect(result.current.isUploading).toBe(true);
-        }, { timeout: 100 });
+        }, { timeout: 200 });
+
+        await act(async () => {
+            resolveUpload({ data: { message: 'ok' } });
+        });
 
         await waitFor(() => {
             expect(result.current.isUploading).toBe(false);

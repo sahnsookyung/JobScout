@@ -169,6 +169,15 @@ describe('StatusBanner', () => {
         step: 'loading_resume',
     };
 
+    it('renders pending status with initializing copy', () => {
+        render(<StatusBanner status="pending" step="initializing" />);
+
+        expect(screen.getByTestId('loader-icon')).toBeInTheDocument();
+        expect(screen.getByTestId('badge')).toHaveAttribute('data-variant', 'info');
+        expect(screen.getByText('PENDING')).toBeInTheDocument();
+        expect(screen.getByText('Starting your matching run...')).toBeInTheDocument();
+    });
+
     it('renders running status with spinner', () => {
         render(<StatusBanner {...defaultProps} />);
 
@@ -195,6 +204,14 @@ describe('StatusBanner', () => {
         expect(screen.getByTestId('badge')).toHaveAttribute('data-variant', 'error');
         expect(screen.getByText('Pipeline failed')).toBeInTheDocument();
         expect(screen.getByText('Database connection failed')).toBeInTheDocument();
+    });
+
+    it('renders cancelled status', () => {
+        render(<StatusBanner status="cancelled" step="scoring" />);
+
+        expect(screen.getByTestId('x-circle-icon')).toBeInTheDocument();
+        expect(screen.getByTestId('badge')).toHaveAttribute('data-variant', 'default');
+        expect(screen.getByText('Pipeline cancelled')).toBeInTheDocument();
     });
 
     it('shows current step when running', () => {
