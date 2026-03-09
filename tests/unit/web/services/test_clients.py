@@ -5,6 +5,7 @@ Covers: web/backend/services/clients.py
 """
 
 import pytest
+import os
 import httpx
 from unittest.mock import Mock, patch, MagicMock
 from urllib.parse import urlparse
@@ -122,7 +123,7 @@ class TestServiceClient:
 
             assert result == {"status": "ok"}
             mock_client_instance.request.assert_called_once_with(
-                "GET", "http://localhost:8080/health", timeout=30
+                "GET", "http://localhost:8080/health"
             )
 
     def test_request_post_success(self):
@@ -143,7 +144,7 @@ class TestServiceClient:
 
             assert result == {"success": True}
             mock_client_instance.request.assert_called_once_with(
-                "POST", "http://localhost:8080/api/test", json={"data": "value"}, timeout=30
+                "POST", "http://localhost:8080/api/test", json={"data": "value"}
             )
 
     def test_request_no_base_url_raises(self):
@@ -236,9 +237,10 @@ class TestExtractionClient:
 
     def test_init_default_url(self):
         """Test initialization with default URL."""
-        with patch('web.backend.services.clients.EXTRACTION_URL', ""):
-            client = ExtractionClient()
-            assert client.base_url == ""
+        with patch.dict(os.environ, {"EXTRACTION_URL": ""}, clear=False):
+            with patch('web.backend.services.clients._validate_url', return_value=""):
+                client = ExtractionClient()
+                assert client.base_url == ""
 
     def test_init_custom_url(self):
         """Test initialization with custom URL."""
@@ -289,9 +291,10 @@ class TestEmbeddingsClient:
 
     def test_init_default_url(self):
         """Test initialization with default URL."""
-        with patch('web.backend.services.clients.EMBEDDINGS_URL', ""):
-            client = EmbeddingsClient()
-            assert client.base_url == ""
+        with patch.dict(os.environ, {"EMBEDDINGS_URL": ""}, clear=False):
+            with patch('web.backend.services.clients._validate_url', return_value=""):
+                client = EmbeddingsClient()
+                assert client.base_url == ""
 
     def test_init_custom_url(self):
         """Test initialization with custom URL."""
@@ -342,9 +345,10 @@ class TestScorerMatcherClient:
 
     def test_init_default_url(self):
         """Test initialization with default URL."""
-        with patch('web.backend.services.clients.SCORER_MATCHER_URL', ""):
-            client = ScorerMatcherClient()
-            assert client.base_url == ""
+        with patch.dict(os.environ, {"SCORER_MATCHER_URL": ""}, clear=False):
+            with patch('web.backend.services.clients._validate_url', return_value=""):
+                client = ScorerMatcherClient()
+                assert client.base_url == ""
 
     def test_init_custom_url(self):
         """Test initialization with custom URL."""
@@ -397,9 +401,10 @@ class TestOrchestratorClient:
 
     def test_init_default_url(self):
         """Test initialization with default URL."""
-        with patch('web.backend.services.clients.ORCHESTRATOR_URL', ""):
-            client = OrchestratorClient()
-            assert client.base_url == ""
+        with patch.dict(os.environ, {"ORCHESTRATOR_URL": ""}, clear=False):
+            with patch('web.backend.services.clients._validate_url', return_value=""):
+                client = OrchestratorClient()
+                assert client.base_url == ""
 
     def test_init_custom_url(self):
         """Test initialization with custom URL."""

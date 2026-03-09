@@ -301,8 +301,8 @@ class TestNotificationsRouter:
         mock_service_instance.get_queue_status.side_effect = Exception("Redis connection failed")
         mock_notification_service.return_value = mock_service_instance
 
-        with pytest.raises(Exception):
-            client.get('/api/notifications/queue-status')
+        response = client.get('/api/notifications/queue-status')
+        assert response.status_code == 500
 
 
 class TestNotificationsRouterIntegration:

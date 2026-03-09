@@ -4,6 +4,7 @@ Policy endpoints - manage result filtering policies.
 """
 
 from fastapi import APIRouter, HTTPException
+from typing import Optional, cast
 
 from ..services.policy_service import get_policy_service
 from ..models.requests import PolicyUpdate
@@ -42,10 +43,12 @@ def update_policy(policy_update: PolicyUpdate):
     - min_jd_required_coverage: Minimum job description coverage (0-1), or null to disable
     """
     policy_service = get_policy_service()
+    current_policy = policy_service.get_current_policy()
+    
     policy = policy_service.update_policy(
-        min_fit=policy_update.min_fit,
-        top_k=policy_update.top_k,
-        min_jd_required_coverage=policy_update.min_jd_required_coverage
+        min_fit=cast(float, policy_update.min_fit if policy_update.min_fit is not None else current_policy.min_fit),
+        top_k=cast(int, policy_update.top_k if policy_update.top_k is not None else current_policy.top_k),
+        min_jd_required_coverage=policy_update.min_jd_required_coverage if policy_update.min_jd_required_coverage is not None else current_policy.min_jd_required_coverage
     )
     
     return PolicyResponse(
@@ -73,14 +76,15 @@ def apply_preset(preset_name: str):
         400: Unknown preset name.
     """
     _VALID_PRESETS = {"strict", "balanced", "discovery"}
-    if preset_name.lower() not in _VALID_PRESETS:
+    normalized_preset = preset_name.lower()
+    if normalized_preset not in _VALID_PRESETS:
         raise HTTPException(
             status_code=400,
             detail=f"Unknown preset '{preset_name}'. Valid presets: {', '.join(sorted(_VALID_PRESETS))}"
         )
 
     policy_service = get_policy_service()
-    policy = policy_service.apply_preset(preset_name)
+    policy = policy_service.apply_preset(normalized_preset)
     
     return PolicyResponse(
         min_fit=policy.min_fit,
