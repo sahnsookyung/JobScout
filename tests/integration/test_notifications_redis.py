@@ -34,45 +34,37 @@ from notification import (
 )
 from notification.channels import EmailChannel
 
-# Check if we should run with Docker containers
-USE_DOCKER = os.environ.get('USE_DOCKER_CONTAINERS', '1') == '1'
-REDIS_URL = os.environ.get('REDIS_URL')
+# Check if we should use testcontainers or external Redis
+REDIS_URL = os.environ.get("TEST_REDIS_URL")
 
-# Prevent tests from using production Redis - use db=1 for tests if using same host
-if REDIS_URL and '/0' in REDIS_URL:
-    # Check if this looks like production Redis and redirect to test DB
-    if 'redis://redis:6379' in REDIS_URL or 'localhost:6379' in REDIS_URL:
-        # Use db=1 for tests to avoid polluting production
-        REDIS_URL = REDIS_URL.replace('/0', '/1')
-        print(f"Redirecting to test Redis database: {REDIS_URL}")
-
-# Try to import container management
-try:
-    from tests.conftest_docker import redis_container
-    DOCKER_AVAILABLE = True
-except ImportError:
-    DOCKER_AVAILABLE = False
-    redis_container = None  # Explicitly set to None when not available
-
-# Determine if we can run
-if REDIS_URL:
-    # Use provided Redis
-    RUN_TESTS = True
-    USE_EXTERNAL_REDIS = True
-elif DOCKER_AVAILABLE and USE_DOCKER:
-    # Will spin up Docker container
-    RUN_TESTS = True
-    USE_EXTERNAL_REDIS = False
-else:
-    RUN_TESTS = False
+# Determine if we can run tests
+RUN_TESTS = REDIS_URL is not None or DOCKER_AVAILABLE
 
 if not RUN_TESTS:
-        print("\n" + "=" * 70)
-        print("SKIPPING: Docker not available and REDIS_URL not set")
-        print("To run: ensure Docker is running or set REDIS_URL")
-        print("=" * 70 + "\n")
+    print("\n" + "=" * 70)
+    print("SKIPPING: No Redis available (set TEST_REDIS_URL or enable Docker)")
+    print("=" * 70 + "\n")
 
-@unittest.skipIf(not RUN_TESTS, "Docker not available and REDIS_URL not set")
+
+@pytest.fixture(scope="session")
+def redis_test_url():
+    """Get Redis URL from environment or testcontainers."""
+    if REDIS_URL:
+        return REDIS_URL
+    
+    # Use testcontainers if available
+    try:
+        from testcontainers.redis import RedisContainer
+        container = RedisContainer("redis:7-alpine", port=6379)
+        container.start()
+        url = container.get_connection_url()
+        yield url
+        container.stop()
+    except ImportError:
+        pytest.skip("testcontainers.redis not available")
+
+
+@unittest.skipIf(not RUN_TESTS, "No Redis available (set TEST_REDIS_URL or enable Docker)")
 class TestNotificationsWithRedis(unittest.TestCase):
     """
     Integration tests for Notification Service with real Redis operations.
@@ -87,46 +79,45 @@ class TestNotificationsWithRedis(unittest.TestCase):
     
     @classmethod
     def setUpClass(cls):
-        """Set up test environment with real Redis (either Docker or external)."""
+        """Set up test environment with real Redis (either external or testcontainers)."""
         print("\n" + "=" * 70)
         print("INTEGRATION TEST: Notification System with Real Redis")
         print("=" * 70)
-        
-        if USE_EXTERNAL_REDIS:
+
+        # Get Redis URL from environment or use testcontainers
+        if REDIS_URL:
             print(f"Using external Redis: {REDIS_URL[:30]}...")
             cls.redis_url = REDIS_URL
-            cls.redis_conn = Redis.from_url(cls.redis_url)
-            cls._verify_connection()
         else:
-            print("Starting Redis Docker container...")
+            # Use testcontainers
             try:
-                # Use the context manager directly
-                cls._container_ctx = redis_container()
-                cls.container = cls._container_ctx.__enter__()
-                print(f"✓ Container started on port {cls.container.host_port}")
-                
-                # Connect to container
-                cls.redis_url = cls.container.redis_url
-                cls.redis_conn = Redis.from_url(cls.redis_url)
-                cls._verify_connection()
-            except Exception as e:
-                print(f"✗ Failed to start container: {e}")
-                raise
-        
+                from testcontainers.redis import RedisContainer
+                print("Starting Redis testcontainer...")
+                cls._container = RedisContainer("redis:7-alpine", port=6379)
+                cls._container.start()
+                cls.redis_url = cls._container.get_connection_url()
+                print(f"✓ Container started: {cls.redis_url}")
+            except ImportError:
+                raise RuntimeError("testcontainers.redis not available and TEST_REDIS_URL not set")
+
+        # Connect to Redis
+        cls.redis_conn = Redis.from_url(cls.redis_url)
+        cls._verify_connection()
+
         # Create queue
         cls.queue = Queue('notifications', connection=cls.redis_conn)
-        
+
         # Create mock repository
         cls.mock_repo = Mock()
         cls.mock_repo.db = Mock()
-        
+
         # Create notification service with real Redis
         cls.service = NotificationService(
             repo=cls.mock_repo,
             redis_url=cls.redis_url,
             skip_dedup=True  # Disable dedup for basic queue tests
         )
-        
+
         print("✓ Notification service initialized with Redis")
     
     @classmethod
@@ -146,12 +137,12 @@ class TestNotificationsWithRedis(unittest.TestCase):
             cls.redis_conn.delete('rq:queue:notifications')
             cls.redis_conn.delete('rq:queue:failed')
             cls.redis_conn.close()
-        
+
         # Stop container if we started it
-        if not USE_EXTERNAL_REDIS and hasattr(cls, '_container_ctx'):
-            print("\nStopping Redis container...")
-            cls._container_ctx.__exit__(None, None, None)
-        
+        if not REDIS_URL and hasattr(cls, '_container'):
+            print("\nStopping Redis testcontainer...")
+            cls._container.stop()
+
         print("\n✓ Integration test complete")
         print("=" * 70 + "\n")
     
