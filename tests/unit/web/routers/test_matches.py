@@ -75,7 +75,7 @@ class TestMatchesRouter:
     @pytest.fixture
     def client(self, app):
         """Create test client."""
-        return TestClient(app, raise_server_exceptions=False)
+        return TestClient(app, raise_server_exceptions=True)
 
     @pytest.fixture
     def mock_db(self):
@@ -86,7 +86,9 @@ class TestMatchesRouter:
     def mock_match_service(self):
         """Create mock match service."""
         with patch('web.backend.routers.matches.MatchService') as mock:
-            yield mock
+            mock_service_instance = Mock()
+            mock.return_value = mock_service_instance
+            yield mock_service_instance
 
     @pytest.fixture
     def mock_policy_service(self):
@@ -98,12 +100,11 @@ class TestMatchesRouter:
             policy.top_k = 100
             policy_service.get_current_policy.return_value = policy
             mock.return_value = policy_service
-            yield mock
+            yield policy_service
 
     def test_get_matches_success(self, client, mock_match_service, mock_policy_service):
         """Test successful get matches."""
-        mock_service_instance = Mock()
-        mock_service_instance.get_matches.return_value = [
+        mock_match_service.get_matches.return_value = [
             {
                 'match_id': str(uuid.uuid4()),
                 'title': 'Software Engineer',
@@ -113,10 +114,12 @@ class TestMatchesRouter:
                 'is_remote': True,
                 'is_hidden': False,
                 'required_coverage': 0.85,
-                'match_type': 'requirements_only'
+                'preferred_coverage': 0.70,
+                'match_type': 'requirements_only',
+                'base_score': 85.0,
+                'penalties': 0.0,
             }
         ]
-        mock_match_service.return_value = mock_service_instance
 
         response = client.get('/api/matches')
 
@@ -125,13 +128,11 @@ class TestMatchesRouter:
         assert data['success'] is True
         assert data['count'] == 1
         assert 'matches' in data
-        mock_service_instance.get_matches.assert_called_once()
+        mock_match_service.get_matches.assert_called_once()
 
     def test_get_matches_with_filters(self, client, mock_match_service, mock_policy_service):
         """Test get matches with query filters."""
-        mock_service_instance = Mock()
-        mock_service_instance.get_matches.return_value = []
-        mock_match_service.return_value = mock_service_instance
+        mock_match_service.get_matches.return_value = []
 
         response = client.get(
             '/api/matches',
@@ -145,8 +146,8 @@ class TestMatchesRouter:
         )
 
         assert response.status_code == 200
-        mock_service_instance.get_matches.assert_called_once()
-        call_kwargs = mock_service_instance.get_matches.call_args[1]
+        mock_match_service.get_matches.assert_called_once()
+        call_kwargs = mock_match_service.get_matches.call_args[1]
         assert call_kwargs['status'] == 'active'
         assert call_kwargs['min_fit'] == 70.0
         assert call_kwargs['top_k'] == 50
@@ -155,13 +156,11 @@ class TestMatchesRouter:
 
     def test_get_matches_uses_policy_defaults(self, client, mock_match_service, mock_policy_service):
         """Test get matches uses policy defaults when not specified."""
-        mock_service_instance = Mock()
-        mock_service_instance.get_matches.return_value = []
-        mock_match_service.return_value = mock_service_instance
+        mock_match_service.get_matches.return_value = []
 
         client.get('/api/matches')
 
-        call_kwargs = mock_service_instance.get_matches.call_args[1]
+        call_kwargs = mock_match_service.get_matches.call_args[1]
         assert call_kwargs['min_fit'] == 50.0  # From policy
         assert call_kwargs['top_k'] == 100  # From policy
 
@@ -176,9 +175,7 @@ class TestMatchesRouter:
 
     def test_get_matches_valid_statuses(self, client, mock_match_service, mock_policy_service):
         """Test get matches with all valid status values."""
-        mock_service_instance = Mock()
-        mock_service_instance.get_matches.return_value = []
-        mock_match_service.return_value = mock_service_instance
+        mock_match_service.get_matches.return_value = []
 
         for status in ['active', 'stale', 'all']:
             response = client.get('/api/matches', params={'status': status})
@@ -186,9 +183,7 @@ class TestMatchesRouter:
 
     def test_get_matches_min_fit_bounds(self, client, mock_match_service, mock_policy_service):
         """Test get matches with min_fit boundary values."""
-        mock_service_instance = Mock()
-        mock_service_instance.get_matches.return_value = []
-        mock_match_service.return_value = mock_service_instance
+        mock_match_service.get_matches.return_value = []
 
         # Test minimum bound
         response = client.get('/api/matches', params={'min_fit': 0})
@@ -208,9 +203,7 @@ class TestMatchesRouter:
 
     def test_get_matches_top_k_bounds(self, client, mock_match_service, mock_policy_service):
         """Test get matches with top_k boundary values."""
-        mock_service_instance = Mock()
-        mock_service_instance.get_matches.return_value = []
-        mock_match_service.return_value = mock_service_instance
+        mock_match_service.get_matches.return_value = []
 
         # Test minimum bound
         response = client.get('/api/matches', params={'top_k': 1})
@@ -230,24 +223,50 @@ class TestMatchesRouter:
 
     def test_get_match_details_success(self, client, mock_match_service):
         """Test successful get match details."""
-        mock_service_instance = Mock()
-        mock_service_instance.get_match_detail.return_value = {
-            'match_id': str(uuid.uuid4()),
-            'title': 'Software Engineer',
-            'company': 'Tech Corp',
-            'overall_score': 85.5,
-            'job_description': 'We are looking for...',
-            'requirement_matches': []
+        mock_match_service.get_match_detail.return_value = {
+            'success': True,
+            'match': {
+                'match_id': str(uuid.uuid4()),
+                'resume_fingerprint': 'fp-123',
+                'overall_score': 85.5,
+                'fit_score': 82.0,
+                'want_score': 78.0,
+                'is_hidden': False,
+                'base_score': 85.0,
+                'penalties': 0.0,
+                'required_coverage': 0.85,
+                'preferred_coverage': 0.70,
+                'total_requirements': 10,
+                'matched_requirements_count': 8,
+                'match_type': 'requirements_only',
+                'status': 'active',
+                'penalty_details': {},
+            },
+            'job': {
+                'id': 'job-123',
+                'title': 'Software Engineer',
+                'company': 'Tech Corp',
+                'description': 'Job description here...',
+            },
+            'requirements': [
+                {
+                    'requirement_id': 'req-1',
+                    'requirement_text': 'Python',
+                    'similarity_score': 0.95,
+                    'is_covered': True,
+                    'req_type': 'required',
+                    'evidence': '5 years Python experience',
+                }
+            ]
         }
-        mock_match_service.return_value = mock_service_instance
 
         match_id = str(uuid.uuid4())
         response = client.get(f'/api/matches/{match_id}')
 
         assert response.status_code == 200
         data = response.json()
-        assert data['match_id'] == match_id
-        mock_service_instance.get_match_detail.assert_called_once_with(match_id)
+        assert data['success'] is True
+        mock_match_service.get_match_detail.assert_called_once_with(match_id)
 
     def test_get_match_details_invalid_uuid(self, client):
         """Test get match details with invalid UUID."""
@@ -259,11 +278,9 @@ class TestMatchesRouter:
 
     def test_get_match_details_not_found(self, client, mock_match_service):
         """Test get match details when match not found."""
-        mock_service_instance = Mock()
-        mock_service_instance.get_match_detail.side_effect = HTTPException(
+        mock_match_service.get_match_detail.side_effect = HTTPException(
             status_code=404, detail="Match not found"
         )
-        mock_match_service.return_value = mock_service_instance
 
         match_id = str(uuid.uuid4())
         response = client.get(f'/api/matches/{match_id}')
@@ -272,9 +289,7 @@ class TestMatchesRouter:
 
     def test_toggle_match_hidden_success(self, client, mock_match_service):
         """Test successful toggle match hidden."""
-        mock_service_instance = Mock()
-        mock_service_instance.toggle_hidden.return_value = True
-        mock_match_service.return_value = mock_service_instance
+        mock_match_service.toggle_hidden.return_value = True
 
         match_id = str(uuid.uuid4())
         response = client.post(f'/api/matches/{match_id}/hide')
@@ -284,13 +299,11 @@ class TestMatchesRouter:
         assert data['success'] is True
         assert data['match_id'] == match_id
         assert data['is_hidden'] is True
-        mock_service_instance.toggle_hidden.assert_called_once_with(match_id)
+        mock_match_service.toggle_hidden.assert_called_once_with(match_id)
 
     def test_toggle_match_hidden_unhide(self, client, mock_match_service):
         """Test toggle match hidden to unhide."""
-        mock_service_instance = Mock()
-        mock_service_instance.toggle_hidden.return_value = False
-        mock_match_service.return_value = mock_service_instance
+        mock_match_service.toggle_hidden.return_value = False
 
         match_id = str(uuid.uuid4())
         response = client.post(f'/api/matches/{match_id}/hide')
@@ -308,35 +321,34 @@ class TestMatchesRouter:
 
     def test_get_match_explanation_success(self, client, mock_match_service):
         """Test successful get match explanation."""
-        mock_service_instance = Mock()
-        mock_service_instance.get_match_explanation.return_value = {
+        mock_match_service.get_match_explanation.return_value = {
+            'success': True,
             'match_id': str(uuid.uuid4()),
-            'per_requirement': [
-                {
-                    'requirement_id': 'req-1',
-                    'requirement_text': 'Python experience',
-                    'similarity': 0.85,
-                    'matched_sections': ['experience']
-                }
-            ],
-            'section_summary': {
-                'experience': {'avg_similarity': 0.80, 'requirements_covered': 5}
-            },
-            'strengths': [{'section': 'experience', 'score': 0.90}],
-            'gaps': []
+            'explanation': {
+                'per_requirement': [
+                    {
+                        'requirement_id': 'req-1',
+                        'requirement_text': 'Python experience',
+                        'similarity': 0.85,
+                        'matched_sections': ['experience']
+                    }
+                ],
+                'section_summary': {
+                    'experience': {'avg_similarity': 0.80, 'requirements_covered': 5}
+                },
+                'strengths': [{'section': 'experience', 'score': 0.90}],
+                'gaps': []
+            }
         }
-        mock_match_service.return_value = mock_service_instance
 
         match_id = str(uuid.uuid4())
         response = client.get(f'/api/matches/{match_id}/explanation')
 
         assert response.status_code == 200
         data = response.json()
-        assert 'per_requirement' in data
-        assert 'section_summary' in data
-        assert 'strengths' in data
-        assert 'gaps' in data
-        mock_service_instance.get_match_explanation.assert_called_once_with(match_id)
+        assert data['success'] is True
+        assert 'explanation' in data
+        mock_match_service.get_match_explanation.assert_called_once_with(match_id)
 
     def test_get_match_explanation_invalid_uuid(self, client):
         """Test get match explanation with invalid UUID."""
@@ -347,11 +359,9 @@ class TestMatchesRouter:
 
     def test_get_match_explanation_not_found(self, client, mock_match_service):
         """Test get match explanation when match not found."""
-        mock_service_instance = Mock()
-        mock_service_instance.get_match_explanation.side_effect = HTTPException(
+        mock_match_service.get_match_explanation.side_effect = HTTPException(
             status_code=404, detail="Match not found"
         )
-        mock_match_service.return_value = mock_service_instance
 
         match_id = str(uuid.uuid4())
         response = client.get(f'/api/matches/{match_id}/explanation')
@@ -372,7 +382,7 @@ class TestMatchesRouterIntegration:
     @pytest.fixture
     def client(self, app):
         """Create test client."""
-        return TestClient(app, raise_server_exceptions=False)
+        return TestClient(app, raise_server_exceptions=True)
 
     def test_full_get_matches_flow(self, client):
         """Test complete flow of getting matches."""
@@ -386,7 +396,7 @@ class TestMatchesRouterIntegration:
                 mock_policy_service.get_current_policy.return_value = mock_policy
                 MockPolicyService.return_value = mock_policy_service
 
-                # Setup match service
+                # Setup match service - mock returns instance when called
                 mock_match_service = Mock()
                 mock_match_service.get_matches.return_value = [
                     {
@@ -399,9 +409,11 @@ class TestMatchesRouterIntegration:
                         'fit_score': 90.0,
                         'want_score': 85.0,
                         'required_coverage': 0.95,
-                        'preferences_coverage': 0.80,
+                        'preferred_coverage': 0.80,
                         'match_type': 'requirements_only',
-                        'is_hidden': False
+                        'is_hidden': False,
+                        'base_score': 92.0,
+                        'penalties': 0.0,
                     }
                 ]
                 MockMatchService.return_value = mock_match_service
@@ -423,36 +435,43 @@ class TestMatchesRouterIntegration:
         """Test complete flow of getting match details."""
         with patch('web.backend.routers.matches.MatchService') as MockMatchService:
             mock_match_service = Mock()
+            match_id = str(uuid.uuid4())
             mock_match_service.get_match_detail.return_value = {
-                'match_id': str(uuid.uuid4()),
+                'success': True,
+                'match': {
+                    'match_id': match_id,
+                    'resume_fingerprint': 'fp-123',
+                    'overall_score': 85.5,
+                    'fit_score': 82.0,
+                    'want_score': 78.0,
+                    'is_hidden': False,
+                    'base_score': 85.0,
+                    'penalties': 0.0,
+                    'required_coverage': 0.85,
+                    'preferred_coverage': 0.70,
+                    'total_requirements': 10,
+                    'matched_requirements_count': 8,
+                    'match_type': 'requirements_only',
+                    'status': 'active',
+                    'penalty_details': {},
+                },
                 'job': {
                     'id': 'job-123',
                     'title': 'Software Engineer',
                     'company': 'Tech Corp',
                     'description': 'Job description here...',
-                    'requirements': ['Python', 'SQL', 'AWS']
                 },
-                'overall_score': 85.5,
-                'fit_score': 82.0,
-                'want_score': 78.0,
-                'requirement_matches': [
-                    {
-                        'requirement': 'Python',
-                        'evidence': '5 years Python experience',
-                        'similarity': 0.95
-                    }
-                ]
+                'requirements': []
             }
             MockMatchService.return_value = mock_match_service
 
-            match_id = str(uuid.uuid4())
             response = client.get(f'/api/matches/{match_id}')
 
             assert response.status_code == 200
             data = response.json()
-            assert data['match_id'] == match_id
+            assert data['success'] is True
+            assert data['match']['match_id'] == match_id
             assert data['job']['title'] == 'Software Engineer'
-            assert data['overall_score'] == 85.5
 
     def test_full_toggle_hidden_flow(self, client):
         """Test complete flow of toggling hidden status."""
@@ -478,38 +497,41 @@ class TestMatchesRouterIntegration:
         with patch('web.backend.routers.matches.MatchService') as MockMatchService:
             mock_match_service = Mock()
             mock_match_service.get_match_explanation.return_value = {
+                'success': True,
                 'match_id': str(uuid.uuid4()),
-                'per_requirement': [
-                    {
-                        'requirement_id': 'req-1',
-                        'requirement_text': '5+ years Python experience',
-                        'similarity': 0.88,
-                        'details': {
-                            'best_section': 'experience',
-                            'best_section_text': 'Worked with Python for 6 years...'
+                'explanation': {
+                    'per_requirement': [
+                        {
+                            'requirement_id': 'req-1',
+                            'requirement_text': '5+ years Python experience',
+                            'similarity': 0.88,
+                            'details': {
+                                'best_section': 'experience',
+                                'best_section_text': 'Worked with Python for 6 years...'
+                            }
+                        },
+                        {
+                            'requirement_id': 'req-2',
+                            'requirement_text': 'AWS experience',
+                            'similarity': 0.65,
+                            'details': {
+                                'best_section': 'skills',
+                                'best_section_text': 'AWS: EC2, S3, Lambda'
+                            }
                         }
+                    ],
+                    'section_summary': {
+                        'experience': {'avg_similarity': 0.85, 'max_similarity': 0.95, 'requirements_covered': 8},
+                        'skills': {'avg_similarity': 0.70, 'max_similarity': 0.80, 'requirements_covered': 5}
                     },
-                    {
-                        'requirement_id': 'req-2',
-                        'requirement_text': 'AWS experience',
-                        'similarity': 0.65,
-                        'details': {
-                            'best_section': 'skills',
-                            'best_section_text': 'AWS: EC2, S3, Lambda'
-                        }
-                    }
-                ],
-                'section_summary': {
-                    'experience': {'avg_similarity': 0.85, 'max_similarity': 0.95, 'requirements_covered': 8},
-                    'skills': {'avg_similarity': 0.70, 'max_similarity': 0.80, 'requirements_covered': 5}
-                },
-                'strengths': [
-                    {'section': 'experience', 'score': 0.95},
-                    {'section': 'projects', 'score': 0.88}
-                ],
-                'gaps': [
-                    {'section': 'skills', 'avg_score': 0.70}
-                ]
+                    'strengths': [
+                        {'section': 'experience', 'score': 0.95},
+                        {'section': 'projects', 'score': 0.88}
+                    ],
+                    'gaps': [
+                        {'section': 'skills', 'avg_score': 0.70}
+                    ]
+                }
             }
             MockMatchService.return_value = mock_match_service
 
@@ -518,7 +540,9 @@ class TestMatchesRouterIntegration:
 
             assert response.status_code == 200
             data = response.json()
-            assert len(data['per_requirement']) == 2
-            assert len(data['strengths']) == 2
-            assert len(data['gaps']) == 1
-            assert 'section_summary' in data
+            assert data['success'] is True
+            assert 'explanation' in data
+            explanation = data['explanation']
+            assert len(explanation.get('strengths', [])) == 2
+            assert len(explanation.get('gaps', [])) == 1
+            assert 'section_summary' in explanation

@@ -21,6 +21,7 @@ UTC_NOW = sql_text("timezone('UTC', now())")
 
 # Common foreign key references
 JOB_POST_ID_FK = 'job_post.id'
+JOB_REQUIREMENT_UNIT_ID_FK = 'job_requirement_unit.id'
 
 
 class JobPost(Base):
@@ -159,7 +160,7 @@ class JobRequirementUnit(Base):
 class JobRequirementUnitEmbedding(Base):
     __tablename__ = 'job_requirement_unit_embedding'
 
-    job_requirement_unit_id = Column(UUID(as_uuid=True), ForeignKey(JOB_POST_ID_FK, ondelete='CASCADE'), primary_key=True)
+    job_requirement_unit_id = Column(UUID(as_uuid=True), ForeignKey(JOB_REQUIREMENT_UNIT_ID_FK, ondelete='CASCADE'), primary_key=True)
     embedding = Column(Vector(1024), nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
 

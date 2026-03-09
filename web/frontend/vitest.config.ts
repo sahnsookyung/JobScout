@@ -34,7 +34,6 @@ export default defineConfig({
             'src/**/*.d.ts',
             'src/main.tsx',
             'src/App.tsx',
-            'src/features/dashboard/components/__tests__/**',
             // indexedDB tests require actual browser IndexedDB implementation
             'src/utils/__tests__/indexedDB.test.ts',
         ],
@@ -49,7 +48,6 @@ export default defineConfig({
                 'src/**/*.d.ts',
                 'src/main.tsx',
                 'src/App.tsx',
-                'src/features/dashboard/components/__tests__/**',
                 // indexedDB tests require actual browser IndexedDB implementation
                 'src/utils/__tests__/indexedDB.test.ts',
             ],
