@@ -2,12 +2,13 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { CompactControls } from '../CompactControls';
 import { usePipeline } from '@/hooks/usePipeline';
+import { useStats } from '@/hooks/useStats';
 import { toast } from 'sonner';
 import { vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Mock modules - vi.mock is hoisted, create mocks inline
 vi.mock('@/hooks/usePipeline');
+vi.mock('@/hooks/useStats');
 vi.mock('sonner');
 vi.mock('@shared/constants', () => ({
     RESUME_MAX_SIZE_MB: 2,
@@ -22,14 +23,20 @@ vi.mock('@/utils/indexedDB', () => ({
     getResumeFilename: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock('@/utils/fileUtils', () => ({
+    computeFileHash: vi.fn().mockResolvedValue('mock-hash-abc123'),
+    validateFileSize: vi.fn().mockReturnValue(true),
+}));
+
 vi.mock('@/services/pipelineApi', () => ({
     pipelineApi: {
-        checkResumeHash: vi.fn().mockRejectedValue(new Error('Network error')),
-        uploadResume: vi.fn().mockRejectedValue(new Error('Network error')),
+        checkResumeHash: vi.fn(),
+        uploadResume: vi.fn(),
     },
 }));
 
 const mockUsePipeline = usePipeline as ReturnType<typeof vi.fn>;
+const mockUseStats = useStats as ReturnType<typeof vi.fn>;
 
 const createWrapper = () => {
     const queryClient = new QueryClient({
@@ -45,7 +52,9 @@ describe('CompactControls', () => {
     const mockStopPipeline = vi.fn();
     const mockUploadResumeFromHook = vi.fn();
 
-    beforeEach(() => {
+    beforeEach(async () => {
+        vi.clearAllMocks();
+
         mockUsePipeline.mockReturnValue({
             runPipeline: mockRunPipeline,
             stopPipeline: mockStopPipeline,
@@ -55,6 +64,12 @@ describe('CompactControls', () => {
             uploadResume: mockUploadResumeFromHook,
             isUploading: false,
         });
+
+        mockUseStats.mockReturnValue({ data: null });
+
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        (pipelineApi.checkResumeHash as any).mockRejectedValue(new Error('Network error'));
+        (pipelineApi.uploadResume as any).mockRejectedValue(new Error('Network error'));
     });
 
     describe('Resume Upload Button', () => {
@@ -79,8 +94,7 @@ describe('CompactControls', () => {
             await waitFor(() => {
                 expect(screen.getByText('Update Resume')).toBeInTheDocument();
             }, { timeout: 2000 });
-            
-            // Check for filename in any element
+
             const filenameElements = screen.getAllByText(/my-resume\.json/i);
             expect(filenameElements.length).toBeGreaterThan(0);
             expect(toast.success).toHaveBeenCalled();
@@ -176,8 +190,7 @@ describe('CompactControls', () => {
             await waitFor(() => {
                 expect(screen.getByText('Update Resume')).toBeInTheDocument();
             }, { timeout: 2000 });
-            
-            // Check filename is displayed
+
             const filenameElements = screen.getAllByText(/first-resume\.json/i);
             expect(filenameElements.length).toBeGreaterThan(0);
         });
