@@ -483,10 +483,10 @@ class TestEmbedRequirementOne:
         mock_repo.save_requirement_embedding.assert_called_once()
 
 
-class TestProcessResume:
-    """Test process_resume method."""
+class TestExtractAndEmbedResume:
+    """Test extract_and_embed_resume method (full ETL: extract + embed)."""
 
-    def test_process_resume_file_not_found(self):
+    def test_extract_and_embed_resume_file_not_found(self):
         """Test processing resume with missing file."""
         from etl.orchestrator import JobETLService
 
@@ -495,11 +495,11 @@ class TestProcessResume:
 
         mock_repo = Mock()
 
-        result = service.process_resume(mock_repo, "nonexistent.json")
+        result = service.extract_and_embed_resume(mock_repo, "nonexistent.json")
 
         assert result == (False, "", None)
 
-    def test_process_resume_unchanged(self):
+    def test_extract_and_embed_resume_unchanged(self):
         """Test processing unchanged resume."""
         from etl.orchestrator import JobETLService
 
@@ -512,11 +512,11 @@ class TestProcessResume:
 
         with patch('etl.orchestrator.generate_file_fingerprint', return_value="fp123"):
             with patch('builtins.open', mock_open(read_data=b'{}')):
-                result = service.process_resume(mock_repo, "resume.json")
+                result = service.extract_and_embed_resume(mock_repo, "resume.json")
 
                 assert result == (False, "fp123", None)
 
-    def test_process_resume_changed(self):
+    def test_extract_and_embed_resume_changed(self):
         """Test processing changed resume."""
         from etl.orchestrator import JobETLService
 
@@ -537,14 +537,15 @@ class TestProcessResume:
                     mock_parser.parse.return_value = mock_parsed
                     mock_parser_class.return_value = mock_parser
 
-                    with patch.object(service, 'extract_resume_one'):
-                        result = service.process_resume(mock_repo, "resume.json")
+                    with patch.object(service, '_extract_resume_data', return_value=(True, "fp123", {"skills": ["Python"]})):
+                        with patch.object(service, 'embed_resume', return_value=(True, "fp123")):
+                            result = service.extract_and_embed_resume(mock_repo, "resume.json")
 
-                        assert result[0] is True
-                        assert result[1] == "fp123"
-                        assert result[2] is not None
+                            assert result[0] is True
+                            assert result[1] == "fp123"
+                            assert result[2] is not None
 
-    def test_process_resume_parse_error(self):
+    def test_extract_and_embed_resume_parse_error(self):
         """Test processing resume with parse error."""
         from etl.orchestrator import JobETLService
 
@@ -561,11 +562,11 @@ class TestProcessResume:
                     mock_parser.parse.side_effect = ValueError("Parse error")
                     mock_parser_class.return_value = mock_parser
 
-                    result = service.process_resume(mock_repo, "resume.json")
+                    result = service.extract_and_embed_resume(mock_repo, "resume.json")
 
                     assert result == (False, "fp123", None)
 
-    def test_process_resume_file_read_error(self):
+    def test_extract_and_embed_resume_file_read_error(self):
         """Test processing resume with file read error."""
         from etl.orchestrator import JobETLService
 
@@ -579,7 +580,7 @@ class TestProcessResume:
 
         with patch('builtins.open', side_effect=raise_io_error):
             with patch('os.path.exists', return_value=True):
-                result = service.process_resume(mock_repo, "resume.json")
+                result = service.extract_and_embed_resume(mock_repo, "resume.json")
 
                 assert result == (False, "", None)
 
@@ -820,128 +821,6 @@ class TestEmbedResume:
 
             with pytest.raises(Exception, match="Embedding error"):
                 service.embed_resume(mock_repo, "fp123")
-
-
-class TestExtractResumeOne:
-    """Test extract_resume_one method."""
-
-    def test_extract_resume_one_success(self):
-        """Test successful resume extraction."""
-        from etl.orchestrator import JobETLService
-
-        mock_ai = Mock()
-        service = JobETLService(mock_ai)
-
-        mock_repo = Mock()
-
-        mock_resume = Mock()
-        mock_resume.claimed_total_years = 5
-        mock_resume.model_dump.return_value = {"skills": ["Python"]}
-        mock_resume.extraction.confidence = 0.9
-        mock_resume.extraction.warnings = []
-
-        mock_evidence = Mock()
-        mock_evidence.id = "evidence-1"
-        mock_evidence.text = "5 years Python"
-        mock_evidence.embedding = [0.1, 0.2]
-        mock_evidence.source_section = "experience"
-        mock_evidence.tags = ["skill"]
-        mock_evidence.years_value = 5
-        mock_evidence.years_context = "Python development"
-        mock_evidence.is_total_years_claim = False
-
-        mock_profiler = Mock()
-        mock_profiler.profile_resume.return_value = (mock_resume, [mock_evidence], None)
-
-        resume_data = {"skills": ["Python"]}
-
-        with patch('etl.orchestrator.ResumeProfiler') as mock_profiler_class:
-            mock_profiler_class.return_value = mock_profiler
-
-            service.extract_resume_one(mock_repo, resume_data, "fp123")
-
-            mock_repo.save_structured_resume.assert_called_once()
-            mock_repo.save_evidence_unit_embeddings.assert_called_once()
-
-    def test_extract_resume_one_no_evidence(self):
-        """Test resume extraction without evidence units."""
-        from etl.orchestrator import JobETLService
-
-        mock_ai = Mock()
-        service = JobETLService(mock_ai)
-
-        mock_repo = Mock()
-
-        mock_resume = Mock()
-        mock_resume.claimed_total_years = 5
-        mock_resume.model_dump.return_value = {"skills": ["Python"]}
-        mock_resume.extraction.confidence = 0.9
-        mock_resume.extraction.warnings = []
-
-        mock_profiler = Mock()
-        mock_profiler.profile_resume.return_value = (mock_resume, [], None)
-
-        resume_data = {"skills": ["Python"]}
-
-        with patch('etl.orchestrator.ResumeProfiler') as mock_profiler_class:
-            mock_profiler_class.return_value = mock_profiler
-
-            service.extract_resume_one(mock_repo, resume_data, "fp123")
-
-            mock_repo.save_structured_resume.assert_called_once()
-            mock_repo.save_evidence_unit_embeddings.assert_not_called()
-
-    def test_extract_resume_one_no_resume(self):
-        """Test resume extraction with no resume result."""
-        from etl.orchestrator import JobETLService
-
-        mock_ai = Mock()
-        service = JobETLService(mock_ai)
-
-        mock_repo = Mock()
-
-        mock_profiler = Mock()
-        mock_profiler.profile_resume.return_value = (None, [], None)
-
-        resume_data = {"skills": ["Python"]}
-
-        with patch('etl.orchestrator.ResumeProfiler') as mock_profiler_class:
-            mock_profiler_class.return_value = mock_profiler
-
-            service.extract_resume_one(mock_repo, resume_data, "fp123")
-
-            mock_repo.save_structured_resume.assert_not_called()
-
-    def test_extract_resume_one_evidence_without_embedding(self):
-        """Test resume extraction with evidence without embeddings."""
-        from etl.orchestrator import JobETLService
-
-        mock_ai = Mock()
-        service = JobETLService(mock_ai)
-
-        mock_repo = Mock()
-
-        mock_resume = Mock()
-        mock_resume.claimed_total_years = 5
-        mock_resume.model_dump.return_value = {"skills": ["Python"]}
-        mock_resume.extraction.confidence = 0.9
-        mock_resume.extraction.warnings = []
-
-        mock_evidence = Mock()
-        mock_evidence.embedding = None
-        mock_evidence.years_value = None
-
-        mock_profiler = Mock()
-        mock_profiler.profile_resume.return_value = (mock_resume, [mock_evidence], None)
-
-        resume_data = {"skills": ["Python"]}
-
-        with patch('etl.orchestrator.ResumeProfiler') as mock_profiler_class:
-            mock_profiler_class.return_value = mock_profiler
-
-            service.extract_resume_one(mock_repo, resume_data, "fp123")
-
-            mock_repo.save_evidence_unit_embeddings.assert_not_called()
 
 
 class TestUnloadModels:
