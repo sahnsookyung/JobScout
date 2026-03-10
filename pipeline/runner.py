@@ -180,9 +180,9 @@ def run_matching_pipeline(
 def _load_resume_file(etl_config) -> Tuple[Optional[str], Optional[dict]]:
     """Load resume file from configured path and return (filepath, data)."""
     # Support both old path (etl.resume_file) and new path (etl.resume.resume_file)
-    if etl_config and etl_config.resume:
+    if etl_config and getattr(etl_config, 'resume', None):
         resume_file = etl_config.resume.resume_file
-    elif etl_config and etl_config.resume_file:
+    elif etl_config and getattr(etl_config, 'resume_file', None):
         resume_file = etl_config.resume_file
     else:
         resume_file = None

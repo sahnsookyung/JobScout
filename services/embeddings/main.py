@@ -234,7 +234,7 @@ async def consume_embeddings_jobs(state: EmbeddingsState) -> None:
     message_count = 0
     error_count = 0
 
-    while True:
+    while not state.stop_event.is_set():
         try:
             logger.debug("Waiting for embeddings job from Redis stream...")
             messages = await asyncio.to_thread(
@@ -277,3 +277,4 @@ async def consume_embeddings_jobs(state: EmbeddingsState) -> None:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8082)
+4
