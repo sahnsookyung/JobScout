@@ -313,7 +313,7 @@ async def consume_extraction_jobs(state: ExtractionState) -> None:
     message_count = 0
     error_count = 0
 
-    while True:
+    while not state.stop_event.is_set():
         try:
             logger.debug("Waiting for extraction job from Redis stream...")
             result = await asyncio.to_thread(_get_one_extraction_message)

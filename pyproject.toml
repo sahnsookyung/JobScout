@@ -53,4 +53,5 @@ log_level = "DEBUG"
 filterwarnings = [
     "ignore::RuntimeWarning:asyncio",
     "ignore:coroutine 'AsyncMockMixin.*was never awaited",
+    "ignore::DeprecationWarning:testcontainers",
 ]
