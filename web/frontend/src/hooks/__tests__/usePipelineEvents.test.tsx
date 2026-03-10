@@ -65,6 +65,37 @@ describe('usePipelineEvents', () => {
 
     const getLastEventSource = (): MockEventSource => MockEventSource.instances[MockEventSource.instances.length - 1];
 
+    // Helper functions to reduce duplication
+    const renderConnectedHook = (taskId: string, options?: Parameters<typeof usePipelineEvents>[1]) => {
+        const { result, rerender, unmount } = renderHook(
+            ({ taskId }) => usePipelineEvents(taskId, options),
+            { initialProps: { taskId: null } }
+        );
+        rerender({ taskId });
+        return { result, rerender, unmount };
+    };
+
+    const waitForConnection = async () => {
+        await waitFor(() => {
+            expect(MockEventSource.instances.length).toBe(1);
+        });
+    };
+
+    const createStatusData = (status: string): PipelineStatusResponse => ({
+        task_id: 'test-123',
+        status,
+        created_at: new Date().toISOString(),
+    });
+
+    const simulateErrorAndRetry = async (delayMs: number) => {
+        await act(async () => {
+            getLastEventSource().simulateError();
+        });
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(delayMs);
+        });
+    };
+
     describe('initial state', () => {
         it('should start disconnected when no taskId', () => {
             const { result } = renderHook(() => usePipelineEvents(null));
@@ -82,31 +113,15 @@ describe('usePipelineEvents', () => {
 
     describe('connection', () => {
         it('should create EventSource when taskId provided', async () => {
-            const { rerender } = renderHook(
-                ({ taskId }) => usePipelineEvents(taskId),
-                { initialProps: { taskId: null } }
-            );
-
-            rerender({ taskId: 'test-123' });
-
-            await waitFor(() => {
-                expect(MockEventSource.instances.length).toBe(1);
-            });
+            const { rerender } = renderConnectedHook('test-123');
+            await waitForConnection();
 
             expect(getLastEventSource().url).toContain('test-123');
         });
 
         it('should close EventSource on unmount', async () => {
-            const { unmount, rerender } = renderHook(
-                ({ taskId }) => usePipelineEvents(taskId),
-                { initialProps: { taskId: null } }
-            );
-
-            rerender({ taskId: 'test-123' });
-
-            await waitFor(() => {
-                expect(MockEventSource.instances.length).toBe(1);
-            });
+            const { unmount } = renderConnectedHook('test-123');
+            await waitForConnection();
 
             const closeSpy = vi.spyOn(getLastEventSource(), 'close');
             unmount();
@@ -116,22 +131,10 @@ describe('usePipelineEvents', () => {
 
     describe('status updates', () => {
         it('should update status on message', async () => {
-            const { result, rerender } = renderHook(
-                ({ taskId }) => usePipelineEvents(taskId),
-                { initialProps: { taskId: null } }
-            );
+            const { result } = renderConnectedHook('test-123');
+            await waitForConnection();
 
-            rerender({ taskId: 'test-123' });
-
-            await waitFor(() => {
-                expect(MockEventSource.instances.length).toBe(1);
-            });
-
-            const statusData: PipelineStatusResponse = {
-                task_id: 'test-123',
-                status: 'extracting',
-                created_at: new Date().toISOString(),
-            };
+            const statusData = createStatusData('extracting');
 
             await act(async () => {
                 getLastEventSource().simulateMessage(statusData);
@@ -141,16 +144,8 @@ describe('usePipelineEvents', () => {
         });
 
         it('should ignore heartbeat messages', async () => {
-            const { result, rerender } = renderHook(
-                ({ taskId }) => usePipelineEvents(taskId),
-                { initialProps: { taskId: null } }
-            );
-
-            rerender({ taskId: 'test-123' });
-
-            await waitFor(() => {
-                expect(MockEventSource.instances.length).toBe(1);
-            });
+            const { result } = renderConnectedHook('test-123');
+            await waitForConnection();
 
             await act(async () => {
                 getLastEventSource().simulateMessage({ type: 'heartbeat' });
@@ -159,67 +154,26 @@ describe('usePipelineEvents', () => {
             expect(result.current.status).toBeNull();
         });
 
-        it('should disconnect on completed status', async () => {
-            const { result, rerender } = renderHook(
-                ({ taskId }) => usePipelineEvents(taskId),
-                { initialProps: { taskId: null } }
-            );
+        it.each(['completed', 'failed'])(
+            'should disconnect on %s status',
+            async (status) => {
+                const { result } = renderConnectedHook('test-123');
+                await waitForConnection();
 
-            rerender({ taskId: 'test-123' });
-
-            await waitFor(() => {
-                expect(MockEventSource.instances.length).toBe(1);
-            });
-
-            await act(async () => {
-                getLastEventSource().simulateOpen();
-                getLastEventSource().simulateMessage({
-                    task_id: 'test-123',
-                    status: 'completed',
-                    created_at: new Date().toISOString(),
+                await act(async () => {
+                    getLastEventSource().simulateOpen();
+                    getLastEventSource().simulateMessage(createStatusData(status));
                 });
-            });
 
-            expect(result.current.connectionState).toBe('disconnected');
-        });
-
-        it('should disconnect on failed status', async () => {
-            const { result, rerender } = renderHook(
-                ({ taskId }) => usePipelineEvents(taskId),
-                { initialProps: { taskId: null } }
-            );
-
-            rerender({ taskId: 'test-123' });
-
-            await waitFor(() => {
-                expect(MockEventSource.instances.length).toBe(1);
-            });
-
-            await act(async () => {
-                getLastEventSource().simulateOpen();
-                getLastEventSource().simulateMessage({
-                    task_id: 'test-123',
-                    status: 'failed',
-                    created_at: new Date().toISOString(),
-                });
-            });
-
-            expect(result.current.connectionState).toBe('disconnected');
-        });
+                expect(result.current.connectionState).toBe('disconnected');
+            }
+        );
     });
 
     describe('error handling', () => {
         it('should handle onerror without crashing', async () => {
-            const { rerender } = renderHook(
-                ({ taskId }) => usePipelineEvents(taskId, { maxRetries: 5, baseDelay: 100 }),
-                { initialProps: { taskId: null } }
-            );
-
-            rerender({ taskId: 'test-123' });
-
-            await waitFor(() => {
-                expect(MockEventSource.instances.length).toBe(1);
-            });
+            renderConnectedHook('test-123', { maxRetries: 5, baseDelay: 100 });
+            await waitForConnection();
 
             expect(() => {
                 getLastEventSource().simulateError();
@@ -227,87 +181,33 @@ describe('usePipelineEvents', () => {
         });
 
         it('should retry on connection error', async () => {
-            const { rerender } = renderHook(
-                ({ taskId }) => usePipelineEvents(taskId, { maxRetries: 5, baseDelay: 1000 }),
-                { initialProps: { taskId: null } }
-            );
+            renderConnectedHook('test-123', { maxRetries: 5, baseDelay: 1000 });
+            await waitForConnection();
 
-            rerender({ taskId: 'test-123' });
+            await simulateErrorAndRetry(1000);
 
-            await waitFor(() => {
-                expect(MockEventSource.instances.length).toBe(1);
-            });
-
-            // Trigger error
-            await act(async () => {
-                getLastEventSource().simulateError();
-            });
-
-            // Fast-forward time to trigger retry
-            await act(async () => {
-                await vi.advanceTimersByTimeAsync(1000);
-            });
-
-            // Should have created a new EventSource for retry
             expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(2);
         });
 
         it('should use exponential backoff for retries', async () => {
-            const { rerender } = renderHook(
-                ({ taskId }) => usePipelineEvents(taskId, { maxRetries: 5, baseDelay: 1000 }),
-                { initialProps: { taskId: null } }
-            );
-
-            rerender({ taskId: 'test-123' });
-
-            await waitFor(() => {
-                expect(MockEventSource.instances.length).toBe(1);
-            });
+            renderConnectedHook('test-123', { maxRetries: 5, baseDelay: 1000 });
+            await waitForConnection();
 
             const initialCount = MockEventSource.instances.length;
 
-            // First error
-            await act(async () => {
-                getLastEventSource().simulateError();
-            });
-
-            // Fast-forward to trigger first retry (1000ms)
-            await act(async () => {
-                await vi.advanceTimersByTimeAsync(1000);
-            });
-
+            await simulateErrorAndRetry(1000);
             expect(MockEventSource.instances.length).toBe(initialCount + 1);
 
-            // Second error
             if (MockEventSource.instances.length > initialCount) {
-                await act(async () => {
-                    getLastEventSource().simulateError();
-                });
-
-                // Fast-forward for second retry (should be 2000ms with exponential backoff)
-                await act(async () => {
-                    await vi.advanceTimersByTimeAsync(2000);
-                });
-
-                // Should have attempted another retry
+                await simulateErrorAndRetry(2000);
                 expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(initialCount + 2);
             }
         });
 
         it('should fail after max retries', async () => {
-            const { result, rerender } = renderHook(
-                ({ taskId }) => usePipelineEvents(taskId, { maxRetries: 3, baseDelay: 10 }),
-                { initialProps: { taskId: null } }
-            );
+            const { result } = renderConnectedHook('test-123', { maxRetries: 3, baseDelay: 10 });
+            await waitForConnection();
 
-            rerender({ taskId: 'test-123' });
-
-            await waitFor(() => {
-                expect(MockEventSource.instances.length).toBe(1);
-            });
-
-            // Trigger errors until max retries exceeded
-            // Initial connection + 3 retries = 4 total attempts
             for (let i = 0; i < 4; i++) {
                 const currentEs = getLastEventSource();
                 if (currentEs) {
@@ -315,13 +215,11 @@ describe('usePipelineEvents', () => {
                         currentEs.simulateError();
                     });
 
-                    // Wait for retry delay (exponential backoff)
                     if (i < 3) {
                         await act(async () => {
                             await vi.advanceTimersByTimeAsync(10 * Math.pow(2, i));
                         });
-                        
-                        // Wait for new EventSource to be created
+
                         await waitFor(() => {
                             expect(MockEventSource.instances.length).toBeGreaterThan(i + 1);
                         }, { timeout: 1000 });
@@ -329,76 +227,43 @@ describe('usePipelineEvents', () => {
                 }
             }
 
-            // Should be in failed state after all retries exhausted
             await waitFor(() => {
                 expect(result.current.connectionState).toBe('failed');
             }, { timeout: 1000 });
-            
+
             expect(result.current.error).toContain('after 3 attempts');
         });
 
         it('should reset retry count on successful reconnection', async () => {
-            const { result, rerender } = renderHook(
-                ({ taskId }) => usePipelineEvents(taskId, { maxRetries: 5, baseDelay: 100 }),
-                { initialProps: { taskId: null } }
-            );
+            const { result } = renderConnectedHook('test-123', { maxRetries: 5, baseDelay: 100 });
+            await waitForConnection();
 
-            rerender({ taskId: 'test-123' });
-
-            await waitFor(() => {
-                expect(MockEventSource.instances.length).toBe(1);
-            });
-
-            // Trigger error
-            await act(async () => {
-                getLastEventSource().simulateError();
-            });
-
-            // Fast-forward to trigger retry
-            await act(async () => {
-                await vi.advanceTimersByTimeAsync(100);
-            });
-
-            // Verify retry count increased
+            await simulateErrorAndRetry(100);
             expect(result.current.retryCount).toBeGreaterThanOrEqual(1);
 
-            // Successful reconnection
             await act(async () => {
                 getLastEventSource().simulateOpen();
             });
 
-            // Retry count should be reset
             expect(result.current.retryCount).toBe(0);
         });
     });
 
     describe('manual retry', () => {
         it('should allow manual retry via retry function', async () => {
-            const { result, rerender } = renderHook(
-                ({ taskId }) => usePipelineEvents(taskId, { maxRetries: 5, baseDelay: 100 }),
-                { initialProps: { taskId: null } }
-            );
+            const { result } = renderConnectedHook('test-123', { maxRetries: 5, baseDelay: 100 });
+            await waitForConnection();
 
-            rerender({ taskId: 'test-123' });
-
-            await waitFor(() => {
-                expect(MockEventSource.instances.length).toBe(1);
-            });
-
-            // Trigger error
             await act(async () => {
                 getLastEventSource().simulateError();
             });
 
-            // Verify error state
             expect(result.current.error).toBeTruthy();
 
-            // Manual retry
             await act(async () => {
                 result.current.retry();
             });
 
-            // Error should be cleared
             expect(result.current.error).toBeNull();
         });
     });
@@ -410,11 +275,8 @@ describe('usePipelineEvents', () => {
                 { initialProps: { taskId: 'test-123' } }
             );
 
-            await waitFor(() => {
-                expect(MockEventSource.instances.length).toBe(1);
-            });
+            await waitForConnection();
 
-            // Remove taskId
             rerender({ taskId: null });
 
             expect(result.current.connectionState).toBe('disconnected');
@@ -427,11 +289,8 @@ describe('usePipelineEvents', () => {
                 { initialProps: { taskId: 'test-123' } }
             );
 
-            await waitFor(() => {
-                expect(MockEventSource.instances.length).toBe(1);
-            });
+            await waitForConnection();
 
-            // Open the connection before unmounting
             await act(async () => {
                 getLastEventSource().simulateOpen();
             });
@@ -440,13 +299,8 @@ describe('usePipelineEvents', () => {
 
             unmount();
 
-            // Message after unmount should not update state
             await act(async () => {
-                getLastEventSource().simulateMessage({
-                    task_id: 'test-123',
-                    status: 'extracting',
-                    created_at: new Date().toISOString(),
-                });
+                getLastEventSource().simulateMessage(createStatusData('extracting'));
             });
 
             expect(result.current.status).toBeNull();
