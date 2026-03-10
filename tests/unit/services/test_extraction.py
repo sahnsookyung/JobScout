@@ -217,8 +217,8 @@ class TestExtractionEndpoints:
         app, _ = app_with_state
         with patch("services.extraction.main._validate_resume_path",
                    return_value=(True, "/app/resume.pdf")), \
-             patch("services.extraction.main.process_resume",
-                   return_value=(True, "fp-abc")):
+             patch("services.extraction.main.extract_resume",
+                   new_callable=Mock, return_value=(True, "fp-abc")):
             r = TestClient(app).post("/extract/resume",
                                       json={"resume_file": "/app/resume.pdf"})
         assert r.status_code == 200
@@ -286,8 +286,8 @@ class TestProcessExtractionMessage:
 
         with patch("services.extraction.main._validate_resume_path",
                    return_value=(True, "/app/r.pdf")), \
-             patch("services.extraction.main.process_resume",
-                   return_value=(True, "fp-abc")), \
+             patch("services.extraction.main.extract_resume",
+                   new_callable=Mock, return_value=(True, "fp-abc")), \
              patch("services.extraction.main.publish_completion") as mock_pub, \
              patch("services.extraction.main.ack_message") as mock_ack:
 
@@ -306,8 +306,8 @@ class TestProcessExtractionMessage:
 
         with patch("services.extraction.main._validate_resume_path",
                    return_value=(True, "/app/r.pdf")), \
-             patch("services.extraction.main.process_resume",
-                   return_value=(False, None)), \
+             patch("services.extraction.main.extract_resume",
+                   new_callable=Mock, return_value=(False, None)), \
              patch("services.extraction.main.publish_completion") as mock_pub, \
              patch("services.extraction.main.ack_message"):
 
@@ -346,8 +346,8 @@ class TestProcessExtractionMessage:
 
         with patch("services.extraction.main._validate_resume_path",
                    return_value=(True, "/app/r.pdf")), \
-             patch("services.extraction.main.process_resume",
-                   side_effect=Exception("Processing error")), \
+             patch("services.extraction.main.extract_resume",
+                   new_callable=Mock, side_effect=Exception("Processing error")), \
              patch("services.extraction.main.publish_completion") as mock_pub, \
              patch("services.extraction.main.ack_message") as mock_ack, \
              patch("services.extraction.main.logger") as mock_log:

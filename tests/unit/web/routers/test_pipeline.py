@@ -146,25 +146,34 @@ class TestPipelineRouter:
     def test_upload_resume_json_success(self, client):
         """Test successful JSON resume upload."""
         file_content = b'{"name": "John Doe", "skills": ["Python"]}'
-        
+
         with patch('web.backend.routers.pipeline._validate_resume_file', return_value=file_content):
             with patch('web.backend.routers.pipeline._compute_and_verify_hash', return_value='hash123'):
                 with patch('web.backend.routers.pipeline.get_pipeline_manager') as mock_manager:
-                    mock_mgr_instance = Mock()
-                    mock_mgr_instance.create_task.return_value = 'task-456'
-                    mock_manager.return_value = mock_mgr_instance
+                    with patch('database.uow.job_uow') as mock_job_uow:
+                        mock_mgr_instance = Mock()
+                        mock_mgr_instance.create_task.return_value = 'task-456'
+                        mock_manager.return_value = mock_mgr_instance
+                        
+                        # Mock DB check - resume doesn't exist yet
+                        mock_repo = Mock()
+                        mock_repo.resume.resume_hash_exists.return_value = False
+                        mock_context = MagicMock()
+                        mock_context.__enter__ = Mock(return_value=mock_repo)
+                        mock_context.__exit__ = Mock(return_value=False)
+                        mock_job_uow.return_value = mock_context
 
-                    response = client.post(
-                        '/api/pipeline/upload-resume',
-                        files={'file': ('resume.json', file_content, 'application/json')},
-                        data={'resume_hash': 'hash123'}
-                    )
+                        response = client.post(
+                            '/api/pipeline/upload-resume',
+                            files={'file': ('resume.json', file_content, 'application/json')},
+                            data={'resume_hash': 'hash123'}
+                        )
 
-                    assert response.status_code == 200
-                    data = response.json()
-                    assert data['success'] is True
-                    assert data['resume_hash'] == 'hash123'
-                    assert 'task_id' in data
+                        assert response.status_code == 200
+                        data = response.json()
+                        assert data['success'] is True
+                        assert data['resume_hash'] == 'hash123'
+                        assert 'task_id' in data
 
     def test_upload_resume_no_file(self, client):
         """Test upload with no file."""
@@ -545,7 +554,8 @@ class TestProcessResumeBackground:
             file_content=b'{"name": "test"}',
             filename='resume.json',
             task_id='task-123',
-            manager=mock_manager
+            manager=mock_manager,
+            known_fingerprint='test-fp-123'
         )
 
         # Verify function executed without error
@@ -563,7 +573,8 @@ class TestProcessResumeBackground:
             file_content=b'invalid json',
             filename='resume.json',
             task_id='task-123',
-            manager=mock_manager
+            manager=mock_manager,
+            known_fingerprint='test-fp-123'
         )
 
         # Verify function handled error without raising

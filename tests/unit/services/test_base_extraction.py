@@ -364,15 +364,28 @@ class TestRunResumeExtraction:
     def test_run_resume_extraction_success(self):
         """Test resume extraction success."""
         from services.base.extraction import run_resume_extraction
+        from unittest.mock import mock_open
         with patch('services.base.extraction.generate_file_fingerprint') as mock_fingerprint:
-            with patch('services.base.extraction._load_resume_with_parser') as mock_load:
-                mock_load.return_value = {"name": "Test"}
-                mock_fingerprint.return_value = "abc123"
+            with patch('builtins.open', mock_open(read_data=b'test content')):
+                with patch('services.base.extraction._load_resume_with_parser') as mock_load:
+                    mock_load.return_value = {"name": "Test"}
+                    mock_fingerprint.return_value = "abc123"
 
-                result = run_resume_extraction(Mock(), "/path/to/resume.json")
+                    result = run_resume_extraction(Mock(), "/path/to/resume.json")
 
-                assert result[0] == {"name": "Test"}
-                assert result[1] == "abc123"
+                    assert result[0] == {"name": "Test"}
+                    assert result[1] == "abc123"
+
+    def test_run_resume_extraction_with_known_fingerprint(self):
+        """Test resume extraction with pre-computed fingerprint (skips file read)."""
+        from services.base.extraction import run_resume_extraction
+        with patch('services.base.extraction._load_resume_with_parser') as mock_load:
+            mock_load.return_value = {"name": "Test"}
+
+            result = run_resume_extraction(Mock(), "/path/to/resume.json", known_fingerprint="precomputed-fp")
+
+            assert result[0] == {"name": "Test"}
+            assert result[1] == "precomputed-fp"
 
     def test_run_resume_extraction_file_not_found(self):
         """Test resume extraction file not found."""
@@ -387,20 +400,24 @@ class TestRunResumeExtraction:
     def test_run_resume_extraction_parsing_error(self):
         """Test resume extraction parsing error."""
         from services.base.extraction import run_resume_extraction
-        with patch('services.base.extraction._load_resume_with_parser') as mock_load:
-            mock_load.side_effect = ValueError("Parse error")
+        from unittest.mock import mock_open
+        with patch('services.base.extraction.generate_file_fingerprint') as mock_fingerprint:
+            with patch('builtins.open', mock_open(read_data=b'test content')):
+                with patch('services.base.extraction._load_resume_with_parser') as mock_load:
+                    mock_fingerprint.return_value = "abc123"
+                    mock_load.side_effect = ValueError("Parse error")
 
-            result = run_resume_extraction(Mock(), "/path/to/resume.json")
+                    result = run_resume_extraction(Mock(), "/path/to/resume.json")
 
-            assert result == (None, "")
+                    assert result == (None, "abc123")
 
 
-class TestProcessResume:
-    """Test process_resume function."""
+class TestExtractResume:
+    """Test extract_resume function."""
 
-    def test_process_resume_success(self):
-        """Test process resume returns True."""
-        from services.base.extraction import process_resume
+    def test_extract_resume_success(self):
+        """Test extract resume returns True."""
+        from services.base.extraction import extract_resume
         with patch('services.base.extraction.job_uow') as mock_job_uow:
             mock_ctx = MagicMock()
             mock_ctx.job_etl_service.extract_resume = Mock(return_value=(True, "fingerprint123", {}))
@@ -410,13 +427,13 @@ class TestProcessResume:
             mock_context.__exit__ = Mock(return_value=False)
             mock_job_uow.return_value = mock_context
 
-            result = process_resume(mock_ctx, "/path/to/resume.json")
+            result = extract_resume(mock_ctx, "/path/to/resume.json")
 
             assert result == (True, "fingerprint123")
 
-    def test_process_resume_failure(self):
-        """Test process resume returns False."""
-        from services.base.extraction import process_resume
+    def test_extract_resume_failure(self):
+        """Test extract resume returns False."""
+        from services.base.extraction import extract_resume
         with patch('services.base.extraction.job_uow') as mock_job_uow:
             mock_ctx = MagicMock()
             mock_ctx.job_etl_service.extract_resume = Mock(return_value=(False, "", None))
@@ -426,6 +443,6 @@ class TestProcessResume:
             mock_context.__exit__ = Mock(return_value=False)
             mock_job_uow.return_value = mock_context
 
-            result = process_resume(mock_ctx, "/path/to/resume.json")
+            result = extract_resume(mock_ctx, "/path/to/resume.json")
 
             assert result == (False, "")

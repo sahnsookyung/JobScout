@@ -370,12 +370,25 @@ async def upload_resume_endpoint(
     The file is written to a temporary file for ETL processing, then cleaned up.
     Returns only the hash for frontend verification and IndexedDB storage.
     """
+    from database.uow import job_uow
+
     # Validate file
     content = await _validate_resume_file(file)
-    
+
     # Compute and verify hash
     resume_hash = _compute_and_verify_hash(content, resume_hash)
-    
+
+    # Check if resume already exists in DB
+    with job_uow() as repo:
+        if repo.resume.resume_hash_exists(resume_hash):
+            # Resume already processed - skip ETL, just return success
+            return ResumeUploadResponse(
+                success=True,
+                resume_hash=resume_hash,
+                message="Resume already processed",
+                task_id=None
+            )
+
     # Create task and process in background
     manager = get_pipeline_manager()
     task_id = manager.create_task()
@@ -383,7 +396,7 @@ async def upload_resume_endpoint(
     # Fire and forget - return immediately while processing continues in background
     # Store task reference to prevent premature garbage collection
     background_task = asyncio.create_task(asyncio.to_thread(
-        _process_resume_background, content, file.filename, task_id, manager
+        _process_resume_background, content, file.filename, task_id, manager, resume_hash
     ))
     background_task.add_done_callback(lambda t: None)  # Suppress unhandled exception warnings
 
@@ -445,9 +458,18 @@ def _process_resume_background(
     file_content: bytes,
     filename: str,
     task_id: str,
-    manager
+    manager,
+    known_fingerprint: str
 ) -> None:
-    """Run ETL processing in background thread with status updates."""
+    """Run ETL processing in background thread with status updates.
+
+    Args:
+        file_content: Raw file bytes
+        filename: Original filename
+        task_id: Task identifier
+        manager: Pipeline manager
+        known_fingerprint: Pre-computed fingerprint from raw file bytes
+    """
     import tempfile
     from database.uow import job_uow
     from core.app_context import AppContext
@@ -473,7 +495,10 @@ def _process_resume_background(
             task.message = "Extracting resume data..."
 
         with job_uow() as repo:
-            ctx.job_etl_service.process_resume(repo, tmp_path)
+            # Pass known_fingerprint to avoid re-computing
+            ctx.job_etl_service.extract_and_embed_resume(
+                repo, tmp_path, known_fingerprint=known_fingerprint
+            )
 
         # Mark complete
         if task:

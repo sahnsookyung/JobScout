@@ -27,7 +27,7 @@ from core.redis_streams import (
     CHANNEL_EXTRACTION_DONE,
     STREAM_EXTRACTION,
 )
-from services.base.extraction import run_job_extraction, process_resume
+from services.base.extraction import run_job_extraction, extract_resume
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +198,7 @@ async def extract_resume(request: Request, body: ExtractResumeRequest):
     resume_path = result
     try:
         changed, fingerprint = await asyncio.to_thread(
-            process_resume, state.ctx, resume_path
+            extract_resume, state.ctx, resume_path
         )
         if changed:
             return ExtractResponse(
@@ -272,7 +272,7 @@ async def _process_extraction_message(
     logger.info("⚙️ Processing extraction job: task_id=%s, file=%s", task_id, resume_path)
     try:
         changed, fingerprint = await asyncio.to_thread(
-            process_resume, state.ctx, resume_path
+            extract_resume, state.ctx, resume_path
         )
         status = "skipped" if not changed else "completed"
         await asyncio.to_thread(
