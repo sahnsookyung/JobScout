@@ -5,7 +5,7 @@ import { useStats } from '@/hooks/useStats';
 import { toast } from 'sonner';
 import { pipelineApi } from '@/services/pipelineApi';
 import { saveResume, hasResume, getResumeFilename } from '@/utils/indexedDB';
-import { computeFileHash, validateFileSize } from '@/utils/fileUtils';
+import { computeFileHash } from '@/utils/fileUtils';
 import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
 import { DashboardWrapper } from './DashboardWrapper';
 import { ResumeUploadSection } from './ResumeUploadSection';

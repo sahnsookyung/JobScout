@@ -23,6 +23,13 @@ UTC_NOW = sql_text("timezone('UTC', now())")
 JOB_POST_ID_FK = 'job_post.id'
 JOB_REQUIREMENT_UNIT_ID_FK = 'job_requirement_unit.id'
 
+# Table name constants
+JOB_POST_TABLE = 'job_post'
+JOB_REQUIREMENT_UNIT_TABLE = 'job_requirement_unit'
+TENANT_TABLE = 'tenant'
+RESUME_TABLE = 'resume'
+JOB_MATCH_TABLE = 'job_match'
+
 
 class JobPost(Base):
     __tablename__ = 'job_post'
@@ -112,7 +119,7 @@ class JobPostSource(Base):
     __tablename__ = 'job_post_source'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_post_id = Column(UUID(as_uuid=True), ForeignKey('job_post.id', ondelete='CASCADE'), nullable=False)
+    job_post_id = Column(UUID(as_uuid=True), ForeignKey(JOB_POST_ID_FK, ondelete='CASCADE'), nullable=False)
     
     site = Column(Text, nullable=False)
     job_url = Column(Text, nullable=False)
@@ -136,7 +143,7 @@ class JobRequirementUnit(Base):
     __tablename__ = 'job_requirement_unit'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_post_id = Column(UUID(as_uuid=True), ForeignKey('job_post.id', ondelete='CASCADE'), nullable=False)
+    job_post_id = Column(UUID(as_uuid=True), ForeignKey(JOB_POST_ID_FK, ondelete='CASCADE'), nullable=False)
     
     req_type = Column(Text, nullable=False) # required|preferred|responsibility|constraint|benefit
     text = Column(Text, nullable=False)
@@ -174,7 +181,7 @@ class JobBenefit(Base):
     __tablename__ = 'job_benefit'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_post_id = Column(UUID(as_uuid=True), ForeignKey('job_post.id', ondelete='CASCADE'), nullable=False)
+    job_post_id = Column(UUID(as_uuid=True), ForeignKey(JOB_POST_ID_FK, ondelete='CASCADE'), nullable=False)
 
     category = Column(Text, nullable=False)
     text = Column(Text, nullable=False)
@@ -205,7 +212,7 @@ class JobFacetEmbedding(Base):
     __tablename__ = 'job_facet_embedding'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_post_id = Column(UUID(as_uuid=True), ForeignKey('job_post.id', ondelete='CASCADE'), nullable=False)
+    job_post_id = Column(UUID(as_uuid=True), ForeignKey(JOB_POST_ID_FK, ondelete='CASCADE'), nullable=False)
 
     facet_key = Column(Text, nullable=False)
     facet_text = Column(Text, nullable=False)

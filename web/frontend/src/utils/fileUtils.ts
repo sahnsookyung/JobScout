@@ -8,9 +8,7 @@ import xxhash from 'xxhash-wasm';
 let xxhPromise: ReturnType<typeof xxhash> | null = null;
 
 async function getXxh() {
-    if (!xxhPromise) {
-        xxhPromise = xxhash();
-    }
+    xxhPromise ??= xxhash();
     return xxhPromise;
 }
 

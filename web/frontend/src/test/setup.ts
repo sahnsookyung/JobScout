@@ -120,13 +120,13 @@ vi.mock('idb-keyval', () => ({
 }));
 
 // Polyfill File.arrayBuffer() for jsdom (required for hash computation tests)
-// Note: Using FileReader instead of Response API which requires stream method
+// Note: FileReader is used instead of Response API which requires stream method
 if (!File.prototype.arrayBuffer) {
     File.prototype.arrayBuffer = async function() {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result as ArrayBuffer);
-            reader.onerror = () => reject(reader.error);
+            reader.onerror = () => reject(new Error('FileReader error'));
             reader.readAsArrayBuffer(this);
         });
     };
@@ -138,7 +138,7 @@ if (!Blob.prototype.arrayBuffer) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result as ArrayBuffer);
-            reader.onerror = () => reject(reader.error);
+            reader.onerror = () => reject(new Error('FileReader error'));
             reader.readAsArrayBuffer(this);
         });
     };
