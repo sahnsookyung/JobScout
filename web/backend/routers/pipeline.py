@@ -10,6 +10,7 @@ import logging
 import re
 from pathlib import Path
 from typing import Annotated, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Request, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -238,21 +239,22 @@ async def _stream_orchestrator_sse(orchestrator_url: str, task_id: str):
     """Async generator that proxies SSE bytes from the orchestrator."""
     import httpx
 
+    # Sanitize task_id for logging to prevent log injection (CWE-117)
+    safe_task_id = _sanitize_for_logging(task_id)
+    # URL-encode task_id to prevent path injection (CWE-952)
+    encoded_task_id = quote(task_id, safe='')
+
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
             async with client.stream(
                 "GET",
-                f"{orchestrator_url}/orchestrate/status/{task_id}"
+                f"{orchestrator_url}/orchestrate/status/{encoded_task_id}"
             ) as response:
                 if response.status_code == 404:
-                    # Sanitize task_id before logging to prevent log injection (CWE-117)
-                    safe_task_id = _sanitize_for_logging(task_id)
                     logger.error("Orchestrator: task %s not found", safe_task_id)
                     yield f"data: {json.dumps({'error': 'Task not found', 'status': 'failed'})}\n\n"
                     return
                 if response.is_error:
-                    # Sanitize task_id before logging to prevent log injection (CWE-117)
-                    safe_task_id = _sanitize_for_logging(task_id)
                     logger.error("Orchestrator returned %s for task %s", response.status_code, safe_task_id)
                     yield f"data: {json.dumps({'error': 'Failed to get pipeline status'})}\n\n"
                     return
@@ -260,8 +262,6 @@ async def _stream_orchestrator_sse(orchestrator_url: str, task_id: str):
                     if chunk:
                         yield chunk
     except Exception:
-        # Sanitize task_id before logging to prevent log injection (CWE-117)
-        safe_task_id = _sanitize_for_logging(task_id)
         logger.exception("Failed to connect to orchestrator for task %s", safe_task_id)
         yield f"data: {json.dumps({'error': 'Failed to connect to pipeline service'})}\n\n"
 
@@ -275,16 +275,17 @@ async def _preflight_task_check(orchestrator_url: str, task_id: str) -> None:
     """
     import httpx
 
+    # Sanitize task_id for logging and error messages to prevent log injection (CWE-117)
+    safe_task_id = _sanitize_for_logging(task_id)
+
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as probe:
             probe_resp = await probe.get(f"{orchestrator_url}/orchestrate/active")
             if probe_resp.status_code == 404:
-                raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+                raise HTTPException(status_code=404, detail=f"Task {safe_task_id} not found")
     except HTTPException:
         raise
     except Exception as e:
-        # Sanitize task_id and error message before logging to prevent log injection (CWE-117)
-        safe_task_id = _sanitize_for_logging(task_id)
         safe_error = _sanitize_for_logging(str(e))
         logger.warning("Pre-flight check failed for task %s: %s", safe_task_id, safe_error)
 

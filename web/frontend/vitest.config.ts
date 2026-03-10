@@ -50,6 +50,9 @@ export default defineConfig({
                 'src/App.tsx',
                 // indexedDB tests require actual browser IndexedDB implementation
                 'src/utils/__tests__/indexedDB.test.ts',
+                // Config files (not application code)
+                'vite.config.ts',
+                'vitest.config.ts',
             ],
         },
     },

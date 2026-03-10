@@ -118,7 +118,7 @@ def _calculate_experience_penalty(
 
     for req in matched_requirements:
         # Skip if no evidence or not covered
-        if not req.evidence or not req.is_covered:
+        if not req.is_covered:
             continue
 
         # Get required years from requirement unit
