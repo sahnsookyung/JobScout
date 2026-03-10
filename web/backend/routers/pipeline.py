@@ -275,14 +275,16 @@ async def _preflight_task_check(orchestrator_url: str, task_id: str) -> None:
     """
     import httpx
 
-    # Sanitize task_id for logging and error messages to prevent log injection (CWE-117)
+    # Sanitize task_id for logging to prevent log injection (CWE-117)
     safe_task_id = _sanitize_for_logging(task_id)
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as probe:
             probe_resp = await probe.get(f"{orchestrator_url}/orchestrate/active")
             if probe_resp.status_code == 404:
-                raise HTTPException(status_code=404, detail=f"Task {safe_task_id} not found")
+                # Log sanitized task_id, but don't include it in HTTP exception detail
+                logger.warning("Task not found: %s", safe_task_id)
+                raise HTTPException(status_code=404, detail="Task not found")
     except HTTPException:
         raise
     except Exception as e:

@@ -3,7 +3,7 @@
  * Covers: web/frontend/src/features/dashboard/components/
  */
 
-import { render, screen, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Import components
@@ -133,7 +133,6 @@ describe('ResumeUploadSection', () => {
         render(<ResumeUploadSection {...defaultProps} onUpload={mockOnUpload} />);
 
         const fileInput = screen.getByTestId('resume-file-input');
-        const file = new File(['test content'], 'resume.pdf', { type: 'application/pdf' });
 
         await vi.waitFor(() => {
             fileInput.dispatchEvent(new Event('change', { bubbles: true }));
