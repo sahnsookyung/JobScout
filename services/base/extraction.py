@@ -269,13 +269,19 @@ def run_job_extraction(ctx: AppContext, stop_event: threading.Event, limit: int 
     return recovery_count + extraction_count + facet_count
     
 
-def run_resume_extraction(ctx: AppContext, resume_file: str) -> tuple[Optional[dict], str]:
+def run_resume_extraction(
+    ctx: AppContext, 
+    resume_file: str, 
+    known_fingerprint: Optional[str] = None
+) -> tuple[Optional[dict], str]:
     """
     Extract resume data from file.
 
     Args:
         ctx: Application context (unused - kept for API consistency)
         resume_file: Path to resume file
+        known_fingerprint: Optional pre-computed fingerprint from raw file bytes.
+                          If provided, skips re-computation for efficiency.
 
     Returns:
         Tuple of (resume_data, fingerprint)
@@ -283,31 +289,47 @@ def run_resume_extraction(ctx: AppContext, resume_file: str) -> tuple[Optional[d
     del ctx  # Unused parameter - kept for API consistency
     logger.info("Extracting resume from %s", resume_file)
 
+    # Use provided fingerprint OR compute from raw file bytes
+    if known_fingerprint:
+        fingerprint = known_fingerprint
+    else:
+        # Standalone usage - read file and hash raw bytes
+        try:
+            with open(resume_file, 'rb') as f:
+                file_bytes = f.read()
+            fingerprint = generate_file_fingerprint(file_bytes)
+        except (FileNotFoundError, IOError, PermissionError) as e:
+            logger.error(f"Failed to read resume file {resume_file}: {e}")
+            return None, ""
+
     # Load and parse resume with error handling
     try:
         resume_data = _load_resume_with_parser(resume_file)
         if not resume_data:
-            return None, ""
-
-        # Generate fingerprint from parsed data
-        fingerprint = generate_file_fingerprint(json.dumps(resume_data, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode())
+            return None, fingerprint
     except (FileNotFoundError, IOError, PermissionError) as e:
         logger.error(f"Failed to read resume file {resume_file}: {e}")
-        return None, ""
+        return None, fingerprint
     except Exception as e:
         logger.error(f"Failed to parse resume file {resume_file}: {e}")
-        return None, ""
+        return None, fingerprint
 
     return resume_data, fingerprint
 
 
-def process_resume(ctx: AppContext, resume_file: str) -> tuple[bool, Optional[str]]:
+def extract_resume(
+    ctx: AppContext, 
+    resume_file: str, 
+    known_fingerprint: Optional[str] = None
+) -> tuple[bool, Optional[str]]:
     """
     Extract resume data (no embeddings).
 
     Args:
         ctx: Application context
         resume_file: Path to resume file
+        known_fingerprint: Optional pre-computed fingerprint from raw file bytes.
+                          If provided, skips re-computation for efficiency.
 
     Returns:
         Tuple of (extracted: bool, fingerprint: Optional[str])
@@ -315,6 +337,8 @@ def process_resume(ctx: AppContext, resume_file: str) -> tuple[bool, Optional[st
     logger.info(f"Extracting resume: {resume_file}")
 
     with job_uow() as repo:
-        extracted, fingerprint, _ = ctx.job_etl_service.extract_resume(repo, resume_file)
+        extracted, fingerprint, _ = ctx.job_etl_service.extract_resume(
+            repo, resume_file, known_fingerprint
+        )
 
     return extracted, fingerprint

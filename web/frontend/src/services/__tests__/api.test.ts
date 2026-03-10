@@ -4,13 +4,13 @@
  */
 
 import axios, { AxiosError } from 'axios';
+import { getMockHandlers, createMockError, testErrorInterceptor } from './api.test.utils';
 
 // Mock axios with interceptors support - must be before apiClient import
 vi.mock('axios', () => {
-    // Declare handlers inside the mock factory to avoid hoisting issues
     const mockRequestHandlers: any[] = [];
     const mockResponseHandlers: any[] = [];
-    
+
     const create = vi.fn().mockImplementation((config) => {
         const instance = {
             defaults: config,
@@ -21,7 +21,9 @@ vi.mock('axios', () => {
                         return mockRequestHandlers.length - 1;
                     }),
                     eject: vi.fn(),
-                    get handlers() { return mockRequestHandlers; },
+                    get handlers() {
+                        return mockRequestHandlers;
+                    },
                 },
                 response: {
                     use: vi.fn((fulfilled, rejected) => {
@@ -29,14 +31,15 @@ vi.mock('axios', () => {
                         return mockResponseHandlers.length - 1;
                     }),
                     eject: vi.fn(),
-                    get handlers() { return mockResponseHandlers; },
+                    get handlers() {
+                        return mockResponseHandlers;
+                    },
                 },
             },
         };
         return instance;
     });
-    
-    // Create the default instance that apiClient will be
+
     const defaultInstance = create({
         baseURL: '/api',
         timeout: 30000,
@@ -44,18 +47,16 @@ vi.mock('axios', () => {
             'Content-Type': 'application/json',
         },
     });
-    
-    // Add create to the default instance for axios.create() calls
+
     defaultInstance.create = create;
-    
-    // Expose handlers on the default instance for tests
+
     Object.defineProperty(defaultInstance, '__mockRequestHandlers', {
         get: () => mockRequestHandlers,
     });
     Object.defineProperty(defaultInstance, '__mockResponseHandlers', {
         get: () => mockResponseHandlers,
     });
-    
+
     return {
         default: defaultInstance,
         AxiosError: class AxiosError extends Error {},
@@ -63,13 +64,11 @@ vi.mock('axios', () => {
     };
 });
 
-// Now import apiClient - it will use our mocked axios
 import { apiClient } from '../api';
 
 describe('apiClient', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        // Don't clear handlers - they're registered when api.ts loads
     });
 
     describe('configuration', () => {
@@ -93,9 +92,8 @@ describe('apiClient', () => {
             const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
             const mockConfig = { method: 'get', url: '/test', headers: {} };
 
-            const mockAxios = axios as any;
-            const handler = mockAxios.__mockRequestHandlers[0];
-            handler.fulfilled(mockConfig);
+            const { requestHandler } = getMockHandlers();
+            requestHandler.fulfilled(mockConfig);
 
             expect(consoleSpy).toHaveBeenCalledWith('[API] GET /test');
             consoleSpy.mockRestore();
@@ -103,19 +101,17 @@ describe('apiClient', () => {
 
         it('should pass config through', () => {
             const mockConfig = { method: 'post', url: '/api', headers: {} };
-            const mockAxios = axios as any;
-            const handler = mockAxios.__mockRequestHandlers[0];
-            const result = handler.fulfilled(mockConfig);
+            const { requestHandler } = getMockHandlers();
+            const result = requestHandler.fulfilled(mockConfig);
 
             expect(result).toEqual(mockConfig);
         });
 
         it('should reject on error', async () => {
             const error = new Error('Request error');
-            const mockAxios = axios as any;
-            const handler = mockAxios.__mockRequestHandlers[0];
+            const { requestHandler } = getMockHandlers();
 
-            await expect(handler.rejected(error)).rejects.toBe(error);
+            await expect(requestHandler.rejected(error)).rejects.toBe(error);
         });
     });
 
@@ -129,132 +125,61 @@ describe('apiClient', () => {
                 config: {},
             };
 
-            const mockAxios = axios as any;
-            const handler = mockAxios.__mockResponseHandlers[0];
-            const result = handler.fulfilled(mockResponse);
+            const { responseHandler } = getMockHandlers();
+            const result = responseHandler.fulfilled(mockResponse);
 
             expect(result).toBe(mockResponse);
         });
 
         it('should extract string detail from error', () => {
-            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-            const mockError = {
+            const mockError = createMockError({
                 message: 'Error',
-                response: { status: 400, data: { detail: 'Invalid input' } },
-                config: {},
-            } as unknown as AxiosError;
-
-            const mockAxios = axios as any;
-            const handler = mockAxios.__mockResponseHandlers[0];
-
-            // The interceptor throws, so we need to catch it and prevent unhandled rejection
-            try {
-                const result = handler.rejected(mockError);
-                // If it doesn't throw synchronously, await it
-                if (result && typeof result.then === 'function') {
-                    result.catch(() => {});
-                }
-            } catch (error) {
-                expect((error as Error).message).toBe('Invalid input');
-            }
-
-            consoleSpy.mockRestore();
+                status: 400,
+                data: { detail: 'Invalid input' },
+            });
+            testErrorInterceptor(mockError, 'Invalid input');
         });
 
         it('should extract error field from error response', () => {
-            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-            const mockError = {
+            const mockError = createMockError({
                 message: 'Error',
-                response: { status: 500, data: { error: 'Server error' } },
-                config: {},
-            } as unknown as AxiosError;
-
-            const mockAxios = axios as any;
-            const handler = mockAxios.__mockResponseHandlers[0];
-
-            try {
-                const result = handler.rejected(mockError);
-                if (result && typeof result.then === 'function') {
-                    result.catch(() => {});
-                }
-            } catch (error) {
-                expect((error as Error).message).toBe('Server error');
-            }
-
-            consoleSpy.mockRestore();
+                status: 500,
+                data: { error: 'Server error' },
+            });
+            testErrorInterceptor(mockError, 'Server error');
         });
 
         it('should handle FastAPI validation errors', () => {
-            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-            const mockError = {
+            const mockError = createMockError({
                 message: 'Validation error',
-                response: {
-                    status: 422,
-                    data: {
-                        detail: [{ loc: ['body', 'email'], msg: 'required', type: 'missing' }],
-                    },
+                status: 422,
+                data: {
+                    detail: [
+                        {
+                            loc: ['body', 'email'],
+                            msg: 'required',
+                            type: 'missing',
+                        },
+                    ],
                 },
-                config: {},
-            } as unknown as AxiosError;
-
-            const mockAxios = axios as any;
-            const handler = mockAxios.__mockResponseHandlers[0];
-
-            try {
-                const result = handler.rejected(mockError);
-                if (result && typeof result.then === 'function') {
-                    result.catch(() => {});
-                }
-            } catch (error) {
-                expect((error as Error).message).toBe('required');
-            }
-
-            consoleSpy.mockRestore();
+            });
+            testErrorInterceptor(mockError, 'required');
         });
 
         it('should use original message when no detail', () => {
-            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-            const mockError = {
+            const mockError = createMockError({
                 message: 'Network error',
-                response: { status: 503, data: {} },
-                config: {},
-            } as unknown as AxiosError;
-
-            const mockAxios = axios as any;
-            const handler = mockAxios.__mockResponseHandlers[0];
-
-            try {
-                const result = handler.rejected(mockError);
-                if (result && typeof result.then === 'function') {
-                    result.catch(() => {});
-                }
-            } catch (error) {
-                expect((error as Error).message).toBe('Network error');
-            }
-
-            consoleSpy.mockRestore();
+                status: 503,
+                data: {},
+            });
+            testErrorInterceptor(mockError, 'Network error');
         });
 
         it('should handle missing response', () => {
-            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-            const mockError = {
+            const mockError = createMockError({
                 message: 'Network Error',
-                config: {},
-            } as unknown as AxiosError;
-
-            const mockAxios = axios as any;
-            const handler = mockAxios.__mockResponseHandlers[0];
-
-            try {
-                const result = handler.rejected(mockError);
-                if (result && typeof result.then === 'function') {
-                    result.catch(() => {});
-                }
-            } catch (error) {
-                expect((error as Error).message).toBe('Network Error');
-            }
-
-            consoleSpy.mockRestore();
+            });
+            testErrorInterceptor(mockError, 'Network Error');
         });
     });
 });
