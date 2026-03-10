@@ -239,8 +239,6 @@ async def _stream_orchestrator_sse(orchestrator_url: str, task_id: str):
     """Async generator that proxies SSE bytes from the orchestrator."""
     import httpx
 
-    # Sanitize task_id for logging to prevent log injection (CWE-117)
-    safe_task_id = _sanitize_for_logging(task_id)
     # URL-encode task_id to prevent path injection (CWE-952)
     encoded_task_id = quote(task_id, safe='')
 
@@ -251,18 +249,18 @@ async def _stream_orchestrator_sse(orchestrator_url: str, task_id: str):
                 f"{orchestrator_url}/orchestrate/status/{encoded_task_id}"
             ) as response:
                 if response.status_code == 404:
-                    logger.error("Orchestrator: task %s not found", safe_task_id)
+                    logger.error("Orchestrator: task not found")
                     yield f"data: {json.dumps({'error': 'Task not found', 'status': 'failed'})}\n\n"
                     return
                 if response.is_error:
-                    logger.error("Orchestrator returned %s for task %s", response.status_code, safe_task_id)
+                    logger.error("Orchestrator returned %s", response.status_code)
                     yield f"data: {json.dumps({'error': 'Failed to get pipeline status'})}\n\n"
                     return
                 async for chunk in response.aiter_raw():
                     if chunk:
                         yield chunk
     except Exception:
-        logger.exception("Failed to connect to orchestrator for task %s", safe_task_id)
+        logger.exception("Failed to connect to orchestrator")
         yield f"data: {json.dumps({'error': 'Failed to connect to pipeline service'})}\n\n"
 
 
@@ -275,21 +273,16 @@ async def _preflight_task_check(orchestrator_url: str, task_id: str) -> None:
     """
     import httpx
 
-    # Sanitize task_id for logging to prevent log injection (CWE-117)
-    safe_task_id = _sanitize_for_logging(task_id)
-
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as probe:
             probe_resp = await probe.get(f"{orchestrator_url}/orchestrate/active")
             if probe_resp.status_code == 404:
-                # Log sanitized task_id, but don't include it in HTTP exception detail
-                logger.warning("Task not found: %s", safe_task_id)
+                logger.warning("Task not found")
                 raise HTTPException(status_code=404, detail="Task not found")
     except HTTPException:
         raise
     except Exception as e:
-        safe_error = _sanitize_for_logging(str(e))
-        logger.warning("Pre-flight check failed for task %s: %s", safe_task_id, safe_error)
+        logger.warning("Pre-flight check failed: %s", type(e).__name__)
 
 
 @router.get(

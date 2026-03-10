@@ -153,7 +153,7 @@ export const CompactControls: React.FC = () => {
                     </div>
                 </div>
             </div>
-            {showStatusBanner && <StatusBanner {...statusData!} />}
+            {showStatusBanner && <StatusBanner {...statusData} />}
         </DashboardWrapper>
     );
 };

@@ -120,9 +120,14 @@ vi.mock('idb-keyval', () => ({
 }));
 
 // Polyfill File.arrayBuffer() for jsdom (required for hash computation tests)
-// Note: FileReader is used instead of Response API which requires stream method
+// Note: Uses native arrayBuffer() if available, otherwise falls back to FileReader
 if (!File.prototype.arrayBuffer) {
     File.prototype.arrayBuffer = async function() {
+        // Try native method first (preferred by SonarCloud)
+        if (this instanceof Blob && typeof Blob.prototype.arrayBuffer === 'function') {
+            return Blob.prototype.arrayBuffer.call(this);
+        }
+        // Fallback to FileReader for jsdom
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result as ArrayBuffer);
