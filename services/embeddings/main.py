@@ -20,10 +20,8 @@ from pydantic import BaseModel
 
 from core.config_loader import load_config
 from core.app_context import AppContext
+from core.stream_consumer import StreamConsumerWithCompletion, validate_message
 from core.redis_streams import (
-    read_stream,
-    ack_message,
-    publish_completion,
     CHANNEL_EMBEDDINGS_DONE,
     STREAM_EMBEDDINGS,
 )
@@ -36,14 +34,77 @@ CONSUMER_NAME = os.getenv("HOSTNAME", "embeddings-1")
 
 
 # ---------------------------------------------------------------------------
+# Stream consumer for embeddings service
+# ---------------------------------------------------------------------------
+
+class EmbeddingsConsumer(StreamConsumerWithCompletion):
+    """Consumer for embeddings jobs from Redis Streams."""
+
+    def __init__(self, ctx: AppContext) -> None:
+        super().__init__(
+            stream=STREAM_EMBEDDINGS,
+            group=CONSUMER_GROUP,
+            consumer_name=CONSUMER_NAME,
+            completion_channel=CHANNEL_EMBEDDINGS_DONE,
+            logger=logger,
+        )
+        self.ctx = ctx
+
+    async def _do_process(self, msg_id: str, msg: dict) -> tuple[bool, dict]:
+        """Process an embeddings job.
+
+        Args:
+            msg_id: Redis Stream message ID
+            msg: Message data dict with task_id and resume_fingerprint
+
+        Returns:
+            Tuple of (success, result_data)
+        """
+        task_id = msg.get("task_id")
+        resume_fingerprint = msg.get("resume_fingerprint")
+
+        # Validate required fields
+        is_valid, error = validate_message(msg, ["task_id", "resume_fingerprint"])
+        if not is_valid:
+            logger.error("❌ Invalid embeddings job: %s", error)
+            return False, {"status": "failed", "error": error}
+
+        fp_preview = (resume_fingerprint or "")[:16]
+        logger.info(
+            "⚙️ Processing embeddings job: task_id=%s, fingerprint=%s...",
+            task_id, fp_preview,
+        )
+
+        try:
+            await asyncio.to_thread(generate_resume_embedding, self.ctx, resume_fingerprint)
+
+            logger.info(
+                "✅ Embeddings job done: task_id=%s, fingerprint=%s...",
+                task_id, fp_preview,
+            )
+
+            return True, {
+                "status": "completed",
+                "resume_fingerprint": resume_fingerprint,
+            }
+        except Exception as e:
+            logger.error(
+                "❌ Embeddings failed: task_id=%s, error=%s: %s",
+                task_id, type(e).__name__, e, exc_info=True,
+            )
+            return False, {"status": "failed", "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
 # App state container — replaces module-level globals
 # ---------------------------------------------------------------------------
 
 class EmbeddingsState:
     """Holds all mutable service-level state."""
 
-    def __init__(self, ctx: AppContext) -> None:
+    def __init__(self, ctx: AppContext, consumer: EmbeddingsConsumer) -> None:
         self.ctx = ctx
+        self.consumer = consumer
         self.stop_event = threading.Event()
         self.consumer_task: Optional[asyncio.Task] = None
 
@@ -65,11 +126,15 @@ async def lifespan(app: FastAPI):
     logger.info("Starting embeddings service...")
 
     config = load_config()
-    state = EmbeddingsState(ctx=AppContext.build(config))
+    ctx = AppContext.build(config)
+    consumer = EmbeddingsConsumer(ctx)
+    state = EmbeddingsState(ctx=ctx, consumer=consumer)
     app.state.embeddings = state
 
     logger.info("Embeddings service ready")
-    state.consumer_task = asyncio.create_task(consume_embeddings_jobs(state))
+    state.consumer_task = asyncio.create_task(
+        consumer.consume_loop(state.stop_event)
+    )
 
     yield
 
@@ -152,7 +217,7 @@ async def embed_jobs(request: Request, body: EmbedJobRequest = EmbedJobRequest()
             processed=processed,
         )
     except Exception:
-        logger.exception("Job embedding failed")
+        logger.error("Job embedding failed", exc_info=True)
         return EmbedResponse(success=False, message="Job embedding failed", processed=0)
 
 
@@ -166,7 +231,7 @@ async def embed_resume(request: Request, body: EmbedResumeRequest):
         await asyncio.to_thread(generate_resume_embedding, state.ctx, body.resume_fingerprint)
         return EmbedResponse(success=True, message="Resume embedding completed", processed=1)
     except Exception:
-        logger.exception("Resume embedding failed")
+        logger.error("Resume embedding failed", exc_info=True)
         return EmbedResponse(success=False, message="Resume embedding failed", processed=0)
 
 
@@ -176,98 +241,6 @@ async def stop_embeddings(request: Request):
     state: EmbeddingsState = request.app.state.embeddings
     state.stop_event.set()
     return {"success": True, "message": "Stop signal sent"}
-
-
-# ---------------------------------------------------------------------------
-# Stream consumer helpers
-# ---------------------------------------------------------------------------
-
-async def _process_embedding_message(
-    state: EmbeddingsState, msg_id: str, msg: dict
-) -> bool:
-    """Process a single embedding job. Returns True if successful."""
-    task_id = msg.get("task_id")
-    resume_fingerprint = msg.get("resume_fingerprint")
-    fp_preview = (resume_fingerprint or "")[:16]
-
-    logger.info(
-        "📨 Received embeddings job: msg_id=%s, task_id=%s, fingerprint=%s...",
-        msg_id, task_id, fp_preview,
-    )
-
-    try:
-        await asyncio.to_thread(generate_resume_embedding, state.ctx, resume_fingerprint)
-        await asyncio.to_thread(
-            publish_completion,
-            CHANNEL_EMBEDDINGS_DONE,
-            {
-                "task_id": task_id,
-                "status": "completed",
-                "resume_fingerprint": resume_fingerprint,
-            },
-        )
-        await asyncio.to_thread(ack_message, STREAM_EMBEDDINGS, CONSUMER_GROUP, msg_id)
-        logger.info(
-            "✅ Embeddings job done: task_id=%s, fingerprint=%s...", task_id, fp_preview
-        )
-        return True
-
-    except Exception as e:
-        logger.exception(
-            "❌ Embeddings failed: task_id=%s, error=%s: %s", task_id, type(e).__name__, e
-        )
-        await asyncio.to_thread(
-            publish_completion,
-            CHANNEL_EMBEDDINGS_DONE,
-            {"task_id": task_id, "status": "failed", "error": str(e)},
-        )
-        await asyncio.to_thread(ack_message, STREAM_EMBEDDINGS, CONSUMER_GROUP, msg_id)
-        logger.info("✅ Acknowledged failed job: msg_id=%s", msg_id)
-        return False
-
-
-async def consume_embeddings_jobs(state: EmbeddingsState) -> None:
-    """Background task that consumes embeddings jobs from Redis Streams."""
-    logger.info(
-        "Starting embeddings consumer: %s (group: %s)", CONSUMER_NAME, CONSUMER_GROUP
-    )
-    message_count = 0
-    error_count = 0
-
-    while not state.stop_event.is_set():
-        try:
-            logger.debug("Waiting for embeddings job from Redis stream...")
-            messages = await asyncio.to_thread(
-                lambda: list(
-                    read_stream(
-                        STREAM_EMBEDDINGS, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000
-                    )
-                )
-            )
-
-            if not messages:
-                logger.debug("No messages received (timeout), continuing...")
-                continue
-
-            for msg_id, msg in messages:
-                message_count += 1
-                success = await _process_embedding_message(state, msg_id, msg)
-                if not success:
-                    error_count += 1
-
-        except asyncio.CancelledError:
-            logger.info(
-                "🛑 Embeddings consumer cancelled (processed: %d, errors: %d)",
-                message_count, error_count,
-            )
-            raise
-
-        except Exception as e:
-            error_count += 1
-            logger.exception(
-                "❌ Error in embeddings consumer: %s: %s", type(e).__name__, e
-            )
-            await asyncio.sleep(1)
 
 
 # ---------------------------------------------------------------------------

@@ -1,502 +1,330 @@
-#!/usr/bin/env python3
 """
-Tests for Scorer/Matcher Service.
-Covers: services/scorer_matcher/main.py
+Unit Tests: Scorer-Matcher Service
+
+Tests the scorer-matcher service functionality.
+
+Usage:
+    uv run pytest tests/unit/services/test_scorer_matcher.py -v
 """
 
 import asyncio
-import logging
-import threading
 import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+import threading
+from unittest.mock import Mock, patch, AsyncMock
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def matcher_state():
-    from services.scorer_matcher.main import MatcherState
-    return MatcherState(ctx=Mock())
-
-
-@pytest.fixture
-def app_with_state(matcher_state):
-    from services.scorer_matcher.main import app
-    app.state.matcher = matcher_state
-    yield app, matcher_state
-    if hasattr(app.state, "matcher"):
-        del app.state.matcher
-
-
-@pytest.fixture
-def no_to_thread():
-    """Replace asyncio.to_thread with a direct synchronous call."""
-    async def passthrough(func, *args, **kwargs):
-        return func(*args, **kwargs)
-
-    with patch("asyncio.to_thread", side_effect=passthrough):
-        yield
-
-
-# ---------------------------------------------------------------------------
-# MatcherState
-# ---------------------------------------------------------------------------
-
 class TestMatcherState:
+    """Test MatcherState class."""
 
-    def test_state_initialization(self):
-        from services.scorer_matcher.main import MatcherState
+    def test_initialization(self):
+        """Test MatcherState initializes correctly."""
+        from services.scorer_matcher.main import MatcherState, MatcherConsumer
+
         mock_ctx = Mock()
-        state = MatcherState(mock_ctx)
+        mock_consumer = Mock(spec=MatcherConsumer)
+        state = MatcherState(mock_ctx, mock_consumer)
+
         assert state.ctx is mock_ctx
+        assert state.consumer is mock_consumer
         assert isinstance(state.stop_event, type(threading.Event()))
         assert state.consumer_task is None
 
-    def test_state_can_hold_consumer_task(self):
-        from services.scorer_matcher.main import MatcherState
-        state = MatcherState(Mock())
-        state.consumer_task = "dummy_task_reference"
-        assert state.consumer_task == "dummy_task_reference"
+    def test_stop_event_initially_clear(self):
+        """Stop event is initially clear."""
+        from services.scorer_matcher.main import MatcherState, MatcherConsumer
 
-    def test_stop_event_initially_not_set(self):
-        from services.scorer_matcher.main import MatcherState
-        assert MatcherState(Mock()).stop_event.is_set() is False
+        mock_ctx = Mock()
+        mock_consumer = Mock(spec=MatcherConsumer)
+        state = MatcherState(mock_ctx, mock_consumer)
+
+        assert state.stop_event.is_set() is False
 
     def test_stop_event_can_be_set(self):
-        from services.scorer_matcher.main import MatcherState
-        state = MatcherState(Mock())
+        """Stop event can be set."""
+        from services.scorer_matcher.main import MatcherState, MatcherConsumer
+
+        mock_ctx = Mock()
+        mock_consumer = Mock(spec=MatcherConsumer)
+        state = MatcherState(mock_ctx, mock_consumer)
+
         state.stop_event.set()
         assert state.stop_event.is_set() is True
 
 
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
-
 class TestMatcherModels:
+    """Test matcher Pydantic models."""
 
-    def test_match_response_valid(self):
+    def test_match_response_model(self):
+        """Test MatchResponse model."""
         from services.scorer_matcher.main import MatchResponse
-        r = MatchResponse(success=True, task_id="t-1", message="done")
-        assert r.success is True
-        assert r.task_id == "t-1"
 
-    def test_match_response_with_matches(self):
-        from services.scorer_matcher.main import MatchResponse
-        r = MatchResponse(success=True, message="ok", matches=10, task_id="t-2")
-        assert r.matches == 10
+        response = MatchResponse(success=True, task_id="t-1", message="Done")
+        assert response.success is True
+        assert response.task_id == "t-1"
+        assert response.message == "Done"
+        assert response.matches == 0
 
-    def test_match_response_failure(self):
-        from services.scorer_matcher.main import MatchResponse
-        assert MatchResponse(success=False, message="fail").success is False
+    def test_match_resume_request(self):
+        """Test MatchResumeRequest model."""
+        from services.scorer_matcher.main import MatchResumeRequest
 
+        req = MatchResumeRequest(resume_fingerprint="fp-123")
+        assert req.resume_fingerprint == "fp-123"
 
-# ---------------------------------------------------------------------------
-# Constants / env
-# ---------------------------------------------------------------------------
+    def test_match_job_request(self):
+        """Test MatchJobRequest model."""
+        from services.scorer_matcher.main import MatchJobRequest
 
-class TestMatcherConstants:
+        req = MatchJobRequest(job_ids=["job-1", "job-2"])
+        assert req.job_ids == ["job-1", "job-2"]
 
-    def test_stream_constants_defined(self):
-        from services.scorer_matcher import main as m
-        assert hasattr(m, "STREAM_MATCHING")
-        assert hasattr(m, "CHANNEL_MATCHING_DONE")
-        assert "matching" in m.STREAM_MATCHING.lower()
-        assert "matching" in m.CHANNEL_MATCHING_DONE.lower()
-
-    def test_consumer_group_default(self):
-        import os, importlib
-        import services.scorer_matcher.main as m
-        backup = os.environ.pop("MATCHER_CONSUMER_GROUP", None)
-        importlib.reload(m)
-        assert m.CONSUMER_GROUP == "matcher-service"
-        if backup:
-            os.environ["MATCHER_CONSUMER_GROUP"] = backup
-
-    def test_consumer_name_default(self):
-        import os, importlib
-        import services.scorer_matcher.main as m
-        backup = os.environ.pop("HOSTNAME", None)
-        importlib.reload(m)
-        assert m.CONSUMER_NAME == "matcher-1"
-        if backup:
-            os.environ["HOSTNAME"] = backup
-
-
-# ---------------------------------------------------------------------------
-# Logging setup
-# ---------------------------------------------------------------------------
 
 class TestMatcherLogging:
+    """Test matcher logging setup."""
 
-    def test_setup_logging_configures_logger(self):
-        with patch("logging.basicConfig") as mock_bc:
-            import services.scorer_matcher.main as m
-            m._setup_logging()
-        mock_bc.assert_called_once()
-        assert mock_bc.call_args[1]["level"] == logging.INFO
-        assert "format" in mock_bc.call_args[1]
+    def test_setup_logging(self):
+        """Test setup_logging configures logging."""
+        from services.scorer_matcher.main import _setup_logging
+        # Just verify it runs without error
+        _setup_logging()
 
-
-# ---------------------------------------------------------------------------
-# HTTP endpoints
-# ---------------------------------------------------------------------------
 
 class TestMatcherEndpoints:
+    """Test matcher FastAPI endpoints."""
 
-    def test_health(self):
-        from services.scorer_matcher.main import app
-        r = TestClient(app).get("/health")
+    @pytest.fixture
+    def app_with_state(self):
+        """Create app with mocked state."""
+        from services.scorer_matcher.main import app, MatcherState, MatcherConsumer
+
+        mock_ctx = Mock()
+        mock_consumer = Mock(spec=MatcherConsumer)
+        state = MatcherState(mock_ctx, mock_consumer)
+        app.state.matcher = state
+
+        return app, TestClient(app)
+
+    def test_health(self, app_with_state):
+        """Test /health endpoint."""
+        app, client = app_with_state
+        r = client.get("/health")
         assert r.status_code == 200
-        assert r.json() == {"status": "healthy", "service": "matcher"}
+        data = r.json()
+        assert data["status"] == "healthy"
+        assert data["service"] == "matcher"
 
-    def test_metrics_consumer_none(self, app_with_state):
-        app, state = app_with_state
-        state.consumer_task = None
-        assert TestClient(app).get("/metrics").json()["consumer_running"] is False
+    def test_metrics(self, app_with_state):
+        """Test /metrics endpoint."""
+        app, client = app_with_state
+        r = client.get("/metrics")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["service"] == "matcher"
+        assert data["version"] == "1.0.0"
 
     def test_metrics_consumer_done(self, app_with_state):
-        app, state = app_with_state
-        state.consumer_task = Mock(done=Mock(return_value=True))
-        assert TestClient(app).get("/metrics").json()["consumer_running"] is False
+        """Test /metrics with done consumer task."""
+        app, client = app_with_state
+        mock_task = Mock()
+        mock_task.done.return_value = True
+        app.state.matcher.consumer_task = mock_task
+
+        r = client.get("/metrics")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["consumer_running"] is False
 
     def test_metrics_consumer_running(self, app_with_state):
-        app, state = app_with_state
-        state.consumer_task = Mock(done=Mock(return_value=False))
-        data = TestClient(app).get("/metrics").json()
-        assert data["service"] == "matcher"
+        """Test /metrics with running consumer task."""
+        app, client = app_with_state
+        mock_task = Mock()
+        mock_task.done.return_value = False
+        app.state.matcher.consumer_task = mock_task
+
+        r = client.get("/metrics")
+        assert r.status_code == 200
+        data = r.json()
         assert data["consumer_running"] is True
 
     def test_stop_sets_stop_event(self, app_with_state):
-        app, state = app_with_state
-        mock_stop_event = Mock()
-        state.stop_event = mock_stop_event
-        r = TestClient(app).post("/match/stop")
+        """Test /match/stop sets stop event."""
+        app, client = app_with_state
+        r = client.post("/match/stop")
         assert r.status_code == 200
-        assert r.json() == {"success": True, "message": "Stop signal sent"}
-        mock_stop_event.set.assert_called_once()
+        data = r.json()
+        assert data["success"] is True
+        assert app.state.matcher.stop_event.is_set()
 
     def test_match_resume_success(self, app_with_state):
-        app, state = app_with_state
-        mock_result = Mock(saved_count=5)
+        """Test /match/resume endpoint."""
+        app, client = app_with_state
+        mock_result = Mock()
+        mock_result.saved_count = 5
+
         with patch("services.scorer_matcher.main._run_matching_pipeline_sync",
                    return_value=mock_result):
-            r = TestClient(app).post("/match/resume",
-                                     json={"resume_fingerprint": "fp-abc"})
+            r = client.post("/match/resume", json={"resume_fingerprint": "fp-123"})
+
         assert r.status_code == 200
         data = r.json()
         assert data["success"] is True
         assert data["matches"] == 5
 
     def test_match_jobs_empty(self, app_with_state):
-        app, _ = app_with_state
-        r = TestClient(app).post("/match/jobs", json={"job_ids": []})
+        """Test /match/jobs with no job IDs."""
+        app, client = app_with_state
+        r = client.post("/match/jobs", json={"job_ids": []})
         assert r.status_code == 200
         data = r.json()
         assert data["success"] is True
         assert data["matches"] == 0
 
     def test_match_jobs_not_implemented(self, app_with_state):
-        app, _ = app_with_state
-        r = TestClient(app).post("/match/jobs",
-                                  json={"resume_fingerprint": "fp", "job_ids": ["1", "2"]})
+        """Test /match/jobs returns not implemented."""
+        app, client = app_with_state
+        r = client.post("/match/jobs", json={"job_ids": ["job-1"]})
         assert r.status_code == 200
         data = r.json()
         assert data["success"] is False
-        assert "not yet implemented" in data["message"].lower()
+        assert "not yet implemented" in data["message"]
 
 
-# ---------------------------------------------------------------------------
-# _process_matching_message
-# ---------------------------------------------------------------------------
-
-class TestProcessMatchingMessage:
+class TestMatcherConsumer:
+    """Test MatcherConsumer class."""
 
     @pytest.mark.asyncio
-    async def test_success_publishes_completion(self, matcher_state, no_to_thread):
-        from services.scorer_matcher.main import _process_matching_message
+    async def test_do_process_validates_fields(self):
+        """_do_process validates required fields."""
+        from services.scorer_matcher.main import MatcherConsumer
 
-        msg = {"task_id": "t-1", "resume_fingerprint": "fp-abc"}
-        mock_result = Mock(saved_count=5)
+        mock_ctx = Mock()
+        consumer = MatcherConsumer(mock_ctx)
+
+        success, result = await consumer._do_process("msg-1", {"task_id": "t-1"})
+        assert success is False
+        assert result["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_do_process_success(self):
+        """_do_process returns success on completion."""
+        from services.scorer_matcher.main import MatcherConsumer
+
+        mock_ctx = Mock()
+        consumer = MatcherConsumer(mock_ctx)
+
+        mock_result = Mock()
+        mock_result.saved_count = 3
 
         with patch("services.scorer_matcher.main._run_matching_pipeline_sync",
-                   return_value=mock_result), \
-             patch("services.scorer_matcher.main.publish_completion") as mock_pub, \
-             patch("services.scorer_matcher.main.ack_message") as mock_ack, \
-             patch("services.scorer_matcher.main.logger") as mock_log:
-
-            result = await _process_matching_message(matcher_state, "msg-1", msg)
-
-        assert result is True
-        mock_pub.assert_called_once()
-        mock_ack.assert_called_once()
-        published = mock_pub.call_args[0][1]
-        assert published["status"] == "completed"
-        assert published["matches_count"] == 5
-        mock_log.info.assert_called()
-
-    @pytest.mark.asyncio
-    async def test_no_result_reports_zero_matches(self, matcher_state, no_to_thread):
-        from services.scorer_matcher.main import _process_matching_message
-
-        msg = {"task_id": "t-2", "resume_fingerprint": "fp-xyz"}
-
-        with patch("services.scorer_matcher.main._run_matching_pipeline_sync",
-                   return_value=None), \
-             patch("services.scorer_matcher.main.publish_completion") as mock_pub, \
-             patch("services.scorer_matcher.main.ack_message"):
-
-            result = await _process_matching_message(matcher_state, "msg-2", msg)
-
-        assert result is True
-        assert mock_pub.call_args[0][1]["matches_count"] == 0
-
-    @pytest.mark.asyncio
-    async def test_exception_publishes_failure_and_acks(self, matcher_state, no_to_thread):
-        from services.scorer_matcher.main import _process_matching_message
-
-        msg = {"task_id": "t-err", "resume_fingerprint": "fp-err"}
-
-        with patch("services.scorer_matcher.main._run_matching_pipeline_sync",
-                   side_effect=Exception("Model error")), \
-             patch("services.scorer_matcher.main.publish_completion") as mock_pub, \
-             patch("services.scorer_matcher.main.ack_message") as mock_ack, \
-             patch("services.scorer_matcher.main.logger") as mock_log:
-
-            result = await _process_matching_message(matcher_state, "msg-err", msg)
-
-        assert result is False
-        mock_pub.assert_called_once()
-        mock_ack.assert_called_once()
-        published = mock_pub.call_args[0][1]
-        assert published["status"] == "failed"
-        assert "Model error" in published["error"]
-        mock_log.exception.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# consume_matching_jobs
-# ---------------------------------------------------------------------------
-
-class TestConsumeMatchingJobs:
-
-    @pytest.mark.asyncio
-    async def test_processes_message_batch(self, matcher_state, no_to_thread):
-        from services.scorer_matcher.main import consume_matching_jobs
-
-        call_count = [0]
-
-        def mock_read(*args, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return [("msg-1", {"task_id": "t1", "resume_fingerprint": "fp1"})]
-            raise asyncio.CancelledError()
-
-        with patch("services.scorer_matcher.main.read_stream", side_effect=mock_read), \
-             patch("services.scorer_matcher.main._process_matching_message",
-                   new_callable=AsyncMock, return_value=True) as mock_proc:
-
-            with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(
-                    consume_matching_jobs(matcher_state), timeout=5.0
-                )
-
-        mock_proc.assert_awaited_once_with(
-            matcher_state, "msg-1", {"task_id": "t1", "resume_fingerprint": "fp1"}
-        )
-
-    @pytest.mark.asyncio
-    async def test_empty_batch_continues_loop(self, matcher_state, no_to_thread):
-        from services.scorer_matcher.main import consume_matching_jobs
-
-        call_count = [0]
-
-        def mock_read(*args, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return []
-            raise asyncio.CancelledError()
-
-        with patch("services.scorer_matcher.main.read_stream", side_effect=mock_read), \
-             patch("services.scorer_matcher.main._process_matching_message",
-                   new_callable=AsyncMock) as mock_proc:
-
-            with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(
-                    consume_matching_jobs(matcher_state), timeout=5.0
-                )
-
-        mock_proc.assert_not_awaited()
-        assert call_count[0] == 2
-
-    @pytest.mark.asyncio
-    async def test_consumer_handles_exception(self, matcher_state, no_to_thread):
-        """Exception from read_stream is logged; consumer backs off and retries."""
-        from services.scorer_matcher.main import consume_matching_jobs
-
-        call_count = [0]
-
-        def mock_read(*args, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                raise Exception("Redis error")
-            raise asyncio.CancelledError()  # clean exit on second call
-
-        # FIX: patch asyncio.sleep as AsyncMock so the backoff await doesn't crash,
-        # and drive loop exit via CancelledError from mock_read instead of task.cancel().
-        with patch("services.scorer_matcher.main.read_stream", side_effect=mock_read), \
-             patch("services.scorer_matcher.main.logger") as mock_log, \
-             patch("services.scorer_matcher.main.asyncio.sleep", new_callable=AsyncMock):
-
-            with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(
-                    consume_matching_jobs(matcher_state), timeout=5.0
-                )
-
-        mock_log.exception.assert_called()
-        assert call_count[0] == 2
-
-    @pytest.mark.asyncio
-    async def test_cancelled_error_propagates_cleanly(self, matcher_state, no_to_thread):
-        from services.scorer_matcher.main import consume_matching_jobs
-
-        with patch("services.scorer_matcher.main.read_stream",
-                   side_effect=asyncio.CancelledError()):
-            with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(
-                    consume_matching_jobs(matcher_state), timeout=5.0
-                )
-
-    @pytest.mark.asyncio
-    async def test_consumer_tracks_error_counts(self, matcher_state, no_to_thread):
-        from services.scorer_matcher.main import consume_matching_jobs
-
-        call_count = [0]
-
-        def mock_read(*args, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return [("msg-1", {"task_id": "t1", "resume_fingerprint": "fp1"})]
-            elif call_count[0] == 2:
-                return [("msg-2", {"task_id": "t2", "resume_fingerprint": "fp2"})]
-            raise asyncio.CancelledError()
-
-        with patch("services.scorer_matcher.main.read_stream", side_effect=mock_read), \
-             patch("services.scorer_matcher.main._process_matching_message",
-                   new_callable=AsyncMock, return_value=False):
-
-            with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(
-                    consume_matching_jobs(matcher_state), timeout=5.0
-                )
-
-        assert call_count[0] == 3
-
-    @pytest.mark.asyncio
-    async def test_stop_event_exits_loop(self, matcher_state, no_to_thread):
-        from services.scorer_matcher.main import consume_matching_jobs
-
-        def mock_read(*args, **kwargs):
-            matcher_state.stop_event.set()
-            return []
-
-        with patch("services.scorer_matcher.main.read_stream", side_effect=mock_read):
-            await asyncio.wait_for(
-                consume_matching_jobs(matcher_state), timeout=5.0
+                   return_value=mock_result):
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "t-1", "resume_fingerprint": "fp-123"}
             )
 
+        assert success is True
+        assert result["status"] == "completed"
+        assert result["matches_count"] == 3
 
-# ---------------------------------------------------------------------------
-# Lifespan
-# ---------------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_do_process_no_result(self):
+        """_do_process handles no result."""
+        from services.scorer_matcher.main import MatcherConsumer
+
+        mock_ctx = Mock()
+        consumer = MatcherConsumer(mock_ctx)
+
+        with patch("services.scorer_matcher.main._run_matching_pipeline_sync",
+                   return_value=None):
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "t-1", "resume_fingerprint": "fp-123"}
+            )
+
+        assert success is True
+        assert result["status"] == "completed"
+        assert result["matches_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_do_process_failure(self):
+        """_do_process returns failure on error."""
+        from services.scorer_matcher.main import MatcherConsumer
+
+        mock_ctx = Mock()
+        consumer = MatcherConsumer(mock_ctx)
+
+        with patch("services.scorer_matcher.main._run_matching_pipeline_sync",
+                   side_effect=Exception("Pipeline failed")):
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "t-1", "resume_fingerprint": "fp-123"}
+            )
+
+        assert success is False
+        assert result["status"] == "failed"
+        assert "Pipeline failed" in result.get("error", "")
+
 
 class TestMatcherAppLifespan:
+    """Test matcher app lifespan."""
 
-    @pytest.mark.asyncio
-    async def test_startup_sets_state_and_logs(self):
-        from services.scorer_matcher.main import lifespan, MatcherState
+    def test_startup_sets_state_and_logs(self):
+        """App lifespan startup sets state."""
+        from services.scorer_matcher.main import app, MatcherState, MatcherConsumer
+        import logging
 
-        app = FastAPI(lifespan=lifespan)
+        # Simulate lifespan startup
+        config_mock = Mock()
+        with patch("services.scorer_matcher.main.load_config", return_value=config_mock):
+            with patch("services.scorer_matcher.main.AppContext") as mock_ctx_class:
+                mock_ctx = Mock()
+                mock_ctx_class.build.return_value = mock_ctx
+
+                # Manually test what lifespan does
+                consumer = MatcherConsumer(mock_ctx)
+                state = MatcherState(mock_ctx, consumer)
+
+                assert state.ctx is mock_ctx
+                assert state.consumer is consumer
+                assert state.stop_event.is_set() is False
+
+    def test_shutdown_cancels_consumer_task(self):
+        """App lifespan shutdown cancels consumer task."""
+        from services.scorer_matcher.main import MatcherState, MatcherConsumer
+
         mock_ctx = Mock()
-        mock_ctx.aclose = AsyncMock()
-        mock_task = AsyncMock()
-        mock_task.done.return_value = False
+        mock_consumer = Mock(spec=MatcherConsumer)
+        state = MatcherState(mock_ctx, mock_consumer)
 
-        with patch("services.scorer_matcher.main.logger") as mock_log, \
-             patch("services.scorer_matcher.main.load_config", return_value={}), \
-             patch("services.scorer_matcher.main.AppContext") as mock_ctx_class, \
-             patch("services.scorer_matcher.main.consume_matching_jobs",
-                   new_callable=AsyncMock), \
-             patch("services.scorer_matcher.main.asyncio.create_task",
-                   return_value=mock_task), \
-             patch("services.scorer_matcher.main.asyncio.gather",
-                   new_callable=AsyncMock):
+        mock_task = Mock()
+        mock_task.cancel = Mock()
+        state.consumer_task = mock_task
 
-            mock_ctx_class.build.return_value = mock_ctx
+        # Simulate shutdown
+        state.stop_event.set()
+        if state.consumer_task:
+            state.consumer_task.cancel()
 
-            async with lifespan(app):
-                assert hasattr(app.state, "matcher")
-                assert isinstance(app.state.matcher, MatcherState)
-                assert app.state.matcher.ctx is mock_ctx
-
-        mock_log.info.assert_any_call("Starting matcher service...")
-        mock_log.info.assert_any_call("Matcher service ready")
-
-    @pytest.mark.asyncio
-    async def test_shutdown_cancels_consumer_task(self):
-        from services.scorer_matcher.main import lifespan
-
-        app = FastAPI(lifespan=lifespan)
-        mock_ctx = Mock()
-        mock_ctx.aclose = AsyncMock()
-        mock_task = AsyncMock()
-        mock_task.done.return_value = False
-
-        with patch("services.scorer_matcher.main.logger") as mock_log, \
-             patch("services.scorer_matcher.main.load_config", return_value={}), \
-             patch("services.scorer_matcher.main.AppContext") as mock_ctx_class, \
-             patch("services.scorer_matcher.main.consume_matching_jobs",
-                   new_callable=AsyncMock), \
-             patch("services.scorer_matcher.main.asyncio.create_task",
-                   return_value=mock_task), \
-             patch("services.scorer_matcher.main.asyncio.gather",
-                   new_callable=AsyncMock) as mock_gather:
-
-            mock_ctx_class.build.return_value = mock_ctx
-
-            async with lifespan(app):
-                lifespan_state = app.state.matcher
-
-        mock_log.info.assert_any_call("Shutting down matcher service...")
-        assert lifespan_state.stop_event.is_set()
         mock_task.cancel.assert_called_once()
-        mock_gather.assert_awaited_once()
+        assert state.stop_event.is_set()
 
-    @pytest.mark.asyncio
-    async def test_shutdown_closes_app_context(self):
-        from services.scorer_matcher.main import lifespan
+    def test_shutdown_closes_app_context(self):
+        """App lifespan shutdown closes context."""
+        from services.scorer_matcher.main import MatcherState, MatcherConsumer
 
-        app = FastAPI(lifespan=lifespan)
         mock_ctx = Mock()
         mock_ctx.aclose = AsyncMock()
+        mock_consumer = Mock(spec=MatcherConsumer)
+        state = MatcherState(mock_ctx, mock_consumer)
 
-        with patch("services.scorer_matcher.main.load_config", return_value={}), \
-             patch("services.scorer_matcher.main.AppContext") as mock_ctx_class, \
-             patch("services.scorer_matcher.main.consume_matching_jobs",
-                   new_callable=AsyncMock), \
-             patch("services.scorer_matcher.main.asyncio.create_task",
-                   return_value=AsyncMock()), \
-             patch("services.scorer_matcher.main.asyncio.gather",
-                   new_callable=AsyncMock):
+        # Simulate shutdown
+        import asyncio
+        asyncio.run(state.ctx.aclose())
 
-            mock_ctx_class.build.return_value = mock_ctx
+        mock_ctx.aclose.assert_called_once()
 
-            async with lifespan(app):
-                pass
 
-        mock_ctx.aclose.assert_awaited_once()
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

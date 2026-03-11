@@ -38,12 +38,28 @@ cp wants.example.txt wants.txt
 
 ### Start Everything
 
-```bash
-# Start Docker services + Backend + Frontend
-./scripts/setup_local_env/start.sh --docker --backend --frontend
+**Option A: Full Stack via Docker Compose (Recommended)**
 
-# Or start with logs visible (blocks terminal):
-./scripts/setup_local_env/start.sh --docker --backend --frontend --block
+```bash
+# Start entire stack: infra + pipeline + web backend + web frontend
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.pipeline.yml \
+  -f docker-compose.web.yml \
+  --profile web up -d
+
+# Or use the startup script (same command)
+./scripts/setup_local_env/start.sh
+```
+
+**Option B: Local Development (with hot reload)**
+
+```bash
+# Start infra + pipeline in Docker, run backend/frontend locally
+./scripts/setup_local_env/start.sh --infra --microservices --web-app --web-ui
+
+# For backend hot reload during active development:
+WEB_DEV=true ./scripts/setup_local_env/start.sh --infra --microservices --web-app --web-ui
 ```
 
 **Access the app:**
@@ -79,17 +95,28 @@ docker-compose --profile docker-ollama up -d
 
 ### 2. Start Backend (FastAPI)
 
+**Option A: Using Docker (Recommended for production parity)**
+
+```bash
+# Start backend via Docker Compose
+docker compose -f docker-compose.yml -f docker-compose.web.yml --profile web up -d web-backend
+
+# Backend available at:
+# - API: http://localhost:8080
+# - API Docs: http://localhost:8080/docs
+```
+
+**Option B: Local Development (with hot reload)**
+
 ```bash
 # Install dependencies
 uv sync --group web
 
-# Start server
-uv run python -m uvicorn web.backend.app:app --host 0.0.0.0 --port 8080
+# Start server locally (127.0.0.1 only - secure for shared networks)
+WEB_DEV=true uv run python -m uvicorn web.backend.app:app --host 127.0.0.1 --reload --port 8080
 ```
 
-**Endpoints:**
-- Dashboard: http://localhost:8080
-- API Docs: http://localhost:8080/docs
+**⚠️ Security Note:** When running locally without Docker, use `--host 127.0.0.1` to bind only to localhost. Use `--host 0.0.0.0` only when running inside Docker containers where network isolation applies.
 
 ### 3. Start Frontend (Vite)
 

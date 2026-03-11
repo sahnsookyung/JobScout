@@ -52,22 +52,22 @@ NC='\033[0m' # No Color
 
 # Logging functions
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    printf "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') - %s\n" "$1"
     return 0
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    printf "${GREEN}[SUCCESS]${NC} $(date '+%Y-%m-%d %H:%M:%S') - %s\n" "$1"
     return 0
 }
 
 log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    printf "${YELLOW}[WARN]${NC} $(date '+%Y-%m-%d %H:%M:%S') - %s\n" "$1"
     return 0
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1" >&2
+    printf "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') - %s\n" "$1" >&2
     return 0
 }
 
@@ -88,17 +88,17 @@ show_help() {
 
 # Parse command line arguments
 parse_args() {
-    # New descriptive names
-    local INFRA=false
-    local WEB_APP=false
-    local WEB_UI=false
-    local MICROSERVICES=false
-    local OLLAMA=false
-    local CLEAN=false
-    local BLOCK=false
-    local DATABASE=false
-    local REDIS=false
-    local ALL=false
+    # Initialize global variables (removed 'local' to make them global)
+    INFRA=false
+    WEB_APP=false
+    WEB_UI=false
+    MICROSERVICES=false
+    OLLAMA=false
+    CLEAN=false
+    BLOCK=false
+    DATABASE=false
+    REDIS=false
+    ALL=false
     local option
 
     while [[ $# -gt 0 ]]; do
@@ -385,8 +385,15 @@ start_web_app() {
     fi
 
     # Start web app
-    cd "${PROJECT_ROOT}"
-    uv run python -m uvicorn web.backend.app:app --host 0.0.0.0 --reload --port ${BACKEND_PORT} > "${LOGS_DIR}/web-app.log" 2>&1 &
+    # For backend development with hot reload (bare host only):
+    # WEB_DEV=true ./scripts/setup_local_env/start.sh
+    if [[ "${WEB_DEV:-false}" == "true" ]]; then
+        log_info "Starting web backend locally with hot reload (dev mode)..."
+        uv run python -m uvicorn web.backend.app:app --host 127.0.0.1 --reload --port ${BACKEND_PORT} > "${LOGS_DIR}/web-app.log" 2>&1 &
+    else
+        log_info "Starting web backend via Docker..."
+        docker compose -f "${PROJECT_ROOT}/docker-compose.yml" -f "${PROJECT_ROOT}/docker-compose.web.yml" --profile web up -d web-backend
+    fi
 
     WEB_APP_PID=$!
     log_info "Web application started with PID: ${WEB_APP_PID}"
@@ -465,52 +472,52 @@ print_summary() {
     echo "============================================================================="
     echo ""
     if [[ "$WEB_UI" == true ]]; then
-        echo -e "  ${GREEN}Web UI${NC}:      http://localhost:${FRONTEND_PORT}"
+        printf "  ${GREEN}Web UI${NC}:      http://localhost:${FRONTEND_PORT}\n"
     fi
     if [[ "$WEB_APP" == true ]]; then
-        echo -e "  ${GREEN}Web App${NC}:     http://localhost:${BACKEND_PORT}"
-        echo -e "  ${GREEN}API Docs${NC}:    http://localhost:${BACKEND_PORT}/docs"
+        printf "  ${GREEN}Web App${NC}:     http://localhost:${BACKEND_PORT}\n"
+        printf "  ${GREEN}API Docs${NC}:    http://localhost:${BACKEND_PORT}/docs\n"
     fi
     if [[ "$MICROSERVICES" == true ]]; then
-        echo -e "  ${GREEN}Microservices:${NC}"
-        echo -e "    - Extraction:     http://localhost:8081"
-        echo -e "    - Embeddings:     http://localhost:8082"
-        echo -e "    - Scorer-Matcher: http://localhost:8083"
-        echo -e "    - Orchestrator:   http://localhost:8084"
+        printf "  ${GREEN}Microservices:${NC}\n"
+        printf "    - Extraction:     http://localhost:8081\n"
+        printf "    - Embeddings:     http://localhost:8082\n"
+        printf "    - Scorer-Matcher: http://localhost:8083\n"
+        printf "    - Orchestrator:   http://localhost:8084\n"
     fi
     echo ""
     echo "  Logs:"
     if [[ "$WEB_APP" == true ]]; then
-        echo -e "    ${BLUE}Web App${NC}:     ${LOGS_DIR}/web-app.log"
+        printf "    ${BLUE}Web App${NC}:     ${LOGS_DIR}/web-app.log\n"
     fi
     if [[ "$WEB_UI" == true ]]; then
-        echo -e "    ${BLUE}Web UI${NC}:      ${LOGS_DIR}/web-ui.log"
+        printf "    ${BLUE}Web UI${NC}:      ${LOGS_DIR}/web-ui.log\n"
     fi
     if [[ "$INFRA" == true ]] || [[ "$DATABASE" == true ]]; then
-        echo -e "    ${BLUE}PostgreSQL${NC}:  ${LOGS_DIR}/postgres.log"
+        printf "    ${BLUE}PostgreSQL${NC}:  ${LOGS_DIR}/postgres.log\n"
     fi
     if [[ "$INFRA" == true ]]; then
-        echo -e "    ${BLUE}Main Driver${NC}: ${LOGS_DIR}/main-driver.log"
+        printf "    ${BLUE}Main Driver${NC}: ${LOGS_DIR}/main-driver.log\n"
     fi
     echo ""
     echo "  To view logs in real-time:"
     if [[ "$WEB_APP" == true ]]; then
-        echo -e "    ${YELLOW}tail -f ${LOGS_DIR}/web-app.log${NC}"
+        printf "    ${YELLOW}tail -f ${LOGS_DIR}/web-app.log${NC}\n"
     fi
     if [[ "$WEB_UI" == true ]]; then
-        echo -e "    ${YELLOW}tail -f ${LOGS_DIR}/web-ui.log${NC}"
+        printf "    ${YELLOW}tail -f ${LOGS_DIR}/web-ui.log${NC}\n"
     fi
     if [[ "$INFRA" == true ]] || [[ "$DATABASE" == true ]]; then
-        echo -e "    ${YELLOW}tail -f ${LOGS_DIR}/postgres.log${NC}"
+        printf "    ${YELLOW}tail -f ${LOGS_DIR}/postgres.log${NC}\n"
     fi
     echo ""
     echo "  Or use the logs script:"
-    echo -e "    ${YELLOW}./scripts/setup_local_env/logs.sh -f${NC}   (follow all logs)"
-    echo "    ./scripts/setup_local_env/logs.sh web-app    (web app only)"
-    echo "    ./scripts/setup_local_env/logs.sh web-ui     (web UI only)"
+    printf "    ${YELLOW}./scripts/setup_local_env/logs.sh -f${NC}   (follow all logs)\n"
+    printf "    ./scripts/setup_local_env/logs.sh web-app    (web app only)\n"
+    printf "    ./scripts/setup_local_env/logs.sh web-ui     (web UI only)\n"
     echo ""
     echo "  To stop:"
-    echo -e "    ${YELLOW}./scripts/setup_local_env/start.sh --clean${NC}  (all services)"
+    printf "    ${YELLOW}./scripts/setup_local_env/start.sh --clean${NC}  (all services)\n"
     echo ""
     return 0
 }

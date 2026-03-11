@@ -48,22 +48,22 @@ NC='\033[0m' # No Color
 
 # Logging functions
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    printf "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') - %s\n" "$1"
     return 0
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    printf "${GREEN}[SUCCESS]${NC} $(date '+%Y-%m-%d %H:%M:%S') - %s\n" "$1"
     return 0
 }
 
 log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    printf "${YELLOW}[WARN]${NC} $(date '+%Y-%m-%d %H:%M:%S') - %s\n" "$1"
     return 0
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1" >&2
+    printf "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') - %s\n" "$1" >&2
     return 0
 }
 
@@ -87,13 +87,14 @@ show_help() {
 
 # Parse command line arguments
 parse_args() {
-    local STOP_INFRA=false
-    local STOP_WEB_APP=false
-    local STOP_WEB_UI=false
-    local STOP_MICROSERVICES=false
-    local STOP_DATABASE=false
-    local STOP_REDIS=false
-    local STOP_ALL=false
+    # Initialize global variables (removed 'local' to make them global)
+    STOP_INFRA=false
+    STOP_WEB_APP=false
+    STOP_WEB_UI=false
+    STOP_MICROSERVICES=false
+    STOP_DATABASE=false
+    STOP_REDIS=false
+    STOP_ALL=false
     local option
 
     while [[ $# -gt 0 ]]; do

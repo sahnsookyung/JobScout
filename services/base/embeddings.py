@@ -39,7 +39,7 @@ def _run_facet_embedding_batch(ctx: AppContext, stop_event: threading.Event, lim
                 else:
                     logger.debug(f"Job {job_id} facet_status is '{job.facet_status}', skipping")
         except Exception:
-            logger.exception("Facet embedding error job_id=%s", job_id)
+            logger.error("Facet embedding error job_id=%s", job_id, exc_info=True)
 
     logger.info(f"Facet embedding batch completed: processed={processed}")
     return processed
@@ -66,7 +66,7 @@ def _run_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: in
                 ctx.job_etl_service.embed_job_one(repo, job)
             job_success += 1
         except Exception:
-            logger.exception("Failed job embedding job_id=%s", job_id)
+            logger.error("Failed job embedding job_id=%s", job_id, exc_info=True)
 
     # 2. Requirements
     with job_uow() as repo:
@@ -87,7 +87,7 @@ def _run_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: in
                 ctx.job_etl_service.embed_requirement_one(repo, req)
             req_success += 1
         except Exception:
-            logger.exception("Failed requirement embedding req_id=%s", req_id)
+            logger.error("Failed requirement embedding req_id=%s", req_id, exc_info=True)
 
     logger.info(f"Embedding batch completed: {job_success} jobs, {req_success} reqs")
     return job_success + req_success

@@ -269,7 +269,7 @@ class PipelineTaskManager:
                 self.update_task_status(task_id, "failed", error=error_msg)
 
         except Exception as e:
-            logger.exception("Error delegating pipeline task %s to orchestrator", task_id)
+            logger.error("Error delegating pipeline task %s to orchestrator: %s: %s", task_id, type(e).__name__, e, exc_info=True)
             self.update_task_status(task_id, "failed", error=str(e))
 
 

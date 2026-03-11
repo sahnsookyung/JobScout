@@ -158,8 +158,8 @@ def _retry_failed_facet_extractions(limit: int, max_retries: int, stop_event: th
                         repo.update_job_facet_status(job.id, None)
                         recovered += 1
             except Exception:
-                logger.exception("Facet recovery failed for job %s", job_id)
-    
+                logger.error("Facet recovery failed for job %s", job_id, exc_info=True)
+
     return recovered
 
 
@@ -182,8 +182,8 @@ def _retry_missing_facet_embeddings(ctx: AppContext, limit: int, max_retries: in
                         ctx.job_etl_service.embed_facets_one(repo, job)
                         recovered += 1
             except Exception:
-                logger.exception("Facet embedding recovery failed for job %s", job_id)
-    
+                logger.error("Facet embedding recovery failed for job %s", job_id, exc_info=True)
+
     return recovered
 
 
@@ -219,7 +219,7 @@ def _process_facet_job(ctx: AppContext, job_id: int) -> int:
 def _handle_facet_error(job_id: int) -> None:
     """Log and persist a facet extraction failure."""
     error_msg = traceback.format_exc()
-    logger.exception("Facet extraction error job_id=%s", job_id)
+    logger.error("Facet extraction error job_id=%s", job_id, exc_info=True)
     try:
         with job_uow() as repo:
             repo.mark_job_facets_failed(job_id, error_msg)

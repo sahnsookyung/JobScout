@@ -442,14 +442,14 @@ async def orchestrate_match(
 
     except asyncio.TimeoutError:
         # Fired by one of the asyncio.timeout() blocks above
-        logger.exception("❌ Orchestration timeout for task %s", task_id)
+        logger.error("❌ Orchestration timeout for task %s: %s", task_id, "stage timeout exceeded", exc_info=True)
         state.status = "failed"
         state.error = "Stage timeout"
         await state._save_to_redis()
         await state.notify({"task_id": task_id, "status": "failed", "error": state.error})
 
     except Exception as e:
-        logger.exception("❌ Orchestration failed for task %s", task_id)
+        logger.error("❌ Orchestration failed for task %s: %s: %s", task_id, type(e).__name__, e, exc_info=True)
         state.status = "failed"
         state.error = str(e)
         await state._save_to_redis()

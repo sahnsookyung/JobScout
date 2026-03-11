@@ -20,14 +20,12 @@ from pydantic import BaseModel
 
 from core.config_loader import load_config
 from core.app_context import AppContext
+from core.stream_consumer import StreamConsumerWithCompletion, validate_message
 from core.redis_streams import (
-    read_stream,
-    ack_message,
-    publish_completion,
     CHANNEL_EXTRACTION_DONE,
     STREAM_EXTRACTION,
 )
-from services.base.extraction import run_job_extraction, extract_resume
+from services.base.extraction import run_job_extraction, extract_resume as extract_resume_file
 
 logger = logging.getLogger(__name__)
 
@@ -60,14 +58,82 @@ def _validate_resume_path(resume_file: str) -> tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
+# Stream consumer for extraction service
+# ---------------------------------------------------------------------------
+
+class ExtractionConsumer(StreamConsumerWithCompletion):
+    """Consumer for extraction jobs from Redis Streams."""
+
+    def __init__(self, ctx: AppContext) -> None:
+        super().__init__(
+            stream=STREAM_EXTRACTION,
+            group=CONSUMER_GROUP,
+            consumer_name=CONSUMER_NAME,
+            completion_channel=CHANNEL_EXTRACTION_DONE,
+            logger=logger,
+        )
+        self.ctx = ctx
+
+    async def _do_process(self, msg_id: str, msg: dict) -> tuple[bool, dict]:
+        """Process an extraction job.
+
+        Args:
+            msg_id: Redis Stream message ID
+            msg: Message data dict with task_id and resume_file
+
+        Returns:
+            Tuple of (success, result_data)
+        """
+        task_id = msg.get("task_id")
+        resume_file = msg.get("resume_file")
+
+        # Validate required fields
+        is_valid, error = validate_message(msg, ["task_id", "resume_file"])
+        if not is_valid:
+            logger.error("❌ Invalid extraction job: %s", error)
+            return False, {"status": "failed", "error": error}
+
+        # Validate resume path
+        is_valid, result = _validate_resume_path(resume_file)
+        if not is_valid:
+            logger.error(
+                "❌ Invalid path in extraction job: task_id=%s, file=%s",
+                task_id, resume_file,
+            )
+            return False, {"status": "failed", "error": "Invalid resume file path"}
+
+        resume_path = result
+        logger.info(
+            "⚙️ Processing extraction job: task_id=%s, file=%s",
+            task_id, resume_path,
+        )
+
+        changed, fingerprint = await asyncio.to_thread(
+            extract_resume_file, self.ctx, resume_path
+        )
+
+        status = "skipped" if not changed else "completed"
+        logger.info(
+            "✅ Extraction job done: task_id=%s, status=%s, fingerprint=%s...",
+            task_id, status, (fingerprint or "")[:16],
+        )
+
+        return True, {
+            "status": status,
+            "resume_fingerprint": fingerprint or "",
+        }
+
+
+# ---------------------------------------------------------------------------
 # App state container — replaces module-level globals
 # ---------------------------------------------------------------------------
 
 class ExtractionState:
     """Holds all mutable service-level state."""
 
-    def __init__(self, ctx: AppContext) -> None:
+    def __init__(self, ctx: AppContext, consumer: ExtractionConsumer) -> None:
         self.ctx = ctx
+        self.consumer = consumer
         self.stop_event = threading.Event()
         self.consumer_task: Optional[asyncio.Task] = None
 
@@ -89,11 +155,15 @@ async def lifespan(app: FastAPI):
     logger.info("Starting extraction service...")
 
     config = load_config()
-    state = ExtractionState(ctx=AppContext.build(config))
+    ctx = AppContext.build(config)
+    consumer = ExtractionConsumer(ctx)
+    state = ExtractionState(ctx=ctx, consumer=consumer)
     app.state.extraction = state
 
     logger.info("Extraction service ready")
-    state.consumer_task = asyncio.create_task(consume_extraction_jobs(state))
+    state.consumer_task = asyncio.create_task(
+        consumer.consume_loop(state.stop_event)
+    )
 
     yield
 
@@ -177,7 +247,7 @@ async def extract_jobs(request: Request, body: ExtractJobRequest = ExtractJobReq
             processed=processed,
         )
     except Exception:
-        logger.exception("Job extraction failed")
+        logger.error("Job extraction failed", exc_info=True)
         return ExtractResponse(
             success=False,
             message="Job extraction failed",
@@ -198,7 +268,7 @@ async def extract_resume(request: Request, body: ExtractResumeRequest):
     resume_path = result
     try:
         changed, fingerprint = await asyncio.to_thread(
-            extract_resume, state.ctx, resume_path
+            extract_resume_file, state.ctx, resume_path
         )
         if changed:
             return ExtractResponse(
@@ -214,7 +284,7 @@ async def extract_resume(request: Request, body: ExtractResumeRequest):
             fingerprint=fingerprint,
         )
     except Exception:
-        logger.exception("Resume extraction failed")
+        logger.error("Resume extraction failed", exc_info=True)
         return ExtractResponse(
             success=False,
             message="Resume extraction failed",
@@ -228,118 +298,6 @@ async def stop_extraction(request: Request):
     state: ExtractionState = request.app.state.extraction
     state.stop_event.set()
     return {"success": True, "message": "Stop signal sent"}
-
-
-# ---------------------------------------------------------------------------
-# Stream consumer helpers
-# ---------------------------------------------------------------------------
-
-def _get_one_extraction_message() -> Optional[tuple[str, dict]]:
-    """Pull a single message from the extraction stream, blocking up to 5s."""
-    gen = read_stream(STREAM_EXTRACTION, CONSUMER_GROUP, CONSUMER_NAME, count=1, block=5000)
-    try:
-        return next(gen)
-    except StopIteration:
-        return None
-
-
-async def _process_extraction_message(
-    state: ExtractionState, msg_id: str, msg: dict
-) -> bool:
-    """Validate, process, and acknowledge a single extraction job. Returns True if successful."""
-    task_id = msg.get("task_id")
-    resume_file = msg.get("resume_file")
-    logger.info(
-        "📨 Received extraction job: msg_id=%s, task_id=%s, file=%s",
-        msg_id, task_id, resume_file,
-    )
-
-    is_valid, result = _validate_resume_path(resume_file)
-    if not is_valid:
-        logger.error(
-            "❌ Invalid path in extraction job: task_id=%s, file=%s", task_id, resume_file
-        )
-        await asyncio.to_thread(
-            publish_completion,
-            CHANNEL_EXTRACTION_DONE,
-            {"task_id": task_id, "status": "failed", "error": "Invalid resume file path"},
-        )
-        await asyncio.to_thread(ack_message, STREAM_EXTRACTION, CONSUMER_GROUP, msg_id)
-        logger.info("✅ Acknowledged failed job: msg_id=%s", msg_id)
-        return False
-
-    resume_path = result
-    logger.info("⚙️ Processing extraction job: task_id=%s, file=%s", task_id, resume_path)
-    try:
-        changed, fingerprint = await asyncio.to_thread(
-            extract_resume, state.ctx, resume_path
-        )
-        status = "skipped" if not changed else "completed"
-        await asyncio.to_thread(
-            publish_completion,
-            CHANNEL_EXTRACTION_DONE,
-            {
-                "task_id": task_id,
-                "status": status,
-                "resume_fingerprint": fingerprint or "",
-            },
-        )
-        await asyncio.to_thread(ack_message, STREAM_EXTRACTION, CONSUMER_GROUP, msg_id)
-        logger.info(
-            "✅ Extraction job done: task_id=%s, status=%s, fingerprint=%s...",
-            task_id, status, (fingerprint or "")[:16],
-        )
-        return True
-
-    except Exception as e:
-        logger.exception(
-            "❌ Extraction failed: task_id=%s, error=%s: %s", task_id, type(e).__name__, e
-        )
-        await asyncio.to_thread(
-            publish_completion,
-            CHANNEL_EXTRACTION_DONE,
-            {"task_id": task_id, "status": "failed", "error": str(e)},
-        )
-        await asyncio.to_thread(ack_message, STREAM_EXTRACTION, CONSUMER_GROUP, msg_id)
-        logger.info("✅ Acknowledged failed job: msg_id=%s", msg_id)
-        return False
-
-
-async def consume_extraction_jobs(state: ExtractionState) -> None:
-    """Background task that consumes extraction jobs from Redis Streams."""
-    logger.info(
-        "Starting extraction consumer: %s (group: %s)", CONSUMER_NAME, CONSUMER_GROUP
-    )
-    message_count = 0
-    error_count = 0
-
-    while not state.stop_event.is_set():
-        try:
-            logger.debug("Waiting for extraction job from Redis stream...")
-            result = await asyncio.to_thread(_get_one_extraction_message)
-            if not result:
-                logger.debug("No messages received (timeout), continuing...")
-                continue
-
-            msg_id, msg = result
-            message_count += 1
-            success = await _process_extraction_message(state, msg_id, msg)
-            if not success:
-                error_count += 1
-
-        except asyncio.CancelledError:
-            logger.info(
-                "🛑 Extraction consumer cancelled (processed: %d, errors: %d)",
-                message_count, error_count,
-            )
-            raise
-
-        except Exception as e:
-            error_count += 1
-            logger.exception(
-                "❌ Error in extraction consumer: %s: %s", type(e).__name__, e
-            )
-            await asyncio.sleep(1)
 
 
 # ---------------------------------------------------------------------------

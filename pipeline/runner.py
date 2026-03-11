@@ -165,7 +165,7 @@ def run_matching_pipeline(
         )
 
     except Exception as e:
-        logger.exception("Error in matching pipeline")
+        logger.error("Error in matching pipeline: %s: %s", type(e).__name__, e, exc_info=True)
         execution_time = time.time() - pipeline_start_time
         return MatchingPipelineResult(
             success=False,

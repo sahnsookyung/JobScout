@@ -44,13 +44,15 @@ os.environ["SCORER_MATCHER_URL"] = MATCHER_URL
 os.environ["ORCHESTRATOR_URL"] = ORCHESTRATOR_URL
 
 
-def run_docker_command(args):
-    """Run docker command and return result."""
+def run_docker_command(args, check=False):
+    """Run docker command and return result. Raises error if check=True and command fails."""
     result = subprocess.run(
         ["docker"] + args,
         capture_output=True,
         text=True
     )
+    if check and result.returncode != 0:
+        raise RuntimeError(f"Docker command failed: {' '.join(args)}\nError: {result.stderr}")
     return result
 
 
@@ -62,19 +64,24 @@ def start_test_infrastructure():
         pytest.skip("Docker not available - skipping integration tests")
         return
 
-    print("\n🚀 Starting test infrastructure...")
+    # Check if the required image exists
+    image_check = run_docker_command(["images", "-q", "jobscout-orchestrator:latest"])
+    if not image_check.stdout.strip():
+        pytest.skip("Docker image 'jobscout-orchestrator:latest' not found. Please build it first before running integration tests.")
 
-    # Stop and remove existing containers
+    print("\nStarting test infrastructure...")
+
+    # Stop and remove existing containers safely
     for container in ["redis-test", "extraction-test", "embeddings-test", "matcher-test", "orchestrator-test"]:
         run_docker_command(["stop", container])
         run_docker_command(["rm", container])
 
     # Create test network
     run_docker_command(["network", "rm", "test-network"])
-    run_docker_command(["network", "create", "test-network"])
+    run_docker_command(["network", "create", "test-network"], check=True)
     
     # Start Redis
-    print("  📦 Starting Redis...")
+    print("  Starting Redis...")
     run_docker_command([
         "run", "-d",
         "--name", "redis-test",
@@ -82,13 +89,13 @@ def start_test_infrastructure():
         "-p", f"{REDIS_PORT}:6379",
         "--rm",
         "redis:7-alpine"
-    ])
+    ], check=True)
     
     # Wait for Redis
     wait_for_service(f"localhost:{REDIS_PORT}", "redis-cli ping")
     
     # Start Extraction Service
-    print("  📦 Starting Extraction Service...")
+    print("  Starting Extraction Service...")
     run_docker_command([
         "run", "-d",
         "--name", "extraction-test",
@@ -101,10 +108,10 @@ def start_test_infrastructure():
         "jobscout-orchestrator:latest",
         "uv", "run", "uvicorn", "services.extraction.main:app",
         "--host", "0.0.0.0", "--port", "8081"
-    ])
+    ], check=True)
     
     # Start Embeddings Service
-    print("  📦 Starting Embeddings Service...")
+    print("  Starting Embeddings Service...")
     run_docker_command([
         "run", "-d",
         "--name", "embeddings-test",
@@ -117,10 +124,10 @@ def start_test_infrastructure():
         "jobscout-orchestrator:latest",
         "uv", "run", "uvicorn", "services.embeddings.main:app",
         "--host", "0.0.0.0", "--port", "8082"
-    ])
+    ], check=True)
     
     # Start Scorer-Matcher Service
-    print("  📦 Starting Scorer-Matcher Service...")
+    print("  Starting Scorer-Matcher Service...")
     run_docker_command([
         "run", "-d",
         "--name", "matcher-test",
@@ -133,10 +140,10 @@ def start_test_infrastructure():
         "jobscout-orchestrator:latest",
         "uv", "run", "uvicorn", "services.scorer_matcher.main:app",
         "--host", "0.0.0.0", "--port", "8083"
-    ])
+    ], check=True)
     
     # Start Orchestrator Service
-    print("  📦 Starting Orchestrator Service...")
+    print("  Starting Orchestrator Service...")
     run_docker_command([
         "run", "-d",
         "--name", "orchestrator-test",
@@ -150,16 +157,16 @@ def start_test_infrastructure():
         "jobscout-orchestrator:latest",
         "uv", "run", "uvicorn", "services.orchestrator.main:app",
         "--host", "0.0.0.0", "--port", "8084"
-    ])
+    ], check=True)
     
     # Wait for all services to be healthy
-    print("  ⏳ Waiting for services to be ready...")
+    print("  Waiting for services to be ready...")
     wait_for_service(f"localhost:{EXTRACTION_PORT}", "health")
     wait_for_service(f"localhost:{EMBEDDINGS_PORT}", "health")
     wait_for_service(f"localhost:{MATCHER_PORT}", "health")
     wait_for_service(f"localhost:{ORCHESTRATOR_PORT}", "health")
     
-    print("  ✅ All services ready!")
+    print("  All services ready!")
 
 
 def wait_for_service(host_port, check_type, timeout=60):
@@ -169,14 +176,14 @@ def wait_for_service(host_port, check_type, timeout=60):
     while time.time() - start_time < timeout:
         try:
             if check_type == "health":
-                response = requests.get(f"http://{host_port}/health", timeout=2)  # nosec: B113 - localhost test URL
+                response = requests.get(f"http://{host_port}/health", timeout=2)  # nosec: B113
                 if response.status_code == 200:
                     return
             elif check_type == "redis-cli ping":
                 result = run_docker_command(["exec", "redis-test", "redis-cli", "ping"])
                 if result.stdout.strip() == "PONG":
                     return
-        except Exception:
+        except (requests.exceptions.RequestException, ConnectionError):
             pass
         time.sleep(1)
 
@@ -185,11 +192,11 @@ def wait_for_service(host_port, check_type, timeout=60):
 
 def stop_test_infrastructure():
     """Stop all test containers."""
-    print("\n🛑 Stopping test infrastructure...")
+    print("\nStopping test infrastructure...")
     for container in ["orchestrator-test", "matcher-test", "embeddings-test", "extraction-test", "redis-test"]:
         run_docker_command(["stop", container])
     run_docker_command(["network", "rm", "test-network"])
-    print("  ✅ Test infrastructure stopped")
+    print("  Test infrastructure stopped")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -205,11 +212,13 @@ class TestRedisStreamsIntegration:
 
     @pytest.fixture(autouse=True)
     def setup_redis(self):
-        """Set up Redis connection for tests."""
+        """Set up Redis connection for tests and ensure clean state."""
         import redis
-        self.redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True, db=1)
+        client = redis.Redis.from_url(REDIS_URL, decode_responses=True, db=1)
+        client.flushdb()
+        self.redis_client = client
         yield
-        self.redis_client.close()
+        client.connection_pool.disconnect()
 
     def test_enqueue_message(self):
         """Test enqueueing a message to a stream."""
@@ -302,10 +311,10 @@ class TestOrchestratorPipeline:
     def test_publish_completion_event(self):
         """Test publishing completion event to pubsub."""
         from core.redis_streams import publish_completion
-        
+
         channel = "test:extraction:completed"
         payload = {"task_id": "test-subscription", "status": "completed"}
-        
+
         result = publish_completion(channel, payload)
         assert result >= 0
 
@@ -320,21 +329,20 @@ class TestOrchestratorPipeline:
 
     def test_orchestrate_match_endpoint(self):
         """Test the orchestration match endpoint starts the pipeline."""
-        # Trigger the pipeline
-        response = requests.post(f"{ORCHESTRATOR_URL}/orchestrate/match", json={})
+        # Trigger the pipeline, capturing the response stream to validate event delivery
+        response = requests.post(f"{ORCHESTRATOR_URL}/orchestrate/match", json={}, stream=True)
         assert response.status_code == 200
         
-        data = response.json()
-        assert data["success"] is True
-        assert data["task_id"].startswith("match-")
-        assert "Pipeline started" in data["message"]
-        
-        # Note: Full pipeline execution testing requires checking SSE stream
-        # which is complex. The integration is verified by checking:
-        # 1. Endpoint accepts request ✓
-        # 2. Task is created ✓
-        # 3. Microservices are running and connected to Redis ✓
-        # The actual pipeline execution is verified manually or in E2E tests
+        # Check if the endpoint responds with SSE (Server-Sent Events)
+        if response.headers.get('content-type') == 'text/event-stream':
+            first_event = next(response.iter_lines()).decode('utf-8')
+            assert "data:" in first_event or "event:" in first_event
+        else:
+            # Fallback for standard JSON response
+            data = response.json()
+            assert data["success"] is True
+            assert data["task_id"].startswith("match-")
+            assert "Pipeline started" in data["message"]
 
 
 class TestMicroservicesLogging:
@@ -342,8 +350,12 @@ class TestMicroservicesLogging:
 
     def test_redis_streams_logs_enqueue_with_task_id(self, caplog):
         """Test that enqueue_job logs include task_id for traceability."""
-        from core.redis_streams import enqueue_job
+        import os
         import logging
+
+        # Use the test infrastructure Redis URL
+        os.environ["REDIS_URL"] = REDIS_URL
+        from core.redis_streams import enqueue_job
         
         stream = f"test:logs:jobs:{uuid.uuid4().hex[:8]}"
         task_id = f"test-{uuid.uuid4().hex[:8]}"
@@ -353,7 +365,6 @@ class TestMicroservicesLogging:
 
             assert task_id in caplog.text
             assert "Enqueued" in caplog.text or "enqueued" in caplog.text
-
 
 class TestPipelineErrorHandling:
     """Test error handling in pipeline to prevent silent failures."""
@@ -378,9 +389,3 @@ class TestPipelineErrorHandling:
         
         with pytest.raises(ValueError, match="status"):
             publish_completion("test:completed", {"task_id": "test-123"})
-
-
-# Cleanup after all tests
-def pytest_sessionfinish(session, exitstatus):
-    """Stop all test containers after all tests complete."""
-    stop_test_infrastructure()
