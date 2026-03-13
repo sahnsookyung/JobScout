@@ -235,6 +235,14 @@ def wait_for_service(host_port, check_type, timeout=60):
                 result = run_docker_command(["exec", "redis-test", "redis-cli", "ping"])
                 if result.stdout.strip() == "PONG":
                     return
+            elif check_type == "pg_isready":
+                # Use docker exec to run pg_isready inside the container
+                result = run_docker_command([
+                    "exec", "postgres-test",
+                    "pg_isready", "-U", "user", "-d", "jobscout_test"
+                ])
+                if result.returncode == 0:
+                    return
         except (requests.exceptions.RequestException, ConnectionError):
             pass
         time.sleep(1)
@@ -245,7 +253,7 @@ def wait_for_service(host_port, check_type, timeout=60):
 def stop_test_infrastructure():
     """Stop all test containers."""
     print("\nStopping test infrastructure...")
-    for container in ["orchestrator-test", "matcher-test", "embeddings-test", "extraction-test", "redis-test"]:
+    for container in ["orchestrator-test", "matcher-test", "embeddings-test", "extraction-test", "redis-test", "postgres-test", "web-backend-test"]:
         run_docker_command(["stop", container])
     run_docker_command(["network", "rm", "test-network"])
     print("  Test infrastructure stopped")
