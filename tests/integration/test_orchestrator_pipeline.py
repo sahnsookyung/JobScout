@@ -72,12 +72,12 @@ def start_test_infrastructure():
 
     print("\nStarting test infrastructure...")
 
-    # Stop and remove existing containers safely
-    for container in ["redis-test", "extraction-test", "embeddings-test", "matcher-test", "orchestrator-test"]:
+    # Stop and remove existing containers safely (ignore errors if not running)
+    for container in ["web-backend-test", "orchestrator-test", "matcher-test", "embeddings-test", "extraction-test", "postgres-test", "redis-test"]:
         run_docker_command(["stop", container])
         run_docker_command(["rm", container])
 
-    # Create test network
+    # Clean up test network (ignore errors if not exists or in use)
     run_docker_command(["network", "rm", "test-network"])
     run_docker_command(["network", "create", "test-network"], check=True)
     
@@ -291,10 +291,12 @@ def wait_for_service(host_port, check_type, timeout=60):
 
 
 def stop_test_infrastructure():
-    """Stop all test containers."""
+    """Stop and remove all test containers."""
     print("\nStopping test infrastructure...")
-    for container in ["orchestrator-test", "matcher-test", "embeddings-test", "extraction-test", "redis-test", "postgres-test", "web-backend-test"]:
+    # Stop and remove containers (order matters: dependents first)
+    for container in ["web-backend-test", "orchestrator-test", "matcher-test", "embeddings-test", "extraction-test", "postgres-test", "redis-test"]:
         run_docker_command(["stop", container])
+        run_docker_command(["rm", container])
     run_docker_command(["network", "rm", "test-network"])
     print("  Test infrastructure stopped")
 
