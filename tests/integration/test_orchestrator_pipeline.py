@@ -224,24 +224,25 @@ print('Database tables created with pgvector extension')
 
 def start_web_backend_for_tests(project_root: pathlib.Path, resume_path: pathlib.Path, config_path: pathlib.Path):
     """Start web backend container for resume upload testing.
-    
-    This uses the same Dockerfile as production (web/backend/Dockerfile).
+
+    This uses the same Dockerfile as production (web/backend/Dockerfile)
+    but builds a separate test image to avoid conflicts.
     """
     print("  Starting Web Backend for resume upload tests...")
     web_backend_port = os.environ.get("WEB_BACKEND_PORT", "8080")
-    
-    # Build web backend image if not exists
-    image_check = run_docker_command(["images", "-q", "jobscout-web-backend:latest"])
+
+    # Build web backend test image (separate from production)
+    image_check = run_docker_command(["images", "-q", "jobscout-web-backend-test:latest"])
     if not image_check.stdout.strip():
-        print("    Building jobscout-web-backend image (this may take a minute)...")
+        print("    Building jobscout-web-backend-test image (this may take a minute)...")
         run_docker_command([
             "build",
             "-f", str(project_root / "web" / "backend" / "Dockerfile"),
-            "-t", "jobscout-web-backend:latest",
+            "-t", "jobscout-web-backend-test:latest",
             str(project_root)
         ], check=True)
-        print("    Web backend image built successfully")
-    
+        print("    Web backend test image built successfully")
+
     run_docker_command([
         "run", "-d",
         "--name", "web-backend-test",
@@ -256,9 +257,9 @@ def start_web_backend_for_tests(project_root: pathlib.Path, resume_path: pathlib
         "-v", f"{config_path}:/app/config.yaml:ro",
         "-v", f"{resume_path}:/app/resume.json:ro",
         "--rm",
-        "jobscout-web-backend:latest"
+        "jobscout-web-backend-test:latest"
     ], check=True)
-    
+
     # Wait for web backend to be healthy
     wait_for_service(f"localhost:{web_backend_port}", "health")
     print("  Web Backend ready!")
@@ -466,16 +467,14 @@ class TestResumeUploadAndMatch:
         This tests the actual user workflow:
         1. Upload resume file via POST /api/pipeline/upload-resume
         2. Resume is processed and stored in database
-        3. Trigger matching pipeline via POST /orchestrate/match
-        4. Pipeline uses the uploaded resume from database
+        3. Verify resume exists in database via orchestrator
 
         The web backend container is built using the production Dockerfile
         (web/backend/Dockerfile) to ensure test matches production behavior.
         """
         import requests
-        import time
         import json
-        
+
         # Sample resume data for testing
         test_resume = {
             "personal_info": {
@@ -494,50 +493,36 @@ class TestResumeUploadAndMatch:
             ],
             "skills": ["Python", "FastAPI", "Redis", "Docker", "Kubernetes"]
         }
-        
+
         # Step 1: Upload resume via web backend API
-        # Note: Web backend runs on port 8080 by default in CI
         web_backend_url = os.environ.get("WEB_BACKEND_URL", "http://localhost:8080")
         upload_url = f"{web_backend_url}/api/pipeline/upload-resume"
-        
+
         files = {
             'file': ('test-resume.json', json.dumps(test_resume), 'application/json')
         }
-        
-        response = requests.post(upload_url, files=files)
-        
-        # Should accept the upload (may return 200 or skip if already processed)
+
+        response = requests.post(upload_url, files=files, timeout=30)
+
+        # Should accept the upload (may return 200 or 409 if already processed)
         assert response.status_code in [200, 409], f"Upload failed: {response.text}"
-        
+
         upload_data = response.json()
         assert upload_data.get("success") is True or "already" in upload_data.get("message", "").lower()
-        
+
         resume_hash = upload_data.get("resume_hash")
         assert resume_hash, "Response should include resume_hash"
-        
-        # Step 2: Wait for resume processing to complete
-        if upload_data.get("task_id"):
-            # Poll for processing completion
-            events_url = f"{web_backend_url}/api/pipeline/events/{upload_data['task_id']}"
-            for _ in range(30):  # Wait up to 30 seconds
-                time.sleep(1)
-                status_response = requests.get(f"{web_backend_url}/api/pipeline/status/{upload_data['task_id']}")
-                if status_response.status_code == 200:
-                    status_data = status_response.json()
-                    if status_data.get("status") in ["completed", "failed"]:
-                        break
-        
-        # Step 3: Trigger matching pipeline - should use uploaded resume from DB
+
+        # Step 2: Verify orchestrator can find the resume in database
+        # (The actual matching is tested separately in test_orchestrate_match_endpoint)
         orchestrator_url = f"{ORCHESTRATOR_URL}/orchestrate/match"
-        match_response = requests.post(orchestrator_url, json={})
-        
+        match_response = requests.post(orchestrator_url, json={}, timeout=10)
+
+        # Should start successfully (resume exists in DB)
         assert match_response.status_code == 200, f"Match endpoint failed: {match_response.text}"
         match_data = match_response.json()
-        assert match_data["success"] is True
-        assert match_data["task_id"].startswith("match-")
-        
-        # The pipeline should start successfully using the resume from database
-        # (Actual matching may take time, we just verify it started)
+        assert match_data["success"] is True, f"Match response not successful: {match_data}"
+        assert match_data["task_id"].startswith("match-"), f"Invalid task_id format: {match_data}"
 
 
 class TestMicroservicesLogging:
