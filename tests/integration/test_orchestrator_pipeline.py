@@ -121,12 +121,15 @@ def start_test_infrastructure():
         "jobscout-orchestrator:latest",
         "python", "-c",
         """
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from database.models.base import Base
 import os
 engine = create_engine(os.environ['DATABASE_URL'])
+with engine.connect() as conn:
+    conn.execute(text('CREATE EXTENSION IF NOT EXISTS vector;'))
+    conn.commit()
 Base.metadata.create_all(bind=engine)
-print('Database tables created')
+print('Database tables created with pgvector extension')
         """
     ], check=True)
 
