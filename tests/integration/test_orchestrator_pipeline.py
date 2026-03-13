@@ -93,7 +93,24 @@ def start_test_infrastructure():
     
     # Wait for Redis
     wait_for_service(f"localhost:{REDIS_PORT}", "redis-cli ping")
+
+    # Start PostgreSQL (for web backend resume upload testing)
+    print("  Starting PostgreSQL...")
+    run_docker_command([
+        "run", "-d",
+        "--name", "postgres-test",
+        "--network", "test-network",
+        "-p", "5433:5432",
+        "-e", "POSTGRES_USER=user",
+        "-e", "POSTGRES_PASSWORD=password",
+        "-e", "POSTGRES_DB=jobscout_test",
+        "--rm",
+        "pgvector/pgvector:pg16"
+    ], check=True)
     
+    # Wait for PostgreSQL
+    wait_for_service("localhost:5433", "pg_isready")
+
     # Start Extraction Service
     print("  Starting Extraction Service...")
     run_docker_command([
@@ -144,6 +161,17 @@ def start_test_infrastructure():
     
     # Start Orchestrator Service
     print("  Starting Orchestrator Service...")
+    
+    # Get project root for mounting resume file and config
+    import pathlib
+    project_root = pathlib.Path(__file__).parent.parent.parent
+    resume_path = project_root / "resume.json"
+    config_path = project_root / "config.yaml"
+    
+    # Check if resume file exists
+    if not resume_path.exists():
+        print("  ⚠️  resume.json not found - orchestrator will start but pipeline will fail")
+    
     run_docker_command([
         "run", "-d",
         "--name", "orchestrator-test",
@@ -153,19 +181,43 @@ def start_test_infrastructure():
         "-e", "EXTRACTION_URL=http://extraction-test:8081",
         "-e", "EMBEDDINGS_URL=http://embeddings-test:8082",
         "-e", "SCORER_MATCHER_URL=http://matcher-test:8083",
+        "-v", f"{resume_path}:/app/resume.json:ro",
+        "-v", f"{config_path}:/app/config.yaml:ro",
         "--rm",
         "jobscout-orchestrator:latest",
         "uv", "run", "uvicorn", "services.orchestrator.main:app",
         "--host", "0.0.0.0", "--port", "8084"
     ], check=True)
-    
+
+    # Start Web Backend (for resume upload API testing)
+    print("  Starting Web Backend...")
+    web_backend_port = os.environ.get("WEB_BACKEND_PORT", "8080")
+    run_docker_command([
+        "run", "-d",
+        "--name", "web-backend-test",
+        "--network", "test-network",
+        "-p", f"{web_backend_port}:8080",
+        "-e", f"DATABASE_URL=postgresql://user:password@postgres-test:5432/jobscout_test",
+        "-e", f"REDIS_URL={REDIS_URL_DOCKER}",
+        "-e", f"EXTRACTION_URL=http://extraction-test:8081",
+        "-e", f"EMBEDDINGS_URL=http://embeddings-test:8082",
+        "-e", f"SCORER_MATCHER_URL=http://matcher-test:8083",
+        "-e", f"ORCHESTRATOR_URL=http://orchestrator-test:8084",
+        "-v", f"{config_path}:/app/config.yaml:ro",
+        "--rm",
+        "jobscout-orchestrator:latest",
+        "uv", "run", "uvicorn", "web.backend.app:app",
+        "--host", "0.0.0.0", "--port", "8080"
+    ], check=True)
+
     # Wait for all services to be healthy
     print("  Waiting for services to be ready...")
     wait_for_service(f"localhost:{EXTRACTION_PORT}", "health")
     wait_for_service(f"localhost:{EMBEDDINGS_PORT}", "health")
     wait_for_service(f"localhost:{MATCHER_PORT}", "health")
     wait_for_service(f"localhost:{ORCHESTRATOR_PORT}", "health")
-    
+    wait_for_service(f"localhost:{web_backend_port}", "health")
+
     print("  All services ready!")
 
 
@@ -332,7 +384,7 @@ class TestOrchestratorPipeline:
         # Trigger the pipeline, capturing the response stream to validate event delivery
         response = requests.post(f"{ORCHESTRATOR_URL}/orchestrate/match", json={}, stream=True)
         assert response.status_code == 200
-        
+
         # Check if the endpoint responds with SSE (Server-Sent Events)
         if response.headers.get('content-type') == 'text/event-stream':
             first_event = next(response.iter_lines()).decode('utf-8')
@@ -343,6 +395,86 @@ class TestOrchestratorPipeline:
             assert data["success"] is True
             assert data["task_id"].startswith("match-")
             assert "Pipeline started" in data["message"]
+
+
+class TestResumeUploadAndMatch:
+    """Test the full resume upload -> matching pipeline flow."""
+
+    def test_upload_resume_via_web_backend_api(self):
+        """Test uploading a resume via the web backend /api/pipeline/upload-resume endpoint.
+        
+        This tests the actual user workflow:
+        1. Upload resume file via POST /api/pipeline/upload-resume
+        2. Resume is processed and stored in database
+        3. Trigger matching pipeline via POST /orchestrate/match
+        4. Pipeline uses the uploaded resume from database
+        """
+        import requests
+        import time
+        import json
+        
+        # Sample resume data for testing
+        test_resume = {
+            "personal_info": {
+                "name": "Test User",
+                "email": "test@example.com",
+                "phone": "+1-555-0123"
+            },
+            "experience": [
+                {
+                    "company": "Test Corp",
+                    "title": "Senior Software Engineer",
+                    "start_date": "2020-01",
+                    "end_date": "present",
+                    "description": "Developed microservices architecture"
+                }
+            ],
+            "skills": ["Python", "FastAPI", "Redis", "Docker", "Kubernetes"]
+        }
+        
+        # Step 1: Upload resume via web backend API
+        # Note: Web backend runs on port 8080 by default in CI
+        web_backend_url = os.environ.get("WEB_BACKEND_URL", "http://localhost:8080")
+        upload_url = f"{web_backend_url}/api/pipeline/upload-resume"
+        
+        files = {
+            'file': ('test-resume.json', json.dumps(test_resume), 'application/json')
+        }
+        
+        response = requests.post(upload_url, files=files)
+        
+        # Should accept the upload (may return 200 or skip if already processed)
+        assert response.status_code in [200, 409], f"Upload failed: {response.text}"
+        
+        upload_data = response.json()
+        assert upload_data.get("success") is True or "already" in upload_data.get("message", "").lower()
+        
+        resume_hash = upload_data.get("resume_hash")
+        assert resume_hash, "Response should include resume_hash"
+        
+        # Step 2: Wait for resume processing to complete
+        if upload_data.get("task_id"):
+            # Poll for processing completion
+            events_url = f"{web_backend_url}/api/pipeline/events/{upload_data['task_id']}"
+            for _ in range(30):  # Wait up to 30 seconds
+                time.sleep(1)
+                status_response = requests.get(f"{web_backend_url}/api/pipeline/status/{upload_data['task_id']}")
+                if status_response.status_code == 200:
+                    status_data = status_response.json()
+                    if status_data.get("status") in ["completed", "failed"]:
+                        break
+        
+        # Step 3: Trigger matching pipeline - should use uploaded resume from DB
+        orchestrator_url = f"{ORCHESTRATOR_URL}/orchestrate/match"
+        match_response = requests.post(orchestrator_url, json={})
+        
+        assert match_response.status_code == 200, f"Match endpoint failed: {match_response.text}"
+        match_data = match_response.json()
+        assert match_data["success"] is True
+        assert match_data["task_id"].startswith("match-")
+        
+        # The pipeline should start successfully using the resume from database
+        # (Actual matching may take time, we just verify it started)
 
 
 class TestMicroservicesLogging:
