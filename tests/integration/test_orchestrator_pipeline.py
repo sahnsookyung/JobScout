@@ -19,6 +19,7 @@ import pytest
 import subprocess
 import time
 import requests
+import pathlib
 from typing import Generator
 
 # Configuration - Test services run on different ports to avoid conflicts
