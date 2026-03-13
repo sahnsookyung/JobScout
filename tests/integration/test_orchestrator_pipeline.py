@@ -218,6 +218,48 @@ print('Database tables created')
     print("  All services ready!")
 
 
+def start_web_backend_for_tests(project_root: pathlib.Path, resume_path: pathlib.Path, config_path: pathlib.Path):
+    """Start web backend container for resume upload testing.
+    
+    This uses the same Dockerfile as production (web/backend/Dockerfile).
+    """
+    print("  Starting Web Backend for resume upload tests...")
+    web_backend_port = os.environ.get("WEB_BACKEND_PORT", "8080")
+    
+    # Build web backend image if not exists
+    image_check = run_docker_command(["images", "-q", "jobscout-web-backend:latest"])
+    if not image_check.stdout.strip():
+        print("    Building jobscout-web-backend image (this may take a minute)...")
+        run_docker_command([
+            "build",
+            "-f", str(project_root / "web" / "backend" / "Dockerfile"),
+            "-t", "jobscout-web-backend:latest",
+            str(project_root)
+        ], check=True)
+        print("    Web backend image built successfully")
+    
+    run_docker_command([
+        "run", "-d",
+        "--name", "web-backend-test",
+        "--network", "test-network",
+        "-p", f"{web_backend_port}:8080",
+        "-e", f"DATABASE_URL=postgresql://user:password@postgres-test:5432/jobscout_test",
+        "-e", f"REDIS_URL={REDIS_URL_DOCKER}",
+        "-e", f"EXTRACTION_URL=http://extraction-test:8081",
+        "-e", f"EMBEDDINGS_URL=http://embeddings-test:8082",
+        "-e", f"SCORER_MATCHER_URL=http://matcher-test:8083",
+        "-e", f"ORCHESTRATOR_URL=http://orchestrator-test:8084",
+        "-v", f"{config_path}:/app/config.yaml:ro",
+        "-v", f"{resume_path}:/app/resume.json:ro",
+        "--rm",
+        "jobscout-web-backend:latest"
+    ], check=True)
+    
+    # Wait for web backend to be healthy
+    wait_for_service(f"localhost:{web_backend_port}", "health")
+    print("  Web Backend ready!")
+
+
 def wait_for_service(host_port, check_type, timeout=60):
     """Wait for service to be ready."""
     start_time = time.time()
@@ -250,7 +292,7 @@ def wait_for_service(host_port, check_type, timeout=60):
 def stop_test_infrastructure():
     """Stop all test containers."""
     print("\nStopping test infrastructure...")
-    for container in ["orchestrator-test", "matcher-test", "embeddings-test", "extraction-test", "redis-test", "postgres-test"]:
+    for container in ["orchestrator-test", "matcher-test", "embeddings-test", "extraction-test", "redis-test", "postgres-test", "web-backend-test"]:
         run_docker_command(["stop", container])
     run_docker_command(["network", "rm", "test-network"])
     print("  Test infrastructure stopped")
@@ -260,6 +302,13 @@ def stop_test_infrastructure():
 def test_infrastructure() -> Generator[None, None, None]:
     """Session fixture to start and stop test infrastructure."""
     start_test_infrastructure()
+    
+    # Start web backend for resume upload tests
+    project_root = pathlib.Path(__file__).parent.parent.parent
+    resume_path = project_root / "resume.json"
+    config_path = project_root / "config.yaml"
+    start_web_backend_for_tests(project_root, resume_path, config_path)
+    
     yield
     stop_test_infrastructure()
 
@@ -405,18 +454,17 @@ class TestOrchestratorPipeline:
 class TestResumeUploadAndMatch:
     """Test the full resume upload -> matching pipeline flow."""
 
-    @pytest.mark.skip(reason="Requires web-backend image build in CI")
     def test_upload_resume_via_web_backend_api(self):
         """Test uploading a resume via the web backend /api/pipeline/upload-resume endpoint.
-        
+
         This tests the actual user workflow:
         1. Upload resume file via POST /api/pipeline/upload-resume
         2. Resume is processed and stored in database
         3. Trigger matching pipeline via POST /orchestrate/match
         4. Pipeline uses the uploaded resume from database
-        
-        Note: This test is skipped in CI until we add web-backend image build.
-        Run locally with: docker build -f web/backend/Dockerfile -t jobscout-web-backend .
+
+        The web backend container is built using the production Dockerfile
+        (web/backend/Dockerfile) to ensure test matches production behavior.
         """
         import requests
         import time
