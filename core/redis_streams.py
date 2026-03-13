@@ -338,6 +338,66 @@ def get_stream_info(stream: str) -> dict:
         raise
 
 
+def get_stream_backlog(stream: str) -> dict:
+    """Get pending message count and queue depth for a stream.
+    
+    Args:
+        stream: Stream name
+        
+    Returns:
+        Dict with stream stats:
+        - stream: Stream name
+        - length: Total messages ever added
+        - pending: Messages pending acknowledgment
+        - consumers: Number of active consumers
+        - groups: Number of consumer groups
+    """
+    client = get_redis_client()
+    try:
+        info = client.xinfo_stream(stream)
+        return {
+            "stream": stream,
+            "length": info.get("length", 0),
+            "pending": info.get("pending", 0),
+            "consumers": info.get("consumers", 0),
+            "groups": info.get("groups", 0),
+        }
+    except redis.ResponseError as e:
+        if "no such key" in str(e).lower() or "err no such key" in str(e).lower():
+            return {"stream": stream, "length": 0, "pending": 0, "consumers": 0, "groups": 0}
+        raise
+
+
+def get_all_stream_backlogs() -> dict:
+    """Get backlog stats for all pipeline streams.
+    
+    Returns:
+        Dict mapping stream names to their backlog stats
+    """
+    return {
+        "extraction": get_stream_backlog(STREAM_EXTRACTION),
+        "embeddings": get_stream_backlog(STREAM_EMBEDDINGS),
+        "matching": get_stream_backlog(STREAM_MATCHING),
+    }
+
+
+def log_stream_backlogs() -> None:
+    """Log current backlog for all pipeline streams.
+    
+    Useful for periodic health checks or debugging.
+    """
+    backlogs = get_all_stream_backlogs()
+    for stream_name, stats in backlogs.items():
+        logger.info(
+            "📊 Stream backlog: %s - length=%d, pending=%d, consumers=%d, groups=%d",
+            stream_name,
+            stats.get("length", 0),
+            stats.get("pending", 0),
+            stats.get("consumers", 0),
+            stats.get("groups", 0),
+        )
+
+
 def stream_exists(stream: str) -> bool:
     return bool(get_stream_info(stream))
 

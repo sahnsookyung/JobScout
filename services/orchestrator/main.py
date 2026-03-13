@@ -42,6 +42,11 @@ from core.redis_streams import (
     CHANNEL_MATCHING_DONE,
 )
 
+# Configure logging at module level
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -68,6 +73,20 @@ class OrchestratorRegistry:
 # Lifespan
 # ---------------------------------------------------------------------------
 
+async def _log_stream_backlogs_periodically(stop_event: asyncio.Event) -> None:
+    """Log stream backlogs every 30 seconds for visibility."""
+    from core.redis_streams import log_stream_backlogs
+    
+    while not stop_event.is_set():
+        try:
+            await asyncio.sleep(30)
+            log_stream_backlogs()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning("Failed to log stream backlogs: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=" * 60)
@@ -83,6 +102,11 @@ async def lifespan(app: FastAPI):
         "📡 Will subscribe to channels: %s, %s, %s",
         CHANNEL_EXTRACTION_DONE, CHANNEL_EMBEDDINGS_DONE, CHANNEL_MATCHING_DONE,
     )
+    
+    # Start periodic stream backlog logging
+    stream_log_stop = asyncio.Event()
+    stream_log_task = asyncio.create_task(_log_stream_backlogs_periodically(stream_log_stop))
+    logger.info("📊 Started periodic stream backlog logging (every 30s)")
     logger.info("=" * 60)
 
     cleanup_task = asyncio.create_task(
@@ -91,6 +115,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # Stop stream logging
+    stream_log_stop.set()
+    stream_log_task.cancel()
+    await asyncio.gather(stream_log_task, return_exceptions=True)
+    
     cleanup_task.cancel()
     await asyncio.gather(cleanup_task, return_exceptions=True)
 
@@ -256,14 +285,21 @@ async def _wait_for_next_message(pubsub) -> dict:
     """Read the next pubsub message. Caller owns the timeout."""
     async for message in pubsub.listen():
         if message["type"] == "message":
-            return json.loads(message["data"])
+            data = json.loads(message["data"])
+            logger.debug("📬 PubSub message received: channel=%s, task_id=%s, status=%s", 
+                        message.get("channel"), data.get("task_id"), data.get("status"))
+            return data
+        logger.debug("Received pubsub message type: %s", message.get("type"))
+    return {}
 
 
 async def _wait_for_task_message(pubsub, task_id: str) -> dict:
     """Skip messages until one matches task_id. Caller owns the timeout."""
     while True:
         data = await _wait_for_next_message(pubsub)
+        logger.info("🔍 Checking task_id: received=%s, waiting_for=%s", data.get("task_id"), task_id)
         if data.get("task_id") == task_id:
+            logger.info("✅ Found matching completion message for task_id=%s", task_id)
             return data
         logger.debug(
             "Skipping message for task %s, waiting for %s",
@@ -283,13 +319,23 @@ async def _run_pipeline_stage(
     The caller is responsible for subscribing pubsub to the correct channel
     and wrapping this call in asyncio.timeout().
     """
-    logger.info("📤 Enqueueing %s job to %s", stage_name, stream)
+    # Map stage name to completion channel
+    channel_map = {
+        "extraction": CHANNEL_EXTRACTION_DONE,
+        "embeddings": CHANNEL_EMBEDDINGS_DONE,
+        "matching": CHANNEL_MATCHING_DONE,
+    }
+    completion_channel = channel_map.get(stage_name, "unknown")
+    
+    logger.info("📤 Enqueueing %s job to %s: task_id=%s", stage_name, stream, job_payload.get("task_id"))
+    logger.debug("   Payload: %s", json.dumps(job_payload))
     await asyncio.to_thread(enqueue_job, stream, job_payload)
-    logger.info("✅ %s job enqueued", stage_name.capitalize())
+    logger.info("✅ %s job enqueued: task_id=%s", stage_name.capitalize(), job_payload.get("task_id"))
 
-    logger.info("⏳ Waiting for %s completion...", stage_name)
+    logger.info("⏳ Waiting for %s completion on %s...", stage_name, completion_channel)
     data = await _wait_for_task_message(pubsub, state.task_id)
-    logger.info("📨 %s response: status=%s", stage_name, data.get("status"))
+    logger.info("📨 Received %s completion: task_id=%s, status=%s, channel=%s", 
+                stage_name, data.get("task_id"), data.get("status"), completion_channel)
 
     status = data.get("status")
     if status == "failed":
@@ -356,78 +402,110 @@ async def _cleanup_pubsub_and_client(redis_client, pubsub) -> None:
 # ---------------------------------------------------------------------------
 
 async def orchestrate_match(
-    task_id: str, resume_file: str, registry: OrchestratorRegistry
+    task_id: str, resume_file: Optional[str], registry: OrchestratorRegistry,
+    resume_fingerprint: Optional[str] = None
 ) -> None:
-    """Run the full pipeline: extraction -> embeddings -> matching."""
+    """Run the full pipeline: extraction -> embeddings -> matching.
+    
+    If resume_fingerprint is provided, extraction and embedding stages are skipped
+    and matching is run directly using the existing stored data.
+    """
     async with registry.lock:
         registry.active_task_ids.add(task_id)
 
     state = await get_or_create_orchestration(registry, task_id)
-    state.status = "extracting"
-    state.resume_file = resume_file
+    
+    if resume_fingerprint:
+        state.resume_fingerprint = resume_fingerprint
+        logger.info("🔄 Resume already processed, skipping extraction/embedding")
+    else:
+        state.status = "extracting"
+        state.resume_file = resume_file
+        
     await state._save_to_redis()
-    await state.notify({"task_id": task_id, "status": "extracting", "message": "Starting extraction"})
 
     redis_client = None
     pubsub = None
     try:
         logger.info("🚀 Starting pipeline for task: %s", task_id)
-        redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
-        pubsub = redis_client.pubsub()
+        
+        if resume_fingerprint:
+            await state.notify({"task_id": task_id, "status": "matching", "message": "Resume already processed, starting matching"})
+            logger.info("⏭️ Skipping extraction and embedding stages")
+            
+            redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
+            pubsub = redis_client.pubsub()
+            await pubsub.subscribe(CHANNEL_MATCHING_DONE)
+            logger.info("📡 Subscribed to %s for matching", CHANNEL_MATCHING_DONE)
 
-        # ── Stage 1: Extraction ──────────────────────────────────────────
-        logger.info("📡 Subscribing to %s", CHANNEL_EXTRACTION_DONE)
-        await pubsub.subscribe(CHANNEL_EXTRACTION_DONE)
+            async with asyncio.timeout(LISTENER_TIMEOUT):
+                success, matching_data = await _run_pipeline_stage(
+                    state=state, pubsub=pubsub,
+                    stream=STREAM_MATCHING,
+                    job_payload={"task_id": task_id, "resume_fingerprint": state.resume_fingerprint},
+                    stage_name="matching",
+                )
+            if not success:
+                return
+        else:
+            await state.notify({"task_id": task_id, "status": "extracting", "message": "Starting extraction"})
+            
+            redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
+            pubsub = redis_client.pubsub()
 
-        async with asyncio.timeout(LISTENER_TIMEOUT):
-            success, extraction_data = await _run_pipeline_stage(
-                state=state, pubsub=pubsub,
-                stream=STREAM_EXTRACTION,
-                job_payload={"task_id": task_id, "resume_file": resume_file},
-                stage_name="extraction",
-            )
-        if not success:
-            return
-        if not await _handle_extraction_fingerprint(state, task_id, extraction_data):
-            return
+            # ── Stage 1: Extraction ──────────────────────────────────────────
+            logger.info("📡 Subscribing to %s", CHANNEL_EXTRACTION_DONE)
+            await pubsub.subscribe(CHANNEL_EXTRACTION_DONE)
 
-        # ── Stage 2: Embeddings ──────────────────────────────────────────
-        state.status = "embedding"
-        await state._save_to_redis()
-        await state.notify({"task_id": task_id, "status": "embedding", "message": "Starting embeddings"})
+            async with asyncio.timeout(LISTENER_TIMEOUT):
+                success, extraction_data = await _run_pipeline_stage(
+                    state=state, pubsub=pubsub,
+                    stream=STREAM_EXTRACTION,
+                    job_payload={"task_id": task_id, "resume_file": resume_file},
+                    stage_name="extraction",
+                )
+            if not success:
+                return
+            if not await _handle_extraction_fingerprint(state, task_id, extraction_data):
+                return
 
-        await pubsub.unsubscribe(CHANNEL_EXTRACTION_DONE)
-        await pubsub.subscribe(CHANNEL_EMBEDDINGS_DONE)
-        logger.info("📡 Switched to %s", CHANNEL_EMBEDDINGS_DONE)
+            # ── Stage 2: Embeddings ──────────────────────────────────────────
+            state.status = "embedding"
+            await state._save_to_redis()
+            await state.notify({"task_id": task_id, "status": "embedding", "message": "Starting embeddings"})
 
-        async with asyncio.timeout(LISTENER_TIMEOUT):
-            success, _ = await _run_pipeline_stage(
-                state=state, pubsub=pubsub,
-                stream=STREAM_EMBEDDINGS,
-                job_payload={"task_id": task_id, "resume_fingerprint": state.resume_fingerprint},
-                stage_name="embeddings",
-            )
-        if not success:
-            return
+            await pubsub.unsubscribe(CHANNEL_EXTRACTION_DONE)
+            await pubsub.subscribe(CHANNEL_EMBEDDINGS_DONE)
+            logger.info("📡 Switched to %s", CHANNEL_EMBEDDINGS_DONE)
 
-        # ── Stage 3: Matching ────────────────────────────────────────────
-        state.status = "matching"
-        await state._save_to_redis()
-        await state.notify({"task_id": task_id, "status": "matching", "message": "Starting matching"})
+            async with asyncio.timeout(LISTENER_TIMEOUT):
+                success, _ = await _run_pipeline_stage(
+                    state=state, pubsub=pubsub,
+                    stream=STREAM_EMBEDDINGS,
+                    job_payload={"task_id": task_id, "resume_fingerprint": state.resume_fingerprint},
+                    stage_name="embeddings",
+                )
+            if not success:
+                return
 
-        await pubsub.unsubscribe(CHANNEL_EMBEDDINGS_DONE)
-        await pubsub.subscribe(CHANNEL_MATCHING_DONE)
-        logger.info("📡 Switched to %s", CHANNEL_MATCHING_DONE)
+            # ── Stage 3: Matching ────────────────────────────────────────────
+            state.status = "matching"
+            await state._save_to_redis()
+            await state.notify({"task_id": task_id, "status": "matching", "message": "Starting matching"})
 
-        async with asyncio.timeout(LISTENER_TIMEOUT):
-            success, matching_data = await _run_pipeline_stage(
-                state=state, pubsub=pubsub,
-                stream=STREAM_MATCHING,
-                job_payload={"task_id": task_id, "resume_fingerprint": state.resume_fingerprint},
-                stage_name="matching",
-            )
-        if not success:
-            return
+            await pubsub.unsubscribe(CHANNEL_EMBEDDINGS_DONE)
+            await pubsub.subscribe(CHANNEL_MATCHING_DONE)
+            logger.info("📡 Switched to %s", CHANNEL_MATCHING_DONE)
+
+            async with asyncio.timeout(LISTENER_TIMEOUT):
+                success, matching_data = await _run_pipeline_stage(
+                    state=state, pubsub=pubsub,
+                    stream=STREAM_MATCHING,
+                    job_payload={"task_id": task_id, "resume_fingerprint": state.resume_fingerprint},
+                    stage_name="matching",
+                )
+            if not success:
+                return
 
         state.status = "completed"
         state.matches_count = matching_data.get("matches_count", 0)
@@ -441,7 +519,6 @@ async def orchestrate_match(
         })
 
     except asyncio.TimeoutError:
-        # Fired by one of the asyncio.timeout() blocks above
         logger.error("❌ Orchestration timeout for task %s: %s", task_id, "stage timeout exceeded", exc_info=True)
         state.status = "failed"
         state.error = "Stage timeout"
@@ -533,7 +610,11 @@ async def metrics():
 
 @app.post("/orchestrate/match", response_model=MatchResponse)
 async def orchestrate_match_endpoint(request: Request):
-    """Trigger the full pipeline: extraction -> embeddings -> matching."""
+    """Trigger the full pipeline: extraction -> embeddings -> matching.
+    
+    If a resume has already been uploaded and processed, this will skip
+    extraction and embedding stages and go straight to matching.
+    """
     logger.info("=" * 60)
     logger.info("📨 HTTP POST /orchestrate/match received")
     logger.info("=" * 60)
@@ -544,18 +625,30 @@ async def orchestrate_match_endpoint(request: Request):
     ctx: AppContext = request.app.state.ctx
     registry: OrchestratorRegistry = request.app.state.registry
 
+    from database.uow import job_uow
+    
     resume_file: Optional[str] = None
-    if ctx.config.etl and ctx.config.etl.resume:
-        resume_file = ctx.config.etl.resume.resume_file
+    resume_fingerprint: Optional[str] = None
+    
+    with job_uow() as repo:
+        latest_fingerprint = repo.resume.get_latest_stored_resume_fingerprint()
+        if latest_fingerprint:
+            logger.info("📄 Found existing resume in database: %s...", latest_fingerprint[:16])
+            resume_fingerprint = latest_fingerprint
+        else:
+            if ctx.config.etl and ctx.config.etl.resume:
+                resume_file = ctx.config.etl.resume.resume_file
+            if not resume_file:
+                logger.error("❌ No resume in database and no resume file configured")
+                return MatchResponse(success=False, task_id=task_id, message="No resume found. Please upload a resume first.")
 
-    if not resume_file:
-        logger.error("❌ No resume file configured in config")
-        return MatchResponse(success=False, task_id=task_id, message="No resume file configured")
+    if resume_fingerprint:
+        logger.info("🚀 Using existing resume from DB (fingerprint: %s...)", resume_fingerprint[:16])
+    else:
+        logger.info("📄 Using resume file: %s", resume_file)
+        logger.info("🚀 Creating orchestration task...")
 
-    logger.info("📄 Using resume file: %s", resume_file)
-    logger.info("🚀 Creating orchestration task...")
-
-    task = asyncio.create_task(orchestrate_match(task_id, resume_file, registry))
+    task = asyncio.create_task(orchestrate_match(task_id, resume_file, registry, resume_fingerprint))
 
     def safe_done_callback(t: asyncio.Task) -> None:
         try:
