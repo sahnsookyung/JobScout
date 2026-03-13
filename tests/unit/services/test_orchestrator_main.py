@@ -435,31 +435,39 @@ class TestOrchestrateMatchEndpoint:
         app.state.ctx = mock_ctx
         app.state.registry = mock_registry
 
+        # Mock database access for checking existing resume
+        mock_repo = MagicMock()
+        mock_repo.resume.get_latest_stored_resume_fingerprint.return_value = None
+        mock_uow = MagicMock()
+        mock_uow.__enter__ = MagicMock(return_value=mock_repo)
+        mock_uow.__exit__ = MagicMock(return_value=False)
+
         try:
-            from fastapi.testclient import TestClient
-            client = TestClient(app)
+            with patch('database.uow.job_uow', return_value=mock_uow):
+                from fastapi.testclient import TestClient
+                client = TestClient(app)
 
-            with patch('asyncio.create_task') as mock_create:
-                mock_task = AsyncMock()
-                mock_task.add_done_callback = Mock()
-                mock_create.return_value = mock_task
+                with patch('asyncio.create_task') as mock_create:
+                    mock_task = AsyncMock()
+                    mock_task.add_done_callback = Mock()
+                    mock_create.return_value = mock_task
 
-                # Use a wrapper that prevents the coroutine from being created
-                def mock_create_task(coro):
-                    # Close the coroutine to avoid unawaited warning
-                    if hasattr(coro, 'close'):
-                        coro.close()
-                    return mock_task
+                    # Use a wrapper that prevents the coroutine from being created
+                    def mock_create_task(coro):
+                        # Close the coroutine to avoid unawaited warning
+                        if hasattr(coro, 'close'):
+                            coro.close()
+                        return mock_task
 
-                mock_create.side_effect = mock_create_task
+                    mock_create.side_effect = mock_create_task
 
-                response = client.post("/orchestrate/match")
+                    response = client.post("/orchestrate/match")
 
-                assert response.status_code == 200
-                data = response.json()
-                assert data["success"] is True
-                assert "task_id" in data
-                mock_create.assert_called_once()
+                    assert response.status_code == 200
+                    data = response.json()
+                    assert data["success"] is True
+                    assert "task_id" in data
+                    mock_create.assert_called_once()
         finally:
             del app.state.ctx
             del app.state.registry
