@@ -240,6 +240,10 @@ stop_services() {
         kill $(lsof -ti:${FRONTEND_PORT}) 2>/dev/null || true
     fi
 
+    # Clean up dangling images to prevent disk space issues
+    log_info "Cleaning up dangling Docker images..."
+    docker image prune -f 2>/dev/null || true
+
     log_success "Existing services stopped"
 }
 
@@ -392,7 +396,8 @@ start_web_app() {
         uv run python -m uvicorn web.backend.app:app --host 127.0.0.1 --reload --port ${BACKEND_PORT} > "${LOGS_DIR}/web-app.log" 2>&1 &
     else
         log_info "Starting web backend via Docker..."
-        docker compose -f "${PROJECT_ROOT}/docker-compose.yml" -f "${PROJECT_ROOT}/docker-compose.web.yml" --profile web up -d web-backend
+        # Always rebuild to ensure latest code and dependencies are included
+        docker compose -f "${PROJECT_ROOT}/docker-compose.yml" -f "${PROJECT_ROOT}/docker-compose.web.yml" --profile web up -d --build web-backend
     fi
 
     WEB_APP_PID=$!

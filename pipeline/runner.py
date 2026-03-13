@@ -70,10 +70,30 @@ def load_user_wants_data(wants_file_path: str) -> List[str]:
         return []
 
 
+def _load_resume_from_db(resume_fingerprint: str) -> Optional[dict]:
+    """Load resume extracted_data from database using fingerprint."""
+    logger.info(f"Loading resume from database: {resume_fingerprint[:16]}...")
+    try:
+        from database.uow import job_uow
+        with job_uow() as repo:
+            structured_resume = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
+            if not structured_resume:
+                logger.error(f"No resume found in DB for fingerprint: {resume_fingerprint[:16]}...")
+                return None
+            if not structured_resume.extracted_data:
+                logger.error(f"Resume found but no extracted_data for fingerprint: {resume_fingerprint[:16]}...")
+                return None
+            return structured_resume.extracted_data
+    except Exception as e:
+        logger.error(f"Error loading resume from DB: {e}")
+        return None
+
+
 def run_matching_pipeline(
     ctx: AppContext,
     stop_event: Optional[threading.Event] = None,
-    status_callback: Optional[Callable[[str], None]] = None
+    status_callback: Optional[Callable[[str], None]] = None,
+    resume_fingerprint: Optional[str] = None,
 ) -> MatchingPipelineResult:
     """Run the matching pipeline as a self-contained operation.
 
@@ -110,18 +130,28 @@ def run_matching_pipeline(
         )
 
     try:
-        # Step 1: Load and validate resume file
-        resume_file, resume_data = _load_resume_file(ctx.config.etl)
-        if not resume_file or not resume_data:
-            return MatchingPipelineResult(
-                success=False, matches_count=0, saved_count=0,
-                notified_count=0, error="Failed to load resume"
+        # Step 1: Load resume data
+        # If resume_fingerprint is provided (from orchestrator), load from DB
+        # Otherwise, fall back to loading from file (backward compatibility)
+        if resume_fingerprint:
+            resume_data = _load_resume_from_db(resume_fingerprint)
+            if not resume_data:
+                return MatchingPipelineResult(
+                    success=False, matches_count=0, saved_count=0,
+                    notified_count=0, error=f"Resume not found in DB for fingerprint: {resume_fingerprint[:16]}..."
+                )
+            should_re_extract = False
+            logger.info("Loaded resume from database (fingerprint: %s...)", resume_fingerprint[:16])
+        else:
+            resume_file, resume_data = _load_resume_file(ctx.config.etl)
+            if not resume_file or not resume_data:
+                return MatchingPipelineResult(
+                    success=False, matches_count=0, saved_count=0,
+                    notified_count=0, error="Failed to load resume"
+                )
+            resume_fingerprint, should_re_extract = _determine_resume_extraction(
+                resume_file, ctx.config.etl
             )
-
-        # Step 2: Calculate fingerprint and determine if re-extraction is needed
-        resume_fingerprint, should_re_extract = _determine_resume_extraction(
-            resume_file, ctx.config.etl
-        )
 
         # Step 3: Load user wants embeddings
         user_want_embeddings = _load_user_wants_embeddings(

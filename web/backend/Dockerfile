@@ -21,6 +21,10 @@ COPY core/ ./core/
 COPY database/ ./database/
 # ETL: ResumeParser for resume upload endpoint
 COPY etl/ ./etl/
+# Notification service for async notifications
+COPY notification/ ./notification/
+# Shared constants and utilities
+COPY web/shared/ ./web/shared/
 # Web backend application
 COPY web/backend/ ./web/backend/
 COPY config.yaml ./

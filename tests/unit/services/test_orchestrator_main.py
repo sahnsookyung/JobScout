@@ -469,6 +469,7 @@ class TestOrchestrateMatchEndpoint:
         """Test orchestrate match endpoint without resume file configured."""
         from services.orchestrator.main import app, OrchestratorRegistry
         from core.app_context import AppContext
+        from unittest.mock import patch, MagicMock
 
         mock_ctx = Mock(spec=AppContext)
         mock_ctx.config = Mock()
@@ -479,16 +480,24 @@ class TestOrchestrateMatchEndpoint:
         app.state.ctx = mock_ctx
         app.state.registry = mock_registry
 
+        mock_repo = MagicMock()
+        mock_repo.resume.get_latest_stored_resume_fingerprint.return_value = None
+
+        mock_uow = MagicMock()
+        mock_uow.__enter__ = MagicMock(return_value=mock_repo)
+        mock_uow.__exit__ = MagicMock(return_value=False)
+
         try:
-            from fastapi.testclient import TestClient
-            client = TestClient(app)
+            with patch('database.uow.job_uow', return_value=mock_uow):
+                from fastapi.testclient import TestClient
+                client = TestClient(app)
 
-            response = client.post("/orchestrate/match")
+                response = client.post("/orchestrate/match")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["success"] is False
-            assert data["message"] == "No resume file configured"
+                assert response.status_code == 200
+                data = response.json()
+                assert data["success"] is False
+                assert data["message"] == "No resume found. Please upload a resume first."
         finally:
             del app.state.ctx
             del app.state.registry

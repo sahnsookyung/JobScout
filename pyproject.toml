@@ -36,6 +36,7 @@ web = [
     "pydantic>=2.12.5",
     "python-multipart>=0.0.22",
     "slowapi>=0.1.9",
+    "python-dotenv>=1.0.0",
 ]
 
 [tool.uv]

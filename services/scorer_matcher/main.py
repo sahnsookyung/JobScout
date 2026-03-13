@@ -80,7 +80,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
 
         try:
             result = await asyncio.to_thread(
-                _run_matching_pipeline_sync, self.ctx, self.stop_event
+                _run_matching_pipeline_sync, self.ctx, self.stop_event, resume_fingerprint
             )
 
             matches_count = result.saved_count if result else 0
@@ -265,10 +265,10 @@ async def stop_matching(request: Request):
 # ---------------------------------------------------------------------------
 
 def _run_matching_pipeline_sync(
-    ctx: AppContext, stop_event: threading.Event
+    ctx: AppContext, stop_event: threading.Event, resume_fingerprint: Optional[str] = None
 ):
     """Run the matching pipeline synchronously — safe to call via asyncio.to_thread."""
-    return run_matching_pipeline(ctx, stop_event)
+    return run_matching_pipeline(ctx, stop_event, resume_fingerprint=resume_fingerprint)
 
 
 async def _process_matching_message(
@@ -286,7 +286,7 @@ async def _process_matching_message(
 
     try:
         result = await asyncio.to_thread(
-            _run_matching_pipeline_sync, state.ctx, state.stop_event
+            _run_matching_pipeline_sync, state.ctx, state.stop_event, resume_fingerprint
         )
         matches_count = result.saved_count if result else 0
         await asyncio.to_thread(
