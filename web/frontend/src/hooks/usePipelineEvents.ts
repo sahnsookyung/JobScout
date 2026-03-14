@@ -20,18 +20,18 @@ export const usePipelineEvents = (
     options: UsePipelineEventsOptions = {}
 ) => {
     const { maxRetries, baseDelay, maxDelay } = { ...DEFAULT_OPTIONS, ...options };
-    
+
     const [status, setStatus] = useState<PipelineStatusResponse | null>(null);
     const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
     const [error, setError] = useState<string | null>(null);
     const [retryCount, setRetryCount] = useState(0);
-    
+
     const eventSourceRef = useRef<EventSource | null>(null);
     const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const mountedRef = useRef(true);
     const retryCountRef = useRef(0);
     const taskIdRef = useRef<string | null>(null);
-    
+
     taskIdRef.current = taskId;
     retryCountRef.current = retryCount;
 
@@ -61,14 +61,14 @@ export const usePipelineEvents = (
     const connect = useCallback(() => {
         const currentTaskId = taskIdRef.current;
         if (!currentTaskId) return;
-        
+
         if (eventSourceRef.current) {
             eventSourceRef.current.close();
         }
 
         const isReconnecting = retryCountRef.current > 0;
         setConnectionState(isReconnecting ? 'reconnecting' : 'connecting');
-        
+
         const eventSource = new EventSource(`/api/pipeline/events/${currentTaskId}`);
         eventSourceRef.current = eventSource;
 
@@ -84,11 +84,18 @@ export const usePipelineEvents = (
 
         eventSource.onmessage = (event) => {
             if (!mountedRef.current) return;
-            
+
             try {
                 const data = JSON.parse(event.data) as PipelineStatusResponse & { type?: string };
                 if (data.type === 'heartbeat') return;
                 setStatus(data);
+
+                if (data.status === 'completed' || data.status === 'failed') {
+                    clearRetryTimeout();
+                    eventSource.close();
+                    eventSourceRef.current = null;
+                    setConnectionState('disconnected');
+                }
             } catch (e) {
                 console.error('Failed to parse SSE data:', e);
             }
@@ -96,18 +103,18 @@ export const usePipelineEvents = (
 
         eventSource.onerror = () => {
             if (!mountedRef.current) return;
-            
+
             eventSource.close();
             eventSourceRef.current = null;
-            
+
             const currentRetryCount = retryCountRef.current;
-            
+
             if (currentRetryCount < maxRetries) {
                 setConnectionState('reconnecting');
                 setError(`Connection lost. Reconnecting... (${currentRetryCount + 1}/${maxRetries})`);
-                
+
                 const delay = calculateDelay(currentRetryCount);
-                
+
                 retryTimeoutRef.current = setTimeout(() => {
                     if (mountedRef.current) {
                         setRetryCount(prev => prev + 1);
@@ -122,14 +129,14 @@ export const usePipelineEvents = (
 
     useEffect(() => {
         mountedRef.current = true;
-        
+
         if (taskId) {
             connect();
         } else {
             disconnect();
             setStatus(null);
         }
-        
+
         return () => {
             mountedRef.current = false;
             disconnect();

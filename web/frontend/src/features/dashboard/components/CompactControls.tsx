@@ -5,34 +5,13 @@ import { useStats } from '@/hooks/useStats';
 import { toast } from 'sonner';
 import { pipelineApi } from '@/services/pipelineApi';
 import { saveResume, hasResume, getResumeFilename } from '@/utils/indexedDB';
+import { computeFileHash } from '@/utils/fileUtils';
 import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
-
-import xxhash from 'xxhash-wasm';
-
-import { StatsPanel } from './StatsPanel';
+import { DashboardWrapper } from './DashboardWrapper';
 import { ResumeUploadSection } from './ResumeUploadSection';
+import { StatsPanel } from './StatsPanel';
 import { ActionButton } from './ActionButton';
 import { StatusBanner } from './StatusBanner';
-import { DashboardWrapper } from './DashboardWrapper';
-
-const isDev = import.meta.env.DEV;
-
-let xxhPromise: ReturnType<typeof xxhash> | null = null;
-
-async function getXxh() {
-    if (!xxhPromise) {
-        xxhPromise = xxhash();
-    }
-    return xxhPromise;
-}
-
-async function computeFileHash(file: File): Promise<string> {
-    const xxh = await getXxh();
-    const buffer = await file.arrayBuffer();
-    const hasher = xxh.create64();
-    hasher.update(new Uint8Array(buffer));
-    return hasher.digest().toString(16).padStart(16, '0');
-}
 
 export const CompactControls: React.FC = () => {
     const { runPipeline, stopPipeline, isRunning, isStopping, status, isUploading } = usePipeline();
@@ -86,10 +65,8 @@ export const CompactControls: React.FC = () => {
 
             // Check if hash already exists in backend
             const checkResponse = await pipelineApi.checkResumeHash(hash);
-            isDev && console.log('Hash check response:', checkResponse);
 
             if (checkResponse.data.exists) {
-                isDev && console.log('Hash exists, skipping upload');
                 // Hash exists, skip upload, store in IndexedDB (best effort)
                 try {
                     await saveResume(file, hash, file.name);
@@ -176,7 +153,7 @@ export const CompactControls: React.FC = () => {
                     </div>
                 </div>
             </div>
-            {showStatusBanner && <StatusBanner {...statusData!} />}
+            {showStatusBanner && <StatusBanner {...statusData} />}
         </DashboardWrapper>
     );
 };

@@ -3,92 +3,80 @@
 # JobScout - Log Viewing Script
 # =============================================================================
 # Usage:
-#   ./logs.sh              Show all logs (last 50 lines each)
-#   ./logs.sh -f           Follow all logs in real-time
-#   ./logs.sh backend      Show backend log only
-#   ./logs.sh backend -f   Follow backend log only
-#   ./logs.sh frontend     Show frontend log only
-#   ./logs.sh frontend -f  Follow frontend log only
-#   ./logs.sh docker       Show Docker service logs
-#   ./logs.sh postgres     Show PostgreSQL logs
-#   ./logs.sh redis        Show Redis logs
-#   ./logs.sh -c           Clear all logs
-#
-# Options:
-#   -f, --follow    Follow logs in real-time (tail -f)
-#   -c, --clear     Clear all log files
-#   -h, --help      Show this help message
+#   ./logs.sh                    Show all logs
+#   ./logs.sh -f                 Follow all logs in real-time
+#   ./logs.sh web-app            Show web app log
+#   ./logs.sh web-ui             Show web UI log
+#   ./logs.sh microservices      Show all microservice logs
+#   ./logs.sh postgres           Show PostgreSQL logs
+#   ./logs.sh redis              Show Redis logs
+#   ./logs.sh -c                 Clear all logs
 # =============================================================================
 
-set -e
-
-# Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="${SCRIPT_DIR}"
-LOGS_DIR="${PROJECT_ROOT}/logs"
+LOGS_DIR="${SCRIPT_DIR}/logs"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 DOCKER_COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Default lines to show
 LINES=50
 
-# Print help message
+get_log_info() {
+    local filename="$1"
+    case "$filename" in
+        web-app)      echo "Web App:${GREEN}";;
+        web-ui)       echo "Web UI:${CYAN}";;
+        extraction)   echo "Extraction:${YELLOW}";;
+        embeddings)   echo "Embeddings:${YELLOW}";;
+        scorer-matcher) echo "Scorer-Matcher:${YELLOW}";;
+        orchestrator) echo "Orchestrator:${YELLOW}";;
+        postgres)     echo "PostgreSQL:${BLUE}";;
+        redis)        echo "Redis:${BLUE}";;
+        *)            echo "${filename}:${YELLOW}";;
+    esac
+}
+
 show_help() {
-    head -22 "$0" | tail -18
+    head -15 "$0" | tail -13
 }
 
-# Print log file with header
 print_log() {
-    local label=$1
-    local file=$2
-    local color=$3
+    local label="$1"
+    local file="$2"
+    local color="$3"
 
-    if [ -f "$file" ]; then
+    if [[ -f "$file" ]]; then
         echo -e "${color}=== ${label} ===${NC}"
-        if [ "$1" = "follow" ]; then
-            tail -n ${LINES} -f "$file"
-        else
-            tail -n ${LINES} "$file"
-        fi
+        tail -n ${LINES} "$file"
     else
-        echo -e "${YELLOW}[${label}]${NC} Log file not found: $file"
+        echo -e "${YELLOW}[${label}]${NC} Log file not found: $file" >&2
     fi
 }
 
-# List all logs
-list_logs() {
-    echo -e "${BLUE}Available logs:${NC}"
-    echo ""
+print_log_follow() {
+    local label="$1"
+    local file="$2"
+    local color="$3"
 
-    if [ -d "${LOGS_DIR}" ]; then
-        echo -e "  ${GREEN}Application Logs:${NC}"
-        ls -lh "${LOGS_DIR}"/*.log 2>/dev/null | awk '{print "    " $9 " (" $5 ")"}' || echo "    (empty)"
-    else
-        echo -e "  ${YELLOW}Logs directory not found: ${LOGS_DIR}${NC}"
+    if [[ -f "$file" ]]; then
+        echo -e "${color}=== ${label} ===${NC}"
+        tail -n ${LINES} -f "$file"
     fi
-
-    echo ""
-    echo -e "  ${CYAN}Docker Logs:${NC}"
-    echo "    Run: ${YELLOW}docker-compose logs${NC}"
-    echo "    Or: ${YELLOW}./logs.sh docker${NC}"
 }
 
-# Main function
 main() {
     local follow=false
     local clear=false
-    local service="all"
+    local service=""
 
-    # Parse arguments
     while [[ $# -gt 0 ]]; do
-        case $1 in
+        case "$1" in
             -f|--follow)
                 follow=true
                 shift
@@ -101,131 +89,136 @@ main() {
                 show_help
                 exit 0
                 ;;
-            backend|frontend|docker|postgres|redis)
-                service=$1
-                shift
-                ;;
             -*)
-                echo -e "${RED}Unknown option: $1${NC}"
+                echo -e "${RED}Unknown option: $1${NC}" >&2
                 show_help
                 exit 1
                 ;;
             *)
+                service="$1"
                 shift
                 ;;
         esac
     done
 
-    # Ensure logs directory exists
-    if [ ! -d "${LOGS_DIR}" ]; then
-        echo -e "${YELLOW}No logs directory found: ${LOGS_DIR}${NC}"
+    if [[ ! -d "${LOGS_DIR}" ]]; then
+        echo -e "${YELLOW}Logs directory not found: ${LOGS_DIR}${NC}"
         exit 1
     fi
 
-    # Clear logs if requested
-    if [ "$clear" = true ]; then
+    if [[ "$clear" = true ]]; then
         echo -e "${YELLOW}Clearing all logs...${NC}"
         rm -f "${LOGS_DIR}"/*.log
         echo -e "${GREEN}Logs cleared!${NC}"
         exit 0
     fi
 
-    # Handle different services
-    case $service in
-        all)
-            echo -e "${BLUE}=== JobScout All Logs ===${NC}"
-            echo ""
-            if [ "$follow" = true ]; then
-                # Follow all logs using tail with multiple files
-                tail -n ${LINES} -f "${LOGS_DIR}"/*.log 2>/dev/null || {
-                    echo -e "${YELLOW}No log files found${NC}"
-                }
+    if [[ -z "$service" ]] || [[ "$service" == "all" ]]; then
+        echo -e "${BLUE}=== JobScout All Logs ===${NC}"
+        echo ""
+        for logfile in "${LOGS_DIR}"/*.log; do
+            [[ -f "$logfile" ]] || continue
+            filename=$(basename "$logfile" .log)
+            info=$(get_log_info "$filename")
+            label="${info%%:*}"
+            color="${info##*:}"
+            if [[ "$follow" = true ]]; then
+                print_log_follow "$label" "$logfile" "$color" &
             else
-                # Show last 50 lines of each log
-                for logfile in "${LOGS_DIR}"/*.log; do
-                    if [ -f "$logfile" ]; then
-                        filename=$(basename "$logfile")
-                        case "$filename" in
-                            backend.log)
-                                print_log "Backend" "$logfile" "$GREEN"
-                                echo ""
-                                ;;
-                            frontend.log)
-                                print_log "Frontend" "$logfile" "$CYAN"
-                                echo ""
-                                ;;
-                            *)
-                                print_log "$filename" "$logfile" "$YELLOW"
-                                echo ""
-                                ;;
-                        esac
+                print_log "$label" "$logfile" "$color"
+                echo ""
+            fi
+        done
+        if [[ "$follow" = true ]]; then
+            wait
+        fi
+        return 0
+    fi
+
+    case "$service" in
+        web-app)
+            if [[ "$follow" = true ]]; then
+                print_log_follow "Web App" "${LOGS_DIR}/web-app.log" "$GREEN"
+            else
+                print_log "Web App" "${LOGS_DIR}/web-app.log" "$GREEN"
+            fi
+            ;;
+        web-ui)
+            if [[ "$follow" = true ]]; then
+                print_log_follow "Web UI" "${LOGS_DIR}/web-ui.log" "$CYAN"
+            else
+                print_log "Web UI" "${LOGS_DIR}/web-ui.log" "$CYAN"
+            fi
+            ;;
+        microservices|micro)
+            for svc in extraction embeddings scorer-matcher orchestrator; do
+                logfile="${LOGS_DIR}/${svc}.log"
+                if [[ -f "$logfile" ]]; then
+                    if [[ "$follow" = true ]]; then
+                        print_log_follow "${svc}" "$logfile" "$YELLOW" &
+                    else
+                        print_log "${svc}" "$logfile" "$YELLOW"
+                        echo ""
                     fi
-                done
-            fi
-            echo ""
-            echo -e "${YELLOW}Tip: Use ${CYAN}./logs.sh docker${YELLOW} to view Docker service logs${NC}"
-            ;;
-
-        backend)
-            if [ "$follow" = true ]; then
-                print_log "Backend" "${LOGS_DIR}/backend.log" "$GREEN"
-            else
-                if [ -f "${LOGS_DIR}/backend.log" ]; then
-                    tail -n ${LINES} "${LOGS_DIR}/backend.log"
-                else
-                    echo -e "${YELLOW}Backend log not found: ${LOGS_DIR}/backend.log${NC}"
-                    echo "Is the backend running?"
                 fi
+            done
+            if [[ "$follow" = true ]]; then
+                wait
             fi
             ;;
-
-        frontend)
-            if [ "$follow" = true ]; then
-                print_log "Frontend" "${LOGS_DIR}/frontend.log" "$CYAN"
-            else
-                if [ -f "${LOGS_DIR}/frontend.log" ]; then
-                    tail -n ${LINES} "${LOGS_DIR}/frontend.log"
-                else
-                    echo -e "${YELLOW}Frontend log not found: ${LOGS_DIR}/frontend.log${NC}"
-                    echo "Is the frontend running?"
-                fi
-            fi
-            ;;
-
-        docker)
-            if [ -f "${DOCKER_COMPOSE_FILE}" ]; then
-                if [ "$follow" = true ]; then
-                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs -f
-                else
-                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES}
-                fi
-            else
-                echo -e "${RED}docker-compose.yml not found${NC}"
-            fi
-            ;;
-
         postgres)
-            if [ -f "${DOCKER_COMPOSE_FILE}" ]; then
-                if [ "$follow" = true ]; then
-                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs -f postgres
+            if [[ -f "${DOCKER_COMPOSE_FILE}" ]]; then
+                if [[ "$follow" = true ]]; then
+                    docker compose -f "${DOCKER_COMPOSE_FILE}" logs -f postgres
                 else
-                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES} postgres
+                    docker compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES} postgres
                 fi
             else
                 echo -e "${RED}docker-compose.yml not found${NC}"
             fi
             ;;
-
         redis)
-            if [ -f "${DOCKER_COMPOSE_FILE}" ]; then
-                if [ "$follow" = true ]; then
-                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs -f redis
+            if [[ -f "${DOCKER_COMPOSE_FILE}" ]]; then
+                if [[ "$follow" = true ]]; then
+                    docker compose -f "${DOCKER_COMPOSE_FILE}" logs -f redis
                 else
-                    docker-compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES} redis
+                    docker compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES} redis
                 fi
             else
                 echo -e "${RED}docker-compose.yml not found${NC}"
             fi
+            ;;
+        infra|infrastructure)
+            for svc in postgres redis; do
+                if [[ -f "${DOCKER_COMPOSE_FILE}" ]]; then
+                    if [[ "$follow" = true ]]; then
+                        docker compose -f "${DOCKER_COMPOSE_FILE}" logs -f "$svc" &
+                    else
+                        echo -e "${BLUE}=== ${svc^} ===${NC}"
+                        docker compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES} "$svc"
+                        echo ""
+                    fi
+                fi
+            done
+            if [[ "$follow" = true ]]; then
+                wait
+            fi
+            ;;
+        docker)
+            if [[ -f "${DOCKER_COMPOSE_FILE}" ]]; then
+                if [[ "$follow" = true ]]; then
+                    docker compose -f "${DOCKER_COMPOSE_FILE}" logs -f
+                else
+                    docker compose -f "${DOCKER_COMPOSE_FILE}" logs --tail=${LINES}
+                fi
+            else
+                echo -e "${RED}docker-compose.yml not found${NC}"
+            fi
+            ;;
+        *)
+            echo -e "${RED}Unknown service: $service${NC}" >&2
+            show_help
+            exit 1
             ;;
     esac
 }

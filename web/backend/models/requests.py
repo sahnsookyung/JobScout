@@ -9,8 +9,8 @@ from typing import Optional
 
 class PolicyUpdate(BaseModel):
     """Request to update result policy."""
-    min_fit: float = Field(ge=0, le=100, description="Minimum fit score (0-100)")
-    top_k: int = Field(ge=1, le=500, description="Maximum results to return (1-500)")
+    min_fit: Optional[float] = Field(None, ge=0, le=100, description="Minimum fit score (0-100)")
+    top_k: Optional[int] = Field(None, ge=1, le=500, description="Maximum results to return (1-500)")
     min_jd_required_coverage: Optional[float] = Field(
         None,
         ge=0,

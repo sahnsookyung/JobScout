@@ -23,12 +23,34 @@ class TestConfigLoader(unittest.TestCase):
         self.config_yaml = yaml.dump(self.sample_config)
 
     def test_load_config_default(self):
+        # Clear env vars to test YAML loading without environment overrides
+        env_to_clear = [
+            "ETL_LLM_EXTRACTION_MODEL",
+            "ETL_LLM_EXTRACTION_BASE_URL",
+            "ETL_LLM_EXTRACTION_API_KEY",
+            "ETL_LLM_EXTRACTION_API_SECRET",
+            "ETL_EMBEDDING_MODEL",
+            "ETL_EMBEDDING_BASE_URL",
+            "ETL_EMBEDDING_API_KEY",
+            "ETL_EMBEDDING_API_SECRET",
+            "DATABASE_URL",
+            "JOBSPY_URL",
+            "REDIS_URL",
+        ]
         with patch("builtins.open", mock_open(read_data=self.config_yaml)):
             with patch("os.path.exists", return_value=True):
-                config = load_config("dummy_path.yaml")
-                self.assertIsInstance(config, AppConfig)
-                self.assertEqual(config.database.url, "postgresql://user:pass@localhost:5432/db")
-                self.assertEqual(config.etl.llm.extraction_model, "qwen3:14b")
+                # Save and clear env vars
+                saved_env = {k: os.environ.pop(k, None) for k in env_to_clear}
+                try:
+                    config = load_config("dummy_path.yaml")
+                    self.assertIsInstance(config, AppConfig)
+                    self.assertEqual(config.database.url, "postgresql://user:pass@localhost:5432/db")
+                    self.assertEqual(config.etl.llm.extraction_model, "qwen3:14b")
+                finally:
+                    # Restore env vars
+                    for k, v in saved_env.items():
+                        if v is not None:
+                            os.environ[k] = v
 
     def test_env_var_override_database(self):
         with patch("builtins.open", mock_open(read_data=self.config_yaml)):
@@ -51,12 +73,30 @@ class TestConfigLoader(unittest.TestCase):
             "schedule": {"interval_seconds": 60},
             "scrapers": []
         })
+        env_to_clear = [
+            "ETL_LLM_EXTRACTION_MODEL",
+            "ETL_LLM_EXTRACTION_BASE_URL",
+            "ETL_LLM_EXTRACTION_API_KEY",
+            "ETL_LLM_EXTRACTION_API_SECRET",
+            "ETL_EMBEDDING_MODEL",
+            "ETL_EMBEDDING_BASE_URL",
+            "ETL_EMBEDDING_API_KEY",
+            "ETL_EMBEDDING_API_SECRET",
+        ]
         with patch("builtins.open", mock_open(read_data=minimal_config_yaml)):
             with patch("os.path.exists", return_value=True):
-                config = load_config("dummy")
-                # Defaults from LlmConfig
-                self.assertEqual(config.etl.llm.extraction_type, "openai")
-                self.assertEqual(config.etl.llm.extraction_model, "gpt-4o-mini")
+                # Save and clear env vars
+                saved_env = {k: os.environ.pop(k, None) for k in env_to_clear}
+                try:
+                    config = load_config("dummy")
+                    # Defaults from LlmConfig
+                    self.assertEqual(config.etl.llm.extraction_type, "openai")
+                    self.assertEqual(config.etl.llm.extraction_model, "gpt-4o-mini")
+                finally:
+                    # Restore env vars
+                    for k, v in saved_env.items():
+                        if v is not None:
+                            os.environ[k] = v
 
     def test_notification_config_loading(self):
         """Test loading notification configuration from YAML."""

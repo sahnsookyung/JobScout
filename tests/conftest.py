@@ -9,10 +9,34 @@ import os
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def clean_env():
+    """Backup and restore environment to prevent test pollution.
+    
+    This fixture ensures environment variables set by one test don't
+    affect other tests. It backs up os.environ before each test
+    and restores it after, preventing pollution from integration
+    tests that set module-level environment variables.
+    """
+    env_backup = os.environ.copy()
+    yield
+    os.environ.clear()
+    os.environ.update(env_backup)
+
+
+# Test database credentials (not production credentials)
+TEST_DB_USER = "testuser"
+TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD", "testpass")
+TEST_DB_NAME = "jobscout_test"
+
+
 def pytest_configure(config):
     """Configure pytest markers."""
     config.addinivalue_line(
         "markers", "db: marks tests as requiring database (deselect with '-m \"not db\"')"
+    )
+    config.addinivalue_line(
+        "markers", "redis: marks tests as requiring Redis (deselect with '-m \"not redis\"')"
     )
 
 
@@ -42,9 +66,9 @@ def test_database():
         # Start PostgreSQL with pgvector
         postgres = PostgresContainer(
             image="ankane/pgvector:latest",
-            username="testuser",
-            password="testpass",
-            dbname="jobscout_test",
+            username=TEST_DB_USER,
+            password=TEST_DB_PASSWORD,
+            dbname=TEST_DB_NAME,
             port=5432
         )
         postgres.start()
@@ -144,6 +168,92 @@ def database_available(test_database):
 def test_db_url(test_database):
     """Get test database URL."""
     return test_database
+
+
+@pytest.fixture(scope="session")
+def redis_container():
+    """Session-scoped fixture that provides a Redis container for tests.
+
+    Uses testcontainers to start a Redis container before tests and stop it after.
+    Falls back to external Redis if TEST_REDIS_URL is set.
+    """
+    # If TEST_REDIS_URL is set, use external Redis
+    external_url = os.environ.get("TEST_REDIS_URL")
+    if external_url:
+        yield {"url": external_url, "port": external_url.split(":")[-1].split("/")[0] if ":" in external_url else 6379}
+        return
+
+    # Try to use testcontainers for automatic container management
+    try:
+        from testcontainers.redis import RedisContainer
+
+        # Start Redis container
+        redis = RedisContainer("redis:7-alpine", port=6379)
+        redis.start()
+
+        # Get connection URL
+        redis_url = redis.get_connection_url()
+
+        print(f"\n✓ Test Redis container started: {redis_url}")
+
+        yield {"container": redis, "url": redis_url, "port": redis.port}
+
+        # Cleanup after all tests
+        redis.stop()
+        print("\n✓ Test Redis container stopped")
+
+    except Exception as e:
+        import traceback
+        print(f"\n⚠ Failed to start test Redis container:")
+        print(f"   {e}")
+        print(f"\n   Full traceback:")
+        traceback.print_exc()
+        pytest.skip(f"Could not start test Redis container: {e}")
+
+
+@pytest.fixture
+def redis_url(redis_container):
+    """Get Redis connection URL from container."""
+    return redis_container["url"]
+
+
+@pytest.fixture(autouse=True)
+def reset_redis_module_state():
+    """Reset Redis module state between tests to prevent pollution.
+
+    This fixture resets the connection pool in redis_streams
+    to ensure tests don't share state.
+    """
+    from core import redis_streams
+    # Backup original state
+    original_connection_pool = redis_streams._connection_pool
+
+    yield
+
+    # Reset connection pool to force recreation
+    redis_streams._connection_pool = original_connection_pool
+    if original_connection_pool is not None:
+        try:
+            original_connection_pool.disconnect()
+        except Exception:
+            pass  # Ignore errors on disconnect
+
+
+@pytest.fixture(autouse=True)
+def reset_pipeline_manager_state():
+    """Reset pipeline manager global state between tests.
+
+    This fixture resets the global pipeline manager to ensure tests
+    don't share state.
+    """
+    from web.backend.services import pipeline_service
+    # Backup original manager
+    original_manager = pipeline_service._pipeline_manager
+
+    yield
+
+    # Restore original manager
+    pipeline_service._pipeline_manager = original_manager
 
 
 @pytest.fixture(autouse=True)

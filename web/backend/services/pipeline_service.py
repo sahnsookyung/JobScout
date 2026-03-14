@@ -7,22 +7,11 @@ import uuid
 import logging
 import threading
 import asyncio
-import json
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, Optional, Any, Callable, List
+from typing import Dict, Optional, Any, List
 from threading import Lock, Event
-
-from core.config_loader import load_config
-from core.app_context import AppContext
-from pipeline.runner import run_matching_pipeline, MatchingPipelineResult
-# Import resume ETL from main module
-import sys
-import os
-# Add project root to path to import main
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-from main import run_resume_etl
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +22,7 @@ class PipelineTask:
     task_id: str
     status: str  # "pending", "running", "completed", "failed"
     step: Optional[str] = None
-    result: Optional[MatchingPipelineResult] = None
+    orchestrator_task_id: Optional[str] = None
     error: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
     stop_event: Event = field(default_factory=Event)
@@ -198,7 +187,6 @@ class PipelineTaskManager:
         task_id: str,
         status: str,
         step: Optional[str] = None,
-        result: Optional[MatchingPipelineResult] = None,
         error: Optional[str] = None,
     ):
         """Update task status and publish to subscribers."""
@@ -208,26 +196,16 @@ class PipelineTaskManager:
             task.status = status
             if step:
                 task.step = step
-            if result:
-                task.result = result
             if error:
                 task.error = error
-        
+
         # Build update data
         update_data = {"task_id": task_id, "status": status}
         if step:
             update_data["step"] = step
-        if result:
-            update_data["matches_count"] = result.matches_count
-            update_data["saved_count"] = result.saved_count
-            update_data["notified_count"] = result.notified_count
-            update_data["execution_time"] = result.execution_time
-            update_data["success"] = result.success
-            if result.error:
-                update_data["error"] = result.error
         if error:
             update_data["error"] = error
-        
+
         # Publish update
         try:
             self.publish_update(task_id, update_data)
@@ -259,69 +237,40 @@ class PipelineTaskManager:
     # Private methods
     
     def _run_pipeline_background(self, task_id: str):
-        """Run the matching pipeline in a background thread."""
-        import traceback
-        
+        """Trigger the matching pipeline via the orchestrator microservice."""
         try:
-            # Update status to running
-            self.update_task_status(task_id, "running")
-            
-            # Load config and build app context
-            full_config = load_config()
-            ctx = AppContext.build(full_config)
-            
-            # Define status callback
-            def status_callback(step_name: str):
-                self.update_task_status(task_id, "running", step=step_name)
-            
-            # Get stop event
+            self.update_task_status(task_id, "running", step="starting")
+
             task = self.get_task(task_id)
             if not task:
-                logger.error(f"Task {task_id} not found during execution")
-                raise RuntimeError(f"Task {task_id} not found during execution")
-            
-            # Step 1: Run Resume ETL (fresh extraction based on fingerprint)
-            self.update_task_status(task_id, "running", step="resume_etl")
-            logger.info("Running Resume ETL before matching...")
-            try:
-                run_resume_etl(ctx, task.stop_event)
-                logger.info("Resume ETL completed")
-            except Exception as e:
-                logger.error(f"Resume ETL failed: {e}")
-                # Continue to matching - it will handle the case where resume extraction is needed
-            
-            # Check if interrupted
+                logger.error("Task %s not found during execution", task_id)
+                self.update_task_status(task_id, "failed", error="Task not found")
+                return
+
             if task.stop_event.is_set():
                 self.update_task_status(task_id, "cancelled")
                 return
-            
-            # Step 2: Run the matching pipeline
-            self.update_task_status(task_id, "running", step="matching")
-            result = run_matching_pipeline(
-                ctx,
-                task.stop_event,
-                status_callback=status_callback
-            )
-            
-            # Update task with result
-            final_status = "completed" if result.success else "failed"
-            self.update_task_status(
-                task_id,
-                final_status,
-                result=result,
-                error=result.error if not result.success else None
-            )
-            
+
+            from web.backend.services.clients import orchestrator_client
+            logger.info("Delegating pipeline to orchestrator (local task_id=%s)", task_id)
+            result = orchestrator_client.start_matching()
+
+            if result.get("success"):
+                orchestrator_task_id = result.get("task_id", "")
+                task.orchestrator_task_id = orchestrator_task_id
+                logger.info(
+                    "Orchestrator accepted pipeline: orchestrator_task_id=%s",
+                    orchestrator_task_id,
+                )
+                self.update_task_status(task_id, "completed", step="matching")
+            else:
+                error_msg = result.get("message", "Orchestrator failed to start pipeline")
+                logger.error("Orchestrator rejected pipeline start: %s", error_msg)
+                self.update_task_status(task_id, "failed", error=error_msg)
+
         except Exception as e:
-            logger.exception(f"Error in background pipeline task {task_id}")
-            self.update_task_status(
-                task_id,
-                "failed",
-                error=str(e)
-            )
-        finally:
-            # No lock to release - DB handles concurrency
-            pass
+            logger.error("Error delegating pipeline task %s to orchestrator: %s: %s", task_id, type(e).__name__, e, exc_info=True)
+            self.update_task_status(task_id, "failed", error=str(e))
 
 
 # Global pipeline task manager

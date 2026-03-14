@@ -3,6 +3,7 @@
 Stats endpoints - view match statistics.
 """
 
+from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -16,10 +17,10 @@ router = APIRouter(prefix="/api/stats", tags=["stats"])
 
 
 @router.get("", response_model=StatsResponse)
-def get_stats(db: Session = Depends(get_db)):
+def get_stats(db: Annotated[Session, Depends(get_db)]):
     """
     Get overall statistics about matches in the database.
-    
+
     Returns total counts and score distribution.
     """
     policy_service = get_policy_service()

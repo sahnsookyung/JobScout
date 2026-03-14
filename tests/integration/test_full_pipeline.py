@@ -108,9 +108,9 @@ class MockAIService(LLMProvider):
         import json
         try:
             data = json.loads(text)
-        except:
+        except Exception:
             return {"profile": {}, "extraction": {"confidence": 0.5, "warnings": []}}
-        
+
         if "profile" in data:
             return data
         else:
@@ -121,9 +121,9 @@ class MockAIService(LLMProvider):
         import json
         try:
             data = json.loads(text)
-        except:
+        except Exception:
             return {"profile": {}, "extraction": {"confidence": 0.5, "warnings": []}}
-        
+
         if "profile" in data:
             return data
         else:
