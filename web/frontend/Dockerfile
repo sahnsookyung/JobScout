@@ -8,8 +8,8 @@ WORKDIR /app
 # Copy package files
 COPY web/frontend/package*.json ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies - ignore post-install scripts (security)
+RUN npm ci --ignore-scripts
 
 # Copy source code
 COPY web/frontend/ ./
@@ -24,8 +24,8 @@ FROM nginx:alpine
 # Copy custom nginx config
 COPY web/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
-# Copy built assets from builder stage
-COPY --from=builder /app/dist /usr/share/nginx/html
+# Copy built assets from builder stage with proper ownership
+COPY --from=builder --chown=nginx:nginx /app/dist /usr/share/nginx/html
 
 # Expose port 80
 EXPOSE 80
