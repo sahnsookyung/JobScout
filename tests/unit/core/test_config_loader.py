@@ -9,10 +9,10 @@ class TestConfigLoader(unittest.TestCase):
     def setUp(self):
         self.sample_config = {
             "database": {"url": "postgresql://user:pass@localhost:5432/db"},
-            "jobspy": {"url": "http://localhost:8000"},
+            "jobspy": {"url": "http://localhost:8000"},  # NOSONAR - local test service
             "etl": {
                 "llm": {
-                    "base_url": "http://ollama:11434",
+                    "base_url": "http://ollama:11434",  # NOSONAR - local test service
                     "extraction_type": "ollama",
                     "extraction_model": "qwen3:14b"
                 }

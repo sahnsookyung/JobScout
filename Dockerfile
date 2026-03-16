@@ -15,6 +15,13 @@ COPY . /app/
 # Ensure project is installed
 RUN uv sync --reinstall
 
+# Create non-root user for security (S6471)
+RUN useradd --create-home --shell /bin/bash appuser && \
+    chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH=/app

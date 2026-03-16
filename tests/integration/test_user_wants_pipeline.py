@@ -43,6 +43,7 @@ class DeterministicMockAIService(LLMProvider):
     
     def generate_embedding(self, text: str) -> List[float]:
         # Use stable hash instead of Python's hash() which varies by session
+        # NOSONAR - MD5 is only used for deterministic test data generation, not security
         text_hash = int(hashlib.md5(text.encode()).hexdigest(), 16) % (2**32)
         rng = np.random.default_rng(text_hash)
         emb = rng.standard_normal(self.dim)
