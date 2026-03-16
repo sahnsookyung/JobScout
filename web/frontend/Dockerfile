@@ -14,6 +14,9 @@ RUN npm ci --ignore-scripts
 # Copy source code
 COPY web/frontend/ ./
 
+# Copy shared folder at correct relative path (../shared from frontend perspective)
+COPY web/shared/ shared
+
 # Build the application
 RUN npm run build
 

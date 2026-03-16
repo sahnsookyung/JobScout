@@ -14,8 +14,9 @@ jobspy:
 etl:
   # Resume processing configuration
   resume:
-    # Resume file path (relative or absolute)
-    resume_file: "resume.pdf"
+    # Note: Resume must be uploaded via the web UI. This config property is deprecated.
+    # The system no longer uses a configured resume file - uploaded resumes are the only source of truth.
+    # resume_file: "resume.pdf"  # DEPRECATED - removed
     # force_re_extraction: false  # Uncomment to force re-extraction every time
   llm:
     # Base URL for LLM (extraction) - can be overridden by ETL_LLM_BASE_URL env var

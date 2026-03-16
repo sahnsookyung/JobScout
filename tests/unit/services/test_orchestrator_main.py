@@ -420,24 +420,20 @@ class TestOrchestrateMatchEndpoint:
 
     @pytest.mark.asyncio
     async def test_orchestrate_match_success(self):
-        """Test orchestrate match endpoint with valid config."""
+        """Test orchestrate match endpoint with existing resume in database."""
         from services.orchestrator.main import app, OrchestratorRegistry
         from core.app_context import AppContext
 
         mock_ctx = Mock(spec=AppContext)
-        mock_ctx.config = Mock()
-        mock_ctx.config.etl = Mock()
-        mock_ctx.config.etl.resume = Mock()
-        mock_ctx.config.etl.resume.resume_file = "resume.json"
 
         mock_registry = OrchestratorRegistry()
 
         app.state.ctx = mock_ctx
         app.state.registry = mock_registry
 
-        # Mock database access for checking existing resume
+        # Mock database access - simulate existing resume in DB
         mock_repo = MagicMock()
-        mock_repo.resume.get_latest_stored_resume_fingerprint.return_value = None
+        mock_repo.resume.get_latest_stored_resume_fingerprint.return_value = "test-fingerprint-123"
         mock_uow = MagicMock()
         mock_uow.__enter__ = MagicMock(return_value=mock_repo)
         mock_uow.__exit__ = MagicMock(return_value=False)
@@ -473,21 +469,20 @@ class TestOrchestrateMatchEndpoint:
             del app.state.registry
 
     @pytest.mark.asyncio
-    async def test_orchestrate_match_no_resume_file(self):
-        """Test orchestrate match endpoint without resume file configured."""
+    async def test_orchestrate_match_no_resume_in_db(self):
+        """Test orchestrate match endpoint when no resume exists in database."""
         from services.orchestrator.main import app, OrchestratorRegistry
         from core.app_context import AppContext
         from unittest.mock import patch, MagicMock
 
         mock_ctx = Mock(spec=AppContext)
-        mock_ctx.config = Mock()
-        mock_ctx.config.etl = None
 
         mock_registry = OrchestratorRegistry()
 
         app.state.ctx = mock_ctx
         app.state.registry = mock_registry
 
+        # Mock database access - no resume in DB
         mock_repo = MagicMock()
         mock_repo.resume.get_latest_stored_resume_fingerprint.return_value = None
 
@@ -505,7 +500,7 @@ class TestOrchestrateMatchEndpoint:
                 assert response.status_code == 200
                 data = response.json()
                 assert data["success"] is False
-                assert data["message"] == "No resume found. Please upload a resume first."
+                assert data["message"] == "No resume found. Please upload a resume first via the web UI."
         finally:
             del app.state.ctx
             del app.state.registry
