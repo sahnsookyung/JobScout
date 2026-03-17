@@ -70,7 +70,7 @@ def _parse_reset_duration(value: str) -> float:
     """Parse an OpenAI reset-timer header value like '1s', '500ms', '1m30s' into seconds."""
     total = 0.0
     # More specific regex to avoid catastrophic backtracking (S5852)
-    for amount, unit in re.findall(r"(\d+(?:\.\d+)?)(ms|s|m|h)", value):
+    for amount, unit in re.findall(r"(\d+(?:\.\d+)?)(ms|s|m|h)", value):  # NOSONAR
         a = float(amount)
         if unit == "ms":
             total += a / 1000

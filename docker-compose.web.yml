@@ -43,14 +43,14 @@ services:
       context: .
       dockerfile: web/frontend/Dockerfile
     ports:
-      - "5173:80"
+      - "5173:8080"
     depends_on:
       - web-backend
     profiles:
       - web
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
       interval: 30s
       timeout: 10s
       retries: 3

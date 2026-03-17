@@ -24,14 +24,28 @@ RUN npm run build
 # Production stage with Nginx
 FROM nginx:alpine
 
+# Fix ownership of runtime dirs nginx needs to write to
+RUN chown -R nginx:nginx \
+      /var/cache/nginx \
+      /var/run \
+      /var/log/nginx \
+      /etc/nginx/conf.d \
+      /usr/share/nginx/html
+
+# Switch listen port from 80 → 8080 for non-root
+RUN sed -i 's/listen\s*80;/listen 8080;/g' /etc/nginx/conf.d/default.conf
+
 # Copy custom nginx config
 COPY web/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
-# Copy built assets from builder stage with proper ownership
-COPY --from=builder --chown=nginx:nginx /app/dist /usr/share/nginx/html
+# Copy built assets from builder stage with proper ownership and permissions
+COPY --from=builder --chown=nginx:nginx --chmod=555 /app/dist /usr/share/nginx/html
 
-# Expose port 80
-EXPOSE 80
+# Switch to non-root user
+USER nginx
+
+# Expose port 8080
+EXPOSE 8080
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
