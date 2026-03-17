@@ -38,8 +38,12 @@ RUN sed -i 's/listen\s*80;/listen 8080;/g' /etc/nginx/conf.d/default.conf
 # Copy custom nginx config
 COPY web/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
-# Copy built assets from builder stage with proper ownership and permissions
-COPY --from=builder --chown=nginx:nginx --chmod=555 /app/dist /usr/share/nginx/html
+# Copy built assets from builder stage
+COPY --from=builder --chown=nginx:nginx /app/dist /usr/share/nginx/html
+
+# Ensure no group/others write permissions on static files
+RUN find /usr/share/nginx/html -type f -exec chmod 444 {} \; && \
+    find /usr/share/nginx/html -type d -exec chmod 555 {} \;
 
 # Switch to non-root user
 USER nginx

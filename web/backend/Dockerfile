@@ -41,8 +41,12 @@ RUN groupadd -g 1001 appgroup && \
 
 WORKDIR /app
 
-# Copy the environment and code from builder, changing ownership and permissions
-COPY --from=builder --chown=appuser:appgroup --chmod=550 /app /app
+# Copy the environment and code from builder
+COPY --from=builder --chown=appuser:appgroup /app /app
+
+# Ensure no group/others write permissions (defines proper file permissions)
+RUN find /app -type f -exec chmod 440 {} \; && \
+    find /app -type d -exec chmod 550 {} \;
 
 # Put the virtual environment on the PATH
 ENV PATH="/app/.venv/bin:$PATH"
