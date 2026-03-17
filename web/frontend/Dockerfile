@@ -41,7 +41,7 @@ COPY web/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 # Copy built assets from builder stage
 COPY --from=builder --chown=nginx:nginx /app/dist /usr/share/nginx/html
 
-# Ensure no group/others write permissions on static files
+# Ensure no group/others write permissions on static files (read-only)
 RUN find /usr/share/nginx/html -type f -exec chmod 444 {} \; && \
     find /usr/share/nginx/html -type d -exec chmod 555 {} \;
 

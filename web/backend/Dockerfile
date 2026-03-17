@@ -44,8 +44,9 @@ WORKDIR /app
 # Copy the environment and code from builder
 COPY --from=builder --chown=appuser:appgroup /app /app
 
-# Ensure no group/others write permissions (defines proper file permissions)
-RUN find /app -type f -exec chmod 440 {} \; && \
+# Ensure no group/others write permissions, but preserve owner execute for binaries
+RUN find /app -type f -name '*.py' -exec chmod 440 {} \; && \
+    find /app -type f -path '*/.venv/bin/*' -exec chmod 550 {} \; && \
     find /app -type d -exec chmod 550 {} \;
 
 # Put the virtual environment on the PATH
