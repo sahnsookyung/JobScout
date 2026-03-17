@@ -24,16 +24,14 @@ RUN npm run build
 # Production stage with Nginx
 FROM nginx:alpine
 
-# Fix ownership of runtime dirs nginx needs to write to
+# Fix ownership of runtime dirs nginx needs to write to and switch listen port
 RUN chown -R nginx:nginx \
       /var/cache/nginx \
       /var/run \
       /var/log/nginx \
       /etc/nginx/conf.d \
-      /usr/share/nginx/html
-
-# Switch listen port from 80 → 8080 for non-root
-RUN sed -i 's/listen\s*80;/listen 8080;/g' /etc/nginx/conf.d/default.conf
+      /usr/share/nginx/html \
+ && sed -i 's/listen\s*80;/listen 8080;/g' /etc/nginx/conf.d/default.conf
 
 # Copy custom nginx config
 COPY web/frontend/nginx.conf /etc/nginx/conf.d/default.conf
