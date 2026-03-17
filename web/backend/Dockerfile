@@ -41,13 +41,8 @@ RUN groupadd -g 1001 appgroup && \
 
 WORKDIR /app
 
-# Copy the environment and code from builder
-COPY --from=builder --chown=appuser:appgroup /app /app
-
-# Ensure no group/others write permissions, but preserve owner execute for binaries
-RUN find /app -type f -name '*.py' -exec chmod 440 {} \; && \
-    find /app -type f -path '*/.venv/bin/*' -exec chmod 550 {} \; && \
-    find /app -type d -exec chmod 550 {} \;
+# Copy the environment and code from builder with proper permissions
+COPY --from=builder --chown=appuser:appgroup --chmod=550 /app /app
 
 # Put the virtual environment on the PATH
 ENV PATH="/app/.venv/bin:$PATH"
