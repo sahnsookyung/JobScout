@@ -77,7 +77,7 @@ def check_status(task_id, max_wait=120):
                 return result
             else:
                 print(f"  Status: {status}... (waiting)")
-                time.sleep(5)
+                time.sleep(2)
         except Exception as e:
             print(f"✗ Error checking status: {e}")
             return None
@@ -147,7 +147,6 @@ def test_scrapers():
                 "task_id": task_id,
                 "result": result
             })
-        time.sleep(2)
     
     # Summary
     print(f"\n{'='*60}")
@@ -161,6 +160,4 @@ def test_scrapers():
 if __name__ == "__main__":
     print("Starting API tests...")
     print("Make sure the API server is running on http://localhost:8000")
-    print("\nWaiting 3 seconds before starting tests...")
-    time.sleep(3)
     test_scrapers()

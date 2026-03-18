@@ -649,10 +649,15 @@ class TestFullPipelineIntegration(unittest.TestCase):
         
         print(f"  ✓ Queued {notification_count} notifications")
         
-        # Verify queue
+        # Verify queue - poll for queue length instead of sleeping
         if notification_count > 0:
-            time.sleep(0.5)  # Brief wait for queue
-            queue_length = self.notification_service.get_queue_status().get('queue_length', 0)
+            max_wait = 5.0
+            start = time.time()
+            while time.time() - start < max_wait:
+                queue_length = self.notification_service.get_queue_status().get('queue_length', 0)
+                if queue_length >= notification_count:
+                    break
+                time.sleep(0.1)
             print(f"  ✓ Queue has {queue_length} pending jobs")
     
     def test_07_end_to_end_flow(self):
