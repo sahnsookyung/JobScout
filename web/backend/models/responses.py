@@ -217,3 +217,12 @@ class ResumeUploadResponse(BaseModel):
     resume_hash: str
     message: str
     task_id: Optional[str] = None
+
+
+class ScrapeJobsResponse(BaseModel):
+    """Response after triggering job scraping."""
+    success: bool
+    message: str
+    jobs_gathered: int = 0
+    extraction_triggered: bool = False
+    embeddings_triggered: bool = False
