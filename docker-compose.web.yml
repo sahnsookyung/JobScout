@@ -27,8 +27,6 @@ services:
       - .env
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-    profiles:
-      - web
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -45,8 +43,6 @@ services:
       - "${WEB_FRONTEND_PORT:-5173}:8080"
     depends_on:
       - web-backend
-    profiles:
-      - web
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/"]
