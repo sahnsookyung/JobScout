@@ -1,9 +1,8 @@
 # Web Services (Backend + Frontend)
-# Run: docker compose -f docker-compose.yml -f docker-compose.pipeline.yml -f docker-compose.web.yml --profile web up -d
+# Run: docker-compose -f docker-compose.yml -f docker-compose.microservices.yml -f docker-compose.web.yml up -d
 #
-# Note: Pipeline services (extraction, embeddings, scorer-matcher, orchestrator)
-# must be started separately or via the full stack command above.
-# The backend handles connection failures gracefully with retries.
+# This file contains the web backend and frontend.
+# It depends on docker-compose.yml which includes docker-compose.base.yml for infrastructure.
 
 services:
   web-backend:
@@ -11,7 +10,7 @@ services:
       context: .
       dockerfile: web/backend/Dockerfile
     ports:
-      - "8080:8080"
+      - "${WEB_BACKEND_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,7 +42,7 @@ services:
       context: .
       dockerfile: web/frontend/Dockerfile
     ports:
-      - "5173:8080"
+      - "${WEB_FRONTEND_PORT:-5173}:8080"
     depends_on:
       - web-backend
     profiles:
