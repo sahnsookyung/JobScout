@@ -138,32 +138,39 @@ class TestRunEmbeddingBatch:
     """Test _run_embedding_batch function."""
 
     def test_embedding_batch_returns_count(self):
-        """Test embedding batch returns count of processed items."""
+        """Test embedding batch returns count of processed items using batch API."""
         from services.base.embeddings import _run_embedding_batch
         with patch('services.base.embeddings.job_uow') as mock_job_uow:
             mock_repo = MagicMock()
             mock_job = MagicMock()
             mock_job.id = "job-1"
+            mock_job.requirements = []
+            mock_job.benefits = []
+            mock_job.description = "test job description"
             mock_req = MagicMock()
             mock_req.id = "req-1"
+            mock_req.text = "Python experience required"
             mock_repo.get_unembedded_jobs.return_value = [mock_job]
             mock_repo.get_unembedded_requirements.return_value = [mock_req]
             mock_repo.get_by_id.return_value = mock_job
-            mock_repo.get_requirement_by_id.return_value = mock_req
-            
+
             mock_context = MagicMock()
             mock_context.__enter__ = Mock(return_value=mock_repo)
             mock_context.__exit__ = Mock(return_value=False)
             mock_job_uow.return_value = mock_context
 
             mock_ctx = Mock()
-            mock_ctx.job_etl_service.embed_job_one = Mock()
-            mock_ctx.job_etl_service.embed_requirement_one = Mock()
+            # generate_embeddings_batch called twice: once for jobs, once for reqs
+            mock_ctx.job_etl_service.ai.generate_embeddings_batch.side_effect = [
+                [[0.1] * 1024],  # job vectors
+                [[0.2] * 1024],  # requirement vectors
+            ]
             stop_event = threading.Event()
 
             result = _run_embedding_batch(mock_ctx, stop_event, limit=10)
 
             assert result == 2
+            assert mock_ctx.job_etl_service.ai.generate_embeddings_batch.call_count == 2
 
     def test_embedding_batch_handles_stop_event(self):
         """Test embedding batch respects stop event."""
@@ -174,7 +181,7 @@ class TestRunEmbeddingBatch:
             mock_job.id = "job-1"
             mock_repo.get_unembedded_jobs.return_value = [mock_job]
             mock_repo.get_unembedded_requirements.return_value = []
-            
+
             mock_context = MagicMock()
             mock_context.__enter__ = Mock(return_value=mock_repo)
             mock_context.__exit__ = Mock(return_value=False)
@@ -187,46 +194,57 @@ class TestRunEmbeddingBatch:
             result = _run_embedding_batch(mock_ctx, stop_event, limit=10)
 
             assert result == 0
+            # Batch API should not be called when stop event is set
+            mock_ctx.job_etl_service.ai.generate_embeddings_batch.assert_not_called()
 
-    def test_embedding_batch_handles_job_exception(self):
-        """Test embedding batch handles job embedding exceptions."""
+    def test_embedding_batch_handles_job_api_exception(self):
+        """Test embedding batch handles batch API failure by marking jobs retryable."""
         from services.base.embeddings import _run_embedding_batch
         with patch('services.base.embeddings.job_uow') as mock_job_uow:
             mock_repo = MagicMock()
             mock_job = MagicMock()
             mock_job.id = "job-1"
+            mock_job.requirements = []
+            mock_job.benefits = []
+            mock_job.description = "test description"
             mock_repo.get_unembedded_jobs.return_value = [mock_job]
             mock_repo.get_unembedded_requirements.return_value = []
-            mock_repo.get_by_id.return_value = mock_job
-            
+
             mock_context = MagicMock()
             mock_context.__enter__ = Mock(return_value=mock_repo)
             mock_context.__exit__ = Mock(return_value=False)
             mock_job_uow.return_value = mock_context
 
             mock_ctx = Mock()
-            mock_ctx.job_etl_service.embed_job_one.side_effect = Exception("Embedding failed")
+            mock_ctx.job_etl_service.ai.generate_embeddings_batch.side_effect = Exception("API failed")
             stop_event = threading.Event()
 
             result = _run_embedding_batch(mock_ctx, stop_event, limit=10)
 
             assert result == 0
+            assert mock_repo.mark_embedding_retryable_failed.called
 
-    def test_embedding_batch_handles_missing_job(self):
-        """Test embedding batch handles missing job."""
+    def test_embedding_batch_handles_missing_job_on_writeback(self):
+        """Test embedding batch skips write-back when job is not found."""
         from services.base.embeddings import _run_embedding_batch
         with patch('services.base.embeddings.job_uow') as mock_job_uow:
             mock_repo = MagicMock()
-            mock_repo.get_by_id.return_value = None
-            mock_repo.get_unembedded_jobs.return_value = []
+            mock_job = MagicMock()
+            mock_job.id = "job-1"
+            mock_job.requirements = []
+            mock_job.benefits = []
+            mock_job.description = "test"
+            mock_repo.get_unembedded_jobs.return_value = [mock_job]
             mock_repo.get_unembedded_requirements.return_value = []
-            
+            mock_repo.get_by_id.return_value = None  # not found on write-back
+
             mock_context = MagicMock()
             mock_context.__enter__ = Mock(return_value=mock_repo)
             mock_context.__exit__ = Mock(return_value=False)
             mock_job_uow.return_value = mock_context
 
             mock_ctx = Mock()
+            mock_ctx.job_etl_service.ai.generate_embeddings_batch.return_value = [[0.1] * 1024]
             stop_event = threading.Event()
 
             result = _run_embedding_batch(mock_ctx, stop_event, limit=10)

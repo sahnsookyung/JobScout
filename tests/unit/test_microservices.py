@@ -17,8 +17,13 @@ class TestRedisStreamsModule:
         result = enqueue_job("test:jobs", {"task_id": "test-123", "data": "value"})
 
         assert result == "1234567890-0"
-        # All values are now JSON-encoded for type preservation
-        mock_client.xadd.assert_called_once_with("test:jobs", {"task_id": '"test-123"', "data": '"value"'})
+        # All values are now JSON-encoded for type preservation; MAXLEN trimming is enabled
+        mock_client.xadd.assert_called_once_with(
+            "test:jobs",
+            {"task_id": '"test-123"', "data": '"value"'},
+            maxlen=10000,
+            approximate=True,
+        )
 
     @patch('core.redis_streams.get_redis_client')
     def test_ack_message(self, mock_get_client):
@@ -83,44 +88,41 @@ class TestRedisStreamsModule:
 
 
 class TestServiceClient:
-    
+
     @patch('web.backend.services.clients.httpx.Client')
     def test_client_get_request(self, mock_httpx_client):
         mock_response = Mock()
         mock_response.json.return_value = {"status": "ok"}
         mock_response.raise_for_status = Mock()
-        
-        mock_client_instance = Mock()
-        mock_client_instance.request.return_value = mock_response
-        mock_httpx_client.return_value.__enter__ = Mock(return_value=mock_client_instance)
-        mock_httpx_client.return_value.__exit__ = Mock(return_value=False)
-        
+
+        # Client is stored as self._http_client; calls go directly to .request()
+        mock_httpx_client.return_value.request.return_value = mock_response
+
         from web.backend.services.clients import ServiceClient
-        
+
         client = ServiceClient("http://localhost:8084")
         result = client.get("/health")
-        
+
         assert result == {"status": "ok"}
-        mock_client_instance.request.assert_called_once_with("GET", "http://localhost:8084/health")
+        mock_httpx_client.return_value.request.assert_called_once_with(
+            "GET", "http://localhost:8084/health"
+        )
 
     @patch('web.backend.services.clients.httpx.Client')
     def test_client_post_request(self, mock_httpx_client):
         mock_response = Mock()
         mock_response.json.return_value = {"task_id": "123", "success": True}
         mock_response.raise_for_status = Mock()
-        
-        mock_client_instance = Mock()
-        mock_client_instance.request.return_value = mock_response
-        mock_httpx_client.return_value.__enter__ = Mock(return_value=mock_client_instance)
-        mock_httpx_client.return_value.__exit__ = Mock(return_value=False)
-        
+
+        mock_httpx_client.return_value.request.return_value = mock_response
+
         from web.backend.services.clients import ServiceClient
-        
+
         client = ServiceClient("http://localhost:8084")
         result = client.post("/orchestrate/match", json={})
-        
+
         assert result == {"task_id": "123", "success": True}
-        mock_client_instance.request.assert_called_once_with(
+        mock_httpx_client.return_value.request.assert_called_once_with(
             "POST", "http://localhost:8084/orchestrate/match", json={}
         )
 

@@ -13,3 +13,4 @@ pipeline.lock
 **/logs/
 **/*.pdf
 coverage/
+.gitnexus

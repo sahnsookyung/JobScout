@@ -38,34 +38,36 @@ cp wants.example.txt wants.txt
 
 ### Start Everything
 
-**Option A: Full Stack via Docker Compose (Recommended)**
+**Option A: Split Topology (microservices)**
 
 ```bash
-# Start entire stack: infra + pipeline + web backend + web frontend
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.pipeline.yml \
-  -f docker-compose.web.yml \
-  --profile web up -d
-
-# Or use the startup script (same command)
-./scripts/setup_local_env/start.sh
+# Split mode: orchestrator + extraction + embeddings + scorer-matcher
+./scripts/setup_local_env/start.sh --split
 ```
 
-**Option B: Local Development (with hot reload)**
+**Option B: Compact Topology (low memory)**
 
 ```bash
-# Start infra + pipeline in Docker, run backend/frontend locally
-./scripts/setup_local_env/start.sh --infra --microservices --web-app --web-ui
+# Compact mode: main-driver + infra (+ web)
+./scripts/setup_local_env/start.sh --compact
+```
 
-# For backend hot reload during active development:
-WEB_DEV=true ./scripts/setup_local_env/start.sh --infra --microservices --web-app --web-ui
+**Option C: Local Development (with hot reload)**
+
+```bash
+# Split mode with backend/frontend local development
+WEB_DEV=true ./scripts/setup_local_env/start.sh --split --web-app --web-ui
 ```
 
 **Access the app:**
 - Frontend: http://localhost:5173
 - Backend API: http://localhost:8080
 - API Docs: http://localhost:8080/docs
+
+### Topology Recommendations
+
+- **Laptop / Oracle Always Free (initial):** use `--compact` for lower memory usage.
+- **Higher throughput / scale-out:** switch to `--split` to run extraction, embeddings, and matching as separate services.
 
 ### View Logs
 
@@ -86,8 +88,18 @@ WEB_DEV=true ./scripts/setup_local_env/start.sh --infra --microservices --web-ap
 ### 1. Start Docker Services
 
 ```bash
-# Start PostgreSQL, Redis, and optionally Ollama
-docker-compose up -d
+# Compact topology (recommended for laptops / small cloud instances)
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.web.yml \
+  --profile compact up -d
+
+# Split topology (recommended when you need independent service scaling)
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.microservices.yml \
+  -f docker-compose.web.yml \
+  --profile split up -d
 
 # With Ollama
 docker-compose --profile docker-ollama up -d

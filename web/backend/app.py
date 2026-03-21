@@ -21,6 +21,10 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from core.logging_utils import (
+    is_nil_filter_active,
+    setup_logging as setup_shared_logging,
+)
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -41,11 +45,9 @@ from .routers import (
 )
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+setup_shared_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logger.debug("NIL log sanitization active=%s", is_nil_filter_active())
 
 # Load configuration
 config = get_config()

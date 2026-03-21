@@ -395,3 +395,17 @@ class TestGenerateEmbedding:
 
         result = svc.generate_embedding("test")
         assert result == [0.1, 0.2]
+
+    def test_generate_embedding_rejects_empty_vector(self, service):
+        """Should reject empty embedding vectors."""
+        service.embedding_client.embeddings.create.return_value.data[0].embedding = []
+
+        with pytest.raises(ValueError, match="empty or non-list vector"):
+            service.generate_embedding("test")
+
+    def test_generate_embedding_rejects_non_finite_values(self, service):
+        """Should reject non-finite embedding vectors."""
+        service.embedding_client.embeddings.create.return_value.data[0].embedding = [0.1, float("nan")]
+
+        with pytest.raises(ValueError, match="non-finite"):
+            service.generate_embedding("test")

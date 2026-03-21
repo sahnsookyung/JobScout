@@ -7,6 +7,7 @@ from typing import Dict, Any, List, Optional, Tuple
 import json
 import logging
 import copy
+import math
 import re
 import requests
 import httpx
@@ -164,6 +165,20 @@ def _unwrap_schema_spec(spec: Dict[str, Any]) -> Tuple[str, bool, Dict[str, Any]
     return "extraction_response", False, spec
 
 
+def _validate_embedding_vector(vector: Any) -> List[float]:
+    """Ensure embedding responses are non-empty finite numeric vectors."""
+    if not isinstance(vector, list) or not vector:
+        raise ValueError("Embedding API returned an empty or non-list vector")
+
+    validated: List[float] = []
+    for value in vector:
+        if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            raise ValueError("Embedding API returned a non-finite vector value")
+        validated.append(float(value))
+
+    return validated
+
+
 class OpenAIService(LLMProvider):
     """
     OpenAI LLM Service.
@@ -276,11 +291,11 @@ class OpenAIService(LLMProvider):
             raise
 
         thought_process = data.get('thought_process', 'No reasoning provided.')
-        logger.info("=" * 60)
-        logger.info(f"MODEL THINKING ({self.extraction_model}):")
-        logger.info("-" * 60)
-        logger.info(thought_process)
-        logger.info("=" * 60)
+        logger.debug("=" * 60)
+        logger.debug(f"MODEL THINKING ({self.extraction_model}):")
+        logger.debug("-" * 60)
+        logger.debug(thought_process)
+        logger.debug("=" * 60)
 
         return data
 
@@ -300,11 +315,11 @@ class OpenAIService(LLMProvider):
             user_message=f"Extract the structured resume data following the schema.\n\nResume:\n{text}"
         )
 
-        logger.info("=" * 60)
-        logger.info(f"RESUME EXTRACTION ({self.extraction_model}):")
-        logger.info("-" * 60)
-        logger.info(f"Extracted profile with {len(data.get('profile', {}).get('experience', []))} experience entries")
-        logger.info("=" * 60)
+        logger.debug("=" * 60)
+        logger.debug(f"RESUME EXTRACTION ({self.extraction_model}):")
+        logger.debug("-" * 60)
+        logger.debug(f"Extracted profile with {len(data.get('profile', {}).get('experience', []))} experience entries")
+        logger.debug("=" * 60)
 
         return data
 
@@ -324,11 +339,11 @@ class OpenAIService(LLMProvider):
             user_message=f"<JOB_DESCRIPTION>\n{text}\n</JOB_DESCRIPTION>\n\nExtract all qualification requirements."
         )
 
-        logger.info("=" * 60)
-        logger.info(f"REQUIREMENTS EXTRACTION ({self.extraction_model}):")
-        logger.info("-" * 60)
-        logger.info("extract_structured_data returned type=%s value=%r", type(data), data)
-        logger.info("=" * 60)
+        logger.debug("=" * 60)
+        logger.debug(f"REQUIREMENTS EXTRACTION ({self.extraction_model}):")
+        logger.debug("-" * 60)
+        logger.debug("extract_structured_data returned type=%s value=%r", type(data), data)
+        logger.debug("=" * 60)
 
         return data
 
@@ -367,7 +382,36 @@ class OpenAIService(LLMProvider):
             model=self.embedding_model,
             dimensions=self.embedding_dimensions
         )
-        return response.data[0].embedding
+        return _validate_embedding_vector(response.data[0].embedding)
+
+    def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for multiple texts in a single API call.
+
+        Sends texts in chunks of up to 100 to stay within API limits.
+        Returns embeddings in the same order as the input texts.
+        """
+        if not texts:
+            return []
+
+        _MAX_BATCH = 100
+        client = self.embedding_client if self.embedding_client else self.client
+        results: List[List[float]] = []
+
+        for i in range(0, len(texts), _MAX_BATCH):
+            chunk = texts[i:i + _MAX_BATCH]
+
+            @_llm_retry()
+            def _call(chunk=chunk):
+                response = client.embeddings.create(
+                    input=chunk,
+                    model=self.embedding_model,
+                    dimensions=self.embedding_dimensions
+                )
+                return [_validate_embedding_vector(item.embedding) for item in response.data]
+
+            results.extend(_call())
+
+        return results
 
     def unload_model(self, model_name: str):
         """Unload model from Ollama (no-op for pure OpenAI)."""

@@ -81,8 +81,20 @@ class JobRepository:
     def mark_as_extracted(self, job_post: JobPost) -> None:
         return self.job_post.mark_as_extracted(job_post)
 
+    def mark_extraction_in_progress(self, job_post_id: Any) -> None:
+        return self.job_post.mark_extraction_in_progress(job_post_id)
+
+    def mark_extraction_retryable_failed(self, job_post_id: Any, error: str) -> None:
+        return self.job_post.mark_extraction_retryable_failed(job_post_id, error)
+
     def mark_extraction_failed(self, job_post_id: str, error: str) -> None:
         return self.job_post.mark_extraction_failed(job_post_id, error)
+
+    def mark_extraction_in_progress(self, job_post_id: Any) -> None:
+        return self.job_post.mark_extraction_in_progress(job_post_id)
+
+    def mark_extraction_retryable_failed(self, job_post_id: Any, error: str) -> None:
+        return self.job_post.mark_extraction_retryable_failed(job_post_id, error)
 
     def _extract_years_from_requirement(self, text: str) -> tuple:
         return self.job_post._extract_years_from_requirement(text)
@@ -111,8 +123,20 @@ class JobRepository:
     def save_job_embedding(self, job_post: JobPost, embedding: List[float]) -> None:
         return self.job_post.save_job_embedding(job_post, embedding)
 
+    def mark_embedding_in_progress(self, job_post_id: Any) -> None:
+        return self.job_post.mark_embedding_in_progress(job_post_id)
+
+    def mark_embedding_retryable_failed(self, job_post_id: Any, error: str) -> None:
+        return self.job_post.mark_embedding_retryable_failed(job_post_id, error)
+
+    def bulk_mark_embedding_in_progress(self, job_post_ids: List[Any]) -> None:
+        return self.job_post.bulk_mark_embedding_in_progress(job_post_ids)
+
     def save_requirement_embedding(self, req_id: Any, embedding: List[float]) -> None:
         return self.job_post.save_requirement_embedding(req_id, embedding)
+
+    def mark_embedding_failed(self, job_post_id: Any, error: str) -> None:
+        return self.job_post.mark_embedding_failed(job_post_id, error)
 
     def get_embedded_jobs_for_matching(self, limit: int = 100) -> List[JobPost]:
         return self.job_post.get_embedded_jobs_for_matching(limit)
