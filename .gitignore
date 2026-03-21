@@ -14,3 +14,5 @@ pipeline.lock
 **/*.pdf
 coverage/
 .gitnexus
+.claude/skills/*
+.scannerwork
