@@ -16,3 +16,5 @@ coverage/
 .gitnexus
 .claude/skills/*
 .scannerwork
+coverage.xml
+.coverage
