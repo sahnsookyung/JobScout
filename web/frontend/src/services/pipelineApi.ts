@@ -13,6 +13,12 @@ interface ResumeUploadResponse {
     task_id?: string;
 }
 
+interface ResumeStatusResponse {
+    task_id: string;
+    status: string;
+    error?: string;
+}
+
 export const pipelineApi = {
     runMatching: () =>
         apiClient.post<PipelineTaskResponse>('/pipeline/run-matching'),
@@ -28,6 +34,9 @@ export const pipelineApi = {
 
     checkResumeHash: (hash: string) =>
         apiClient.post<ResumeHashCheckResponse>('/pipeline/check-resume-hash', { resume_hash: hash }),
+
+    getResumeStatus: (taskId: string) =>
+        apiClient.get<ResumeStatusResponse>(`/pipeline/resume-status/${taskId}`),
 
     uploadResume: (file: File, resumeHash?: string) => {
         const formData = new FormData();

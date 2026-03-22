@@ -28,6 +28,16 @@ include:
     include_as: base
 
 services:
+  # Inject microservice URLs into web-backend when running in split mode.
+  # This block is only included when docker-compose.microservices.yml is part of the compose stack,
+  # which only happens for --split topology. Compact mode excludes this file entirely.
+  web-backend:
+    environment:
+      - EXTRACTION_URL=http://extraction:8081
+      - EMBEDDINGS_URL=http://embeddings:8082
+      - SCORER_MATCHER_URL=http://scorer-matcher:8083
+      - ORCHESTRATOR_URL=http://orchestrator:8084
+
   extraction:
     <<: *service-common
     profiles: ["split"]

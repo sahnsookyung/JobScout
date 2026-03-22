@@ -33,7 +33,7 @@ class TestRunFacetEmbeddingBatch:
             mock_job_uow.return_value = mock_context
 
             mock_ctx = Mock()
-            mock_ctx.job_etl_service.embed_facets_one = Mock()
+            mock_ctx.job_etl_service.embed_facets_one = Mock(return_value=1)
             stop_event = threading.Event()
 
             result = _run_facet_embedding_batch(mock_ctx, stop_event, limit=10)

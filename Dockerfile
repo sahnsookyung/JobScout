@@ -4,7 +4,7 @@ RUN pip install uv
 WORKDIR /app
 
 # Copy the project files first for better caching
-COPY pyproject.toml uv.lock /app/
+COPY pyproject.toml uv.lock README.md /app/
 
 # Create venv and install dependencies with explicit reinstall
 RUN uv sync --reinstall

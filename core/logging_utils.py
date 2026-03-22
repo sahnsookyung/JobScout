@@ -7,23 +7,44 @@ LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
+def _strip_nil(s: str) -> str:
+    return s.replace('\x00', '') if '\x00' in s else s
+
+
 class NilCharacterFilter(logging.Filter):
-    """Filter that removes NIL (null) characters from log records.
-    
-    Prevents log forging and ensures clean log output in Docker/JSON environments.
+    """Pre-format filter: strips NIL bytes from msg and args before formatting.
+
+    Handles tuple args (standard API) and dict args (%-dict style).
+    Exception tracebacks are caught by NilSafeFormatter after formatting.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
         if record.msg:
-            msg_str = str(record.msg)
-            if '\x00' in msg_str:
-                record.msg = msg_str.replace('\x00', '')
+            record.msg = _strip_nil(str(record.msg))
         if record.args:
-            record.args = tuple(
-                arg.replace('\x00', '') if isinstance(arg, str) and '\x00' in arg else arg
-                for arg in record.args
-            )
+            if isinstance(record.args, dict):
+                record.args = {
+                    k: _strip_nil(v) if isinstance(v, str) else v
+                    for k, v in record.args.items()
+                }
+            elif isinstance(record.args, (list, tuple)):
+                record.args = type(record.args)(
+                    _strip_nil(arg) if isinstance(arg, str) else arg
+                    for arg in record.args
+                )
         return True
+
+
+class NilSafeFormatter(logging.Formatter):
+    """Post-format pass: strips any NIL bytes remaining in the final output.
+
+    Catches NIL chars that survive pre-format filtering (e.g. exception
+    tracebacks, stack frames, or format strings that embed raw data).
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        return _strip_nil(super().format(record))
+
 
 def _ensure_nil_filter(handler: logging.Handler) -> None:
     """Attach NIL filter to handler once."""
@@ -33,11 +54,8 @@ def _ensure_nil_filter(handler: logging.Handler) -> None:
     handler.addFilter(NilCharacterFilter())
 
 def _ensure_default_formatter(handler: logging.Handler) -> None:
-    """Attach default formatter if handler has none."""
-    if handler.formatter is None:
-        handler.setFormatter(
-            logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
-        )
+    """Attach NilSafeFormatter to handler, overriding any existing formatter."""
+    handler.setFormatter(NilSafeFormatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
 
 def _sanitize_logger_handlers(
     logger: logging.Logger,

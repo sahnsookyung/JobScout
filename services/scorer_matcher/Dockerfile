@@ -4,7 +4,7 @@ WORKDIR /app
 
 RUN useradd --create-home --shell /bin/bash appuser
 
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 
 RUN pip install --no-cache-dir uv==0.10.8 && \
     uv sync --no-dev --group web

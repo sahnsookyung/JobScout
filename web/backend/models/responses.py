@@ -219,6 +219,13 @@ class ResumeUploadResponse(BaseModel):
     task_id: Optional[str] = None
 
 
+class ResumeStatusResponse(BaseModel):
+    """Response for querying background resume processing status."""
+    task_id: str
+    status: str  # processing | completed | failed
+    error: Optional[str] = None
+
+
 class ScrapeJobsResponse(BaseModel):
     """Response after triggering job scraping."""
     success: bool

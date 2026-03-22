@@ -52,58 +52,68 @@ logger.debug("NIL log sanitization active=%s", is_nil_filter_active())
 # Load configuration
 config = get_config()
 
-# Create FastAPI app
-app = FastAPI(
-    title="JobScout API",
-    description="API for viewing job matching results",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
 
-# Configure rate limiting
-from .routers.pipeline import add_rate_limit_handlers
-add_rate_limit_handlers(app)
+def create_app() -> FastAPI:
+    """Create and configure the FastAPI application.
 
-# Register exception handlers
-app.add_exception_handler(ServiceException, service_exception_handler)
-app.add_exception_handler(HTTPException, http_exception_handler)
-app.add_exception_handler(Exception, general_exception_handler)
-
-# Include routers
-app.include_router(matches_router)
-app.include_router(stats_router)
-app.include_router(policy_router)
-app.include_router(pipeline_router)
-app.include_router(notifications_router)
-
-# Mount static files if they exist
-static_dir = get_project_root() / 'web' / 'static'
-if static_dir.exists():
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-
-
-@app.get("/", response_class=HTMLResponse)
-def read_root():
+    Returns a fully configured app instance. Called at module level for OSS
+    single-user use, and by the SaaS layer (jobscout-cloud) to extend via
+    dependency_overrides and additional routers.
     """
-    Serve the main dashboard HTML page.
-    """
-    html_path = get_project_root() / 'web' / 'templates' / 'index.html'
-    
-    if not html_path.exists():
-        return HTMLResponse(
-            content="<h1>Dashboard not found</h1><p>Please ensure web/templates/index.html exists</p>",
-            status_code=404
-        )
-    
-    with open(html_path, 'r', encoding='utf-8') as f:
-        return HTMLResponse(content=f.read())
+    from .routers.pipeline import add_rate_limit_handlers
+
+    _app = FastAPI(
+        title="JobScout API",
+        description="API for viewing job matching results",
+        version="1.0.0",
+        docs_url="/docs",
+        redoc_url="/redoc"
+    )
+
+    # Configure rate limiting
+    add_rate_limit_handlers(_app)
+
+    # Register exception handlers
+    _app.add_exception_handler(ServiceException, service_exception_handler)
+    _app.add_exception_handler(HTTPException, http_exception_handler)
+    _app.add_exception_handler(Exception, general_exception_handler)
+
+    # Include routers
+    _app.include_router(matches_router)
+    _app.include_router(stats_router)
+    _app.include_router(policy_router)
+    _app.include_router(pipeline_router)
+    _app.include_router(notifications_router)
+
+    # Mount static files if they exist
+    static_dir = get_project_root() / 'web' / 'static'
+    if static_dir.exists():
+        _app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    @_app.get("/", response_class=HTMLResponse)
+    def read_root():
+        """Serve the main dashboard HTML page."""
+        html_path = get_project_root() / 'web' / 'templates' / 'index.html'
+
+        if not html_path.exists():
+            return HTMLResponse(
+                content="<h1>Dashboard not found</h1><p>Please ensure web/templates/index.html exists</p>",
+                status_code=404
+            )
+
+        with open(html_path, 'r', encoding='utf-8') as f:
+            return HTMLResponse(content=f.read())
+
+    @_app.get("/health")
+    def health_check():
+        """Health check endpoint."""
+        return {"status": "healthy", "service": "jobscout-web"}
+
+    return _app
 
 
-@app.get("/health")
-def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "service": "jobscout-web"}
+# Module-level instance for OSS single-user use and uvicorn entry point
+app = create_app()
 
 
 def main():

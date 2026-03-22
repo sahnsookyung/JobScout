@@ -5,12 +5,13 @@ export interface ActionButtonProps {
     isRunningStatus: boolean;
     isRunning: boolean;
     isStopping: boolean;
+    isProcessingResume?: boolean;
     onRun: () => void;
     onStop: () => void;
 }
 
-export const ActionButton: React.FC<ActionButtonProps> = ({ isRunningStatus, isRunning, isStopping, onRun, onStop }) => {
-    const isProcessing = isRunningStatus ? isStopping : isRunning;
+export const ActionButton: React.FC<ActionButtonProps> = ({ isRunningStatus, isRunning, isStopping, isProcessingResume, onRun, onStop }) => {
+    const isProcessing = (isRunningStatus ? isStopping : isRunning) || (isProcessingResume ?? false);
     const buttonText = isRunningStatus ? 'Stop' : 'Run Matching';
 
     return (

@@ -393,7 +393,7 @@ class OpenAIService(LLMProvider):
         if not texts:
             return []
 
-        _MAX_BATCH = 100
+        _MAX_BATCH = 32
         client = self.embedding_client if self.embedding_client else self.client
         results: List[List[float]] = []
 
