@@ -368,10 +368,13 @@ def test_infrastructure() -> Generator[None, None, None]:
     if not config_path.exists():
         print("  ⚠️  config.yaml not found - services may fail to start correctly")
 
-    start_web_backend_for_tests(project_root, resume_path, config_path)
-
-    yield
-    stop_test_infrastructure()
+    try:
+        start_web_backend_for_tests(project_root, resume_path, config_path)
+        yield
+    finally:
+        # Ensure cleanup even if start_web_backend_for_tests() raises — otherwise
+        # containers created by start_test_infrastructure() are never removed.
+        stop_test_infrastructure()
 
 
 
