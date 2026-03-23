@@ -20,7 +20,7 @@ import pytest
 
 from notification.channels import (
     DiscordChannel, TelegramChannel, EmailChannel, WebhookChannel,
-    RateLimitException,
+    RateLimitException, NotificationChannel,
     _validate_webhook_url, _sanitize_url, _escape_html, _is_dry_run_mode,
     _mask_email, _validate_channel_file_path,
     NotificationChannelFactory, InAppChannel
@@ -738,3 +738,355 @@ class TestNotificationChannelFactory:
         """Test getting unknown channel raises error."""
         with pytest.raises(ValueError, match='Unknown channel type'):
             NotificationChannelFactory.get_channel('unknown_channel')
+
+    def test_register_channel_valid(self):
+        """register_channel adds a new channel type."""
+        class MyChannel(NotificationChannel):
+            @property
+            def channel_type(self) -> str:
+                return 'my_test'
+            def send(self, recipient, subject, body, metadata):
+                return True
+
+        NotificationChannelFactory.register_channel('my_test', MyChannel)
+        channel = NotificationChannelFactory.get_channel('my_test')
+        assert isinstance(channel, MyChannel)
+
+    def test_register_channel_invalid_raises(self):
+        """register_channel raises ValueError for non-channel classes."""
+        with pytest.raises(ValueError, match='must extend NotificationChannel'):
+            NotificationChannelFactory.register_channel('bad', dict)
+
+    def test_load_custom_channels_already_loaded_returns_early(self):
+        """_load_custom_channels returns immediately if already loaded."""
+        factory = NotificationChannelFactory
+        original = factory._custom_channels_loaded
+        factory._custom_channels_loaded = True
+        initial_count = len(factory._channels)
+        factory._load_custom_channels()
+        # Should not have added new channels
+        assert len(factory._channels) == initial_count
+        factory._custom_channels_loaded = original
+
+    def test_load_custom_channels_invalid_path_skipped(self, caplog):
+        """Invalid NOTIFICATION_CHANNEL_PATH is skipped with warning."""
+        factory = NotificationChannelFactory
+        original = factory._custom_channels_loaded
+        factory._custom_channels_loaded = False
+        try:
+            with patch.dict('os.environ', {'NOTIFICATION_CHANNEL_PATH': '/tmp/bad.py'}, clear=False):
+                with patch('notification.channels._validate_channel_file_path', return_value=False):
+                    factory._load_custom_channels()
+            assert "Skipping custom channel" in caplog.text
+        finally:
+            factory._custom_channels_loaded = original
+
+    def test_load_custom_channels_modules_env(self):
+        """NOTIFICATION_CHANNEL_MODULES triggers _load_channel_from_module."""
+        factory = NotificationChannelFactory
+        original = factory._custom_channels_loaded
+        factory._custom_channels_loaded = False
+        try:
+            with patch.dict('os.environ', {'NOTIFICATION_CHANNEL_MODULES': 'mymod'}, clear=False):
+                with patch.object(factory, '_load_channel_from_module') as mock_load:
+                    with patch('notification.channels._validate_channel_file_path', return_value=False):
+                        # Ensure NOTIFICATION_CHANNEL_PATH is absent
+                        with patch.dict('os.environ', {}, clear=False):
+                            factory._load_custom_channels()
+            mock_load.assert_called()
+        finally:
+            factory._custom_channels_loaded = original
+
+    def test_load_channel_from_module_colon_syntax(self):
+        """_load_channel_from_module handles 'module:ClassName' syntax."""
+        factory = NotificationChannelFactory
+
+        class CustomChannel(NotificationChannel):
+            @property
+            def channel_type(self):
+                return 'colon_custom'
+            def send(self, r, s, b, m):
+                return True
+
+        mock_module = MagicMock()
+        mock_module.CustomChannel = CustomChannel
+
+        with patch('importlib.import_module', return_value=mock_module):
+            factory._load_channel_from_module('mymod:CustomChannel')
+
+        assert 'colon_custom' in factory._channels
+
+    def test_load_channel_from_module_exception_logged(self, caplog):
+        """_load_channel_from_module logs error on import failure."""
+        factory = NotificationChannelFactory
+        with patch('importlib.import_module', side_effect=ImportError("no module")):
+            factory._load_channel_from_module('nonexistent_module:SomeClass')
+        assert "Failed to load custom channel from module" in caplog.text
+
+    def test_load_channel_from_file_no_spec_returns(self, caplog):
+        """_load_channel_from_file returns early when spec is None."""
+        factory = NotificationChannelFactory
+        with patch('importlib.util.spec_from_file_location', return_value=None):
+            factory._load_channel_from_file('/app/channels/custom.py')
+        assert "Could not load custom channel" in caplog.text
+
+    def test_load_channel_from_file_exception_logged(self, caplog):
+        """_load_channel_from_file logs error on exception."""
+        factory = NotificationChannelFactory
+        with patch('importlib.util.spec_from_file_location', side_effect=Exception("load error")):
+            factory._load_channel_from_file('/app/channels/custom.py')
+        assert "Failed to load custom channel from" in caplog.text
+
+
+class TestEmailChannelUncoveredPaths:
+    """Cover remaining email channel branches."""
+
+    def test_email_not_configured_returns_false(self, caplog):
+        """EmailChannel.send returns False when SMTP not configured."""
+        channel = EmailChannel()
+        for var in ['SMTP_SERVER', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD']:
+            os.environ.pop(var, None)
+
+        result = channel.send('user@example.com', 'Subject', 'Body', {})
+        assert result is False
+        assert "Email not configured" in caplog.text
+
+    @patch('notification.channels.smtplib.SMTP')
+    def test_email_plain_text_fallback(self, mock_smtp_class):
+        """EmailChannel uses plain text when no job_contents."""
+        mock_smtp = MagicMock()
+        mock_smtp_class.return_value.__enter__ = Mock(return_value=mock_smtp)
+        mock_smtp_class.return_value.__exit__ = Mock(return_value=False)
+
+        os.environ.update({
+            'SMTP_SERVER': 'smtp.test.com',
+            'SMTP_PORT': '587',
+            'SMTP_USERNAME': 'user@test.com',
+            'SMTP_PASSWORD': 'pass',
+        })
+
+        channel = EmailChannel()
+        result = channel.send('user@example.com', 'Subject', 'Plain body', {})
+        assert result is True
+        mock_smtp.send_message.assert_called_once()
+
+    @patch('notification.channels.smtplib.SMTP', side_effect=Exception("SMTP error"))
+    def test_email_smtp_exception_returns_false(self, mock_smtp_class, caplog):
+        """EmailChannel.send returns False on SMTP exception."""
+        os.environ.update({
+            'SMTP_SERVER': 'smtp.test.com',
+            'SMTP_PORT': '587',
+            'SMTP_USERNAME': 'user@test.com',
+            'SMTP_PASSWORD': 'pass',
+        })
+
+        channel = EmailChannel()
+        result = channel.send('user@example.com', 'Subject', 'Body', {})
+        assert result is False
+
+    def test_email_build_html_body_optional_fields_absent(self):
+        """_build_html_body handles jobs missing optional fields."""
+        channel = EmailChannel()
+        job_contents = [
+            {
+                'job': {'title': 'Dev', 'company': 'Corp'},  # no location/salary/type
+                'match': {'overall_score': 80, 'fit_score': 75},  # no want_score
+                'requirements': {'total': 5, 'matched': 4},
+                # no apply_url, no match_id
+            }
+        ]
+        html = channel._build_html_body('Subject', job_contents, {})
+        assert 'Dev' in html
+        assert 'Corp' in html
+
+    def test_email_build_html_body_multiple_jobs(self):
+        """_build_html_body separates multiple jobs with divider."""
+        channel = EmailChannel()
+        job = {
+            'job': {'title': 'Dev', 'company': 'Corp'},
+            'match': {'overall_score': 80, 'fit_score': 75},
+            'requirements': {'total': 5, 'matched': 4},
+        }
+        html = channel._build_html_body('Subject', [job, job], {})
+        assert 'separator' in html
+
+    def test_email_build_html_body_apply_url_invalid(self):
+        """_build_html_body skips apply link when URL is invalid."""
+        channel = EmailChannel()
+        job_contents = [{
+            'job': {'title': 'Dev', 'company': 'Corp'},
+            'match': {'overall_score': 80, 'fit_score': 75},
+            'requirements': {'total': 5, 'matched': 4},
+            'apply_url': 'javascript:alert(1)',  # invalid
+        }]
+        html = channel._build_html_body('Subject', job_contents, {'match_id': 'mid-1'})
+        assert 'javascript' not in html
+        assert 'View Details' in html
+
+
+class TestDiscordChannelUncoveredPaths:
+    """Cover remaining Discord channel branches."""
+
+    def test_discord_no_webhook_url_returns_false(self, caplog):
+        """DiscordChannel.send returns False with no webhook URL."""
+        os.environ.pop('DISCORD_WEBHOOK_URL', None)
+        channel = DiscordChannel()
+        result = channel.send('', 'Subject', 'Body', {})
+        assert result is False
+        assert "Discord webhook not configured" in caplog.text
+
+    @patch('notification.channels.requests.post')
+    def test_discord_simple_embed_fallback(self, mock_post):
+        """DiscordChannel uses simple embed when no job_contents."""
+        mock_response = Mock()
+        mock_response.status_code = 204
+        mock_response.raise_for_status = Mock()
+        mock_post.return_value = mock_response
+
+        channel = DiscordChannel()
+        result = channel.send('', 'Alert Subject', 'Alert body', {
+            'discord_webhook_url': 'https://discord.com/api/webhooks/test/test'
+        })
+        assert result is True
+        payload = mock_post.call_args[1]['json']
+        assert payload['embeds'][0]['title'] == 'Alert Subject'
+
+    @patch('notification.channels.requests.post', side_effect=Exception("network error"))
+    def test_discord_exception_returns_false(self, mock_post, caplog):
+        """DiscordChannel.send returns False on exception."""
+        channel = DiscordChannel()
+        result = channel.send('', 'Subject', 'Body', {
+            'discord_webhook_url': 'https://discord.com/api/webhooks/test/test'
+        })
+        assert result is False
+
+
+class TestTelegramChannelUncoveredPaths:
+    """Cover remaining Telegram channel branches."""
+
+    def test_telegram_no_bot_token_returns_false(self, caplog):
+        """TelegramChannel.send returns False with no bot token."""
+        os.environ.pop('TELEGRAM_BOT_TOKEN', None)
+        channel = TelegramChannel()
+        result = channel.send('@channel', 'Subject', 'Body', {})
+        assert result is False
+        assert "TELEGRAM_BOT_TOKEN not set" in caplog.text
+
+    @patch('notification.channels.requests.post')
+    def test_telegram_non_200_status_returns_false(self, mock_post, caplog):
+        """TelegramChannel.send returns False on non-200 status."""
+        mock_response = Mock()
+        mock_response.status_code = 400
+        mock_response.text = 'Bad Request'
+        mock_post.return_value = mock_response
+
+        os.environ['TELEGRAM_BOT_TOKEN'] = 'test-token'
+        channel = TelegramChannel()
+        result = channel.send('@channel', 'Subject', 'Body', {})
+        assert result is False
+        assert "Telegram API error" in caplog.text
+
+    @patch('notification.channels.requests.post', side_effect=Exception("connection error"))
+    def test_telegram_exception_returns_false(self, mock_post, caplog):
+        """TelegramChannel.send returns False on exception."""
+        os.environ['TELEGRAM_BOT_TOKEN'] = 'test-token'
+        channel = TelegramChannel()
+        result = channel.send('@channel', 'Subject', 'Body', {})
+        assert result is False
+
+    def test_telegram_build_rich_message_optional_fields_absent(self):
+        """_build_rich_message handles jobs missing optional fields."""
+        channel = TelegramChannel()
+        job_contents = [{
+            'job': {'title': 'Dev', 'company': 'Corp'},  # no location/salary/type/level
+            'match': {'overall_score': 80, 'fit_score': 75},  # no want_score
+            'requirements': {'total': 5, 'matched': 4},
+            # no apply_url, no match_id
+        }]
+        msg = channel._build_rich_message('Alert', job_contents, {})
+        assert 'Dev' in msg
+        assert 'Corp' in msg
+
+    def test_telegram_build_rich_message_multiple_jobs(self):
+        """_build_rich_message adds separator between multiple jobs."""
+        channel = TelegramChannel()
+        job = {
+            'job': {'title': 'Dev', 'company': 'Corp'},
+            'match': {'overall_score': 80, 'fit_score': 75},
+            'requirements': {'total': 5, 'matched': 4},
+        }
+        msg = channel._build_rich_message('Alert', [job, job], {})
+        assert '─' * 10 in msg
+
+
+class TestWebhookChannelUncoveredPaths:
+    """Cover remaining webhook channel branches."""
+
+    @patch('notification.channels.requests.post')
+    def test_webhook_json_body_parsed(self, mock_post):
+        """WebhookChannel parses JSON body as payload."""
+        mock_post.return_value.raise_for_status = Mock()
+        channel = WebhookChannel()
+        with patch('notification.channels._validate_webhook_url', return_value=True):
+            result = channel.send(
+                'https://example.com/webhook',
+                'Subject',
+                '{"key": "value"}',
+                {}
+            )
+        assert result is True
+        payload = mock_post.call_args[1]['json']
+        assert payload.get('key') == 'value'
+
+    @patch('notification.channels.requests.post')
+    def test_webhook_non_json_body_as_plain(self, mock_post):
+        """WebhookChannel wraps non-JSON body in plain payload."""
+        mock_post.return_value.raise_for_status = Mock()
+        channel = WebhookChannel()
+        with patch('notification.channels._validate_webhook_url', return_value=True):
+            result = channel.send(
+                'https://example.com/webhook',
+                'Subject',
+                'plain text body',
+                {}
+            )
+        assert result is True
+        payload = mock_post.call_args[1]['json']
+        assert payload['body'] == 'plain text body'
+
+    @patch('notification.channels.requests.post', side_effect=Exception("timeout"))
+    def test_webhook_exception_returns_false(self, mock_post, caplog):
+        """WebhookChannel.send returns False on exception."""
+        channel = WebhookChannel()
+        with patch('notification.channels._validate_webhook_url', return_value=True):
+            result = channel.send('https://example.com/webhook', 'S', 'B', {})
+        assert result is False
+
+
+class TestValidationExceptionPaths:
+    """Cover exception/edge paths in utility functions."""
+
+    def test_validate_channel_file_path_exception(self, caplog):
+        """_validate_channel_file_path returns False on unexpected exception."""
+        with patch('os.path.abspath', side_effect=Exception("unexpected")):
+            result = _validate_channel_file_path('/some/path.py')
+        assert result is False
+        assert "Path validation error" in caplog.text
+
+    def test_validate_webhook_url_exception(self, caplog):
+        """_validate_webhook_url returns False on unexpected exception."""
+        with patch('urllib.parse.urlparse', side_effect=Exception("parse error")):
+            result = _validate_webhook_url('https://example.com/hook')
+        assert result is False
+        assert "URL validation error" in caplog.text
+
+    def test_sanitize_url_exception_returns_none(self):
+        """_sanitize_url returns None on unexpected exception."""
+        with patch('urllib.parse.urlparse', side_effect=Exception("parse error")):
+            result = _sanitize_url('https://example.com')
+        assert result is None
+
+    def test_notification_channel_validate_config_default_true(self):
+        """NotificationChannel.validate_config base implementation returns True."""
+        channel = InAppChannel()  # InAppChannel doesn't override validate_config
+        assert channel.validate_config() is True
