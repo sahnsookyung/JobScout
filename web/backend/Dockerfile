@@ -21,6 +21,8 @@ COPY core/ ./core/
 COPY database/ ./database/
 # ETL: ResumeParser for resume upload endpoint
 COPY etl/ ./etl/
+# Pipeline: matching pipeline runner for compact mode
+COPY pipeline/ ./pipeline/
 # Notification service for async notifications
 COPY notification/ ./notification/
 # Shared constants and utilities

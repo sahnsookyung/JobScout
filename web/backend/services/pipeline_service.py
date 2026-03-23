@@ -109,21 +109,7 @@ class PipelineTaskManager:
                 status="pending",
                 step="initializing"
             )
-        
-        # Run in a thread to not block the event loop
-        import asyncio
-        
-        def run_in_thread():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                self._run_pipeline_background(task_id)
-            finally:
-                loop.close()
-        
-        thread = threading.Thread(target=run_in_thread, daemon=True)
-        thread.start()
-        
+
         return task_id
     
     def get_task(self, task_id: str) -> Optional[PipelineTask]:

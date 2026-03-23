@@ -79,6 +79,51 @@ def test_setup_logging_attaches_filter_to_existing_uvicorn_handler() -> None:
         uvicorn_logger.setLevel(original_level)
 
 
+def test_sanitize_logger_handlers_adds_handler_when_missing() -> None:
+    """_sanitize_logger_handlers with add_handler_if_missing=True adds a handler when none exist."""
+    from core.logging_utils import _sanitize_logger_handlers
+
+    logger_name = "test.add.handler.when.missing"
+    logger = logging.getLogger(logger_name)
+    original_handlers = list(logger.handlers)
+    original_level = logger.level
+
+    try:
+        logger.handlers = []
+        logger.setLevel(logging.NOTSET)
+        logger.propagate = False
+
+        _sanitize_logger_handlers(logger, logging.INFO, add_handler_if_missing=True)
+
+        assert len(logger.handlers) == 1
+        assert any(isinstance(f, NilCharacterFilter) for f in logger.handlers[0].filters)
+    finally:
+        logger.handlers = original_handlers
+        logger.setLevel(original_level)
+
+
+def test_is_nil_filter_active_returns_false_when_filter_missing() -> None:
+    """is_nil_filter_active returns False when a handler lacks NilCharacterFilter."""
+    logger_name = "test.no.nil.filter"
+    logger = logging.getLogger(logger_name)
+    original_handlers = list(logger.handlers)
+    original_level = logger.level
+
+    try:
+        logger.handlers = []
+        logger.propagate = False
+
+        # Handler WITHOUT NilCharacterFilter
+        handler = logging.StreamHandler()
+        logger.addHandler(handler)
+
+        result = is_nil_filter_active([logger_name])
+        assert result is False
+    finally:
+        logger.handlers = original_handlers
+        logger.setLevel(original_level)
+
+
 def test_integration_emitted_log_contains_no_null_bytes() -> None:
     logger_name = "test.nil.integration"
     logger = logging.getLogger(logger_name)
