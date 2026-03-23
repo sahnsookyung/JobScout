@@ -252,6 +252,84 @@ class TestRunEmbeddingBatch:
             assert result == 0
 
 
+    def test_embedding_batch_requirements_api_failure_falls_back_to_per_item(self):
+        """When batch requirement embedding fails, fall back to per-item embedding."""
+        from services.base.embeddings import _run_embedding_batch
+        with patch('services.base.embeddings.job_uow') as mock_job_uow:
+            mock_repo = MagicMock()
+            mock_req = MagicMock()
+            mock_req.id = "req-1"
+            mock_req.text = "Python required"
+            mock_repo.get_unembedded_jobs.return_value = []
+            mock_repo.get_unembedded_requirements.return_value = [mock_req]
+            mock_repo.get_requirement_by_id.return_value = mock_req
+
+            mock_context = MagicMock()
+            mock_context.__enter__ = Mock(return_value=mock_repo)
+            mock_context.__exit__ = Mock(return_value=False)
+            mock_job_uow.return_value = mock_context
+
+            mock_ctx = Mock()
+            mock_ctx.job_etl_service.ai.generate_embeddings_batch.side_effect = Exception("Batch API failed")
+            mock_ctx.job_etl_service.embed_requirement_one = Mock()
+            stop_event = threading.Event()
+
+            result = _run_embedding_batch(mock_ctx, stop_event, limit=10)
+
+            # Per-item fallback should have been called
+            mock_ctx.job_etl_service.embed_requirement_one.assert_called_once()
+
+    def test_embedding_batch_job_writeback_exception_marks_failed(self):
+        """When write-back for a job fails, it should be marked retryable."""
+        from services.base.embeddings import _run_embedding_batch
+        with patch('services.base.embeddings.job_uow') as mock_job_uow:
+            mock_repo = MagicMock()
+            mock_job = MagicMock()
+            mock_job.id = "job-1"
+            mock_job.requirements = []
+            mock_job.benefits = []
+            mock_job.description = "desc"
+            mock_repo.get_unembedded_jobs.return_value = [mock_job]
+            mock_repo.get_unembedded_requirements.return_value = []
+            mock_repo.get_by_id.return_value = mock_job
+            mock_repo.save_job_embedding.side_effect = Exception("Write failed")
+
+            mock_context = MagicMock()
+            mock_context.__enter__ = Mock(return_value=mock_repo)
+            mock_context.__exit__ = Mock(return_value=False)
+            mock_job_uow.return_value = mock_context
+
+            mock_ctx = Mock()
+            mock_ctx.job_etl_service.ai.generate_embeddings_batch.return_value = [[0.1] * 1024]
+            stop_event = threading.Event()
+
+            result = _run_embedding_batch(mock_ctx, stop_event, limit=10)
+
+            # Job failed to write back, should be marked retryable
+            assert result == 0
+
+    def test_embedding_batch_no_jobs_and_no_requirements(self):
+        """When there are no jobs or requirements, returns 0 without API calls."""
+        from services.base.embeddings import _run_embedding_batch
+        with patch('services.base.embeddings.job_uow') as mock_job_uow:
+            mock_repo = MagicMock()
+            mock_repo.get_unembedded_jobs.return_value = []
+            mock_repo.get_unembedded_requirements.return_value = []
+
+            mock_context = MagicMock()
+            mock_context.__enter__ = Mock(return_value=mock_repo)
+            mock_context.__exit__ = Mock(return_value=False)
+            mock_job_uow.return_value = mock_context
+
+            mock_ctx = Mock()
+            stop_event = threading.Event()
+
+            result = _run_embedding_batch(mock_ctx, stop_event, limit=10)
+
+            assert result == 0
+            mock_ctx.job_etl_service.ai.generate_embeddings_batch.assert_not_called()
+
+
 class TestRunEmbeddingExtraction:
     """Test run_embedding_extraction function."""
 
