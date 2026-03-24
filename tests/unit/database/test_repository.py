@@ -269,12 +269,6 @@ class TestJobPostDelegation:
         result = repo.get_top_jobs_by_summary_embedding([0.1, 0.2], 10, None, True)
         assert result == [("job", 0.9)]
 
-    def test_get_jobs_needing_facet_extraction(self):
-        repo, _ = make_repo()
-        repo.job_post.get_jobs_needing_facet_extraction = MagicMock(return_value=["j"])
-        result = repo.get_jobs_needing_facet_extraction(limit=5)
-        assert result == ["j"]
-
     def test_save_job_facet_embedding(self):
         repo, _ = make_repo()
         repo.job_post.save_job_facet_embedding = MagicMock(return_value="facet")

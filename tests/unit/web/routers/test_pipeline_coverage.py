@@ -216,6 +216,50 @@ class TestStartLocalMatching:
 
         mock_thread.return_value.start.assert_called_once()
 
+    def test_returns_409_when_startup_etl_running(self):
+        """Change 4d: matching is blocked with 409 while startup ETL state=running."""
+        from web.backend.routers.pipeline import _start_local_matching, _STARTUP_ETL_STATE_KEY
+        from fastapi import HTTPException
+
+        mock_redis = self._make_redis(acquired=True)
+        # No resume upload in progress (resume guard exits early)
+        mock_redis.get.return_value = None
+
+        def fake_task_state(key):
+            if key == _STARTUP_ETL_STATE_KEY:
+                return {"status": "running"}
+            return None
+
+        with patch("web.backend.routers.pipeline.get_redis_client", return_value=mock_redis), \
+             patch("web.backend.routers.pipeline.get_task_state", side_effect=fake_task_state):
+            with pytest.raises(HTTPException) as exc_info:
+                _start_local_matching()
+
+        assert exc_info.value.status_code == 409
+        assert "startup" in exc_info.value.detail.lower()
+
+    def test_startup_etl_guard_exception_does_not_block_matching(self):
+        """If get_task_state raises inside the guard, matching proceeds (no crash/409)."""
+        from web.backend.routers.pipeline import _start_local_matching
+        from web.backend.models.responses import PipelineTaskResponse
+
+        mock_redis = self._make_redis(acquired=True)
+        mock_redis.get.return_value = None
+        mock_manager = self._make_manager("task-ok")
+        mock_uow, _ = self._make_uow_context("fp-1")
+
+        with patch("web.backend.routers.pipeline.get_redis_client", return_value=mock_redis), \
+             patch("web.backend.routers.pipeline.get_task_state", side_effect=Exception("Redis flap")), \
+             patch("web.backend.routers.pipeline.set_task_state"), \
+             patch("web.backend.routers.pipeline.get_pipeline_manager", return_value=mock_manager), \
+             patch("web.backend.routers.pipeline.job_uow", mock_uow), \
+             patch("threading.Thread") as mock_thread:
+            mock_thread.return_value.start = MagicMock()
+            result = _start_local_matching()
+
+        assert isinstance(result, PipelineTaskResponse)
+        assert result.success is True
+
 
 # ---------------------------------------------------------------------------
 # _run_local_matching_background

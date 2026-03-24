@@ -745,24 +745,6 @@ class TestGetTopJobsBySummaryEmbedding:
 
 
 # ---------------------------------------------------------------------------
-# get_jobs_needing_facet_extraction
-# ---------------------------------------------------------------------------
-
-class TestGetJobsNeedingFacetExtraction:
-    def test_returns_jobs(self):
-        repo, mock_db = make_repo()
-        mock_db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-        result = repo.get_jobs_needing_facet_extraction(limit=10)
-        assert len(result) == 1
-
-    def test_returns_empty(self):
-        repo, mock_db = make_repo()
-        mock_db.execute.return_value.scalars.return_value.all.return_value = []
-        result = repo.get_jobs_needing_facet_extraction()
-        assert result == []
-
-
-# ---------------------------------------------------------------------------
 # get_job_facet_embeddings / get_facets_for_job / get_jobs_needing_facet_embedding
 # ---------------------------------------------------------------------------
 
@@ -797,6 +779,66 @@ class TestGetJobsNeedingFacetEmbedding:
         mock_db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
         result = repo.get_jobs_needing_facet_embedding(limit=5)
         assert len(result) == 1
+
+    def test_returns_empty_when_no_unembedded_facets(self):
+        repo, mock_db = make_repo()
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        result = repo.get_jobs_needing_facet_embedding()
+        assert result == []
+
+    def test_query_joins_facet_embedding_for_null_filter(self):
+        """Change 3: query must join JobFacetEmbedding and filter embedding IS NULL."""
+        import inspect
+        from database.repositories.job_post import JobPostRepository
+        src = inspect.getsource(JobPostRepository.get_jobs_needing_facet_embedding)
+        assert "JobFacetEmbedding" in src
+        assert "is_(None)" in src
+        assert "distinct" in src
+
+
+# ---------------------------------------------------------------------------
+# get_and_claim_jobs_for_facet_extraction (Change 1 — extraction_status fix)
+# ---------------------------------------------------------------------------
+
+class TestGetAndClaimJobsForFacetExtraction:
+    def _side_effect(self, claimed_ids, jobs):
+        """Provide execute() side-effects: stale-reset UPDATE, quarantine UPDATE, claim CTE, SELECT."""
+        claim_result = MagicMock()
+        claim_result.fetchall.return_value = [(id_,) for id_ in claimed_ids]
+        jobs_result = MagicMock()
+        jobs_result.scalars.return_value.all.return_value = jobs
+        return [MagicMock(), MagicMock(), claim_result, jobs_result]
+
+    def test_claim_sql_uses_extraction_status_not_is_embedded(self):
+        """Change 1: claim CTE must filter on extraction_status='succeeded', not is_embedded=true."""
+        import inspect
+        from database.repositories.job_post import JobPostRepository
+        src = inspect.getsource(JobPostRepository.get_and_claim_jobs_for_facet_extraction)
+        assert "extraction_status = 'succeeded'" in src
+        assert "is_embedded = true" not in src
+
+    def test_returns_empty_when_nothing_claimed(self):
+        repo, mock_db = make_repo()
+        claim_result = MagicMock()
+        claim_result.fetchall.return_value = []
+        mock_db.execute.side_effect = [MagicMock(), MagicMock(), claim_result]
+        result = repo.get_and_claim_jobs_for_facet_extraction()
+        assert result == []
+
+    def test_returns_claimed_jobs(self):
+        repo, mock_db = make_repo()
+        mock_job = MagicMock(spec=JobPost)
+        mock_db.execute.side_effect = self._side_effect(["id-1"], [mock_job])
+        result = repo.get_and_claim_jobs_for_facet_extraction()
+        assert result == [mock_job]
+
+    def test_extraction_status_succeeded_is_embedded_false_jobs_are_eligible(self):
+        """Change 1: is_embedded=false must not block claiming when extraction_status=succeeded."""
+        # Verified via source inspection: the old is_embedded = true guard is gone.
+        import inspect
+        from database.repositories.job_post import JobPostRepository
+        src = inspect.getsource(JobPostRepository.get_and_claim_jobs_for_facet_extraction)
+        assert "is_embedded = true" not in src
 
 
 # ---------------------------------------------------------------------------

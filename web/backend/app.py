@@ -14,7 +14,11 @@ Then open:
 """
 
 import sys
+import os
+import asyncio
 import logging
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Add project root to path
@@ -53,6 +57,89 @@ logger.debug("NIL log sanitization active=%s", is_nil_filter_active())
 config = get_config()
 
 
+_STARTUP_ETL_LOCK_KEY  = "pipeline:startup:etl:lock"
+_STARTUP_ETL_STATE_KEY = "pipeline:startup:etl:state"
+
+
+async def _compact_startup_etl() -> None:
+    """Process any pending jobs left over from a previous run (compact mode only)."""
+    from core.config_loader import load_config
+    from core.app_context import AppContext
+    from core.redis_streams import get_redis_client, set_task_state
+    from services.base.extraction import run_job_extraction
+    from services.base.embeddings import run_embedding_extraction
+    from database.uow import job_uow
+    from database.models.job import JobPost
+    from sqlalchemy import select, func
+
+    # Pre-check: skip if nothing pending
+    try:
+        with job_uow() as repo:
+            pending = repo.db.execute(
+                select(func.count()).select_from(JobPost).where(
+                    (JobPost.extraction_status == 'pending') |
+                    (JobPost.facet_status      == 'pending') |
+                    (JobPost.embedding_status  == 'pending')
+                )
+            ).scalar()
+        if not pending:
+            logger.info("Compact startup ETL: nothing pending, skipping")
+            return
+        logger.info("Compact startup ETL: %d pending jobs found", pending)
+    except Exception:
+        logger.exception("Compact startup ETL: pre-check failed, skipping")
+        return
+
+    # Redis distributed lock (ex=7200 to outlast large backlogs)
+    try:
+        redis = get_redis_client()
+        acquired = redis.set(_STARTUP_ETL_LOCK_KEY, "1", nx=True, ex=7200)
+        if not acquired:
+            logger.info("Compact startup ETL: another worker holds the lock, skipping")
+            return
+    except Exception:
+        logger.warning("Compact startup ETL: Redis unavailable, proceeding without lock")
+        redis = None
+
+    ctx = None
+    try:
+        ctx = AppContext.build(load_config())
+        # Set running state AFTER ETL confirmed to start (avoids non-atomic gap)
+        if redis:
+            try:
+                set_task_state(_STARTUP_ETL_STATE_KEY, {"status": "running"}, ttl=7200)
+            except Exception:
+                pass
+        stop = threading.Event()
+        await asyncio.to_thread(run_job_extraction, ctx, stop, 200)
+        await asyncio.to_thread(run_embedding_extraction, ctx, stop, 100)
+        logger.info("Compact startup ETL: complete")
+    except Exception:
+        logger.exception("Compact startup ETL: failed")
+    finally:
+        if ctx is not None:
+            try:
+                if hasattr(ctx, 'aclose'):
+                    await ctx.aclose()
+                elif hasattr(ctx, 'close'):
+                    ctx.close()
+            except Exception:
+                logger.warning("Compact startup ETL: error closing AppContext")
+        if redis is not None:
+            try:
+                redis.delete(_STARTUP_ETL_LOCK_KEY)
+                set_task_state(_STARTUP_ETL_STATE_KEY, {"status": "done"}, ttl=60)
+            except Exception:
+                pass
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    if not os.getenv("ORCHESTRATOR_URL", "").strip():
+        asyncio.create_task(_compact_startup_etl())
+    yield
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -67,7 +154,8 @@ def create_app() -> FastAPI:
         description="API for viewing job matching results",
         version="1.0.0",
         docs_url="/docs",
-        redoc_url="/redoc"
+        redoc_url="/redoc",
+        lifespan=_lifespan,
     )
 
     # Configure rate limiting

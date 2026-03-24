@@ -152,9 +152,6 @@ class JobRepository:
             resume_embedding, limit, tenant_id, require_remote
         )
 
-    def get_jobs_needing_facet_extraction(self, limit: int = 100) -> List[JobPost]:
-        return self.job_post.get_jobs_needing_facet_extraction(limit)
-
     def save_job_facet_embedding(
         self,
         job_post_id: Any,
