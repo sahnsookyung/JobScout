@@ -227,7 +227,7 @@ describe('PipelineRunner', () => {
         it('shows 0 for missing matches_count', () => {
             mockUsePipeline.mockReturnValue({
                 ...completedHook,
-                status: { status: 'completed', execution_time: 5.0 },
+                status: { status: 'completed', execution_time: 5 },
             } as never);
             render(<PipelineRunner />);
             // Two 0s for matches and saved
@@ -334,7 +334,7 @@ describe('PipelineRunner', () => {
         it('hides Connection Issue banner when status is completed', () => {
             mockUsePipeline.mockReturnValue({
                 ...defaultHook,
-                status: { status: 'completed', execution_time: 1.0 },
+                status: { status: 'completed', execution_time: 1 },
                 sseError: 'Some error',
             } as never);
             render(<PipelineRunner />);

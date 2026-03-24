@@ -690,7 +690,7 @@ describe('MatchDetailsModal', () => {
         mockUseMatchDetails.mockReturnValue({ data: makeModalData(), isLoading: false });
         const onClose = vi.fn();
         const { container } = render(<MatchDetailsModal matchId="match-1" onClose={onClose} />);
-        const backdrop = container.querySelector('.bg-black\\/60');
+        const backdrop = container.querySelector(String.raw`.bg-black\/60`);
         expect(backdrop).toBeInTheDocument();
         fireEvent.click(backdrop!);
         expect(onClose).toHaveBeenCalledTimes(1);

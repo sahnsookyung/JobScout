@@ -32,22 +32,22 @@ describe('ToastProvider', () => {
 
     it('passes position="bottom-right"', () => {
         const { getByTestId } = render(<ToastProvider />);
-        expect(getByTestId('toaster').getAttribute('data-position')).toBe('bottom-right');
+        expect((getByTestId('toaster') as HTMLElement).dataset.position).toBe('bottom-right');
     });
 
     it('passes theme="system"', () => {
         const { getByTestId } = render(<ToastProvider />);
-        expect(getByTestId('toaster').getAttribute('data-theme')).toBe('system');
+        expect((getByTestId('toaster') as HTMLElement).dataset.theme).toBe('system');
     });
 
     it('passes visibleToasts=3', () => {
         const { getByTestId } = render(<ToastProvider />);
-        expect(getByTestId('toaster').getAttribute('data-visible-toasts')).toBe('3');
+        expect((getByTestId('toaster') as HTMLElement).dataset.visibleToasts).toBe('3');
     });
 
     it('passes sonner-toast className', () => {
         const { getByTestId } = render(<ToastProvider />);
-        expect(getByTestId('toaster').getAttribute('data-class-name')).toBe('sonner-toast');
+        expect((getByTestId('toaster') as HTMLElement).dataset.className).toBe('sonner-toast');
     });
 });
 
