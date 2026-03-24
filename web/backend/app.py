@@ -59,6 +59,18 @@ config = get_config()
 
 _STARTUP_ETL_LOCK_KEY  = "pipeline:startup:etl:lock"
 _STARTUP_ETL_STATE_KEY = "pipeline:startup:etl:state"
+_startup_tasks: set = set()  # strong refs prevent GC of fire-and-forget tasks
+
+
+async def _close_app_context(ctx) -> None:
+    """Close AppContext using aclose() if available, falling back to close()."""
+    try:
+        if hasattr(ctx, 'aclose'):
+            await ctx.aclose()
+        elif hasattr(ctx, 'close'):
+            ctx.close()
+    except Exception:
+        logger.warning("Compact startup ETL: error closing AppContext")
 
 
 async def _compact_startup_etl() -> None:
@@ -118,13 +130,7 @@ async def _compact_startup_etl() -> None:
         logger.exception("Compact startup ETL: failed")
     finally:
         if ctx is not None:
-            try:
-                if hasattr(ctx, 'aclose'):
-                    await ctx.aclose()
-                elif hasattr(ctx, 'close'):
-                    ctx.close()
-            except Exception:
-                logger.warning("Compact startup ETL: error closing AppContext")
+            await _close_app_context(ctx)
         if redis is not None:
             try:
                 redis.delete(_STARTUP_ETL_LOCK_KEY)
@@ -136,7 +142,9 @@ async def _compact_startup_etl() -> None:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     if not os.getenv("ORCHESTRATOR_URL", "").strip():
-        asyncio.create_task(_compact_startup_etl())
+        task = asyncio.create_task(_compact_startup_etl())
+        _startup_tasks.add(task)
+        task.add_done_callback(_startup_tasks.discard)
     yield
 
 

@@ -427,15 +427,18 @@ class TestCompactStartupEtl:
 
         async def run():
             created = []
+            mock_task = MagicMock()
+            mock_task.add_done_callback = MagicMock()
             def capture(coro, **kw):
                 coro.close()  # prevent "coroutine never awaited" warning
                 created.append(1)
-                return MagicMock()
+                return mock_task
             with patch("asyncio.create_task", side_effect=capture), \
                  patch.dict("os.environ", {"ORCHESTRATOR_URL": ""}):
                 async with _lifespan(MagicMock()):
                     pass
             assert len(created) == 1
+            mock_task.add_done_callback.assert_called_once()
 
         self._run(run())
 
