@@ -7,7 +7,9 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { Card } from '../Card';
 
-function renderCard(props: React.ComponentProps<typeof Card> = { children: 'Content' }) {
+const defaultCardProps: React.ComponentProps<typeof Card> = { children: 'Content' };
+
+function renderCard(props: React.ComponentProps<typeof Card> = defaultCardProps) {
     const { container } = render(<Card {...props} />);
     return { container, div: container.firstChild as HTMLElement };
 }
