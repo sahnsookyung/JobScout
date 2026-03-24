@@ -918,3 +918,73 @@ class TestGetJobsWithMissingFacetEmbeddings:
 
         result = repo.get_jobs_with_missing_facet_embeddings()
         assert result == mock_jobs
+
+
+# ---------------------------------------------------------------------------
+# quarantine_null_description_jobs
+# ---------------------------------------------------------------------------
+
+class TestQuarantineNullDescriptionJobs:
+    def test_returns_rowcount(self):
+        repo, mock_db = make_repo()
+        mock_result = MagicMock()
+        mock_result.rowcount = 3
+        mock_db.execute.return_value = mock_result
+
+        count = repo.quarantine_null_description_jobs(older_than_days=7)
+
+        assert count == 3
+        mock_db.execute.assert_called_once()
+
+    def test_returns_zero_when_nothing_to_quarantine(self):
+        repo, mock_db = make_repo()
+        mock_result = MagicMock()
+        mock_result.rowcount = 0
+        mock_db.execute.return_value = mock_result
+
+        count = repo.quarantine_null_description_jobs(older_than_days=7)
+
+        assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# save_job_content — resurrection of no_description jobs
+# ---------------------------------------------------------------------------
+
+class TestSaveJobContentResurrection:
+    def test_resets_no_description_status_when_description_arrives(self):
+        repo, mock_db = make_repo()
+        mock_job = MagicMock(spec=JobPost)
+        mock_job.description = None
+        mock_job.content_hash = None
+        mock_job.extraction_status = 'no_description'
+        mock_db.execute.return_value.scalar_one.return_value = mock_job
+
+        repo.save_job_content("job-id", {"description": "Python dev", "title": "Dev", "company_name": "X"})
+
+        assert mock_job.description == "Python dev"
+        assert mock_job.extraction_status == 'pending'
+
+    def test_does_not_reset_status_when_description_still_null(self):
+        repo, mock_db = make_repo()
+        mock_job = MagicMock(spec=JobPost)
+        mock_job.description = None
+        mock_job.content_hash = None
+        mock_job.extraction_status = 'no_description'
+        mock_db.execute.return_value.scalar_one.return_value = mock_job
+
+        repo.save_job_content("job-id", {"title": "Dev", "company_name": "X"})
+
+        assert mock_job.extraction_status == 'no_description'
+
+    def test_does_not_touch_status_for_normal_pending_jobs(self):
+        repo, mock_db = make_repo()
+        mock_job = MagicMock(spec=JobPost)
+        mock_job.description = None
+        mock_job.content_hash = None
+        mock_job.extraction_status = 'pending'
+        mock_db.execute.return_value.scalar_one.return_value = mock_job
+
+        repo.save_job_content("job-id", {"description": "desc", "title": "Dev", "company_name": "X"})
+
+        assert mock_job.extraction_status == 'pending'

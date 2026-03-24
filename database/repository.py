@@ -209,6 +209,9 @@ class JobRepository:
     ) -> List[JobPost]:
         return self.job_post.get_jobs_with_missing_facet_embeddings(limit, max_retries)
 
+    def quarantine_null_description_jobs(self, older_than_days: int = 7) -> int:
+        return self.job_post.quarantine_null_description_jobs(older_than_days)
+
     def get_resume_summary_embedding(self, resume_fingerprint: str) -> Optional[List[float]]:
         return self.resume.get_resume_summary_embedding(resume_fingerprint)
 

@@ -421,6 +421,30 @@ class TestCompactStartupEtl:
             mock_app_ctx.build.return_value = mock_ctx
             self._run(_compact_startup_etl())  # must not raise
 
+    def test_age_out_called_before_precheck(self):
+        """quarantine_null_description_jobs is called before the pending count check."""
+        from web.backend.app import _compact_startup_etl
+        mock_uow = self._make_uow(0)
+        call_order = []
+        mock_repo = mock_uow.return_value.__enter__.return_value
+        mock_repo.quarantine_null_description_jobs.side_effect = lambda **kw: call_order.append("age_out") or 2
+        mock_repo.db.execute.return_value.scalar.side_effect = lambda: call_order.append("count") or 0
+        with patch("database.uow.job_uow", mock_uow), \
+             patch("core.redis_streams.get_redis_client"):
+            self._run(_compact_startup_etl())
+        assert call_order.index("age_out") < call_order.index("count")
+
+    def test_age_out_failure_does_not_abort_startup(self):
+        """If quarantine_null_description_jobs raises, the ETL still proceeds."""
+        from web.backend.app import _compact_startup_etl
+        mock_uow = self._make_uow(0)
+        mock_repo = mock_uow.return_value.__enter__.return_value
+        mock_repo.quarantine_null_description_jobs.side_effect = Exception("DB error")
+        with patch("database.uow.job_uow", mock_uow), \
+             patch("core.redis_streams.get_redis_client") as mock_redis_fn:
+            self._run(_compact_startup_etl())  # must not raise
+        mock_redis_fn.assert_not_called()  # nothing pending, so Redis still never touched
+
     def test_lifespan_creates_etl_task_in_compact_mode(self):
         """_lifespan schedules _compact_startup_etl when ORCHESTRATOR_URL is unset."""
         from web.backend.app import _lifespan

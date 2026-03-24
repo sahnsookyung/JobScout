@@ -29,6 +29,8 @@ COPY notification/ ./notification/
 COPY web/shared/ ./web/shared/
 # Web backend application
 COPY web/backend/ ./web/backend/
+# Services: extraction and embeddings for compact mode matching
+COPY services/ ./services/
 COPY config.yaml ./
 
 RUN uv sync --frozen --no-dev --group web

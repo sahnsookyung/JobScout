@@ -292,6 +292,8 @@ class TestRunLocalMatchingBackground:
 
         with patch("core.config_loader.load_config"), \
              patch("core.app_context.AppContext.build"), \
+             patch("services.base.extraction.run_job_extraction"), \
+             patch("services.base.embeddings.run_embedding_extraction"), \
              patch("pipeline.runner.run_matching_pipeline", return_value=self._make_success_result()), \
              patch("web.backend.routers.pipeline.set_task_state") as mock_set, \
              patch("web.backend.routers.pipeline.get_redis_client"):
@@ -308,6 +310,8 @@ class TestRunLocalMatchingBackground:
 
         with patch("core.config_loader.load_config"), \
              patch("core.app_context.AppContext.build"), \
+             patch("services.base.extraction.run_job_extraction"), \
+             patch("services.base.embeddings.run_embedding_extraction"), \
              patch("pipeline.runner.run_matching_pipeline", return_value=self._make_failed_result()), \
              patch("web.backend.routers.pipeline.set_task_state") as mock_set, \
              patch("web.backend.routers.pipeline.get_redis_client"):
@@ -324,6 +328,8 @@ class TestRunLocalMatchingBackground:
 
         with patch("core.config_loader.load_config"), \
              patch("core.app_context.AppContext.build"), \
+             patch("services.base.extraction.run_job_extraction"), \
+             patch("services.base.embeddings.run_embedding_extraction"), \
              patch("pipeline.runner.run_matching_pipeline", side_effect=RuntimeError("boom")), \
              patch("web.backend.routers.pipeline.set_task_state") as mock_set, \
              patch("web.backend.routers.pipeline.get_redis_client"):
@@ -341,6 +347,8 @@ class TestRunLocalMatchingBackground:
 
         with patch("core.config_loader.load_config"), \
              patch("core.app_context.AppContext.build"), \
+             patch("services.base.extraction.run_job_extraction"), \
+             patch("services.base.embeddings.run_embedding_extraction"), \
              patch("pipeline.runner.run_matching_pipeline", return_value=self._make_success_result()), \
              patch("web.backend.routers.pipeline.set_task_state"), \
              patch("web.backend.routers.pipeline.get_redis_client", return_value=mock_redis):
@@ -357,6 +365,8 @@ class TestRunLocalMatchingBackground:
 
         with patch("core.config_loader.load_config"), \
              patch("core.app_context.AppContext.build"), \
+             patch("services.base.extraction.run_job_extraction"), \
+             patch("services.base.embeddings.run_embedding_extraction"), \
              patch("pipeline.runner.run_matching_pipeline", side_effect=Exception("fail")), \
              patch("web.backend.routers.pipeline.set_task_state"), \
              patch("web.backend.routers.pipeline.get_redis_client", return_value=mock_redis):
@@ -373,6 +383,8 @@ class TestRunLocalMatchingBackground:
 
         with patch("core.config_loader.load_config"), \
              patch("core.app_context.AppContext.build"), \
+             patch("services.base.extraction.run_job_extraction"), \
+             patch("services.base.embeddings.run_embedding_extraction"), \
              patch("pipeline.runner.run_matching_pipeline", return_value=self._make_success_result(5)), \
              patch("web.backend.routers.pipeline.set_task_state"), \
              patch("web.backend.routers.pipeline.get_redis_client"):
@@ -389,6 +401,8 @@ class TestRunLocalMatchingBackground:
 
         with patch("core.config_loader.load_config"), \
              patch("core.app_context.AppContext.build"), \
+             patch("services.base.extraction.run_job_extraction"), \
+             patch("services.base.embeddings.run_embedding_extraction"), \
              patch("pipeline.runner.run_matching_pipeline", return_value=self._make_success_result(7)), \
              patch("web.backend.routers.pipeline.set_task_state") as mock_set, \
              patch("web.backend.routers.pipeline.get_redis_client"):
@@ -401,6 +415,29 @@ class TestRunLocalMatchingBackground:
         assert len(completed_calls) >= 1
         result_data = completed_calls[0][0][1].get("result", {})
         assert result_data.get("matches_count") == 7
+
+    def test_etl_runs_before_matching(self):
+        """Verify extraction and embedding run before the matching pipeline."""
+        from web.backend.routers.pipeline import _run_local_matching_background
+
+        call_order = []
+        manager = MagicMock()
+        manager.get_task.return_value = None
+
+        def record_extraction(*a, **kw): call_order.append("extraction")
+        def record_embedding(*a, **kw): call_order.append("embedding")
+        def record_matching(*a, **kw): call_order.append("matching"); return self._make_success_result()
+
+        with patch("core.config_loader.load_config"), \
+             patch("core.app_context.AppContext.build"), \
+             patch("services.base.extraction.run_job_extraction", side_effect=record_extraction), \
+             patch("services.base.embeddings.run_embedding_extraction", side_effect=record_embedding), \
+             patch("pipeline.runner.run_matching_pipeline", side_effect=record_matching), \
+             patch("web.backend.routers.pipeline.set_task_state"), \
+             patch("web.backend.routers.pipeline.get_redis_client"):
+            _run_local_matching_background("task-order", manager, "fp-1")
+
+        assert call_order == ["extraction", "embedding", "matching"]
 
 
 # ---------------------------------------------------------------------------

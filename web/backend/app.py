@@ -84,11 +84,24 @@ async def _compact_startup_etl() -> None:
     from database.models.job import JobPost
     from sqlalchemy import select, func
 
-    # Pre-check: skip if nothing pending
+    # Age out jobs that were saved without a description and never re-scraped.
+    # Must run before the pending count so stale no-description jobs don't
+    # trigger an unnecessary ETL cycle.
+    try:
+        with job_uow() as repo:
+            aged = repo.quarantine_null_description_jobs(older_than_days=7)
+        if aged:
+            logger.info("Compact startup ETL: aged out %d null-description jobs", aged)
+    except Exception:
+        logger.warning("Compact startup ETL: age-out step failed, continuing anyway")
+
+    # Pre-check: skip if nothing pending (exclude null-description rows — they
+    # can't be processed and self-heal via re-scraping).
     try:
         with job_uow() as repo:
             pending = repo.db.execute(
                 select(func.count()).select_from(JobPost).where(
+                    JobPost.description.isnot(None),
                     (JobPost.extraction_status == 'pending') |
                     (JobPost.facet_status      == 'pending') |
                     (JobPost.embedding_status  == 'pending')
