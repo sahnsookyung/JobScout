@@ -452,14 +452,14 @@ describe('MatchDetailsModal', () => {
         mockUseMatchDetails.mockReturnValue({ data: undefined, isLoading: true });
         const onClose = vi.fn();
         render(<MatchDetailsModal matchId="match-1" onClose={onClose} />);
-        fireEvent.keyDown(window, { key: 'Escape' });
+        fireEvent.keyDown(globalThis as Window, { key: 'Escape' });
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 
     it('does not listen for Escape when matchId is null', () => {
         const onClose = vi.fn();
         render(<MatchDetailsModal matchId={null} onClose={onClose} />);
-        fireEvent.keyDown(window, { key: 'Escape' });
+        fireEvent.keyDown(globalThis as Window, { key: 'Escape' });
         expect(onClose).not.toHaveBeenCalled();
     });
 
@@ -498,5 +498,201 @@ describe('MatchDetailsModal', () => {
         });
         render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
         expect(screen.getByText('Great job opportunity')).toBeInTheDocument();
+    });
+
+    it('shows salary when salary_min is set', () => {
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({ job: { salary_min: 100000, salary_max: null, currency: 'USD' } }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText('Salary')).toBeInTheDocument();
+    });
+
+    it('shows experience requirement when min_years_experience is set', () => {
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({ job: { min_years_experience: 5 } }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText('5+ years')).toBeInTheDocument();
+    });
+
+    it('shows job level when job_level is set', () => {
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({ job: { job_level: 'Senior' } }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText('Senior')).toBeInTheDocument();
+    });
+
+    it('shows degree required when requires_degree is true', () => {
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({ job: { requires_degree: true } }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText('Required')).toBeInTheDocument();
+    });
+
+    it('shows degree not required when requires_degree is false', () => {
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({ job: { requires_degree: false } }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText('Not Required')).toBeInTheDocument();
+    });
+
+    it('does not show exceptional badge for low overall score', () => {
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({ match: { overall_score: 70 } }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.queryByText('Exceptional Match!')).not.toBeInTheDocument();
+    });
+
+    it('does not show Want score when want_score is null', () => {
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({ match: { overall_score: 85, fit_score: 80, want_score: null } }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.queryByText('Want')).not.toBeInTheDocument();
+    });
+
+    it('renders required requirements section', () => {
+        const requirements = [
+            {
+                requirement_id: 'req-1',
+                req_type: 'required',
+                is_covered: true,
+                similarity_score: 0.92,
+                requirement_text: 'React experience',
+                evidence_text: 'Built React apps',
+                evidence_section: 'Work Experience',
+            },
+        ];
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({ requirements }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText('React experience')).toBeInTheDocument();
+        expect(screen.getByText('Built React apps')).toBeInTheDocument();
+        expect(screen.getByText('Source: Work Experience')).toBeInTheDocument();
+    });
+
+    it('renders preferred requirements section', () => {
+        const requirements = [
+            {
+                requirement_id: 'req-2',
+                req_type: 'preferred',
+                is_covered: false,
+                similarity_score: 0.45,
+                requirement_text: 'GraphQL knowledge',
+                evidence_text: null,
+                evidence_section: null,
+            },
+        ];
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({ requirements }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText('GraphQL knowledge')).toBeInTheDocument();
+    });
+
+    it('renders requirement without evidence text', () => {
+        const requirements = [
+            {
+                requirement_id: 'req-3',
+                req_type: 'required',
+                is_covered: false,
+                similarity_score: 0.3,
+                requirement_text: 'Kubernetes expertise',
+                evidence_text: null,
+                evidence_section: null,
+            },
+        ];
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({ requirements }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText('Kubernetes expertise')).toBeInTheDocument();
+        expect(screen.queryByText('Evidence Found')).not.toBeInTheDocument();
+    });
+
+    it('shows covered/missing badges on requirement cards', () => {
+        const requirements = [
+            {
+                requirement_id: 'req-4',
+                req_type: 'required',
+                is_covered: true,
+                similarity_score: 0.9,
+                requirement_text: 'TypeScript',
+                evidence_text: null,
+                evidence_section: null,
+            },
+            {
+                requirement_id: 'req-5',
+                req_type: 'required',
+                is_covered: false,
+                similarity_score: 0.2,
+                requirement_text: 'Rust',
+                evidence_text: null,
+                evidence_section: null,
+            },
+        ];
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({ requirements }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText('✓ Covered')).toBeInTheDocument();
+        expect(screen.getByText('✗ Missing')).toBeInTheDocument();
+    });
+
+    it('shows both required and preferred requirement sections', () => {
+        const requirements = [
+            {
+                requirement_id: 'req-6',
+                req_type: 'required',
+                is_covered: true,
+                similarity_score: 0.9,
+                requirement_text: 'Node.js',
+                evidence_text: null,
+                evidence_section: null,
+            },
+            {
+                requirement_id: 'req-7',
+                req_type: 'preferred',
+                is_covered: false,
+                similarity_score: 0.4,
+                requirement_text: 'Docker',
+                evidence_text: null,
+                evidence_section: null,
+            },
+        ];
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({ requirements }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText('Required (1)')).toBeInTheDocument();
+        expect(screen.getByText('Preferred (1)')).toBeInTheDocument();
+    });
+
+    it('shows backdrop overlay when modal is open', () => {
+        mockUseMatchDetails.mockReturnValue({ data: makeModalData(), isLoading: false });
+        const onClose = vi.fn();
+        const { container } = render(<MatchDetailsModal matchId="match-1" onClose={onClose} />);
+        const backdrop = container.querySelector('.bg-black\\/60');
+        expect(backdrop).toBeInTheDocument();
+        fireEvent.click(backdrop!);
+        expect(onClose).toHaveBeenCalledTimes(1);
     });
 });

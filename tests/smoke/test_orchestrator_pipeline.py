@@ -358,8 +358,6 @@ def stop_test_infrastructure():
 @pytest.fixture(scope="session", autouse=True)
 def test_infrastructure() -> Generator[None, None, None]:
     """Session fixture to start and stop test infrastructure."""
-    start_test_infrastructure()
-
     project_root = pathlib.Path(__file__).parent.parent.parent
     resume_path = project_root / "resume.json"
     config_path = project_root / "config.yaml"
@@ -369,11 +367,16 @@ def test_infrastructure() -> Generator[None, None, None]:
         print("  ⚠️  config.yaml not found - services may fail to start correctly")
 
     try:
+        # start_test_infrastructure is inside the try so that any containers it
+        # manages to spin up are always torn down by stop_test_infrastructure(),
+        # even when startup fails partway through (e.g. orchestrator-test
+        # launches but a later wait_for_service call times out).
+        start_test_infrastructure()
         start_web_backend_for_tests(project_root, resume_path, config_path)
         yield
     finally:
-        # Ensure cleanup even if start_web_backend_for_tests() raises — otherwise
-        # containers created by start_test_infrastructure() are never removed.
+        # Ensure cleanup even if start_test_infrastructure() or
+        # start_web_backend_for_tests() raises — no containers are left running.
         stop_test_infrastructure()
 
 

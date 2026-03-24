@@ -3,7 +3,7 @@ import { useAuth } from './useAuth';
 import { GoogleLoginScreen } from './GoogleLoginScreen';
 
 interface AuthGateProps {
-    children: ReactNode;
+    readonly children: ReactNode;
 }
 
 /**

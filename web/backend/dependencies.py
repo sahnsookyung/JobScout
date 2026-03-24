@@ -64,7 +64,7 @@ def get_db_engine():
     return _db_manager.engine
 
 
-async def get_current_user():
+def get_current_user():
     """No-op in single-user OSS mode. Overridden by SaaS layer via app.dependency_overrides.
 
     IMPORTANT: Routes must import this from web.backend.dependencies (this exact path).

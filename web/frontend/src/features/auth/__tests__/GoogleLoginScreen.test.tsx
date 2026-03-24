@@ -16,7 +16,7 @@ describe('GoogleLoginScreen', () => {
         vi.useFakeTimers();
         vi.stubEnv('VITE_GOOGLE_CLIENT_ID', 'test-client-id-abc');
         document.getElementById('google-gsi')?.remove();
-        delete (window as any).google;
+        delete (globalThis as any).google;
     });
 
     afterEach(() => {
@@ -24,7 +24,7 @@ describe('GoogleLoginScreen', () => {
         vi.useRealTimers();
         vi.unstubAllEnvs();
         document.getElementById('google-gsi')?.remove();
-        delete (window as any).google;
+        delete (globalThis as any).google;
     });
 
     describe('static rendering', () => {
@@ -57,7 +57,7 @@ describe('GoogleLoginScreen', () => {
         it('calls google.accounts.id.initialize when window.google becomes available', () => {
             const mockInitialize = vi.fn();
             const mockRenderButton = vi.fn();
-            (window as any).google = {
+            (globalThis as any).google = {
                 accounts: { id: { initialize: mockInitialize, renderButton: mockRenderButton } },
             };
 
@@ -72,7 +72,7 @@ describe('GoogleLoginScreen', () => {
         it('calls google.accounts.id.renderButton with the button ref', () => {
             const mockInitialize = vi.fn();
             const mockRenderButton = vi.fn();
-            (window as any).google = {
+            (globalThis as any).google = {
                 accounts: { id: { initialize: mockInitialize, renderButton: mockRenderButton } },
             };
 
@@ -95,7 +95,7 @@ describe('GoogleLoginScreen', () => {
         it('stops polling after google SDK becomes available', () => {
             const mockInitialize = vi.fn();
             const mockRenderButton = vi.fn();
-            (window as any).google = {
+            (globalThis as any).google = {
                 accounts: { id: { initialize: mockInitialize, renderButton: mockRenderButton } },
             };
 
@@ -125,7 +125,7 @@ describe('GoogleLoginScreen', () => {
             });
 
             let capturedCallback: ((resp: { credential: string }) => void) | undefined;
-            (window as any).google = {
+            (globalThis as any).google = {
                 accounts: {
                     id: {
                         initialize: vi.fn((config: any) => { capturedCallback = config.callback; }),
@@ -160,7 +160,7 @@ describe('GoogleLoginScreen', () => {
             });
 
             let capturedCallback: ((resp: { credential: string }) => void) | undefined;
-            (window as any).google = {
+            (globalThis as any).google = {
                 accounts: {
                     id: {
                         initialize: vi.fn((config: any) => { capturedCallback = config.callback; }),
@@ -192,7 +192,7 @@ describe('GoogleLoginScreen', () => {
             });
 
             let capturedCallback: ((resp: { credential: string }) => void) | undefined;
-            (window as any).google = {
+            (globalThis as any).google = {
                 accounts: {
                     id: {
                         initialize: vi.fn((config: any) => { capturedCallback = config.callback; }),
@@ -225,7 +225,7 @@ describe('GoogleLoginScreen', () => {
             });
 
             let capturedCallback: ((resp: { credential: string }) => void) | undefined;
-            (window as any).google = {
+            (globalThis as any).google = {
                 accounts: {
                     id: {
                         initialize: vi.fn((config: any) => { capturedCallback = config.callback; }),

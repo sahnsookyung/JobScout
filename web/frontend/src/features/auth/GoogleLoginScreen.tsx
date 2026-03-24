@@ -3,16 +3,15 @@ import { Briefcase } from 'lucide-react';
 import { useAuth, type AuthUser } from './useAuth';
 
 declare global {
-    interface Window {
-        google?: {
-            accounts: {
-                id: {
-                    initialize: (config: object) => void;
-                    renderButton: (element: HTMLElement, config: object) => void;
-                };
+    // eslint-disable-next-line no-var
+    var google: {
+        accounts: {
+            id: {
+                initialize: (config: object) => void;
+                renderButton: (element: HTMLElement, config: object) => void;
             };
         };
-    }
+    } | undefined;
 }
 
 interface GoogleCredentialResponse {
@@ -44,8 +43,8 @@ export function GoogleLoginScreen() {
         }
 
         function initButton() {
-            if (!window.google || !buttonRef.current) return;
-            window.google.accounts.id.initialize({
+            if (!globalThis.google || !buttonRef.current) return;
+            globalThis.google.accounts.id.initialize({
                 client_id: clientId,
                 callback: (response: GoogleCredentialResponse) => {
                     const payload = parseJwt(response.credential);
@@ -57,7 +56,7 @@ export function GoogleLoginScreen() {
                     login(user, response.credential);
                 },
             });
-            window.google.accounts.id.renderButton(buttonRef.current, {
+            globalThis.google.accounts.id.renderButton(buttonRef.current, {
                 theme: 'outline',
                 size: 'large',
                 text: 'signin_with',
@@ -67,7 +66,7 @@ export function GoogleLoginScreen() {
 
         // Poll until Google SDK is ready
         const interval = setInterval(() => {
-            if (window.google) {
+            if (globalThis.google) {
                 clearInterval(interval);
                 initButton();
             }
