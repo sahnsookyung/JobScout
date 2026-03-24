@@ -60,38 +60,25 @@ describe('StatsPanel', () => {
             mockUseStats.mockReturnValue({ data: mockStats, isLoading: false } as never);
         });
 
-        it('renders Score Distribution heading', () => {
+        it('renders heading and all four tier labels, ranges, counts, and percentages', () => {
             render(<StatsPanel />);
             expect(screen.getByText('Score Distribution')).toBeTruthy();
-        });
-
-        it('renders all four score tiers', () => {
-            render(<StatsPanel />);
+            // tier labels
             expect(screen.getByText('Excellent')).toBeTruthy();
             expect(screen.getByText('Good')).toBeTruthy();
             expect(screen.getByText('Average')).toBeTruthy();
             expect(screen.getByText('Poor')).toBeTruthy();
-        });
-
-        it('renders range labels for each tier', () => {
-            render(<StatsPanel />);
+            // range labels
             expect(screen.getByText('(80+)')).toBeTruthy();
             expect(screen.getByText('(60-79)')).toBeTruthy();
             expect(screen.getByText('(40-59)')).toBeTruthy();
             expect(screen.getByText('(<40)')).toBeTruthy();
-        });
-
-        it('renders count values for each tier', () => {
-            render(<StatsPanel />);
+            // count values
             expect(screen.getByText('20')).toBeTruthy();
             expect(screen.getByText('35')).toBeTruthy();
             expect(screen.getByText('30')).toBeTruthy();
             expect(screen.getByText('15')).toBeTruthy();
-        });
-
-        it('renders percentage for non-zero tiers', () => {
-            render(<StatsPanel />);
-            // 20/100 = 20%
+            // percentage (20/100 = 20%)
             expect(screen.getByText('20%')).toBeTruthy();
         });
 

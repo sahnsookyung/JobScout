@@ -111,3 +111,13 @@ def setup_logging(name: str = None, level: int = logging.INFO) -> None:
     logger = logging.getLogger(name)
     logger.setLevel(level)
     _sanitize_logger_handlers(logger, level, add_handler_if_missing=True)
+
+
+def setup_service_logging(logger: logging.Logger) -> None:
+    """Initialize logging for a microservice and log NIL sanitization status.
+
+    Replaces the boilerplate ``_setup_logging()`` defined identically in each
+    service, so they can all call this single shared helper instead.
+    """
+    setup_logging()
+    logger.debug("NIL log sanitization active=%s", is_nil_filter_active())

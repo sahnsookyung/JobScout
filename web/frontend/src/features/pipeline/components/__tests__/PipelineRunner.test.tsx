@@ -118,27 +118,15 @@ describe('PipelineRunner', () => {
             expect(screen.getByText('Scoring Candidates')).toBeTruthy();
         });
 
-        it('shows live connection indicator when connected', () => {
+        it.each([
+            ['connected',    'Live'],
+            ['connecting',   'Connecting...'],
+            ['reconnecting', 'Reconnecting...'],
+            ['failed',       'Disconnected'],
+        ])('shows "%s" connection indicator', (state, label) => {
+            mockUsePipeline.mockReturnValue({ ...runningHook, connectionState: state } as never);
             render(<PipelineRunner />);
-            expect(screen.getByText('Live')).toBeTruthy();
-        });
-
-        it('shows Connecting... indicator when connectionState is connecting', () => {
-            mockUsePipeline.mockReturnValue({ ...runningHook, connectionState: 'connecting' } as never);
-            render(<PipelineRunner />);
-            expect(screen.getByText('Connecting...')).toBeTruthy();
-        });
-
-        it('shows Reconnecting... indicator when connectionState is reconnecting', () => {
-            mockUsePipeline.mockReturnValue({ ...runningHook, connectionState: 'reconnecting' } as never);
-            render(<PipelineRunner />);
-            expect(screen.getByText('Reconnecting...')).toBeTruthy();
-        });
-
-        it('shows Disconnected indicator when connectionState is failed', () => {
-            mockUsePipeline.mockReturnValue({ ...runningHook, connectionState: 'failed' } as never);
-            render(<PipelineRunner />);
-            expect(screen.getByText('Disconnected')).toBeTruthy();
+            expect(screen.getByText(label)).toBeTruthy();
         });
 
         it('shows pending status badge', () => {
@@ -228,14 +216,11 @@ describe('PipelineRunner', () => {
             expect(screen.getByText('12.5s')).toBeTruthy();
         });
 
-        it('shows Clear Status button', () => {
+        it('shows Clear Status button and calls clearTask on click', () => {
             render(<PipelineRunner />);
-            expect(screen.getByRole('button', { name: /clear status/i })).toBeTruthy();
-        });
-
-        it('calls clearTask when Clear Status is clicked', () => {
-            render(<PipelineRunner />);
-            fireEvent.click(screen.getByRole('button', { name: /clear status/i }));
+            const btn = screen.getByRole('button', { name: /clear status/i });
+            expect(btn).toBeTruthy();
+            fireEvent.click(btn);
             expect(defaultHook.clearTask).toHaveBeenCalledTimes(1);
         });
 
@@ -284,14 +269,11 @@ describe('PipelineRunner', () => {
             expect(screen.getByText(/error details/i)).toBeTruthy();
         });
 
-        it('shows Clear Status button', () => {
+        it('shows Clear Status button and calls clearTask on click', () => {
             render(<PipelineRunner />);
-            expect(screen.getByRole('button', { name: /clear status/i })).toBeTruthy();
-        });
-
-        it('calls clearTask when Clear Status is clicked', () => {
-            render(<PipelineRunner />);
-            fireEvent.click(screen.getByRole('button', { name: /clear status/i }));
+            const btn = screen.getByRole('button', { name: /clear status/i });
+            expect(btn).toBeTruthy();
+            fireEvent.click(btn);
             expect(defaultHook.clearTask).toHaveBeenCalledTimes(1);
         });
 

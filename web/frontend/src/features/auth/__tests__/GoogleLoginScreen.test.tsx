@@ -115,7 +115,8 @@ describe('GoogleLoginScreen', () => {
     });
 
     describe('login callback', () => {
-        it('calls login() with parsed JWT payload user and token', () => {
+        /** Mount the screen with a captured Google callback and a fresh mockLogin. */
+        function setupLoginCallback() {
             const mockLogin = vi.fn();
             vi.mocked(useAuth).mockReturnValue({
                 login: mockLogin,
@@ -123,7 +124,6 @@ describe('GoogleLoginScreen', () => {
                 token: null,
                 logout: vi.fn(),
             });
-
             let capturedCallback: ((resp: { credential: string }) => void) | undefined;
             (globalThis as any).google = {
                 accounts: {
@@ -133,17 +133,16 @@ describe('GoogleLoginScreen', () => {
                     },
                 },
             };
-
             render(<GoogleLoginScreen />);
             act(() => { vi.advanceTimersByTime(200); });
+            return { mockLogin, fire: (jwt: string) => capturedCallback?.({ credential: jwt }) };
+        }
 
-            // Create a minimal JWT: header.payload.signature
+        it('calls login() with parsed JWT payload user and token', () => {
+            const { mockLogin, fire } = setupLoginCallback();
             const payload = { email: 'user@test.com', name: 'Test User', picture: 'https://img/p.jpg' };
-            const encodedPayload = btoa(JSON.stringify(payload));
-            const fakeJwt = `eyJhbGciOiJSUzI1NiJ9.${encodedPayload}.sig`;
-
-            capturedCallback?.({ credential: fakeJwt });
-
+            const fakeJwt = `eyJhbGciOiJSUzI1NiJ9.${btoa(JSON.stringify(payload))}.sig`;
+            fire(fakeJwt);
             expect(mockLogin).toHaveBeenCalledWith(
                 expect.objectContaining({ email: 'user@test.com', name: 'Test User' }),
                 fakeJwt
@@ -151,31 +150,10 @@ describe('GoogleLoginScreen', () => {
         });
 
         it('includes picture in user when JWT contains it', () => {
-            const mockLogin = vi.fn();
-            vi.mocked(useAuth).mockReturnValue({
-                login: mockLogin,
-                user: null,
-                token: null,
-                logout: vi.fn(),
-            });
-
-            let capturedCallback: ((resp: { credential: string }) => void) | undefined;
-            (globalThis as any).google = {
-                accounts: {
-                    id: {
-                        initialize: vi.fn((config: any) => { capturedCallback = config.callback; }),
-                        renderButton: vi.fn(),
-                    },
-                },
-            };
-
-            render(<GoogleLoginScreen />);
-            act(() => { vi.advanceTimersByTime(200); });
-
+            const { mockLogin, fire } = setupLoginCallback();
             const payload = { email: 'pic@test.com', name: 'Pic User', picture: 'https://cdn/photo.jpg' };
             const fakeJwt = `header.${btoa(JSON.stringify(payload))}.sig`;
-            capturedCallback?.({ credential: fakeJwt });
-
+            fire(fakeJwt);
             expect(mockLogin).toHaveBeenCalledWith(
                 expect.objectContaining({ picture: 'https://cdn/photo.jpg' }),
                 fakeJwt
@@ -183,32 +161,10 @@ describe('GoogleLoginScreen', () => {
         });
 
         it('falls back to email for name when JWT name is missing', () => {
-            const mockLogin = vi.fn();
-            vi.mocked(useAuth).mockReturnValue({
-                login: mockLogin,
-                user: null,
-                token: null,
-                logout: vi.fn(),
-            });
-
-            let capturedCallback: ((resp: { credential: string }) => void) | undefined;
-            (globalThis as any).google = {
-                accounts: {
-                    id: {
-                        initialize: vi.fn((config: any) => { capturedCallback = config.callback; }),
-                        renderButton: vi.fn(),
-                    },
-                },
-            };
-
-            render(<GoogleLoginScreen />);
-            act(() => { vi.advanceTimersByTime(200); });
-
-            // No 'name' field in payload
+            const { mockLogin, fire } = setupLoginCallback();
             const payload = { email: 'noname@test.com' };
             const fakeJwt = `header.${btoa(JSON.stringify(payload))}.sig`;
-            capturedCallback?.({ credential: fakeJwt });
-
+            fire(fakeJwt);
             expect(mockLogin).toHaveBeenCalledWith(
                 expect.objectContaining({ email: 'noname@test.com', name: 'noname@test.com' }),
                 fakeJwt
@@ -216,31 +172,8 @@ describe('GoogleLoginScreen', () => {
         });
 
         it('handles malformed JWT gracefully without throwing', () => {
-            const mockLogin = vi.fn();
-            vi.mocked(useAuth).mockReturnValue({
-                login: mockLogin,
-                user: null,
-                token: null,
-                logout: vi.fn(),
-            });
-
-            let capturedCallback: ((resp: { credential: string }) => void) | undefined;
-            (globalThis as any).google = {
-                accounts: {
-                    id: {
-                        initialize: vi.fn((config: any) => { capturedCallback = config.callback; }),
-                        renderButton: vi.fn(),
-                    },
-                },
-            };
-
-            render(<GoogleLoginScreen />);
-            act(() => { vi.advanceTimersByTime(200); });
-
-            // Should not throw even with invalid JWT
-            expect(() => {
-                capturedCallback?.({ credential: 'not.a.valid.jwt' });
-            }).not.toThrow();
+            const { fire } = setupLoginCallback();
+            expect(() => fire('not.a.valid.jwt')).not.toThrow();
         });
     });
 });
