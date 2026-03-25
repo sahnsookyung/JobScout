@@ -20,8 +20,17 @@ from core.utils import cosine_similarity_from_distance
 
 logger = logging.getLogger(__name__)
 
+EXTRACTION_RETRY_DELAYS_SECONDS = [60, 300, 900, 3600, 14400]
+EMBEDDING_RETRY_DELAYS_SECONDS = [60, 300, 900, 3600, 14400]
+STAGE_IN_PROGRESS_STALE_MINUTES = 30
+
 
 class JobPostRepository(BaseRepository):
+    @staticmethod
+    def _compute_next_retry_at(attempts: int, schedule: List[int]) -> datetime:
+        delay_seconds = schedule[min(max(attempts - 1, 0), len(schedule) - 1)]
+        return datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
+
     def get_by_fingerprint(self, fingerprint: str) -> Optional[JobPost]:
         stmt = select(JobPost).where(JobPost.canonical_fingerprint == fingerprint)
         return self.db.execute(stmt).scalar_one_or_none()
@@ -85,6 +94,12 @@ class JobPostRepository(BaseRepository):
 
         if not job_post.description or content_changed:
             job_post.description = job_data.get('description')
+            if job_post.description and job_post.extraction_status == 'no_description':
+                job_post.extraction_status = 'pending'
+                logger.info(
+                    "Resurrected job %s: description arrived, reset to pending",
+                    job_post_id,
+                )
 
             if job_data.get('skills'):
                 job_post.skills_raw = json.dumps(job_data.get('skills'))
@@ -102,14 +117,86 @@ class JobPostRepository(BaseRepository):
         job_post.last_seen_at = func.now()
 
     def get_unextracted_jobs(self, limit: int = 100) -> List[JobPost]:
+        now = datetime.now(timezone.utc)
+        stale_cutoff = now - timedelta(minutes=STAGE_IN_PROGRESS_STALE_MINUTES)
         stmt = select(JobPost).where(
-            JobPost.is_extracted.is_(False),
-            JobPost.description != None
+            JobPost.description.isnot(None),
+            or_(
+                and_(
+                    JobPost.extraction_status.in_(["pending", "failed_retryable"]),
+                    or_(
+                        JobPost.extraction_next_retry_at.is_(None),
+                        JobPost.extraction_next_retry_at <= now,
+                    ),
+                ),
+                and_(
+                    JobPost.extraction_status == "in_progress",
+                    or_(
+                        JobPost.extraction_last_attempt_at.is_(None),
+                        JobPost.extraction_last_attempt_at <= stale_cutoff,
+                    ),
+                ),
+            ),
         ).limit(limit)
         return self.db.execute(stmt).scalars().all()
 
     def mark_as_extracted(self, job_post: JobPost) -> None:
         job_post.is_extracted = True
+        job_post.extraction_status = 'succeeded'
+        job_post.extraction_attempts = (job_post.extraction_attempts or 0) + 1
+        job_post.extraction_last_error = None
+        job_post.extraction_last_attempt_at = datetime.now(timezone.utc)
+        job_post.extraction_next_retry_at = None
+
+    def mark_extraction_in_progress(self, job_post_id: Any) -> None:
+        stmt = update(JobPost).where(
+            JobPost.id == job_post_id
+        ).values(
+            extraction_status='in_progress',
+            extraction_last_attempt_at=datetime.now(timezone.utc),
+            extraction_next_retry_at=None,
+        )
+        self.db.execute(stmt)
+
+    def mark_extraction_retryable_failed(self, job_post_id: Any, error: str) -> None:
+        """Mark job extraction as retryable failure."""
+        job_post = self.get_by_id(job_post_id)
+        attempts = (job_post.extraction_attempts or 0) + 1
+        now = datetime.now(timezone.utc)
+        stmt = update(JobPost).where(
+            JobPost.id == job_post_id
+        ).values(
+            is_extracted=False,
+            extraction_status='failed_retryable',
+            extraction_attempts=attempts,
+            extraction_last_error=error,
+            extraction_last_attempt_at=now,
+            extraction_next_retry_at=self._compute_next_retry_at(
+                attempts, EXTRACTION_RETRY_DELAYS_SECONDS
+            ),
+        )
+        self.db.execute(stmt)
+
+    def mark_extraction_failed(self, job_post_id: Any, error: str) -> None:
+        """Mark job extraction as terminally failed.
+
+        Args:
+            job_post_id: Job ID
+            error: Error message
+        """
+        job_post = self.get_by_id(job_post_id)
+        attempts = (job_post.extraction_attempts or 0) + 1
+        stmt = update(JobPost).where(
+            JobPost.id == job_post_id
+        ).values(
+            is_extracted=False,
+            extraction_status='failed_terminal',
+            extraction_attempts=attempts,
+            extraction_last_error=error,
+            extraction_last_attempt_at=datetime.now(timezone.utc),
+            extraction_next_retry_at=None,
+        )
+        self.db.execute(stmt)
 
     def _extract_years_from_requirement(self, text: str) -> Tuple[Optional[int], Optional[str]]:
         if not text:
@@ -231,9 +318,28 @@ class JobPostRepository(BaseRepository):
         job_post.raw_payload = new_payload
 
     def get_unembedded_jobs(self, limit: int = 100) -> List[JobPost]:
+        now = datetime.now(timezone.utc)
+        stale_cutoff = now - timedelta(minutes=STAGE_IN_PROGRESS_STALE_MINUTES)
         stmt = select(JobPost).where(
-            JobPost.summary_embedding == None,
-            JobPost.description != None
+            JobPost.description.isnot(None),
+            JobPost.extraction_status == 'succeeded',
+            JobPost.summary_embedding.is_(None),
+            or_(
+                and_(
+                    JobPost.embedding_status.in_(["pending", "failed_retryable"]),
+                    or_(
+                        JobPost.embedding_next_retry_at.is_(None),
+                        JobPost.embedding_next_retry_at <= now,
+                    ),
+                ),
+                and_(
+                    JobPost.embedding_status == "in_progress",
+                    or_(
+                        JobPost.embedding_last_attempt_at.is_(None),
+                        JobPost.embedding_last_attempt_at <= stale_cutoff,
+                    ),
+                ),
+            ),
         ).limit(limit)
         return self.db.execute(stmt).scalars().all()
 
@@ -250,6 +356,11 @@ class JobPostRepository(BaseRepository):
     def save_job_embedding(self, job_post: JobPost, embedding: List[float]) -> None:
         job_post.summary_embedding = embedding
         job_post.is_embedded = True
+        job_post.embedding_status = 'succeeded'
+        job_post.embedding_attempts = (job_post.embedding_attempts or 0) + 1
+        job_post.embedding_last_error = None
+        job_post.embedding_last_attempt_at = datetime.now(timezone.utc)
+        job_post.embedding_next_retry_at = None
 
     def save_requirement_embedding(self, req_id: Any, embedding: List[float]) -> None:
         emb_row = JobRequirementUnitEmbedding(
@@ -257,6 +368,64 @@ class JobPostRepository(BaseRepository):
             embedding=embedding
         )
         self.db.add(emb_row)
+
+    def mark_embedding_in_progress(self, job_post_id: Any) -> None:
+        stmt = update(JobPost).where(
+            JobPost.id == job_post_id
+        ).values(
+            embedding_status='in_progress',
+            embedding_last_attempt_at=datetime.now(timezone.utc),
+            embedding_next_retry_at=None,
+        )
+        self.db.execute(stmt)
+
+    def bulk_mark_embedding_in_progress(self, job_post_ids: List[Any]) -> None:
+        """Mark multiple jobs as embedding in_progress in a single UPDATE statement."""
+        if not job_post_ids:
+            return
+        stmt = update(JobPost).where(
+            JobPost.id.in_(job_post_ids)
+        ).values(
+            embedding_status='in_progress',
+            embedding_last_attempt_at=datetime.now(timezone.utc),
+            embedding_next_retry_at=None,
+        )
+        self.db.execute(stmt)
+
+    def mark_embedding_retryable_failed(self, job_post_id: Any, error: str) -> None:
+        """Mark job embedding as failed while keeping it eligible for retry."""
+        job_post = self.get_by_id(job_post_id)
+        attempts = (job_post.embedding_attempts or 0) + 1
+        now = datetime.now(timezone.utc)
+        stmt = update(JobPost).where(
+            JobPost.id == job_post_id
+        ).values(
+            is_embedded=False,
+            embedding_status='failed_retryable',
+            embedding_attempts=attempts,
+            embedding_last_error=error,
+            embedding_last_attempt_at=now,
+            embedding_next_retry_at=self._compute_next_retry_at(
+                attempts, EMBEDDING_RETRY_DELAYS_SECONDS
+            ),
+        )
+        self.db.execute(stmt)
+
+    def mark_embedding_failed(self, job_post_id: Any, error: str) -> None:
+        """Mark job embedding as terminally failed (no automatic retry)."""
+        job_post = self.get_by_id(job_post_id)
+        attempts = (job_post.embedding_attempts or 0) + 1
+        stmt = update(JobPost).where(
+            JobPost.id == job_post_id
+        ).values(
+            is_embedded=False,
+            embedding_status='failed_terminal',
+            embedding_attempts=attempts,
+            embedding_last_error=error,
+            embedding_last_attempt_at=datetime.now(timezone.utc),
+            embedding_next_retry_at=None,
+        )
+        self.db.execute(stmt)
 
     def get_embedded_jobs_for_matching(self, limit: int = 100) -> List[JobPost]:
         stmt = select(JobPost).where(
@@ -290,14 +459,6 @@ class JobPostRepository(BaseRepository):
 
         rows = self.db.execute(stmt).all()
         return [(row[0], cosine_similarity_from_distance(row._mapping['distance'])) for row in rows]
-
-    def get_jobs_needing_facet_extraction(self, limit: int = 100) -> List[JobPost]:
-        stmt = select(JobPost).where(
-            JobPost.is_embedded.is_(True)
-        ).outerjoin(JobFacetEmbedding).where(
-            JobFacetEmbedding.id == None
-        ).limit(limit)
-        return self.db.execute(stmt).scalars().all()
 
     def save_job_facet_embedding(
         self,
@@ -343,9 +504,14 @@ class JobPostRepository(BaseRepository):
         return list(self.db.execute(stmt).scalars().all())
 
     def get_jobs_needing_facet_embedding(self, limit: int = 100) -> List[JobPost]:
-        stmt = select(JobPost).where(
-            JobPost.facet_status == 'done'
-        ).limit(limit)
+        stmt = (
+            select(JobPost)
+            .where(JobPost.facet_status == 'done')
+            .join(JobFacetEmbedding, JobFacetEmbedding.job_post_id == JobPost.id)
+            .where(JobFacetEmbedding.embedding.is_(None))
+            .distinct()
+            .limit(limit)
+        )
         return list(self.db.execute(stmt).scalars().all())
 
     def update_facet_embedding(
@@ -402,7 +568,7 @@ class JobPostRepository(BaseRepository):
             text("""
                 WITH pending AS (
                     SELECT id FROM job_post
-                    WHERE is_embedded = true
+                    WHERE extraction_status = 'succeeded'
                       AND facet_status = 'pending'
                       AND description IS NOT NULL
                       AND (facet_extraction_hash IS NULL OR facet_extraction_hash != content_hash)
@@ -541,3 +707,30 @@ class JobPostRepository(BaseRepository):
 
         jobs_stmt = select(JobPost).where(JobPost.id.in_(job_ids))
         return list(self.db.execute(jobs_stmt).scalars().all())
+
+    def quarantine_null_description_jobs(self, older_than_days: int = 7) -> int:
+        """Mark stale pending jobs with null descriptions as 'no_description'.
+
+        Jobs saved without a description self-heal when re-scraped. Those that
+        are never re-scraped (e.g. posting removed) stay pending forever. After
+        older_than_days, move them to 'no_description' so they stop polluting
+        pending counts. They are resurrected automatically if a re-scrape ever
+        delivers the description (see save_job_content).
+
+        Args:
+            older_than_days: Jobs older than this are quarantined.
+
+        Returns:
+            Number of jobs marked as 'no_description'.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        result = self.db.execute(
+            update(JobPost).where(
+                and_(
+                    JobPost.description.is_(None),
+                    JobPost.extraction_status == 'pending',
+                    JobPost.first_seen_at < cutoff,
+                )
+            ).values(extraction_status='no_description')
+        )
+        return result.rowcount

@@ -20,23 +20,23 @@ class NotificationTracker(Base):
     
     # What was notified
     user_id = Column(Text, nullable=False, index=True)
-    job_match_id = Column(UUID(as_uuid=True), ForeignKey('job_match.id', ondelete='CASCADE'), nullable=True)
-    notification_type = Column(Text, nullable=False)  # email, discord, telegram, etc.
+    job_match_id = Column(UUID(as_uuid=True), ForeignKey('job_match.id', ondelete='CASCADE'), nullable=True, index=True)
     channel_type = Column(Text, nullable=False)  # email, discord, telegram, slack, etc.
     
     # Deduplication key - hash of user + job + event type
-    dedup_hash = Column(Text, nullable=False, index=True, unique=True)
+    dedup_hash = Column(Text, nullable=False, index=True)
     
     # Notification content hash (to detect content changes)
     content_hash = Column(Text, nullable=True)
     
     # Event that triggered notification
     event_type = Column(Text, nullable=False)  # new_match, score_improved, batch_complete, etc.
-    event_data = Column(JSONB, default={})  # Additional event context
+    event_data = Column(JSONB, default=dict, server_default=sql_text("'{}'"))  # Additional event context
     
     # Notification metadata
     recipient = Column(Text, nullable=False)  # email, discord webhook, telegram chat id
     subject = Column(Text)
+    body = Column(Text, nullable=True)  # Actual notification body sent
     sent_successfully = Column(Boolean, default=False)
     error_message = Column(Text, nullable=True)
     
@@ -46,7 +46,7 @@ class NotificationTracker(Base):
     send_count = Column(Integer, default=1)  # How many times this was sent (for resends)
     
     # Resend policy
-    allow_resend = Column(Boolean, default=False)  # Whether to allow resending
+    allow_resend = Column(Boolean, default=True)  # Whether to allow resending
     resend_interval_hours = Column(Integer, default=24)  # Minimum hours between resends
     
     # Relationships

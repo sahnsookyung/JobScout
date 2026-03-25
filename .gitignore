@@ -12,3 +12,9 @@ pipeline.lock
 **/node_modules/
 **/logs/
 **/*.pdf
+coverage/
+.gitnexus
+.claude/skills/*
+.scannerwork
+coverage.xml
+.coverage

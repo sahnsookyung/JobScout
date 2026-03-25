@@ -1,0 +1,61 @@
+# Base Infrastructure
+# This file contains all shared infrastructure services.
+# Include this in other compose files that need database, cache, or external services.
+#
+# Usage:
+#   docker-compose -f docker-compose.base.yml up -d              # Infra only
+#   docker-compose -f docker-compose.base.yml -f docker-compose.microservices.yml up -d  # Infra + microservices
+
+x-postgres-healthcheck: &postgres-healthcheck
+  test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-jobscout}"]
+  interval: 5s
+  timeout: 3s
+  retries: 5
+
+x-redis-healthcheck: &redis-healthcheck
+  test: ["CMD", "sh", "-c", "REDISCLI_AUTH=${REDIS_PASSWORD:-jobscoutredis} redis-cli ping"]
+  interval: 5s
+  timeout: 3s
+  retries: 5
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-jobscout}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      <<: *postgres-healthcheck
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD:-jobscoutredis}
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-jobscoutredis}
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      <<: *redis-healthcheck
+
+  jobspy:
+    image: sahnsookyung/jobspy:1.0.1
+    platform: linux/amd64
+    ports:
+      - "${JOBSPY_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  postgres_data:
+  redis_data:

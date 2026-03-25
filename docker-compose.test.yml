@@ -1,8 +1,6 @@
-version: '3.8'
-
 services:
   postgres-test:
-    image: ankane/pgvector:latest
+    image: pgvector/pgvector:pg17
     container_name: jobscout-test-db
     environment:
       POSTGRES_USER: testuser

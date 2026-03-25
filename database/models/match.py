@@ -8,6 +8,17 @@ from sqlalchemy.orm import relationship
 from .base import Base
 
 
+# ============================================================================
+# Constants - avoid duplication across models
+# ============================================================================
+
+# Server default for UTC timestamps
+UTC_NOW = sql_text("timezone('UTC', now())")
+
+# SQLAlchemy cascade specification
+CASCADE_DELETE_ORPHAN = "all, delete-orphan"
+
+
 class JobMatch(Base):
     """
     Stores match results between a resume and a job post.
@@ -55,12 +66,12 @@ class JobMatch(Base):
     invalidated_reason = Column(Text, nullable=True)
     notified = Column(Boolean, default=False)
     is_hidden = Column(Boolean, default=False)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
-    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"), onupdate=sql_text("timezone('UTC', now())"))
-    calculated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW, onupdate=UTC_NOW)
+    calculated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
 
     job_post = relationship("JobPost", back_populates="matches")
-    requirement_matches = relationship("JobMatchRequirement", back_populates="job_match", cascade="all, delete-orphan")
+    requirement_matches = relationship("JobMatchRequirement", back_populates="job_match", cascade=CASCADE_DELETE_ORPHAN)
 
     __table_args__ = (
         UniqueConstraint('job_post_id', 'resume_fingerprint', name='uq_job_match_job_resume'),
@@ -98,8 +109,8 @@ class JobMatchRequirement(Base):
     similarity_score = Column(Numeric(3, 2), nullable=False)  # Cosine similarity (0.00-1.00)
     is_covered = Column(Boolean, default=False)  # Whether this meets threshold
     req_type = Column(Text, nullable=False)  # required|preferred|responsibility|constraint|benefit
-    
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
 
     # Relationships
     job_match = relationship("JobMatch", back_populates="requirement_matches")
