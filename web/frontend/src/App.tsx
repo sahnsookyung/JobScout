@@ -5,7 +5,7 @@ import { MatchList } from '@/features/matches/components/MatchList';
 import { MatchDetailsModal } from '@/features/matches/components/MatchDetailsModal';
 import { PolicyPanel } from '@/features/config/components/PolicyPanel';
 import { StatsPanel } from '@/features/stats/components/StatsPanel';
-import { CompactControls } from '@/features/dashboard/components/CompactControls';
+import { DashboardControls } from '@/features/dashboard/components/DashboardControls';
 import { RefreshCw, Briefcase } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { ToastProvider } from '@/components/ui/Toast';
@@ -56,7 +56,7 @@ function AppContent() {
             <main className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
                 {/* Compact Controls Bar at Top */}
                 <div className="mb-6">
-                    <CompactControls />
+                    <DashboardControls />
                 </div>
 
                 {/* Two Column Layout: Matches + Sidebar */}

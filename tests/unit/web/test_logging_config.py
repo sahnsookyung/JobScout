@@ -4,8 +4,9 @@ Tests for logging configuration.
 Covers: web/backend/logging_config.py
 """
 
+import logging
 import unittest
-from web.backend.logging_config import LOGGING_CONFIG
+from web.backend.logging_config import LOGGING_CONFIG, NulCharacterFilter
 
 
 class TestLoggingConfig(unittest.TestCase):
@@ -77,6 +78,43 @@ class TestLoggingConfig(unittest.TestCase):
         except Exception:
             success = False
         self.assertTrue(success)
+
+
+class TestNulCharacterFilter(unittest.TestCase):
+    def _make_record(self, msg, args=None):
+        record = logging.LogRecord(
+            name="test", level=logging.INFO,
+            pathname="", lineno=0, msg=msg, args=args, exc_info=None,
+        )
+        return record
+
+    def test_strips_nul_from_msg(self):
+        f = NulCharacterFilter()
+        record = self._make_record("hello\x00world")
+        f.filter(record)
+        self.assertEqual(record.msg, "helloworld")
+
+    def test_strips_nul_from_tuple_args(self):
+        f = NulCharacterFilter()
+        record = self._make_record("val: %s", ("abc\x00def",))
+        f.filter(record)
+        self.assertEqual(record.args, ("abcdef",))
+
+    def test_strips_nul_from_dict_args(self):
+        f = NulCharacterFilter()
+        # Pass as a tuple wrapping the dict — same as how logger.info("%(k)s", {...}) stores args
+        record = self._make_record("key=%(key)s", ({"key": "v\x00al"},))
+        f.filter(record)
+        self.assertIsInstance(record.args, dict)
+        self.assertEqual(record.args["key"], "val")
+
+    def test_dict_args_structure_preserved(self):
+        f = NulCharacterFilter()
+        record = self._make_record("%(a)s %(b)s", ({"a": "x\x00", "b": 42},))
+        f.filter(record)
+        self.assertIsInstance(record.args, dict)
+        self.assertEqual(record.args["a"], "x")
+        self.assertEqual(record.args["b"], 42)
 
 
 if __name__ == '__main__':

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 # Copy uv directly from the official image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -29,15 +29,15 @@ COPY notification/ ./notification/
 COPY web/shared/ ./web/shared/
 # Web backend application
 COPY web/backend/ ./web/backend/
-# Services: extraction and embeddings for compact mode matching
-COPY services/ ./services/
+# Services: base utilities for compact mode (extraction and embeddings runners)
+COPY services/base/ ./services/base/
 COPY config.yaml ./
 
 RUN uv sync --frozen --no-dev --group web
 
 # ---------------------------------------------------------
 # Runtime Stage
-FROM python:3.13-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 # Create non-root user
 RUN groupadd -g 1001 appgroup && \

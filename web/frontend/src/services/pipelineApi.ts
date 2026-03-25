@@ -16,6 +16,7 @@ interface ResumeUploadResponse {
 interface ResumeStatusResponse {
     task_id: string;
     status: string;
+    step?: string;
     error?: string;
 }
 

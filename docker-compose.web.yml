@@ -6,7 +6,7 @@
 
 services:
   web-backend:
-    profiles: ["web", "compact", "split"]
+    profiles: ["web", "split"]
     build:
       context: .
       dockerfile: web/backend/Dockerfile
@@ -33,7 +33,7 @@ services:
       start_period: 10s
 
   web-frontend:
-    profiles: ["web", "compact", "split"]
+    profiles: ["web", "split"]
     build:
       context: .
       dockerfile: web/frontend/Dockerfile

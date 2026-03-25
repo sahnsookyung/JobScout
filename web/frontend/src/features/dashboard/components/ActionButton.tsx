@@ -1,18 +1,27 @@
 import React from 'react';
-import { Zap } from 'lucide-react';
+import { Zap, Loader } from 'lucide-react';
+
+const RESUME_STEP_LABELS: Record<string, string> = {
+    extracting: 'Parsing resume...',
+    embedding: 'Generating vectors...',
+};
 
 export interface ActionButtonProps {
     isRunningStatus: boolean;
     isRunning: boolean;
     isStopping: boolean;
     isProcessingResume?: boolean;
+    processingStep?: string | null;
     onRun: () => void;
     onStop: () => void;
 }
 
-export const ActionButton: React.FC<ActionButtonProps> = ({ isRunningStatus, isRunning, isStopping, isProcessingResume, onRun, onStop }) => {
+export const ActionButton: React.FC<ActionButtonProps> = ({ isRunningStatus, isRunning, isStopping, isProcessingResume, processingStep, onRun, onStop }) => {
     const isProcessing = (isRunningStatus ? isStopping : isRunning) || (isProcessingResume ?? false);
-    const buttonText = isRunningStatus ? 'Stop' : 'Run Matching';
+    const preparingLabel = processingStep
+        ? (RESUME_STEP_LABELS[processingStep] ?? 'Preparing...')
+        : 'Preparing...';
+    const buttonText = isRunningStatus ? 'Stop' : (isProcessingResume ? preparingLabel : 'Run Matching');
 
     return (
         <button
@@ -26,7 +35,8 @@ export const ActionButton: React.FC<ActionButtonProps> = ({ isRunningStatus, isR
                 }`} />
             <span className="relative flex items-center justify-center gap-2 text-base">
                 {/* Matched sizing to FileUp and added shrink-0 */}
-                {!isRunningStatus && <Zap className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />}
+                {!isRunningStatus && isProcessingResume && <Loader className="w-5 h-5 sm:w-6 sm:h-6 shrink-0 animate-spin" />}
+                {!isRunningStatus && !isProcessingResume && <Zap className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />}
                 <span>{buttonText}</span>
             </span>
         </button>

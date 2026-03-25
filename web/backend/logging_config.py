@@ -3,9 +3,9 @@
 import logging
 
 
-class NilCharacterFilter(logging.Filter):
-    """Filter that removes NIL (null) characters from log records.
-    
+class NulCharacterFilter(logging.Filter):
+    """Filter that removes NUL (null) characters from log records.
+
     Prevents log forging and ensures clean log output in Docker/JSON environments.
     """
 
@@ -13,10 +13,16 @@ class NilCharacterFilter(logging.Filter):
         if record.msg:
             record.msg = str(record.msg).replace('\x00', '')
         if record.args:
-            record.args = tuple(
-                str(arg).replace('\x00', '') if isinstance(arg, str) else arg
-                for arg in record.args
-            )
+            if isinstance(record.args, dict):
+                record.args = {
+                    k: v.replace('\x00', '') if isinstance(v, str) else v
+                    for k, v in record.args.items()
+                }
+            else:
+                record.args = tuple(
+                    arg.replace('\x00', '') if isinstance(arg, str) else arg
+                    for arg in record.args
+                )
         return True
 
 
@@ -34,8 +40,8 @@ LOGGING_CONFIG = {
         },
     },
     "filters": {
-        "nil_filter": {
-            "()": "web.backend.logging_config.NilCharacterFilter",
+        "nul_filter": {
+            "()": "web.backend.logging_config.NulCharacterFilter",
         },
     },
     "handlers": {
@@ -43,13 +49,13 @@ LOGGING_CONFIG = {
             "formatter": "default",
             "class": "logging.StreamHandler",
             "stream": "ext://sys.stdout",
-            "filters": ["nil_filter"],
+            "filters": ["nul_filter"],
         },
         "access": {
             "formatter": "access",
             "class": "logging.StreamHandler",
             "stream": "ext://sys.stdout",
-            "filters": ["nil_filter"],
+            "filters": ["nul_filter"],
         },
     },
     "loggers": {

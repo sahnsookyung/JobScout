@@ -14,10 +14,7 @@ Then open:
 """
 
 import sys
-import os
-import asyncio
 import logging
-import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -26,7 +23,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from core.logging_utils import (
-    is_nil_filter_active,
+    is_nul_filter_active,
     setup_logging as setup_shared_logging,
 )
 from fastapi import FastAPI, HTTPException
@@ -51,113 +48,14 @@ from .routers import (
 # Configure logging
 setup_shared_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
-logger.debug("NIL log sanitization active=%s", is_nil_filter_active())
+logger.debug("NUL log sanitization active=%s", is_nul_filter_active())
 
 # Load configuration
 config = get_config()
 
 
-_STARTUP_ETL_LOCK_KEY  = "pipeline:startup:etl:lock"
-_STARTUP_ETL_STATE_KEY = "pipeline:startup:etl:state"
-_startup_tasks: set = set()  # strong refs prevent GC of fire-and-forget tasks
-
-
-async def _close_app_context(ctx) -> None:
-    """Close AppContext using aclose() if available, falling back to close()."""
-    try:
-        if hasattr(ctx, 'aclose'):
-            await ctx.aclose()
-        elif hasattr(ctx, 'close'):
-            ctx.close()
-    except Exception:
-        logger.warning("Compact startup ETL: error closing AppContext")
-
-
-async def _compact_startup_etl() -> None:
-    """Process any pending jobs left over from a previous run (compact mode only)."""
-    from core.config_loader import load_config
-    from core.app_context import AppContext
-    from core.redis_streams import get_redis_client, set_task_state
-    from services.base.extraction import run_job_extraction
-    from services.base.embeddings import run_embedding_extraction
-    from database.uow import job_uow
-    from database.models.job import JobPost
-    from sqlalchemy import select, func
-
-    # Age out jobs that were saved without a description and never re-scraped.
-    # Must run before the pending count so stale no-description jobs don't
-    # trigger an unnecessary ETL cycle.
-    try:
-        with job_uow() as repo:
-            aged = repo.quarantine_null_description_jobs(older_than_days=7)
-        if aged:
-            logger.info("Compact startup ETL: aged out %d null-description jobs", aged)
-    except Exception:
-        logger.warning("Compact startup ETL: age-out step failed, continuing anyway")
-
-    # Pre-check: skip if nothing pending (exclude null-description rows — they
-    # can't be processed and self-heal via re-scraping).
-    try:
-        with job_uow() as repo:
-            pending = repo.db.execute(
-                select(func.count()).select_from(JobPost).where(
-                    JobPost.description.isnot(None),
-                    (JobPost.extraction_status == 'pending') |
-                    (JobPost.facet_status      == 'pending') |
-                    (JobPost.embedding_status  == 'pending')
-                )
-            ).scalar()
-        if not pending:
-            logger.info("Compact startup ETL: nothing pending, skipping")
-            return
-        logger.info("Compact startup ETL: %d pending jobs found", pending)
-    except Exception:
-        logger.exception("Compact startup ETL: pre-check failed, skipping")
-        return
-
-    # Redis distributed lock (ex=7200 to outlast large backlogs)
-    try:
-        redis = get_redis_client()
-        acquired = redis.set(_STARTUP_ETL_LOCK_KEY, "1", nx=True, ex=7200)
-        if not acquired:
-            logger.info("Compact startup ETL: another worker holds the lock, skipping")
-            return
-    except Exception:
-        logger.warning("Compact startup ETL: Redis unavailable, proceeding without lock")
-        redis = None
-
-    ctx = None
-    try:
-        ctx = AppContext.build(load_config())
-        # Set running state AFTER ETL confirmed to start (avoids non-atomic gap)
-        if redis:
-            try:
-                set_task_state(_STARTUP_ETL_STATE_KEY, {"status": "running"}, ttl=7200)
-            except Exception:
-                pass
-        stop = threading.Event()
-        await asyncio.to_thread(run_job_extraction, ctx, stop, 200)
-        await asyncio.to_thread(run_embedding_extraction, ctx, stop, 100)
-        logger.info("Compact startup ETL: complete")
-    except Exception:
-        logger.exception("Compact startup ETL: failed")
-    finally:
-        if ctx is not None:
-            await _close_app_context(ctx)
-        if redis is not None:
-            try:
-                redis.delete(_STARTUP_ETL_LOCK_KEY)
-                set_task_state(_STARTUP_ETL_STATE_KEY, {"status": "done"}, ttl=60)
-            except Exception:
-                pass
-
-
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    if not os.getenv("ORCHESTRATOR_URL", "").strip():
-        task = asyncio.create_task(_compact_startup_etl())
-        _startup_tasks.add(task)
-        task.add_done_callback(_startup_tasks.discard)
     yield
 
 

@@ -45,14 +45,7 @@ cp wants.example.txt wants.txt
 ./scripts/setup_local_env/start.sh --split
 ```
 
-**Option B: Compact Topology (low memory)**
-
-```bash
-# Compact mode: main-driver + infra (+ web)
-./scripts/setup_local_env/start.sh --compact
-```
-
-**Option C: Local Development (with hot reload)**
+**Option B: Local Development (with hot reload)**
 
 ```bash
 # Split mode with backend/frontend local development
@@ -64,10 +57,9 @@ WEB_DEV=true ./scripts/setup_local_env/start.sh --split --web-app --web-ui
 - Backend API: http://localhost:8080
 - API Docs: http://localhost:8080/docs
 
-### Topology Recommendations
+### Topology
 
-- **Laptop / Oracle Always Free (initial):** use `--compact` for lower memory usage.
-- **Higher throughput / scale-out:** switch to `--split` to run extraction, embeddings, and matching as separate services.
+Run `--split` to start extraction, embeddings, matching, and orchestration as separate microservices.
 
 ### View Logs
 
@@ -88,13 +80,6 @@ WEB_DEV=true ./scripts/setup_local_env/start.sh --split --web-app --web-ui
 ### 1. Start Docker Services
 
 ```bash
-# Compact topology (recommended for laptops / small cloud instances)
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.web.yml \
-  --profile compact up -d
-
-# Split topology (recommended when you need independent service scaling)
 docker compose \
   -f docker-compose.yml \
   -f docker-compose.microservices.yml \

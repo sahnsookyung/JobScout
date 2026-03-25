@@ -223,6 +223,7 @@ class ResumeStatusResponse(BaseModel):
     """Response for querying background resume processing status."""
     task_id: str
     status: str  # processing | completed | failed
+    step: Optional[str] = None  # extracting | embedding
     error: Optional[str] = None
 
 

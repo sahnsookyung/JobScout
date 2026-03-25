@@ -28,15 +28,16 @@ include:
     include_as: base
 
 services:
-  # Inject microservice URLs into web-backend when running in split mode.
-  # This block is only included when docker-compose.microservices.yml is part of the compose stack,
-  # which only happens for --split topology. Compact mode excludes this file entirely.
+  # Inject microservice URLs into web-backend when running with microservices.
+  # This block is only included when docker-compose.microservices.yml is part of the compose stack.
   web-backend:
     environment:
       - EXTRACTION_URL=http://extraction:8081
       - EMBEDDINGS_URL=http://embeddings:8082
       - SCORER_MATCHER_URL=http://scorer-matcher:8083
       - ORCHESTRATOR_URL=http://orchestrator:8084
+    volumes:
+      - resume_uploads:/data/resume_uploads
 
   extraction:
     <<: *service-common
@@ -46,13 +47,14 @@ services:
       dockerfile: services/extraction/Dockerfile
     ports:
       - "${EXTRACTION_PORT:-8081}:8081"
-    command: ["uv", "run", "uvicorn", "services.extraction.main:app", "--host", "0.0.0.0", "--port", "8081"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+    volumes:
+      - resume_uploads:/data/resume_uploads
 
   embeddings:
     <<: *service-common
@@ -62,7 +64,6 @@ services:
       dockerfile: services/embeddings/Dockerfile
     ports:
       - "${EMBEDDINGS_PORT:-8082}:8082"
-    command: ["uv", "run", "uvicorn", "services.embeddings.main:app", "--host", "0.0.0.0", "--port", "8082"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
       interval: 30s
@@ -78,7 +79,6 @@ services:
       dockerfile: services/scorer_matcher/Dockerfile
     ports:
       - "${SCORER_MATCHER_PORT:-8083}:8083"
-    command: ["uv", "run", "uvicorn", "services.scorer_matcher.main:app", "--host", "0.0.0.0", "--port", "8083"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8083/health"]
       interval: 30s
@@ -109,10 +109,14 @@ services:
       - EXTRACTION_URL=http://extraction:8081
       - EMBEDDINGS_URL=http://embeddings:8082
       - SCRAPER_INTERVAL_HOURS=${SCRAPER_INTERVAL_HOURS:-6}
-    command: ["uv", "run", "uvicorn", "services.orchestrator.main:app", "--host", "0.0.0.0", "--port", "8084"]
+    volumes:
+      - resume_uploads:/data/resume_uploads
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8084/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+
+volumes:
+  resume_uploads:

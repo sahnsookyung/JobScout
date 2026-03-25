@@ -204,6 +204,7 @@ export const usePipeline = () => {
         uploadResume,
         isUploading,
         isPreparingResume: isRunningPreflight || pendingResumeTaskId !== null,
+        resumeProcessingStep: resumeProcessingStatus?.step ?? null,
         retrySSE,
     };
 };

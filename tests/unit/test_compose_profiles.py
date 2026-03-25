@@ -11,12 +11,6 @@ def _load_compose(filename: str) -> dict:
         return yaml.safe_load(f)
 
 
-def test_main_driver_has_compact_profile() -> None:
-    compose = _load_compose("docker-compose.yml")
-    profiles = compose["services"]["main-driver"]["profiles"]
-    assert "compact" in profiles
-
-
 def test_microservices_have_split_profile() -> None:
     compose = _load_compose("docker-compose.microservices.yml")
     services = compose["services"]
@@ -45,12 +39,11 @@ def test_microservices_all_depend_on_redis_healthy() -> None:
         )
 
 
-def test_web_services_support_compact_and_split_profiles() -> None:
+def test_web_services_support_split_profile() -> None:
     compose = _load_compose("docker-compose.web.yml")
     services = compose["services"]
 
     for service_name in ("web-backend", "web-frontend"):
         profiles = services[service_name]["profiles"]
         assert "web" in profiles
-        assert "compact" in profiles
         assert "split" in profiles

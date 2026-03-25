@@ -1,23 +1,23 @@
 import io
 import logging
 
-from core.logging_utils import NilCharacterFilter, NilSafeFormatter, is_nil_filter_active, setup_logging
+from core.logging_utils import NulCharacterFilter, NulSafeFormatter, is_nul_filter_active, setup_logging
 
 
 def _make_test_logger(name: str, stream: io.StringIO) -> logging.Logger:
-    """Return an isolated logger writing to *stream* with NilCharacterFilter + NilSafeFormatter."""
+    """Return an isolated logger writing to *stream* with NulCharacterFilter + NulSafeFormatter."""
     logger = logging.getLogger(name)
     logger.handlers = []
     logger.propagate = False
     logger.setLevel(logging.INFO)
     handler = logging.StreamHandler(stream)
-    handler.setFormatter(NilSafeFormatter("%(message)s"))
-    handler.addFilter(NilCharacterFilter())
+    handler.setFormatter(NulSafeFormatter("%(message)s"))
+    handler.addFilter(NulCharacterFilter())
     logger.addHandler(handler)
     return logger
 
 
-def test_nil_character_filter_strips_null_bytes_from_msg() -> None:
+def test_nul_character_filter_strips_null_bytes_from_msg() -> None:
     stream = io.StringIO()
     logger = _make_test_logger("test.nil.msg", stream)
     logger.info("hello\x00world")
@@ -26,7 +26,7 @@ def test_nil_character_filter_strips_null_bytes_from_msg() -> None:
     assert "helloworld" in output
 
 
-def test_nil_character_filter_strips_null_bytes_from_tuple_args() -> None:
+def test_nul_character_filter_strips_null_bytes_from_tuple_args() -> None:
     stream = io.StringIO()
     logger = _make_test_logger("test.nil.args_tuple", stream)
     logger.info("val: %s", "abc\x00def")
@@ -35,8 +35,8 @@ def test_nil_character_filter_strips_null_bytes_from_tuple_args() -> None:
     assert "abcdef" in output
 
 
-def test_nil_character_filter_strips_null_bytes_from_dict_args() -> None:
-    """Dict-style % formatting must also have NIL chars stripped."""
+def test_nul_character_filter_strips_null_bytes_from_dict_args() -> None:
+    """Dict-style % formatting must also have NUL chars stripped."""
     stream = io.StringIO()
     logger = _make_test_logger("test.nil.args_dict", stream)
     logger.info("key=%(key)s", {"key": "v\x00al"})
@@ -45,8 +45,8 @@ def test_nil_character_filter_strips_null_bytes_from_dict_args() -> None:
     assert "val" in output
 
 
-def test_nil_safe_formatter_strips_null_bytes_from_exception_traceback() -> None:
-    """NIL chars in exception messages must be removed from the formatted output."""
+def test_nul_safe_formatter_strips_null_bytes_from_exception_traceback() -> None:
+    """NUL chars in exception messages must be removed from the formatted output."""
     stream = io.StringIO()
     logger = _make_test_logger("test.nil.exc", stream)
     try:
@@ -72,8 +72,8 @@ def test_setup_logging_attaches_filter_to_existing_uvicorn_handler() -> None:
 
         setup_logging()
 
-        assert any(isinstance(f, NilCharacterFilter) for f in handler.filters)
-        assert is_nil_filter_active(["uvicorn.error"]) is True
+        assert any(isinstance(f, NulCharacterFilter) for f in handler.filters)
+        assert is_nul_filter_active(["uvicorn.error"]) is True
     finally:
         uvicorn_logger.handlers = original_handlers
         uvicorn_logger.setLevel(original_level)
@@ -96,14 +96,14 @@ def test_sanitize_logger_handlers_adds_handler_when_missing() -> None:
         _sanitize_logger_handlers(logger, logging.INFO, add_handler_if_missing=True)
 
         assert len(logger.handlers) == 1
-        assert any(isinstance(f, NilCharacterFilter) for f in logger.handlers[0].filters)
+        assert any(isinstance(f, NulCharacterFilter) for f in logger.handlers[0].filters)
     finally:
         logger.handlers = original_handlers
         logger.setLevel(original_level)
 
 
-def test_is_nil_filter_active_returns_false_when_filter_missing() -> None:
-    """is_nil_filter_active returns False when a handler lacks NilCharacterFilter."""
+def test_is_nul_filter_active_returns_false_when_filter_missing() -> None:
+    """is_nul_filter_active returns False when a handler lacks NulCharacterFilter."""
     logger_name = "test.no.nil.filter"
     logger = logging.getLogger(logger_name)
     original_handlers = list(logger.handlers)
@@ -113,11 +113,11 @@ def test_is_nil_filter_active_returns_false_when_filter_missing() -> None:
         logger.handlers = []
         logger.propagate = False
 
-        # Handler WITHOUT NilCharacterFilter
+        # Handler WITHOUT NulCharacterFilter
         handler = logging.StreamHandler()
         logger.addHandler(handler)
 
-        result = is_nil_filter_active([logger_name])
+        result = is_nul_filter_active([logger_name])
         assert result is False
     finally:
         logger.handlers = original_handlers

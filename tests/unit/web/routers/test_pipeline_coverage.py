@@ -1,13 +1,11 @@
 """Tests for uncovered branches in web/backend/routers/pipeline.py
 
-Focuses on compact mode internal functions not covered by test_pipeline.py:
+Covers functions not fully exercised by test_pipeline.py:
 - add_rate_limit_handlers / _rate_limit_exceeded_handler
 - _validate_task_id
-- _start_local_matching (compact mode paths)
-- _run_local_matching_background
-- get_pipeline_status (compact mode)
+- get_pipeline_status
 - _stream_local_task_sse
-- pipeline_events (compact mode)
+- pipeline_events
 - get_resume_status
 - _process_resume_background
 """
@@ -96,356 +94,11 @@ class TestValidateTaskId:
 
 
 # ---------------------------------------------------------------------------
-# _start_local_matching
-# ---------------------------------------------------------------------------
-
-class TestStartLocalMatching:
-    def _make_manager(self, task_id="task-123"):
-        manager = MagicMock()
-        manager.create_task.return_value = task_id
-        return manager
-
-    def _make_redis(self, acquired=True):
-        redis = MagicMock()
-        redis.set.return_value = acquired
-        redis.get.return_value = None
-        return redis
-
-    def _make_uow_context(self, fingerprint="fp-1"):
-        mock_repo = MagicMock()
-        mock_repo.resume.get_latest_stored_resume_fingerprint.return_value = fingerprint
-        mock_uow = MagicMock()
-        mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
-        mock_uow.return_value.__exit__ = MagicMock(return_value=False)
-        return mock_uow, mock_repo
-
-    def test_success_returns_pipeline_task_response(self):
-        from web.backend.routers.pipeline import _start_local_matching
-        from web.backend.models.responses import PipelineTaskResponse
-
-        mock_redis = self._make_redis(acquired=True)
-        mock_manager = self._make_manager("task-abc")
-        mock_uow, _ = self._make_uow_context("fp-1")
-
-        with patch("web.backend.routers.pipeline.get_redis_client", return_value=mock_redis), \
-             patch("web.backend.routers.pipeline.get_task_state", return_value=None), \
-             patch("web.backend.routers.pipeline.set_task_state"), \
-             patch("web.backend.routers.pipeline.get_pipeline_manager", return_value=mock_manager), \
-             patch("web.backend.routers.pipeline.job_uow", mock_uow), \
-             patch("threading.Thread") as mock_thread:
-            mock_thread.return_value.start = MagicMock()
-            result = _start_local_matching()
-
-        assert isinstance(result, PipelineTaskResponse)
-        assert result.success is True
-        assert result.task_id == "task-abc"
-
-    def test_returns_409_when_lock_not_acquired(self):
-        from web.backend.routers.pipeline import _start_local_matching
-        from fastapi import HTTPException
-
-        mock_redis = self._make_redis(acquired=False)
-        with patch("web.backend.routers.pipeline.get_redis_client", return_value=mock_redis):
-            with pytest.raises(HTTPException) as exc_info:
-                _start_local_matching()
-        assert exc_info.value.status_code == 409
-
-    def test_returns_400_when_no_resume(self):
-        from web.backend.routers.pipeline import _start_local_matching
-        from fastapi import HTTPException
-
-        mock_redis = self._make_redis(acquired=True)
-        mock_manager = self._make_manager()
-        mock_uow, _ = self._make_uow_context(fingerprint=None)
-
-        with patch("web.backend.routers.pipeline.get_redis_client", return_value=mock_redis), \
-             patch("web.backend.routers.pipeline.get_task_state", return_value=None), \
-             patch("web.backend.routers.pipeline.get_pipeline_manager", return_value=mock_manager), \
-             patch("web.backend.routers.pipeline.job_uow", mock_uow):
-            with pytest.raises(HTTPException) as exc_info:
-                _start_local_matching()
-        assert exc_info.value.status_code == 400
-
-    def test_returns_409_when_resume_processing(self):
-        from web.backend.routers.pipeline import _start_local_matching
-        from fastapi import HTTPException
-
-        mock_redis = self._make_redis(acquired=True)
-        mock_redis.get.return_value = "resume-task-1"
-
-        with patch("web.backend.routers.pipeline.get_redis_client", return_value=mock_redis), \
-             patch("web.backend.routers.pipeline.get_task_state", return_value={"status": "processing"}):
-            with pytest.raises(HTTPException) as exc_info:
-                _start_local_matching()
-        assert exc_info.value.status_code == 409
-        assert "processed" in exc_info.value.detail.lower() or "processing" in exc_info.value.detail.lower()
-
-    def test_redis_unavailable_proceeds_without_lock(self):
-        """When Redis is down, proceed without the lock (degraded mode)."""
-        from web.backend.routers.pipeline import _start_local_matching
-        from web.backend.models.responses import PipelineTaskResponse
-
-        mock_manager = self._make_manager("task-no-redis")
-        mock_uow, _ = self._make_uow_context("fp-1")
-
-        with patch("web.backend.routers.pipeline.get_redis_client", side_effect=Exception("Redis down")), \
-             patch("web.backend.routers.pipeline.set_task_state"), \
-             patch("web.backend.routers.pipeline.get_pipeline_manager", return_value=mock_manager), \
-             patch("web.backend.routers.pipeline.job_uow", mock_uow), \
-             patch("threading.Thread") as mock_thread:
-            mock_thread.return_value.start = MagicMock()
-            result = _start_local_matching()
-
-        assert result.success is True
-
-    def test_background_thread_started(self):
-        from web.backend.routers.pipeline import _start_local_matching
-
-        mock_redis = self._make_redis(acquired=True)
-        mock_manager = self._make_manager()
-        mock_uow, _ = self._make_uow_context("fp-1")
-
-        with patch("web.backend.routers.pipeline.get_redis_client", return_value=mock_redis), \
-             patch("web.backend.routers.pipeline.get_task_state", return_value=None), \
-             patch("web.backend.routers.pipeline.set_task_state"), \
-             patch("web.backend.routers.pipeline.get_pipeline_manager", return_value=mock_manager), \
-             patch("web.backend.routers.pipeline.job_uow", mock_uow), \
-             patch("threading.Thread") as mock_thread:
-            mock_thread.return_value.start = MagicMock()
-            _start_local_matching()
-
-        mock_thread.return_value.start.assert_called_once()
-
-    def test_returns_409_when_startup_etl_running(self):
-        """Change 4d: matching is blocked with 409 while startup ETL state=running."""
-        from web.backend.routers.pipeline import _start_local_matching, _STARTUP_ETL_STATE_KEY
-        from fastapi import HTTPException
-
-        mock_redis = self._make_redis(acquired=True)
-        # No resume upload in progress (resume guard exits early)
-        mock_redis.get.return_value = None
-
-        def fake_task_state(key):
-            if key == _STARTUP_ETL_STATE_KEY:
-                return {"status": "running"}
-            return None
-
-        with patch("web.backend.routers.pipeline.get_redis_client", return_value=mock_redis), \
-             patch("web.backend.routers.pipeline.get_task_state", side_effect=fake_task_state):
-            with pytest.raises(HTTPException) as exc_info:
-                _start_local_matching()
-
-        assert exc_info.value.status_code == 409
-        assert "startup" in exc_info.value.detail.lower()
-
-    def test_startup_etl_guard_exception_does_not_block_matching(self):
-        """If get_task_state raises inside the guard, matching proceeds (no crash/409)."""
-        from web.backend.routers.pipeline import _start_local_matching
-        from web.backend.models.responses import PipelineTaskResponse
-
-        mock_redis = self._make_redis(acquired=True)
-        mock_redis.get.return_value = None
-        mock_manager = self._make_manager("task-ok")
-        mock_uow, _ = self._make_uow_context("fp-1")
-
-        with patch("web.backend.routers.pipeline.get_redis_client", return_value=mock_redis), \
-             patch("web.backend.routers.pipeline.get_task_state", side_effect=Exception("Redis flap")), \
-             patch("web.backend.routers.pipeline.set_task_state"), \
-             patch("web.backend.routers.pipeline.get_pipeline_manager", return_value=mock_manager), \
-             patch("web.backend.routers.pipeline.job_uow", mock_uow), \
-             patch("threading.Thread") as mock_thread:
-            mock_thread.return_value.start = MagicMock()
-            result = _start_local_matching()
-
-        assert isinstance(result, PipelineTaskResponse)
-        assert result.success is True
-
-
-# ---------------------------------------------------------------------------
-# _run_local_matching_background
-# ---------------------------------------------------------------------------
-
-class TestRunLocalMatchingBackground:
-    def _make_success_result(self, matches=5):
-        result = MagicMock()
-        result.success = True
-        result.matches_count = matches
-        result.saved_count = matches
-        result.execution_time = 1.23
-        result.error = None
-        return result
-
-    def _make_failed_result(self):
-        result = MagicMock()
-        result.success = False
-        result.matches_count = 0
-        result.saved_count = 0
-        result.execution_time = 0.0
-        result.error = "Embedding failed"
-        return result
-
-    def test_success_path_sets_completed_state(self):
-        from web.backend.routers.pipeline import _run_local_matching_background
-
-        manager = MagicMock()
-        manager.get_task.return_value = MagicMock()
-
-        with patch("core.config_loader.load_config"), \
-             patch("core.app_context.AppContext.build"), \
-             patch("services.base.extraction.run_job_extraction"), \
-             patch("services.base.embeddings.run_embedding_extraction"), \
-             patch("pipeline.runner.run_matching_pipeline", return_value=self._make_success_result()), \
-             patch("web.backend.routers.pipeline.set_task_state") as mock_set, \
-             patch("web.backend.routers.pipeline.get_redis_client"):
-            _run_local_matching_background("task-1", manager, "fp-1")
-
-        completed = [c for c in mock_set.call_args_list if c[0][1].get("status") == "completed"]
-        assert len(completed) >= 1
-
-    def test_failed_result_sets_failed_state(self):
-        from web.backend.routers.pipeline import _run_local_matching_background
-
-        manager = MagicMock()
-        manager.get_task.return_value = MagicMock()
-
-        with patch("core.config_loader.load_config"), \
-             patch("core.app_context.AppContext.build"), \
-             patch("services.base.extraction.run_job_extraction"), \
-             patch("services.base.embeddings.run_embedding_extraction"), \
-             patch("pipeline.runner.run_matching_pipeline", return_value=self._make_failed_result()), \
-             patch("web.backend.routers.pipeline.set_task_state") as mock_set, \
-             patch("web.backend.routers.pipeline.get_redis_client"):
-            _run_local_matching_background("task-1", manager, "fp-1")
-
-        failed = [c for c in mock_set.call_args_list if c[0][1].get("status") == "failed"]
-        assert len(failed) >= 1
-
-    def test_exception_sets_failed_state(self):
-        from web.backend.routers.pipeline import _run_local_matching_background
-
-        manager = MagicMock()
-        manager.get_task.return_value = MagicMock()
-
-        with patch("core.config_loader.load_config"), \
-             patch("core.app_context.AppContext.build"), \
-             patch("services.base.extraction.run_job_extraction"), \
-             patch("services.base.embeddings.run_embedding_extraction"), \
-             patch("pipeline.runner.run_matching_pipeline", side_effect=RuntimeError("boom")), \
-             patch("web.backend.routers.pipeline.set_task_state") as mock_set, \
-             patch("web.backend.routers.pipeline.get_redis_client"):
-            _run_local_matching_background("task-exc", manager, "fp-1")
-
-        failed = [c for c in mock_set.call_args_list if c[0][1].get("status") == "failed"]
-        assert len(failed) >= 1
-
-    def test_lock_deleted_in_finally_on_success(self):
-        from web.backend.routers.pipeline import _run_local_matching_background
-
-        manager = MagicMock()
-        manager.get_task.return_value = None
-        mock_redis = MagicMock()
-
-        with patch("core.config_loader.load_config"), \
-             patch("core.app_context.AppContext.build"), \
-             patch("services.base.extraction.run_job_extraction"), \
-             patch("services.base.embeddings.run_embedding_extraction"), \
-             patch("pipeline.runner.run_matching_pipeline", return_value=self._make_success_result()), \
-             patch("web.backend.routers.pipeline.set_task_state"), \
-             patch("web.backend.routers.pipeline.get_redis_client", return_value=mock_redis):
-            _run_local_matching_background("task-fin", manager, "fp-1")
-
-        mock_redis.delete.assert_called_once()
-
-    def test_lock_deleted_in_finally_on_exception(self):
-        from web.backend.routers.pipeline import _run_local_matching_background
-
-        manager = MagicMock()
-        manager.get_task.return_value = None
-        mock_redis = MagicMock()
-
-        with patch("core.config_loader.load_config"), \
-             patch("core.app_context.AppContext.build"), \
-             patch("services.base.extraction.run_job_extraction"), \
-             patch("services.base.embeddings.run_embedding_extraction"), \
-             patch("pipeline.runner.run_matching_pipeline", side_effect=Exception("fail")), \
-             patch("web.backend.routers.pipeline.set_task_state"), \
-             patch("web.backend.routers.pipeline.get_redis_client", return_value=mock_redis):
-            _run_local_matching_background("task-fin", manager, "fp-1")
-
-        mock_redis.delete.assert_called_once()
-
-    def test_task_manager_updated_on_success(self):
-        from web.backend.routers.pipeline import _run_local_matching_background
-
-        manager = MagicMock()
-        task = MagicMock()
-        manager.get_task.return_value = task
-
-        with patch("core.config_loader.load_config"), \
-             patch("core.app_context.AppContext.build"), \
-             patch("services.base.extraction.run_job_extraction"), \
-             patch("services.base.embeddings.run_embedding_extraction"), \
-             patch("pipeline.runner.run_matching_pipeline", return_value=self._make_success_result(5)), \
-             patch("web.backend.routers.pipeline.set_task_state"), \
-             patch("web.backend.routers.pipeline.get_redis_client"):
-            _run_local_matching_background("task-1", manager, "fp-1")
-
-        assert task.status == "completed"
-        assert "5 matches" in task.message
-
-    def test_result_includes_match_counts(self):
-        from web.backend.routers.pipeline import _run_local_matching_background
-
-        manager = MagicMock()
-        manager.get_task.return_value = None
-
-        with patch("core.config_loader.load_config"), \
-             patch("core.app_context.AppContext.build"), \
-             patch("services.base.extraction.run_job_extraction"), \
-             patch("services.base.embeddings.run_embedding_extraction"), \
-             patch("pipeline.runner.run_matching_pipeline", return_value=self._make_success_result(7)), \
-             patch("web.backend.routers.pipeline.set_task_state") as mock_set, \
-             patch("web.backend.routers.pipeline.get_redis_client"):
-            _run_local_matching_background("task-1", manager, "fp-1")
-
-        final_call = mock_set.call_args_list[-1]
-        state = final_call[0][1]
-        # Running state or completed state
-        completed_calls = [c for c in mock_set.call_args_list if c[0][1].get("status") == "completed"]
-        assert len(completed_calls) >= 1
-        result_data = completed_calls[0][0][1].get("result", {})
-        assert result_data.get("matches_count") == 7
-
-    def test_etl_runs_before_matching(self):
-        """Verify extraction and embedding run before the matching pipeline."""
-        from web.backend.routers.pipeline import _run_local_matching_background
-
-        call_order = []
-        manager = MagicMock()
-        manager.get_task.return_value = None
-
-        def record_extraction(*a, **kw): call_order.append("extraction")
-        def record_embedding(*a, **kw): call_order.append("embedding")
-        def record_matching(*a, **kw): call_order.append("matching"); return self._make_success_result()
-
-        with patch("core.config_loader.load_config"), \
-             patch("core.app_context.AppContext.build"), \
-             patch("services.base.extraction.run_job_extraction", side_effect=record_extraction), \
-             patch("services.base.embeddings.run_embedding_extraction", side_effect=record_embedding), \
-             patch("pipeline.runner.run_matching_pipeline", side_effect=record_matching), \
-             patch("web.backend.routers.pipeline.set_task_state"), \
-             patch("web.backend.routers.pipeline.get_redis_client"):
-            _run_local_matching_background("task-order", manager, "fp-1")
-
-        assert call_order == ["extraction", "embedding", "matching"]
-
-
-# ---------------------------------------------------------------------------
-# get_pipeline_status (compact mode)
+# get_pipeline_status
 # ---------------------------------------------------------------------------
 
 class TestGetPipelineStatus:
-    def test_compact_mode_returns_status_from_redis(self, pipeline_client):
+    def test_returns_status_from_redis(self, pipeline_client):
         state = {"status": "completed"}
         with patch.dict("os.environ", {"ORCHESTRATOR_URL": ""}, clear=False), \
              patch("web.backend.routers.pipeline.get_task_state", return_value=state):
@@ -454,7 +107,7 @@ class TestGetPipelineStatus:
         data = response.json()
         assert data["status"] == "completed"
 
-    def test_compact_mode_with_result_fields(self, pipeline_client):
+    def test_with_result_fields(self, pipeline_client):
         state = {
             "status": "completed",
             "result": {"matches_count": 10, "saved_count": 8, "execution_time": 2.5}
@@ -468,7 +121,7 @@ class TestGetPipelineStatus:
         assert data["saved_count"] == 8
         assert data["execution_time"] == pytest.approx(2.5)
 
-    def test_compact_mode_with_error_field(self, pipeline_client):
+    def test_with_error_field(self, pipeline_client):
         state = {"status": "failed", "error": "something broke"}
         with patch.dict("os.environ", {"ORCHESTRATOR_URL": ""}, clear=False), \
              patch("web.backend.routers.pipeline.get_task_state", return_value=state):
@@ -605,7 +258,7 @@ class TestPipelineEvents:
         response = pipeline_client.get("/api/pipeline/events/" + "a" * 51)
         assert response.status_code == 400
 
-    def test_compact_mode_returns_200_streaming(self, pipeline_client):
+    def test_returns_200_streaming(self, pipeline_client):
         with patch.dict("os.environ", {"ORCHESTRATOR_URL": ""}, clear=False), \
              patch("web.backend.routers.pipeline.get_task_state", return_value={"status": "completed"}):
             response = pipeline_client.get("/api/pipeline/events/task-abc")
@@ -658,98 +311,56 @@ class TestGetResumeStatus:
 # ---------------------------------------------------------------------------
 
 class TestProcessResumeBackground:
-    def _make_tmp_mock(self, name="/tmp/resume.pdf"):
-        tmp_file = MagicMock()
-        tmp_file.name = name
-        tmp_file.__enter__ = MagicMock(return_value=tmp_file)
-        tmp_file.__exit__ = MagicMock(return_value=False)
-        return tmp_file
-
     def test_success_path_sets_completed_state(self):
         from web.backend.routers.pipeline import _process_resume_background
 
+        mock_task = MagicMock()
         manager = MagicMock()
-        manager.get_task.return_value = MagicMock()
-        mock_repo = MagicMock()
-        mock_ctx = MagicMock()
-        tmp_file = self._make_tmp_mock()
+        manager.get_task.return_value = mock_task
 
-        with patch("web.backend.routers.pipeline.set_task_state") as mock_set, \
-             patch("web.backend.routers.pipeline.load_config"), \
-             patch("core.app_context.AppContext.build", return_value=mock_ctx), \
-             patch("database.uow.job_uow") as mock_uow, \
-             patch("tempfile.NamedTemporaryFile", return_value=tmp_file), \
-             patch("os.unlink"):
-            mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
-            mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+        with patch("pathlib.Path.mkdir"), \
+             patch("pathlib.Path.write_bytes"), \
+             patch("os.unlink"), \
+             patch("web.backend.services.clients.orchestrator_client"), \
+             patch("web.backend.routers.pipeline.set_task_state"), \
+             patch("web.backend.routers.pipeline.get_task_state", return_value={"status": "completed"}):
             _process_resume_background(b"pdf-content", "resume.pdf", "task-1", manager, "fp-1")
 
-        completed = [c for c in mock_set.call_args_list if c[0][1].get("status") == "completed"]
-        assert len(completed) >= 1
+        assert mock_task.status == "completed"
 
     def test_exception_sets_failed_state(self):
         from web.backend.routers.pipeline import _process_resume_background
 
+        mock_task = MagicMock()
         manager = MagicMock()
-        manager.get_task.return_value = MagicMock()
-        tmp_file = self._make_tmp_mock()
+        manager.get_task.return_value = mock_task
 
-        with patch("web.backend.routers.pipeline.set_task_state") as mock_set, \
-             patch("web.backend.routers.pipeline.load_config", side_effect=RuntimeError("config error")), \
-             patch("tempfile.NamedTemporaryFile", return_value=tmp_file), \
-             patch("os.unlink"):
+        with patch("pathlib.Path.mkdir"), \
+             patch("pathlib.Path.write_bytes"), \
+             patch("os.unlink"), \
+             patch("web.backend.services.clients.orchestrator_client") as mock_client, \
+             patch("web.backend.routers.pipeline.set_task_state") as mock_set, \
+             patch("web.backend.routers.pipeline.get_task_state", return_value=None):
+            mock_client.process_resume.side_effect = RuntimeError("service down")
             _process_resume_background(b"data", "resume.pdf", "task-err", manager, "fp-1")
 
         failed = [c for c in mock_set.call_args_list if c[0][1].get("status") == "failed"]
         assert len(failed) >= 1
 
-    def test_finally_deletes_temp_file_on_success(self):
-        from web.backend.routers.pipeline import _process_resume_background
-
-        manager = MagicMock()
-        manager.get_task.return_value = None
-        mock_ctx = MagicMock()
-        mock_repo = MagicMock()
-        tmp_file = self._make_tmp_mock("/tmp/test-resume.pdf")
-
-        with patch("web.backend.routers.pipeline.set_task_state"), \
-             patch("web.backend.routers.pipeline.load_config"), \
-             patch("core.app_context.AppContext.build", return_value=mock_ctx), \
-             patch("database.uow.job_uow") as mock_uow, \
-             patch("tempfile.NamedTemporaryFile", return_value=tmp_file), \
-             patch("os.unlink") as mock_unlink:
-            mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
-            mock_uow.return_value.__exit__ = MagicMock(return_value=False)
-            _process_resume_background(b"data", "resume.pdf", "task-fin", manager, "fp-1")
-
-        mock_unlink.assert_called_once_with("/tmp/test-resume.pdf")
-
-    def test_finally_deletes_temp_file_on_exception(self):
-        from web.backend.routers.pipeline import _process_resume_background
-
-        manager = MagicMock()
-        manager.get_task.return_value = None
-        tmp_file = self._make_tmp_mock("/tmp/fail-resume.pdf")
-
-        with patch("web.backend.routers.pipeline.set_task_state"), \
-             patch("web.backend.routers.pipeline.load_config", side_effect=Exception("fail")), \
-             patch("tempfile.NamedTemporaryFile", return_value=tmp_file), \
-             patch("os.unlink") as mock_unlink:
-            _process_resume_background(b"data", "resume.pdf", "task-exc", manager, "fp-1")
-
-        mock_unlink.assert_called_once_with("/tmp/fail-resume.pdf")
-
     def test_error_includes_exception_message_in_redis_state(self):
         from web.backend.routers.pipeline import _process_resume_background
 
+        mock_task = MagicMock()
         manager = MagicMock()
-        manager.get_task.return_value = None
-        tmp_file = self._make_tmp_mock()
+        manager.get_task.return_value = mock_task
 
-        with patch("web.backend.routers.pipeline.set_task_state") as mock_set, \
-             patch("web.backend.routers.pipeline.load_config", side_effect=ValueError("bad config")), \
-             patch("tempfile.NamedTemporaryFile", return_value=tmp_file), \
-             patch("os.unlink"):
+        with patch("pathlib.Path.mkdir"), \
+             patch("pathlib.Path.write_bytes"), \
+             patch("os.unlink"), \
+             patch("web.backend.services.clients.orchestrator_client") as mock_client, \
+             patch("web.backend.routers.pipeline.set_task_state") as mock_set, \
+             patch("web.backend.routers.pipeline.get_task_state", return_value=None):
+            mock_client.process_resume.side_effect = ValueError("bad config")
             _process_resume_background(b"data", "resume.pdf", "task-1", manager, "fp-1")
 
         failed_calls = [c for c in mock_set.call_args_list if c[0][1].get("status") == "failed"]
