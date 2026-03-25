@@ -33,20 +33,23 @@ export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
 
     const formatTime = (time?: number): string => (time ?? 0).toFixed(2);
     const isActiveStatus = isPendingStatus || isRunningStatus;
-    const iconBackground = isActiveStatus
-        ? 'bg-blue-100'
-        : isCompletedStatus
-            ? 'bg-green-100'
-            : isFailedStatus
-                ? 'bg-red-100'
-                : 'bg-slate-100';
-    const badgeVariant = isActiveStatus
-        ? 'info'
-        : isCompletedStatus
-            ? 'success'
-            : isFailedStatus
-                ? 'error'
-                : 'default';
+    let iconBackground = 'bg-slate-100';
+    if (isActiveStatus) {
+        iconBackground = 'bg-blue-100';
+    } else if (isCompletedStatus) {
+        iconBackground = 'bg-green-100';
+    } else if (isFailedStatus) {
+        iconBackground = 'bg-red-100';
+    }
+
+    let badgeVariant: 'info' | 'success' | 'error' | 'default' = 'default';
+    if (isActiveStatus) {
+        badgeVariant = 'info';
+    } else if (isCompletedStatus) {
+        badgeVariant = 'success';
+    } else if (isFailedStatus) {
+        badgeVariant = 'error';
+    }
 
     return (
         <div className="mt-6 bg-white/60 backdrop-blur-sm rounded-2xl p-6 border border-white/50">
