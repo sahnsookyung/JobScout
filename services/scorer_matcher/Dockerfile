@@ -33,7 +33,7 @@ RUN useradd --create-home --shell /bin/bash appuser
 
 WORKDIR /app
 
-COPY --from=builder --chown=appuser:appuser /app /app
+COPY --from=builder --chown=root:root /app /app
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH=/app
