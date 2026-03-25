@@ -21,7 +21,12 @@ export const ActionButton: React.FC<ActionButtonProps> = ({ isRunningStatus, isR
     const preparingLabel = processingStep
         ? (RESUME_STEP_LABELS[processingStep] ?? 'Preparing...')
         : 'Preparing...';
-    const buttonText = isRunningStatus ? 'Stop' : (isProcessingResume ? preparingLabel : 'Run Matching');
+    let buttonText = 'Run Matching';
+    if (isRunningStatus) {
+        buttonText = 'Stop';
+    } else if (isProcessingResume) {
+        buttonText = preparingLabel;
+    }
 
     return (
         <button

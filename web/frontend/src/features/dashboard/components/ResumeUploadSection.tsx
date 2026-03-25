@@ -20,6 +20,12 @@ export const ResumeUploadSection: React.FC<ResumeUploadSectionProps> = ({ fileIn
     const uploadingLabel = processingStep
         ? (RESUME_STEP_LABELS[processingStep] ?? 'Processing...')
         : 'Uploading...';
+    let buttonLabel = 'Upload Resume';
+    if (isUploading) {
+        buttonLabel = uploadingLabel;
+    } else if (filename) {
+        buttonLabel = 'Update Resume';
+    }
     return (
     <>
         <button
@@ -31,7 +37,7 @@ export const ResumeUploadSection: React.FC<ResumeUploadSectionProps> = ({ fileIn
                 {isUploading
                     ? <Loader className="w-5 h-5 sm:w-6 sm:h-6 shrink-0 animate-spin" />
                     : !filename && <FileUp className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />}
-                <span>{isUploading ? uploadingLabel : filename ? 'Update Resume' : 'Upload Resume'}</span>
+                <span>{buttonLabel}</span>
             </span>
             {!isUploading && filename && <span className="text-xs opacity-70 truncate max-w-[200px]">{filename}</span>}
             <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
