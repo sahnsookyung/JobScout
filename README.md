@@ -14,7 +14,8 @@ AI-powered job matching pipeline that scrapes, analyzes, and matches jobs to you
 ### Prerequisites
 
 - **Python 3.13+** and **uv** (package manager)
-- **Docker** (for PostgreSQL, Redis, Ollama)
+- **Docker** (for PostgreSQL and Redis)
+- **Ollama** optional, run natively if you use local models
 - **Node.js 18+** (for frontend)
 
 ### First-Time Setup
@@ -71,8 +72,8 @@ Run `--split` to start extraction, embeddings, matching, and orchestration as se
 ./scripts/setup_local_env/logs.sh -f
 
 # Specific service logs
-./scripts/setup_local_env/logs.sh backend    # Backend only
-./scripts/setup_local_env/logs.sh frontend   # Frontend only
+./scripts/setup_local_env/logs.sh web-backend  # Backend only
+./scripts/setup_local_env/logs.sh web-ui       # Frontend only
 ```
 
 ## Manual Startup
@@ -86,8 +87,8 @@ docker compose \
   -f docker-compose.web.yml \
   --profile split up -d
 
-# With Ollama
-docker-compose --profile docker-ollama up -d
+# Run Ollama natively if your config points at localhost:11434
+ollama serve
 ```
 
 ### 2. Start Backend (FastAPI)
@@ -195,7 +196,8 @@ _Coming soon: Dashboard screenshots and demo video_
 
 - **Python 3.13+**
 - **uv**: Package manager
-- **Docker**: PostgreSQL, Redis, Ollama
+- **Docker**: PostgreSQL, Redis
+- **Ollama**: optional local model runtime
 - **Node.js 18+**: For frontend development
 
 ## License

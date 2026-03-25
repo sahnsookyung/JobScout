@@ -175,7 +175,6 @@ if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
     fi
 else
     log_warn "Ollama not running. Start with: ollama serve"
-    echo "       Or use Docker: docker-compose --profile docker-ollama up -d"
 fi
 
 # Summary

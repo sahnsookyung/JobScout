@@ -28,17 +28,6 @@ include:
     include_as: base
 
 services:
-  # Inject microservice URLs into web-backend when running with microservices.
-  # This block is only included when docker-compose.microservices.yml is part of the compose stack.
-  web-backend:
-    environment:
-      - EXTRACTION_URL=http://extraction:8081
-      - EMBEDDINGS_URL=http://embeddings:8082
-      - SCORER_MATCHER_URL=http://scorer-matcher:8083
-      - ORCHESTRATOR_URL=http://orchestrator:8084
-    volumes:
-      - resume_uploads:/data/resume_uploads
-
   extraction:
     <<: *service-common
     profiles: ["split"]

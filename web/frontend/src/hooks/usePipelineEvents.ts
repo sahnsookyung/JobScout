@@ -90,7 +90,11 @@ export const usePipelineEvents = (
                 if (data.type === 'heartbeat') return;
                 setStatus(data);
 
-                if (data.status === 'completed' || data.status === 'failed') {
+                if (
+                    data.status === 'completed' ||
+                    data.status === 'failed' ||
+                    data.status === 'cancelled'
+                ) {
                     clearRetryTimeout();
                     eventSource.close();
                     eventSourceRef.current = null;

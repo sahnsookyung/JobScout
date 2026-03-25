@@ -47,3 +47,16 @@ def test_web_services_support_split_profile() -> None:
         profiles = services[service_name]["profiles"]
         assert "web" in profiles
         assert "split" in profiles
+
+
+def test_dev_overlay_only_overrides_existing_services() -> None:
+    compose = _load_compose("docker-compose.dev.yml")
+    services = compose["services"]
+
+    assert set(services) == {
+        "embeddings",
+        "extraction",
+        "orchestrator",
+        "scorer-matcher",
+        "web-backend",
+    }

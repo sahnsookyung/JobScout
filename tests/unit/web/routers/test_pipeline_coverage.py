@@ -110,6 +110,7 @@ class TestGetPipelineStatus:
     def test_with_result_fields(self, pipeline_client):
         state = {
             "status": "completed",
+            "step": "saving_results",
             "result": {"matches_count": 10, "saved_count": 8, "execution_time": 2.5}
         }
         with patch.dict("os.environ", {"ORCHESTRATOR_URL": ""}, clear=False), \
@@ -120,6 +121,16 @@ class TestGetPipelineStatus:
         assert data["matches_count"] == 10
         assert data["saved_count"] == 8
         assert data["execution_time"] == pytest.approx(2.5)
+        assert data["step"] == "saving_results"
+
+    def test_normalizes_redis_step_for_active_status(self, pipeline_client):
+        state = {"status": "running", "step": "matching"}
+        with patch.dict("os.environ", {"ORCHESTRATOR_URL": ""}, clear=False), \
+             patch("web.backend.routers.pipeline.get_task_state", return_value=state):
+            response = pipeline_client.get("/api/pipeline/status/task-123")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["step"] == "vector_matching"
 
     def test_with_error_field(self, pipeline_client):
         state = {"status": "failed", "error": "something broke"}
@@ -164,7 +175,7 @@ class TestStreamLocalTaskSse:
 
         async def run():
             chunks = []
-            with patch("web.backend.routers.pipeline.get_task_state", return_value={"status": "completed"}), \
+            with patch("web.backend.routers.pipeline.get_task_state", return_value={"status": "completed", "step": "saving_results"}), \
                  patch("asyncio.sleep", new_callable=AsyncMock):
                 async for chunk in _stream_local_task_sse("task-done"):
                     chunks.append(chunk)
@@ -174,6 +185,7 @@ class TestStreamLocalTaskSse:
         assert len(chunks) == 1
         data = json.loads(chunks[0].removeprefix("data: ").strip())
         assert data["status"] == "completed"
+        assert data["step"] == "saving_results"
 
     def test_failed_state_yields_and_stops(self):
         from web.backend.routers.pipeline import _stream_local_task_sse
@@ -208,7 +220,10 @@ class TestStreamLocalTaskSse:
     def test_pending_then_completed_emits_both(self):
         from web.backend.routers.pipeline import _stream_local_task_sse
 
-        states = [{"status": "running"}, {"status": "completed"}]
+        states = [
+            {"status": "running", "step": "matching"},
+            {"status": "completed", "step": "saving_results"},
+        ]
         call_count = [0]
 
         def fake_state(task_id):
@@ -229,6 +244,7 @@ class TestStreamLocalTaskSse:
         first = json.loads(chunks[0].removeprefix("data: ").strip())
         last = json.loads(chunks[-1].removeprefix("data: ").strip())
         assert first["status"] == "running"
+        assert first["step"] == "vector_matching"
         assert last["status"] == "completed"
 
     def test_get_task_state_exception_treated_as_not_found(self):

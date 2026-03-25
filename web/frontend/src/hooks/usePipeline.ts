@@ -44,6 +44,19 @@ export const usePipeline = () => {
         retry: retrySSE
     } = usePipelineEvents(taskIdForSSE);
 
+    const optimisticPendingStatus = React.useMemo<PipelineStatusResponse | null>(() => {
+        if (pendingTaskId === null || sseStatus !== null || activePipeline !== null) {
+            return null;
+        }
+        return {
+            task_id: pendingTaskId,
+            status: 'pending',
+            step: 'initializing',
+        };
+    }, [activePipeline, pendingTaskId, sseStatus]);
+
+    const effectiveStatus = sseStatus ?? activePipeline ?? optimisticPendingStatus;
+
     // Poll resume processing status after explicit upload with a background task
     const { data: resumeProcessingStatus } = useQuery({
         queryKey: ['resume', 'processing', pendingResumeTaskId],
@@ -92,9 +105,14 @@ export const usePipeline = () => {
     });
 
     React.useEffect(() => {
-        if (sseStatus?.status === 'completed' || sseStatus?.status === 'failed') {
+        if (
+            sseStatus?.status === 'completed' ||
+            sseStatus?.status === 'failed' ||
+            sseStatus?.status === 'cancelled'
+        ) {
             queryClient.invalidateQueries({ queryKey: ['matches'] });
             queryClient.invalidateQueries({ queryKey: ['stats'] });
+            queryClient.invalidateQueries({ queryKey: ['pipeline', 'active'] });
             setPendingTaskId(null);
         }
     }, [sseStatus?.status, queryClient]);
@@ -190,7 +208,7 @@ export const usePipeline = () => {
 
     return {
         activePipeline,
-        status: sseStatus,
+        status: effectiveStatus,
         connectionState,
         sseError,
         isLoading,
@@ -198,7 +216,7 @@ export const usePipeline = () => {
         runPipelineError: runPipelineMutation.error,
         stopPipeline: stopPipelineMutation.mutate,
         stopPipelineError: stopPipelineMutation.error,
-        isRunning: sseStatus?.status === 'running' || sseStatus?.status === 'pending',
+        isRunning: effectiveStatus?.status === 'running' || effectiveStatus?.status === 'pending',
         isStopping: stopPipelineMutation.isPending,
         clearTask: handleClearTask,
         uploadResume,

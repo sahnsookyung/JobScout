@@ -166,7 +166,7 @@ class PipelineTaskResponse(BaseModel):
 class PipelineStatusResponse(BaseModel):
     """Response containing pipeline task status."""
     task_id: str
-    status: str  # "pending", "running", "completed", "failed"
+    status: str  # "pending", "running", "completed", "failed", "cancelled"
     matches_count: Optional[int] = None
     saved_count: Optional[int] = None
     notified_count: Optional[int] = None

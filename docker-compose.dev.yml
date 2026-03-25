@@ -1,20 +1,8 @@
-# Development overlay — volume mounts + hot reload for all services
-# Use via: make dev
-# Or manually: docker compose -f docker-compose.base.yml -f docker-compose.microservices.yml -f docker-compose.web.yml -f docker-compose.dev.yml up -d
+# Development overlay for Dockerized hot reload
+# Use via: ./scripts/setup_local_env/start.sh --split --dev
+# Or manually: docker compose -f docker-compose.yml -f docker-compose.microservices.yml -f docker-compose.web.yml -f docker-compose.dev.yml --profile split --profile web up -d
 
 services:
-  main-driver:
-    volumes:
-      - ./core:/app/core
-      - ./database:/app/database
-      - ./etl:/app/etl
-      - ./pipeline:/app/pipeline
-      - ./notification:/app/notification
-      - ./services/base:/app/services/base
-      - ./web/backend:/app/web/backend
-      - ./config.yaml:/app/config.yaml:ro
-      - ./main.py:/app/main.py
-
   extraction:
     command: ["uvicorn", "services.extraction.main:app", "--host", "0.0.0.0", "--port", "8081",
               "--reload", "--reload-dir", "/app/services/extraction", "--reload-dir", "/app/core", "--reload-dir", "/app/database"]
