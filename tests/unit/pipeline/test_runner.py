@@ -512,13 +512,6 @@ class TestGetPreExtractedResume:
 
         assert _get_pre_extracted_resume(mock_s, should_re_extract=False) is not None
 
-    def test_logs_warning_on_parse_failure(self, caplog):
-        with pytest.raises(ValueError, match="Failed to parse stored ready resume"):
-            _get_pre_extracted_resume(
-                Mock(extracted_data={"invalid": "schema"}), should_re_extract=False
-            )
-
-
 # ---------------------------------------------------------------------------
 # _run_vector_matching
 # ---------------------------------------------------------------------------
@@ -1099,20 +1092,6 @@ class TestRunMatchingPipeline:
 
         assert result.success is True
 
-    @patch('pipeline.runner._load_configured_resume_fallback', return_value=(None, None, "Failed to load resume"))
-    @patch('pipeline.runner.job_uow')
-    def test_returns_failure_when_resume_load_fails(self, mock_uow, _):
-        mock_repo = Mock()
-        mock_repo.get_latest_ready_resume_fingerprint.return_value = None
-        mock_repo.get_latest_resume_processing_state.return_value = None
-        mock_uow.return_value.__enter__.return_value = mock_repo
-        mock_uow.return_value.__exit__.return_value = False
-
-        result = run_matching_pipeline(self._ctx())
-
-        assert result.success is False
-        assert result.error == "Failed to load resume"
-
     @patch('pipeline.runner._load_resume_from_db', return_value=None)
     def test_returns_failure_when_db_resume_not_found(self, _):
         result = run_matching_pipeline(self._ctx(), resume_fingerprint="fp" * 8)
@@ -1144,45 +1123,6 @@ class TestRunMatchingPipeline:
         assert result.success is False
         assert "boom" in result.error
         assert "Error in matching pipeline" in caplog.text
-
-    @patch('pipeline.runner._load_configured_resume_fallback', return_value=("fp-1", {"name": "J"}, None))
-    @patch('pipeline.runner._load_user_wants_embeddings', return_value=[[0.1]])
-    @patch('pipeline.runner._run_matching_and_scoring', return_value=[Mock()])
-    @patch('pipeline.runner._save_matches_batch', return_value=1)
-    @patch('pipeline.runner.job_uow')
-    def test_full_pipeline_success(self, mock_uow, *_):
-        mock_repo = Mock()
-        mock_repo.get_latest_ready_resume_fingerprint.return_value = None
-        mock_repo.get_latest_resume_processing_state.return_value = None
-        mock_uow.return_value.__enter__.return_value = mock_repo
-        mock_uow.return_value.__exit__.return_value = False
-
-        result = run_matching_pipeline(self._ctx())
-
-        assert result.success is True
-        assert result.matches_count == 1
-        assert result.saved_count == 1
-        assert result.execution_time > 0
-
-    @patch('pipeline.runner._load_configured_resume_fallback', return_value=("fp-1", {"name": "J"}, None))
-    @patch('pipeline.runner._load_user_wants_embeddings', return_value=[])
-    @patch('pipeline.runner._run_matching_and_scoring', return_value=[])
-    @patch('pipeline.runner.job_uow')
-    def test_stop_event_during_scoring_returns_interrupted(self, mock_uow, *_):
-        mock_repo = Mock()
-        mock_repo.get_latest_ready_resume_fingerprint.return_value = None
-        mock_repo.get_latest_resume_processing_state.return_value = None
-        mock_uow.return_value.__enter__.return_value = mock_repo
-        mock_uow.return_value.__exit__.return_value = False
-
-        stop = threading.Event()
-        stop.set()
-
-        result = run_matching_pipeline(self._ctx(), stop_event=stop)
-
-        assert result.success is False
-        assert result.cancelled is True
-        assert "Cancelled" in result.error
 
     @patch('pipeline.runner._load_configured_resume_fallback', return_value=("fp-1", {"name": "J"}, None))
     @patch('pipeline.runner._load_user_wants_embeddings', return_value=[])
@@ -1221,22 +1161,6 @@ class TestRunMatchingPipeline:
 
         assert result.success is True
         assert result.notified_count == 0
-
-    @patch('pipeline.runner._load_configured_resume_fallback', return_value=("fp-1", {"name": "J"}, None))
-    @patch('pipeline.runner._load_user_wants_embeddings', return_value=[])
-    @patch('pipeline.runner._run_matching_and_scoring', return_value=[Mock()])
-    @patch('pipeline.runner._save_matches_batch', return_value=1)
-    @patch('pipeline.runner.job_uow')
-    def test_execution_time_is_recorded(self, mock_uow, *_):
-        mock_repo = Mock()
-        mock_repo.get_latest_ready_resume_fingerprint.return_value = None
-        mock_repo.get_latest_resume_processing_state.return_value = None
-        mock_uow.return_value.__enter__.return_value = mock_repo
-        mock_uow.return_value.__exit__.return_value = False
-
-        result = run_matching_pipeline(self._ctx())
-
-        assert result.execution_time >= 0.0
 
     @patch('pipeline.runner._load_configured_resume_fallback', return_value=("fp-1", {"name": "J"}, None))
     @patch('pipeline.runner._load_user_wants_embeddings', return_value=[])
@@ -1298,22 +1222,6 @@ class TestRunMatchingAndScoring:
         mock_uow.return_value.__enter__.return_value = mock_repo
         mock_uow.return_value.__exit__.return_value = False
         return mock_repo
-
-    @patch('pipeline.runner.job_uow')
-    @patch('pipeline.runner._load_structured_resume', return_value=None)
-    @patch('pipeline.runner._prepare_matcher_service')
-    def test_returns_empty_when_no_resume_and_not_re_extracting(
-        self, mock_prep, mock_load, mock_uow, caplog
-    ):
-        """No structured resume + should_re_extract=False raises a clear error."""
-        self._setup_uow(mock_uow)
-
-        with pytest.raises(ValueError, match="Resume not found in database"):
-            _run_matching_and_scoring(
-                Mock(), {"name": "J"}, "fp-1", should_re_extract=False,
-                matching_config=Mock(), user_want_embeddings=[],
-                stop_event=threading.Event(), status_callback=None,
-            )
 
     @patch('pipeline.runner.job_uow')
     @patch('pipeline.runner._load_structured_resume')

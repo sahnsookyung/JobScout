@@ -9,7 +9,11 @@ from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 from pipeline.runner import MatchingPipelineResult
-from web.backend.services.pipeline_service import PipelineTask, PipelineTaskManager
+from web.backend.services.pipeline_service import (
+    PipelineTask,
+    PipelineTaskManager,
+    get_pipeline_manager,
+)
 
 
 class TestPipelineTaskManager(unittest.TestCase):
@@ -391,6 +395,14 @@ class TestPipelineTaskManager(unittest.TestCase):
 
         self.assertEqual(task.status, "failed")
         self.assertEqual(task.error, "boom")
+
+
+class TestGetPipelineManager(unittest.TestCase):
+    def test_returns_singleton(self):
+        self.assertIs(get_pipeline_manager(), get_pipeline_manager())
+
+    def test_returns_pipeline_task_manager(self):
+        self.assertIsInstance(get_pipeline_manager(), PipelineTaskManager)
 
 
 if __name__ == "__main__":
