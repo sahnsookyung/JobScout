@@ -49,11 +49,22 @@ export const usePipeline = () => {
     });
 
     React.useEffect(() => {
-        if (sseStatus?.status === 'completed' || sseStatus?.status === 'failed') {
+        if (
+            sseStatus?.status === 'completed' ||
+            sseStatus?.status === 'failed' ||
+            sseStatus?.status === 'cancelled'
+        ) {
             queryClient.invalidateQueries({ queryKey: ['matches'] });
             queryClient.invalidateQueries({ queryKey: ['stats'] });
         }
     }, [sseStatus?.status, queryClient]);
+
+    const activeStatuses = new Set([
+        'pending',
+        'running',
+        'cancellation_requested',
+        'persisting',
+    ]);
 
     return {
         activePipeline,
@@ -63,7 +74,7 @@ export const usePipeline = () => {
         isLoading,
         runPipeline: runPipelineMutation.mutate,
         stopPipeline: stopPipelineMutation.mutate,
-        isRunning: sseStatus?.status === 'running' || sseStatus?.status === 'pending',
+        isRunning: sseStatus ? activeStatuses.has(sseStatus.status) : false,
         isStopping: stopPipelineMutation.isPending,
         clearTask: clearTaskMutation.mutate,
         uploadResume: uploadResumeMutation.mutate,

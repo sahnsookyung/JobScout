@@ -19,8 +19,12 @@ export const PipelineRunner: React.FC = () => {
     };
 
     const isRunningStatus = status?.status === 'running' || status?.status === 'pending';
+    const isCancellationRequested = status?.status === 'cancellation_requested';
+    const isPersistingStatus = status?.status === 'persisting';
     const isCompletedStatus = status?.status === 'completed';
     const isFailedStatus = status?.status === 'failed';
+    const isCancelledStatus = status?.status === 'cancelled';
+    const canStop = isRunningStatus;
 
     return (
         <div className="relative bg-gradient-to-br from-slate-50 via-purple-50 to-indigo-50 rounded-3xl overflow-hidden">
@@ -41,13 +45,19 @@ export const PipelineRunner: React.FC = () => {
                         <div>
                             <h3 className="text-2xl font-black text-gray-900">Matching Pipeline</h3>
                             <p className="text-sm font-semibold text-gray-600">
-                                {isRunningStatus ? 'Processing...' : 'Ready to match'}
+                                {isRunningStatus
+                                    ? 'Processing...'
+                                    : isCancellationRequested
+                                        ? 'Stopping safely...'
+                                        : isPersistingStatus
+                                            ? 'Finishing writes...'
+                                            : 'Ready to match'}
                             </p>
                         </div>
                     </div>
 
                     {/* Action Button */}
-                    {isRunningStatus ? (
+                    {canStop ? (
                         <button
                             onClick={() => stopPipeline()}
                             disabled={isStopping}
@@ -62,18 +72,36 @@ export const PipelineRunner: React.FC = () => {
                     ) : (
                         <button
                             onClick={() => runPipeline()}
-                            disabled={isRunning}
-                            className="group relative px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold rounded-2xl shadow-lg hover:shadow-2xl hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden"
+                            disabled={isRunning || isCancellationRequested || isPersistingStatus}
+                            className={`group relative px-6 py-3 text-white font-bold rounded-2xl shadow-lg hover:shadow-2xl hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden ${
+                                isPersistingStatus
+                                    ? 'bg-amber-500 hover:bg-amber-600'
+                                    : isCancellationRequested
+                                        ? 'bg-red-500 hover:bg-red-600'
+                                        : 'bg-gradient-to-r from-purple-600 to-indigo-600'
+                            }`}
                         >
-                            <div className="absolute inset-0 bg-gradient-to-r from-purple-400 to-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                            <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 ${
+                                isPersistingStatus
+                                    ? 'bg-amber-400'
+                                    : isCancellationRequested
+                                        ? 'bg-red-400'
+                                        : 'bg-gradient-to-r from-purple-400 to-indigo-400'
+                            }`} />
                             <div className="relative flex items-center gap-2">
-                                {isRunning ? (
+                                {isRunning || isCancellationRequested || isPersistingStatus ? (
                                     <Loader className="w-5 h-5 animate-spin" />
                                 ) : (
                                     <Play className="w-5 h-5" />
                                 )}
-                                <span>Run Matching</span>
-                                {!isRunning && (
+                                <span>
+                                    {isPersistingStatus
+                                        ? 'Finishing...'
+                                        : isCancellationRequested
+                                            ? 'Stopping...'
+                                            : 'Run Matching'}
+                                </span>
+                                {!isRunning && !isCancellationRequested && !isPersistingStatus && (
                                     <ArrowUpRight className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
                                 )}
                             </div>
@@ -85,14 +113,21 @@ export const PipelineRunner: React.FC = () => {
                 {status && (
                     <div className="bg-white/60 backdrop-blur-sm rounded-2xl p-6 border border-white/50 shadow-lg">
                         {/* Running State */}
-                        {isRunningStatus && (
+                        {(isRunningStatus || isCancellationRequested || isPersistingStatus) && (
                             <div>
                                 <div className="flex items-center justify-between mb-4">
                                     <div className="flex items-center gap-3">
-                                        <div className="p-3 bg-blue-100 rounded-xl">
-                                            <Loader className="w-6 h-6 animate-spin text-blue-600" aria-hidden="true" />
+                                        <div className={`p-3 rounded-xl ${
+                                            isPersistingStatus ? 'bg-amber-100' : isCancellationRequested ? 'bg-orange-100' : 'bg-blue-100'
+                                        }`}>
+                                            <Loader className={`w-6 h-6 animate-spin ${
+                                                isPersistingStatus ? 'text-amber-600' : isCancellationRequested ? 'text-orange-600' : 'text-blue-600'
+                                            }`} aria-hidden="true" />
                                         </div>
-                                        <Badge variant="info" className="font-bold text-sm">
+                                        <Badge
+                                            variant={isRunningStatus ? 'info' : 'warning'}
+                                            className="font-bold text-sm"
+                                        >
                                             {status.status.toUpperCase()}
                                         </Badge>
                                     </div>
@@ -129,15 +164,23 @@ export const PipelineRunner: React.FC = () => {
                                 <div className="space-y-3">
                                     <div className="flex items-center gap-3">
                                         <div className="relative w-2 h-2">
-                                            <div className="absolute inset-0 bg-blue-500 rounded-full animate-ping" />
-                                            <div className="relative bg-blue-600 rounded-full w-2 h-2" />
+                                            <div className={`absolute inset-0 rounded-full animate-ping ${
+                                                isPersistingStatus ? 'bg-amber-500' : isCancellationRequested ? 'bg-orange-500' : 'bg-blue-500'
+                                            }`} />
+                                            <div className={`relative rounded-full w-2 h-2 ${
+                                                isPersistingStatus ? 'bg-amber-600' : isCancellationRequested ? 'bg-orange-600' : 'bg-blue-600'
+                                            }`} />
                                         </div>
                                         <span className="font-bold text-gray-900">
                                             {getStepLabel(status.step)}
                                         </span>
                                     </div>
                                     <p className="text-sm text-gray-600 ml-5">
-                                        This may take a few minutes. Please wait...
+                                        {isCancellationRequested
+                                            ? 'Cancellation was requested. The worker is winding down.'
+                                            : isPersistingStatus
+                                                ? 'The pipeline crossed the save boundary and is finishing writes.'
+                                                : 'This may take a few minutes. Please wait...'}
                                     </p>
 
                                     {/* Progress bar (indeterminate) */}
@@ -150,7 +193,7 @@ export const PipelineRunner: React.FC = () => {
                         )}
 
                         {/* Connection Error State */}
-                        {sseError && !isRunningStatus && !isCompletedStatus && !isFailedStatus && (
+                        {sseError && !isRunningStatus && !isCancellationRequested && !isPersistingStatus && !isCompletedStatus && !isFailedStatus && !isCancelledStatus && (
                             <div className="mb-4 p-4 bg-yellow-50 border-2 border-yellow-200 rounded-xl">
                                 <div className="flex items-center gap-2 text-yellow-800 font-semibold mb-2">
                                     <WifiOff className="w-4 h-4" />
@@ -246,6 +289,42 @@ export const PipelineRunner: React.FC = () => {
                                     <div className="mb-4 p-4 bg-red-50 border-2 border-red-200 rounded-xl">
                                         <div className="text-xs font-bold text-red-600 uppercase tracking-wider mb-2">
                                             Error Details
+                                        </div>
+                                        <div className="text-sm text-gray-700 font-medium">
+                                            {status.error}
+                                        </div>
+                                    </div>
+                                )}
+
+                                <button
+                                    onClick={() => clearTask()}
+                                    className="w-full px-4 py-3 bg-white border-2 border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all"
+                                >
+                                    Clear Status
+                                </button>
+                            </div>
+                        )}
+
+                        {isCancelledStatus && (
+                            <div>
+                                <div className="flex items-center gap-3 mb-4">
+                                    <div className="p-3 bg-slate-100 rounded-xl">
+                                        <XCircle className="w-6 h-6 text-slate-600" aria-hidden="true" />
+                                    </div>
+                                    <div>
+                                        <Badge variant="info" className="font-bold text-sm mb-1">
+                                            CANCELLED
+                                        </Badge>
+                                        <p className="text-sm font-bold text-slate-700">
+                                            Pipeline cancelled
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {status.error && (
+                                    <div className="mb-4 p-4 bg-slate-50 border-2 border-slate-200 rounded-xl">
+                                        <div className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
+                                            Details
                                         </div>
                                         <div className="text-sm text-gray-700 font-medium">
                                             {status.error}

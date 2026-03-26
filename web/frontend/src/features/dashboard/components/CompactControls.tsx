@@ -15,8 +15,6 @@ import { ActionButton } from './ActionButton';
 import { StatusBanner } from './StatusBanner';
 import { DashboardWrapper } from './DashboardWrapper';
 
-const isDev = import.meta.env.DEV;
-
 let xxhPromise: ReturnType<typeof xxhash> | null = null;
 
 async function getXxh() {
@@ -84,33 +82,13 @@ export const CompactControls: React.FC = () => {
             // Compute hash of file bytes
             const hash = await computeFileHash(file);
 
-            // Check if hash already exists in backend
-            const checkResponse = await pipelineApi.checkResumeHash(hash);
-            isDev && console.log('Hash check response:', checkResponse);
-
-            if (checkResponse.data.exists) {
-                isDev && console.log('Hash exists, skipping upload');
-                // Hash exists, skip upload, store in IndexedDB (best effort)
-                try {
-                    await saveResume(file, hash, file.name);
-                } catch (indexedDbError) {
-                    console.warn('Failed to save resume to IndexedDB:', indexedDbError);
-                }
-                setResumeFilename(file.name);
-                toast.success("An identical resume has already been uploaded.");
-                return;
-            }
-
-            // Hash doesn't exist, need to upload
             const uploadResponse = await pipelineApi.uploadResume(file, hash);
 
             // Store in IndexedDB (best effort - don't fail if this fails)
-            let savedLocally = true;
             try {
                 await saveResume(file, hash, file.name);
             } catch (indexedDbError) {
                 console.warn('Failed to save resume to IndexedDB:', indexedDbError);
-                savedLocally = false;
             }
 
             setResumeFilename(file.name);
@@ -129,10 +107,20 @@ export const CompactControls: React.FC = () => {
     const statusData = status;
 
     const hasStatus = statusData !== null && statusData !== undefined;
-    const isRunningStatus = hasStatus && statusData?.status === 'running';
+    const isRunningStatus = hasStatus && ['pending', 'running'].includes(statusData?.status ?? '');
+    const isCancellationRequested = hasStatus && statusData?.status === 'cancellation_requested';
+    const isPersistingStatus = hasStatus && statusData?.status === 'persisting';
+    const canStop = isRunningStatus;
     const isCompletedStatus = hasStatus && statusData?.status === 'completed';
     const isFailedStatus = hasStatus && statusData?.status === 'failed';
-    const showStatusBanner = isRunningStatus || isCompletedStatus || isFailedStatus;
+    const isCancelledStatus = hasStatus && statusData?.status === 'cancelled';
+    const showStatusBanner =
+        isRunningStatus ||
+        isCancellationRequested ||
+        isPersistingStatus ||
+        isCompletedStatus ||
+        isFailedStatus ||
+        isCancelledStatus;
 
     const totalMatches = stats?.total_matches ?? 0;
     const activeMatches = stats?.active_matches ?? 0;
@@ -167,7 +155,9 @@ export const CompactControls: React.FC = () => {
                             filename={resumeFilename}
                         />
                         <ActionButton
-                            isRunningStatus={isRunningStatus}
+                            canStop={canStop}
+                            isCancellationRequested={isCancellationRequested}
+                            isPersistingStatus={isPersistingStatus}
                             isRunning={isRunning}
                             isStopping={isStopping}
                             onRun={handleRunMatching}

@@ -65,11 +65,11 @@ def run_matching_pipeline_endpoint():
     manager = get_pipeline_manager()
     
     try:
-        task_id = manager.create_task()
+        task_id = manager.create_matching_task()
         
         # Check if this is an existing task
         task = manager.get_task(task_id)
-        if task and task.status in ["pending", "running"]:
+        if task and task.status in ["pending", "running", "cancellation_requested", "persisting"]:
             return PipelineTaskResponse(
                 success=True,
                 task_id=task_id,
@@ -153,19 +153,24 @@ def stop_matching_pipeline():
     Stop the currently running pipeline task.
     """
     manager = get_pipeline_manager()
-    task_id = manager.stop_active_task()
+    task = manager.stop_active_task()
     
-    if not task_id:
+    if not task:
         return PipelineTaskResponse(
             success=False,
             task_id="",
             message="No active pipeline to stop."
         )
+
+    if task.status == "persisting":
+        message = "Pipeline is already finishing writes and can no longer be cancelled."
+    else:
+        message = "Pipeline cancellation requested."
     
     return PipelineTaskResponse(
         success=True,
-        task_id=task_id,
-        message="Pipeline cancellation requested."
+        task_id=task.task_id,
+        message=message
     )
 
 
@@ -194,7 +199,7 @@ async def pipeline_events(task_id: str):
                     "status": task.status,
                     "step": task.step,
                 }
-                if task.status in ["completed", "failed"] and task.result:
+                if task.status in ["completed", "failed", "cancelled"] and task.result:
                     initial_data["matches_count"] = task.result.matches_count
                     initial_data["saved_count"] = task.result.saved_count
                     initial_data["notified_count"] = task.result.notified_count
@@ -202,11 +207,11 @@ async def pipeline_events(task_id: str):
                     initial_data["success"] = task.result.success
                     if not task.result.success:
                         initial_data["error"] = task.result.error
-                elif task.status in ["completed", "failed"] and task.error:
+                elif task.status in ["completed", "failed", "cancelled"] and task.error:
                     initial_data["error"] = task.error
                 yield f"data: {json.dumps(initial_data)}\n\n"
             
-            if task and task.status in ["completed", "failed"]:
+            if task and task.status in ["completed", "failed", "cancelled"]:
                 return
             
             while True:
@@ -217,7 +222,7 @@ async def pipeline_events(task_id: str):
                     yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
                     
                 task = manager.get_task(task_id)
-                if task and task.status in ["completed", "failed"]:
+                if task and task.status in ["completed", "failed", "cancelled"]:
                     final_data = {
                         "task_id": task_id,
                         "status": task.status,
@@ -331,9 +336,29 @@ async def upload_resume_endpoint(
     # Use the computed hash (either client matched, or we use computed)
     resume_hash = computed_hash
 
-    # Create a task to track resume processing
+    from database.uow import job_uow
+
+    with job_uow() as repo:
+        if repo.is_resume_ready(resume_hash):
+            return ResumeUploadResponse(
+                success=True,
+                resume_hash=resume_hash,
+                message="Resume already processed and ready for matching.",
+                task_id=None,
+            )
+
+        existing_state = repo.get_resume_processing_state(resume_hash)
+        if existing_state and existing_state.processing_status in {"extracting", "embedding"}:
+            return ResumeUploadResponse(
+                success=True,
+                resume_hash=resume_hash,
+                message=f"Resume is already processing ({existing_state.processing_status}).",
+                task_id=None,
+            )
+        resume_stage = "embedding" if existing_state and existing_state.processing_status == "extracted" else "extracting"
+
     manager = get_pipeline_manager()
-    task_id = manager.create_task()
+    task_id = manager.create_resume_task()
 
     # Process the resume asynchronously with status tracking
     def process_resume_background(file_content: bytes, filename: str, task_id: str) -> None:
@@ -342,12 +367,12 @@ async def upload_resume_endpoint(
         from database.uow import job_uow
         from core.app_context import AppContext
 
-        # Update task status to running
         task = manager.get_task(task_id)
         if not task:
             logger.warning(f"Task {task_id} not found, cannot update status")
         else:
             task.status = "running"
+            task.step = resume_stage
             task.message = "Processing resume..."
             task.phases = {"resume_etl": {"status": "running", "progress": 0}}
 
@@ -359,10 +384,10 @@ async def upload_resume_endpoint(
             full_config = load_config()
             ctx = AppContext.build(full_config)
 
-            # Update progress
             if task:
+                task.step = resume_stage
                 task.phases = {"resume_etl": {"status": "running", "progress": 50}}
-                task.message = "Extracting resume data..."
+                task.message = "Processing resume..."
 
             with job_uow() as repo:
                 ctx.job_etl_service.process_resume(repo, tmp_path)

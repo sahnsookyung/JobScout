@@ -12,9 +12,12 @@ export interface StatusBannerProps {
 }
 
 export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
-    const isRunningStatus = statusData.status === 'running';
+    const isRunningStatus = statusData.status === 'running' || statusData.status === 'pending';
+    const isCancellationRequested = statusData.status === 'cancellation_requested';
+    const isPersistingStatus = statusData.status === 'persisting';
     const isCompletedStatus = statusData.status === 'completed';
     const isFailedStatus = statusData.status === 'failed';
+    const isCancelledStatus = statusData.status === 'cancelled';
 
     const getStepLabel = (step?: string): string => {
         const labels: Record<string, string> = {
@@ -24,6 +27,8 @@ export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
             saving_results: 'Saving Results',
             notifying: 'Notifying',
             initializing: 'Initializing',
+            extracting: 'Extracting Resume',
+            embedding: 'Embedding Resume',
         };
         return step ? labels[step] || 'Processing' : 'Initializing';
     };
@@ -33,14 +38,17 @@ export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
     return (
         <div className="mt-6 bg-white/60 backdrop-blur-sm rounded-2xl p-6 border border-white/50">
             <div className="flex items-start gap-4">
-                <div className={`p-3 rounded-xl ${isRunningStatus ? 'bg-blue-100' : isCompletedStatus ? 'bg-green-100' : 'bg-red-100'}`}>
+                <div className={`p-3 rounded-xl ${isRunningStatus ? 'bg-blue-100' : isCancellationRequested ? 'bg-orange-100' : isPersistingStatus ? 'bg-amber-100' : isCompletedStatus ? 'bg-green-100' : isCancelledStatus ? 'bg-slate-100' : 'bg-red-100'}`}>
                     {isRunningStatus && <Loader className="w-6 h-6 animate-spin text-blue-600" />}
+                    {isCancellationRequested && <Loader className="w-6 h-6 animate-spin text-orange-600" />}
+                    {isPersistingStatus && <Loader className="w-6 h-6 animate-spin text-amber-600" />}
                     {isCompletedStatus && <CheckCircle className="w-6 h-6 text-green-600" />}
+                    {isCancelledStatus && <XCircle className="w-6 h-6 text-slate-600" />}
                     {isFailedStatus && <XCircle className="w-6 h-6 text-red-600" />}
                 </div>
                 <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
-                        <Badge variant={isRunningStatus ? 'info' : isCompletedStatus ? 'success' : 'error'}>
+                        <Badge variant={isRunningStatus ? 'info' : isCancellationRequested || isPersistingStatus ? 'warning' : isCompletedStatus ? 'success' : isCancelledStatus ? 'info' : 'error'}>
                             {statusData.status?.toUpperCase()}
                         </Badge>
                         {isRunningStatus && (
@@ -52,8 +60,12 @@ export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
                                 <span className="text-sm font-bold text-blue-900">{getStepLabel(statusData.step)}</span>
                             </div>
                         )}
+                        {isCancellationRequested && <span className="text-sm font-bold text-orange-900">Stopping as soon as it is safe</span>}
+                        {isPersistingStatus && <span className="text-sm font-bold text-amber-900">Finishing writes</span>}
                     </div>
                     {isRunningStatus && <p className="text-sm text-gray-600 mt-1">Processing your matches...</p>}
+                    {isCancellationRequested && <p className="text-sm text-gray-600 mt-1">Cancellation was requested. The worker is still winding down.</p>}
+                    {isPersistingStatus && <p className="text-sm text-gray-600 mt-1">The pipeline crossed the save boundary and is finishing safely.</p>}
                     {isCompletedStatus && (
                         <div>
                             <p className="font-bold text-gray-900 mb-1">Pipeline completed!</p>
@@ -69,6 +81,14 @@ export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
                             <p className="font-bold text-red-700 mb-2">Pipeline failed</p>
                             {statusData.error && (
                                 <p className="text-sm text-gray-700 bg-red-50 p-3 rounded-lg border border-red-200">{statusData.error}</p>
+                            )}
+                        </div>
+                    )}
+                    {isCancelledStatus && (
+                        <div>
+                            <p className="font-bold text-slate-800 mb-2">Pipeline cancelled</p>
+                            {statusData.error && (
+                                <p className="text-sm text-gray-700 bg-slate-50 p-3 rounded-lg border border-slate-200">{statusData.error}</p>
                             )}
                         </div>
                     )}

@@ -118,7 +118,14 @@ export interface PipelineTaskResponse {
 
 export interface PipelineStatusResponse {
     task_id: string;
-    status: 'pending' | 'running' | 'completed' | 'failed';
+    status:
+        | 'pending'
+        | 'running'
+        | 'cancellation_requested'
+        | 'persisting'
+        | 'completed'
+        | 'failed'
+        | 'cancelled';
     matches_count?: number;
     saved_count?: number;
     notified_count?: number;

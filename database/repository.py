@@ -188,6 +188,37 @@ class JobRepository:
     def get_resume_summary_embedding(self, resume_fingerprint: str) -> Optional[List[float]]:
         return self.resume.get_resume_summary_embedding(resume_fingerprint)
 
+    def get_resume_processing_state(self, resume_fingerprint: str) -> Any:
+        return self.resume.get_resume_processing_state(resume_fingerprint)
+
+    def get_latest_resume_processing_state(self) -> Any:
+        return self.resume.get_latest_resume_processing_state()
+
+    def set_resume_processing_state(
+        self,
+        resume_fingerprint: str,
+        status: str,
+        error: Optional[str] = None,
+        extraction_completed_at: Optional[Any] = None,
+        embedding_completed_at: Optional[Any] = None,
+    ) -> Any:
+        return self.resume.set_resume_processing_state(
+            resume_fingerprint=resume_fingerprint,
+            status=status,
+            error=error,
+            extraction_completed_at=extraction_completed_at,
+            embedding_completed_at=embedding_completed_at,
+        )
+
+    def is_resume_ready(self, resume_fingerprint: str) -> bool:
+        return self.resume.is_resume_ready(resume_fingerprint)
+
+    def get_latest_ready_resume_fingerprint(self) -> Optional[str]:
+        return self.resume.get_latest_ready_resume_fingerprint()
+
+    def resume_needs_embedding(self, resume_fingerprint: str) -> bool:
+        return self.resume.resume_needs_embedding(resume_fingerprint)
+
     def save_structured_resume(
         self,
         resume_fingerprint: str,

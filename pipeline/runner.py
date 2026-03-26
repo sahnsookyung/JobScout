@@ -6,7 +6,6 @@ used by both main.py and the web application.
 
 import os
 import time
-import json
 import logging
 import threading
 from typing import List, Optional, Dict, Any, Callable
@@ -35,24 +34,7 @@ class MatchingPipelineResult:
     notified_count: int
     error: Optional[str] = None
     execution_time: float = 0.0
-
-
-def _load_resume_with_parser(resume_file_path: str) -> Optional[dict]:
-    """Load resume using ResumeParser for multi-format support."""
-    logger.info(f"Loading resume from {resume_file_path}")
-    try:
-        parser = ResumeParser()
-        parsed = parser.parse(resume_file_path)
-        return parsed.data if parsed.data is not None else {"raw_text": parsed.text}
-    except FileNotFoundError:
-        logger.error(f"Resume file not found: {resume_file_path}")
-        return None
-    except ValueError as e:
-        logger.error(f"Failed to parse resume: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Unexpected error loading resume: {e}")
-        return None
+    cancelled: bool = False
 
 
 def load_user_wants_data(wants_file_path: str) -> List[str]:
@@ -68,6 +50,70 @@ def load_user_wants_data(wants_file_path: str) -> List[str]:
     except Exception as e:
         logger.error(f"Error reading user wants file: {e}")
         return []
+
+
+def _get_configured_resume_file(ctx: AppContext) -> Optional[str]:
+    """Resolve the configured resume file path, if one exists."""
+    etl_config = getattr(ctx.config, "etl", None)
+    resume_file = None
+    if etl_config and getattr(etl_config, "resume", None):
+        resume_file = etl_config.resume.resume_file
+    elif etl_config and getattr(etl_config, "resume_file", None):
+        resume_file = etl_config.resume_file
+
+    if not resume_file:
+        return None
+    if not os.path.isabs(resume_file):
+        return os.path.join(os.getcwd(), resume_file)
+    return resume_file
+
+
+def _load_configured_resume_fallback(
+    ctx: AppContext,
+) -> tuple[Optional[str], Optional[Dict[str, Any]], Optional[str]]:
+    """Run resume ETL from the configured file when no ready DB resume exists."""
+    resume_file = _get_configured_resume_file(ctx)
+    if not resume_file:
+        return None, None, None
+    if not os.path.exists(resume_file):
+        return None, None, f"Resume file not found: {resume_file}"
+
+    etl_config = getattr(ctx.config, "etl", None)
+    force_re_extraction = bool(
+        etl_config
+        and getattr(etl_config, "resume", None)
+        and getattr(etl_config.resume, "force_re_extraction", False)
+    )
+
+    with job_uow() as repo:
+        _, resume_fingerprint, _ = ctx.job_etl_service.process_resume(
+            repo,
+            resume_file,
+            force_re_extraction=force_re_extraction,
+        )
+        if not resume_fingerprint:
+            return None, None, "Failed to load resume data"
+
+        structured_resume = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
+        if not structured_resume or not structured_resume.extracted_data:
+            return (
+                None,
+                None,
+                f"Configured resume {resume_fingerprint[:16]}... is missing structured data",
+            )
+
+        if not repo.is_resume_ready(resume_fingerprint):
+            state = repo.get_resume_processing_state(resume_fingerprint)
+            if state and state.processing_status in {"extracting", "extracted", "embedding"}:
+                return (
+                    None,
+                    None,
+                    "Configured resume is still processing "
+                    f"({state.processing_status}).",
+                )
+            return None, None, "Configured resume is not ready for matching."
+
+        return resume_fingerprint, structured_resume.extracted_data, None
 
 
 def run_matching_pipeline(
@@ -114,142 +160,69 @@ def run_matching_pipeline(
             status_callback("loading_resume")
         
         step_start = time.time()
-        logger.info("=== RESUME ETL STEP 2: Prepare Resume & Compare Fingerprint ===")
+        logger.info("=== RESUME STEP: Select Latest Ready Resume ===")
 
-        # Step 1: Verify resume file exists
-        # Support both old path (etl.resume_file) and new path (etl.resume.resume_file)
-        etl_config = ctx.config.etl
-        if etl_config and etl_config.resume:
-            resume_file = etl_config.resume.resume_file
-        elif etl_config and etl_config.resume_file:
-            resume_file = etl_config.resume_file  # Backward compatibility
-        else:
-            resume_file = None
-        if not resume_file:
-            error_msg = "No resume file configured in ETL config"
-            logger.error(error_msg)
-            return MatchingPipelineResult(
-                success=False,
-                matches_count=0,
-                saved_count=0,
-                notified_count=0,
-                error=error_msg
-            )
-        
-        if not os.path.isabs(resume_file):
-            resume_file = os.path.join(os.getcwd(), resume_file)
-        
-        if not os.path.exists(resume_file):
-            error_msg = f"Resume file not found: {resume_file}"
-            logger.error(error_msg)
-            return MatchingPipelineResult(
-                success=False,
-                matches_count=0,
-                saved_count=0,
-                notified_count=0,
-                error=error_msg
-            )
-
-        # Step 2: Load raw resume data
-        resume_data = _load_resume_with_parser(resume_file)
-        if not resume_data:
-            error_msg = "Failed to load resume data"
-            logger.error(error_msg)
-            return MatchingPipelineResult(
-                success=False,
-                matches_count=0,
-                saved_count=0,
-                notified_count=0,
-                error=error_msg
-            )
-
-        # Step 3: Load current resume file and calculate its fingerprint
-        # This is needed to compare with stored fingerprint
-        
-        # Support both old path (etl.resume.resume_file) and new path (etl.resume.resume_file)
-        if etl_config and etl_config.resume:
-            resume_file = etl_config.resume.resume_file
-        elif etl_config and etl_config.resume_file:
-            resume_file = etl_config.resume_file  # Backward compatibility
-        else:
-            resume_file = None
-            
-        if not resume_file:
-            error_msg = "No resume file configured in ETL config"
-            logger.error(error_msg)
-            return MatchingPipelineResult(
-                success=False,
-                matches_count=0,
-                saved_count=0,
-                notified_count=0,
-                error=error_msg
-            )
-        
-        if not os.path.isabs(resume_file):
-            resume_file = os.path.join(os.getcwd(), resume_file)
-        
-        if not os.path.exists(resume_file):
-            error_msg = f"Resume file not found: {resume_file}"
-            logger.error(error_msg)
-            return MatchingPipelineResult(
-                success=False,
-                matches_count=0,
-                saved_count=0,
-                notified_count=0,
-                error=error_msg
-            )
-
-        # Load resume data and calculate current fingerprint
-        resume_data = _load_resume_with_parser(resume_file)
-        if not resume_data:
-            error_msg = "Failed to load resume data"
-            logger.error(error_msg)
-            return MatchingPipelineResult(
-                success=False,
-                matches_count=0,
-                saved_count=0,
-                notified_count=0,
-                error=error_msg
-            )
-
-        from database.models import generate_file_fingerprint
-        with open(resume_file, 'rb') as f:
-            current_fingerprint = generate_file_fingerprint(f.read())
-        logger.info(f"Current resume fingerprint: {current_fingerprint[:16]}...")
-
-        # Get stored fingerprint from DB
+        resume_data = None
+        resume_fingerprint = None
+        latest_processing_state = None
         with job_uow() as repo:
-            stored_fingerprint = repo.resume.get_latest_stored_resume_fingerprint()
-        
-        # Determine if we should re-extract:
-        # - Force re-extraction is enabled in config
-        # - OR current fingerprint differs from stored fingerprint (resume file changed)
-        force_re_extraction = (
-            etl_config.resume.force_re_extraction 
-            if etl_config and etl_config.resume and etl_config.resume.force_re_extraction 
-            else False
-        )
-        
-        # Use current fingerprint if:
-        # - Force re-extraction is enabled, OR
-        # - No stored fingerprint exists, OR  
-        # - Current fingerprint differs from stored
-        if force_re_extraction or not stored_fingerprint or current_fingerprint != stored_fingerprint:
-            should_re_extract = True
-            # Use current fingerprint for matching (will be re-extracted)
-            resume_fingerprint = current_fingerprint
-            
-            if not stored_fingerprint:
-                logger.info("No stored resume found - will extract")
-            elif current_fingerprint != stored_fingerprint:
-                logger.info(f"Resume file changed (stored: {stored_fingerprint[:16]}..., current: {current_fingerprint[:16]}...) - will re-extract")
+            resume_fingerprint = repo.get_latest_ready_resume_fingerprint()
+            latest_processing_state = repo.get_latest_resume_processing_state()
+
+            if not resume_fingerprint:
+                if latest_processing_state and latest_processing_state.processing_status in {
+                    "extracting",
+                    "extracted",
+                    "embedding",
+                }:
+                    error_msg = (
+                        "Latest resume upload is still processing "
+                        f"({latest_processing_state.processing_status})."
+                    )
+                    logger.error(error_msg)
+                    return MatchingPipelineResult(
+                        success=False,
+                        matches_count=0,
+                        saved_count=0,
+                        notified_count=0,
+                        error=error_msg,
+                    )
+            if resume_fingerprint:
+                structured_resume = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
+                if not structured_resume or not structured_resume.extracted_data:
+                    error_msg = (
+                        f"Ready resume {resume_fingerprint[:16]}... is missing structured data"
+                    )
+                    logger.error(error_msg)
+                    return MatchingPipelineResult(
+                        success=False,
+                        matches_count=0,
+                        saved_count=0,
+                        notified_count=0,
+                        error=error_msg,
+                    )
+                resume_data = structured_resume.extracted_data
+
+        if not resume_fingerprint:
+            resume_fingerprint, resume_data, fallback_error = _load_configured_resume_fallback(ctx)
+            if resume_fingerprint:
+                logger.info(
+                    "No ready resume found in storage; using configured resume fallback "
+                    "(fingerprint: %s...)",
+                    resume_fingerprint[:16],
+                )
             else:
-                logger.info("Force re-extraction enabled in config - will re-extract")
-        else:
-            should_re_extract = False
-            # Use stored fingerprint for matching (resume unchanged)
-            resume_fingerprint = stored_fingerprint
-            logger.info(f"Resume unchanged (fingerprint: {current_fingerprint[:16]}...) - using stored data")
+                error_msg = fallback_error or "No ready resume found. Upload and process a resume first."
+                logger.error(error_msg)
+                return MatchingPipelineResult(
+                    success=False,
+                    matches_count=0,
+                    saved_count=0,
+                    notified_count=0,
+                    error=error_msg,
+                )
+
+        logger.info(f"Selected latest ready resume fingerprint: {resume_fingerprint[:16]}...")
 
         # Load user wants BEFORE entering UOW (AI service calls are slow, don't hold DB transaction)
         user_wants = []
@@ -273,29 +246,20 @@ def run_matching_pipeline(
         match_dtos = []
         
         with job_uow() as repo:
-            # Only load structured resume from DB if NOT re-extracting
-            structured_resume = None
-            if not should_re_extract:
-                structured_resume = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
-
+            structured_resume = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
             if not structured_resume:
-                if should_re_extract:
-                    logger.info(f"Will re-extract resume (fingerprint: {resume_fingerprint[:16]}...)")
-                else:
-                    error_msg = f"Resume not found in database for fingerprint: {resume_fingerprint[:16]}..."
-                    logger.error(error_msg)
-                    logger.error("Make sure Resume ETL has been run")
-                    return MatchingPipelineResult(
-                        success=False,
-                        matches_count=0,
-                        saved_count=0,
-                        notified_count=0,
-                        error=error_msg
-                    )
+                error_msg = f"Resume not found in database for fingerprint: {resume_fingerprint[:16]}..."
+                logger.error(error_msg)
+                return MatchingPipelineResult(
+                    success=False,
+                    matches_count=0,
+                    saved_count=0,
+                    notified_count=0,
+                    error=error_msg
+                )
 
-            if structured_resume:
-                logger.info(f"Loaded resume from database (fingerprint: {resume_fingerprint[:16]}...)")
-                logger.info(f"Resume experience: {structured_resume.total_experience_years} years")
+            logger.info(f"Loaded resume from database (fingerprint: {resume_fingerprint[:16]}...)")
+            logger.info(f"Resume experience: {structured_resume.total_experience_years} years")
 
             # Create matcher with store to persist resume embeddings
             matcher = MatcherService(
@@ -315,7 +279,8 @@ def run_matching_pipeline(
                     matches_count=0,
                     saved_count=0,
                     notified_count=0,
-                    error="Interrupted by system"
+                    error="Cancelled by user",
+                    cancelled=True,
                 )
 
             if status_callback:
@@ -324,18 +289,19 @@ def run_matching_pipeline(
             step_start = time.time()
             logger.info("=== MATCHING STEP 1: Running MatcherService (Vector Retrieval) ===")
 
-            # Check if we have a stored structured resume to use (avoid re-extraction)
-            # Skip if should_re_extract is True
-            pre_extracted_resume = None
-            if not should_re_extract:
-                if structured_resume and structured_resume.extracted_data:
-                    try:
-                        pre_extracted_resume = ResumeSchema.model_validate(structured_resume.extracted_data)
-                        logger.info(f"Using stored structured resume (fingerprint: {resume_fingerprint[:16]}...)")
-                    except Exception as e:
-                        logger.warning(f"Failed to parse stored resume: {e}. Will re-extract.")
-            else:
-                logger.info("Resume re-extraction needed - will extract fresh")
+            try:
+                pre_extracted_resume = ResumeSchema.model_validate(structured_resume.extracted_data)
+                logger.info(f"Using stored structured resume (fingerprint: {resume_fingerprint[:16]}...)")
+            except Exception as e:
+                error_msg = f"Failed to parse stored ready resume: {e}"
+                logger.error(error_msg)
+                return MatchingPipelineResult(
+                    success=False,
+                    matches_count=0,
+                    saved_count=0,
+                    notified_count=0,
+                    error=error_msg,
+                )
 
             # Retrieve top jobs based on cosine distance with resume summary embedding
             preliminary_matches = matcher.match_resume_two_stage(
@@ -355,7 +321,8 @@ def run_matching_pipeline(
                     matches_count=0,
                     saved_count=0,
                     notified_count=0,
-                    error="Interrupted by system"
+                    error="Cancelled by user",
+                    cancelled=True,
                 )
 
             if status_callback:
@@ -470,7 +437,8 @@ def run_matching_pipeline(
                 matches_count=len(match_dtos),
                 saved_count=0,
                 notified_count=0,
-                error="Interrupted by system"
+                error="Cancelled by user",
+                cancelled=True,
             )
 
         # Step 9: Save matches with per-match transactions
@@ -482,15 +450,6 @@ def run_matching_pipeline(
         saved_count = _save_matches_batch(match_dtos, resume_fingerprint, matching_config)
         step_elapsed = time.time() - step_start
         logger.info(f"MATCHING Step 3 completed: Saved {saved_count} matches in {step_elapsed:.2f}s")
-
-        if stop_event.is_set():
-            return MatchingPipelineResult(
-                success=True,
-                matches_count=len(match_dtos),
-                saved_count=saved_count,
-                notified_count=0,
-                error="Interrupted by system before notifications"
-            )
 
         # Step 10: Send notifications (optional, only if notification service exists)
         notified_count = 0

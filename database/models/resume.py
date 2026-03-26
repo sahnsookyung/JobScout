@@ -1,6 +1,5 @@
 import uuid
 import xxhash
-import json
 from typing import Dict, Any
 
 from sqlalchemy import Column, Text, TIMESTAMP, Integer, Boolean, Numeric, Float, Index
@@ -9,6 +8,21 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from pgvector.sqlalchemy import Vector
 
 from .base import Base
+
+
+RESUME_PROCESSING_EXTRACTING = "extracting"
+RESUME_PROCESSING_EXTRACTED = "extracted"
+RESUME_PROCESSING_EMBEDDING = "embedding"
+RESUME_PROCESSING_READY = "ready"
+RESUME_PROCESSING_FAILED = "failed"
+
+RESUME_PROCESSING_STATUSES = {
+    RESUME_PROCESSING_EXTRACTING,
+    RESUME_PROCESSING_EXTRACTED,
+    RESUME_PROCESSING_EMBEDDING,
+    RESUME_PROCESSING_READY,
+    RESUME_PROCESSING_FAILED,
+}
 
 
 class ResumeSectionEmbedding(Base):
@@ -107,6 +121,33 @@ class StructuredResume(Base):
         Index('idx_structured_resume_fingerprint', 'resume_fingerprint'),
         # Index for experience queries
         Index('idx_structured_resume_years', 'total_experience_years'),
+    )
+
+
+class ResumeProcessingState(Base):
+    """Durable fingerprint-scoped processing state for resume ETL readiness."""
+    __tablename__ = 'resume_processing_state'
+
+    resume_fingerprint = Column(Text, primary_key=True)
+    processing_status = Column(Text, nullable=False)
+    last_error = Column(Text, nullable=True)
+    extraction_completed_at = Column(TIMESTAMP(timezone=True))
+    embedding_completed_at = Column(TIMESTAMP(timezone=True))
+    created_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=sql_text("timezone('UTC', now())"),
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=sql_text("timezone('UTC', now())"),
+        onupdate=sql_text("timezone('UTC', now())"),
+    )
+
+    __table_args__ = (
+        Index('idx_resume_processing_state_status', 'processing_status'),
+        Index('idx_resume_processing_state_updated_at', 'updated_at'),
     )
 
 

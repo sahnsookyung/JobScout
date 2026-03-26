@@ -281,7 +281,14 @@ def _run_resume_etl(ctx: AppContext, stop_event: threading.Event) -> None:
 
     try:
         with job_uow() as repo:
-            ctx.job_etl_service.process_resume(repo, resume_file)
+            force_re_extraction = bool(
+                etl_config.resume and etl_config.resume.force_re_extraction
+            )
+            ctx.job_etl_service.process_resume(
+                repo,
+                resume_file,
+                force_re_extraction=force_re_extraction,
+            )
     except Exception as e:
         logger.error(f"Failed to process resume: {e}")
 

@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 class PipelineTask:
     """Represents a pipeline execution task."""
     task_id: str
+    task_type: str
     status: str  # "pending", "running", "completed", "failed"
     step: Optional[str] = None
     result: Optional[MatchingPipelineResult] = None
@@ -39,10 +40,15 @@ class PipelineTask:
     stop_event: Event = field(default_factory=Event)
     message: Optional[str] = None
     phases: Optional[Dict[str, Any]] = None
+    cancellation_requested: bool = False
+    persistence_started: bool = False
 
 
 class PipelineTaskManager:
     """Manages pipeline task execution and state."""
+
+    ACTIVE_STATUSES = {"pending", "running", "cancellation_requested", "persisting"}
+    TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
     
     def __init__(self):
         self._tasks: Dict[str, PipelineTask] = {}
@@ -98,32 +104,22 @@ class PipelineTaskManager:
                 except asyncio.QueueFull:
                     pass
     
-    def create_task(self) -> str:
-        """
-        Create a new pipeline task.
-        
-        Returns:
-            Task ID.
-        """
-        # Check for existing running tasks
+    def create_matching_task(self) -> str:
+        """Create or reuse the active matching task and start the worker."""
         with self._lock:
             for tid, task in self._tasks.items():
-                if task.status in ["pending", "running"]:
-                    return tid  # Return existing task ID
-        
-        # Create new task (no lock needed - DB handles concurrency)
+                if task.task_type == "matching" and task.status in self.ACTIVE_STATUSES:
+                    return tid
+
         task_id = str(uuid.uuid4())
-        
         with self._lock:
             self._tasks[task_id] = PipelineTask(
                 task_id=task_id,
+                task_type="matching",
                 status="pending",
                 step="initializing"
             )
-        
-        # Run in a thread to not block the event loop
-        import asyncio
-        
+
         def run_in_thread():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -134,7 +130,19 @@ class PipelineTaskManager:
         
         thread = threading.Thread(target=run_in_thread, daemon=True)
         thread.start()
-        
+
+        return task_id
+
+    def create_resume_task(self) -> str:
+        """Create a standalone resume ETL task without starting matching work."""
+        task_id = str(uuid.uuid4())
+        with self._lock:
+            self._tasks[task_id] = PipelineTask(
+                task_id=task_id,
+                task_type="resume_etl",
+                status="pending",
+                step="initializing",
+            )
         return task_id
     
     def get_task(self, task_id: str) -> Optional[PipelineTask]:
@@ -159,11 +167,11 @@ class PipelineTaskManager:
         """
         with self._lock:
             for task in self._tasks.values():
-                if task.status in ["pending", "running"]:
+                if task.task_type == "matching" and task.status in self.ACTIVE_STATUSES:
                     return task
         return None
     
-    def request_stop(self, task_id: str) -> bool:
+    def request_stop(self, task_id: str) -> Optional[str]:
         """
         Request task cancellation.
         
@@ -171,27 +179,58 @@ class PipelineTaskManager:
             task_id: The task ID to stop.
         
         Returns:
-            True if stop was requested, False if task not found.
+            Resulting task status after the request, or None if task not found.
         """
+        next_status = None
+        step = None
         with self._lock:
-            if task_id in self._tasks:
-                self._tasks[task_id].stop_event.set()
-                return True
-        return False
-    
-    def stop_active_task(self) -> Optional[str]:
+            task = self._tasks.get(task_id)
+            if task is None:
+                return None
+            if task.status in self.TERMINAL_STATUSES:
+                return task.status
+            if task.persistence_started or task.status == "persisting":
+                task.status = "persisting"
+                next_status = "persisting"
+                step = task.step
+            else:
+                task.cancellation_requested = True
+                task.stop_event.set()
+                task.status = "cancellation_requested"
+                next_status = "cancellation_requested"
+                step = task.step
+
+        if next_status:
+            self.update_task_status(task_id, next_status, step=step)
+            return next_status
+        return None
+
+    def stop_active_task(self) -> Optional[PipelineTask]:
         """
         Stop the currently running task.
         
         Returns:
-            Task ID if stopped, None if no active task.
+            Task if found, None if no active task.
         """
+        next_status = None
+        selected_task = None
         with self._lock:
-            for tid, task in self._tasks.items():
-                if task.status in ["pending", "running"]:
-                    task.stop_event.set()
-                    return tid
-        return None
+            for task in self._tasks.values():
+                if task.task_type == "matching" and task.status in self.ACTIVE_STATUSES:
+                    if task.persistence_started or task.status == "persisting":
+                        task.status = "persisting"
+                        next_status = "persisting"
+                    else:
+                        task.cancellation_requested = True
+                        task.stop_event.set()
+                        task.status = "cancellation_requested"
+                        next_status = "cancellation_requested"
+                    selected_task = task
+                    break
+
+        if selected_task and next_status:
+            self.update_task_status(selected_task.task_id, next_status, step=selected_task.step)
+        return selected_task
     
     def update_task_status(
         self,
@@ -206,7 +245,11 @@ class PipelineTaskManager:
         if task_id in self._tasks:
             task = self._tasks[task_id]
             task.status = status
-            if step:
+            if status == "persisting":
+                task.persistence_started = True
+            if status == "cancellation_requested":
+                task.cancellation_requested = True
+            if step is not None:
                 task.step = step
             if result:
                 task.result = result
@@ -215,7 +258,7 @@ class PipelineTaskManager:
         
         # Build update data
         update_data = {"task_id": task_id, "status": status}
-        if step:
+        if step is not None:
             update_data["step"] = step
         if result:
             update_data["matches_count"] = result.matches_count
@@ -244,7 +287,7 @@ class PipelineTaskManager:
         with self._lock:
             completed_tasks = [
                 (tid, t) for tid, t in self._tasks.items()
-                if t.status in ["completed", "failed"]
+                if t.status in self.TERMINAL_STATUSES
             ]
             
             if len(completed_tasks) <= keep_count:
@@ -272,7 +315,14 @@ class PipelineTaskManager:
             
             # Define status callback
             def status_callback(step_name: str):
-                self.update_task_status(task_id, "running", step=step_name)
+                task = self.get_task(task_id)
+                if task and step_name == "saving_results":
+                    task.persistence_started = True
+                    self.update_task_status(task_id, "persisting", step=step_name)
+                elif task and task.cancellation_requested:
+                    self.update_task_status(task_id, "cancellation_requested", step=step_name)
+                else:
+                    self.update_task_status(task_id, "running", step=step_name)
             
             # Get stop event
             task = self.get_task(task_id)
@@ -292,7 +342,7 @@ class PipelineTaskManager:
             
             # Check if interrupted
             if task.stop_event.is_set():
-                self.update_task_status(task_id, "cancelled")
+                self.update_task_status(task_id, "cancelled", step=task.step)
                 return
             
             # Step 2: Run the matching pipeline
@@ -304,7 +354,12 @@ class PipelineTaskManager:
             )
             
             # Update task with result
-            final_status = "completed" if result.success else "failed"
+            if result.cancelled:
+                final_status = "cancelled"
+            elif result.success:
+                final_status = "completed"
+            else:
+                final_status = "failed"
             self.update_task_status(
                 task_id,
                 final_status,

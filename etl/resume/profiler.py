@@ -155,8 +155,27 @@ class ResumeProfiler:
         if text := profile.skills.to_embedding_text():
             sections.append({'section_type': 'skills', 'section_index': 0, 'source_text': text, 'source_data': profile.skills.model_dump()})
 
-        if profile.summary and profile.summary.text:
-            sections.append({'section_type': 'summary', 'section_index': 0, 'source_text': profile.summary.text, 'source_data': profile.summary.model_dump()})
+        summary_text = profile.summary.text if profile.summary and profile.summary.text else None
+        if not summary_text:
+            summary_parts = []
+            if profile.experience[:2]:
+                summary_parts.extend(
+                    exp.to_embedding_text()
+                    for exp in profile.experience[:2]
+                    if exp.to_embedding_text()
+                )
+            skills_text = profile.skills.to_embedding_text()
+            if skills_text:
+                summary_parts.append(skills_text)
+            summary_text = " | ".join(summary_parts)
+
+        if summary_text:
+            sections.append({
+                'section_type': 'summary',
+                'section_index': 0,
+                'source_text': summary_text,
+                'source_data': profile.summary.model_dump() if profile.summary else {},
+            })
 
         payload = [{**sec, 'embedding': self.ai.generate_embedding(sec['source_text'])} for sec in sections]
 

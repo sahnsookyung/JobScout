@@ -49,6 +49,8 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         ctx = MagicMock()
         ctx.job_etl_service = MagicMock()
         repo = MagicMock()
+        repo.is_resume_ready.return_value = False
+        repo.get_resume_processing_state.return_value = None
         repo.resume.resume_hash_exists.return_value = resume_exists
         
         if process_result:
@@ -165,6 +167,8 @@ class TestResumeUploadEndpoint(unittest.TestCase):
 
                 with patch('database.uow.job_uow') as mock_uow:
                     mock_repo = MagicMock()
+                    mock_repo.is_resume_ready.return_value = False
+                    mock_repo.get_resume_processing_state.return_value = None
                     mock_repo.resume.resume_hash_exists.return_value = False
                     mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                     mock_uow.return_value.__exit__ = MagicMock(return_value=False)
@@ -220,6 +224,8 @@ class TestResumeUploadEndpoint(unittest.TestCase):
                         mock_etl_service = MagicMock()
                         mock_ctx.job_etl_service = mock_etl_service
                         mock_repo = MagicMock()
+                        mock_repo.is_resume_ready.return_value = False
+                        mock_repo.get_resume_processing_state.return_value = None
                         mock_repo.resume.resume_hash_exists.return_value = False
                         mock_etl_service.process_resume.return_value = (True, test_fingerprint, sample_resume)
                         mock_context.build.return_value = mock_ctx
@@ -347,6 +353,8 @@ class TestResumeUploadSecurity(unittest.TestCase):
                 # Mock the database to avoid connection errors
                 with patch('database.uow.job_uow') as mock_uow:
                     mock_repo = MagicMock()
+                    mock_repo.is_resume_ready.return_value = False
+                    mock_repo.get_resume_processing_state.return_value = None
                     mock_repo.resume.resume_hash_exists.return_value = False
                     mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                     mock_uow.return_value.__exit__ = MagicMock(return_value=False)
@@ -384,6 +392,8 @@ class TestResumeUploadSecurity(unittest.TestCase):
 
                     with patch('database.uow.job_uow') as mock_uow:
                         mock_repo = MagicMock()
+                        mock_repo.is_resume_ready.return_value = False
+                        mock_repo.get_resume_processing_state.return_value = None
                         mock_repo.resume.resume_hash_exists.return_value = False
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
@@ -444,6 +454,8 @@ class TestResumeUploadDeduplication(unittest.TestCase):
 
                     with patch('database.uow.job_uow') as mock_uow:
                         mock_repo = MagicMock()
+                        mock_repo.is_resume_ready.return_value = True
+                        mock_repo.get_resume_processing_state.return_value = None
                         mock_repo.resume.resume_hash_exists.return_value = True
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
@@ -462,11 +474,12 @@ class TestResumeUploadDeduplication(unittest.TestCase):
                                 data={'resume_hash': file_hash}
                             )
 
-        # Should succeed and indicate upload started (processing happens in background)
+        # Ready fingerprints should short-circuit without reprocessing.
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertTrue(data['success'])
-        self.assertIn('background', data['message'].lower())
+        self.assertIn('ready', data['message'].lower())
+        self.assertIsNone(data['task_id'])
 
     def test_upload_returns_hash_for_indexeddb(self):
         """Test that response includes resume_hash for frontend IndexedDB storage."""
@@ -490,6 +503,8 @@ class TestResumeUploadDeduplication(unittest.TestCase):
 
                     with patch('database.uow.job_uow') as mock_uow:
                         mock_repo = MagicMock()
+                        mock_repo.is_resume_ready.return_value = False
+                        mock_repo.get_resume_processing_state.return_value = None
                         mock_repo.resume.resume_hash_exists.return_value = False
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
@@ -534,6 +549,8 @@ class TestResumeUploadDeduplication(unittest.TestCase):
 
                     with patch('database.uow.job_uow') as mock_uow:
                         mock_repo = MagicMock()
+                        mock_repo.is_resume_ready.return_value = False
+                        mock_repo.get_resume_processing_state.return_value = None
                         mock_repo.resume.resume_hash_exists.return_value = False
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)

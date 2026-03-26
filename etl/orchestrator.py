@@ -3,14 +3,24 @@ import time
 import logging
 import json
 import os
+from datetime import datetime, timezone
 from database.repository import JobRepository
 from core.llm.interfaces import LLMProvider
 from core.utils import JobFingerprinter
 from pydantic import ValidationError
 from core.llm.schema_models import JobExtraction
+from core.llm.schema_models import ResumeSchema
 from core.scorer.want_score import FACET_KEYS
-from database.models import generate_file_fingerprint
+from database.models import (
+    generate_file_fingerprint,
+    RESUME_PROCESSING_EXTRACTING,
+    RESUME_PROCESSING_EXTRACTED,
+    RESUME_PROCESSING_EMBEDDING,
+    RESUME_PROCESSING_READY,
+    RESUME_PROCESSING_FAILED,
+)
 from etl.resume import ResumeProfiler, ResumeParser
+from etl.resume.embedding_store import JobRepositoryAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +213,8 @@ class JobETLService:
     def process_resume(
         self,
         repo: JobRepository,
-        resume_file: str
+        resume_file: str,
+        force_re_extraction: bool = False,
     ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
         """Process resume ETL with fingerprint-based change detection.
 
@@ -237,10 +248,20 @@ class JobETLService:
 
         logger.info(f"Resume fingerprint: {fingerprint[:16]}...")
 
-        # Check if resume already exists (unchanged)
-        existing = repo.resume.get_structured_resume_by_fingerprint(fingerprint)
-        if existing:
-            logger.info(f"Resume unchanged (fingerprint: {fingerprint[:16]}...), skipping ETL")
+        if repo.is_resume_ready(fingerprint) and not force_re_extraction:
+            logger.info(f"Resume ready (fingerprint: {fingerprint[:16]}...), skipping ETL")
+            return False, fingerprint, None
+
+        state = repo.get_resume_processing_state(fingerprint)
+        if state and state.processing_status in {
+            RESUME_PROCESSING_EXTRACTING,
+            RESUME_PROCESSING_EMBEDDING,
+        }:
+            logger.info(
+                "Resume already processing (fingerprint: %s..., status=%s)",
+                fingerprint[:16],
+                state.processing_status,
+            )
             return False, fingerprint, None
 
         # Parse for processing
@@ -249,17 +270,56 @@ class JobETLService:
             parsed = parser.parse(resume_file)
             resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
         except (ValueError, IOError) as e:
+            repo.set_resume_processing_state(
+                fingerprint,
+                RESUME_PROCESSING_FAILED,
+                error=str(e),
+            )
             logger.error(f"Failed to parse resume file: {e}")
             return False, "", None
 
-        logger.info(f"Resume changed (fingerprint: {fingerprint[:16]}...), processing...")
+        if state and state.processing_status == RESUME_PROCESSING_EXTRACTED:
+            logger.info(
+                "Resume extracted but not ready (fingerprint: %s...), resuming embedding",
+                fingerprint[:16],
+            )
+            try:
+                self.embed_resume_one(repo, fingerprint)
+                logger.info(f"Resume embedding completed for fingerprint: {fingerprint[:16]}...")
+                return True, fingerprint, resume_data
+            except Exception as e:
+                repo.set_resume_processing_state(
+                    fingerprint,
+                    RESUME_PROCESSING_FAILED,
+                    error=str(e),
+                )
+                logger.error(f"Failed to resume embedding for resume: {e}")
+                raise
+
+        if force_re_extraction:
+            logger.info(
+                "Force re-extraction enabled for fingerprint: %s...",
+                fingerprint[:16],
+            )
+        else:
+            logger.info(f"Resume changed (fingerprint: {fingerprint[:16]}...), processing...")
 
         # Process the resume
         try:
+            repo.set_resume_processing_state(
+                fingerprint,
+                RESUME_PROCESSING_EXTRACTING,
+                error=None,
+            )
             self.extract_resume_one(repo, resume_data, fingerprint)
             logger.info(f"Resume ETL completed for fingerprint: {fingerprint[:16]}...")
             return True, fingerprint, resume_data
         except Exception as e:
+            repo.set_resume_processing_state(
+                fingerprint,
+                RESUME_PROCESSING_FAILED,
+                error=str(e),
+            )
             logger.error(f"Failed to process resume: {e}")
             raise
 
@@ -278,50 +338,78 @@ class JobETLService:
         """
         logger.info(f"Extracting structured resume data...")
 
-        # Create profiler (no store - we handle persistence manually)
         profiler = ResumeProfiler(ai_service=self.ai)
 
-        # Run complete profiling pipeline
-        resume, evidence_units, _ = profiler.profile_resume(resume_data, resume_fingerprint=fingerprint)
+        resume = profiler.extract_structured_resume(resume_data)
 
-        if resume:
-            years_msg = f"Total experience: {resume.claimed_total_years or 'unknown'} years"
-            logger.info(years_msg)
+        if not resume:
+            raise ValueError("Structured resume extraction failed")
 
-            # Save structured resume to database
-            repo.save_structured_resume(
-                resume_fingerprint=fingerprint,
-                extracted_data=resume.model_dump(),
-                total_experience_years=resume.claimed_total_years,
-                extraction_confidence=resume.extraction.confidence if resume.extraction else None,
-                extraction_warnings=resume.extraction.warnings if resume.extraction else []
-            )
-            logger.info(f"Saved structured resume to database")
+        years_msg = f"Total experience: {resume.claimed_total_years or 'unknown'} years"
+        logger.info(years_msg)
 
-        # Save evidence unit embeddings (already generated by profiler)
-        if evidence_units:
-            logger.info(f"Saving {len(evidence_units)} evidence units...")
+        repo.save_structured_resume(
+            resume_fingerprint=fingerprint,
+            extracted_data=resume.model_dump(),
+            total_experience_years=resume.claimed_total_years,
+            extraction_confidence=resume.extraction.confidence if resume.extraction else None,
+            extraction_warnings=resume.extraction.warnings if resume.extraction else []
+        )
+        logger.info("Saved structured resume to database")
 
-            units_data = []
-            for unit in evidence_units:
-                if unit.embedding:
-                    units_data.append({
-                        'evidence_unit_id': unit.id,
-                        'source_text': unit.text,
-                        'source_section': unit.source_section,
-                        'tags': unit.tags,
-                        'embedding': unit.embedding,
-                        'years_value': unit.years_value,
-                        'years_context': unit.years_context,
-                        'is_total_years_claim': unit.is_total_years_claim,
-                    })
+        repo.set_resume_processing_state(
+            fingerprint,
+            RESUME_PROCESSING_EXTRACTED,
+            error=None,
+            extraction_completed_at=datetime.now(timezone.utc),
+        )
 
-            if units_data:
-                repo.save_evidence_unit_embeddings(fingerprint, units_data)
-                logger.info(f"Saved {len(units_data)} evidence unit embeddings")
+        self.embed_resume_one(repo, fingerprint, resume)
 
-            units_with_years = [u for u in evidence_units if u.years_value is not None]
-            logger.info(f"Extracted years from {len(units_with_years)} evidence units")
+    def embed_resume_one(
+        self,
+        repo: JobRepository,
+        fingerprint: str,
+        pre_extracted_resume: Optional[ResumeSchema] = None,
+    ) -> None:
+        """Generate resume embeddings from a structured resume and mark readiness."""
+        repo.set_resume_processing_state(
+            fingerprint,
+            RESUME_PROCESSING_EMBEDDING,
+            error=None,
+        )
+
+        if pre_extracted_resume is None:
+            structured = repo.resume.get_structured_resume_by_fingerprint(fingerprint)
+            if structured is None or not structured.extracted_data:
+                raise ValueError(f"Structured resume missing for fingerprint: {fingerprint}")
+            pre_extracted_resume = ResumeSchema.model_validate(structured.extracted_data)
+
+        profiler = ResumeProfiler(
+            ai_service=self.ai,
+            store=JobRepositoryAdapter(repo),
+        )
+        _, evidence_units, persistence_payload = profiler.profile_resume(
+            {},
+            resume_fingerprint=fingerprint,
+            pre_extracted_resume=pre_extracted_resume,
+        )
+
+        if not persistence_payload:
+            raise ValueError("No resume section embeddings were generated")
+
+        if not evidence_units:
+            raise ValueError("No resume evidence embeddings were generated")
+
+        if repo.get_resume_summary_embedding(fingerprint) is None:
+            raise ValueError("No summary embedding found after resume embedding")
+
+        repo.set_resume_processing_state(
+            fingerprint,
+            RESUME_PROCESSING_READY,
+            error=None,
+            embedding_completed_at=datetime.now(timezone.utc),
+        )
 
     def unload_models(self):
         """Helper to unload models if the provider supports it."""
