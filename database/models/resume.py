@@ -10,6 +10,9 @@ from pgvector.sqlalchemy import Vector
 from .base import Base
 
 
+UTC_NOW_SQL = "timezone('UTC', now())"
+
+
 RESUME_PROCESSING_EXTRACTING = "extracting"
 RESUME_PROCESSING_EXTRACTED = "extracted"
 RESUME_PROCESSING_EMBEDDING = "embedding"
@@ -49,7 +52,7 @@ class ResumeSectionEmbedding(Base):
     embedding = Column(Vector(1024), nullable=False)
     
     # Metadata
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text(UTC_NOW_SQL))
     
     __table_args__ = (
         # Composite index for retrieving all sections of a resume
@@ -80,7 +83,7 @@ class ResumeEvidenceUnitEmbedding(Base):
     years_context = Column(Text)  # What the years refer to (e.g., "Python", "total experience")
     is_total_years_claim = Column(Boolean, default=False)  # Whether this is a total years claim
 
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text(UTC_NOW_SQL))
 
     __table_args__ = (
         Index('idx_rfue_fingerprint', 'resume_fingerprint'),
@@ -113,8 +116,8 @@ class StructuredResume(Base):
     extraction_warnings = Column(JSONB, default=[])  # List of warning messages
     
     # Timestamps
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
-    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"), onupdate=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text(UTC_NOW_SQL))
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text(UTC_NOW_SQL), onupdate=sql_text(UTC_NOW_SQL))
 
     __table_args__ = (
         # Index for finding resumes by fingerprint
@@ -136,13 +139,13 @@ class ResumeProcessingState(Base):
     created_at = Column(
         TIMESTAMP(timezone=True),
         nullable=False,
-        server_default=sql_text("timezone('UTC', now())"),
+        server_default=sql_text(UTC_NOW_SQL),
     )
     updated_at = Column(
         TIMESTAMP(timezone=True),
         nullable=False,
-        server_default=sql_text("timezone('UTC', now())"),
-        onupdate=sql_text("timezone('UTC', now())"),
+        server_default=sql_text(UTC_NOW_SQL),
+        onupdate=sql_text(UTC_NOW_SQL),
     )
 
     __table_args__ = (

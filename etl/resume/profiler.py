@@ -285,32 +285,56 @@ class ResumeProfiler:
             self.store.save_evidence_unit_embeddings(resume_fingerprint, payload)
             logger.info(f"Saved {len(payload)} evidence unit embeddings for fingerprint {resume_fingerprint}")
 
+    def _build_experience_section_payloads(self, profile: Profile) -> List[Dict[str, Any]]:
+        """Create section payloads for experience entries with embedding text."""
+        sections = []
+        for idx, exp in enumerate(profile.experience):
+            text = exp.to_embedding_text()
+            if text:
+                sections.append(
+                    {
+                        'section_type': 'experience',
+                        'section_index': idx,
+                        'source_text': text,
+                        'source_data': exp.model_dump(),
+                    }
+                )
+        return sections
+
+    def _build_summary_text(self, profile: Profile) -> Optional[str]:
+        """Derive summary text from the structured summary or fallback fields."""
+        if profile.summary and profile.summary.text:
+            return profile.summary.text
+
+        summary_parts = []
+        for exp in profile.experience[:2]:
+            text = exp.to_embedding_text()
+            if text:
+                summary_parts.append(text)
+
+        skills_text = profile.skills.to_embedding_text()
+        if skills_text:
+            summary_parts.append(skills_text)
+
+        return " | ".join(summary_parts) if summary_parts else None
+
     def save_resume_section_embeddings(self, resume_fingerprint: str, resume: ResumeSchema) -> List[Dict[str, Any]]:
         """Generate and optionally persist embeddings for individual resume sections."""
-        sections = []
         profile = resume.profile
+        sections = self._build_experience_section_payloads(profile)
 
-        for idx, exp in enumerate(profile.experience):
-            if text := exp.to_embedding_text():
-                sections.append({'section_type': 'experience', 'section_index': idx, 'source_text': text, 'source_data': exp.model_dump()})
+        skills_text = profile.skills.to_embedding_text()
+        if skills_text:
+            sections.append(
+                {
+                    'section_type': 'skills',
+                    'section_index': 0,
+                    'source_text': skills_text,
+                    'source_data': profile.skills.model_dump(),
+                }
+            )
 
-        if text := profile.skills.to_embedding_text():
-            sections.append({'section_type': 'skills', 'section_index': 0, 'source_text': text, 'source_data': profile.skills.model_dump()})
-
-        summary_text = profile.summary.text if profile.summary and profile.summary.text else None
-        if not summary_text:
-            summary_parts = []
-            if profile.experience[:2]:
-                summary_parts.extend(
-                    exp.to_embedding_text()
-                    for exp in profile.experience[:2]
-                    if exp.to_embedding_text()
-                )
-            skills_text = profile.skills.to_embedding_text()
-            if skills_text:
-                summary_parts.append(skills_text)
-            summary_text = " | ".join(summary_parts)
-
+        summary_text = self._build_summary_text(profile)
         if summary_text:
             sections.append({
                 'section_type': 'summary',

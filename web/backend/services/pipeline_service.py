@@ -203,30 +203,37 @@ class PipelineTaskManager:
             )
         return selected_task
 
-    def update_task_status(
+    def _apply_task_status_update(
+        self,
+        task: PipelineTask,
+        status: str,
+        step: Optional[str],
+        result: Optional[MatchingPipelineResult],
+        error: Optional[str],
+    ) -> None:
+        """Apply an in-memory status update to a task object."""
+        task.status = status
+        if status == "persisting":
+            task.persistence_started = True
+        if status == "cancellation_requested":
+            task.cancellation_requested = True
+        if step is not None:
+            task.step = step
+        if result:
+            task.result = result
+        if error:
+            task.error = error
+
+    def _build_update_payload(
         self,
         task_id: str,
         status: str,
-        step: Optional[str] = None,
-        result: Optional[MatchingPipelineResult] = None,
-        error: Optional[str] = None,
-    ):
-        """Update task status and publish to subscribers."""
-        if task_id in self._tasks:
-            task = self._tasks[task_id]
-            task.status = status
-            if status == "persisting":
-                task.persistence_started = True
-            if status == "cancellation_requested":
-                task.cancellation_requested = True
-            if step is not None:
-                task.step = step
-            if result:
-                task.result = result
-            if error:
-                task.error = error
-
-        update_data = {"task_id": task_id, "status": status}
+        step: Optional[str],
+        result: Optional[MatchingPipelineResult],
+        error: Optional[str],
+    ) -> Dict[str, Any]:
+        """Build the event payload sent to subscribers."""
+        update_data: Dict[str, Any] = {"task_id": task_id, "status": status}
         if step is not None:
             update_data["step"] = step
         if result:
@@ -239,6 +246,22 @@ class PipelineTaskManager:
                 update_data["error"] = result.error
         if error:
             update_data["error"] = error
+        return update_data
+
+    def update_task_status(
+        self,
+        task_id: str,
+        status: str,
+        step: Optional[str] = None,
+        result: Optional[MatchingPipelineResult] = None,
+        error: Optional[str] = None,
+    ):
+        """Update task status and publish to subscribers."""
+        task = self._tasks.get(task_id)
+        if task is not None:
+            self._apply_task_status_update(task, status, step, result, error)
+
+        update_data = self._build_update_payload(task_id, status, step, result, error)
 
         try:
             self.publish_update(task_id, update_data)
