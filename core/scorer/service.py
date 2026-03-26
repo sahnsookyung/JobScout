@@ -122,6 +122,8 @@ class ScoringService:
             overall_score=overall,
             fit_components=fit_components,
             want_components=want_components or {},
+            fit_weight=self.config.fit_weight,
+            want_weight=self.config.want_weight,
             base_score=fit_components.get("blended", 0.0) * 100.0,
             penalties=fit_penalties,
             jd_required_coverage=fit_components["required_coverage"],

@@ -12,7 +12,8 @@ export interface StatusBannerProps {
 }
 
 export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
-    const isRunningStatus = statusData.status === 'running' || statusData.status === 'pending';
+    const isPendingStatus = statusData.status === 'pending';
+    const isRunningStatus = statusData.status === 'running';
     const isCancellationRequested = statusData.status === 'cancellation_requested';
     const isPersistingStatus = statusData.status === 'persisting';
     const isCompletedStatus = statusData.status === 'completed';
@@ -27,6 +28,7 @@ export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
             saving_results: 'Saving Results',
             notifying: 'Notifying',
             initializing: 'Initializing',
+            matching: 'Finding Matches',
             extracting: 'Extracting Resume',
             embedding: 'Embedding Resume',
         };
@@ -34,24 +36,49 @@ export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
     };
 
     const formatTime = (time?: number): string => (time ?? 0).toFixed(2);
+    const isActiveStatus = isPendingStatus || isRunningStatus;
+    let iconBackground = 'bg-slate-100';
+    if (isActiveStatus) {
+        iconBackground = 'bg-blue-100';
+    } else if (isCancellationRequested) {
+        iconBackground = 'bg-orange-100';
+    } else if (isPersistingStatus) {
+        iconBackground = 'bg-amber-100';
+    } else if (isCompletedStatus) {
+        iconBackground = 'bg-green-100';
+    } else if (isFailedStatus) {
+        iconBackground = 'bg-red-100';
+    }
+
+    let badgeVariant: 'info' | 'success' | 'error' | 'warning' | 'default' = 'default';
+    if (isActiveStatus) {
+        badgeVariant = 'info';
+    } else if (isCancellationRequested || isPersistingStatus) {
+        badgeVariant = 'warning';
+    } else if (isCompletedStatus) {
+        badgeVariant = 'success';
+    } else if (isFailedStatus) {
+        badgeVariant = 'error';
+    }
 
     return (
         <div className="mt-6 bg-white/60 backdrop-blur-sm rounded-2xl p-6 border border-white/50">
             <div className="flex items-start gap-4">
-                <div className={`p-3 rounded-xl ${isRunningStatus ? 'bg-blue-100' : isCancellationRequested ? 'bg-orange-100' : isPersistingStatus ? 'bg-amber-100' : isCompletedStatus ? 'bg-green-100' : isCancelledStatus ? 'bg-slate-100' : 'bg-red-100'}`}>
-                    {isRunningStatus && <Loader className="w-6 h-6 animate-spin text-blue-600" />}
+                <div className={`p-3 rounded-xl ${iconBackground}`}>
+                    {isActiveStatus && <Loader className="w-6 h-6 animate-spin text-blue-600" />}
                     {isCancellationRequested && <Loader className="w-6 h-6 animate-spin text-orange-600" />}
                     {isPersistingStatus && <Loader className="w-6 h-6 animate-spin text-amber-600" />}
                     {isCompletedStatus && <CheckCircle className="w-6 h-6 text-green-600" />}
-                    {isCancelledStatus && <XCircle className="w-6 h-6 text-slate-600" />}
-                    {isFailedStatus && <XCircle className="w-6 h-6 text-red-600" />}
+                    {(isFailedStatus || isCancelledStatus) && (
+                        <XCircle className={`w-6 h-6 ${isFailedStatus ? 'text-red-600' : 'text-slate-600'}`} />
+                    )}
                 </div>
                 <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
-                        <Badge variant={isRunningStatus ? 'info' : isCancellationRequested || isPersistingStatus ? 'warning' : isCompletedStatus ? 'success' : isCancelledStatus ? 'info' : 'error'}>
+                        <Badge variant={badgeVariant}>
                             {statusData.status?.toUpperCase()}
                         </Badge>
-                        {isRunningStatus && (
+                        {isActiveStatus && (
                             <div className="flex items-center gap-2">
                                 <div className="relative w-2 h-2">
                                     <div className="absolute inset-0 bg-blue-500 rounded-full animate-ping" />
@@ -63,6 +90,7 @@ export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
                         {isCancellationRequested && <span className="text-sm font-bold text-orange-900">Stopping as soon as it is safe</span>}
                         {isPersistingStatus && <span className="text-sm font-bold text-amber-900">Finishing writes</span>}
                     </div>
+                    {isPendingStatus && <p className="text-sm text-gray-600 mt-1">Starting your matching run...</p>}
                     {isRunningStatus && <p className="text-sm text-gray-600 mt-1">Processing your matches...</p>}
                     {isCancellationRequested && <p className="text-sm text-gray-600 mt-1">Cancellation was requested. The worker is still winding down.</p>}
                     {isPersistingStatus && <p className="text-sm text-gray-600 mt-1">The pipeline crossed the save boundary and is finishing safely.</p>}
@@ -86,10 +114,8 @@ export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
                     )}
                     {isCancelledStatus && (
                         <div>
-                            <p className="font-bold text-slate-800 mb-2">Pipeline cancelled</p>
-                            {statusData.error && (
-                                <p className="text-sm text-gray-700 bg-slate-50 p-3 rounded-lg border border-slate-200">{statusData.error}</p>
-                            )}
+                            <p className="font-bold text-slate-800 mb-1">Pipeline cancelled</p>
+                            <p className="text-sm text-gray-600">You can start another matching run whenever you’re ready.</p>
                         </div>
                     )}
                 </div>

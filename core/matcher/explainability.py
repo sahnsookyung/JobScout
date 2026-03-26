@@ -23,57 +23,23 @@ from core.utils import cosine_similarity_from_distance
 logger = logging.getLogger(__name__)
 
 
-def calculate_requirement_similarity_with_resume_sections(
-    job_requirement: JobRequirementUnit,
-    resume_fingerprint: str,
-    repo: JobRepository,
-    section_types: Optional[List[str]] = None,
-    top_k: int = 10
-) -> Tuple[float, Dict[str, Any]]:
-    """
-    Calculate similarity between job requirement and resume sections.
-    
-    Finds the best-matching resume section for each job requirement by searching
-    all resume section embeddings (experience, projects, skills, summary).
-    
-    Args:
-        job_requirement: Job requirement with embedding
-        resume_fingerprint: Fingerprint of the resume
-        repo: JobRepository instance for database access
-        section_types: Filter by section type (e.g., ['experience', 'project', 'skill'])
-        top_k: Number of top matches to return per requirement
-    
-    Returns:
-        Tuple of (similarity_score, match_details_dict) where match_details includes:
-            - similarity: Cosine similarity (0.0-1.0)
-            - best_section: Best matching resume section type
-            - best_section_index: Index within section type
-            - best_section_text: Text of best section
-            - all_matches: List of all top matches with their sections
-    """
-    req_embedding = None
-    
+def _get_requirement_embedding(job_requirement: JobRequirementUnit) -> Optional[Any]:
+    """Extract embedding from job requirement."""
     try:
         if hasattr(job_requirement, 'requirement_row') and job_requirement.requirement_row:
-            req_embedding = job_requirement.requirement_row.embedding_row.unit.embedding
+            return job_requirement.requirement_row.embedding_row.unit.embedding
         elif hasattr(job_requirement, 'embedding_row') and job_requirement.embedding_row:
-            req_embedding = job_requirement.embedding_row.unit.embedding
+            return job_requirement.embedding_row.unit.embedding
     except AttributeError:
-        logger.warning(f"Requirement {getattr(job_requirement, 'id', 'unknown')} has malformed embedding structure")
-        return 0.0, {'skipped': True, 'reason': 'Malformed embedding structure'}
+        pass
+    return None
 
-    if not req_embedding:
-        return 0.0, {'skipped': True, 'reason': 'No embedding'}
 
-    sections = repo.resume.get_resume_section_embeddings(resume_fingerprint, section_type=None)
-    all_sections = [s for s in sections if s and s.embedding]
-
-    if section_types:
-        all_sections = [s for s in all_sections if s.section_type in section_types]
-
-    if not all_sections:
-        return 0.0, {'skipped': True, 'reason': 'No resume sections found'}
-
+def _calculate_section_similarities(
+    req_embedding: Any,
+    all_sections: list,
+) -> Tuple[Optional[Any], float, List[Dict[str, Any]]]:
+    """Calculate similarities between requirement and all sections."""
     best_section = None
     best_distance = float('inf')
     similarity_scores = []
@@ -93,9 +59,60 @@ def calculate_requirement_similarity_with_resume_sections(
                     best_distance = distance
                     best_section = section
             except Exception as e:
-                logger.warning(f"Error computing similarity for section: {e}")
+                logger.warning("Error computing similarity for section: %s", e)
                 continue
 
+    return best_section, best_distance, similarity_scores
+
+
+def calculate_requirement_similarity_with_resume_sections(
+    job_requirement: JobRequirementUnit,
+    resume_fingerprint: str,
+    repo: JobRepository,
+    section_types: Optional[List[str]] = None,
+    top_k: int = 10
+) -> Tuple[float, Dict[str, Any]]:
+    """
+    Calculate similarity between job requirement and resume sections.
+
+    Finds the best-matching resume section for each job requirement by searching
+    all resume section embeddings (experience, projects, skills, summary).
+
+    Args:
+        job_requirement: Job requirement with embedding
+        resume_fingerprint: Fingerprint of the resume
+        repo: JobRepository instance for database access
+        section_types: Filter by section type (e.g., ['experience', 'project', 'skill'])
+        top_k: Number of top matches to return per requirement
+
+    Returns:
+        Tuple of (similarity_score, match_details_dict) where match_details includes:
+            - similarity: Cosine similarity (0.0-1.0)
+            - best_section: Best matching resume section type
+            - best_section_index: Index within section type
+            - best_section_text: Text of best section
+            - all_matches: List of all top matches with their sections
+    """
+    # Get requirement embedding
+    req_embedding = _get_requirement_embedding(job_requirement)
+    if not req_embedding:
+        return 0.0, {'skipped': True, 'reason': 'No embedding'}
+    
+    # Get and filter resume sections
+    sections = repo.resume.get_resume_section_embeddings(resume_fingerprint, section_type=None)
+    all_sections = [s for s in sections if s and s.embedding]
+    
+    if section_types:
+        all_sections = [s for s in all_sections if s.section_type in section_types]
+    
+    if not all_sections:
+        return 0.0, {'skipped': True, 'reason': 'No resume sections found'}
+    
+    # Calculate similarities
+    best_section, best_distance, similarity_scores = _calculate_section_similarities(
+        req_embedding, all_sections
+    )
+    
     if not similarity_scores:
         return 0.0, {'skipped': True, 'reason': 'Could not compute similarities'}
 
@@ -152,7 +169,7 @@ def explain_match(
             job_requirement=req,
             resume_fingerprint=resume_fingerprint,
             repo=repo,
-            top_k=3
+            top_k=10
         )
         
         requirement_explanations.append({

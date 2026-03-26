@@ -26,5 +26,5 @@ def init_db():
         logger.error(f"Error initializing DB: {e}")
         raise
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     init_db()

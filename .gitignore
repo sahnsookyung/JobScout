@@ -12,6 +12,7 @@ pipeline.lock
 **/node_modules/
 **/logs/
 **/*.pdf
+coverage/
 
 # Coverage
 .coverage
@@ -24,6 +25,7 @@ web/frontend/coverage/
 
 # Local assistant/tool config
 .claude/
+.claude/skills/*
 
 # Editor temp files
 *.swp

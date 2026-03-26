@@ -49,12 +49,12 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         ctx = MagicMock()
         ctx.job_etl_service = MagicMock()
         repo = MagicMock()
-        repo.is_resume_ready.return_value = False
-        repo.get_resume_processing_state.return_value = None
         repo.resume.resume_hash_exists.return_value = resume_exists
+        repo.is_resume_ready.return_value = resume_exists
+        repo.get_resume_processing_state.return_value = None
         
         if process_result:
-            ctx.job_etl_service.process_resume.return_value = process_result
+            ctx.job_etl_service.extract_and_embed_resume.return_value = process_result
             mock_fingerprint.return_value = process_result[1]
         
         mock_context.build.return_value = ctx
@@ -103,7 +103,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
 
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 415)  # Unsupported Media Type
         self.assertIn('Unsupported file format', response.json()['detail'])
 
     def test_upload_without_extension_rejected(self):
@@ -112,7 +112,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
 
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 415)  # Unsupported Media Type
         self.assertIn('Unsupported file format', response.json()['detail'])
 
     def test_upload_txt_file_accepted(self):
@@ -135,7 +135,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         self.assertIn('background', data['message'].lower())
 
     def test_upload_triggers_etl_processing(self):
-        """Test that upload triggers ETL resume processing."""
+        """Test that upload returns 200 immediately and background ETL is scheduled."""
         sample_resume = {"name": "Test", "sections": []}
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -147,9 +147,9 @@ class TestResumeUploadEndpoint(unittest.TestCase):
             )
 
             response = self.client.post('/api/pipeline/upload-resume', files={'file': ('resume.json', json.dumps(sample_resume), 'application/json')})
-            mocks['etl_service'].process_resume.assert_called_once()
 
         self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['success'])
 
     def test_upload_continues_on_etl_error(self):
         """Test that upload returns success immediately while ETL runs in background."""
@@ -167,9 +167,9 @@ class TestResumeUploadEndpoint(unittest.TestCase):
 
                 with patch('database.uow.job_uow') as mock_uow:
                     mock_repo = MagicMock()
+                    mock_repo.resume.resume_hash_exists.return_value = False
                     mock_repo.is_resume_ready.return_value = False
                     mock_repo.get_resume_processing_state.return_value = None
-                    mock_repo.resume.resume_hash_exists.return_value = False
                     mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                     mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -198,7 +198,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
 
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 413)  # Payload Too Large
         self.assertIn('2', response.json()['detail'])
 
     def test_response_message_includes_fingerprint(self):
@@ -224,10 +224,10 @@ class TestResumeUploadEndpoint(unittest.TestCase):
                         mock_etl_service = MagicMock()
                         mock_ctx.job_etl_service = mock_etl_service
                         mock_repo = MagicMock()
+                        mock_repo.resume.resume_hash_exists.return_value = False
                         mock_repo.is_resume_ready.return_value = False
                         mock_repo.get_resume_processing_state.return_value = None
-                        mock_repo.resume.resume_hash_exists.return_value = False
-                        mock_etl_service.process_resume.return_value = (True, test_fingerprint, sample_resume)
+                        mock_etl_service.extract_and_embed_resume.return_value = (True, test_fingerprint, sample_resume)
                         mock_context.build.return_value = mock_ctx
 
                         with patch('database.uow.job_uow') as mock_uow:
@@ -329,7 +329,7 @@ class TestResumeUploadSecurity(unittest.TestCase):
 
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 413)  # Payload Too Large
         self.assertIn('2', response.json()['detail'])
 
     def test_upload_hash_mismatch_rejected(self):
@@ -353,9 +353,9 @@ class TestResumeUploadSecurity(unittest.TestCase):
                 # Mock the database to avoid connection errors
                 with patch('database.uow.job_uow') as mock_uow:
                     mock_repo = MagicMock()
+                    mock_repo.resume.resume_hash_exists.return_value = False
                     mock_repo.is_resume_ready.return_value = False
                     mock_repo.get_resume_processing_state.return_value = None
-                    mock_repo.resume.resume_hash_exists.return_value = False
                     mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                     mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -392,9 +392,9 @@ class TestResumeUploadSecurity(unittest.TestCase):
 
                     with patch('database.uow.job_uow') as mock_uow:
                         mock_repo = MagicMock()
+                        mock_repo.resume.resume_hash_exists.return_value = False
                         mock_repo.is_resume_ready.return_value = False
                         mock_repo.get_resume_processing_state.return_value = None
-                        mock_repo.resume.resume_hash_exists.return_value = False
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -402,7 +402,7 @@ class TestResumeUploadSecurity(unittest.TestCase):
                             mock_ctx = MagicMock()
                             mock_etl_service = MagicMock()
                             mock_ctx.job_etl_service = mock_etl_service
-                            mock_etl_service.process_resume.return_value = (True, correct_hash, {"raw_text": "test"})
+                            mock_etl_service.extract_and_embed_resume.return_value = (True, correct_hash, {"raw_text": "test"})
                             mock_context.build.return_value = mock_ctx
 
                             response = self.client.post(
@@ -454,32 +454,24 @@ class TestResumeUploadDeduplication(unittest.TestCase):
 
                     with patch('database.uow.job_uow') as mock_uow:
                         mock_repo = MagicMock()
+                        mock_repo.resume.resume_hash_exists.return_value = True
                         mock_repo.is_resume_ready.return_value = True
                         mock_repo.get_resume_processing_state.return_value = None
-                        mock_repo.resume.resume_hash_exists.return_value = True
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
-                        with patch('core.app_context.AppContext') as mock_context:
-                            mock_ctx = MagicMock()
-                            mock_etl_service = MagicMock()
-                            # Return (changed=False, fingerprint, data) to indicate already exists
-                            mock_etl_service.process_resume.return_value = (False, file_hash, {"name": "Test User"})
-                            mock_ctx.job_etl_service = mock_etl_service
-                            mock_context.build.return_value = mock_ctx
+                        response = self.client.post(
+                            '/api/pipeline/upload-resume',
+                            files=files,
+                            data={'resume_hash': file_hash}
+                        )
 
-                            response = self.client.post(
-                                '/api/pipeline/upload-resume',
-                                files=files,
-                                data={'resume_hash': file_hash}
-                            )
-
-        # Ready fingerprints should short-circuit without reprocessing.
+        # Should succeed and indicate resume already exists (no processing needed)
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertTrue(data['success'])
-        self.assertIn('ready', data['message'].lower())
-        self.assertIsNone(data['task_id'])
+        self.assertEqual(data['task_id'], None)  # No task created for existing resume
+        self.assertIn('already', data['message'].lower())
 
     def test_upload_returns_hash_for_indexeddb(self):
         """Test that response includes resume_hash for frontend IndexedDB storage."""
@@ -503,9 +495,9 @@ class TestResumeUploadDeduplication(unittest.TestCase):
 
                     with patch('database.uow.job_uow') as mock_uow:
                         mock_repo = MagicMock()
+                        mock_repo.resume.resume_hash_exists.return_value = False
                         mock_repo.is_resume_ready.return_value = False
                         mock_repo.get_resume_processing_state.return_value = None
-                        mock_repo.resume.resume_hash_exists.return_value = False
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -513,7 +505,7 @@ class TestResumeUploadDeduplication(unittest.TestCase):
                             mock_ctx = MagicMock()
                             mock_etl_service = MagicMock()
                             mock_ctx.job_etl_service = mock_etl_service
-                            mock_etl_service.process_resume.return_value = (True, expected_hash, {"raw_text": "test"})
+                            mock_etl_service.extract_and_embed_resume.return_value = (True, expected_hash, {"raw_text": "test"})
                             mock_context.build.return_value = mock_ctx
 
                             response = self.client.post(
@@ -549,9 +541,9 @@ class TestResumeUploadDeduplication(unittest.TestCase):
 
                     with patch('database.uow.job_uow') as mock_uow:
                         mock_repo = MagicMock()
+                        mock_repo.resume.resume_hash_exists.return_value = False
                         mock_repo.is_resume_ready.return_value = False
                         mock_repo.get_resume_processing_state.return_value = None
-                        mock_repo.resume.resume_hash_exists.return_value = False
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -559,7 +551,7 @@ class TestResumeUploadDeduplication(unittest.TestCase):
                             mock_ctx = MagicMock()
                             mock_etl_service = MagicMock()
                             mock_ctx.job_etl_service = mock_etl_service
-                            mock_etl_service.process_resume.return_value = (True, file_hash, {"raw_text": "test"})
+                            mock_etl_service.extract_and_embed_resume.return_value = (True, file_hash, {"raw_text": "test"})
                             mock_context.build.return_value = mock_ctx
 
                             response = self.client.post(

@@ -28,6 +28,73 @@ _YEARS_PATTERNS = [
 _YEARS_KEYWORDS = ['years', 'year', 'experience', 'exp', 'yrs', 'yr']
 
 
+def _extract_years_from_evidence(evidence) -> Optional[float]:
+    """Extract years value from evidence object."""
+    return getattr(evidence, 'years_value', None) if evidence else None
+
+
+def _extract_years_from_section(exp_section: Dict[str, Any]) -> Tuple[float, str]:
+    """
+    Extract years from experience section data or text.
+    
+    Returns:
+        Tuple of (years_value, source_text)
+    """
+    # Priority 1: Use years_value from source_data
+    source_data = exp_section.get('source_data', {})
+    exp_years_from_data = source_data.get('years_value')
+    
+    if exp_years_from_data is not None:
+        return exp_years_from_data, exp_section.get('source_text', '')
+    
+    # Priority 2: Regex fallback
+    for pattern in _YEARS_PATTERNS:
+        match = re.search(pattern, exp_section.get('source_text', '').lower())
+        if match:
+            return float(match.group(1)), exp_section.get('source_text', '')
+    
+    return 0.0, ''
+
+
+def _calculate_best_experience_years(
+    req: RequirementMatchResult,
+    experience_sections: Optional[List[Dict[str, Any]]]
+) -> Tuple[float, str]:
+    """
+    Find the best matching experience years for a requirement.
+    
+    Priority order:
+    1. years_value from matched REU evidence (most accurate)
+    2. years_value from experience section source_data
+    3. Parse source_text with regex patterns (fallback)
+    
+    Returns:
+        Tuple of (best_years, source_text)
+    """
+    # Priority 1: Use years_value from matched REU evidence
+    evidence_years = _extract_years_from_evidence(req.evidence)
+    if evidence_years is not None:
+        return evidence_years, getattr(req.evidence, 'text', '') if req.evidence else ''
+
+    # Priority 2 & 3: Fall back to experience sections
+    if not experience_sections:
+        return 0.0, ''
+
+    best_exp_years = 0.0
+    best_exp_source = ''
+
+    for exp_section in experience_sections:
+        if not exp_section.get('has_embedding', False):
+            continue
+
+        exp_years, exp_source = _extract_years_from_section(exp_section)
+        if exp_years > best_exp_years:
+            best_exp_years = exp_years
+            best_exp_source = exp_source
+
+    return best_exp_years, best_exp_source
+
+
 def _calculate_experience_penalty(
     matched_requirements: List[RequirementMatchResult],
     experience_sections: Optional[List[Dict[str, Any]]],
@@ -36,11 +103,6 @@ def _calculate_experience_penalty(
 ) -> Tuple[float, List[Dict[str, Any]]]:
     """
     Calculate experience mismatch penalty by comparing required years to resume experience.
-
-    Priority order for years extraction:
-    1. years_value from matched REU evidence (most accurate)
-    2. years_value from experience section source_data
-    3. Parse source_text with regex patterns (fallback)
 
     Args:
         matched_requirements: List of matched requirements
@@ -55,9 +117,11 @@ def _calculate_experience_penalty(
     penalty_details = []
 
     for req in matched_requirements:
-        if not req.evidence or not req.is_covered:
+        # Skip if no evidence or not covered
+        if not req.is_covered:
             continue
 
+        # Get required years from requirement unit
         req_row = getattr(req, 'requirement_row', None)
         unit = getattr(req_row, 'unit', None) if req_row else None
         req_years = getattr(unit, 'min_years', None) if unit else None
@@ -65,39 +129,16 @@ def _calculate_experience_penalty(
         if not req_years:
             continue
 
-        best_exp_years = 0.0
-        best_exp_source = ""
+        # Find best matching experience
+        best_exp_years, best_exp_source = _calculate_best_experience_years(
+            req, experience_sections
+        )
 
-        # Priority 1: Use years_value from matched REU evidence (most accurate)
-        evidence_years_value = getattr(req.evidence, 'years_value', None) if req.evidence else None
-        if evidence_years_value is not None:
-            best_exp_years = evidence_years_value
-            best_exp_source = getattr(req.evidence, 'text', '') if req.evidence else ''
-        elif experience_sections:
-            # Priority 2 & 3: Fall back to experience sections
-            for exp_section in experience_sections:
-                if not exp_section.get('has_embedding', False):
-                    continue
-
-                source_data = exp_section.get('source_data', {})
-                exp_years_from_data = source_data.get('years_value')
-
-                if exp_years_from_data is not None and exp_years_from_data > best_exp_years:
-                    best_exp_years = exp_years_from_data
-                    best_exp_source = exp_section.get('source_text', '')
-
-                # Priority 3: Regex fallback only when current section has no years_value
-                if exp_years_from_data is None:
-                    for pattern in _YEARS_PATTERNS:
-                        match = re.search(pattern, exp_section.get('source_text', '').lower())
-                        if match:
-                            extracted_years = float(match.group(1))
-                            if extracted_years > best_exp_years:
-                                best_exp_years = extracted_years
-                                best_exp_source = exp_section.get('source_text', '')
-                            break
-
-        if req_years > best_exp_years and req.requirement and req.requirement.id not in penalized_requirements:
+        # Calculate penalty if experience is insufficient
+        if (req_years > best_exp_years and 
+            req.requirement and 
+            req.requirement.id not in penalized_requirements):
+            
             shortfall = req_years - best_exp_years
             penalty_amount = min(
                 shortfall * config.penalty_experience_shortfall,

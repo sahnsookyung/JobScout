@@ -1,11 +1,13 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from core.config_loader import AppConfig, LlmConfig
 from core.llm.openai_service import OpenAIService
 from core.scraper.jobspy_client import JobSpyClient
-from etl.orchestrator import JobETLService
-from notification.service import NotificationService
+
+if TYPE_CHECKING:
+    from etl.orchestrator import JobETLService
+    from notification.service import NotificationService
 
 
 @dataclass
@@ -18,9 +20,9 @@ class AppContext:
     """
     config: AppConfig
     ai_service: OpenAIService
-    job_etl_service: JobETLService
+    job_etl_service: Any          # JobETLService at runtime
     jobspy_client: JobSpyClient
-    notification_service: Optional[NotificationService] = None
+    notification_service: Optional[Any] = None  # NotificationService at runtime
 
     @classmethod
     def build(cls, config: AppConfig) -> "AppContext":
@@ -32,6 +34,8 @@ class AppContext:
         Returns:
             Fully wired AppContext instance (no DB session attached)
         """
+        from etl.orchestrator import JobETLService
+
         # AI Service
         llm_config = config.etl.llm if (config.etl and config.etl.llm) else LlmConfig()
         ai_service = cls._build_ai_service(llm_config)
@@ -100,7 +104,7 @@ class AppContext:
     @staticmethod
     def _build_notification_service(
         config: AppConfig
-    ) -> Optional[NotificationService]:
+    ) -> Optional[Any]:
         """Build notification service if enabled in config.
 
         Creates a temporary session for the notification service repository.
@@ -113,6 +117,7 @@ class AppContext:
 
         from database.database import SessionLocal
         from database.repository import JobRepository
+        from notification.service import NotificationService
 
         # Create a session for the notification service
         # Note: The service uses this repo for tracker initialization,

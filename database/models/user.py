@@ -7,6 +7,18 @@ from sqlalchemy.orm import relationship
 
 from .base import Base
 
+
+# ============================================================================
+# Constants - avoid duplication across models
+# ============================================================================
+
+# Server default for UTC timestamps
+UTC_NOW = sql_text("timezone('UTC', now())")
+
+# SQLAlchemy cascade specification
+CASCADE_DELETE_ORPHAN = "all, delete-orphan"
+
+
 class User(Base):
     """
     User account with authentication and audit fields.
@@ -29,12 +41,12 @@ class User(Base):
     # Audit
     last_login_at = Column(TIMESTAMP(timezone=True))
     last_login_ip = Column(Text)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
-    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"), onupdate=func.now())
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW, onupdate=func.now())
     deleted_at = Column(TIMESTAMP(timezone=True))
-    
+
     # Relationships
-    files = relationship("UserFile", back_populates="owner", cascade="all, delete-orphan")
+    files = relationship("UserFile", back_populates="owner", cascade=CASCADE_DELETE_ORPHAN)
     
     __table_args__ = (
         Index('idx_users_email', 'email'),
@@ -74,8 +86,8 @@ class UserFile(Base):
         nullable=False
     )
     
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
-    
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
+
     # Relationships
     owner = relationship("User", back_populates="files")
     
