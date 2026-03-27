@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
+TASK_NOT_FOUND_RESPONSE = {404: {"description": "Task not found"}}
 
 
 def add_rate_limit_handlers(app):
@@ -90,7 +91,11 @@ def run_matching_pipeline_endpoint():
         )
 
 
-@router.get("/status/{task_id}", response_model=PipelineStatusResponse)
+@router.get(
+    "/status/{task_id}",
+    response_model=PipelineStatusResponse,
+    responses=TASK_NOT_FOUND_RESPONSE,
+)
 def get_pipeline_status(task_id: str):
     """
     Get the status of a pipeline task.
@@ -105,7 +110,6 @@ def get_pipeline_status(task_id: str):
     task = manager.get_task(task_id)
     
     if not task:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Task not found")
     
     response = PipelineStatusResponse(
@@ -169,7 +173,7 @@ def stop_matching_pipeline():
     )
 
 
-@router.get("/events/{task_id}")
+@router.get("/events/{task_id}", responses=TASK_NOT_FOUND_RESPONSE)
 async def pipeline_events(task_id: str):
     """
     Server-Sent Events endpoint for real-time pipeline status updates.

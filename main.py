@@ -463,18 +463,26 @@ def _run_facet_embedding_batch(ctx: AppContext, stop_event: threading.Event, lim
     logger.info(f"Facet embedding batch completed: processed={processed}")
 
 
-def _run_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):
-    """Run embedding batch with per-job and per-requirement transactions."""
-    # 1. Jobs
+def _collect_unembedded_job_ids(limit: int) -> List[str]:
+    """Collect IDs for jobs that still need embeddings."""
     with job_uow() as repo:
-        job_ids = [j.id for j in repo.get_unembedded_jobs(limit)]
+        return [j.id for j in repo.get_unembedded_jobs(limit)]
 
-    logger.info(f"Found {len(job_ids)} jobs needing embedding")
 
+def _collect_unembedded_requirement_ids(limit: int) -> List[str]:
+    """Collect IDs for requirements that still need embeddings."""
+    with job_uow() as repo:
+        return [r.id for r in repo.get_unembedded_requirements(limit * 10)]
+
+
+def _embed_pending_jobs(ctx: AppContext, stop_event: threading.Event, job_ids: List[str]) -> int:
+    """Embed pending jobs one by one with isolated transactions."""
     job_success = 0
+
     for job_id in job_ids:
         if stop_event.is_set():
             break
+
         try:
             with job_uow() as repo:
                 job = repo.get_by_id(job_id)
@@ -486,16 +494,17 @@ def _run_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: in
         except Exception:
             logger.exception("Failed job embedding job_id=%s", job_id)
 
-    # 2. Requirements
-    with job_uow() as repo:
-        req_ids = [r.id for r in repo.get_unembedded_requirements(limit * 10)]
+    return job_success
 
-    logger.info(f"Found {len(req_ids)} requirements needing embedding")
 
+def _embed_pending_requirements(ctx: AppContext, stop_event: threading.Event, req_ids: List[str]) -> int:
+    """Embed pending requirements one by one with isolated transactions."""
     req_success = 0
+
     for req_id in req_ids:
         if stop_event.is_set():
             break
+
         try:
             with job_uow() as repo:
                 req = repo.get_requirement_by_id(req_id)
@@ -505,6 +514,19 @@ def _run_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: in
         except Exception:
             logger.exception("Failed requirement embedding req_id=%s", req_id)
 
+    return req_success
+
+
+def _run_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100):
+    """Run embedding batch with per-job and per-requirement transactions."""
+    job_ids = _collect_unembedded_job_ids(limit)
+    req_ids = _collect_unembedded_requirement_ids(limit)
+
+    logger.info(f"Found {len(job_ids)} jobs needing embedding")
+    logger.info(f"Found {len(req_ids)} requirements needing embedding")
+
+    job_success = _embed_pending_jobs(ctx, stop_event, job_ids)
+    req_success = _embed_pending_requirements(ctx, stop_event, req_ids)
     logger.info(f"Embedding batch completed: {job_success} jobs, {req_success} reqs")
 
 
