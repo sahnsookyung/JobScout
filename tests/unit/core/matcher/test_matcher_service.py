@@ -20,7 +20,9 @@ def make_service():
 
 
 def make_repo():
-    return MagicMock()
+    repo = MagicMock()
+    repo.is_resume_ready.return_value = False
+    return repo
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +111,45 @@ class TestMatchResumeTwoStage:
 
         call_kwargs = mock_profiler.profile_resume.call_args[1]
         assert call_kwargs.get("pre_extracted_resume") is pre_extracted
+
+    def test_pre_extracted_ready_resume_reuses_persisted_artifacts(self):
+        service, mock_profiler, _ = make_service()
+        repo = make_repo()
+        repo.is_resume_ready.return_value = True
+        repo.get_resume_summary_embedding.return_value = [0.1, 0.2]
+        repo.get_top_jobs_by_summary_embedding.return_value = []
+        pre_extracted = MagicMock()
+
+        result = service.match_resume_two_stage(
+            repo,
+            {},
+            resume_fingerprint="fp-ready",
+            pre_extracted_resume=pre_extracted,
+        )
+
+        assert result == []
+        mock_profiler.profile_resume.assert_not_called()
+        repo.is_resume_ready.assert_called_once_with("fp-ready")
+
+    def test_pre_extracted_ready_resume_honors_cancelled_stop_event_before_db_work(self):
+        service, mock_profiler, _ = make_service()
+        repo = make_repo()
+        repo.is_resume_ready.return_value = True
+        stop_event = threading.Event()
+        stop_event.set()
+
+        result = service.match_resume_two_stage(
+            repo,
+            {},
+            resume_fingerprint="fp-ready",
+            pre_extracted_resume=MagicMock(),
+            stop_event=stop_event,
+        )
+
+        assert result == []
+        mock_profiler.profile_resume.assert_not_called()
+        repo.is_resume_ready.assert_not_called()
+        repo.get_top_jobs_by_summary_embedding.assert_not_called()
 
     def test_tenant_id_passed_to_retrieval(self):
         service, mock_profiler, _ = make_service()

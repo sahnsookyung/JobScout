@@ -3,6 +3,7 @@
 
 import json
 import unittest
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -272,6 +273,60 @@ class TestPipelineRoutes(unittest.TestCase):
         self.assertTrue(data["success"])
         self.assertEqual(data["task_id"], "task-1")
 
+    @patch("web.backend.routers.pipeline.set_task_state")
+    @patch("web.backend.routers.pipeline.get_task_state")
+    def test_upload_resume_reconciles_stale_in_progress_upload(
+        self,
+        mock_get_task_state,
+        mock_set_task_state,
+    ):
+        files = {"file": ("resume.json", '{"name":"Test User"}', "application/json")}
+        stale_upload = SimpleNamespace(
+            id="upload-1",
+            processing_task_id="task-stale",
+            status="in_progress",
+            created_at=datetime.now(timezone.utc) - timedelta(minutes=30),
+            resume_fingerprint="fp-stale",
+            resume_hash="hash-stale",
+            owner_id=UUID("00000000-0000-0000-0000-000000000001"),
+        )
+        recovered_upload = SimpleNamespace(
+            id="upload-1",
+            processing_task_id="task-stale",
+            status="failed_reupload_required",
+            created_at=stale_upload.created_at,
+            resume_fingerprint="fp-stale",
+            resume_hash="hash-stale",
+            owner_id=stale_upload.owner_id,
+        )
+
+        with patch("core.config_loader.load_config") as mock_config:
+            cfg = MagicMock()
+            cfg.etl = MagicMock()
+            cfg.etl.resume = MagicMock()
+            cfg.etl.resume.resume_file = "/tmp/resume.json"
+            mock_config.return_value = cfg
+
+            with patch("database.models.resume.generate_file_fingerprint", return_value="hash-stale"):
+                with patch("database.uow.job_uow") as mock_uow:
+                    repo = MagicMock()
+                    repo.is_resume_ready.return_value = False
+                    repo.get_latest_resume_upload_for_hash.return_value = stale_upload
+                    repo.get_resume_processing_state.return_value = None
+                    repo.get_structured_resume_by_fingerprint.return_value = None
+                    repo.get_resume_upload.return_value = recovered_upload
+                    mock_get_task_state.return_value = {"status": "processing", "step": "extracting"}
+                    mock_uow.return_value.__enter__ = MagicMock(return_value=repo)
+                    mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+
+                    response = self.client.post("/api/pipeline/upload-resume", files=files)
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertNotEqual(data["task_id"], "task-stale")
+        repo.update_resume_upload.assert_called()
+        mock_set_task_state.assert_called()
+
     @patch.dict("os.environ", {"ORCHESTRATOR_URL": "http://localhost:8084"}, clear=False)
     @patch("web.backend.routers.pipeline._stream_orchestrator_sse")
     @patch("web.backend.routers.pipeline._preflight_task_check", new_callable=AsyncMock)
@@ -294,6 +349,36 @@ class TestPipelineRoutes(unittest.TestCase):
         self.assertIn('"status":"running"', body)
         mock_preflight.assert_awaited_once()
         mock_stream.assert_called_once()
+
+    @patch.dict(
+        "os.environ",
+        {
+            "INTERNAL_ORCHESTRATOR_URL": "http://orchestrator:8084",
+            "ORCHESTRATOR_URL": "http://localhost:8084",
+        },
+        clear=False,
+    )
+    @patch("web.backend.routers.pipeline._stream_orchestrator_sse")
+    @patch("web.backend.routers.pipeline._preflight_task_check", new_callable=AsyncMock)
+    @patch("web.backend.routers.pipeline.get_task_state", return_value=None)
+    def test_pipeline_events_prefers_internal_orchestrator_url_inside_container(
+        self,
+        _mock_get_task_state,
+        mock_preflight,
+        mock_stream,
+    ):
+        async def _stream():
+            yield b'data: {"status":"running"}\n\n'
+
+        mock_stream.return_value = _stream()
+
+        with self.client.stream("GET", "/api/pipeline/events/task-orchestrator") as response:
+            body = b"".join(response.iter_raw()).decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('"status":"running"', body)
+        mock_preflight.assert_awaited_once_with("http://orchestrator:8084", "task-orchestrator")
+        mock_stream.assert_called_once_with("http://orchestrator:8084", "task-orchestrator")
 
     @patch.dict("os.environ", {"ORCHESTRATOR_URL": "http://localhost:8084"}, clear=False)
     @patch("web.backend.routers.pipeline._preflight_task_check", new_callable=AsyncMock)

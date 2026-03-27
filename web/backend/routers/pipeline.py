@@ -3,19 +3,13 @@
 Pipeline endpoints - trigger and monitor matching pipeline.
 """
 
-# Constants
-TASK_NOT_FOUND_DETAIL = "Task not found"
-TASK_NOT_FOUND_OR_EXPIRED_DETAIL = "Task not found or expired"
-ACTIVE_TASK_ID_KEY_PREFIX = "pipeline:active_task_id"
-LATEST_UPLOAD_TASK_ID_KEY_PREFIX = "resume:upload:latest_task_id"
-STOP_PIPELINE_ERROR = "Failed to stop pipeline"
-
 import json
 import os
 import asyncio
 import logging
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Optional
 from urllib.parse import quote
@@ -63,6 +57,11 @@ from ..models.requests import (
     ResumeSelectRequest,
 )
 from etl.resume import ResumeParser
+from web.backend.services.clients import (
+    INTERNAL_ORCHESTRATOR_URL_ENV,
+    ORCHESTRATOR_URL_ENV,
+    resolve_service_url,
+)
 from web.shared.constants import RESUME_MAX_SIZE
 from database.models import (
     RESUME_UPLOAD_FAILED_RETRYABLE,
@@ -73,6 +72,17 @@ from database.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Constants
+TASK_NOT_FOUND_DETAIL = "Task not found"
+TASK_NOT_FOUND_OR_EXPIRED_DETAIL = "Task not found or expired"
+ACTIVE_TASK_ID_KEY_PREFIX = "pipeline:active_task_id"
+LATEST_UPLOAD_TASK_ID_KEY_PREFIX = "resume:upload:latest_task_id"
+STOP_PIPELINE_ERROR = "Failed to stop pipeline"
+STALE_RESUME_UPLOAD_TIMEOUT_SECONDS = 600
+RESUME_ETL_WAIT_TIMEOUT_SECONDS = float(
+    os.getenv("RESUME_ETL_WAIT_TIMEOUT_SECONDS", "600")
+)
 
 # Strong references to fire-and-forget upload tasks — prevents GC on Python 3.12+
 # where the event loop only keeps weak refs to asyncio.Task objects.
@@ -376,6 +386,125 @@ def _classify_failed_resume_upload(repo, resume_fingerprint: str) -> tuple[str, 
         return RESUME_UPLOAD_FAILED_RETRYABLE, message, True
 
     return RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED, message, False
+
+
+def _resume_upload_timed_out(upload) -> bool:
+    created_at = getattr(upload, "created_at", None)
+    if created_at is None:
+        return False
+    return (
+        datetime.now(timezone.utc) - created_at
+    ) >= timedelta(seconds=STALE_RESUME_UPLOAD_TIMEOUT_SECONDS)
+
+
+def _mark_resume_upload_failed_from_stale_task(repo, upload, task_id: str) -> None:
+    upload_status, upload_error, retryable = _classify_failed_resume_upload(
+        repo, upload.resume_fingerprint
+    )
+    if upload_error == "Resume processing failed.":
+        upload_error = "Resume processing timed out. Please retry."
+
+    repo.update_resume_upload(
+        upload.id,
+        status=upload_status,
+        last_error=upload_error,
+        processing_task_id=task_id,
+        failure_stage="resume_etl",
+        failure_class="stale_task",
+        retryable=retryable,
+        user_safe_message=upload_error,
+        failure_debug_context={"reason": "stale_task"},
+    )
+    set_task_state(
+        task_id,
+        {
+            "status": "failed",
+            "task_type": "resume_upload",
+            "error": upload_error,
+            "upload_status": upload_status,
+            "resume_hash": upload.resume_hash,
+            "resume_fingerprint": upload.resume_fingerprint,
+            "upload_id": str(upload.id),
+            "owner_id": serialize_owner_id(upload.owner_id),
+        },
+        ttl=3600,
+    )
+
+
+def _reconcile_resume_upload_task(repo, upload):
+    task_id = getattr(upload, "processing_task_id", None)
+    if not task_id:
+        return upload
+
+    try:
+        state = get_task_state(task_id)
+    except Exception:
+        logger.warning(
+            "Failed to load resume upload task state for %s during reconciliation",
+            task_id,
+            exc_info=True,
+        )
+        return upload
+    if state is None:
+        if _resume_upload_timed_out(upload):
+            _mark_resume_upload_failed_from_stale_task(repo, upload, task_id)
+            return repo.get_resume_upload(upload.id)
+        return upload
+
+    task_status = state.get("status")
+    if task_status == "completed" and upload.status != RESUME_UPLOAD_READY:
+        repo.update_resume_upload(
+            upload.id,
+            status=RESUME_UPLOAD_READY,
+            last_error=None,
+            processing_task_id=task_id,
+            retryable=False,
+            user_safe_message="Resume processing completed successfully.",
+        )
+        return repo.get_resume_upload(upload.id)
+
+    if task_status == "failed" and upload.status not in {
+        RESUME_UPLOAD_FAILED_RETRYABLE,
+        RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED,
+    }:
+        _mark_resume_upload_failed_from_stale_task(repo, upload, task_id)
+        return repo.get_resume_upload(upload.id)
+
+    if (
+        upload.status in {RESUME_UPLOAD_PENDING, RESUME_UPLOAD_IN_PROGRESS}
+        and task_status in {"pending", "processing", "running"}
+        and _resume_upload_timed_out(upload)
+    ):
+        _mark_resume_upload_failed_from_stale_task(repo, upload, task_id)
+        return repo.get_resume_upload(upload.id)
+
+    return upload
+
+
+def _resume_status_from_upload(task_id: str, upload) -> Optional[ResumeStatusResponse]:
+    if upload is None:
+        return None
+
+    if upload.status == RESUME_UPLOAD_READY:
+        return ResumeStatusResponse(
+            task_id=task_id,
+            status="completed",
+            step=None,
+            error=None,
+        )
+
+    if upload.status in {
+        RESUME_UPLOAD_FAILED_RETRYABLE,
+        RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED,
+    }:
+        return ResumeStatusResponse(
+            task_id=task_id,
+            status="failed",
+            step=None,
+            error=upload.user_safe_message or upload.last_error,
+        )
+
+    return None
 
 
 def _ensure_no_active_matching_task(redis, owner_id: str) -> None:
@@ -933,7 +1062,10 @@ async def pipeline_events(task_id: str):
         )
 
     # Fall back to orchestrator SSE for tasks not managed via Redis
-    orchestrator_url = os.getenv("ORCHESTRATOR_URL", "").strip()
+    orchestrator_url = resolve_service_url(
+        INTERNAL_ORCHESTRATOR_URL_ENV,
+        ORCHESTRATOR_URL_ENV,
+    )
     if not orchestrator_url:
         raise HTTPException(status_code=404, detail=TASK_NOT_FOUND_DETAIL)
 
@@ -975,7 +1107,15 @@ def get_resume_status(
             status_code=400,
             detail="Invalid task_id format. Must be alphanumeric with hyphens, max 50 characters."
         )
-    state = _get_owned_resume_task_state(task_id, resolve_owner_id(user))
+    owner_id = resolve_owner_id(user)
+    with job_uow() as repo:
+        upload = repo.get_resume_upload_by_task_id(owner_id, task_id)
+        if upload is not None:
+            upload = _reconcile_resume_upload_task(repo, upload)
+            upload_status = _resume_status_from_upload(task_id, upload)
+            if upload_status is not None:
+                return upload_status
+    state = _get_owned_resume_task_state(task_id, owner_id)
     return ResumeStatusResponse(
         task_id=task_id,
         status=state.get("status", "unknown"),
@@ -1043,6 +1183,8 @@ async def upload_resume_endpoint(
     upload_id: Optional[str] = None
     with job_uow() as repo:
         latest_same_upload = repo.get_latest_resume_upload_for_hash(owner_id, resume_hash)
+        if latest_same_upload is not None:
+            latest_same_upload = _reconcile_resume_upload_task(repo, latest_same_upload)
         if repo.is_resume_ready(resume_fingerprint):
             upload = repo.create_resume_upload(
                 ResumeUploadCreateParams(
@@ -1239,9 +1381,10 @@ def _process_resume_background(
     except Exception:
         logger.warning("Failed to write Redis processing state for task %s", task_id)
 
-    tmp_path = _write_resume_file_to_shared_volume(file_content, filename, task_id)
+    tmp_path: Optional[str] = None
 
     try:
+        tmp_path = _write_resume_file_to_shared_volume(file_content, filename, task_id)
         orchestrator_client.process_resume(
             tmp_path,
             task_id,
@@ -1273,7 +1416,8 @@ def _process_resume_background(
             exc,
         )
     finally:
-        _remove_temporary_resume_file(tmp_path)
+        if tmp_path:
+            _remove_temporary_resume_file(tmp_path)
 
 
 def _retry_resume_background(
@@ -1346,7 +1490,7 @@ def _write_resume_file_to_shared_volume(file_content: bytes, filename: str, task
 
 def _wait_for_resume_etl_final_state(task_id: str, time_module) -> dict:
     """Poll Redis for resume ETL completion and return the final state."""
-    poll_timeout_seconds = 600
+    poll_timeout_seconds = RESUME_ETL_WAIT_TIMEOUT_SECONDS
     deadline = time_module.time() + poll_timeout_seconds
 
     while time_module.time() < deadline:

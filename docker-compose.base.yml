@@ -50,7 +50,7 @@ services:
     ports:
       - "${JOBSPY_PORT:-8000}:8000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -61,6 +61,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    user: "0:0"
     depends_on:
       postgres:
         condition: service_healthy
@@ -69,9 +70,17 @@ services:
       - PYTHONUNBUFFERED=1
     env_file:
       - .env
-    command: ["python", "-m", "database.migrate"]
+    volumes:
+      - resume_uploads:/data/resume_uploads
+    command:
+      [
+        "sh",
+        "-c",
+        "mkdir -p /data/resume_uploads && chmod 1777 /data/resume_uploads && python -m database.migrate",
+      ]
     restart: "no"
 
 volumes:
   postgres_data:
   redis_data:
+  resume_uploads:

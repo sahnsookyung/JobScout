@@ -60,7 +60,7 @@ setup_service_logging(logger)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 ORCHESTRATION_TTL = 3600  # 1 hour
-LISTENER_TIMEOUT = 300.0  # 5 minutes per stage
+LISTENER_TIMEOUT = float(os.getenv("LISTENER_TIMEOUT_SECONDS", "300"))  # 5 minutes per stage
 
 # Scraper configuration
 SCRAPER_INTERVAL_HOURS = float(os.getenv("SCRAPER_INTERVAL_HOURS", "6"))
@@ -130,6 +130,11 @@ def get_current_user():
         session.close()
 
 
+def _scraper_scheduler_disabled() -> bool:
+    value = os.getenv("DISABLE_SCRAPER", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
@@ -181,12 +186,17 @@ async def lifespan(app: FastAPI):
         cleanup_stale_orchestrations(app.state.registry)
     )
 
-    # Start scraper scheduler
-    scraper_redis = redis_async.from_url(REDIS_URL)
+    # Start scraper scheduler unless explicitly disabled (e.g. deterministic E2E runs)
+    scraper_redis = None
     scraper_stop = asyncio.Event()
-    scraper_task = asyncio.create_task(
-        scraper_scheduler_loop(app.state.ctx, scraper_redis, scraper_stop)
-    )
+    scraper_task = None
+    if _scraper_scheduler_disabled():
+        logger.info("🛑 Scraper scheduler disabled via DISABLE_SCRAPER")
+    else:
+        scraper_redis = redis_async.from_url(REDIS_URL)
+        scraper_task = asyncio.create_task(
+            scraper_scheduler_loop(app.state.ctx, scraper_redis, scraper_stop)
+        )
 
     try:
         yield
@@ -201,9 +211,11 @@ async def lifespan(app: FastAPI):
 
         # Stop scraper scheduler
         scraper_stop.set()
-        scraper_task.cancel()
-        await asyncio.gather(scraper_task, return_exceptions=True)
-        await scraper_redis.aclose()
+        if scraper_task is not None:
+            scraper_task.cancel()
+            await asyncio.gather(scraper_task, return_exceptions=True)
+        if scraper_redis is not None:
+            await scraper_redis.aclose()
 
         # Tear down AppContext — try async first, fall back to sync
         ctx: AppContext = app.state.ctx

@@ -349,6 +349,31 @@ class TestGetResumeStatus:
             response = pipeline_client.get("/api/pipeline/resume-status/task-abc")
         assert response.status_code == 404
 
+    def test_terminal_upload_row_takes_precedence_over_stale_redis_state(self, pipeline_client):
+        upload = SimpleNamespace(
+            status="failed_reupload_required",
+            user_safe_message="Resume processing timed out. Please retry.",
+            last_error="Resume processing timed out. Please retry.",
+            processing_task_id="task-stale",
+        )
+        mock_uow = MagicMock()
+        repo = MagicMock()
+        repo.get_resume_upload_by_task_id.return_value = upload
+        mock_uow.__enter__.return_value = repo
+        mock_uow.__exit__.return_value = False
+
+        with patch("web.backend.routers.pipeline.job_uow", return_value=mock_uow), \
+             patch(
+                 "web.backend.routers.pipeline.get_task_state",
+                 return_value={"status": "processing", "task_type": "resume_upload", "owner_id": "00000000-0000-0000-0000-000000000001"},
+             ):
+            response = pipeline_client.get("/api/pipeline/resume-status/task-stale")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "failed"
+        assert "timed out" in data["error"].lower()
+
 
 # ---------------------------------------------------------------------------
 # _process_resume_background
@@ -428,3 +453,28 @@ class TestProcessResumeBackground:
 
         error_arg = mock_failure.call_args[0][-1]
         assert "bad config" in str(error_arg)
+
+    def test_temp_file_write_failure_marks_task_failed(self):
+        from web.backend.routers.pipeline import _process_resume_background
+
+        with patch(
+            "web.backend.routers.pipeline._write_resume_file_to_shared_volume",
+            side_effect=PermissionError("permission denied"),
+        ), patch(
+            "web.backend.routers.pipeline._write_resume_failure_state"
+        ) as mock_failure, patch(
+            "web.backend.routers.pipeline.set_task_state"
+        ):
+            _process_resume_background(
+                b"data",
+                "resume.pdf",
+                "task-write-fail",
+                "upload-1",
+                "00000000-0000-0000-0000-000000000001",
+                "hash-1",
+                "fp-1",
+            )
+
+        mock_failure.assert_called_once()
+        error_arg = mock_failure.call_args[0][-1]
+        assert "permission denied" in str(error_arg).lower()

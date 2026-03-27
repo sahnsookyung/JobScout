@@ -1928,6 +1928,40 @@ class TestLifespan:
                         assert app.state.ctx is mock_ctx
 
     @pytest.mark.asyncio
+    async def test_lifespan_skips_scraper_scheduler_when_disabled(self, monkeypatch):
+        """Test lifespan does not start the scraper scheduler in disabled mode."""
+        from fastapi import FastAPI
+        from services.orchestrator.main import lifespan
+
+        monkeypatch.setenv("DISABLE_SCRAPER", "1")
+
+        app = FastAPI()
+        mock_ctx = Mock()
+        mock_ctx.config = Mock()
+        mock_ctx.aclose = AsyncMock()
+
+        created_coroutines = []
+        mock_cleanup_task = asyncio.create_task(asyncio.sleep(0))
+        await mock_cleanup_task
+
+        def create_mock_task(coro):
+            cr_code = getattr(coro, "cr_code", None)
+            created_coroutines.append(cr_code.co_name if cr_code is not None else None)
+            if hasattr(coro, "close"):
+                coro.close()
+            return mock_cleanup_task
+
+        with patch("services.orchestrator.main.load_config"):
+            with patch(
+                "services.orchestrator.main.AppContext.build", return_value=mock_ctx
+            ):
+                with patch("asyncio.create_task", side_effect=create_mock_task):
+                    async with lifespan(app):
+                        pass
+
+        assert "scraper_scheduler_loop" not in created_coroutines
+
+    @pytest.mark.asyncio
     async def test_lifespan_cleanup_with_aclose(self):
         """Test lifespan cleanup with aclose method."""
         from fastapi import FastAPI

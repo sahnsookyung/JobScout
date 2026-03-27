@@ -243,6 +243,13 @@ class JobRepository:
             resume_hash,
         )
 
+    def get_resume_upload_by_task_id(
+        self,
+        owner_id: Any,
+        task_id: str,
+    ) -> Any:
+        return self.resume.get_resume_upload_by_task_id(owner_id, task_id)
+
     def update_resume_upload(
         self,
         upload_id: Any,

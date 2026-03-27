@@ -109,6 +109,20 @@ class ResumeRepository(BaseRepository):
         ).limit(1)
         return self.db.execute(stmt).scalar_one_or_none()
 
+    def get_resume_upload_by_task_id(
+        self,
+        owner_id: Any,
+        task_id: str,
+    ) -> Optional[ResumeUpload]:
+        stmt = select(ResumeUpload).where(
+            ResumeUpload.owner_id == owner_id,
+            ResumeUpload.processing_task_id == task_id,
+        ).order_by(
+            ResumeUpload.created_at.desc(),
+            ResumeUpload.id.desc(),
+        ).limit(1)
+        return self.db.execute(stmt).scalar_one_or_none()
+
     def update_resume_upload(
         self,
         upload_id: Any,
