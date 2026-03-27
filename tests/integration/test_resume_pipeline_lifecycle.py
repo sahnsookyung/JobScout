@@ -264,7 +264,9 @@ def test_resume_eligibility_blocks_matching_when_latest_upload_is_not_ready(life
 
     run_response = client.post("/api/pipeline/run-matching")
     assert run_response.status_code == 409
-    assert "still processing (embedding)" in run_response.json()["detail"]
+    error = run_response.json()
+    assert error["code"] == "pipeline.resume.upload_in_progress"
+    assert "still processing (embedding)" in error["message"]
 
 
 def test_selecting_ready_resume_unblocks_matching_from_older_processing_upload(lifecycle_env):

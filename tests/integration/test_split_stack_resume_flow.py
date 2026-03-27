@@ -38,6 +38,8 @@ pytestmark = [
 ]
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DOTENV_PATH = PROJECT_ROOT / ".env"
+DOTENV_EXAMPLE_PATH = PROJECT_ROOT / ".env.example"
 VALID_RESUME_FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "resumes" / "valid_resume.json"
 FAIL_EMBEDDING_RESUME_FIXTURE = (
     PROJECT_ROOT / "tests" / "fixtures" / "resumes" / "fail_embedding_resume.json"
@@ -55,6 +57,7 @@ class SplitStackContext:
     service_urls: dict[str, str]
     compose_args: tuple[str, ...]
     compose_env: dict[str, str]
+    created_dotenv: bool = False
 
 
 def _docker_available() -> bool:
@@ -112,6 +115,24 @@ def _compose_args(project_name: str) -> tuple[str, ...]:
         "-f",
         str(PROJECT_ROOT / "docker-compose.e2e.yml"),
     )
+
+
+def _ensure_compose_env_file() -> bool:
+    """Ensure docker compose env_file=.env resolves in CI.
+
+    Returns True when the helper created the file and teardown should remove it.
+    """
+    if DOTENV_PATH.exists():
+        return False
+
+    if DOTENV_EXAMPLE_PATH.exists():
+        DOTENV_PATH.write_text(
+            DOTENV_EXAMPLE_PATH.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+    else:
+        DOTENV_PATH.write_text("", encoding="utf-8")
+    return True
 
 
 def _run_compose(
@@ -302,6 +323,7 @@ def split_stack() -> SplitStackContext:
     )
 
     compose_env: dict[str, str] | None = None
+    created_dotenv = _ensure_compose_env_file()
     try:
         compose_env, _ = _compose_up_with_retries(compose_args, services)
 
@@ -332,6 +354,7 @@ def split_stack() -> SplitStackContext:
             },
             compose_args=compose_args,
             compose_env=compose_env,
+            created_dotenv=created_dotenv,
         )
     finally:
         if compose_env is None:
@@ -345,6 +368,8 @@ def split_stack() -> SplitStackContext:
             check=False,
             timeout=600,
         )
+        if created_dotenv:
+            DOTENV_PATH.unlink(missing_ok=True)
 
 
 def _session_for(database_url: str):
