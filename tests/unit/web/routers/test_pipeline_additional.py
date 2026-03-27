@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from web.backend.routers.pipeline import _validate_task_id, _sanitize_for_logging
+from web.backend.routers.pipeline import _validate_task_id
 
 
 class TestValidateTaskId:
@@ -84,60 +84,6 @@ class TestValidateTaskId:
         assert _validate_task_id("task?id=123") is False
         assert _validate_task_id("task&param=value") is False
         assert _validate_task_id("task;drop") is False
-
-
-class TestSanitizeForLogging:
-    """Test _sanitize_for_logging function for log injection prevention."""
-
-    def test_normal_string_unchanged(self):
-        """Test normal strings pass through unchanged."""
-        assert _sanitize_for_logging("normal text") == "normal text"
-        assert _sanitize_for_logging("task-123") == "task-123"
-
-    def test_removes_carriage_return(self):
-        """Test CR characters are removed."""
-        assert _sanitize_for_logging("task\rinjection") == "taskinjection"
-        # Function removes both CR and LF, so "test\r\n" becomes "test"
-        assert _sanitize_for_logging("test\r\n") == "test"
-
-    def test_removes_line_feed(self):
-        """Test LF characters are removed."""
-        assert _sanitize_for_logging("task\ninjection") == "taskinjection"
-        assert _sanitize_for_logging("line1\nline2") == "line1line2"
-
-    def test_removes_null_bytes(self):
-        """Test null bytes are removed."""
-        assert _sanitize_for_logging("task\x00injection") == "taskinjection"
-        assert _sanitize_for_logging("test\x00") == "test"
-
-    def test_removes_all_control_characters(self):
-        """Test all CRLF and null bytes are removed."""
-        malicious = "task\r\n\x00injection"
-        assert _sanitize_for_logging(malicious) == "taskinjection"
-
-    def test_handles_non_string_input(self):
-        """Test non-string input is converted to string."""
-        assert _sanitize_for_logging(123) == "123"
-        assert _sanitize_for_logging(None) == "None"
-        assert _sanitize_for_logging(True) == "True"
-
-    def test_empty_string_unchanged(self):
-        """Test empty string passes through."""
-        assert _sanitize_for_logging("") == ""
-
-    def test_multiple_control_characters(self):
-        """Test multiple control characters are all removed."""
-        malicious = "line1\r\nline2\r\nline3\x00end"
-        assert _sanitize_for_logging(malicious) == "line1line2line3end"
-
-    def test_log_forging_prevention(self):
-        """Test log forging attempts are neutralized."""
-        # CWE-117: Improper Output Neutralization for Logs
-        forged = "12345\r\nINFO - Fake log entry"
-        sanitized = _sanitize_for_logging(forged)
-        assert "\r" not in sanitized
-        assert "\n" not in sanitized
-        assert "Fake log entry" in sanitized
 
 
 class TestResumeGuards:

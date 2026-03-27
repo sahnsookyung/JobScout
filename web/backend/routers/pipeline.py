@@ -163,18 +163,6 @@ def _raise_pipeline_error(
     )
 
 
-def _sanitize_for_logging(value: str) -> str:
-    """Remove log injection characters (CRLF) from user input.
-
-    Prevents CWE-117: Improper Output Neutralization for Logs.
-    """
-    if not isinstance(value, str):
-        return str(value)
-    # Remove CR, LF, and null bytes to prevent log forging
-    # Using chr(13), chr(10), chr(0) to ensure actual control characters
-    return value.replace(chr(13), '').replace(chr(10), '').replace(chr(0), '')
-
-
 def _validate_task_id(task_id: str) -> bool:
     """Validate task_id using allowlist validation.
 
@@ -1342,8 +1330,7 @@ def get_resume_status(
         return _pipeline_error_response(exc)
     except Exception:
         logger.warning(
-            "Resume status DB lookup unavailable for task %s; falling back to task state only",
-            _sanitize_for_logging(task_id),
+            "Resume status DB lookup unavailable; falling back to task state only",
             exc_info=True,
         )
 
