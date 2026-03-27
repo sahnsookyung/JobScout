@@ -967,7 +967,6 @@ async def _cleanup_pubsub_and_client(redis_client, pubsub) -> None:
 async def _run_extraction_stage(
     state: OrchestrationState,
     task_id: str,
-    redis_client: redis_async.Redis,
     pubsub: redis_async.client.PubSub,
 ) -> bool:
     """Run extraction stage. Returns True on success."""
@@ -999,7 +998,6 @@ async def _run_extraction_stage(
 async def _run_embeddings_stage(
     state: OrchestrationState,
     task_id: str,
-    redis_client: redis_async.Redis,
     pubsub: redis_async.client.PubSub,
 ) -> bool:
     """Run embeddings stage. Returns True on success."""
@@ -1064,6 +1062,77 @@ async def _run_matching_stage(
     return success, matching_data
 
 
+async def _run_matching_fast_path(
+    state: OrchestrationState,
+    task_id: str,
+) -> tuple[redis_async.Redis, redis_async.client.PubSub, bool, Optional[dict]]:
+    """Run only the matching stage for an already-processed resume."""
+    redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
+    pubsub = redis_client.pubsub()
+    await pubsub.subscribe(CHANNEL_MATCHING_DONE)
+    logger.info("📡 Subscribed to %s for matching", CHANNEL_MATCHING_DONE)
+
+    async with asyncio.timeout(LISTENER_TIMEOUT):
+        success, matching_data = await _run_pipeline_stage(
+            state=state,
+            pubsub=pubsub,
+            stream=STREAM_MATCHING,
+            job_payload={
+                "task_id": task_id,
+                "resume_fingerprint": state.resume_fingerprint,
+            },
+            stage_name="matching",
+        )
+
+    return redis_client, pubsub, success, matching_data
+
+
+async def _run_full_match_pipeline(
+    state: OrchestrationState,
+    task_id: str,
+) -> tuple[redis_async.Redis, redis_async.client.PubSub, bool, Optional[dict]]:
+    """Run extraction, embeddings, and matching for a new resume."""
+    redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
+    pubsub = redis_client.pubsub()
+
+    if not await _run_extraction_stage(state, task_id, pubsub):
+        return redis_client, pubsub, False, None
+
+    if not await _run_embeddings_stage(state, task_id, pubsub):
+        return redis_client, pubsub, False, None
+
+    success, matching_data = await _run_matching_stage(
+        state, task_id, pubsub, CHANNEL_EMBEDDINGS_DONE
+    )
+    return redis_client, pubsub, success, matching_data
+
+
+async def _complete_match_task(
+    state: OrchestrationState,
+    task_id: str,
+    matching_data: Optional[dict],
+) -> None:
+    """Persist final orchestration success state and notify subscribers."""
+    state.status = "completed"
+    state.current_stage = "match"
+    state.matches_count = (matching_data or {}).get("matches_count", 0)
+    state.result = {"matches_count": state.matches_count}
+    await state._save_to_redis()
+    logger.info(
+        "🎉 Pipeline completed for task %s: %d matches",
+        task_id,
+        state.matches_count,
+    )
+    await state.notify(
+        {
+            "task_id": task_id,
+            "status": "completed",
+            "matches_count": state.matches_count,
+            "message": f"Matching complete, {state.matches_count} matches",
+        }
+    )
+
+
 async def orchestrate_match(
     task_id: str,
     registry: OrchestratorRegistry,
@@ -1104,61 +1173,18 @@ async def orchestrate_match(
                 }
             )
             logger.info("⏭️ Skipping extraction and embedding stages")
-
-            redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
-            pubsub = redis_client.pubsub()
-            await pubsub.subscribe(CHANNEL_MATCHING_DONE)
-            logger.info("📡 Subscribed to %s for matching", CHANNEL_MATCHING_DONE)
-
-            async with asyncio.timeout(LISTENER_TIMEOUT):
-                success, matching_data = await _run_pipeline_stage(
-                    state=state,
-                    pubsub=pubsub,
-                    stream=STREAM_MATCHING,
-                    job_payload={
-                        "task_id": task_id,
-                        "resume_fingerprint": state.resume_fingerprint,
-                    },
-                    stage_name="matching",
-                )
-
-            if not success:
-                return
-        else:
-            redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
-            pubsub = redis_client.pubsub()
-
-            if not await _run_extraction_stage(state, task_id, redis_client, pubsub):
-                return
-
-            if not await _run_embeddings_stage(state, task_id, redis_client, pubsub):
-                return
-
-            success, matching_data = await _run_matching_stage(
-                state, task_id, pubsub, CHANNEL_EMBEDDINGS_DONE
+            redis_client, pubsub, success, matching_data = await _run_matching_fast_path(
+                state, task_id
             )
-            if not success:
-                return
+        else:
+            redis_client, pubsub, success, matching_data = await _run_full_match_pipeline(
+                state, task_id
+            )
 
-        # Common completion handling (both fast-path and full pipeline)
-        state.status = "completed"
-        state.current_stage = "match"
-        state.matches_count = (matching_data or {}).get("matches_count", 0)  # type: ignore[name-defined]
-        state.result = {"matches_count": state.matches_count}
-        await state._save_to_redis()
-        logger.info(
-            "🎉 Pipeline completed for task %s: %d matches",
-            task_id,
-            state.matches_count,
-        )
-        await state.notify(
-            {
-                "task_id": task_id,
-                "status": "completed",
-                "matches_count": state.matches_count,
-                "message": f"Matching complete, {state.matches_count} matches",
-            }
-        )
+        if not success:
+            return
+
+        await _complete_match_task(state, task_id, matching_data)
 
     except asyncio.TimeoutError:
         logger.error(
@@ -1541,7 +1567,11 @@ async def _get_existing_task_snapshot(
     return _task_snapshot(state)
 
 
-@app.post("/orchestrate/stages/{stage}", response_model=TaskStatusResponse)
+@app.post(
+    "/orchestrate/stages/{stage}",
+    response_model=TaskStatusResponse,
+    responses={404: {"description": "Unknown stage"}},
+)
 async def orchestrate_stage(stage: str, request: Request, body: StageRequest = StageRequest()):
     """Canonical stage trigger surface for scrape/extract/embed."""
     if stage not in {"scrape", "extract", "embed"}:
@@ -1600,7 +1630,11 @@ async def orchestrate_scrape_extract_embed_pipeline(request: Request):
     )
 
 
-@app.get("/orchestrate/tasks/{task_id}", response_model=TaskStatusResponse)
+@app.get(
+    "/orchestrate/tasks/{task_id}",
+    response_model=TaskStatusResponse,
+    responses={404: {"description": "Task not found"}},
+)
 async def get_task_status(task_id: str, request: Request):
     """Canonical JSON task status endpoint."""
     registry: OrchestratorRegistry = request.app.state.registry

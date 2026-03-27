@@ -346,7 +346,6 @@ def _wait_for_orchestrator_result(task_id: str) -> tuple[bool, str]:
     """Wait for orchestrator task completion and return result."""
     result = orchestrator_client.wait_for_completion(task_id, timeout=600.0)
     status = result.get("status", "unknown")
-
     if status == "completed":
         matches_count = result.get("result", {}).get("matches_count", 0)
         logger.info(f"Matching pipeline completed successfully with {matches_count} matches")

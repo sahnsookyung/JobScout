@@ -1138,7 +1138,6 @@ async def retry_resume(
         status=RESUME_UPLOAD_IN_PROGRESS,
     )
 
-
 async def _stream_orchestrator_sse(orchestrator_url: str, task_id: str):
     """Async generator that proxies SSE bytes from the orchestrator."""
     import httpx
