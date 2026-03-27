@@ -3,14 +3,73 @@ name: CI
 on:
   pull_request:
   push:
-    branches:
-      - main
-      - develop
-      - "codex/**"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
+  determine-run-mode:
+    name: Determine CI Mode
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+      reason: ${{ steps.decide.outputs.reason }}
+    steps:
+      - name: Decide whether to run this workflow
+        id: decide
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const event = context.eventName;
+            const branch = context.ref.replace('refs/heads/', '');
+            const alwaysRunPushBranches = new Set(['main', 'develop']);
+
+            if (event === 'pull_request') {
+              core.setOutput('should_run', 'true');
+              core.setOutput('reason', 'pull_request');
+              return;
+            }
+
+            if (event !== 'push') {
+              core.setOutput('should_run', 'true');
+              core.setOutput('reason', `non-push:${event}`);
+              return;
+            }
+
+            if (alwaysRunPushBranches.has(branch)) {
+              core.setOutput('should_run', 'true');
+              core.setOutput('reason', `protected-branch:${branch}`);
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+            const { data: openPulls } = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: 'open',
+              head: `${owner}:${branch}`,
+              per_page: 1,
+            });
+
+            if (openPulls.length > 0) {
+              core.info(`Skipping push-triggered CI for ${branch} because an open PR already exists.`);
+              core.setOutput('should_run', 'false');
+              core.setOutput('reason', 'duplicate-push-with-open-pr');
+              return;
+            }
+
+            core.setOutput('should_run', 'true');
+            core.setOutput('reason', `push-no-open-pr:${branch}`);
+
   python-unit:
     name: Python Unit Tests
+    needs: determine-run-mode
+    if: needs.determine-run-mode.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -42,6 +101,8 @@ jobs:
 
   frontend-unit:
     name: Frontend Tests
+    needs: determine-run-mode
+    if: needs.determine-run-mode.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -68,6 +129,8 @@ jobs:
 
   integration:
     name: Integration Tests
+    needs: determine-run-mode
+    if: needs.determine-run-mode.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
