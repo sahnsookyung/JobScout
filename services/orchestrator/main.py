@@ -18,14 +18,18 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from typing import Annotated, Optional, Tuple, Dict, Any, List
 
 import redis.asyncio as redis_async
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from core.app_context import AppContext
+from core.auth import _auth_mode, _ensure_dev_bypass_allowed, _ensure_dev_user
 from core.config_loader import load_config
 from core.redis_streams import (
     enqueue_job,
@@ -49,13 +53,10 @@ from core.redis_streams import (
 from core.resume_selection import evaluate_resume_eligibility, resolve_owner_id
 import redis  # used in /health
 from database.init_db import init_db
-from web.backend.dependencies import get_current_user
 
-# Configure logging at module level
-from core.logging_utils import setup_logging, is_nul_filter_active
-setup_logging()
+from core.logging_utils import setup_service_logging
 logger = logging.getLogger(__name__)
-logger.debug("NUL log sanitization active=%s", is_nul_filter_active())
+setup_service_logging(logger)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 ORCHESTRATION_TTL = 3600  # 1 hour
@@ -98,6 +99,37 @@ class OrchestratorRegistry:
         self.lock = asyncio.Lock()
 
 
+@lru_cache()
+def _session_local():
+    config = load_config()
+    engine = create_engine(
+        config.database.url,
+        pool_pre_ping=True,
+        pool_size=10,
+        max_overflow=20,
+    )
+    return sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=engine,
+    )
+
+
+def get_current_user():
+    """Resolve the current authenticated user for internal orchestrator routes."""
+    _ensure_dev_bypass_allowed()
+    if _auth_mode() != "dev-bypass":
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    session = _session_local()()
+    try:
+        user = _ensure_dev_user(session)
+        session.expunge(user)
+        return user
+    finally:
+        session.close()
+
+
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
@@ -118,7 +150,7 @@ async def _log_stream_backlogs_periodically(stop_event: asyncio.Event) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    setup_logging()
+    setup_service_logging(logger)
     logger.info("=" * 60)
     logger.info("STARTING ORCHESTRATOR SERVICE")
     logger.info("=" * 60)

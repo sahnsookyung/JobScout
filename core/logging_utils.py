@@ -1,5 +1,6 @@
 """Logging utilities for JobScout services."""
 
+import io
 import logging
 import sys
 
@@ -44,6 +45,42 @@ class NulSafeFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         return _strip_nul(super().format(record))
+
+
+class NulSafeTextIO(io.TextIOBase):
+    """Proxy stream that strips NUL bytes from raw writes."""
+
+    def __init__(self, wrapped):
+        self._wrapped = wrapped
+
+    @property
+    def encoding(self):
+        return getattr(self._wrapped, "encoding", None)
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, s):
+        return self._wrapped.write(_strip_nul(str(s)))
+
+    def flush(self) -> None:
+        self._wrapped.flush()
+
+    def isatty(self) -> bool:
+        return bool(getattr(self._wrapped, "isatty", lambda: False)())
+
+    def fileno(self) -> int:
+        return self._wrapped.fileno()
+
+    def __getattr__(self, name):
+        return getattr(self._wrapped, name)
+
+
+def _ensure_nul_safe_stream(name: str) -> None:
+    stream = getattr(sys, name)
+    if isinstance(stream, NulSafeTextIO):
+        return
+    setattr(sys, name, NulSafeTextIO(stream))
 
 
 def _ensure_nul_filter(handler: logging.Handler) -> None:
@@ -94,6 +131,9 @@ def setup_logging(name: str = None, level: int = logging.INFO) -> None:
         name: Logger name (None for root logger)
         level: Logging level (default: INFO)
     """
+    _ensure_nul_safe_stream("stdout")
+    _ensure_nul_safe_stream("stderr")
+
     if name is None:
         root_logger = logging.getLogger()
         root_logger.setLevel(level)

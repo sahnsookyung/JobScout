@@ -1,7 +1,14 @@
 import io
 import logging
+import sys
 
-from core.logging_utils import NulCharacterFilter, NulSafeFormatter, is_nul_filter_active, setup_logging
+from core.logging_utils import (
+    NulCharacterFilter,
+    NulSafeFormatter,
+    NulSafeTextIO,
+    is_nul_filter_active,
+    setup_logging,
+)
 
 
 def _make_test_logger(name: str, stream: io.StringIO) -> logging.Logger:
@@ -150,3 +157,21 @@ def test_integration_emitted_log_contains_no_null_bytes() -> None:
         logger.handlers = original_handlers
         logger.setLevel(original_level)
         logger.propagate = original_propagate
+
+
+def test_setup_logging_wraps_stdout_and_stderr_with_nul_safe_stream(monkeypatch) -> None:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+
+    setup_logging(name="test.nul.streams")
+
+    assert isinstance(sys.stdout, NulSafeTextIO)
+    assert isinstance(sys.stderr, NulSafeTextIO)
+
+    sys.stdout.write("a\x00b")
+    sys.stderr.write("c\x00d")
+
+    assert stdout.getvalue() == "ab"
+    assert stderr.getvalue() == "cd"

@@ -552,8 +552,7 @@ class TestOrchestrateMatchEndpoint:
         """Test orchestrate match endpoint with existing resume in database."""
         from core.app_context import AppContext
         from fastapi.testclient import TestClient
-        from services.orchestrator.main import OrchestratorRegistry, app
-        from web.backend.dependencies import get_current_user
+        from services.orchestrator.main import OrchestratorRegistry, app, get_current_user
 
         mock_ctx = Mock()
         mock_registry = OrchestratorRegistry()
@@ -848,8 +847,7 @@ class TestRunResumeEtl:
         """Test orchestrate match endpoint when no resume exists in database."""
         from core.app_context import AppContext
         from fastapi.testclient import TestClient
-        from services.orchestrator.main import OrchestratorRegistry, app
-        from web.backend.dependencies import get_current_user
+        from services.orchestrator.main import OrchestratorRegistry, app, get_current_user
 
         mock_ctx = Mock()
         mock_registry = OrchestratorRegistry()
