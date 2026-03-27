@@ -11,10 +11,13 @@ import { pipelineApi } from '@/services/pipelineApi';
 vi.mock('@/services/pipelineApi', () => ({
     pipelineApi: {
         getActivePipeline: vi.fn(),
+        getResumeEligibility: vi.fn(),
+        preflightResume: vi.fn(),
+        selectResume: vi.fn(),
+        retryResume: vi.fn(),
         runMatching: vi.fn(),
         stopMatching: vi.fn(),
         uploadResume: vi.fn(),
-        checkResumeHash: vi.fn(),
         getResumeStatus: vi.fn(),
     },
 }));
@@ -61,6 +64,19 @@ describe('usePipeline', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(pipelineApi.getActivePipeline).mockResolvedValue({ data: null } as never);
+        vi.mocked(pipelineApi.getResumeEligibility).mockResolvedValue({
+            data: {
+                can_run: false,
+                status: 'missing',
+                message: 'No resume uploaded yet.',
+            },
+        } as never);
+        vi.mocked(pipelineApi.preflightResume).mockResolvedValue({
+            data: {
+                status: 'upload_required',
+                message: 'Upload required',
+            },
+        } as never);
     });
 
     describe('hook initialization', () => {
@@ -173,9 +189,13 @@ describe('usePipeline', () => {
         });
 
         it('calls runMatching when resume exists on backend', async () => {
-            const { getResumeHash } = await import('@/utils/indexedDB');
-            vi.mocked(getResumeHash).mockResolvedValue('abc123');
-            vi.mocked(pipelineApi.checkResumeHash).mockResolvedValue({ data: { exists: true } } as never);
+            vi.mocked(pipelineApi.getResumeEligibility).mockResolvedValue({
+                data: {
+                    can_run: true,
+                    status: 'ready',
+                    message: 'Resume ready',
+                },
+            } as never);
             vi.mocked(pipelineApi.runMatching).mockResolvedValue({ data: { task_id: 'new-task' } } as never);
 
             const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
@@ -197,9 +217,25 @@ describe('usePipeline', () => {
         it('uploads then runs matching when resume not on backend', async () => {
             const { getResumeHash, getResume } = await import('@/utils/indexedDB');
             vi.mocked(getResumeHash).mockResolvedValue('abc123');
-            vi.mocked(getResume).mockResolvedValue(new Blob(['data']));
-            vi.mocked(pipelineApi.checkResumeHash).mockResolvedValue({ data: { exists: false } } as never);
-            vi.mocked(pipelineApi.uploadResume).mockResolvedValue({ data: { message: 'ok' } } as never);
+            vi.mocked(getResume).mockResolvedValue(new File(['data'], 'resume.pdf', { type: 'application/pdf' }));
+            vi.mocked(pipelineApi.getResumeEligibility)
+                .mockResolvedValueOnce({
+                    data: {
+                        can_run: false,
+                        status: 'missing',
+                        message: 'Missing resume',
+                    },
+                } as never)
+                .mockResolvedValueOnce({
+                    data: {
+                        can_run: true,
+                        status: 'ready',
+                        message: 'Resume ready',
+                    },
+                } as never);
+            vi.mocked(pipelineApi.uploadResume).mockResolvedValue({
+                data: { message: 'ok', status: 'ready' },
+            } as never);
             vi.mocked(pipelineApi.runMatching).mockResolvedValue({ data: { task_id: 'new-task' } } as never);
 
             const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
@@ -230,9 +266,11 @@ describe('usePipeline', () => {
     describe('uploadResume', () => {
         it('calls API with file when hash not on backend', async () => {
             const mockFile = new File(['test'], 'resume.pdf', { type: 'application/pdf' });
-            vi.mocked(pipelineApi.checkResumeHash).mockResolvedValue({ data: { exists: false } } as never);
+            vi.mocked(pipelineApi.preflightResume).mockResolvedValue({
+                data: { status: 'upload_required', message: 'Upload required' },
+            } as never);
             vi.mocked(pipelineApi.uploadResume).mockResolvedValue({
-                data: { message: 'Resume uploaded successfully' },
+                data: { message: 'Resume uploaded successfully', status: 'ready' },
             } as never);
 
             const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
@@ -244,9 +282,14 @@ describe('usePipeline', () => {
             expect(pipelineApi.uploadResume).toHaveBeenCalledWith(mockFile, 'mock-hash-abc123');
         });
 
-        it('skips upload when hash already on backend', async () => {
+        it('selects existing ready resume when hash already on backend', async () => {
             const mockFile = new File(['test'], 'resume.pdf');
-            vi.mocked(pipelineApi.checkResumeHash).mockResolvedValue({ data: { exists: true } } as never);
+            vi.mocked(pipelineApi.preflightResume).mockResolvedValue({
+                data: { status: 'ready_already_known', message: 'Already ready' },
+            } as never);
+            vi.mocked(pipelineApi.selectResume).mockResolvedValue({
+                data: { message: 'Resume already ready', status: 'ready' },
+            } as never);
 
             const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
             let uploadResult: { alreadyExists: boolean; message: string } | undefined;
@@ -256,14 +299,14 @@ describe('usePipeline', () => {
             });
 
             expect(pipelineApi.uploadResume).not.toHaveBeenCalled();
+            expect(pipelineApi.selectResume).toHaveBeenCalledWith('mock-hash-abc123', 'resume.pdf');
             expect(uploadResult?.alreadyExists).toBe(true);
         });
 
-        it('sets pendingResumeTaskId when upload returns task_id', async () => {
+        it('sets pendingResumeTaskId when preflight reports existing processing', async () => {
             const mockFile = new File(['test'], 'resume.pdf');
-            vi.mocked(pipelineApi.checkResumeHash).mockResolvedValue({ data: { exists: false } } as never);
-            vi.mocked(pipelineApi.uploadResume).mockResolvedValue({
-                data: { message: 'Processing...', task_id: 'bg-task-1' },
+            vi.mocked(pipelineApi.preflightResume).mockResolvedValue({
+                data: { status: 'processing_existing', message: 'Processing...', task_id: 'bg-task-1' },
             } as never);
             vi.mocked(pipelineApi.getResumeStatus).mockResolvedValue({
                 data: { status: 'running' },
@@ -282,7 +325,9 @@ describe('usePipeline', () => {
         it('isUploading is true during upload', async () => {
             const mockFile = new File(['test'], 'resume.pdf');
             let resolveUpload!: (value: any) => void;
-            vi.mocked(pipelineApi.checkResumeHash).mockResolvedValue({ data: { exists: false } } as never);
+            vi.mocked(pipelineApi.preflightResume).mockResolvedValue({
+                data: { status: 'upload_required', message: 'Upload required' },
+            } as never);
             vi.mocked(pipelineApi.uploadResume).mockReturnValue(
                 new Promise(resolve => { resolveUpload = resolve; }) as any
             );
@@ -304,7 +349,9 @@ describe('usePipeline', () => {
 
         it('handles upload error', async () => {
             const mockFile = new File(['test'], 'resume.pdf');
-            vi.mocked(pipelineApi.checkResumeHash).mockResolvedValue({ data: { exists: false } } as never);
+            vi.mocked(pipelineApi.preflightResume).mockResolvedValue({
+                data: { status: 'upload_required', message: 'Upload required' },
+            } as never);
             vi.mocked(pipelineApi.uploadResume).mockRejectedValue(new Error('Network error'));
 
             const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
