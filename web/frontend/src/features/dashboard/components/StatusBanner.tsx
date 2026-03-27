@@ -13,14 +13,23 @@ export interface StatusBannerProps {
     stale_message?: string;
 }
 
-export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
-    const isPendingStatus = statusData.status === 'pending';
-    const isRunningStatus = statusData.status === 'running';
-    const isCancellationRequested = statusData.status === 'cancellation_requested';
-    const isPersistingStatus = statusData.status === 'persisting';
-    const isCompletedStatus = statusData.status === 'completed';
-    const isFailedStatus = statusData.status === 'failed';
-    const isCancelledStatus = statusData.status === 'cancelled';
+export const StatusBanner: React.FC<StatusBannerProps> = ({
+    status,
+    step,
+    matches_count,
+    saved_count,
+    execution_time,
+    error,
+    stale_due_to_newer_upload,
+    stale_message,
+}) => {
+    const isPendingStatus = status === 'pending';
+    const isRunningStatus = status === 'running';
+    const isCancellationRequested = status === 'cancellation_requested';
+    const isPersistingStatus = status === 'persisting';
+    const isCompletedStatus = status === 'completed';
+    const isFailedStatus = status === 'failed';
+    const isCancelledStatus = status === 'cancelled';
 
     const getStepLabel = (step?: string): string => {
         const labels: Record<string, string> = {
@@ -78,7 +87,7 @@ export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
                 <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
                         <Badge variant={badgeVariant}>
-                            {statusData.status?.toUpperCase()}
+                            {status?.toUpperCase()}
                         </Badge>
                         {isActiveStatus && (
                             <div className="flex items-center gap-2">
@@ -86,7 +95,7 @@ export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
                                     <div className="absolute inset-0 bg-blue-500 rounded-full animate-ping" />
                                     <div className="relative bg-blue-600 rounded-full w-2 h-2" />
                                 </div>
-                                <span className="text-sm font-bold text-blue-900">{getStepLabel(statusData.step)}</span>
+                                <span className="text-sm font-bold text-blue-900">{getStepLabel(step)}</span>
                             </div>
                         )}
                         {isCancellationRequested && <span className="text-sm font-bold text-orange-900">Stopping as soon as it is safe</span>}
@@ -100,13 +109,13 @@ export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
                         <div>
                             <p className="font-bold text-gray-900 mb-1">Pipeline completed!</p>
                             <div className="flex gap-4 text-sm text-gray-700">
-                                <span className="font-semibold">Found: {statusData.matches_count ?? 0}</span>
-                                <span className="font-semibold">Saved: {statusData.saved_count ?? 0}</span>
-                                <span className="font-semibold">Time: {formatTime(statusData.execution_time)}s</span>
+                                <span className="font-semibold">Found: {matches_count ?? 0}</span>
+                                <span className="font-semibold">Saved: {saved_count ?? 0}</span>
+                                <span className="font-semibold">Time: {formatTime(execution_time)}s</span>
                             </div>
-                            {statusData.stale_due_to_newer_upload && statusData.stale_message && (
+                            {stale_due_to_newer_upload && stale_message && (
                                 <p className="mt-3 text-sm text-amber-800 bg-amber-50 p-3 rounded-lg border border-amber-200">
-                                    {statusData.stale_message}
+                                    {stale_message}
                                 </p>
                             )}
                         </div>
@@ -114,8 +123,8 @@ export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
                     {isFailedStatus && (
                         <div>
                             <p className="font-bold text-red-700 mb-2">Pipeline failed</p>
-                            {statusData.error && (
-                                <p className="text-sm text-gray-700 bg-red-50 p-3 rounded-lg border border-red-200">{statusData.error}</p>
+                            {error && (
+                                <p className="text-sm text-gray-700 bg-red-50 p-3 rounded-lg border border-red-200">{error}</p>
                             )}
                         </div>
                     )}

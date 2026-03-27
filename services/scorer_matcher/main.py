@@ -239,10 +239,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                 _update_task_state,
             )
 
-            matches_count = result.matches_count if result else 0
             saved_count = result.saved_count if result else 0
-            notified_count = result.notified_count if result else 0
-            execution_time = result.execution_time if result else 0.0
             logger.info(
                 "✅ Matching job done: task_id=%s, matches=%d",
                 task_id, saved_count,
