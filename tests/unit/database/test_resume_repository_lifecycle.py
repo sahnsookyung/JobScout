@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 from database.models import RESUME_PROCESSING_READY
-from database.repositories.resume import ResumeRepository
+from database.repositories.resume import ResumeRepository, ResumeUploadCreateParams
 
 
 def _scalar_result(value):
@@ -40,11 +40,13 @@ def test_create_resume_upload_persists_row():
     repo = ResumeRepository(db)
 
     upload = repo.create_resume_upload(
-        owner_id=UUID("00000000-0000-0000-0000-000000000001"),
-        resume_hash="hash-1",
-        resume_fingerprint="fp-1",
-        original_filename="resume.pdf",
-        processing_task_id="task-1",
+        ResumeUploadCreateParams(
+            owner_id=UUID("00000000-0000-0000-0000-000000000001"),
+            resume_hash="hash-1",
+            resume_fingerprint="fp-1",
+            original_filename="resume.pdf",
+            processing_task_id="task-1",
+        )
     )
 
     assert str(upload.owner_id) == "00000000-0000-0000-0000-000000000001"

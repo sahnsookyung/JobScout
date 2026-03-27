@@ -23,6 +23,8 @@ PROCESSING_BLOCKING_STATUSES = {
     RESUME_PROCESSING_EMBEDDING,
 }
 
+RETRYABLE_UPLOAD_STATUSES = {RESUME_UPLOAD_PENDING, RESUME_UPLOAD_IN_PROGRESS}
+
 
 @dataclass(frozen=True)
 class ResumeEligibility:
@@ -65,13 +67,124 @@ def build_resume_fingerprint(owner_id: Any, resume_hash: str) -> str:
     return generate_resume_fingerprint(owner_id, resume_hash, RESUME_FINGERPRINT_VERSION)
 
 
+def _build_preflight(
+    *,
+    owner_id: Any,
+    status: str,
+    message: str,
+    retryable: bool,
+    can_skip_upload: bool,
+    resume_hash: str,
+    upload_id: Optional[str] = None,
+    processing_task_id: Optional[str] = None,
+    resume_fingerprint: Optional[str] = None,
+) -> ResumePreflight:
+    return ResumePreflight(
+        owner_id=owner_id,
+        status=status,
+        message=message,
+        retryable=retryable,
+        can_skip_upload=can_skip_upload,
+        resume_hash=resume_hash,
+        upload_id=upload_id,
+        processing_task_id=processing_task_id,
+        resume_fingerprint=resume_fingerprint,
+    )
+
+
+def _preflight_for_existing_upload(
+    owner_id: Any,
+    latest_same_upload: Any,
+    resume_hash: str,
+    resume_fingerprint: str,
+) -> Optional[ResumePreflight]:
+    task_id = latest_same_upload.processing_task_id
+    upload_id = str(latest_same_upload.id)
+    if latest_same_upload.status in RETRYABLE_UPLOAD_STATUSES:
+        return _build_preflight(
+            owner_id=owner_id,
+            status="processing_existing",
+            message="Resume is already being processed.",
+            retryable=True,
+            can_skip_upload=True,
+            resume_hash=resume_hash,
+            upload_id=upload_id,
+            processing_task_id=task_id,
+            resume_fingerprint=resume_fingerprint,
+        )
+
+    if latest_same_upload.status == RESUME_UPLOAD_FAILED_RETRYABLE:
+        return _build_preflight(
+            owner_id=owner_id,
+            status=RESUME_UPLOAD_FAILED_RETRYABLE,
+            message=latest_same_upload.user_safe_message or latest_same_upload.last_error or "Resume processing failed but can be retried.",
+            retryable=True,
+            can_skip_upload=True,
+            resume_hash=resume_hash,
+            upload_id=upload_id,
+            processing_task_id=task_id,
+            resume_fingerprint=resume_fingerprint,
+        )
+
+    if latest_same_upload.status == RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED:
+        return _build_preflight(
+            owner_id=owner_id,
+            status=RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED,
+            message=latest_same_upload.user_safe_message or latest_same_upload.last_error or "Resume processing failed and requires re-upload.",
+            retryable=False,
+            can_skip_upload=False,
+            resume_hash=resume_hash,
+            upload_id=upload_id,
+            processing_task_id=task_id,
+            resume_fingerprint=resume_fingerprint,
+        )
+
+    return None
+
+
+def _preflight_for_processing_state(
+    owner_id: Any,
+    state: Any,
+    resume_hash: str,
+    resume_fingerprint: str,
+) -> Optional[ResumePreflight]:
+    if state.processing_status in PROCESSING_BLOCKING_STATUSES:
+        return _build_preflight(
+            owner_id=owner_id,
+            status="processing_existing",
+            message=state.user_safe_message or f"Resume is still processing ({state.processing_status}).",
+            retryable=True,
+            can_skip_upload=True,
+            resume_hash=resume_hash,
+            resume_fingerprint=resume_fingerprint,
+        )
+
+    if state.processing_status == RESUME_PROCESSING_FAILED:
+        is_retryable = bool(state.retryable)
+        return _build_preflight(
+            owner_id=owner_id,
+            status=(
+                RESUME_UPLOAD_FAILED_RETRYABLE
+                if is_retryable
+                else RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED
+            ),
+            message=state.user_safe_message or state.last_error or "Previous processing attempt failed.",
+            retryable=is_retryable,
+            can_skip_upload=is_retryable,
+            resume_hash=resume_hash,
+            resume_fingerprint=resume_fingerprint,
+        )
+
+    return None
+
+
 def evaluate_resume_preflight(owner_id: Any, resume_hash: str) -> ResumePreflight:
     resume_fingerprint = build_resume_fingerprint(owner_id, resume_hash)
     with job_uow() as repo:
         latest_same_upload = repo.get_latest_resume_upload_for_hash(owner_id, resume_hash)
 
         if repo.is_resume_ready(resume_fingerprint):
-            return ResumePreflight(
+            return _build_preflight(
                 owner_id=owner_id,
                 status="ready_already_known",
                 message="Resume already processed and ready for matching.",
@@ -84,74 +197,27 @@ def evaluate_resume_preflight(owner_id: Any, resume_hash: str) -> ResumePrefligh
             )
 
         if latest_same_upload is not None:
-            task_id = latest_same_upload.processing_task_id
-            if latest_same_upload.status in {RESUME_UPLOAD_PENDING, RESUME_UPLOAD_IN_PROGRESS}:
-                return ResumePreflight(
-                    owner_id=owner_id,
-                    status="processing_existing",
-                    message="Resume is already being processed.",
-                    retryable=True,
-                    can_skip_upload=True,
-                    resume_hash=resume_hash,
-                    upload_id=str(latest_same_upload.id),
-                    processing_task_id=task_id,
-                    resume_fingerprint=resume_fingerprint,
-                )
-
-            if latest_same_upload.status == RESUME_UPLOAD_FAILED_RETRYABLE:
-                return ResumePreflight(
-                    owner_id=owner_id,
-                    status=RESUME_UPLOAD_FAILED_RETRYABLE,
-                    message=latest_same_upload.user_safe_message or latest_same_upload.last_error or "Resume processing failed but can be retried.",
-                    retryable=True,
-                    can_skip_upload=True,
-                    resume_hash=resume_hash,
-                    upload_id=str(latest_same_upload.id),
-                    processing_task_id=task_id,
-                    resume_fingerprint=resume_fingerprint,
-                )
-
-            if latest_same_upload.status == RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED:
-                return ResumePreflight(
-                    owner_id=owner_id,
-                    status=RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED,
-                    message=latest_same_upload.user_safe_message or latest_same_upload.last_error or "Resume processing failed and requires re-upload.",
-                    retryable=False,
-                    can_skip_upload=False,
-                    resume_hash=resume_hash,
-                    upload_id=str(latest_same_upload.id),
-                    processing_task_id=task_id,
-                    resume_fingerprint=resume_fingerprint,
-                )
+            upload_preflight = _preflight_for_existing_upload(
+                owner_id,
+                latest_same_upload,
+                resume_hash,
+                resume_fingerprint,
+            )
+            if upload_preflight is not None:
+                return upload_preflight
 
         state = repo.get_resume_processing_state(resume_fingerprint)
-        if state and state.processing_status in PROCESSING_BLOCKING_STATUSES:
-            return ResumePreflight(
-                owner_id=owner_id,
-                status="processing_existing",
-                message=state.user_safe_message or f"Resume is still processing ({state.processing_status}).",
-                retryable=True,
-                can_skip_upload=True,
-                resume_hash=resume_hash,
-                resume_fingerprint=resume_fingerprint,
+        if state:
+            state_preflight = _preflight_for_processing_state(
+                owner_id,
+                state,
+                resume_hash,
+                resume_fingerprint,
             )
+            if state_preflight is not None:
+                return state_preflight
 
-        if state and state.processing_status == RESUME_PROCESSING_FAILED:
-            return ResumePreflight(
-                owner_id=owner_id,
-                status=(
-                    RESUME_UPLOAD_FAILED_RETRYABLE
-                    if state.retryable
-                    else RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED
-                ),
-                message=state.user_safe_message or state.last_error or "Previous processing attempt failed.",
-                retryable=bool(state.retryable),
-                can_skip_upload=bool(state.retryable),
-                resume_hash=resume_hash,
-                resume_fingerprint=resume_fingerprint,
-            )
-
-    return ResumePreflight(
+    return _build_preflight(
         owner_id=owner_id,
         status="upload_required",
         message="Resume upload is required.",

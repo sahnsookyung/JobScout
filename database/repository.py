@@ -223,38 +223,9 @@ class JobRepository:
 
     def create_resume_upload(
         self,
-        *,
-        owner_id: Any,
-        resume_hash: str,
-        resume_fingerprint: str,
-        original_filename: Optional[str] = None,
-        status: str = "pending",
-        last_error: Optional[str] = None,
-        processing_task_id: Optional[str] = None,
-        retry_of_upload_id: Optional[Any] = None,
-        fingerprint_version: int = 1,
-        failure_stage: Optional[str] = None,
-        failure_class: Optional[str] = None,
-        retryable: Optional[bool] = None,
-        user_safe_message: Optional[str] = None,
-        failure_debug_context: Optional[dict] = None,
+        params: Any,
     ) -> Any:
-        return self.resume.create_resume_upload(
-            owner_id=owner_id,
-            resume_hash=resume_hash,
-            resume_fingerprint=resume_fingerprint,
-            original_filename=original_filename,
-            status=status,
-            last_error=last_error,
-            processing_task_id=processing_task_id,
-            retry_of_upload_id=retry_of_upload_id,
-            fingerprint_version=fingerprint_version,
-            failure_stage=failure_stage,
-            failure_class=failure_class,
-            retryable=retryable,
-            user_safe_message=user_safe_message,
-            failure_debug_context=failure_debug_context,
-        )
+        return self.resume.create_resume_upload(params)
 
     def get_resume_upload(self, upload_id: Any, owner_id: Optional[Any] = None) -> Any:
         return self.resume.get_resume_upload(upload_id, owner_id)

@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 from typing import List, Optional, Dict, Any, Tuple
 from sqlalchemy import select, delete
 
@@ -20,6 +21,24 @@ from core.utils import cosine_similarity_from_distance
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class ResumeUploadCreateParams:
+    owner_id: Any
+    resume_hash: str
+    resume_fingerprint: str
+    original_filename: Optional[str] = None
+    status: str = RESUME_UPLOAD_PENDING
+    last_error: Optional[str] = None
+    processing_task_id: Optional[str] = None
+    retry_of_upload_id: Optional[Any] = None
+    fingerprint_version: int = RESUME_FINGERPRINT_VERSION
+    failure_stage: Optional[str] = None
+    failure_class: Optional[str] = None
+    retryable: Optional[bool] = None
+    user_safe_message: Optional[str] = None
+    failure_debug_context: Optional[Dict[str, Any]] = None
+
+
 class ResumeRepository(BaseRepository):
     def get_resume_processing_state(
         self,
@@ -36,39 +55,22 @@ class ResumeRepository(BaseRepository):
         ).limit(1)
         return self.db.execute(stmt).scalar_one_or_none()
 
-    def create_resume_upload(
-        self,
-        *,
-        owner_id: Any,
-        resume_hash: str,
-        resume_fingerprint: str,
-        original_filename: Optional[str] = None,
-        status: str = RESUME_UPLOAD_PENDING,
-        last_error: Optional[str] = None,
-        processing_task_id: Optional[str] = None,
-        retry_of_upload_id: Optional[Any] = None,
-        fingerprint_version: int = RESUME_FINGERPRINT_VERSION,
-        failure_stage: Optional[str] = None,
-        failure_class: Optional[str] = None,
-        retryable: Optional[bool] = None,
-        user_safe_message: Optional[str] = None,
-        failure_debug_context: Optional[Dict[str, Any]] = None,
-    ) -> ResumeUpload:
+    def create_resume_upload(self, params: ResumeUploadCreateParams) -> ResumeUpload:
         upload = ResumeUpload(
-            owner_id=owner_id,
-            resume_hash=resume_hash,
-            fingerprint_version=fingerprint_version,
-            resume_fingerprint=resume_fingerprint,
-            original_filename=original_filename,
-            status=status,
-            last_error=last_error,
-            processing_task_id=processing_task_id,
-            retry_of_upload_id=retry_of_upload_id,
-            failure_stage=failure_stage,
-            failure_class=failure_class,
-            retryable=retryable,
-            user_safe_message=user_safe_message,
-            failure_debug_context=failure_debug_context,
+            owner_id=params.owner_id,
+            resume_hash=params.resume_hash,
+            fingerprint_version=params.fingerprint_version,
+            resume_fingerprint=params.resume_fingerprint,
+            original_filename=params.original_filename,
+            status=params.status,
+            last_error=params.last_error,
+            processing_task_id=params.processing_task_id,
+            retry_of_upload_id=params.retry_of_upload_id,
+            failure_stage=params.failure_stage,
+            failure_class=params.failure_class,
+            retryable=params.retryable,
+            user_safe_message=params.user_safe_message,
+            failure_debug_context=params.failure_debug_context,
         )
         self.db.add(upload)
         self.db.flush()

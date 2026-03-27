@@ -254,7 +254,7 @@ def run_matching_pipeline(
             if status_callback:
                 status_callback("notifying")
             notified_count = _send_notifications(
-                ctx, match_dtos, saved_count, resume_data, resume_fingerprint, stop_event,
+                ctx, match_dtos, saved_count, resume_fingerprint, stop_event,
             )
 
         execution_time = time.time() - pipeline_start_time
@@ -729,7 +729,6 @@ def _send_notifications(
     ctx: AppContext,
     scored_match_dtos: List[MatchResultDTO],
     saved_count: int,
-    resume_data: dict,
     resume_fingerprint: str,
     stop_event: threading.Event,
 ) -> int:

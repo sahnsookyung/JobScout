@@ -107,6 +107,82 @@ class MatcherConsumer(StreamConsumerWithCompletion):
         self.ctx = ctx
         self.stop_event = threading.Event()
 
+    @staticmethod
+    def _read_cancellation_status(
+        task_id: str,
+        step: str,
+        task_stop_event: threading.Event,
+    ) -> str:
+        try:
+            requested = is_task_cancellation_requested(task_id)
+        except Exception:
+            logger.warning("Failed to read cancellation state for %s", task_id)
+            return "running"
+
+        if not requested:
+            return "running"
+
+        task_stop_event.set()
+        return "persisting" if step == "saving_results" else "cancellation_requested"
+
+    @staticmethod
+    def _write_task_state(task_id: str, state: dict, *, warning_message: str) -> None:
+        try:
+            set_task_state(task_id, _serialize_task_state(state), ttl=3600)
+        except Exception:
+            logger.warning(warning_message, task_id, exc_info=True)
+
+    @staticmethod
+    def _terminal_task_state(
+        *,
+        final_status: str,
+        last_step: str,
+        owner_id: Optional[str],
+        upload_id: Optional[str],
+        resume_fingerprint: Optional[str],
+        result: Optional[object],
+    ) -> dict:
+        matches_count = result.matches_count if result else 0
+        saved_count = result.saved_count if result else 0
+        notified_count = result.notified_count if result else 0
+        execution_time = result.execution_time if result else 0.0
+        stale_metadata = _compute_stale_result_metadata(owner_id, upload_id)
+        return {
+            "status": final_status,
+            "step": last_step,
+            "task_type": "matching",
+            "owner_id": owner_id,
+            "upload_id": upload_id,
+            "resume_fingerprint": resume_fingerprint,
+            "result": {
+                "matches_count": matches_count,
+                "saved_count": saved_count,
+                "notified_count": notified_count,
+                "execution_time": execution_time,
+            },
+            "error": result.error if result and result.cancelled else None,
+            **stale_metadata,
+        }
+
+    @staticmethod
+    def _failed_task_state(
+        *,
+        last_step: str,
+        owner_id: Optional[str],
+        upload_id: Optional[str],
+        resume_fingerprint: Optional[str],
+        error: Exception,
+    ) -> dict:
+        return {
+            "status": "failed",
+            "step": last_step,
+            "task_type": "matching",
+            "owner_id": owner_id,
+            "upload_id": upload_id,
+            "resume_fingerprint": resume_fingerprint,
+            "error": str(error),
+        }
+
     async def _do_process(self, msg_id: str, msg: dict) -> tuple[bool, dict]:
         """Process a matching job.
 
@@ -137,40 +213,21 @@ class MatcherConsumer(StreamConsumerWithCompletion):
         last_step = "initializing"
         task_stop_event = threading.Event()
 
-        def _sync_cancellation(step: str) -> str:
-            try:
-                requested = is_task_cancellation_requested(task_id)
-            except Exception:
-                logger.warning("Failed to read cancellation state for %s", task_id)
-                return "running"
-
-            if not requested:
-                return "running"
-            task_stop_event.set()
-            if step == "saving_results":
-                return "persisting"
-            return "cancellation_requested"
-
         def _update_task_state(step: str) -> None:
             nonlocal last_step
             last_step = step
-            try:
-                set_task_state(
-                    task_id,
-                    _serialize_task_state(
-                        {
-                            "status": _sync_cancellation(step),
-                            "step": step,
-                            "task_type": "matching",
-                            "owner_id": owner_id,
-                            "upload_id": upload_id,
-                            "resume_fingerprint": resume_fingerprint,
-                        }
-                    ),
-                    ttl=3600,
-                )
-            except Exception:
-                logger.warning("Failed to write running task state for %s", task_id)
+            self._write_task_state(
+                task_id,
+                {
+                    "status": self._read_cancellation_status(task_id, step, task_stop_event),
+                    "step": step,
+                    "task_type": "matching",
+                    "owner_id": owner_id,
+                    "upload_id": upload_id,
+                    "resume_fingerprint": resume_fingerprint,
+                },
+                warning_message="Failed to write running task state for %s",
+            )
 
         try:
             _update_task_state(last_step)
@@ -191,31 +248,19 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                 task_id, saved_count,
             )
 
-            # Write task state so the web-backend can poll Redis directly (split mode)
-            try:
-                final_status = "cancelled" if result and result.cancelled else "completed"
-                stale_metadata = _compute_stale_result_metadata(owner_id, upload_id)
-                terminal_state = _serialize_task_state(
-                    {
-                        "status": final_status,
-                        "step": last_step,
-                        "task_type": "matching",
-                        "owner_id": owner_id,
-                        "upload_id": upload_id,
-                        "resume_fingerprint": resume_fingerprint,
-                        "result": {
-                            "matches_count": matches_count,
-                            "saved_count": saved_count,
-                            "notified_count": notified_count,
-                            "execution_time": execution_time,
-                        },
-                        "error": result.error if result and result.cancelled else None,
-                        **stale_metadata,
-                    }
-                )
-                set_task_state(task_id, terminal_state, ttl=3600)
-            except Exception:
-                logger.warning("Failed to write completed task state for %s", task_id, exc_info=True)
+            final_status = "cancelled" if result and result.cancelled else "completed"
+            self._write_task_state(
+                task_id,
+                self._terminal_task_state(
+                    final_status=final_status,
+                    last_step=last_step,
+                    owner_id=owner_id,
+                    upload_id=upload_id,
+                    resume_fingerprint=resume_fingerprint,
+                    result=result,
+                ),
+                warning_message="Failed to write completed task state for %s",
+            )
 
             clear_task_cancellation_requested(task_id)
             return (not result.cancelled if result else True), {
@@ -228,24 +273,17 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                 "❌ Matching failed: task_id=%s, error=%s: %s",
                 task_id, type(e).__name__, e, exc_info=True,
             )
-            try:
-                set_task_state(
-                    task_id,
-                    _serialize_task_state(
-                        {
-                            "status": "failed",
-                            "step": last_step,
-                            "task_type": "matching",
-                            "owner_id": owner_id,
-                            "upload_id": upload_id,
-                            "resume_fingerprint": resume_fingerprint,
-                            "error": str(e),
-                        }
-                    ),
-                    ttl=3600,
-                )
-            except Exception:
-                logger.warning("Failed to write failed task state for %s", task_id)
+            self._write_task_state(
+                task_id,
+                self._failed_task_state(
+                    last_step=last_step,
+                    owner_id=owner_id,
+                    upload_id=upload_id,
+                    resume_fingerprint=resume_fingerprint,
+                    error=e,
+                ),
+                warning_message="Failed to write failed task state for %s",
+            )
             clear_task_cancellation_requested(task_id)
             return False, {"status": "failed", "error": str(e)}
 

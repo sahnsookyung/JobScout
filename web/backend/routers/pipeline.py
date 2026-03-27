@@ -5,6 +5,7 @@ Pipeline endpoints - trigger and monitor matching pipeline.
 
 # Constants
 TASK_NOT_FOUND_DETAIL = "Task not found"
+TASK_NOT_FOUND_OR_EXPIRED_DETAIL = "Task not found or expired"
 ACTIVE_TASK_ID_KEY_PREFIX = "pipeline:active_task_id"
 LATEST_UPLOAD_TASK_ID_KEY_PREFIX = "resume:upload:latest_task_id"
 STOP_PIPELINE_ERROR = "Failed to stop pipeline"
@@ -44,6 +45,7 @@ from core.redis_streams import (
     STREAM_MATCHING,
 )
 from database.uow import job_uow
+from database.repositories.resume import ResumeUploadCreateParams
 from ..dependencies import get_current_user
 from ..models.responses import (
     PipelineTaskResponse,
@@ -249,14 +251,14 @@ def _get_owned_resume_task_state(task_id: str, owner_id) -> dict:
     """Load resume-upload task state and enforce owner visibility."""
     state = get_task_state(task_id)
     if state is None:
-        raise HTTPException(status_code=404, detail="Task not found or expired")
+        raise HTTPException(status_code=404, detail=TASK_NOT_FOUND_OR_EXPIRED_DETAIL)
 
     task_type = state.get("task_type")
     if task_type not in (None, "resume_upload"):
-        raise HTTPException(status_code=404, detail="Task not found or expired")
+        raise HTTPException(status_code=404, detail=TASK_NOT_FOUND_OR_EXPIRED_DETAIL)
 
     if not _resume_task_belongs_to_owner(state, owner_id):
-        raise HTTPException(status_code=404, detail="Task not found or expired")
+        raise HTTPException(status_code=404, detail=TASK_NOT_FOUND_OR_EXPIRED_DETAIL)
 
     return state
 
@@ -663,7 +665,11 @@ def resume_preflight(
     return _build_resume_preflight_response(resolve_owner_id(user), body.resume_hash)
 
 
-@router.post("/select-resume", response_model=ResumeUploadResponse)
+@router.post(
+    "/select-resume",
+    response_model=ResumeUploadResponse,
+    responses={409: {"description": "Resume is not ready to select yet."}},
+)
 def select_ready_resume(
     body: ResumeSelectRequest,
     user: Annotated[None, Depends(get_current_user)] = None,
@@ -679,12 +685,14 @@ def select_ready_resume(
             raise HTTPException(status_code=409, detail="Resume is not ready to select yet.")
 
         upload = repo.create_resume_upload(
-            owner_id=owner_id,
-            resume_hash=body.resume_hash,
-            resume_fingerprint=resume_fingerprint,
-            original_filename=body.original_filename,
-            status=RESUME_UPLOAD_READY,
-            user_safe_message="Resume selected and ready for matching.",
+            ResumeUploadCreateParams(
+                owner_id=owner_id,
+                resume_hash=body.resume_hash,
+                resume_fingerprint=resume_fingerprint,
+                original_filename=body.original_filename,
+                status=RESUME_UPLOAD_READY,
+                user_safe_message="Resume selected and ready for matching.",
+            )
         )
         upload_id = str(upload.id)
 
@@ -699,7 +707,14 @@ def select_ready_resume(
     )
 
 
-@router.post("/retry-resume", response_model=ResumeUploadResponse)
+@router.post(
+    "/retry-resume",
+    response_model=ResumeUploadResponse,
+    responses={
+        404: {"description": "Resume upload not found."},
+        409: {"description": "Resume upload cannot be retried in its current state."},
+    },
+)
 async def retry_resume(
     body: ResumeRetryRequest,
     user: Annotated[None, Depends(get_current_user)] = None,
@@ -725,14 +740,16 @@ async def retry_resume(
         source_resume_fingerprint = source_upload.resume_fingerprint
         task_id = str(_uuid.uuid4())
         retry_upload = repo.create_resume_upload(
-            owner_id=owner_id,
-            resume_hash=source_resume_hash,
-            resume_fingerprint=source_resume_fingerprint,
-            original_filename=source_upload.original_filename,
-            status=RESUME_UPLOAD_PENDING,
-            processing_task_id=task_id,
-            retry_of_upload_id=source_upload.id,
-            retryable=True,
+            ResumeUploadCreateParams(
+                owner_id=owner_id,
+                resume_hash=source_resume_hash,
+                resume_fingerprint=source_resume_fingerprint,
+                original_filename=source_upload.original_filename,
+                status=RESUME_UPLOAD_PENDING,
+                processing_task_id=task_id,
+                retry_of_upload_id=source_upload.id,
+                retryable=True,
+            )
         )
         retry_upload_id = str(retry_upload.id)
         repo.update_resume_upload(
@@ -1028,13 +1045,15 @@ async def upload_resume_endpoint(
         latest_same_upload = repo.get_latest_resume_upload_for_hash(owner_id, resume_hash)
         if repo.is_resume_ready(resume_fingerprint):
             upload = repo.create_resume_upload(
-                owner_id=owner_id,
-                resume_hash=resume_hash,
-                resume_fingerprint=resume_fingerprint,
-                original_filename=file.filename,
-                processing_task_id=None,
-                status=RESUME_UPLOAD_READY,
-                user_safe_message="Resume already processed and ready for matching.",
+                ResumeUploadCreateParams(
+                    owner_id=owner_id,
+                    resume_hash=resume_hash,
+                    resume_fingerprint=resume_fingerprint,
+                    original_filename=file.filename,
+                    processing_task_id=None,
+                    status=RESUME_UPLOAD_READY,
+                    user_safe_message="Resume already processed and ready for matching.",
+                )
             )
             return ResumeUploadResponse(
                 success=True,
@@ -1064,12 +1083,14 @@ async def upload_resume_endpoint(
         import uuid as _uuid
         task_id = str(_uuid.uuid4())
         upload = repo.create_resume_upload(
-            owner_id=owner_id,
-            resume_hash=resume_hash,
-            resume_fingerprint=resume_fingerprint,
-            original_filename=file.filename,
-            status=RESUME_UPLOAD_PENDING,
-            processing_task_id=task_id,
+            ResumeUploadCreateParams(
+                owner_id=owner_id,
+                resume_hash=resume_hash,
+                resume_fingerprint=resume_fingerprint,
+                original_filename=file.filename,
+                status=RESUME_UPLOAD_PENDING,
+                processing_task_id=task_id,
+            )
         )
         repo.update_resume_upload(
             upload.id,
@@ -1330,9 +1351,8 @@ def _wait_for_resume_etl_final_state(task_id: str, time_module) -> dict:
 
     while time_module.time() < deadline:
         state = get_task_state(task_id)
-        if state:
-            if state.get("status") in ("completed", "failed"):
-                return state
+        if state and state.get("status") in ("completed", "failed"):
+            return state
         time_module.sleep(1)
 
     raise RuntimeError(

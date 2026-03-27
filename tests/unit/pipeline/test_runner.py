@@ -852,7 +852,7 @@ class TestSendNotifications:
         ctx = Mock()
         ctx.config.notifications = Mock(enabled=False)
 
-        assert _send_notifications(ctx, [], 0, {}, "fp-1", threading.Event()) == 0
+        assert _send_notifications(ctx, [], 0, "fp-1", threading.Event()) == 0
         assert "Skipped (disabled in config)" in caplog.text
 
     def test_no_saved_matches_returns_zero(self, caplog):
@@ -860,31 +860,31 @@ class TestSendNotifications:
         ctx = Mock()
         ctx.config.notifications = Mock(enabled=True)
 
-        assert _send_notifications(ctx, [], 0, {}, "fp-1", threading.Event()) == 0
+        assert _send_notifications(ctx, [], 0, "fp-1", threading.Event()) == 0
         assert "Skipped (no matches to notify)" in caplog.text
 
     def test_no_enabled_channels_returns_zero(self, caplog):
         ctx = self._ctx(channels={"email": Mock(enabled=False)})
 
-        assert _send_notifications(ctx, [self._dto()], 1, {}, "fp-1", threading.Event()) == 0
+        assert _send_notifications(ctx, [self._dto()], 1, "fp-1", threading.Event()) == 0
         assert "No notification channels configured" in caplog.text
 
     def test_stop_event_breaks_loop(self):
         stop = threading.Event()
         stop.set()
 
-        assert _send_notifications(self._ctx(), [self._dto()], 1, {}, "fp-1", stop) == 0
+        assert _send_notifications(self._ctx(), [self._dto()], 1, "fp-1", stop) == 0
 
     def test_below_threshold_match_is_skipped(self):
         ctx = self._ctx(min_score_threshold=90.0)
 
-        assert _send_notifications(ctx, [self._dto(score=60.0)], 1, {}, "fp-1", threading.Event()) == 0
+        assert _send_notifications(ctx, [self._dto(score=60.0)], 1, "fp-1", threading.Event()) == 0
 
     @patch('pipeline.runner.job_uow')
     def test_no_match_record_logs_warning(self, mock_uow, caplog):
         self._setup_uow(mock_uow, record=None)
 
-        result = _send_notifications(self._ctx(), [self._dto()], 1, {}, "fp-1", threading.Event())
+        result = _send_notifications(self._ctx(), [self._dto()], 1, "fp-1", threading.Event())
 
         assert result == 0
         assert "No match record found" in caplog.text
@@ -893,7 +893,7 @@ class TestSendNotifications:
     def test_already_notified_skips(self, mock_uow):
         self._setup_uow(mock_uow, record=Mock(id="m-1", notified=True))
 
-        assert _send_notifications(self._ctx(), [self._dto()], 1, {}, "fp-1", threading.Event()) == 0
+        assert _send_notifications(self._ctx(), [self._dto()], 1, "fp-1", threading.Event()) == 0
 
     @patch('pipeline.runner.NotificationMessageBuilder')
     @patch('pipeline.runner.job_uow')
@@ -906,7 +906,7 @@ class TestSendNotifications:
         ctx = self._ctx()
         dto = self._dto()
 
-        result = _send_notifications(ctx, [dto], 1, {}, "fp-1", threading.Event())
+        result = _send_notifications(ctx, [dto], 1, "fp-1", threading.Event())
 
         assert result == 1
         ctx.notification_service.notify_new_match.assert_called_once_with(
@@ -926,7 +926,7 @@ class TestSendNotifications:
         self._setup_uow(mock_uow, record=mock_record)
         mock_builder.build_notification_content.return_value = "content"
 
-        _send_notifications(self._ctx(), [self._dto()], 1, {}, "fp-1", threading.Event())
+        _send_notifications(self._ctx(), [self._dto()], 1, "fp-1", threading.Event())
 
         # One UOW per match (not two — the old bug opened a second one)
         assert mock_uow.call_count == 1
@@ -950,7 +950,7 @@ class TestSendNotifications:
         dto2.job.id = "job-2"
 
         # Both DTOs should be attempted; failures are caught per-iteration
-        result = _send_notifications(ctx, [dto1, dto2], 2, {}, "fp-1", threading.Event())
+        result = _send_notifications(ctx, [dto1, dto2], 2, "fp-1", threading.Event())
 
         assert result == 0  # none succeeded
 
@@ -960,7 +960,7 @@ class TestSendNotifications:
         mock_record = Mock(id="m-1", notified=False, job_post=None)
         self._setup_uow(mock_uow, record=mock_record)
 
-        result = _send_notifications(self._ctx(), [self._dto()], 1, {}, "fp-1", threading.Event())
+        result = _send_notifications(self._ctx(), [self._dto()], 1, "fp-1", threading.Event())
 
         assert result == 0
         mock_builder.build_notification_content.assert_not_called()
@@ -975,7 +975,7 @@ class TestSendNotifications:
 
         ctx = self._ctx(notify_on_batch_complete=True)
 
-        _send_notifications(ctx, [self._dto()], 1, {}, "fp-1", threading.Event())
+        _send_notifications(ctx, [self._dto()], 1, "fp-1", threading.Event())
 
         ctx.notification_service.notify_batch_complete.assert_called_once_with(
             user_id="u-1",
@@ -995,7 +995,7 @@ class TestSendNotifications:
         ctx = self._ctx(notify_on_batch_complete=True)
         ctx.notification_service.notify_batch_complete.side_effect = Exception("batch failed")
 
-        result = _send_notifications(ctx, [self._dto()], 1, {}, "fp-1", threading.Event())
+        result = _send_notifications(ctx, [self._dto()], 1, "fp-1", threading.Event())
 
         assert result == 1  # individual notification still succeeded
         assert "Failed to send batch summary" in caplog.text
@@ -1005,34 +1005,25 @@ class TestSendNotifications:
         """An exception inside the UOW context is caught per-DTO."""
         mock_uow.return_value.__enter__.side_effect = Exception("DB down")
 
-        result = _send_notifications(
-            self._ctx(), [self._dto()], 1, {}, "fp-1", threading.Event()
-        )
+        result = _send_notifications(self._ctx(), [self._dto()], 1, "fp-1", threading.Event())
 
         assert result == 0
         # The per-iteration except block swallows it — pipeline does not crash
         assert "Failed to process notification" in caplog.text
 
-    def test_user_id_falls_back_to_resume_email(self):
+    def test_missing_user_id_skips_notifications(self):
         ctx = self._ctx(user_id=None)
-        resume_data = {"email": "user@example.com"}
 
-        # No channel enabled — just verify it reaches the channel check without error
-        ctx.config.notifications.channels = {"email": Mock(enabled=False)}
+        result = _send_notifications(ctx, [self._dto()], 1, "fp-1", threading.Event())
 
-        result = _send_notifications(
-            ctx, [self._dto()], 1, resume_data, "fp-1", threading.Event()
-        )
+        assert result == 0
+        ctx.notification_service.notify_new_match.assert_not_called()
 
-        assert result == 0  # no channels, but no crash either
-
-    def test_user_id_falls_back_to_default_user(self):
+    def test_missing_user_id_without_channels_still_returns_zero(self):
         ctx = self._ctx(user_id=None)
         ctx.config.notifications.channels = {"email": Mock(enabled=False)}
 
-        result = _send_notifications(
-            ctx, [self._dto()], 1, {}, "fp-1", threading.Event()
-        )
+        result = _send_notifications(ctx, [self._dto()], 1, "fp-1", threading.Event())
 
         assert result == 0
 
@@ -1042,7 +1033,7 @@ class TestSendNotifications:
         ctx = Mock()
         ctx.config.notifications = None
 
-        result = _send_notifications(ctx, [], 1, {}, "fp-1", threading.Event())
+        result = _send_notifications(ctx, [], 1, "fp-1", threading.Event())
 
         assert result == 0
         assert "Skipped (disabled in config)" in caplog.text
@@ -1055,7 +1046,7 @@ class TestSendNotifications:
         mock_record.job_post = Mock(company_url_direct="https://apply.example.com")
         self._setup_uow(mock_uow, record=mock_record)
 
-        result = _send_notifications(ctx, [self._dto()], 1, {}, "fp-1", threading.Event())
+        result = _send_notifications(ctx, [self._dto()], 1, "fp-1", threading.Event())
 
         assert result == 0
         ctx.notification_service.notify_new_match.assert_not_called()

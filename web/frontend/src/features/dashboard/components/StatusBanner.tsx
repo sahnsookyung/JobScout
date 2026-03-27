@@ -5,15 +5,11 @@ import { Badge } from '@/components/ui/Badge';
 export interface StatusBannerProps {
     status: string;
     step?: string;
-    upload_id?: string;
-    resume_fingerprint?: string;
     matches_count?: number;
     saved_count?: number;
     execution_time?: number;
     error?: string;
     stale_due_to_newer_upload?: boolean;
-    latest_upload_id?: string;
-    latest_resume_fingerprint?: string;
     stale_message?: string;
 }
 

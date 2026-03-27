@@ -132,16 +132,20 @@ def _seed_user(SessionLocal):
 
 
 def _seed_ready_resume(SessionLocal, *, resume_hash: str, resume_fingerprint: str, original_filename: str = "resume.json") -> str:
+    from database.repositories.resume import ResumeUploadCreateParams
+
     session = SessionLocal()
     try:
         repo = JobRepository(session)
         upload = repo.create_resume_upload(
-            owner_id=OWNER_ID,
-            resume_hash=resume_hash,
-            resume_fingerprint=resume_fingerprint,
-            original_filename=original_filename,
-            status=RESUME_UPLOAD_READY,
-            user_safe_message="Resume ready for matching.",
+            ResumeUploadCreateParams(
+                owner_id=OWNER_ID,
+                resume_hash=resume_hash,
+                resume_fingerprint=resume_fingerprint,
+                original_filename=original_filename,
+                status=RESUME_UPLOAD_READY,
+                user_safe_message="Resume ready for matching.",
+            )
         )
         repo.save_structured_resume(
             resume_fingerprint,
@@ -196,18 +200,22 @@ def _seed_ready_resume(SessionLocal, *, resume_hash: str, resume_fingerprint: st
 
 
 def _seed_processing_upload(SessionLocal, *, resume_hash: str, resume_fingerprint: str, task_id: str) -> str:
+    from database.repositories.resume import ResumeUploadCreateParams
+
     session = SessionLocal()
     try:
         repo = JobRepository(session)
         upload = repo.create_resume_upload(
-            owner_id=OWNER_ID,
-            resume_hash=resume_hash,
-            resume_fingerprint=resume_fingerprint,
-            original_filename="resume-new.json",
-            status=RESUME_UPLOAD_IN_PROGRESS,
-            processing_task_id=task_id,
-            retryable=True,
-            user_safe_message="Latest uploaded resume is still processing (embedding).",
+            ResumeUploadCreateParams(
+                owner_id=OWNER_ID,
+                resume_hash=resume_hash,
+                resume_fingerprint=resume_fingerprint,
+                original_filename="resume-new.json",
+                status=RESUME_UPLOAD_IN_PROGRESS,
+                processing_task_id=task_id,
+                retryable=True,
+                user_safe_message="Latest uploaded resume is still processing (embedding).",
+            )
         )
         repo.set_resume_processing_state(
             resume_fingerprint,

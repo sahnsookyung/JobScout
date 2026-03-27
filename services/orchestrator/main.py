@@ -18,7 +18,7 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Optional, Tuple, Dict, Any, List
+from typing import Annotated, Optional, Tuple, Dict, Any, List
 
 import redis.asyncio as redis_async
 from fastapi import FastAPI, HTTPException, Request, Depends
@@ -1569,7 +1569,7 @@ async def get_task_status(task_id: str, request: Request):
 @app.post("/orchestrate/match", response_model=MatchResponse)
 async def orchestrate_match_endpoint(
     request: Request,
-    user: Any = Depends(get_current_user),
+    user: Annotated[Any, Depends(get_current_user)],
 ):
     """Trigger the full pipeline: extraction -> embeddings -> matching.
 
