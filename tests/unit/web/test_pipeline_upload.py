@@ -58,6 +58,10 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         repo.resume.resume_hash_exists.return_value = resume_exists
         repo.is_resume_ready.return_value = resume_exists
         repo.get_resume_processing_state.return_value = None
+        repo.get_latest_resume_upload_for_hash.return_value = None
+        repo.create_resume_upload.return_value = SimpleNamespace(
+            id=UUID("00000000-0000-0000-0000-0000000000aa")
+        )
         
         if process_result:
             ctx.job_etl_service.extract_and_embed_resume.return_value = process_result
@@ -178,6 +182,10 @@ class TestResumeUploadEndpoint(unittest.TestCase):
                     mock_repo.resume.resume_hash_exists.return_value = False
                     mock_repo.is_resume_ready.return_value = False
                     mock_repo.get_resume_processing_state.return_value = None
+                    mock_repo.get_latest_resume_upload_for_hash.return_value = None
+                    mock_repo.create_resume_upload.return_value = SimpleNamespace(
+                        id=UUID("00000000-0000-0000-0000-0000000000ab")
+                    )
                     mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                     mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -237,6 +245,10 @@ class TestResumeUploadEndpoint(unittest.TestCase):
                         mock_repo.resume.resume_hash_exists.return_value = False
                         mock_repo.is_resume_ready.return_value = False
                         mock_repo.get_resume_processing_state.return_value = None
+                        mock_repo.get_latest_resume_upload_for_hash.return_value = None
+                        mock_repo.create_resume_upload.return_value = SimpleNamespace(
+                            id=UUID("00000000-0000-0000-0000-0000000000ac")
+                        )
                         mock_etl_service.extract_and_embed_resume.return_value = (True, test_fingerprint, sample_resume)
                         mock_context.build.return_value = mock_ctx
 
@@ -369,6 +381,10 @@ class TestResumeUploadSecurity(unittest.TestCase):
                     mock_repo.resume.resume_hash_exists.return_value = False
                     mock_repo.is_resume_ready.return_value = False
                     mock_repo.get_resume_processing_state.return_value = None
+                    mock_repo.get_latest_resume_upload_for_hash.return_value = None
+                    mock_repo.create_resume_upload.return_value = SimpleNamespace(
+                        id=UUID("00000000-0000-0000-0000-0000000000b1")
+                    )
                     mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                     mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -409,6 +425,10 @@ class TestResumeUploadSecurity(unittest.TestCase):
                         mock_repo.resume.resume_hash_exists.return_value = False
                         mock_repo.is_resume_ready.return_value = False
                         mock_repo.get_resume_processing_state.return_value = None
+                        mock_repo.get_latest_resume_upload_for_hash.return_value = None
+                        mock_repo.create_resume_upload.return_value = SimpleNamespace(
+                            id=UUID("00000000-0000-0000-0000-0000000000ae")
+                        )
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -475,6 +495,10 @@ class TestResumeUploadDeduplication(unittest.TestCase):
                         mock_repo.resume.resume_hash_exists.return_value = True
                         mock_repo.is_resume_ready.return_value = True
                         mock_repo.get_resume_processing_state.return_value = None
+                        mock_repo.get_latest_resume_upload_for_hash.return_value = None
+                        mock_repo.create_resume_upload.return_value = SimpleNamespace(
+                            id=UUID("00000000-0000-0000-0000-0000000000ad")
+                        )
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -516,6 +540,10 @@ class TestResumeUploadDeduplication(unittest.TestCase):
                         mock_repo.resume.resume_hash_exists.return_value = False
                         mock_repo.is_resume_ready.return_value = False
                         mock_repo.get_resume_processing_state.return_value = None
+                        mock_repo.get_latest_resume_upload_for_hash.return_value = None
+                        mock_repo.create_resume_upload.return_value = SimpleNamespace(
+                            id=UUID("00000000-0000-0000-0000-0000000000af")
+                        )
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -562,6 +590,10 @@ class TestResumeUploadDeduplication(unittest.TestCase):
                         mock_repo.resume.resume_hash_exists.return_value = False
                         mock_repo.is_resume_ready.return_value = False
                         mock_repo.get_resume_processing_state.return_value = None
+                        mock_repo.get_latest_resume_upload_for_hash.return_value = None
+                        mock_repo.create_resume_upload.return_value = SimpleNamespace(
+                            id=UUID("00000000-0000-0000-0000-0000000000b0")
+                        )
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 

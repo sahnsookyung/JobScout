@@ -477,8 +477,10 @@ def _classify_failed_resume_upload(repo, resume_fingerprint: str) -> tuple[str, 
 
 def _resume_upload_timed_out(upload) -> bool:
     created_at = getattr(upload, "created_at", None)
-    if created_at is None:
+    if not isinstance(created_at, datetime):
         return False
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
     return (
         datetime.now(timezone.utc) - created_at
     ) >= timedelta(seconds=STALE_RESUME_UPLOAD_TIMEOUT_SECONDS)
@@ -520,8 +522,10 @@ def _mark_resume_upload_failed_from_stale_task(repo, upload, task_id: str) -> No
 
 def _reconcile_resume_upload_task(repo, upload):
     task_id = getattr(upload, "processing_task_id", None)
-    if not task_id:
+    if not isinstance(task_id, str) or not task_id:
         return upload
+
+    upload_status = getattr(upload, "status", None)
 
     try:
         state = get_task_state(task_id)
@@ -539,7 +543,7 @@ def _reconcile_resume_upload_task(repo, upload):
         return upload
 
     task_status = state.get("status")
-    if task_status == "completed" and upload.status != RESUME_UPLOAD_READY:
+    if task_status == "completed" and upload_status != RESUME_UPLOAD_READY:
         repo.update_resume_upload(
             upload.id,
             status=RESUME_UPLOAD_READY,
@@ -550,7 +554,7 @@ def _reconcile_resume_upload_task(repo, upload):
         )
         return repo.get_resume_upload(upload.id)
 
-    if task_status == "failed" and upload.status not in {
+    if task_status == "failed" and upload_status not in {
         RESUME_UPLOAD_FAILED_RETRYABLE,
         RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED,
     }:
@@ -558,7 +562,7 @@ def _reconcile_resume_upload_task(repo, upload):
         return repo.get_resume_upload(upload.id)
 
     if (
-        upload.status in {RESUME_UPLOAD_PENDING, RESUME_UPLOAD_IN_PROGRESS}
+        upload_status in {RESUME_UPLOAD_PENDING, RESUME_UPLOAD_IN_PROGRESS}
         and task_status in {"pending", "processing", "running"}
         and _resume_upload_timed_out(upload)
     ):
