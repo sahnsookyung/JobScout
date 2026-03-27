@@ -1,84 +1,98 @@
 import uuid
 
-from sqlalchemy import Column, Text, Boolean, Integer, TIMESTAMP, ForeignKey, func, Enum, BigInteger, Index
+from sqlalchemy import Column, Text, Boolean, TIMESTAMP, ForeignKey, Enum, BigInteger, Index
 from sqlalchemy.sql import text as sql_text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from .base import Base
 
+UTC_NOW = sql_text("timezone('UTC', now())")
+
+CASCADE_DELETE_ORPHAN = "all, delete-orphan"
+
+
 class User(Base):
-    """
-    User account with authentication and audit fields.
-    """
+    """Canonical app user/profile record."""
+
     __tablename__ = 'users'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(Text, nullable=False, unique=True)
-    password_hash = Column(Text, nullable=False)
     display_name = Column(Text)
-    
-    # Verification / status
     email_verified_at = Column(TIMESTAMP(timezone=True))
     is_active = Column(Boolean, nullable=False, default=True)
-    
-    # Brute force protection
-    failed_login_attempts = Column(Integer, nullable=False, default=0)
-    locked_until = Column(TIMESTAMP(timezone=True))
-    
-    # Audit
-    last_login_at = Column(TIMESTAMP(timezone=True))
-    last_login_ip = Column(Text)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
-    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"), onupdate=func.now())
-    deleted_at = Column(TIMESTAMP(timezone=True))
-    
-    # Relationships
-    files = relationship("UserFile", back_populates="owner", cascade="all, delete-orphan")
-    
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
+
+    files = relationship("UserFile", back_populates="owner", cascade=CASCADE_DELETE_ORPHAN)
+    auth_identities = relationship(
+        "UserAuthIdentity",
+        back_populates="user",
+        cascade=CASCADE_DELETE_ORPHAN,
+    )
+
     __table_args__ = (
         Index('idx_users_email', 'email'),
-        Index('idx_users_deleted_at', 'deleted_at', postgresql_where=deleted_at.is_(None)),
+    )
+
+
+class UserAuthIdentity(Base):
+    """External or local auth identity linked to a user profile."""
+
+    __tablename__ = 'user_auth_identity'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    provider = Column(
+        Enum('google', 'password', name='auth_provider', create_type=False),
+        nullable=False,
+    )
+    provider_subject = Column(Text, nullable=False)
+    email = Column(Text)
+    email_normalized = Column(Text)
+    email_verified = Column(Boolean, nullable=False, default=False)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
+
+    user = relationship("User", back_populates="auth_identities")
+
+    __table_args__ = (
+        Index('idx_user_auth_identity_email', 'email_normalized'),
+        Index('idx_user_auth_identity_user_provider', 'user_id', 'provider'),
+        Index(
+            'idx_user_auth_identity_provider_subject',
+            'provider',
+            'provider_subject',
+            unique=True,
+        ),
     )
 
 
 class UserFile(Base):
-    """
-    Uploaded file metadata with server-generated storage keys.
-    """
+    """Uploaded file metadata with server-generated storage keys."""
+
     __tablename__ = 'user_files'
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     owner_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    
-    # Display only - never used in paths
     original_filename = Column(Text, nullable=False)
-    
-    # Server-validated mime type
     mime_type = Column(Text, nullable=False)
     size_bytes = Column(BigInteger, nullable=False)
-    
-    # Server-generated storage key: {file_type}/{uuid}
     storage_key = Column(Text, nullable=False, unique=True)
-    
-    # Upload status
+
     upload_status = Column(
         Enum('pending', 'scanned', 'rejected', 'ready', name='upload_status', create_type=False),
         nullable=False,
-        default='pending'
+        default='pending',
+        server_default=sql_text("'pending'::upload_status"),
     )
-    
-    # File type
     file_type = Column(
         Enum('resume', name='file_type', create_type=False),
-        nullable=False
+        nullable=False,
     )
-    
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
-    
-    # Relationships
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
+
     owner = relationship("User", back_populates="files")
-    
+
     __table_args__ = (
         Index('idx_user_files_owner_type', 'owner_id', 'file_type'),
         Index('idx_user_files_storage_key', 'storage_key'),

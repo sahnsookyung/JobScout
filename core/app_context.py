@@ -1,11 +1,41 @@
+import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from core.config_loader import AppConfig, LlmConfig
+from core.llm.fake_service import FakeLLMService
+from core.llm.interfaces import LLMProvider
 from core.llm.openai_service import OpenAIService
 from core.scraper.jobspy_client import JobSpyClient
-from etl.orchestrator import JobETLService
-from notification.service import NotificationService
+
+if TYPE_CHECKING:
+    from etl.orchestrator import JobETLService
+    from notification.service import NotificationService
+
+
+ALLOWED_FAKE_AI_ENVIRONMENTS = {"development", "dev", "test"}
+
+
+def _current_environment() -> str:
+    return (
+        os.getenv("JOBSCOUT_ENV")
+        or os.getenv("APP_ENV")
+        or os.getenv("ENVIRONMENT")
+        or "development"
+    ).strip().lower()
+
+
+def _fake_ai_enabled() -> bool:
+    return os.getenv("JOBSCOUT_FAKE_AI", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _ensure_fake_ai_allowed() -> None:
+    if not _fake_ai_enabled():
+        return
+    if _current_environment() not in ALLOWED_FAKE_AI_ENVIRONMENTS:
+        raise RuntimeError(
+            "JOBSCOUT_FAKE_AI is only allowed in development/test environments"
+        )
 
 
 @dataclass
@@ -17,10 +47,10 @@ class AppContext:
     via job_uow() inside each processing loop.
     """
     config: AppConfig
-    ai_service: OpenAIService
-    job_etl_service: JobETLService
+    ai_service: LLMProvider
+    job_etl_service: Any          # JobETLService at runtime
     jobspy_client: JobSpyClient
-    notification_service: Optional[NotificationService] = None
+    notification_service: Optional[Any] = None  # NotificationService at runtime
 
     @classmethod
     def build(cls, config: AppConfig) -> "AppContext":
@@ -32,6 +62,8 @@ class AppContext:
         Returns:
             Fully wired AppContext instance (no DB session attached)
         """
+        from etl.orchestrator import JobETLService
+
         # AI Service
         llm_config = config.etl.llm if (config.etl and config.etl.llm) else LlmConfig()
         ai_service = cls._build_ai_service(llm_config)
@@ -56,8 +88,14 @@ class AppContext:
         )
 
     @staticmethod
-    def _build_ai_service(llm_config: LlmConfig) -> OpenAIService:
-        """Build OpenAI service from LLM configuration."""
+    def _build_ai_service(llm_config: LlmConfig) -> LLMProvider:
+        """Build AI service from configuration, with fake mode for tests."""
+        _ensure_fake_ai_allowed()
+        if _fake_ai_enabled():
+            return FakeLLMService(
+                embedding_dimensions=llm_config.embedding_dimensions or 1024
+            )
+
         model_config = {
             'extraction_model': llm_config.extraction_model,
             'embedding_model': llm_config.embedding_model,
@@ -100,7 +138,7 @@ class AppContext:
     @staticmethod
     def _build_notification_service(
         config: AppConfig
-    ) -> Optional[NotificationService]:
+    ) -> Optional[Any]:
         """Build notification service if enabled in config.
 
         Creates a temporary session for the notification service repository.
@@ -113,6 +151,7 @@ class AppContext:
 
         from database.database import SessionLocal
         from database.repository import JobRepository
+        from notification.service import NotificationService
 
         # Create a session for the notification service
         # Note: The service uses this repo for tracker initialization,

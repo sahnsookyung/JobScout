@@ -1,0 +1,188 @@
+{
+  "profile": {
+    "summary": {
+      "text": "Senior Python backend engineer with FastAPI, AWS, Docker, Redis, PostgreSQL, and microservices experience.",
+      "total_experience_years": 7
+    },
+    "experience": [
+      {
+        "company": "Acme Cloud",
+        "title": "Senior Backend Engineer",
+        "start_date": {
+          "text": "2022-01",
+          "year": 2022,
+          "month": 1,
+          "precision": "month"
+        },
+        "end_date": {
+          "text": "Present",
+          "year": null,
+          "month": null,
+          "precision": "unknown"
+        },
+        "is_current": true,
+        "description": "Built Python FastAPI APIs on AWS with Docker-based microservices. Improved Redis and PostgreSQL reliability.",
+        "years_value": 3.0,
+        "tech_keywords": [
+          "python",
+          "fastapi",
+          "aws",
+          "docker",
+          "microservices",
+          "redis",
+          "postgresql"
+        ],
+        "highlights": [
+          "Designed containerized microservices deployed on AWS.",
+          "Built backend APIs and async workers in Python and FastAPI."
+        ]
+      },
+      {
+        "company": "Platform Works",
+        "title": "Software Engineer",
+        "start_date": {
+          "text": "2019-01",
+          "year": 2019,
+          "month": 1,
+          "precision": "month"
+        },
+        "end_date": {
+          "text": "2021-12",
+          "year": 2021,
+          "month": 12,
+          "precision": "month"
+        },
+        "is_current": false,
+        "description": "Developed backend APIs and automation services with Python, Docker, and PostgreSQL.",
+        "years_value": 3.0,
+        "tech_keywords": [
+          "python",
+          "docker",
+          "postgresql",
+          "api"
+        ],
+        "highlights": [
+          "Delivered backend services that supported remote engineering teams."
+        ]
+      }
+    ],
+    "projects": {
+      "items": [
+        {
+          "name": "JobScout Platform",
+          "description": "Implemented backend search APIs and matching services with Python, FastAPI, Docker, and microservices.",
+          "technologies": [
+            "python",
+            "fastapi",
+            "docker",
+            "microservices"
+          ],
+          "url": "https://example.com/jobscout",
+          "date": {
+            "text": "2024",
+            "year": 2024,
+            "month": null,
+            "precision": "year"
+          },
+          "highlights": [
+            "Improved job matching quality using embeddings and Redis-backed orchestration."
+          ]
+        }
+      ]
+    },
+    "education": [
+      {
+        "degree": "Bachelor of Science",
+        "field_of_study": "Computer Science",
+        "institution": "Example University",
+        "graduation_year": 2018,
+        "description": "Studied distributed systems and backend engineering.",
+        "highlights": [
+          "Graduated with distinction."
+        ]
+      }
+    ],
+    "skills": {
+      "groups": [
+        {
+          "group_name": "Backend",
+          "items": [
+            {
+              "name": "Python",
+              "kind": "language",
+              "proficiency": "expert",
+              "years_experience": 7
+            },
+            {
+              "name": "FastAPI",
+              "kind": "framework",
+              "proficiency": "expert",
+              "years_experience": 4
+            },
+            {
+              "name": "AWS",
+              "kind": "platform",
+              "proficiency": "proficient",
+              "years_experience": 4
+            },
+            {
+              "name": "Docker",
+              "kind": "tool",
+              "proficiency": "expert",
+              "years_experience": 5
+            },
+            {
+              "name": "Microservices",
+              "kind": "architecture",
+              "proficiency": "proficient",
+              "years_experience": 4
+            }
+          ]
+        }
+      ],
+      "all": [
+        {
+          "name": "Python",
+          "kind": "language",
+          "proficiency": "expert",
+          "years_experience": 7
+        },
+        {
+          "name": "FastAPI",
+          "kind": "framework",
+          "proficiency": "expert",
+          "years_experience": 4
+        },
+        {
+          "name": "AWS",
+          "kind": "platform",
+          "proficiency": "proficient",
+          "years_experience": 4
+        },
+        {
+          "name": "Docker",
+          "kind": "tool",
+          "proficiency": "expert",
+          "years_experience": 5
+        },
+        {
+          "name": "Microservices",
+          "kind": "architecture",
+          "proficiency": "proficient",
+          "years_experience": 4
+        }
+      ]
+    },
+    "certifications": [],
+    "languages": [
+      {
+        "language": "English",
+        "proficiency": "native"
+      }
+    ]
+  },
+  "extraction": {
+    "confidence": 1.0,
+    "warnings": []
+  }
+}

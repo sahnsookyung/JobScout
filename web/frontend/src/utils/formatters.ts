@@ -37,7 +37,10 @@ export const formatSalary = (
     if (min && max) {
         return `${formatter.format(min)} - ${formatter.format(max)}`;
     }
-    return min ? `From ${formatter.format(min)}` : `Up to ${formatter.format(max)}`;
+    if (min) {
+        return `From ${formatter.format(min)}`;
+    }
+    return max ? `Up to ${formatter.format(max)}` : 'Not specified';
 };
 
 export const getScoreColor = (score: number): string => {

@@ -1,0 +1,113 @@
+# Pipeline Microservices
+# Run: docker compose -f docker-compose.yml -f docker-compose.microservices.yml up -d
+#
+# This file contains all pipeline microservices (extraction, embeddings, scorer-matcher, orchestrator).
+# It depends on docker-compose.yml which includes docker-compose.base.yml for infrastructure.
+
+x-service-common: &service-common
+  depends_on:
+    db-migrate:
+      condition: service_completed_successfully
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  environment:
+    - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-jobscout}
+    - REDIS_URL=redis://:${REDIS_PASSWORD:-jobscoutredis}@redis:6379/0
+    - PYTHONUNBUFFERED=1
+  env_file:
+    - .env
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+include:
+  - path: docker-compose.base.yml
+    include_as: base
+
+services:
+  extraction:
+    <<: *service-common
+    profiles: ["split"]
+    build:
+      context: .
+      dockerfile: services/extraction/Dockerfile
+    ports:
+      - "${EXTRACTION_PORT:-8081}:8081"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - resume_uploads:/data/resume_uploads
+
+  embeddings:
+    <<: *service-common
+    profiles: ["split"]
+    build:
+      context: .
+      dockerfile: services/embeddings/Dockerfile
+    ports:
+      - "${EMBEDDINGS_PORT:-8082}:8082"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  scorer-matcher:
+    <<: *service-common
+    profiles: ["split"]
+    build:
+      context: .
+      dockerfile: services/scorer_matcher/Dockerfile
+    ports:
+      - "${SCORER_MATCHER_PORT:-8083}:8083"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  orchestrator:
+    <<: *service-common
+    profiles: ["split"]
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
+    ports:
+      - "${ORCHESTRATOR_PORT:-8084}:8084"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-jobscout}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-jobscoutredis}@redis:6379/0
+      - PYTHONUNBUFFERED=1
+      - JOBSPY_URL=http://jobspy:8000
+      - EXTRACTION_URL=http://extraction:8081
+      - EMBEDDINGS_URL=http://embeddings:8082
+      - SCRAPER_INTERVAL_HOURS=${SCRAPER_INTERVAL_HOURS:-6}
+    volumes:
+      - resume_uploads:/data/resume_uploads
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8084/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  resume_uploads:

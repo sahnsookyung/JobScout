@@ -14,7 +14,8 @@ AI-powered job matching pipeline that scrapes, analyzes, and matches jobs to you
 ### Prerequisites
 
 - **Python 3.13+** and **uv** (package manager)
-- **Docker** (for PostgreSQL, Redis, Ollama)
+- **Docker** (for PostgreSQL and Redis)
+- **Ollama** optional, run natively if you use local models
 - **Node.js 18+** (for frontend)
 
 ### First-Time Setup
@@ -38,18 +39,28 @@ cp wants.example.txt wants.txt
 
 ### Start Everything
 
-```bash
-# Start Docker services + Backend + Frontend
-./scripts/setup_local_env/start.sh --docker --backend --frontend
+**Option A: Split Topology (microservices)**
 
-# Or start with logs visible (blocks terminal):
-./scripts/setup_local_env/start.sh --docker --backend --frontend --block
+```bash
+# Split mode: orchestrator + extraction + embeddings + scorer-matcher
+./scripts/setup_local_env/start.sh --split
+```
+
+**Option B: Local Development (with hot reload)**
+
+```bash
+# Split mode with backend/frontend local development
+WEB_DEV=true ./scripts/setup_local_env/start.sh --split --web-app --web-ui
 ```
 
 **Access the app:**
 - Frontend: http://localhost:5173
 - Backend API: http://localhost:8080
 - API Docs: http://localhost:8080/docs
+
+### Topology
+
+Run `--split` to start extraction, embeddings, matching, and orchestration as separate microservices.
 
 ### View Logs
 
@@ -61,8 +72,8 @@ cp wants.example.txt wants.txt
 ./scripts/setup_local_env/logs.sh -f
 
 # Specific service logs
-./scripts/setup_local_env/logs.sh backend    # Backend only
-./scripts/setup_local_env/logs.sh frontend   # Frontend only
+./scripts/setup_local_env/logs.sh web-backend  # Backend only
+./scripts/setup_local_env/logs.sh web-ui       # Frontend only
 ```
 
 ## Manual Startup
@@ -70,26 +81,40 @@ cp wants.example.txt wants.txt
 ### 1. Start Docker Services
 
 ```bash
-# Start PostgreSQL, Redis, and optionally Ollama
-docker-compose up -d
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.microservices.yml \
+  -f docker-compose.web.yml \
+  --profile split up -d
 
-# With Ollama
-docker-compose --profile docker-ollama up -d
+# Run Ollama natively if your config points at localhost:11434
+ollama serve
 ```
 
 ### 2. Start Backend (FastAPI)
+
+**Option A: Using Docker (Recommended for production parity)**
+
+```bash
+# Start backend via Docker Compose
+docker compose -f docker-compose.yml -f docker-compose.web.yml --profile web up -d web-backend
+
+# Backend available at:
+# - API: http://localhost:8080
+# - API Docs: http://localhost:8080/docs
+```
+
+**Option B: Local Development (with hot reload)**
 
 ```bash
 # Install dependencies
 uv sync --group web
 
-# Start server
-uv run python -m uvicorn web.backend.app:app --host 0.0.0.0 --port 8080
+# Start server locally (127.0.0.1 only - secure for shared networks)
+WEB_DEV=true uv run python -m uvicorn web.backend.app:app --host 127.0.0.1 --reload --port 8080
 ```
 
-**Endpoints:**
-- Dashboard: http://localhost:8080
-- API Docs: http://localhost:8080/docs
+**⚠️ Security Note:** When running locally without Docker, use `--host 127.0.0.1` to bind only to localhost. Use `--host 0.0.0.0` only when running inside Docker containers where network isolation applies.
 
 ### 3. Start Frontend (Vite)
 
@@ -103,31 +128,22 @@ npm run dev
 
 ## Running the Pipeline
 
-### Option A: Batch Pipeline (Main Driver)
+The monolithic `python main.py` flow is no longer supported. Use the split
+microservice stack and trigger work through the web backend or orchestrator APIs.
 
-Runs ETL → Matching cycles on a schedule:
+### Manual Pipeline Trigger
 
-```bash
-# Full pipeline (ETL + Matching)
-uv run python main.py
-
-# ETL only
-uv run python main.py --mode etl
-
-# Matching only
-uv run python main.py --mode matching
-```
-
-### Option B: Manual Pipeline Trigger
-
-Use the dashboard or API to trigger pipelines manually:
+Use the dashboard or API to trigger resume processing and matching:
 
 ```bash
-# Start pipeline
-curl -X POST http://localhost:8080/api/pipeline/start
+# Check whether the latest uploaded resume is eligible for matching
+curl http://localhost:8080/api/pipeline/resume-eligibility
 
-# Check status
-curl http://localhost:8080/api/pipeline/status
+# Start matching against the latest ready upload
+curl -X POST http://localhost:8080/api/pipeline/run-matching
+
+# Check task status
+curl http://localhost:8080/api/pipeline/status/<task_id>
 ```
 
 ## Configuration
@@ -152,7 +168,6 @@ jobscout/
 │           └── frontend.log
 ├── config.yaml              # Application configuration
 ├── docker-compose.yml       # Docker services
-├── main.py                  # Batch pipeline driver
 ├── core/                    # Core services (AI, matching, scoring)
 ├── database/                # SQLAlchemy models and DB logic
 ├── etl/                     # Extract-Transform-Load pipeline
@@ -171,7 +186,8 @@ _Coming soon: Dashboard screenshots and demo video_
 
 - **Python 3.13+**
 - **uv**: Package manager
-- **Docker**: PostgreSQL, Redis, Ollama
+- **Docker**: PostgreSQL, Redis
+- **Ollama**: optional local model runtime
 - **Node.js 18+**: For frontend development
 
 ## License

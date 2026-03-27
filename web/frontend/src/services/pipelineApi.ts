@@ -1,16 +1,16 @@
 import { apiClient } from './api';
-import type { PipelineTaskResponse, PipelineStatusResponse } from '@/types/api';
+import type {
+    PipelineTaskResponse,
+    PipelineStatusResponse,
+    ResumeEligibilityResponse,
+    ResumePreflightResponse,
+    ResumeStatusResponse,
+    ResumeUploadResponse,
+} from '@/types/api';
 
 interface ResumeHashCheckResponse {
     exists: boolean;
     resume_hash: string;
-}
-
-interface ResumeUploadResponse {
-    success: boolean;
-    resume_hash: string;
-    message: string;
-    task_id?: string;
 }
 
 export const pipelineApi = {
@@ -23,11 +23,20 @@ export const pipelineApi = {
     getActivePipeline: () =>
         apiClient.get<PipelineStatusResponse | null>('/pipeline/active'),
 
+    getResumeEligibility: () =>
+        apiClient.get<ResumeEligibilityResponse>('/pipeline/resume-eligibility'),
+
+    preflightResume: (hash: string) =>
+        apiClient.post<ResumePreflightResponse>('/pipeline/resume-preflight', { resume_hash: hash }),
+
     stopMatching: () =>
         apiClient.post<PipelineTaskResponse>('/pipeline/stop'),
 
     checkResumeHash: (hash: string) =>
         apiClient.post<ResumeHashCheckResponse>('/pipeline/check-resume-hash', { resume_hash: hash }),
+
+    getResumeStatus: (taskId: string) =>
+        apiClient.get<ResumeStatusResponse>(`/pipeline/resume-status/${taskId}`),
 
     uploadResume: (file: File, resumeHash?: string) => {
         const formData = new FormData();
@@ -39,4 +48,15 @@ export const pipelineApi = {
             headers: { 'Content-Type': 'multipart/form-data' }
         });
     },
+
+    selectResume: (resumeHash: string, originalFilename?: string) =>
+        apiClient.post<ResumeUploadResponse>('/pipeline/select-resume', {
+            resume_hash: resumeHash,
+            original_filename: originalFilename,
+        }),
+
+    retryResume: (uploadId: string) =>
+        apiClient.post<ResumeUploadResponse>('/pipeline/retry-resume', {
+            upload_id: uploadId,
+        }),
 };

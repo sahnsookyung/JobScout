@@ -1,7 +1,7 @@
 from typing import List, Optional, Any, Tuple
 from sqlalchemy.orm import Session
 
-from database.models import JobPost, JobMatch
+from database.models import JobPost, JobMatch, DEFAULT_LEGACY_OWNER_ID
 
 from database.repositories.job_post import JobPostRepository
 from database.repositories.resume import ResumeRepository
@@ -81,6 +81,21 @@ class JobRepository:
     def mark_as_extracted(self, job_post: JobPost) -> None:
         return self.job_post.mark_as_extracted(job_post)
 
+    def mark_extraction_in_progress(self, job_post_id: Any) -> None:
+        return self.job_post.mark_extraction_in_progress(job_post_id)
+
+    def mark_extraction_retryable_failed(self, job_post_id: Any, error: str) -> None:
+        return self.job_post.mark_extraction_retryable_failed(job_post_id, error)
+
+    def mark_extraction_failed(self, job_post_id: str, error: str) -> None:
+        return self.job_post.mark_extraction_failed(job_post_id, error)
+
+    def mark_extraction_in_progress(self, job_post_id: Any) -> None:
+        return self.job_post.mark_extraction_in_progress(job_post_id)
+
+    def mark_extraction_retryable_failed(self, job_post_id: Any, error: str) -> None:
+        return self.job_post.mark_extraction_retryable_failed(job_post_id, error)
+
     def _extract_years_from_requirement(self, text: str) -> tuple:
         return self.job_post._extract_years_from_requirement(text)
 
@@ -108,8 +123,20 @@ class JobRepository:
     def save_job_embedding(self, job_post: JobPost, embedding: List[float]) -> None:
         return self.job_post.save_job_embedding(job_post, embedding)
 
+    def mark_embedding_in_progress(self, job_post_id: Any) -> None:
+        return self.job_post.mark_embedding_in_progress(job_post_id)
+
+    def mark_embedding_retryable_failed(self, job_post_id: Any, error: str) -> None:
+        return self.job_post.mark_embedding_retryable_failed(job_post_id, error)
+
+    def bulk_mark_embedding_in_progress(self, job_post_ids: List[Any]) -> None:
+        return self.job_post.bulk_mark_embedding_in_progress(job_post_ids)
+
     def save_requirement_embedding(self, req_id: Any, embedding: List[float]) -> None:
         return self.job_post.save_requirement_embedding(req_id, embedding)
+
+    def mark_embedding_failed(self, job_post_id: Any, error: str) -> None:
+        return self.job_post.mark_embedding_failed(job_post_id, error)
 
     def get_embedded_jobs_for_matching(self, limit: int = 100) -> List[JobPost]:
         return self.job_post.get_embedded_jobs_for_matching(limit)
@@ -124,9 +151,6 @@ class JobRepository:
         return self.job_post.get_top_jobs_by_summary_embedding(
             resume_embedding, limit, tenant_id, require_remote
         )
-
-    def get_jobs_needing_facet_extraction(self, limit: int = 100) -> List[JobPost]:
-        return self.job_post.get_jobs_needing_facet_extraction(limit)
 
     def save_job_facet_embedding(
         self,
@@ -185,31 +209,148 @@ class JobRepository:
     ) -> List[JobPost]:
         return self.job_post.get_jobs_with_missing_facet_embeddings(limit, max_retries)
 
+    def quarantine_null_description_jobs(self, older_than_days: int = 7) -> int:
+        return self.job_post.quarantine_null_description_jobs(older_than_days)
+
     def get_resume_summary_embedding(self, resume_fingerprint: str) -> Optional[List[float]]:
         return self.resume.get_resume_summary_embedding(resume_fingerprint)
+
+    def get_resume_processing_state(self, resume_fingerprint: str) -> Any:
+        return self.resume.get_resume_processing_state(resume_fingerprint)
+
+    def get_latest_resume_processing_state(self) -> Any:
+        return self.resume.get_latest_resume_processing_state()
+
+    def create_resume_upload(
+        self,
+        params: Any,
+    ) -> Any:
+        return self.resume.create_resume_upload(params)
+
+    def get_resume_upload(self, upload_id: Any, owner_id: Optional[Any] = None) -> Any:
+        return self.resume.get_resume_upload(upload_id, owner_id)
+
+    def get_latest_resume_upload(self, owner_id: Any) -> Any:
+        return self.resume.get_latest_resume_upload(owner_id)
+
+    def get_latest_resume_upload_for_hash(
+        self,
+        owner_id: Any,
+        resume_hash: str,
+    ) -> Any:
+        return self.resume.get_latest_resume_upload_for_hash(
+            owner_id,
+            resume_hash,
+        )
+
+    def get_resume_upload_by_task_id(
+        self,
+        owner_id: Any,
+        task_id: str,
+    ) -> Any:
+        return self.resume.get_resume_upload_by_task_id(owner_id, task_id)
+
+    def update_resume_upload(
+        self,
+        upload_id: Any,
+        *,
+        status: Optional[str] = None,
+        last_error: Optional[str] = None,
+        processing_task_id: Optional[str] = None,
+        failure_stage: Optional[str] = None,
+        failure_class: Optional[str] = None,
+        retryable: Optional[bool] = None,
+        user_safe_message: Optional[str] = None,
+        failure_debug_context: Optional[dict] = None,
+    ) -> Any:
+        return self.resume.update_resume_upload(
+            upload_id,
+            status=status,
+            last_error=last_error,
+            processing_task_id=processing_task_id,
+            failure_stage=failure_stage,
+            failure_class=failure_class,
+            retryable=retryable,
+            user_safe_message=user_safe_message,
+            failure_debug_context=failure_debug_context,
+        )
+
+    def set_resume_processing_state(
+        self,
+        resume_fingerprint: str,
+        status: str,
+        *,
+        owner_id: Any = None,
+        error: Optional[str] = None,
+        extraction_completed_at: Optional[Any] = None,
+        embedding_completed_at: Optional[Any] = None,
+        fingerprint_version: int = 1,
+        failure_stage: Optional[str] = None,
+        failure_class: Optional[str] = None,
+        retryable: Optional[bool] = None,
+        user_safe_message: Optional[str] = None,
+    ) -> Any:
+        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
+        return self.resume.set_resume_processing_state(
+            owner_id=owner_id,
+            resume_fingerprint=resume_fingerprint,
+            status=status,
+            error=error,
+            extraction_completed_at=extraction_completed_at,
+            embedding_completed_at=embedding_completed_at,
+            fingerprint_version=fingerprint_version,
+            failure_stage=failure_stage,
+            failure_class=failure_class,
+            retryable=retryable,
+            user_safe_message=user_safe_message,
+        )
+
+    def is_resume_ready(self, resume_fingerprint: str) -> bool:
+        return self.resume.is_resume_ready(resume_fingerprint)
+
+    def get_latest_ready_resume_fingerprint(self) -> Optional[str]:
+        return self.resume.get_latest_ready_resume_fingerprint()
+
+    def resume_needs_embedding(self, resume_fingerprint: str) -> bool:
+        return self.resume.resume_needs_embedding(resume_fingerprint)
 
     def save_structured_resume(
         self,
         resume_fingerprint: str,
         extracted_data: dict,
+        *,
+        owner_id: Any = None,
         total_experience_years: Optional[float] = None,
         extraction_confidence: Optional[float] = None,
-        extraction_warnings: Optional[list] = None
+        extraction_warnings: Optional[list] = None,
+        fingerprint_version: int = 1,
     ) -> Any:
+        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
         return self.resume.save_structured_resume(
+            owner_id=owner_id,
             resume_fingerprint=resume_fingerprint,
             extracted_data=extracted_data,
             total_experience_years=total_experience_years,
             extraction_confidence=extraction_confidence,
-            extraction_warnings=extraction_warnings
+            extraction_warnings=extraction_warnings,
+            fingerprint_version=fingerprint_version,
         )
 
     def save_resume_section_embeddings(
         self,
         resume_fingerprint: str,
-        sections: List[dict]
+        sections: List[dict],
+        *,
+        owner_id: Any = None,
+        fingerprint_version: int = 1,
     ) -> list:
-        return self.resume.save_resume_section_embeddings(resume_fingerprint, sections)
+        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
+        return self.resume.save_resume_section_embeddings(
+            resume_fingerprint=resume_fingerprint,
+            sections=sections,
+            owner_id=owner_id,
+            fingerprint_version=fingerprint_version,
+        )
 
     def get_resume_section_embeddings(
         self,
@@ -217,6 +358,9 @@ class JobRepository:
         section_type: Optional[str] = None
     ) -> list:
         return self.resume.get_resume_section_embeddings(resume_fingerprint, section_type)
+
+    def get_structured_resume_by_fingerprint(self, resume_fingerprint: str) -> Any:
+        return self.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
 
     def find_similar_resume_sections(
         self,
@@ -268,7 +412,7 @@ class JobRepository:
 
     def save_user_wants(
         self,
-        user_id: str,
+        user_id: Any,
         wants_text: str,
         embedding: List[float],
         facet_key: Optional[str] = None
@@ -279,16 +423,25 @@ class JobRepository:
 
     def get_user_wants_embeddings(
         self,
-        user_id: str
+        user_id: Any
     ) -> List[List[float]]:
         return self.user_wants.get_user_wants_embeddings(user_id)
 
     def save_evidence_unit_embeddings(
         self,
         resume_fingerprint: str,
-        evidence_units: List[dict]
+        evidence_units: List[dict],
+        *,
+        owner_id: Any = None,
+        fingerprint_version: int = 1,
     ) -> list:
-        return self.resume.save_evidence_unit_embeddings(resume_fingerprint, evidence_units)
+        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
+        return self.resume.save_evidence_unit_embeddings(
+            resume_fingerprint=resume_fingerprint,
+            evidence_units=evidence_units,
+            owner_id=owner_id,
+            fingerprint_version=fingerprint_version,
+        )
 
     def find_best_evidence_for_requirement(
         self,

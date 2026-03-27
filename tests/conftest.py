@@ -9,10 +9,60 @@ import os
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def clean_env():
+    """Backup and restore environment to prevent test pollution.
+
+    This fixture ensures environment variables set by one test don't
+    affect other tests. It backs up os.environ before each test
+    and restores it after, preventing pollution from integration
+    tests that set module-level environment variables.
+    """
+    env_backup = os.environ.copy()
+    yield
+    os.environ.clear()
+    os.environ.update(env_backup)
+
+
+@pytest.fixture(autouse=True)
+def _block_production_db(clean_env):  # noqa: PT004  (runs after clean_env saves backup)
+    """Block production database access during tests.
+
+    Removes DATABASE_URL so tests cannot accidentally write to the production DB.
+    Tests that need a database must use the ``test_database`` fixture, which
+    provides an isolated container.  ``clean_env`` (a dependency here) has
+    already saved the env backup before this fixture removes the variable,
+    so the original value is automatically restored after each test.
+    """
+    if os.environ.pop("DATABASE_URL", None):
+        import warnings
+        warnings.warn(
+            "Test blocked from accessing production DATABASE_URL. "
+            "Use the test_database fixture for DB tests.",
+            stacklevel=2,
+        )
+    yield
+
+
+# Test database credentials (not production credentials)
+TEST_DB_USER = "testuser"
+TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD", "testpass")
+TEST_DB_NAME = "jobscout_test"
+
+
 def pytest_configure(config):
     """Configure pytest markers."""
     config.addinivalue_line(
         "markers", "db: marks tests as requiring database (deselect with '-m \"not db\"')"
+    )
+    config.addinivalue_line(
+        "markers", "redis: marks tests as requiring Redis (deselect with '-m \"not redis\"')"
+    )
+    config.addinivalue_line(
+        "markers", "integration: marks tests as cross-service/integration coverage"
+    )
+    config.addinivalue_line(
+        "markers", "slow: marks tests as slower end-to-end or container-backed coverage"
     )
 
 
@@ -42,9 +92,9 @@ def test_database():
         # Start PostgreSQL with pgvector
         postgres = PostgresContainer(
             image="ankane/pgvector:latest",
-            username="testuser",
-            password="testpass",
-            dbname="jobscout_test",
+            username=TEST_DB_USER,
+            password=TEST_DB_PASSWORD,
+            dbname=TEST_DB_NAME,
             port=5432
         )
         postgres.start()
@@ -56,66 +106,10 @@ def test_database():
         os.environ["TEST_DATABASE_URL"] = db_url
         
         # Create tables (first create pgvector extension)
-        from sqlalchemy import create_engine, text
-        from database.models import Base
+        from sqlalchemy import create_engine
+        from database.migrate import migrate_database
         engine = create_engine(db_url)
-        with engine.connect() as conn:
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            conn.commit()
-        Base.metadata.create_all(engine)
-        
-        # Create ENUM types for user_files table (not created by Base.metadata.create_all)
-        with engine.connect() as conn:
-            conn.execute(text("""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'upload_status') THEN
-                        CREATE TYPE upload_status AS ENUM ('pending', 'scanned', 'rejected', 'ready');
-                    END IF;
-                END
-                $$;
-            """))
-            
-            conn.execute(text("""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'file_type') THEN
-                        CREATE TYPE file_type AS ENUM ('resume');
-                    END IF;
-                END
-                $$;
-            """))
-            
-            # Check and alter upload_status column
-            result = conn.execute(text("""
-                SELECT data_type FROM information_schema.columns 
-                WHERE table_name = 'user_files' AND column_name = 'upload_status'
-            """))
-            row = result.fetchone()
-            if row and row[0] != 'USER-DEFINED':
-                conn.execute(text("""
-                    ALTER TABLE user_files ALTER COLUMN upload_status TYPE upload_status 
-                    USING upload_status::upload_status
-                """))
-            
-            # Check and alter file_type column
-            result = conn.execute(text("""
-                SELECT data_type FROM information_schema.columns 
-                WHERE table_name = 'user_files' AND column_name = 'file_type'
-            """))
-            row = result.fetchone()
-            if row and row[0] != 'USER-DEFINED':
-                conn.execute(text("""
-                    ALTER TABLE user_files ALTER COLUMN file_type TYPE file_type 
-                    USING file_type::file_type
-                """))
-            
-            # Always set the default for upload_status
-            conn.execute(text("""
-                ALTER TABLE user_files ALTER COLUMN upload_status SET DEFAULT 'pending'::upload_status
-            """))
-            
-            conn.commit()
+        migrate_database(engine=engine)
         
         print(f"\n✓ Test database started: {db_url}")
         
@@ -144,6 +138,79 @@ def database_available(test_database):
 def test_db_url(test_database):
     """Get test database URL."""
     return test_database
+
+
+@pytest.fixture(scope="session")
+def redis_container():
+    """Session-scoped fixture that provides a Redis container for tests.
+
+    Uses testcontainers to start a Redis container before tests and stop it after.
+    Falls back to external Redis if TEST_REDIS_URL is set.
+    """
+    # If TEST_REDIS_URL is set, use external Redis
+    external_url = os.environ.get("TEST_REDIS_URL")
+    if external_url:
+        port = external_url.split(":")[-1].split("/")[0] if ":" in external_url else "6379"
+        yield {"url": external_url, "port": port}
+        return
+
+    # Try to use testcontainers for automatic container management
+    try:
+        from testcontainers.redis import RedisContainer
+
+        # Start Redis container
+        redis = RedisContainer("redis:7-alpine")
+        redis.start()
+
+        # Build connection URL from exposed host/port
+        host = redis.get_container_host_ip()
+        port = redis.get_exposed_port(6379)
+        redis_url = f"redis://{host}:{port}"
+        os.environ["TEST_REDIS_URL"] = redis_url
+
+        print(f"\n✓ Test Redis container started: {redis_url}")
+
+        yield {"container": redis, "url": redis_url, "port": port}
+
+        # Cleanup after all tests
+        redis.stop()
+        print("\n✓ Test Redis container stopped")
+
+    except Exception as e:
+        import traceback
+        print(f"\n⚠ Failed to start test Redis container:")
+        print(f"   {e}")
+        print(f"\n   Full traceback:")
+        traceback.print_exc()
+        pytest.skip(f"Could not start test Redis container: {e}")
+
+
+@pytest.fixture
+def redis_url(redis_container):
+    """Get Redis connection URL from container."""
+    return redis_container["url"]
+
+
+@pytest.fixture(autouse=True)
+def reset_redis_module_state():
+    """Reset Redis module state between tests to prevent pollution.
+
+    This fixture resets the connection pool in redis_streams
+    to ensure tests don't share state.
+    """
+    from core import redis_streams
+    # Backup original state
+    original_connection_pool = redis_streams._connection_pool
+
+    yield
+
+    # Reset connection pool to force recreation
+    redis_streams._connection_pool = original_connection_pool
+    if original_connection_pool is not None:
+        try:
+            original_connection_pool.disconnect()
+        except Exception:
+            pass  # Ignore errors on disconnect
 
 
 @pytest.fixture(autouse=True)

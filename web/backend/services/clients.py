@@ -1,0 +1,345 @@
+"""
+Service client for calling internal microservices.
+"""
+
+import os
+import logging
+import threading
+from urllib.parse import urlparse
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+# Health endpoint constant (avoids string duplication S1192)
+HEALTH_ENDPOINT = "/health"
+
+# Environment variables - validated at client instantiation time
+INTERNAL_EXTRACTION_URL_ENV = "INTERNAL_EXTRACTION_URL"
+INTERNAL_EMBEDDINGS_URL_ENV = "INTERNAL_EMBEDDINGS_URL"
+INTERNAL_SCORER_MATCHER_URL_ENV = "INTERNAL_SCORER_MATCHER_URL"
+INTERNAL_ORCHESTRATOR_URL_ENV = "INTERNAL_ORCHESTRATOR_URL"
+
+EXTRACTION_URL_ENV = "EXTRACTION_URL"
+EMBEDDINGS_URL_ENV = "EMBEDDINGS_URL"
+SCORER_MATCHER_URL_ENV = "SCORER_MATCHER_URL"
+ORCHESTRATOR_URL_ENV = "ORCHESTRATOR_URL"
+
+EXTRACTION_URL = os.getenv(EXTRACTION_URL_ENV, "")
+EMBEDDINGS_URL = os.getenv(EMBEDDINGS_URL_ENV, "")
+SCORER_MATCHER_URL = os.getenv(SCORER_MATCHER_URL_ENV, "")
+ORCHESTRATOR_URL = os.getenv(ORCHESTRATOR_URL_ENV, "")
+
+
+def _validate_url(url: str, env_var: str) -> str:
+    """Validate URL is configured and properly formatted.
+
+    Logs warning if URL is empty (allows tests to run without env vars).
+    Raises error if URL is provided but malformed.
+    """
+    if not url:
+        logger.warning(f"{env_var} not configured - client will be unavailable")
+        return ""
+    parsed = urlparse(url)
+    if not parsed.scheme or parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        raise RuntimeError(f"{env_var} must be a valid HTTP/HTTPS URL, got: {url}")
+    return url
+
+
+def resolve_service_url(internal_env_var: str, external_env_var: str) -> str:
+    """Resolve service URL, preferring internal Docker networking values."""
+    return os.getenv(internal_env_var, "").strip() or os.getenv(external_env_var, "").strip()
+
+
+class ServiceClient:
+
+    def __init__(self, base_url: str, timeout: int = 30, env_var: str = ""):
+        if env_var:
+            self.base_url = _validate_url(base_url, env_var)
+        else:
+            self.base_url = base_url
+        self.timeout = timeout
+        self._lock = threading.Lock()
+        self._http_client = httpx.Client(timeout=self.timeout)
+
+    def close(self) -> None:
+        """Close the underlying HTTP client and release connections."""
+        self._http_client.close()
+
+    def _request(self, method: str, path: str, **kwargs) -> dict:
+        if not self.base_url:
+            raise RuntimeError("Service client not configured - base URL is empty")
+        url = f"{self.base_url}{path}"
+        try:
+            with self._lock:
+                response = self._http_client.request(method, url, **kwargs)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Service returned error: {method} {url} - {e.response.status_code}")
+            raise
+        except httpx.RequestError as e:
+            logger.error(f"Service call failed: {method} {url} - {e}")
+            raise
+        except ValueError as e:
+            logger.error(f"Invalid JSON response: {method} {url} - {e}")
+            raise
+    
+    def get(self, path: str, **kwargs) -> dict:
+        return self._request("GET", path, **kwargs)
+    
+    def post(self, path: str, **kwargs) -> dict:
+        return self._request("POST", path, **kwargs)
+
+
+class ExtractionClient(ServiceClient):
+    """Client for Extraction service."""
+
+    def __init__(self, base_url: str | None = None):
+        resolved_base_url = base_url
+        env_name = ""
+        if resolved_base_url is None:
+            resolved_base_url = resolve_service_url(INTERNAL_EXTRACTION_URL_ENV, EXTRACTION_URL_ENV)
+            env_name = f"{INTERNAL_EXTRACTION_URL_ENV}/{EXTRACTION_URL_ENV}"
+        super().__init__(resolved_base_url, env_var=env_name)
+    
+    def extract_resume(
+        self,
+        resume_file: str,
+        owner_id: str,
+        force_re_extraction: bool = False,
+    ) -> dict:
+        """Extract resume data."""
+        return self.post(
+            "/extract/resume",
+            json={
+                "resume_file": resume_file,
+                "force_re_extraction": force_re_extraction,
+                "owner_id": owner_id,
+            },
+        )
+    
+    def health(self) -> dict:
+        """Check service health."""
+        return self.get(HEALTH_ENDPOINT)
+
+
+class EmbeddingsClient(ServiceClient):
+    """Client for Embeddings service."""
+
+    def __init__(self, base_url: str | None = None):
+        resolved_base_url = base_url
+        env_name = ""
+        if resolved_base_url is None:
+            resolved_base_url = resolve_service_url(INTERNAL_EMBEDDINGS_URL_ENV, EMBEDDINGS_URL_ENV)
+            env_name = f"{INTERNAL_EMBEDDINGS_URL_ENV}/{EMBEDDINGS_URL_ENV}"
+        super().__init__(resolved_base_url, env_var=env_name)
+    
+    def embed_resume(self, resume_fingerprint: str, owner_id: str) -> dict:
+        """Generate resume embeddings."""
+        return self.post(
+            "/embed/resume",
+            json={"resume_fingerprint": resume_fingerprint, "owner_id": owner_id},
+        )
+    
+    def health(self) -> dict:
+        """Check service health."""
+        return self.get(HEALTH_ENDPOINT)
+
+
+class ScorerMatcherClient(ServiceClient):
+    """Client for Scorer-Matcher service."""
+
+    def __init__(self, base_url: str | None = None):
+        resolved_base_url = base_url
+        env_name = ""
+        if resolved_base_url is None:
+            resolved_base_url = resolve_service_url(
+                INTERNAL_SCORER_MATCHER_URL_ENV,
+                SCORER_MATCHER_URL_ENV,
+            )
+            env_name = f"{INTERNAL_SCORER_MATCHER_URL_ENV}/{SCORER_MATCHER_URL_ENV}"
+        super().__init__(resolved_base_url, env_var=env_name)
+    
+    def match_resume(self, resume_fingerprint: str) -> dict:
+        """Run matching for a resume."""
+        return self.post("/match/resume", json={"resume_fingerprint": resume_fingerprint})
+    
+    def match_jobs(self, job_ids: list[str]) -> dict:
+        """Run matching for jobs."""
+        return self.post("/match/jobs", json={"job_ids": job_ids})
+    
+    def health(self) -> dict:
+        """Check service health."""
+        return self.get(HEALTH_ENDPOINT)
+
+
+class OrchestratorClient(ServiceClient):
+    """Client for Orchestrator service."""
+
+    def __init__(self, base_url: str | None = None):
+        resolved_base_url = base_url
+        env_name = ""
+        if resolved_base_url is None:
+            resolved_base_url = resolve_service_url(INTERNAL_ORCHESTRATOR_URL_ENV, ORCHESTRATOR_URL_ENV)
+            env_name = f"{INTERNAL_ORCHESTRATOR_URL_ENV}/{ORCHESTRATOR_URL_ENV}"
+        super().__init__(resolved_base_url, env_var=env_name)
+
+    def start_matching(self) -> dict:
+        """Start the full pipeline: extraction -> embeddings -> matching."""
+        return self.post("/orchestrate/match", json={})
+
+    def start_stage(self, stage: str, limit: int | None = None) -> dict:
+        """Start a canonical scrape/extract/embed stage task."""
+        payload = {}
+        if limit is not None:
+            payload["limit"] = limit
+        return self.post(f"/orchestrate/stages/{stage}", json=payload)
+
+    def start_scrape_extract_embed_pipeline(self) -> dict:
+        """Start the canonical scrape -> extract -> embed pipeline task."""
+        return self.post("/orchestrate/pipelines/scrape-extract-embed", json={})
+
+    def get_task_status(self, task_id: str) -> dict:
+        """Get status of a specific task."""
+        return self.get(f"/orchestrate/tasks/{task_id}")
+
+    def get_active_task(self) -> dict:
+        """Get the currently active task, if any."""
+        return self.get("/orchestrate/active")
+
+    def stop_task(self) -> dict:
+        """Stop the currently active task."""
+        return self.post("/orchestrate/stop", json={})
+
+    def wait_for_completion(self, task_id: str, timeout: float = 600.0, poll_interval: float = 2.0) -> dict:
+        """Poll for task completion.
+        
+        Args:
+            task_id: Task ID to wait for
+            timeout: Maximum time to wait in seconds (default 10 minutes)
+            poll_interval: Time between polls in seconds (default 2s)
+            
+        Returns:
+            Final status dict with 'status' key ('completed', 'failed', 'cancelled', 'timeout')
+        """
+        import time
+        import httpx
+        
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            try:
+                result = self.get(f"/orchestrate/tasks/{task_id}")
+                status = result.get("status", "unknown")
+                
+                if status in ("completed", "failed", "cancelled"):
+                    return {"success": True, "status": status, "result": result}
+                    
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    # Task not found - may not exist yet or was cleaned up
+                    pass
+                else:
+                    # Other HTTP errors - log and continue polling
+                    logger.warning(f"HTTP error polling task {task_id}: {e}")
+            except httpx.RequestError as e:
+                # Connection errors - log and continue polling
+                logger.warning(f"Connection error polling task {task_id}: {e}")
+            
+            time.sleep(poll_interval)
+        
+        return {"success": False, "status": "timeout", "error": f"Timeout waiting for task {task_id}"}
+
+    def process_resume(
+        self,
+        file_path: str | None,
+        task_id: str,
+        *,
+        upload_id: str | None = None,
+        owner_id: str | None = None,
+        resume_fingerprint: str | None = None,
+        mode: str = "extract_and_embed",
+    ) -> dict:
+        """Sequence extraction → embeddings for a resume file.
+
+        The orchestrator writes progress to task:{task_id}:state so the
+        web-backend can poll Redis directly without a status proxy.
+        Returns immediately (202 accepted); processing is asynchronous.
+        """
+        payload = {"task_id": task_id, "mode": mode}
+        if file_path is not None:
+            payload["file_path"] = file_path
+        if upload_id is not None:
+            payload["upload_id"] = upload_id
+        if owner_id is not None:
+            payload["owner_id"] = owner_id
+        if resume_fingerprint is not None:
+            payload["resume_fingerprint"] = resume_fingerprint
+        return self.post("/orchestrate/resume-etl", json=payload)
+
+    def health(self) -> dict:
+        """Check service health."""
+        return self.get(HEALTH_ENDPOINT)
+
+
+# Lazy singleton instances - created on first access via __getattr__
+_extraction_client = None
+_embeddings_client = None
+_scorer_matcher_client = None
+_orchestrator_client = None
+
+_clients_lock = threading.Lock()
+
+
+def get_extraction_client() -> ExtractionClient:
+    """Get or create ExtractionClient singleton."""
+    global _extraction_client
+    if _extraction_client is None:
+        with _clients_lock:
+            if _extraction_client is None:
+                _extraction_client = ExtractionClient()
+    return _extraction_client
+
+
+def get_embeddings_client() -> EmbeddingsClient:
+    """Get or create EmbeddingsClient singleton."""
+    global _embeddings_client
+    if _embeddings_client is None:
+        with _clients_lock:
+            if _embeddings_client is None:
+                _embeddings_client = EmbeddingsClient()
+    return _embeddings_client
+
+
+def get_scorer_matcher_client() -> ScorerMatcherClient:
+    """Get or create ScorerMatcherClient singleton."""
+    global _scorer_matcher_client
+    if _scorer_matcher_client is None:
+        with _clients_lock:
+            if _scorer_matcher_client is None:
+                _scorer_matcher_client = ScorerMatcherClient()
+    return _scorer_matcher_client
+
+
+def get_orchestrator_client() -> OrchestratorClient:
+    """Get or create OrchestratorClient singleton."""
+    global _orchestrator_client
+    if _orchestrator_client is None:
+        with _clients_lock:
+            if _orchestrator_client is None:
+                _orchestrator_client = OrchestratorClient()
+    return _orchestrator_client
+
+
+def __getattr__(name: str):
+    """Lazy load singleton clients on first access."""
+    if name == "extraction_client":
+        return get_extraction_client()
+    if name == "embeddings_client":
+        return get_embeddings_client()
+    if name == "scorer_matcher_client":
+        return get_scorer_matcher_client()
+    if name == "orchestrator_client":
+        return get_orchestrator_client()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

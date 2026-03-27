@@ -73,3 +73,11 @@ class LLMProvider(ABC):
         Generate a vector embedding for the given text.
         """
         pass
+
+    def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for multiple texts.
+
+        Default implementation calls generate_embedding in a loop.
+        Override for providers that support native batch embedding APIs.
+        """
+        return [self.generate_embedding(text) for text in texts]

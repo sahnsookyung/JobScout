@@ -4,7 +4,7 @@ Resume Embedding Store Protocol - Abstract interface for persisting resume embed
 
 This module defines the protocol that resume embedding persistence must implement.
 """
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import List, Dict, Any, Optional, Protocol, runtime_checkable
 
 
@@ -18,7 +18,9 @@ class ResumeSectionEmbeddingStore(Protocol):
     def save_resume_section_embeddings(
         self,
         resume_fingerprint: str,
-        sections: List[Dict[str, Any]]
+        sections: List[Dict[str, Any]],
+        *,
+        owner_id: Any = None,
     ) -> None:
         """
         Save resume section embeddings.
@@ -58,7 +60,9 @@ class ResumeEvidenceUnitEmbeddingStore(Protocol):
     def save_evidence_unit_embeddings(
         self,
         resume_fingerprint: str,
-        evidence_units: List[Dict[str, Any]]
+        evidence_units: List[Dict[str, Any]],
+        *,
+        owner_id: Any = None,
     ) -> None:
         """
         Save evidence unit embeddings to storage.
@@ -96,9 +100,12 @@ class InMemoryEmbeddingStore:
     def save_resume_section_embeddings(
         self,
         resume_fingerprint: str,
-        sections: List[Dict[str, Any]]
+        sections: List[Dict[str, Any]],
+        *,
+        owner_id: Any = None,
     ) -> None:
         """Save sections to in-memory storage."""
+        del owner_id
         if resume_fingerprint not in self._storage:
             self._storage[resume_fingerprint] = []
         self._storage[resume_fingerprint].extend(sections)
@@ -117,9 +124,12 @@ class InMemoryEmbeddingStore:
     def save_evidence_unit_embeddings(
         self,
         resume_fingerprint: str,
-        evidence_units: List[Dict[str, Any]]
+        evidence_units: List[Dict[str, Any]],
+        *,
+        owner_id: Any = None,
     ) -> None:
         """Save evidence units to in-memory storage."""
+        del owner_id
         if resume_fingerprint not in self._storage:
             self._storage[resume_fingerprint] = []
         self._storage[resume_fingerprint].extend(evidence_units)
@@ -151,13 +161,18 @@ class JobRepositoryAdapter:
     def save_resume_section_embeddings(
         self,
         resume_fingerprint: str,
-        sections: List[Dict[str, Any]]
+        sections: List[Dict[str, Any]],
+        *,
+        owner_id: Any = None,
     ) -> None:
         """Delegate to JobRepository.save_resume_section_embeddings."""
-        self._repo.save_resume_section_embeddings(
-            resume_fingerprint=resume_fingerprint,
-            sections=sections
-        )
+        kwargs = {
+            "resume_fingerprint": resume_fingerprint,
+            "sections": sections,
+        }
+        if owner_id is not None:
+            kwargs["owner_id"] = owner_id
+        self._repo.save_resume_section_embeddings(**kwargs)
 
     def get_resume_section_embeddings(
         self,
@@ -173,11 +188,16 @@ class JobRepositoryAdapter:
     def save_evidence_unit_embeddings(
         self,
         resume_fingerprint: str,
-        evidence_units: List[Dict[str, Any]]
+        evidence_units: List[Dict[str, Any]],
+        *,
+        owner_id: Any = None,
     ) -> None:
         """Delegate to JobRepository.save_evidence_unit_embeddings."""
         if hasattr(self._repo, 'save_evidence_unit_embeddings'):
-            self._repo.save_evidence_unit_embeddings(
-                resume_fingerprint=resume_fingerprint,
-                evidence_units=evidence_units
-            )
+            kwargs = {
+                "resume_fingerprint": resume_fingerprint,
+                "evidence_units": evidence_units,
+            }
+            if owner_id is not None:
+                kwargs["owner_id"] = owner_id
+            self._repo.save_evidence_unit_embeddings(**kwargs)

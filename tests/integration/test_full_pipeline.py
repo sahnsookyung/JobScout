@@ -29,63 +29,22 @@ import os
 import json
 import time
 import uuid
+import pytest
 import numpy as np
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from unittest.mock import patch
 
-# Check if we should run with Docker containers
-USE_DOCKER = os.environ.get('USE_DOCKER_CONTAINERS', '1') == '1'
-TEST_DATABASE_URL = os.environ.get('TEST_DATABASE_URL')
-REDIS_URL = os.environ.get('REDIS_URL')
-
-# Prevent tests from using production Redis - use db=1 for tests if using same host
-if REDIS_URL and '/0' in REDIS_URL:
-    if 'redis://redis:6379' in REDIS_URL or 'localhost:6379' in REDIS_URL:
-        REDIS_URL = REDIS_URL.replace('/0', '/1')
-        print(f"Redirecting to test Redis database: {REDIS_URL}")
-
-# Try to import container management
-postgres_container = None
-redis_container = None
-try:
-    from tests.conftest_docker import postgres_container, redis_container
-    DOCKER_AVAILABLE = True
-except ImportError:
-    DOCKER_AVAILABLE = False
-
-# Determine if we can run database tests
-if TEST_DATABASE_URL:
-    # Use provided database
-    RUN_TESTS = True
-    USE_EXTERNAL_DB = True
-elif DOCKER_AVAILABLE and USE_DOCKER:
-    # Will spin up Docker container
-    RUN_TESTS = True
-    USE_EXTERNAL_DB = False
-else:
-    RUN_TESTS = False
-
-# Check Redis availability (optional)
-REDIS_AVAILABLE = False
-if REDIS_URL:
-    import redis as redis_lib
-    redis_conn = None
-    try:
-        redis_conn = redis_lib.Redis.from_url(REDIS_URL)
-        redis_conn.ping()
-        REDIS_AVAILABLE = True
-    except (redis_lib.ConnectionError, redis_lib.TimeoutError, OSError) as e:
-        print(f"Redis connection check failed: {e}")
-    finally:
-        if redis_conn:
-            redis_conn.close()
+# Use testcontainers fixtures from conftest.py.  The test_database fixture sets
+# TEST_DATABASE_URL before setUpClass runs; the redis_container fixture sets
+# TEST_REDIS_URL.  Both are session-scoped, so containers start once per run.
+pytestmark = pytest.mark.usefixtures("test_database", "redis_container")
 
 # All necessary imports are defined before MockAIService
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from database.models import Base, JobPost, JobRequirementUnit, JobMatch
+from database.models import Base, JobPost, JobRequirementUnit, JobMatch, DEFAULT_LEGACY_OWNER_ID
 from database.repository import JobRepository
 from core.matcher import MatcherService
 from etl.resume import ResumeProfiler, ResumeEvidenceUnit
@@ -108,9 +67,9 @@ class MockAIService(LLMProvider):
         import json
         try:
             data = json.loads(text)
-        except:
+        except Exception:
             return {"profile": {}, "extraction": {"confidence": 0.5, "warnings": []}}
-        
+
         if "profile" in data:
             return data
         else:
@@ -121,9 +80,9 @@ class MockAIService(LLMProvider):
         import json
         try:
             data = json.loads(text)
-        except:
+        except Exception:
             return {"profile": {}, "extraction": {"confidence": 0.5, "warnings": []}}
-        
+
         if "profile" in data:
             return data
         else:
@@ -150,61 +109,36 @@ class MockAIService(LLMProvider):
         return np.random.randn(1024).tolist()
 
 
-@unittest.skipIf(not RUN_TESTS, "Docker not available and TEST_DATABASE_URL not set")
 class TestFullPipelineIntegration(unittest.TestCase):
     """
     End-to-end integration test of the complete JobScout pipeline.
-    
-    Tests real data flow through all components with actual services,
-    using Docker containers automatically or external services if configured.
+
+    Requires the test_database and redis_container fixtures (injected via
+    pytestmark at module level).  TEST_DATABASE_URL and TEST_REDIS_URL are set
+    by those fixtures before setUpClass runs.
     """
-    
+
     @classmethod
     def setUpClass(cls):
         """Set up all services and test data."""
+        test_db_url = os.environ.get('TEST_DATABASE_URL')
+        if not test_db_url:
+            raise unittest.SkipTest("TEST_DATABASE_URL not set — test_database fixture did not run")
+
         print("\n" + "="*70)
         print("INTEGRATION TEST: Full Pipeline End-to-End")
         print("="*70)
-        
-        # Database setup (Docker or external)
-        if USE_EXTERNAL_DB:
-            assert TEST_DATABASE_URL is not None, "TEST_DATABASE_URL must be set"
-            print(f"Using external database: {TEST_DATABASE_URL[:30]}...")
-            cls.engine = create_engine(TEST_DATABASE_URL)
-            cls._setup_database()
+
+        print(f"Using test database: {test_db_url[:40]}...")
+        cls.engine = create_engine(test_db_url)
+        cls._setup_database()
+
+        # Redis (optional — set by redis_container fixture)
+        cls.redis_url = os.environ.get('TEST_REDIS_URL')
+        if cls.redis_url:
+            print(f"Using test Redis: {cls.redis_url[:30]}...")
         else:
-            print("Starting PostgreSQL Docker container...")
-            assert postgres_container is not None, "postgres_container must be available"
-            try:
-                cls.postgres_container_mgr = postgres_container()
-                cls.postgres_container = cls.postgres_container_mgr.__enter__()
-                print(f"✓ PostgreSQL container started on port {cls.postgres_container.host_port}")
-                
-                # Connect to container
-                cls.engine = create_engine(cls.postgres_container.database_url)
-                cls._setup_database()
-            except Exception as e:
-                print(f"✗ Failed to start PostgreSQL container: {e}")
-                raise
-        
-        # Redis setup (Docker or external, optional)
-        cls.redis_url = None
-        if REDIS_AVAILABLE and REDIS_URL:
-            print(f"Using external Redis: {REDIS_URL[:25]}...")
-            cls.redis_url = REDIS_URL
-        elif DOCKER_AVAILABLE and USE_DOCKER:
-            print("Starting Redis Docker container (optional)...")
-            assert redis_container is not None, "redis_container must be available"
-            try:
-                cls.redis_container_mgr = redis_container()
-                cls.redis_container = cls.redis_container_mgr.__enter__()
-                cls.redis_url = cls.redis_container.redis_url
-                print(f"✓ Redis container started on port {cls.redis_container.host_port}")
-            except Exception as e:
-                print(f"⚠ Redis container failed to start (optional): {e}")
-        
-        if not cls.redis_url:
-            print("⚠ Redis not available - notification tests will be skipped")
+            print("⚠ TEST_REDIS_URL not set — notification tests will be skipped")
         
         # Create session
         SessionLocal = sessionmaker(bind=cls.engine)
@@ -330,12 +264,9 @@ class TestFullPipelineIntegration(unittest.TestCase):
     
     @classmethod
     def _setup_database(cls):
-        """Create tables and enable pgvector extension."""
-        from sqlalchemy import text
-        with cls.engine.connect() as conn:
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
-            conn.commit()
-        Base.metadata.create_all(cls.engine)
+        """Create the test schema using the migration runner."""
+        from database.migrate import migrate_database
+        migrate_database(engine=cls.engine)
     
     @classmethod
     def tearDownClass(cls):
@@ -353,16 +284,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
         
         if hasattr(cls, 'engine'):
             cls.engine.dispose()
-        
-        # Stop containers if we started them
-        if not USE_EXTERNAL_DB and hasattr(cls, 'postgres_container_mgr'):
-            print("\nStopping PostgreSQL container...")
-            cls.postgres_container_mgr.__exit__(None, None, None)
-        
-        if hasattr(cls, 'redis_container_mgr'):
-            print("Stopping Redis container...")
-            cls.redis_container_mgr.__exit__(None, None, None)
-        
+
         print("\n✓ Pipeline test complete - test data cleaned up")
         print("="*70 + "\n")
     
@@ -605,7 +527,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
             return
         
         # Get user ID from resume
-        user_id = self.resume_data.get('email', 'test-pipeline-user')
+        user_id = DEFAULT_LEGACY_OWNER_ID
         
         # Trigger notifications
         notification_count = 0
@@ -649,10 +571,15 @@ class TestFullPipelineIntegration(unittest.TestCase):
         
         print(f"  ✓ Queued {notification_count} notifications")
         
-        # Verify queue
+        # Verify queue - poll for queue length instead of sleeping
         if notification_count > 0:
-            time.sleep(0.5)  # Brief wait for queue
-            queue_length = self.notification_service.get_queue_status().get('queue_length', 0)
+            max_wait = 5.0
+            start = time.time()
+            while time.time() - start < max_wait:
+                queue_length = self.notification_service.get_queue_status().get('queue_length', 0)
+                if queue_length >= notification_count:
+                    break
+                time.sleep(0.1)
             print(f"  ✓ Queue has {queue_length} pending jobs")
     
     def test_07_end_to_end_flow(self):

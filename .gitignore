@@ -12,3 +12,20 @@ pipeline.lock
 **/node_modules/
 **/logs/
 **/*.pdf
+coverage/
+
+# Coverage
+.coverage
+coverage.xml
+web/frontend/coverage/
+
+# Static analysis / local code intelligence
+.scannerwork/
+.gitnexus/
+
+# Local assistant/tool config
+.claude/
+.claude/skills/*
+
+# Editor temp files
+*.swp

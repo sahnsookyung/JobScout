@@ -1,0 +1,59 @@
+# Web Services (Backend + Frontend)
+# Run: docker-compose -f docker-compose.yml -f docker-compose.microservices.yml -f docker-compose.web.yml up -d
+#
+# This file contains the web backend and frontend.
+# It depends on docker-compose.yml which includes docker-compose.base.yml for infrastructure.
+
+services:
+  web-backend:
+    profiles: ["web", "split"]
+    build:
+      context: .
+      dockerfile: web/backend/Dockerfile
+    ports:
+      - "${WEB_BACKEND_PORT:-8080}:8080"
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-jobscout}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-jobscoutredis}@redis:6379/0
+      - INTERNAL_EXTRACTION_URL=http://extraction:8081
+      - INTERNAL_EMBEDDINGS_URL=http://embeddings:8082
+      - INTERNAL_SCORER_MATCHER_URL=http://scorer-matcher:8083
+      - INTERNAL_ORCHESTRATOR_URL=http://orchestrator:8084
+    env_file:
+      - .env
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - resume_uploads:/data/resume_uploads
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  web-frontend:
+    profiles: ["web", "split"]
+    build:
+      context: .
+      dockerfile: web/frontend/Dockerfile
+    ports:
+      - "${WEB_FRONTEND_PORT:-5173}:8080"
+    depends_on:
+      - web-backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  resume_uploads:

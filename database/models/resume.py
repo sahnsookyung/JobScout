@@ -1,126 +1,207 @@
 import uuid
 import xxhash
-import json
-from typing import Dict, Any
+from typing import Any
 
-from sqlalchemy import Column, Text, TIMESTAMP, Integer, Boolean, Numeric, Float, Index
+from sqlalchemy import Column, Text, TIMESTAMP, Integer, Boolean, Numeric, Float, Index, ForeignKey
 from sqlalchemy.sql import text as sql_text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from pgvector.sqlalchemy import Vector
 
 from .base import Base
 
+UTC_NOW_SQL = "timezone('UTC', now())"
+RESUME_FINGERPRINT_VERSION = 1
+DEFAULT_LEGACY_OWNER_ID = "00000000-0000-0000-0000-000000000001"
+USERS_ID_FK = "users.id"
+
+RESUME_PROCESSING_EXTRACTING = "extracting"
+RESUME_PROCESSING_EXTRACTED = "extracted"
+RESUME_PROCESSING_EMBEDDING = "embedding"
+RESUME_PROCESSING_READY = "ready"
+RESUME_PROCESSING_FAILED = "failed"
+
+RESUME_PROCESSING_STATUSES = {
+    RESUME_PROCESSING_EXTRACTING,
+    RESUME_PROCESSING_EXTRACTED,
+    RESUME_PROCESSING_EMBEDDING,
+    RESUME_PROCESSING_READY,
+    RESUME_PROCESSING_FAILED,
+}
+
+RESUME_UPLOAD_PENDING = "pending"
+RESUME_UPLOAD_IN_PROGRESS = "in_progress"
+RESUME_UPLOAD_READY = "ready"
+RESUME_UPLOAD_FAILED_RETRYABLE = "failed_retryable"
+RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED = "failed_reupload_required"
+
+RESUME_UPLOAD_STATUSES = {
+    RESUME_UPLOAD_PENDING,
+    RESUME_UPLOAD_IN_PROGRESS,
+    RESUME_UPLOAD_READY,
+    RESUME_UPLOAD_FAILED_RETRYABLE,
+    RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED,
+}
+
 
 class ResumeSectionEmbedding(Base):
-    """
-    Stores embeddings for individual resume sections.
-    
-    Each resume is broken down into sections (experience, projects, skills, summary)
-    and each section gets its own embedding for granular matching against job requirements.
-    """
+    """Stores embeddings for individual resume sections."""
+
     __tablename__ = 'resume_section_embedding'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    resume_fingerprint = Column(Text, nullable=False, index=True)  # Links to structured_resume
-    
-    # Section identification
-    section_type = Column(Text, nullable=False)  # experience|project|skill|summary|education
-    section_index = Column(Integer, nullable=False)  # Index within section type (0, 1, 2...)
-    
-    # Source text that was embedded
-    source_text = Column(Text, nullable=False)  # The text that was embedded
-    source_data = Column(JSONB, nullable=False)  # Full structured data for this section
-    
-    # Embedding
+    owner_id = Column(UUID(as_uuid=True), ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False, index=True)
+    fingerprint_version = Column(Integer, nullable=False, default=RESUME_FINGERPRINT_VERSION)
+    resume_fingerprint = Column(Text, nullable=False, index=True)
+    section_type = Column(Text, nullable=False)
+    section_index = Column(Integer, nullable=False)
+    source_text = Column(Text, nullable=False)
+    source_data = Column(JSONB, nullable=False)
     embedding = Column(Vector(1024), nullable=False)
-    
-    # Metadata
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
-    
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text(UTC_NOW_SQL))
+
     __table_args__ = (
-        # Composite index for retrieving all sections of a resume
         Index('idx_rse_resume', 'resume_fingerprint', 'section_type', 'section_index'),
-        # HNSW index for similarity search
-        Index('idx_rse_embedding_hnsw', 'embedding', postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}, postgresql_ops={'embedding': 'vector_cosine_ops'}),
+        Index('idx_rse_owner_resume', 'owner_id', 'resume_fingerprint'),
+        Index(
+            'idx_rse_embedding_hnsw',
+            'embedding',
+            postgresql_using='hnsw',
+            postgresql_with={'m': 16, 'ef_construction': 64},
+            postgresql_ops={'embedding': 'vector_cosine_ops'},
+        ),
     )
 
-class ResumeEvidenceUnitEmbedding(Base):
-    """
-    Stores embeddings for individual resume evidence units.
 
-    Each evidence unit (description, highlight from resume) gets its own
-    embedding for fine-grained matching against job requirements.
-    """
+class ResumeEvidenceUnitEmbedding(Base):
+    """Stores embeddings for individual resume evidence units."""
+
     __tablename__ = 'resume_evidence_unit_embedding'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False, index=True)
+    fingerprint_version = Column(Integer, nullable=False, default=RESUME_FINGERPRINT_VERSION)
     resume_fingerprint = Column(Text, nullable=False, index=True)
-
-    evidence_unit_id = Column(Text, nullable=False)  # Links to ResumeEvidenceUnit.id
+    evidence_unit_id = Column(Text, nullable=False)
     source_text = Column(Text, nullable=False)
-    source_section = Column(Text)  # Which resume section (Experience, Skills, etc.)
-    tags = Column(JSONB, default={})  # Metadata (company, title, skill, type, etc.)
-
+    source_section = Column(Text)
+    tags = Column(JSONB, default={})
     embedding = Column(Vector(1024), nullable=False)
-    years_value = Column(Float)  # Extracted years of experience
-    years_context = Column(Text)  # What the years refer to (e.g., "Python", "total experience")
-    is_total_years_claim = Column(Boolean, default=False)  # Whether this is a total years claim
-
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    years_value = Column(Float)
+    years_context = Column(Text)
+    is_total_years_claim = Column(Boolean, default=False)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text(UTC_NOW_SQL))
 
     __table_args__ = (
         Index('idx_rfue_fingerprint', 'resume_fingerprint'),
-        Index('idx_rfue_embedding_hnsw', 'embedding', postgresql_using='hnsw',
-              postgresql_with={'m': 16, 'ef_construction': 64},
-              postgresql_ops={'embedding': 'vector_cosine_ops'}),
+        Index('idx_rfue_owner_resume', 'owner_id', 'resume_fingerprint'),
+        Index(
+            'idx_rfue_embedding_hnsw',
+            'embedding',
+            postgresql_using='hnsw',
+            postgresql_with={'m': 16, 'ef_construction': 64},
+            postgresql_ops={'embedding': 'vector_cosine_ops'},
+        ),
     )
 
 
 class StructuredResume(Base):
-    """
-    Stores structured resume extraction results.
-    
-    Contains AI-extracted structured data from resume with claimed
-    years of experience from the summary section.
-    """
+    """Stores structured resume extraction results."""
+
     __tablename__ = 'structured_resume'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    resume_fingerprint = Column(Text, nullable=False, unique=True, index=True)  # Hash of raw file bytes
-    
-    # Raw extraction result
-    extracted_data = Column(JSONB, nullable=False)  # Full structured extraction
-    
-    # Experience (claimed by candidate from summary section)
-    total_experience_years = Column(Numeric(4, 1))  # From profile.summary.total_experience_years
-    
-    # Extraction metadata
-    extraction_confidence = Column(Numeric(3, 2))  # 0.00-1.00
-    extraction_warnings = Column(JSONB, default=[])  # List of warning messages
-    
-    # Timestamps
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
-    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"), onupdate=sql_text("timezone('UTC', now())"))
+    owner_id = Column(UUID(as_uuid=True), ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False, index=True)
+    fingerprint_version = Column(Integer, nullable=False, default=RESUME_FINGERPRINT_VERSION)
+    resume_fingerprint = Column(Text, nullable=False, unique=True, index=True)
+    extracted_data = Column(JSONB, nullable=False)
+    total_experience_years = Column(Numeric(4, 1))
+    extraction_confidence = Column(Numeric(3, 2))
+    extraction_warnings = Column(JSONB, default=[])
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text(UTC_NOW_SQL))
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text(UTC_NOW_SQL), onupdate=sql_text(UTC_NOW_SQL))
 
     __table_args__ = (
-        # Index for finding resumes by fingerprint
         Index('idx_structured_resume_fingerprint', 'resume_fingerprint'),
-        # Index for experience queries
+        Index('idx_structured_resume_owner_resume', 'owner_id', 'resume_fingerprint'),
         Index('idx_structured_resume_years', 'total_experience_years'),
     )
 
 
+class ResumeProcessingState(Base):
+    """Durable fingerprint-scoped processing state for resume ETL readiness."""
+
+    __tablename__ = 'resume_processing_state'
+
+    resume_fingerprint = Column(Text, primary_key=True)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False, index=True)
+    fingerprint_version = Column(Integer, nullable=False, default=RESUME_FINGERPRINT_VERSION)
+    processing_status = Column(Text, nullable=False)
+    last_error = Column(Text, nullable=True)
+    failure_stage = Column(Text, nullable=True)
+    failure_class = Column(Text, nullable=True)
+    retryable = Column(Boolean, nullable=True)
+    user_safe_message = Column(Text, nullable=True)
+    extraction_completed_at = Column(TIMESTAMP(timezone=True))
+    embedding_completed_at = Column(TIMESTAMP(timezone=True))
+    created_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=sql_text(UTC_NOW_SQL),
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=sql_text(UTC_NOW_SQL),
+        onupdate=sql_text(UTC_NOW_SQL),
+    )
+
+    __table_args__ = (
+        Index('idx_resume_processing_state_status', 'processing_status'),
+        Index('idx_resume_processing_state_updated_at', 'updated_at'),
+        Index('idx_resume_processing_state_owner', 'owner_id', 'updated_at'),
+    )
+
+
+class ResumeUpload(Base):
+    """Ordered ledger of upload intents for resume selection."""
+
+    __tablename__ = 'resume_upload'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False, index=True)
+    resume_hash = Column(Text, nullable=False, index=True)
+    fingerprint_version = Column(Integer, nullable=False, default=RESUME_FINGERPRINT_VERSION)
+    resume_fingerprint = Column(Text, nullable=False, index=True)
+    original_filename = Column(Text, nullable=True)
+    status = Column(Text, nullable=False, default=RESUME_UPLOAD_PENDING)
+    last_error = Column(Text, nullable=True)
+    failure_stage = Column(Text, nullable=True)
+    failure_class = Column(Text, nullable=True)
+    retryable = Column(Boolean, nullable=True)
+    user_safe_message = Column(Text, nullable=True)
+    failure_debug_context = Column(JSONB, nullable=True)
+    processing_task_id = Column(Text, nullable=True)
+    retry_of_upload_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    created_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=sql_text(UTC_NOW_SQL),
+    )
+
+    __table_args__ = (
+        Index('idx_resume_upload_owner_created', 'owner_id', 'created_at'),
+        Index('idx_resume_upload_owner_hash', 'owner_id', 'resume_hash'),
+        Index('idx_resume_upload_owner_fingerprint', 'owner_id', 'resume_fingerprint'),
+        Index('idx_resume_upload_processing_task_id', 'processing_task_id'),
+    )
+
+
 def generate_file_fingerprint(file_bytes: bytes) -> str:
-    """
-    Generate a fingerprint for a resume file based on raw file bytes.
-
-    This is used for deduplication - same file = same hash regardless of parsing.
-    Uses XXH64 (non-cryptographic hash) for performance.
-
-    Args:
-        file_bytes: Raw bytes of the resume file
-
-    Returns:
-        XXH64 64-bit hash as hex string
-    """
+    """Generate a fingerprint for a resume file based on raw file bytes."""
     return xxhash.xxh64_hexdigest(file_bytes)
+
+
+def generate_resume_fingerprint(owner_id: Any, resume_hash: str, version: int = RESUME_FINGERPRINT_VERSION) -> str:
+    """Derive a versioned per-user canonical fingerprint from a raw resume hash."""
+    payload = f"v{version}:{owner_id}:{resume_hash}".encode("utf-8")
+    return xxhash.xxh64_hexdigest(payload)

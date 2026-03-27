@@ -9,6 +9,7 @@ Validates complete user-wants feature with exact score calculations:
 """
 
 import json
+import os
 import sys
 import unittest
 import uuid
@@ -17,10 +18,15 @@ from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
+import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+# Use testcontainers fixture from conftest.py.  test_database sets
+# TEST_DATABASE_URL before setUpClass runs.
+pytestmark = pytest.mark.usefixtures("test_database")
 
 from core.config_loader import FacetWeights, ScorerConfig
 from core.matcher import JobMatchPreliminary
@@ -43,6 +49,7 @@ class DeterministicMockAIService(LLMProvider):
     
     def generate_embedding(self, text: str) -> List[float]:
         # Use stable hash instead of Python's hash() which varies by session
+        # NOSONAR - MD5 is only used for deterministic test data generation, not security
         text_hash = int(hashlib.md5(text.encode()).hexdigest(), 16) % (2**32)
         rng = np.random.default_rng(text_hash)
         emb = rng.standard_normal(self.dim)
@@ -84,27 +91,18 @@ class TestUserWantsPipelineIntegration(unittest.TestCase):
     
     @classmethod
     def setUpClass(cls):
-        """Setup PostgreSQL and load test data from JSON."""
+        """Setup database connection and load test data from JSON."""
+        test_db_url = os.environ.get('TEST_DATABASE_URL')
+        if not test_db_url:
+            raise unittest.SkipTest("TEST_DATABASE_URL not set — test_database fixture did not run")
+
         print("\n" + "="*60)
         print("User-Wants Pipeline Integration Test")
         print("="*60)
-        
-        try:
-            from tests.conftest_docker import postgres_container
-        except ImportError:
-            raise unittest.SkipTest("Docker not available")
-        
-        # Start PostgreSQL
-        cls.postgres_mgr = postgres_container(host_port=15433)
-        cls.postgres = cls.postgres_mgr.__enter__()
-        print(f"✓ PostgreSQL: {cls.postgres.database_url[:40]}...")
-        
-        # Setup database
-        cls.engine = create_engine(cls.postgres.database_url)
-        with cls.engine.connect() as conn:
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
-            conn.commit()
-        Base.metadata.create_all(cls.engine)
+        print(f"✓ PostgreSQL: {test_db_url[:40]}...")
+
+        # test_database fixture already ran create_all and enabled vector extension
+        cls.engine = create_engine(test_db_url)
         
         # Create session and services
         Session = sessionmaker(bind=cls.engine)
@@ -132,10 +130,7 @@ class TestUserWantsPipelineIntegration(unittest.TestCase):
         
         if hasattr(cls, 'engine'):
             cls.engine.dispose()
-        
-        if hasattr(cls, 'postgres_mgr'):
-            cls.postgres_mgr.__exit__(None, None, None)
-        
+
         print("="*60 + "\n")
     
     @classmethod

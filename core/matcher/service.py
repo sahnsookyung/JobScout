@@ -31,16 +31,29 @@ class MatcherService:
     ) -> List[JobMatchPreliminary]:
         if not resume_fingerprint:
             raise ValueError("resume_fingerprint is required for matching")
+        if self._is_cancelled(stop_event):
+            logger.info("MatcherService interrupted before resume preparation")
+            return []
 
-        profile, evidence_units, _ = self.resume_profiler.profile_resume(
-            resume_data, 
-            stop_event=stop_event,
-            pre_extracted_resume=pre_extracted_resume,
-            resume_fingerprint=resume_fingerprint,
-        )
+        if self._can_reuse_ready_resume(repo, resume_fingerprint, pre_extracted_resume):
+            logger.info(
+                "Reusing persisted resume artifacts for matching (fingerprint: %s)",
+                resume_fingerprint,
+            )
+        else:
+            _, evidence_units, _ = self.resume_profiler.profile_resume(
+                resume_data,
+                stop_event=stop_event,
+                pre_extracted_resume=pre_extracted_resume,
+                resume_fingerprint=resume_fingerprint,
+            )
 
-        if not evidence_units:
-            logger.warning("No evidence units extracted from resume")
+            if not evidence_units:
+                logger.warning("No evidence units extracted from resume")
+                return []
+
+        if self._is_cancelled(stop_event):
+            logger.info("MatcherService interrupted before candidate retrieval")
             return []
 
         resume_embedding = self._get_resume_embedding_or_raise(repo, resume_fingerprint)
@@ -64,6 +77,18 @@ class MatcherService:
 
         preliminaries.sort(key=lambda p: p.job_similarity, reverse=True)
         return preliminaries
+
+    @staticmethod
+    def _can_reuse_ready_resume(
+        repo: JobRepository,
+        resume_fingerprint: str,
+        pre_extracted_resume: Optional[Any],
+    ) -> bool:
+        return pre_extracted_resume is not None and repo.is_resume_ready(resume_fingerprint)
+
+    @staticmethod
+    def _is_cancelled(stop_event: Optional[threading.Event]) -> bool:
+        return bool(stop_event and stop_event.is_set())
 
     def _get_resume_embedding_or_raise(self, repo: JobRepository, resume_fingerprint: str):
         embedding = repo.get_resume_summary_embedding(resume_fingerprint)

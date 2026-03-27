@@ -7,56 +7,48 @@ from sqlalchemy.orm import relationship
 
 from .base import Base
 
+
 class NotificationTracker(Base):
-    """
-    Tracks sent notifications for deduplication.
-    
-    Prevents notification fatigue by ensuring the same event
-    (e.g., job match) is not repeatedly notified to the user.
-    """
+    """Tracks sent notifications for deduplication."""
+
     __tablename__ = 'notification_tracker'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    
-    # What was notified
-    user_id = Column(Text, nullable=False, index=True)
-    job_match_id = Column(UUID(as_uuid=True), ForeignKey('job_match.id', ondelete='CASCADE'), nullable=True)
-    notification_type = Column(Text, nullable=False)  # email, discord, telegram, etc.
-    channel_type = Column(Text, nullable=False)  # email, discord, telegram, slack, etc.
-    
-    # Deduplication key - hash of user + job + event type
-    dedup_hash = Column(Text, nullable=False, index=True, unique=True)
-    
-    # Notification content hash (to detect content changes)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    job_match_id = Column(UUID(as_uuid=True), ForeignKey('job_match.id', ondelete='CASCADE'), nullable=True, index=True)
+    channel_type = Column(Text, nullable=False)
+    dedup_hash = Column(Text, nullable=False, index=True)
     content_hash = Column(Text, nullable=True)
-    
-    # Event that triggered notification
-    event_type = Column(Text, nullable=False)  # new_match, score_improved, batch_complete, etc.
-    event_data = Column(JSONB, default={})  # Additional event context
-    
-    # Notification metadata
-    recipient = Column(Text, nullable=False)  # email, discord webhook, telegram chat id
+    event_type = Column(Text, nullable=False)
+    event_data = Column(JSONB, default=dict, server_default=sql_text("'{}'"))
+    recipient = Column(Text, nullable=False)
     subject = Column(Text)
+    body = Column(Text, nullable=True)
     sent_successfully = Column(Boolean, default=False)
     error_message = Column(Text, nullable=True)
-    
-    # Timestamps
     first_sent_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
     last_sent_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
-    send_count = Column(Integer, default=1)  # How many times this was sent (for resends)
-    
-    # Resend policy
-    allow_resend = Column(Boolean, default=False)  # Whether to allow resending
-    resend_interval_hours = Column(Integer, default=24)  # Minimum hours between resends
-    
-    # Relationships
+    send_count = Column(Integer, default=1)
+    allow_resend = Column(Boolean, default=True)
+    resend_interval_hours = Column(Integer, default=24)
+
     job_match = relationship("JobMatch", backref="notifications")
-    
+
     __table_args__ = (
-        # Unique constraint on dedup hash
         UniqueConstraint('dedup_hash', name='uq_notification_dedup'),
-        # Index for querying user's notifications
-        Index('idx_notification_user', 'user_id', 'first_sent_at'),
-        # Index for checking recent notifications
+        Index('idx_notification_owner', 'owner_id', 'first_sent_at'),
         Index('idx_notification_recent', 'dedup_hash', 'last_sent_at'),
     )
+
+    def __init__(self, **kwargs):
+        if "user_id" in kwargs and "owner_id" not in kwargs:
+            kwargs["owner_id"] = kwargs.pop("user_id")
+        super().__init__(**kwargs)
+
+    @property
+    def user_id(self):
+        return self.owner_id
+
+    @user_id.setter
+    def user_id(self, value):
+        self.owner_id = value

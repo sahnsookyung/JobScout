@@ -7,6 +7,23 @@ from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional, Dict, Any
 
 
+class ApiFieldError(BaseModel):
+    """Structured validation metadata for a single request field/path."""
+
+    path: List[str]
+    code: str
+    message: str
+
+
+class ApiError(BaseModel):
+    """Canonical error body for migrated API endpoints."""
+
+    code: str
+    message: str
+    detail: Optional[str] = None
+    fields: Optional[List[ApiFieldError]] = None
+
+
 class MatchSummary(BaseModel):
     """Summary of a job match."""
     model_config = ConfigDict(
@@ -33,15 +50,15 @@ class MatchSummary(BaseModel):
     )
 
     match_id: str
-    job_id: Optional[str]
+    job_id: Optional[str] = None
     title: str
     company: str
-    location: Optional[str]
-    is_remote: Optional[bool]
+    location: Optional[str] = None
+    is_remote: Optional[bool] = None
 
     # Explicit Fit/Want/Overall scores
-    fit_score: Optional[float] = Field(None, ge=0, le=100)
-    want_score: Optional[float] = Field(None, ge=0, le=100)
+    fit_score: Optional[float] = Field(default=None, ge=0, le=100)
+    want_score: Optional[float] = Field(default=None, ge=0, le=100)
     overall_score: float = Field(ge=0, le=100)
 
     # Legacy fields for backward compatibility
@@ -51,16 +68,16 @@ class MatchSummary(BaseModel):
     preferred_coverage: float = Field(ge=0, le=1)
     match_type: str
     is_hidden: bool = False
-    created_at: Optional[str]
-    calculated_at: Optional[str]
+    created_at: Optional[str] = None
+    calculated_at: Optional[str] = None
 
 
 class RequirementDetail(BaseModel):
     """Details of a requirement match."""
     requirement_id: str
-    requirement_text: Optional[str]
-    evidence_text: Optional[str]
-    evidence_section: Optional[str]
+    requirement_text: Optional[str] = None
+    evidence_text: Optional[str] = None
+    evidence_section: Optional[str] = None
     similarity_score: float = Field(ge=0, le=1)
     is_covered: bool
     req_type: str
@@ -68,19 +85,19 @@ class RequirementDetail(BaseModel):
 
 class JobDetails(BaseModel):
     """Details of a job posting."""
-    job_id: Optional[str]
-    title: Optional[str]
-    company: Optional[str]
-    location: Optional[str]
-    is_remote: Optional[bool]
-    description: Optional[str]
-    salary_min: Optional[float]
-    salary_max: Optional[float]
-    currency: Optional[str]
-    min_years_experience: Optional[int]
-    requires_degree: Optional[bool]
-    security_clearance: Optional[bool]
-    job_level: Optional[str]
+    job_id: Optional[str] = None
+    title: Optional[str] = None
+    company: Optional[str] = None
+    location: Optional[str] = None
+    is_remote: Optional[bool] = None
+    description: Optional[str] = None
+    salary_min: Optional[float] = None
+    salary_max: Optional[float] = None
+    currency: Optional[str] = None
+    min_years_experience: Optional[int] = None
+    requires_degree: Optional[bool] = None
+    security_clearance: Optional[bool] = None
+    job_level: Optional[str] = None
 
 
 class MatchDetail(BaseModel):
@@ -108,8 +125,8 @@ class MatchDetail(BaseModel):
     matched_requirements_count: int
     match_type: str
     status: str
-    created_at: Optional[str]
-    calculated_at: Optional[str]
+    created_at: Optional[str] = None
+    calculated_at: Optional[str] = None
     penalty_details: Dict[str, Any]
 
 
@@ -166,13 +183,19 @@ class PipelineTaskResponse(BaseModel):
 class PipelineStatusResponse(BaseModel):
     """Response containing pipeline task status."""
     task_id: str
-    status: str  # "pending", "running", "completed", "failed"
+    status: str  # "pending", "running", "completed", "failed", "cancelled"
+    upload_id: Optional[str] = None
+    resume_fingerprint: Optional[str] = None
     matches_count: Optional[int] = None
     saved_count: Optional[int] = None
     notified_count: Optional[int] = None
     error: Optional[str] = None
     execution_time: Optional[float] = None
     step: Optional[str] = None
+    stale_due_to_newer_upload: bool = False
+    latest_upload_id: Optional[str] = None
+    latest_resume_fingerprint: Optional[str] = None
+    stale_message: Optional[str] = None
 
 
 class NotificationResponse(BaseModel):
@@ -216,4 +239,45 @@ class ResumeUploadResponse(BaseModel):
     success: bool
     resume_hash: str
     message: str
+    upload_id: Optional[str] = None
     task_id: Optional[str] = None
+    status: Optional[str] = None
+
+
+class ResumeStatusResponse(BaseModel):
+    """Response for querying background resume processing status."""
+    task_id: str
+    status: str  # processing | completed | failed
+    step: Optional[str] = None  # extracting | embedding
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+
+class ResumeEligibilityResponse(BaseModel):
+    """Authoritative matching eligibility for the latest uploaded resume."""
+    can_run: bool
+    status: str
+    message: str
+    retryable: bool
+    upload_id: Optional[str] = None
+    resume_hash: Optional[str] = None
+    task_id: Optional[str] = None
+
+
+class ResumePreflightResponse(BaseModel):
+    """Read-only preflight result for a locally computed resume hash."""
+    status: str
+    message: str
+    retryable: bool
+    can_skip_upload: bool
+    resume_hash: str
+    upload_id: Optional[str] = None
+    task_id: Optional[str] = None
+
+class ScrapeJobsResponse(BaseModel):
+    """Response after triggering job scraping."""
+    success: bool
+    message: str
+    jobs_gathered: int = 0
+    extraction_triggered: bool = False
+    embeddings_triggered: bool = False
