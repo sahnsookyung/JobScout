@@ -15,10 +15,20 @@ logger = logging.getLogger(__name__)
 HEALTH_ENDPOINT = "/health"
 
 # Environment variables - validated at client instantiation time
-EXTRACTION_URL = os.getenv("EXTRACTION_URL", "")
-EMBEDDINGS_URL = os.getenv("EMBEDDINGS_URL", "")
-SCORER_MATCHER_URL = os.getenv("SCORER_MATCHER_URL", "")
-ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "")
+INTERNAL_EXTRACTION_URL_ENV = "INTERNAL_EXTRACTION_URL"
+INTERNAL_EMBEDDINGS_URL_ENV = "INTERNAL_EMBEDDINGS_URL"
+INTERNAL_SCORER_MATCHER_URL_ENV = "INTERNAL_SCORER_MATCHER_URL"
+INTERNAL_ORCHESTRATOR_URL_ENV = "INTERNAL_ORCHESTRATOR_URL"
+
+EXTRACTION_URL_ENV = "EXTRACTION_URL"
+EMBEDDINGS_URL_ENV = "EMBEDDINGS_URL"
+SCORER_MATCHER_URL_ENV = "SCORER_MATCHER_URL"
+ORCHESTRATOR_URL_ENV = "ORCHESTRATOR_URL"
+
+EXTRACTION_URL = os.getenv(EXTRACTION_URL_ENV, "")
+EMBEDDINGS_URL = os.getenv(EMBEDDINGS_URL_ENV, "")
+SCORER_MATCHER_URL = os.getenv(SCORER_MATCHER_URL_ENV, "")
+ORCHESTRATOR_URL = os.getenv(ORCHESTRATOR_URL_ENV, "")
 
 
 def _validate_url(url: str, env_var: str) -> str:
@@ -34,6 +44,11 @@ def _validate_url(url: str, env_var: str) -> str:
     if not parsed.scheme or parsed.scheme not in ('http', 'https') or not parsed.netloc:
         raise RuntimeError(f"{env_var} must be a valid HTTP/HTTPS URL, got: {url}")
     return url
+
+
+def resolve_service_url(internal_env_var: str, external_env_var: str) -> str:
+    """Resolve service URL, preferring internal Docker networking values."""
+    return os.getenv(internal_env_var, "").strip() or os.getenv(external_env_var, "").strip()
 
 
 class ServiceClient:
@@ -80,12 +95,29 @@ class ServiceClient:
 class ExtractionClient(ServiceClient):
     """Client for Extraction service."""
 
-    def __init__(self, base_url: str = EXTRACTION_URL):
-        super().__init__(base_url, env_var="EXTRACTION_URL")
+    def __init__(self, base_url: str | None = None):
+        resolved_base_url = base_url
+        env_name = ""
+        if resolved_base_url is None:
+            resolved_base_url = resolve_service_url(INTERNAL_EXTRACTION_URL_ENV, EXTRACTION_URL_ENV)
+            env_name = f"{INTERNAL_EXTRACTION_URL_ENV}/{EXTRACTION_URL_ENV}"
+        super().__init__(resolved_base_url, env_var=env_name)
     
-    def extract_resume(self, resume_file: str) -> dict:
+    def extract_resume(
+        self,
+        resume_file: str,
+        owner_id: str,
+        force_re_extraction: bool = False,
+    ) -> dict:
         """Extract resume data."""
-        return self.post("/extract/resume", json={"resume_file": resume_file})
+        return self.post(
+            "/extract/resume",
+            json={
+                "resume_file": resume_file,
+                "force_re_extraction": force_re_extraction,
+                "owner_id": owner_id,
+            },
+        )
     
     def health(self) -> dict:
         """Check service health."""
@@ -95,12 +127,20 @@ class ExtractionClient(ServiceClient):
 class EmbeddingsClient(ServiceClient):
     """Client for Embeddings service."""
 
-    def __init__(self, base_url: str = EMBEDDINGS_URL):
-        super().__init__(base_url, env_var="EMBEDDINGS_URL")
+    def __init__(self, base_url: str | None = None):
+        resolved_base_url = base_url
+        env_name = ""
+        if resolved_base_url is None:
+            resolved_base_url = resolve_service_url(INTERNAL_EMBEDDINGS_URL_ENV, EMBEDDINGS_URL_ENV)
+            env_name = f"{INTERNAL_EMBEDDINGS_URL_ENV}/{EMBEDDINGS_URL_ENV}"
+        super().__init__(resolved_base_url, env_var=env_name)
     
-    def embed_resume(self, resume_fingerprint: str) -> dict:
+    def embed_resume(self, resume_fingerprint: str, owner_id: str) -> dict:
         """Generate resume embeddings."""
-        return self.post("/embed/resume", json={"resume_fingerprint": resume_fingerprint})
+        return self.post(
+            "/embed/resume",
+            json={"resume_fingerprint": resume_fingerprint, "owner_id": owner_id},
+        )
     
     def health(self) -> dict:
         """Check service health."""
@@ -110,8 +150,16 @@ class EmbeddingsClient(ServiceClient):
 class ScorerMatcherClient(ServiceClient):
     """Client for Scorer-Matcher service."""
 
-    def __init__(self, base_url: str = SCORER_MATCHER_URL):
-        super().__init__(base_url, env_var="SCORER_MATCHER_URL")
+    def __init__(self, base_url: str | None = None):
+        resolved_base_url = base_url
+        env_name = ""
+        if resolved_base_url is None:
+            resolved_base_url = resolve_service_url(
+                INTERNAL_SCORER_MATCHER_URL_ENV,
+                SCORER_MATCHER_URL_ENV,
+            )
+            env_name = f"{INTERNAL_SCORER_MATCHER_URL_ENV}/{SCORER_MATCHER_URL_ENV}"
+        super().__init__(resolved_base_url, env_var=env_name)
     
     def match_resume(self, resume_fingerprint: str) -> dict:
         """Run matching for a resume."""
@@ -129,8 +177,13 @@ class ScorerMatcherClient(ServiceClient):
 class OrchestratorClient(ServiceClient):
     """Client for Orchestrator service."""
 
-    def __init__(self, base_url: str = ORCHESTRATOR_URL):
-        super().__init__(base_url, env_var="ORCHESTRATOR_URL")
+    def __init__(self, base_url: str | None = None):
+        resolved_base_url = base_url
+        env_name = ""
+        if resolved_base_url is None:
+            resolved_base_url = resolve_service_url(INTERNAL_ORCHESTRATOR_URL_ENV, ORCHESTRATOR_URL_ENV)
+            env_name = f"{INTERNAL_ORCHESTRATOR_URL_ENV}/{ORCHESTRATOR_URL_ENV}"
+        super().__init__(resolved_base_url, env_var=env_name)
 
     def start_matching(self) -> dict:
         """Start the full pipeline: extraction -> embeddings -> matching."""
@@ -198,15 +251,32 @@ class OrchestratorClient(ServiceClient):
         
         return {"success": False, "status": "timeout", "error": f"Timeout waiting for task {task_id}"}
 
-    def process_resume(self, file_path: str, task_id: str) -> dict:
+    def process_resume(
+        self,
+        file_path: str | None,
+        task_id: str,
+        *,
+        upload_id: str | None = None,
+        owner_id: str | None = None,
+        resume_fingerprint: str | None = None,
+        mode: str = "extract_and_embed",
+    ) -> dict:
         """Sequence extraction → embeddings for a resume file.
 
         The orchestrator writes progress to task:{task_id}:state so the
         web-backend can poll Redis directly without a status proxy.
         Returns immediately (202 accepted); processing is asynchronous.
         """
-        return self.post("/orchestrate/resume-etl",
-                         json={"file_path": file_path, "task_id": task_id})
+        payload = {"task_id": task_id, "mode": mode}
+        if file_path is not None:
+            payload["file_path"] = file_path
+        if upload_id is not None:
+            payload["upload_id"] = upload_id
+        if owner_id is not None:
+            payload["owner_id"] = owner_id
+        if resume_fingerprint is not None:
+            payload["resume_fingerprint"] = resume_fingerprint
+        return self.post("/orchestrate/resume-etl", json=payload)
 
     def health(self) -> dict:
         """Check service health."""

@@ -2,7 +2,7 @@ import logging
 from sqlalchemy import text
 from tenacity import retry, stop_after_attempt, wait_fixed
 from database.database import engine
-from database.models import Base
+from database.migrate import check_database_schema
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -18,9 +18,8 @@ def init_db():
             connection.commit()
             logger.info("Checked/Created 'vector' extension.")
 
-        # Create tables
-        Base.metadata.create_all(bind=engine)
-        logger.info("Tables created or verified.")
+        check_database_schema(engine=engine)
+        logger.info("Database schema verified.")
         
     except Exception as e:
         logger.error(f"Error initializing DB: {e}")

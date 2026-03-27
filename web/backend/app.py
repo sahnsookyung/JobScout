@@ -31,6 +31,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_config, get_project_root
+from .dependencies import _ensure_dev_bypass_allowed
 from .exceptions import (
     ServiceException,
     service_exception_handler,
@@ -56,6 +57,7 @@ config = get_config()
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    _ensure_dev_bypass_allowed()
     yield
 
 

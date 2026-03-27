@@ -11,7 +11,9 @@ import tempfile
 import os
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
+from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -21,6 +23,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
 
     def setUp(self):
         from fastapi.testclient import TestClient
+        from web.backend.dependencies import get_current_user
         from web.backend.routers.pipeline import router, limiter
         from fastapi import FastAPI
 
@@ -28,6 +31,9 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         limiter.enabled = False
 
         self.app = FastAPI()
+        self.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id=UUID("00000000-0000-0000-0000-000000000001")
+        )
         self.app.include_router(router)
         self.client = TestClient(self.app, raise_server_exceptions=False)
 
@@ -50,6 +56,12 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         ctx.job_etl_service = MagicMock()
         repo = MagicMock()
         repo.resume.resume_hash_exists.return_value = resume_exists
+        repo.is_resume_ready.return_value = resume_exists
+        repo.get_resume_processing_state.return_value = None
+        repo.get_latest_resume_upload_for_hash.return_value = None
+        repo.create_resume_upload.return_value = SimpleNamespace(
+            id=UUID("00000000-0000-0000-0000-0000000000aa")
+        )
         
         if process_result:
             ctx.job_etl_service.extract_and_embed_resume.return_value = process_result
@@ -102,7 +114,8 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
         self.assertEqual(response.status_code, 415)  # Unsupported Media Type
-        self.assertIn('Unsupported file format', response.json()['detail'])
+        self.assertEqual(response.json()['code'], 'pipeline.resume.file_unsupported')
+        self.assertIn('Unsupported file format', response.json()['message'])
 
     def test_upload_without_extension_rejected(self):
         """Test that files without extension are rejected."""
@@ -111,7 +124,8 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
         self.assertEqual(response.status_code, 415)  # Unsupported Media Type
-        self.assertIn('Unsupported file format', response.json()['detail'])
+        self.assertEqual(response.json()['code'], 'pipeline.resume.file_unsupported')
+        self.assertIn('Unsupported file format', response.json()['message'])
 
     def test_upload_txt_file_accepted(self):
         """Test that .txt files are now accepted (multi-format support)."""
@@ -166,6 +180,12 @@ class TestResumeUploadEndpoint(unittest.TestCase):
                 with patch('database.uow.job_uow') as mock_uow:
                     mock_repo = MagicMock()
                     mock_repo.resume.resume_hash_exists.return_value = False
+                    mock_repo.is_resume_ready.return_value = False
+                    mock_repo.get_resume_processing_state.return_value = None
+                    mock_repo.get_latest_resume_upload_for_hash.return_value = None
+                    mock_repo.create_resume_upload.return_value = SimpleNamespace(
+                        id=UUID("00000000-0000-0000-0000-0000000000ab")
+                    )
                     mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                     mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -185,7 +205,8 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn('Empty file', response.json()['detail'])
+        self.assertEqual(response.json()['code'], 'pipeline.resume.file_empty')
+        self.assertIn('Empty file', response.json()['message'])
 
     def test_upload_file_size_limit_exceeded(self):
         """Test that files exceeding size limit are rejected."""
@@ -195,7 +216,8 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
         self.assertEqual(response.status_code, 413)  # Payload Too Large
-        self.assertIn('2', response.json()['detail'])
+        self.assertEqual(response.json()['code'], 'pipeline.resume.file_too_large')
+        self.assertIn('2', response.json()['message'])
 
     def test_response_message_includes_fingerprint(self):
         """Test that successful response includes fingerprint in message."""
@@ -221,6 +243,12 @@ class TestResumeUploadEndpoint(unittest.TestCase):
                         mock_ctx.job_etl_service = mock_etl_service
                         mock_repo = MagicMock()
                         mock_repo.resume.resume_hash_exists.return_value = False
+                        mock_repo.is_resume_ready.return_value = False
+                        mock_repo.get_resume_processing_state.return_value = None
+                        mock_repo.get_latest_resume_upload_for_hash.return_value = None
+                        mock_repo.create_resume_upload.return_value = SimpleNamespace(
+                            id=UUID("00000000-0000-0000-0000-0000000000ac")
+                        )
                         mock_etl_service.extract_and_embed_resume.return_value = (True, test_fingerprint, sample_resume)
                         mock_context.build.return_value = mock_ctx
 
@@ -241,6 +269,7 @@ class TestResumeHashCheckEndpoint(unittest.TestCase):
 
     def setUp(self):
         from fastapi.testclient import TestClient
+        from web.backend.dependencies import get_current_user
         from web.backend.routers.pipeline import router, limiter
         from fastapi import FastAPI
 
@@ -248,6 +277,9 @@ class TestResumeHashCheckEndpoint(unittest.TestCase):
         limiter.enabled = False
 
         self.app = FastAPI()
+        self.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id=UUID("00000000-0000-0000-0000-000000000001")
+        )
         self.app.include_router(router)
         self.client = TestClient(self.app, raise_server_exceptions=False)
 
@@ -255,11 +287,8 @@ class TestResumeHashCheckEndpoint(unittest.TestCase):
         """Test /check-resume-hash returns exists=true when hash exists in DB."""
         test_hash = "abc123def45678901234567890123456"
 
-        with patch('database.uow.job_uow') as mock_uow:
-            mock_repo = MagicMock()
-            mock_repo.resume.resume_hash_exists.return_value = True
-            mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
-            mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+        with patch('web.backend.routers.pipeline.evaluate_resume_preflight') as mock_preflight:
+            mock_preflight.return_value = MagicMock(status='ready_already_known')
 
             response = self.client.post(
                 '/api/pipeline/check-resume-hash',
@@ -275,11 +304,8 @@ class TestResumeHashCheckEndpoint(unittest.TestCase):
         """Test /check-resume-hash returns exists=false when hash not in DB."""
         test_hash = "nonexistent_hash_123456789"
 
-        with patch('database.uow.job_uow') as mock_uow:
-            mock_repo = MagicMock()
-            mock_repo.resume.resume_hash_exists.return_value = False
-            mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
-            mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+        with patch('web.backend.routers.pipeline.evaluate_resume_preflight') as mock_preflight:
+            mock_preflight.return_value = MagicMock(status='upload_required')
 
             response = self.client.post(
                 '/api/pipeline/check-resume-hash',
@@ -306,6 +332,7 @@ class TestResumeUploadSecurity(unittest.TestCase):
 
     def setUp(self):
         from fastapi.testclient import TestClient
+        from web.backend.dependencies import get_current_user
         from web.backend.routers.pipeline import router, limiter
         from fastapi import FastAPI
 
@@ -313,6 +340,9 @@ class TestResumeUploadSecurity(unittest.TestCase):
         limiter.enabled = False
 
         self.app = FastAPI()
+        self.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id=UUID("00000000-0000-0000-0000-000000000001")
+        )
         self.app.include_router(router)
         self.client = TestClient(self.app, raise_server_exceptions=False)
 
@@ -324,7 +354,8 @@ class TestResumeUploadSecurity(unittest.TestCase):
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
         self.assertEqual(response.status_code, 413)  # Payload Too Large
-        self.assertIn('2', response.json()['detail'])
+        self.assertEqual(response.json()['code'], 'pipeline.resume.file_too_large')
+        self.assertIn('2', response.json()['message'])
 
     def test_upload_hash_mismatch_rejected(self):
         """Test that server rejects file when client hash doesn't match computed hash (security)."""
@@ -348,6 +379,12 @@ class TestResumeUploadSecurity(unittest.TestCase):
                 with patch('database.uow.job_uow') as mock_uow:
                     mock_repo = MagicMock()
                     mock_repo.resume.resume_hash_exists.return_value = False
+                    mock_repo.is_resume_ready.return_value = False
+                    mock_repo.get_resume_processing_state.return_value = None
+                    mock_repo.get_latest_resume_upload_for_hash.return_value = None
+                    mock_repo.create_resume_upload.return_value = SimpleNamespace(
+                        id=UUID("00000000-0000-0000-0000-0000000000b1")
+                    )
                     mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                     mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -360,7 +397,8 @@ class TestResumeUploadSecurity(unittest.TestCase):
 
         # Server should reject due to hash mismatch
         self.assertEqual(response.status_code, 400)
-        self.assertIn('hash', response.json()['detail'].lower())
+        self.assertEqual(response.json()['code'], 'pipeline.resume.hash_mismatch')
+        self.assertIn('hash', response.json()['message'].lower())
 
     def test_upload_hash_match_succeeds(self):
         """Test that server accepts when client hash matches computed hash."""
@@ -385,6 +423,12 @@ class TestResumeUploadSecurity(unittest.TestCase):
                     with patch('database.uow.job_uow') as mock_uow:
                         mock_repo = MagicMock()
                         mock_repo.resume.resume_hash_exists.return_value = False
+                        mock_repo.is_resume_ready.return_value = False
+                        mock_repo.get_resume_processing_state.return_value = None
+                        mock_repo.get_latest_resume_upload_for_hash.return_value = None
+                        mock_repo.create_resume_upload.return_value = SimpleNamespace(
+                            id=UUID("00000000-0000-0000-0000-0000000000ae")
+                        )
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -412,6 +456,7 @@ class TestResumeUploadDeduplication(unittest.TestCase):
 
     def setUp(self):
         from fastapi.testclient import TestClient
+        from web.backend.dependencies import get_current_user
         from web.backend.routers.pipeline import router, limiter
         from fastapi import FastAPI
 
@@ -419,6 +464,9 @@ class TestResumeUploadDeduplication(unittest.TestCase):
         limiter.enabled = False
 
         self.app = FastAPI()
+        self.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id=UUID("00000000-0000-0000-0000-000000000001")
+        )
         self.app.include_router(router)
         self.client = TestClient(self.app, raise_server_exceptions=False)
 
@@ -445,6 +493,12 @@ class TestResumeUploadDeduplication(unittest.TestCase):
                     with patch('database.uow.job_uow') as mock_uow:
                         mock_repo = MagicMock()
                         mock_repo.resume.resume_hash_exists.return_value = True
+                        mock_repo.is_resume_ready.return_value = True
+                        mock_repo.get_resume_processing_state.return_value = None
+                        mock_repo.get_latest_resume_upload_for_hash.return_value = None
+                        mock_repo.create_resume_upload.return_value = SimpleNamespace(
+                            id=UUID("00000000-0000-0000-0000-0000000000ad")
+                        )
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -484,6 +538,12 @@ class TestResumeUploadDeduplication(unittest.TestCase):
                     with patch('database.uow.job_uow') as mock_uow:
                         mock_repo = MagicMock()
                         mock_repo.resume.resume_hash_exists.return_value = False
+                        mock_repo.is_resume_ready.return_value = False
+                        mock_repo.get_resume_processing_state.return_value = None
+                        mock_repo.get_latest_resume_upload_for_hash.return_value = None
+                        mock_repo.create_resume_upload.return_value = SimpleNamespace(
+                            id=UUID("00000000-0000-0000-0000-0000000000af")
+                        )
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -528,6 +588,12 @@ class TestResumeUploadDeduplication(unittest.TestCase):
                     with patch('database.uow.job_uow') as mock_uow:
                         mock_repo = MagicMock()
                         mock_repo.resume.resume_hash_exists.return_value = False
+                        mock_repo.is_resume_ready.return_value = False
+                        mock_repo.get_resume_processing_state.return_value = None
+                        mock_repo.get_latest_resume_upload_for_hash.return_value = None
+                        mock_repo.create_resume_upload.return_value = SimpleNamespace(
+                            id=UUID("00000000-0000-0000-0000-0000000000b0")
+                        )
                         mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
                         mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 

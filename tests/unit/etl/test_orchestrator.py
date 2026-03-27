@@ -817,14 +817,11 @@ class TestEmbedResume:
         }
         mock_repo.resume.get_structured_resume_by_fingerprint.return_value = mock_existing
 
-        with patch('etl.orchestrator.ResumeProfiler') as mock_profiler_class:
-            mock_profiler = Mock()
-            mock_profiler.embed_only.return_value = None
-            mock_profiler_class.return_value = mock_profiler
-
+        with patch.object(service, "ensure_resume_ready") as mock_ensure_ready:
             result = service.embed_resume(mock_repo, "fp123")
 
             assert result == (True, "fp123")
+            mock_ensure_ready.assert_called_once()
 
     def test_embed_resume_not_found(self):
         """Test embedding resume not found in DB."""
@@ -879,12 +876,7 @@ class TestEmbedResume:
         }
         mock_repo.resume.get_structured_resume_by_fingerprint.return_value = mock_existing
 
-        # Mock ResumeProfiler to raise exception during embed_only
-        with patch('etl.orchestrator.ResumeProfiler') as mock_profiler_class:
-            mock_profiler = Mock()
-            mock_profiler.embed_only.side_effect = Exception("Embedding error")
-            mock_profiler_class.return_value = mock_profiler
-
+        with patch.object(service, "ensure_resume_ready", side_effect=Exception("Embedding error")):
             with pytest.raises(Exception, match="Embedding error"):
                 service.embed_resume(mock_repo, "fp123")
 

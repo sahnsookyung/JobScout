@@ -197,6 +197,22 @@ describe('StatusBanner', () => {
         expect(screen.getByText('Time: 45.50s')).toBeInTheDocument();
     });
 
+    it('renders stale-result warning when a newer upload exists', () => {
+        render(
+            <StatusBanner
+                status="completed"
+                matches_count={10}
+                saved_count={8}
+                stale_due_to_newer_upload
+                stale_message="These results were generated from an older resume upload."
+            />
+        );
+
+        expect(
+            screen.getByText('These results were generated from an older resume upload.')
+        ).toBeInTheDocument();
+    });
+
     it('renders failed status with error message', () => {
         render(<StatusBanner status="failed" error="Database connection failed" />);
 
@@ -212,6 +228,22 @@ describe('StatusBanner', () => {
         expect(screen.getByTestId('x-circle-icon')).toBeInTheDocument();
         expect(screen.getByTestId('badge')).toHaveAttribute('data-variant', 'default');
         expect(screen.getByText('Pipeline cancelled')).toBeInTheDocument();
+    });
+
+    it('renders cancellation requested warning state', () => {
+        render(<StatusBanner status="cancellation_requested" step="scoring" />);
+
+        expect(screen.getByText('Stopping as soon as it is safe')).toBeInTheDocument();
+        expect(screen.getByText('Cancellation was requested. The worker is still winding down.')).toBeInTheDocument();
+        expect(screen.getByTestId('badge')).toHaveAttribute('data-variant', 'warning');
+    });
+
+    it('renders persisting warning state', () => {
+        render(<StatusBanner status="persisting" step="saving_results" />);
+
+        expect(screen.getByText('Finishing writes')).toBeInTheDocument();
+        expect(screen.getByText('The pipeline crossed the save boundary and is finishing safely.')).toBeInTheDocument();
+        expect(screen.getByTestId('badge')).toHaveAttribute('data-variant', 'warning');
     });
 
     it('shows current step when running', () => {
@@ -475,7 +507,9 @@ describe('CompactScoreBar', () => {
 
 describe('ActionButton', () => {
     const defaultProps: ActionButtonProps = {
-        isRunningStatus: false,
+        canStop: false,
+        isCancellationRequested: false,
+        isPersistingStatus: false,
         isRunning: false,
         isStopping: false,
         onRun: vi.fn(),
@@ -493,7 +527,7 @@ describe('ActionButton', () => {
     });
 
     it('displays "Stop" when running', () => {
-        render(<ActionButton {...defaultProps} isRunningStatus />);
+        render(<ActionButton {...defaultProps} canStop />);
 
         expect(screen.getByText('Stop')).toBeInTheDocument();
     });
@@ -511,7 +545,7 @@ describe('ActionButton', () => {
 
     it('calls onStop when clicked (running)', () => {
         const mockOnStop = vi.fn();
-        render(<ActionButton {...defaultProps} isRunningStatus onStop={mockOnStop} />);
+        render(<ActionButton {...defaultProps} canStop onStop={mockOnStop} />);
 
         const button = screen.getByRole('button');
         button.click();
@@ -527,7 +561,7 @@ describe('ActionButton', () => {
     });
 
     it('is disabled when stopping', () => {
-        render(<ActionButton {...defaultProps} isRunningStatus isStopping />);
+        render(<ActionButton {...defaultProps} canStop isStopping />);
 
         const button = screen.getByRole('button');
         expect(button).toBeDisabled();
@@ -540,7 +574,7 @@ describe('ActionButton', () => {
     });
 
     it('does not show Zap icon when running', () => {
-        render(<ActionButton {...defaultProps} isRunningStatus />);
+        render(<ActionButton {...defaultProps} canStop />);
 
         expect(screen.queryByTestId('zap-icon')).not.toBeInTheDocument();
     });
@@ -554,9 +588,36 @@ describe('ActionButton', () => {
     });
 
     it('has red background when running', () => {
-        const { container } = render(<ActionButton {...defaultProps} isRunningStatus />);
+        const { container } = render(<ActionButton {...defaultProps} canStop />);
 
         const button = container.querySelector('button');
         expect(button).toHaveClass('bg-red-500');
+    });
+
+    it('shows persisting label and amber styling', () => {
+        const { container } = render(<ActionButton {...defaultProps} isPersistingStatus />);
+
+        expect(screen.getByText('Finishing...')).toBeInTheDocument();
+        const button = container.querySelector('button');
+        expect(button).toHaveClass('bg-amber-500');
+    });
+
+    it('shows cancellation requested label', () => {
+        render(<ActionButton {...defaultProps} isCancellationRequested />);
+
+        expect(screen.getByText('Stopping...')).toBeInTheDocument();
+    });
+
+    it('shows resume processing label for known extracting step', () => {
+        render(<ActionButton {...defaultProps} isProcessingResume processingStep="extracting" />);
+
+        expect(screen.getByText('Parsing resume...')).toBeInTheDocument();
+        expect(screen.getByTestId('loader-icon')).toBeInTheDocument();
+    });
+
+    it('falls back to generic preparing label for unknown processing step', () => {
+        render(<ActionButton {...defaultProps} isProcessingResume processingStep="unknown-step" />);
+
+        expect(screen.getByText('Preparing...')).toBeInTheDocument();
     });
 });

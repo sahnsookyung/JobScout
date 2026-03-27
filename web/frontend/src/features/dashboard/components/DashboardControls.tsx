@@ -65,14 +65,17 @@ export const DashboardControls: React.FC = () => {
     const statusData = status;
 
     const hasStatus = statusData !== null && statusData !== undefined;
-    const isRunningStatus = hasStatus && statusData?.status === 'running';
-    const isPendingStatus = hasStatus && statusData?.status === 'pending';
+    const isRunningStatus = hasStatus && ['pending', 'running'].includes(statusData?.status ?? '');
+    const isCancellationRequested = hasStatus && statusData?.status === 'cancellation_requested';
+    const isPersistingStatus = hasStatus && statusData?.status === 'persisting';
+    const canStop = isRunningStatus;
     const isCompletedStatus = hasStatus && statusData?.status === 'completed';
     const isFailedStatus = hasStatus && statusData?.status === 'failed';
     const isCancelledStatus = hasStatus && statusData?.status === 'cancelled';
     const showStatusBanner = (
-        isPendingStatus ||
         isRunningStatus ||
+        isCancellationRequested ||
+        isPersistingStatus ||
         isCompletedStatus ||
         isFailedStatus ||
         isCancelledStatus
@@ -112,7 +115,9 @@ export const DashboardControls: React.FC = () => {
                             processingStep={resumeProcessingStep}
                         />
                         <ActionButton
-                            isRunningStatus={isRunningStatus}
+                            canStop={canStop}
+                            isCancellationRequested={isCancellationRequested}
+                            isPersistingStatus={isPersistingStatus}
                             isRunning={isRunning}
                             isStopping={isStopping}
                             isProcessingResume={isPreparingResume}
@@ -123,7 +128,7 @@ export const DashboardControls: React.FC = () => {
                     </div>
                 </div>
             </div>
-            {showStatusBanner && <StatusBanner {...statusData} />}
+            {showStatusBanner && statusData && <StatusBanner {...statusData} />}
         </DashboardWrapper>
     );
 };

@@ -46,19 +46,32 @@ export function createMockError(options: {
  */
 export function testErrorInterceptor(
     mockError: AxiosError,
-    expectedMessage: string
-): void {
+    expectedMessage: string,
+    expected?: {
+        code?: string;
+        detail?: string;
+        fieldsLength?: number;
+    }
+): Promise<void> {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
         const { responseHandler } = getMockHandlers();
-        try {
-            const result = responseHandler.rejected(mockError);
-            if (result && typeof result.then === 'function') {
-                result.catch(() => {});
-            }
-        } catch (error) {
-            expect((error as Error).message).toBe(expectedMessage);
+        const result = responseHandler.rejected(mockError);
+        if (result && typeof result.then === 'function') {
+            return result.catch((error: Error & { code?: string; detail?: string; fields?: unknown[] }) => {
+                expect(error.message).toBe(expectedMessage);
+                if (expected?.code !== undefined) {
+                    expect(error.code).toBe(expected.code);
+                }
+                if (expected?.detail !== undefined) {
+                    expect(error.detail).toBe(expected.detail);
+                }
+                if (expected?.fieldsLength !== undefined) {
+                    expect(error.fields).toHaveLength(expected.fieldsLength);
+                }
+            });
         }
+        return Promise.resolve();
     } finally {
         consoleSpy.mockRestore();
     }

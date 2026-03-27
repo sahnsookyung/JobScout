@@ -358,7 +358,6 @@ class TestGenerateResumeEmbedding:
         from services.base.embeddings import generate_resume_embedding
         with patch('services.base.embeddings.job_uow') as mock_job_uow:
             mock_repo = MagicMock()
-            mock_repo.embed_resume = Mock(return_value=(True, "fingerprint123"))
             
             mock_context = MagicMock()
             mock_context.__enter__ = Mock(return_value=mock_repo)
@@ -366,18 +365,18 @@ class TestGenerateResumeEmbedding:
             mock_job_uow.return_value = mock_context
 
             mock_ctx = MagicMock()
-            mock_ctx.job_etl_service.embed_resume = Mock(return_value=(True, "fingerprint123"))
+            mock_ctx.job_etl_service.embed_resume_stage = Mock(return_value=(True, "fingerprint123"))
 
             result = generate_resume_embedding(mock_ctx, "fingerprint123")
 
             assert result is True
+            mock_ctx.job_etl_service.embed_resume_stage.assert_called_once()
 
     def test_generate_resume_embedding_returns_false(self):
         """Test generate_resume_embedding returns False when not embedded."""
         from services.base.embeddings import generate_resume_embedding
         with patch('services.base.embeddings.job_uow') as mock_job_uow:
             mock_repo = MagicMock()
-            mock_repo.embed_resume = Mock(return_value=(False, "fingerprint123"))
             
             mock_context = MagicMock()
             mock_context.__enter__ = Mock(return_value=mock_repo)
@@ -385,8 +384,9 @@ class TestGenerateResumeEmbedding:
             mock_job_uow.return_value = mock_context
 
             mock_ctx = MagicMock()
-            mock_ctx.job_etl_service.embed_resume = Mock(return_value=(False, "fingerprint123"))
+            mock_ctx.job_etl_service.embed_resume_stage = Mock(return_value=(False, "fingerprint123"))
 
             result = generate_resume_embedding(mock_ctx, "fingerprint123")
 
             assert result is False
+            mock_ctx.job_etl_service.embed_resume_stage.assert_called_once()

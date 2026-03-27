@@ -1,0 +1,58 @@
+{
+  "profile": {
+    "summary": {
+      "text": "FAIL_EMBEDDING Senior Python backend engineer with FastAPI and AWS experience.",
+      "total_experience_years": 5
+    },
+    "experience": [
+      {
+        "company": "Failure Labs",
+        "title": "Backend Engineer",
+        "start_date": {
+          "text": "2021-01",
+          "year": 2021,
+          "month": 1,
+          "precision": "month"
+        },
+        "end_date": {
+          "text": "Present",
+          "year": null,
+          "month": null,
+          "precision": "unknown"
+        },
+        "is_current": true,
+        "description": "FAIL_EMBEDDING Built backend APIs in Python and FastAPI.",
+        "years_value": 4.0,
+        "tech_keywords": [
+          "python",
+          "fastapi",
+          "aws"
+        ],
+        "highlights": [
+          "FAIL_EMBEDDING Trigger fake embedding failure."
+        ]
+      }
+    ],
+    "projects": {
+      "items": []
+    },
+    "education": [],
+    "skills": {
+      "groups": [],
+      "all": [
+        {
+          "name": "Python",
+          "kind": "language",
+          "proficiency": "expert",
+          "years_experience": 5
+        }
+      ]
+    },
+    "certifications": [],
+    "languages": []
+  },
+  "extraction": {
+    "confidence": 1.0,
+    "warnings": []
+  }
+}

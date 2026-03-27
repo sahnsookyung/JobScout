@@ -6,6 +6,7 @@ from unittest.mock import Mock, MagicMock
 from etl.resume import ResumeProfiler
 from etl.resume.embedding_store import InMemoryEmbeddingStore, JobRepositoryAdapter
 from etl.resume.models import ResumeEvidenceUnit
+from core.llm.schema_models import ResumeSchema
 
 
 class TestResumeProfilerProfiling:
@@ -149,6 +150,40 @@ class TestResumeProfilerProfiling:
         assert profiler.store is None
         assert profiler.ai is not None
 
+    def test_save_resume_section_embeddings_synthesizes_summary_when_missing(
+        self, mock_ai_service
+    ):
+        """Missing summary text should fall back to recent experience and skills."""
+        resume_payload = mock_ai_service.extract_resume_data.return_value
+        resume_payload["profile"]["summary"]["text"] = ""
+        resume = ResumeSchema.model_validate(resume_payload)
+
+        profiler = ResumeProfiler(ai_service=mock_ai_service)
+
+        payload = profiler.save_resume_section_embeddings("test-fp-123", resume)
+
+        summary = next(section for section in payload if section["section_type"] == "summary")
+        assert "TechCorp" in summary["source_text"]
+        assert "Python" in summary["source_text"]
+
+    def test_profile_resume_uses_pre_extracted_resume_without_llm_call(
+        self, mock_ai_service
+    ):
+        """Pre-extracted resumes should bypass LLM extraction and still profile."""
+        resume = ResumeSchema.model_validate(mock_ai_service.extract_resume_data.return_value)
+        profiler = ResumeProfiler(ai_service=mock_ai_service)
+
+        profile, evidence_units, persistence_payload = profiler.profile_resume(
+            {},
+            resume_fingerprint="test-fp-123",
+            pre_extracted_resume=resume,
+        )
+
+        mock_ai_service.extract_resume_data.assert_not_called()
+        assert profile == resume
+        assert len(evidence_units) > 0
+        assert isinstance(persistence_payload, list)
+
 
 class TestJobRepositoryAdapter:
     """Test suite for JobRepository adapter."""
@@ -161,11 +196,16 @@ class TestJobRepositoryAdapter:
         adapter = JobRepositoryAdapter(mock_repo)
         
         sections = [{"section_type": "experience", "embedding": [0.1, 0.2, 0.3]}]
-        adapter.save_resume_section_embeddings("test-fingerprint", sections)
+        adapter.save_resume_section_embeddings(
+            "test-fingerprint",
+            sections,
+            owner_id="owner-1",
+        )
         
         mock_repo.save_resume_section_embeddings.assert_called_once_with(
             resume_fingerprint="test-fingerprint",
-            sections=sections
+            sections=sections,
+            owner_id="owner-1",
         )
     
     def test_adapter_wraps_get_call(self):

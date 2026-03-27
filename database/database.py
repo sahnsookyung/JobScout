@@ -2,7 +2,6 @@ import os
 import contextlib
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-from database.models import Base
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://user:password@localhost:5432/jobscout")
 

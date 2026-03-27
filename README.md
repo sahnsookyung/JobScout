@@ -128,31 +128,22 @@ npm run dev
 
 ## Running the Pipeline
 
-### Option A: Batch Pipeline (Main Driver)
+The monolithic `python main.py` flow is no longer supported. Use the split
+microservice stack and trigger work through the web backend or orchestrator APIs.
 
-Runs ETL → Matching cycles on a schedule:
+### Manual Pipeline Trigger
 
-```bash
-# Full pipeline (ETL + Matching)
-uv run python main.py
-
-# ETL only
-uv run python main.py --mode etl
-
-# Matching only
-uv run python main.py --mode matching
-```
-
-### Option B: Manual Pipeline Trigger
-
-Use the dashboard or API to trigger pipelines manually:
+Use the dashboard or API to trigger resume processing and matching:
 
 ```bash
-# Start pipeline
-curl -X POST http://localhost:8080/api/pipeline/start
+# Check whether the latest uploaded resume is eligible for matching
+curl http://localhost:8080/api/pipeline/resume-eligibility
 
-# Check status
-curl http://localhost:8080/api/pipeline/status
+# Start matching against the latest ready upload
+curl -X POST http://localhost:8080/api/pipeline/run-matching
+
+# Check task status
+curl http://localhost:8080/api/pipeline/status/<task_id>
 ```
 
 ## Configuration
@@ -177,7 +168,6 @@ jobscout/
 │           └── frontend.log
 ├── config.yaml              # Application configuration
 ├── docker-compose.yml       # Docker services
-├── main.py                  # Batch pipeline driver
 ├── core/                    # Core services (AI, matching, scoring)
 ├── database/                # SQLAlchemy models and DB logic
 ├── etl/                     # Extract-Transform-Load pipeline

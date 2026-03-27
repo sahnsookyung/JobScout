@@ -5,7 +5,11 @@ Covers: web/backend/routers/pipeline.py (helper functions)
 """
 
 import pytest
-from web.backend.routers.pipeline import _validate_task_id, _sanitize_for_logging
+from fastapi import HTTPException
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from web.backend.routers.pipeline import _validate_task_id
 
 
 class TestValidateTaskId:
@@ -82,55 +86,186 @@ class TestValidateTaskId:
         assert _validate_task_id("task;drop") is False
 
 
-class TestSanitizeForLogging:
-    """Test _sanitize_for_logging function for log injection prevention."""
+class TestResumeGuards:
+    def test_guard_resume_not_uploading_raises_for_active_upload(self):
+        from web.backend.routers.pipeline import _guard_resume_not_uploading
 
-    def test_normal_string_unchanged(self):
-        """Test normal strings pass through unchanged."""
-        assert _sanitize_for_logging("normal text") == "normal text"
-        assert _sanitize_for_logging("task-123") == "task-123"
+        redis = MagicMock()
+        redis.get.return_value = b"resume-task-1"
 
-    def test_removes_carriage_return(self):
-        """Test CR characters are removed."""
-        assert _sanitize_for_logging("task\rinjection") == "taskinjection"
-        # Function removes both CR and LF, so "test\r\n" becomes "test"
-        assert _sanitize_for_logging("test\r\n") == "test"
+        with patch("web.backend.routers.pipeline.get_task_state", return_value={"status": "running"}), \
+             patch("web.backend.routers.pipeline._latest_resume_upload_uses_task", return_value=True):
+            with pytest.raises(HTTPException) as exc_info:
+                _guard_resume_not_uploading(redis, "owner-1")
 
-    def test_removes_line_feed(self):
-        """Test LF characters are removed."""
-        assert _sanitize_for_logging("task\ninjection") == "taskinjection"
-        assert _sanitize_for_logging("line1\nline2") == "line1line2"
+        assert exc_info.value.status_code == 409
 
-    def test_removes_null_bytes(self):
-        """Test null bytes are removed."""
-        assert _sanitize_for_logging("task\x00injection") == "taskinjection"
-        assert _sanitize_for_logging("test\x00") == "test"
+    def test_guard_resume_not_uploading_ignores_redis_errors(self):
+        from web.backend.routers.pipeline import _guard_resume_not_uploading
 
-    def test_removes_all_control_characters(self):
-        """Test all CRLF and null bytes are removed."""
-        malicious = "task\r\n\x00injection"
-        assert _sanitize_for_logging(malicious) == "taskinjection"
+        redis = MagicMock()
+        redis.get.side_effect = RuntimeError("redis down")
 
-    def test_handles_non_string_input(self):
-        """Test non-string input is converted to string."""
-        assert _sanitize_for_logging(123) == "123"
-        assert _sanitize_for_logging(None) == "None"
-        assert _sanitize_for_logging(True) == "True"
+        _guard_resume_not_uploading(redis, "owner-1")
 
-    def test_empty_string_unchanged(self):
-        """Test empty string passes through."""
-        assert _sanitize_for_logging("") == ""
+    def test_latest_resume_upload_uses_task_returns_false_when_missing(self):
+        from web.backend.routers.pipeline import _latest_resume_upload_uses_task
 
-    def test_multiple_control_characters(self):
-        """Test multiple control characters are all removed."""
-        malicious = "line1\r\nline2\r\nline3\x00end"
-        assert _sanitize_for_logging(malicious) == "line1line2line3end"
+        repo = MagicMock()
+        repo.get_latest_resume_upload.return_value = None
+        mock_uow = MagicMock()
+        mock_uow.__enter__.return_value = repo
+        mock_uow.__exit__.return_value = False
 
-    def test_log_forging_prevention(self):
-        """Test log forging attempts are neutralized."""
-        # CWE-117: Improper Output Neutralization for Logs
-        forged = "12345\r\nINFO - Fake log entry"
-        sanitized = _sanitize_for_logging(forged)
-        assert "\r" not in sanitized
-        assert "\n" not in sanitized
-        assert "Fake log entry" in sanitized
+        with patch("web.backend.routers.pipeline.job_uow", return_value=mock_uow):
+            assert _latest_resume_upload_uses_task("owner-1", "task-1") is False
+
+    def test_latest_resume_upload_uses_task_returns_true_when_repo_errors(self):
+        from web.backend.routers.pipeline import _latest_resume_upload_uses_task
+
+        with patch("web.backend.routers.pipeline.job_uow", side_effect=RuntimeError("db down")):
+            assert _latest_resume_upload_uses_task("owner-1", "task-1") is True
+
+
+class TestMatchingTaskHelpers:
+    def test_classify_failed_resume_upload_marks_retryable_when_structured_resume_exists(self):
+        from web.backend.routers.pipeline import _classify_failed_resume_upload
+
+        repo = MagicMock()
+        repo.get_resume_processing_state.return_value = SimpleNamespace(
+            user_safe_message="Retry me",
+            last_error="boom",
+        )
+        repo.get_structured_resume_by_fingerprint.return_value = object()
+
+        status, message, retryable = _classify_failed_resume_upload(repo, "fp-1")
+
+        assert status == "failed_retryable"
+        assert message == "Retry me"
+        assert retryable is True
+
+    def test_classify_failed_resume_upload_marks_reupload_when_no_structured_resume(self):
+        from web.backend.routers.pipeline import _classify_failed_resume_upload
+
+        repo = MagicMock()
+        repo.get_resume_processing_state.return_value = SimpleNamespace(
+            user_safe_message=None,
+            last_error="Need reupload",
+        )
+        repo.get_structured_resume_by_fingerprint.return_value = None
+
+        status, message, retryable = _classify_failed_resume_upload(repo, "fp-1")
+
+        assert status == "failed_reupload_required"
+        assert message == "Need reupload"
+        assert retryable is False
+
+    def test_ensure_no_active_matching_task_raises_for_running_state(self):
+        from web.backend.routers.pipeline import _ensure_no_active_matching_task
+
+        redis = MagicMock()
+        redis.get.return_value = b"match-task-1"
+
+        with patch("web.backend.routers.pipeline.get_task_state", return_value={"status": "persisting"}):
+            with pytest.raises(HTTPException) as exc_info:
+                _ensure_no_active_matching_task(redis, "owner-1")
+
+        assert exc_info.value.status_code == 409
+
+    def test_ensure_no_active_matching_task_ignores_redis_failure(self):
+        from web.backend.routers.pipeline import _ensure_no_active_matching_task
+
+        redis = MagicMock()
+        redis.get.side_effect = RuntimeError("redis down")
+
+        _ensure_no_active_matching_task(redis, "owner-1")
+
+    def test_enqueue_matching_job_or_500_cleans_up_active_marker(self):
+        from web.backend.routers.pipeline import _enqueue_matching_job_or_500
+
+        redis = MagicMock()
+        redis.get.return_value = b"match-task-1"
+
+        with patch("web.backend.routers.pipeline.enqueue_job", side_effect=RuntimeError("stream down")), \
+             patch("web.backend.routers.pipeline.clear_task_cancellation_requested") as mock_clear_cancel, \
+             patch("web.backend.routers.pipeline.set_task_state") as mock_set_state:
+            with pytest.raises(HTTPException) as exc_info:
+                _enqueue_matching_job_or_500(
+                    "match-task-1",
+                    "fp-1",
+                    "upload-1",
+                    "owner-1",
+                    redis=redis,
+                )
+
+        assert exc_info.value.status_code == 500
+        mock_clear_cancel.assert_called_once_with("match-task-1")
+        mock_set_state.assert_called_once()
+        redis.delete.assert_called_once()
+
+
+class TestResumeEtlHelpers:
+    def test_wait_for_resume_etl_final_state_returns_terminal_state(self):
+        from web.backend.routers.pipeline import _wait_for_resume_etl_final_state
+
+        states = [
+            {"status": "running"},
+            {"status": "completed", "step": "embedding"},
+        ]
+
+        class FakeTime:
+            def __init__(self):
+                self.now = 0
+
+            def time(self):
+                self.now += 1
+                return self.now
+
+            def sleep(self, _seconds):
+                return None
+
+        with patch("web.backend.routers.pipeline.get_task_state", side_effect=states):
+            result = _wait_for_resume_etl_final_state("task-1", FakeTime())
+
+        assert result["status"] == "completed"
+
+    def test_wait_for_resume_etl_final_state_times_out(self):
+        from web.backend.routers.pipeline import _wait_for_resume_etl_final_state
+
+        class FakeTime:
+            def __init__(self):
+                self.now = 0
+
+            def time(self):
+                self.now += 601
+                return self.now
+
+            def sleep(self, _seconds):
+                return None
+
+        with patch("web.backend.routers.pipeline.get_task_state", return_value={"status": "running"}):
+            with pytest.raises(RuntimeError, match="timed out"):
+                _wait_for_resume_etl_final_state("task-timeout", FakeTime())
+
+    def test_write_resume_failure_state_updates_repo_and_redis(self):
+        from web.backend.routers.pipeline import _write_resume_failure_state
+
+        repo = MagicMock()
+        mock_uow = MagicMock()
+        mock_uow.__enter__.return_value = repo
+        mock_uow.__exit__.return_value = False
+
+        with patch("web.backend.routers.pipeline.job_uow", return_value=mock_uow), \
+             patch("web.backend.routers.pipeline._classify_failed_resume_upload", return_value=("failed_retryable", "Retry later", True)), \
+             patch("web.backend.routers.pipeline.set_task_state") as mock_set_state:
+            _write_resume_failure_state(
+                "task-1",
+                "upload-1",
+                "hash-1",
+                "fp-1",
+                "owner-1",
+                RuntimeError("boom"),
+            )
+
+        repo.update_resume_upload.assert_called_once()
+        mock_set_state.assert_called_once()

@@ -15,6 +15,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import (
     AsyncMock,
     MagicMock,
@@ -24,6 +25,7 @@ from unittest.mock import (
 )
 
 import pytest
+from uuid import UUID
 import redis
 
 
@@ -396,6 +398,42 @@ class TestCleanupStaleOrchestrations:
         assert "fresh-task" in registry.orchestrations
         assert "stale-task" not in registry.timestamps
 
+    @pytest.mark.asyncio
+    async def test_cleanup_function_closes_stale_states(self):
+        from services.orchestrator.main import (
+            OrchestratorRegistry,
+            OrchestrationState,
+            ORCHESTRATION_TTL,
+            cleanup_stale_orchestrations,
+        )
+
+        registry = OrchestratorRegistry()
+        stale_state = OrchestrationState("stale-task")
+        stale_state.close = AsyncMock()
+        registry.orchestrations["stale-task"] = stale_state
+        registry.timestamps["stale-task"] = time.time() - (ORCHESTRATION_TTL + 5)
+        registry.tasks["stale-task"] = Mock()
+        registry.active_task_ids.add("stale-task")
+
+        sleep_calls = 0
+
+        async def fake_sleep(_seconds: float) -> None:
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls == 1:
+                return None
+            raise asyncio.CancelledError()
+
+        with patch("services.orchestrator.main.asyncio.sleep", side_effect=fake_sleep):
+            with pytest.raises(asyncio.CancelledError):
+                await cleanup_stale_orchestrations(registry)
+
+        stale_state.close.assert_awaited_once_with(registry)
+        assert "stale-task" not in registry.orchestrations
+        assert "stale-task" not in registry.timestamps
+        assert "stale-task" not in registry.tasks
+        assert "stale-task" not in registry.active_task_ids
+
 
 # ---------------------------------------------------------------------------
 # Endpoints
@@ -453,6 +491,23 @@ class TestOrchestratorEndpoints:
         data = response.json()
         assert "connection_error" in data["redis"]
 
+    def test_health_endpoint_with_unexpected_redis_error(self):
+        """Test health endpoint with unexpected Redis error."""
+        from fastapi.testclient import TestClient
+        from services.orchestrator.main import app
+
+        mock_redis = Mock()
+        mock_redis.ping.side_effect = RuntimeError("boom")
+
+        with patch(
+            "services.orchestrator.main.get_redis_client", return_value=mock_redis
+        ):
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.get("/health")
+
+        assert response.status_code == 200
+        assert response.json()["redis"] == "error: boom"
+
     def test_metrics_endpoint(self):
         """Test metrics endpoint."""
         from fastapi.testclient import TestClient
@@ -497,25 +552,24 @@ class TestOrchestrateMatchEndpoint:
         """Test orchestrate match endpoint with existing resume in database."""
         from core.app_context import AppContext
         from fastapi.testclient import TestClient
-        from services.orchestrator.main import OrchestratorRegistry, app
+        from services.orchestrator.main import OrchestratorRegistry, app, get_current_user
 
-        mock_ctx = Mock(spec=AppContext)
+        mock_ctx = Mock()
         mock_registry = OrchestratorRegistry()
 
         app.state.ctx = mock_ctx
         app.state.registry = mock_registry
 
-        # Mock database access - simulate existing resume in DB
-        mock_repo = MagicMock()
-        mock_repo.resume.get_latest_stored_resume_fingerprint.return_value = (
-            "test-fingerprint-123"
-        )
-        mock_uow = MagicMock()
-        mock_uow.__enter__ = MagicMock(return_value=mock_repo)
-        mock_uow.__exit__ = MagicMock(return_value=False)
-
         try:
-            with patch("database.uow.job_uow", return_value=mock_uow):
+            with patch("services.orchestrator.main.evaluate_resume_eligibility") as mock_eligibility:
+                mock_eligibility.return_value = SimpleNamespace(
+                    can_run=True,
+                    resume_fingerprint="test-fingerprint-123",
+                    message="Resume is ready for matching.",
+                )
+                app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+                    id=UUID("00000000-0000-0000-0000-000000000001")
+                )
                 client = TestClient(app)
 
                 with patch("asyncio.create_task") as mock_create:
@@ -538,42 +592,288 @@ class TestOrchestrateMatchEndpoint:
             assert "task_id" in data
             mock_create.assert_called_once()
         finally:
+            app.dependency_overrides.clear()
             del app.state.ctx
             del app.state.registry
+
+
+class TestResumeEtlEndpoint:
+    @pytest.mark.asyncio
+    async def test_orchestrate_resume_etl_sets_initial_extracting_state(self):
+        from services.orchestrator.main import ResumeEtlRequest, orchestrate_resume_etl
+
+        payload = ResumeEtlRequest(
+            task_id="resume-task-1",
+            file_path="/tmp/resume.pdf",
+            owner_id="00000000-0000-0000-0000-000000000001",
+            upload_id="upload-1",
+            resume_fingerprint="fp-1",
+            mode="extract_and_embed",
+        )
+        request = Mock()
+        task = Mock()
+        task.cancelled.return_value = False
+        task.exception.return_value = None
+        task.add_done_callback = Mock()
+
+        def _mock_create_task(coro):
+            coro.close()
+            return task
+
+        with patch("services.orchestrator.main.set_task_state") as mock_set_task_state, \
+             patch("services.orchestrator.main.asyncio.create_task", side_effect=_mock_create_task):
+            response = await orchestrate_resume_etl(payload, request)
+
+        assert response.status_code == 202
+        mock_set_task_state.assert_called_once_with(
+            "resume-task-1",
+            {
+                "status": "running",
+                "step": "extracting",
+                "upload_id": "upload-1",
+                "resume_fingerprint": "fp-1",
+            },
+            ttl=3600,
+        )
+        task.add_done_callback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_orchestrate_resume_etl_uses_embedding_step_for_embed_only(self):
+        from services.orchestrator.main import ResumeEtlRequest, orchestrate_resume_etl
+
+        payload = ResumeEtlRequest(
+            task_id="resume-task-2",
+            file_path=None,
+            owner_id="00000000-0000-0000-0000-000000000001",
+            resume_fingerprint="fp-2",
+            mode="embed_only",
+        )
+        request = Mock()
+        task = Mock()
+        task.cancelled.return_value = False
+        task.exception.return_value = None
+        task.add_done_callback = Mock()
+
+        def _mock_create_task(coro):
+            coro.close()
+            return task
+
+        with patch("services.orchestrator.main.set_task_state") as mock_set_task_state, \
+             patch("services.orchestrator.main.asyncio.create_task", side_effect=_mock_create_task):
+            response = await orchestrate_resume_etl(payload, request)
+
+        assert response.status_code == 202
+        assert mock_set_task_state.call_args.args[1]["step"] == "embedding"
+
+
+class TestRunResumeEtl:
+    @pytest.mark.asyncio
+    async def test_embed_only_requires_resume_fingerprint(self):
+        from services.orchestrator.main import _run_resume_etl
+
+        with patch("services.orchestrator.main.redis_async.from_url") as mock_from_url, \
+             patch("services.orchestrator.main.set_task_state") as mock_set_task_state, \
+             patch("services.orchestrator.main._cleanup_pubsub_and_client", new_callable=AsyncMock) as mock_cleanup:
+            redis_client = MagicMock()
+            redis_client.pubsub.return_value = MagicMock()
+            mock_from_url.return_value = redis_client
+
+            await _run_resume_etl(
+                "task-1",
+                None,
+                upload_id="upload-1",
+                owner_id="00000000-0000-0000-0000-000000000001",
+                resume_fingerprint=None,
+                mode="embed_only",
+            )
+
+        assert mock_set_task_state.call_args.args[1]["error"] == "Missing resume fingerprint for embed-only retry"
+        mock_cleanup.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_run_resume_etl_handles_extraction_failure(self):
+        from services.orchestrator.main import _run_resume_etl
+
+        pubsub = AsyncMock()
+        redis_client = MagicMock()
+        redis_client.pubsub.return_value = pubsub
+
+        with patch("services.orchestrator.main.redis_async.from_url", return_value=redis_client), \
+             patch("services.orchestrator.main.enqueue_job"), \
+             patch("services.orchestrator.main._wait_for_task_message", new_callable=AsyncMock, return_value={"status": "failed", "error": "Extraction failed hard"}), \
+             patch("services.orchestrator.main.set_task_state") as mock_set_task_state, \
+             patch("services.orchestrator.main._cleanup_pubsub_and_client", new_callable=AsyncMock):
+            await _run_resume_etl(
+                "task-2",
+                "/tmp/resume.pdf",
+                upload_id="upload-2",
+                owner_id="00000000-0000-0000-0000-000000000001",
+                resume_fingerprint=None,
+            )
+
+        assert mock_set_task_state.call_args.args[1]["step"] == "extracting"
+        assert mock_set_task_state.call_args.args[1]["error"] == "Extraction failed hard"
+
+    @pytest.mark.asyncio
+    async def test_run_resume_etl_handles_missing_fingerprint_after_extraction(self):
+        from services.orchestrator.main import _run_resume_etl
+
+        pubsub = AsyncMock()
+        redis_client = MagicMock()
+        redis_client.pubsub.return_value = pubsub
+
+        with patch("services.orchestrator.main.redis_async.from_url", return_value=redis_client), \
+             patch("services.orchestrator.main.enqueue_job"), \
+             patch("services.orchestrator.main._wait_for_task_message", new_callable=AsyncMock, return_value={"status": "completed"}), \
+             patch("services.orchestrator.main.set_task_state") as mock_set_task_state, \
+             patch("services.orchestrator.main._cleanup_pubsub_and_client", new_callable=AsyncMock):
+            await _run_resume_etl(
+                "task-3",
+                "/tmp/resume.pdf",
+                upload_id="upload-3",
+                owner_id="00000000-0000-0000-0000-000000000001",
+                resume_fingerprint=None,
+            )
+
+        assert mock_set_task_state.call_args.args[1]["error"] == "No fingerprint in extraction response"
+
+    @pytest.mark.asyncio
+    async def test_run_resume_etl_handles_embedding_failure(self):
+        from services.orchestrator.main import _run_resume_etl
+
+        pubsub = AsyncMock()
+        redis_client = MagicMock()
+        redis_client.pubsub.return_value = pubsub
+
+        with patch("services.orchestrator.main.redis_async.from_url", return_value=redis_client), \
+             patch("services.orchestrator.main.enqueue_job"), \
+             patch(
+                 "services.orchestrator.main._wait_for_task_message",
+                 new_callable=AsyncMock,
+                 side_effect=[
+                     {"status": "completed", "resume_fingerprint": "fp-4"},
+                     {"status": "failed", "error": "Embedding failed hard"},
+                 ],
+             ), \
+             patch("services.orchestrator.main.set_task_state") as mock_set_task_state, \
+             patch("services.orchestrator.main._cleanup_pubsub_and_client", new_callable=AsyncMock):
+            await _run_resume_etl(
+                "task-4",
+                "/tmp/resume.pdf",
+                upload_id="upload-4",
+                owner_id="00000000-0000-0000-0000-000000000001",
+                resume_fingerprint=None,
+            )
+
+        assert mock_set_task_state.call_args.args[1]["step"] == "embedding"
+        assert mock_set_task_state.call_args.args[1]["error"] == "Embedding failed hard"
+
+    @pytest.mark.asyncio
+    async def test_run_resume_etl_completes_successfully(self):
+        from services.orchestrator.main import _run_resume_etl
+
+        pubsub = AsyncMock()
+        redis_client = MagicMock()
+        redis_client.pubsub.return_value = pubsub
+
+        with patch("services.orchestrator.main.redis_async.from_url", return_value=redis_client), \
+             patch("services.orchestrator.main.enqueue_job"), \
+             patch(
+                 "services.orchestrator.main._wait_for_task_message",
+                 new_callable=AsyncMock,
+                 side_effect=[
+                     {"status": "completed", "resume_fingerprint": "fp-5"},
+                     {"status": "completed"},
+                 ],
+             ), \
+             patch("services.orchestrator.main.set_task_state") as mock_set_task_state, \
+             patch("services.orchestrator.main._cleanup_pubsub_and_client", new_callable=AsyncMock):
+            await _run_resume_etl(
+                "task-5",
+                "/tmp/resume.pdf",
+                upload_id="upload-5",
+                owner_id="00000000-0000-0000-0000-000000000001",
+                resume_fingerprint=None,
+            )
+
+        assert mock_set_task_state.call_args.args[1] == {
+            "status": "completed",
+            "upload_id": "upload-5",
+            "owner_id": "00000000-0000-0000-0000-000000000001",
+            "resume_fingerprint": "fp-5",
+        }
+
+    @pytest.mark.asyncio
+    async def test_run_resume_etl_handles_timeout(self):
+        from services.orchestrator.main import _run_resume_etl
+
+        pubsub = AsyncMock()
+        redis_client = MagicMock()
+        redis_client.pubsub.return_value = pubsub
+
+        with patch("services.orchestrator.main.redis_async.from_url", return_value=redis_client), \
+             patch("services.orchestrator.main.enqueue_job"), \
+             patch("services.orchestrator.main._wait_for_task_message", new_callable=AsyncMock, side_effect=asyncio.TimeoutError), \
+             patch("services.orchestrator.main.set_task_state") as mock_set_task_state, \
+             patch("services.orchestrator.main._cleanup_pubsub_and_client", new_callable=AsyncMock):
+            await _run_resume_etl(
+                "task-6",
+                "/tmp/resume.pdf",
+                upload_id="upload-6",
+                owner_id="00000000-0000-0000-0000-000000000001",
+                resume_fingerprint=None,
+            )
+
+        assert mock_set_task_state.call_args.args[1]["error"] == "Stage timeout"
+
+    @pytest.mark.asyncio
+    async def test_run_resume_etl_handles_unexpected_exception(self):
+        from services.orchestrator.main import _run_resume_etl
+
+        with patch("services.orchestrator.main.redis_async.from_url", side_effect=RuntimeError("boom")), \
+             patch("services.orchestrator.main.set_task_state") as mock_set_task_state:
+            await _run_resume_etl(
+                "task-7",
+                "/tmp/resume.pdf",
+                upload_id="upload-7",
+                owner_id="00000000-0000-0000-0000-000000000001",
+                resume_fingerprint="fp-7",
+            )
+
+        assert mock_set_task_state.call_args.args[1]["error"] == "boom"
 
     @pytest.mark.asyncio
     async def test_orchestrate_match_no_resume_in_db(self):
         """Test orchestrate match endpoint when no resume exists in database."""
         from core.app_context import AppContext
         from fastapi.testclient import TestClient
-        from services.orchestrator.main import OrchestratorRegistry, app
+        from services.orchestrator.main import OrchestratorRegistry, app, get_current_user
 
-        mock_ctx = Mock(spec=AppContext)
+        mock_ctx = Mock()
         mock_registry = OrchestratorRegistry()
 
         app.state.ctx = mock_ctx
         app.state.registry = mock_registry
 
-        # Mock database access - no resume in DB
-        mock_repo = MagicMock()
-        mock_repo.resume.get_latest_stored_resume_fingerprint.return_value = None
-        mock_uow = MagicMock()
-        mock_uow.__enter__ = MagicMock(return_value=mock_repo)
-        mock_uow.__exit__ = MagicMock(return_value=False)
-
         try:
-            with patch("database.uow.job_uow", return_value=mock_uow):
+            with patch("services.orchestrator.main.evaluate_resume_eligibility") as mock_eligibility:
+                mock_eligibility.return_value = SimpleNamespace(
+                    can_run=False,
+                    resume_fingerprint=None,
+                    message="No resume has been uploaded yet.",
+                )
+                app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+                    id=UUID("00000000-0000-0000-0000-000000000001")
+                )
                 client = TestClient(app)
                 response = client.post("/orchestrate/match")
 
             assert response.status_code == 200
             data = response.json()
             assert data["success"] is False
-            assert (
-                data["message"]
-                == "No resume found. Please upload a resume first via the web UI."
-            )
+            assert data["message"] == "No resume has been uploaded yet."
         finally:
+            app.dependency_overrides.clear()
             del app.state.ctx
             del app.state.registry
 
@@ -610,6 +910,44 @@ class TestGetOrchestrationStatus:
 
         assert isinstance(response, StreamingResponse)
         assert response.media_type == "text/event-stream"
+
+    @pytest.mark.asyncio
+    async def test_get_orchestration_status_emits_heartbeat_and_unsubscribes(self):
+        from services.orchestrator.main import (
+            OrchestratorRegistry,
+            OrchestrationState,
+            get_orchestration_status,
+        )
+
+        registry = OrchestratorRegistry()
+        state = OrchestrationState("heartbeat-task")
+        queue = AsyncMock()
+        queue.get = AsyncMock(side_effect=asyncio.TimeoutError)
+        state.subscribe = Mock(return_value=queue)
+        state.unsubscribe = Mock()
+
+        with patch(
+            "services.orchestrator.main.get_or_create_orchestration",
+            new_callable=AsyncMock,
+            return_value=state,
+        ), patch(
+            "services.orchestrator.main.asyncio.wait_for",
+            side_effect=asyncio.TimeoutError,
+        ):
+            mock_request = Mock()
+            mock_request.app = Mock()
+            mock_request.app.state = Mock()
+            mock_request.app.state.registry = registry
+
+            response = await get_orchestration_status("heartbeat-task", mock_request)
+            generator = response.body_iterator
+            first = await anext(generator)
+            second = await anext(generator)
+            await generator.aclose()
+
+        assert "heartbeat-task" in first
+        assert "heartbeat" in second
+        state.unsubscribe.assert_called_once_with(queue)
 
     def test_get_orchestration_status_endpoint_exists(self):
         """Test that the SSE endpoint is configured correctly."""
@@ -670,6 +1008,209 @@ class TestGetOrchestrationStatus:
         assert data["result"]["processed"] == 8
 
 
+class TestStageTaskRunners:
+    @pytest.mark.asyncio
+    async def test_run_batch_stage_via_queue_completes(self):
+        from services.orchestrator.main import _run_batch_stage_via_queue
+
+        pubsub = AsyncMock()
+        redis_client = MagicMock()
+        redis_client.pubsub.return_value = pubsub
+
+        with patch("services.orchestrator.main.redis_async.from_url", return_value=redis_client), \
+             patch("services.orchestrator.main.asyncio.to_thread", new_callable=AsyncMock), \
+             patch(
+                 "services.orchestrator.main._wait_for_task_message",
+                 new_callable=AsyncMock,
+                 return_value={"status": "completed", "processed": "7"},
+             ), \
+             patch("services.orchestrator.main._cleanup_pubsub_and_client", new_callable=AsyncMock) as mock_cleanup:
+            processed, error = await _run_batch_stage_via_queue(
+                task_id="batch-task-1",
+                stage="extract",
+                stream="stream:extract",
+                completion_channel="extract.done",
+                limit=12,
+            )
+
+        assert processed == 7
+        assert error is None
+        pubsub.subscribe.assert_awaited_once_with("extract.done")
+        mock_cleanup.assert_awaited_once_with(redis_client, pubsub)
+
+    @pytest.mark.asyncio
+    async def test_run_batch_stage_via_queue_handles_missing_completion_message(self):
+        from services.orchestrator.main import _run_batch_stage_via_queue
+
+        pubsub = AsyncMock()
+        redis_client = MagicMock()
+        redis_client.pubsub.return_value = pubsub
+
+        with patch("services.orchestrator.main.redis_async.from_url", return_value=redis_client), \
+             patch("services.orchestrator.main.asyncio.to_thread", new_callable=AsyncMock), \
+             patch(
+                 "services.orchestrator.main._wait_for_task_message",
+                 new_callable=AsyncMock,
+                 return_value=None,
+             ), \
+             patch("services.orchestrator.main._cleanup_pubsub_and_client", new_callable=AsyncMock):
+            processed, error = await _run_batch_stage_via_queue(
+                task_id="batch-task-2",
+                stage="embed",
+                stream="stream:embed",
+                completion_channel="embed.done",
+                limit=8,
+            )
+
+        assert processed == 0
+        assert error == "embed stage did not publish a completion message"
+
+    @pytest.mark.asyncio
+    async def test_run_batch_stage_via_queue_handles_failed_status(self):
+        from services.orchestrator.main import _run_batch_stage_via_queue
+
+        pubsub = AsyncMock()
+        redis_client = MagicMock()
+        redis_client.pubsub.return_value = pubsub
+
+        with patch("services.orchestrator.main.redis_async.from_url", return_value=redis_client), \
+             patch("services.orchestrator.main.asyncio.to_thread", new_callable=AsyncMock), \
+             patch(
+                 "services.orchestrator.main._wait_for_task_message",
+                 new_callable=AsyncMock,
+                 return_value={"status": "failed", "processed": 3, "error": "boom"},
+             ), \
+             patch("services.orchestrator.main._cleanup_pubsub_and_client", new_callable=AsyncMock):
+            processed, error = await _run_batch_stage_via_queue(
+                task_id="batch-task-3",
+                stage="extract",
+                stream="stream:extract",
+                completion_channel="extract.done",
+                limit=8,
+            )
+
+        assert processed == 3
+        assert error == "boom"
+
+    @pytest.mark.asyncio
+    async def test_run_stage_task_completes_scrape_stage(self):
+        from services.orchestrator.main import (
+            OrchestratorRegistry,
+            OrchestrationState,
+            _run_stage_task,
+        )
+
+        registry = OrchestratorRegistry()
+        state = OrchestrationState("stage-task-1")
+
+        with patch("services.orchestrator.main.get_or_create_orchestration", new_callable=AsyncMock, return_value=state), \
+             patch("services.orchestrator.main.redis_async.from_url") as mock_from_url, \
+             patch("services.orchestrator.main.run_all_scrapers", new_callable=AsyncMock, return_value={
+                 "total_jobs": 3,
+                 "results_by_scraper": [{"scraper_id": "tokyodev", "jobs_scraped": 3}],
+                 "errors": [],
+             }):
+            mock_redis = AsyncMock()
+            mock_from_url.return_value = mock_redis
+            await _run_stage_task("stage-task-1", registry, Mock(), "scrape", 5)
+
+        assert state.status == "completed"
+        assert state.result["scraped_jobs"] == 3
+        mock_redis.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_run_stage_task_records_failure_for_batch_stage_error(self):
+        from services.orchestrator.main import (
+            OrchestratorRegistry,
+            OrchestrationState,
+            _run_stage_task,
+        )
+
+        registry = OrchestratorRegistry()
+        state = OrchestrationState("stage-task-2")
+
+        with patch("services.orchestrator.main.get_or_create_orchestration", new_callable=AsyncMock, return_value=state), \
+             patch("services.orchestrator.main.run_batch_stage", new_callable=AsyncMock, return_value=(2, "embed failed")):
+            await _run_stage_task("stage-task-2", registry, Mock(), "embed", 10)
+
+        assert state.status == "failed"
+        assert state.error == "embed failed"
+
+    @pytest.mark.asyncio
+    async def test_run_stage_task_rejects_unknown_stage(self):
+        from services.orchestrator.main import (
+            OrchestratorRegistry,
+            OrchestrationState,
+            _run_stage_task,
+        )
+
+        registry = OrchestratorRegistry()
+        state = OrchestrationState("stage-task-3")
+
+        with patch("services.orchestrator.main.get_or_create_orchestration", new_callable=AsyncMock, return_value=state):
+            await _run_stage_task("stage-task-3", registry, Mock(), "unknown", 1)
+
+        assert state.status == "failed"
+        assert "Unsupported stage" in state.error
+
+    @pytest.mark.asyncio
+    async def test_run_scrape_extract_embed_pipeline_task_completes(self):
+        from services.orchestrator.main import (
+            OrchestratorRegistry,
+            OrchestrationState,
+            _run_scrape_extract_embed_pipeline_task,
+        )
+
+        registry = OrchestratorRegistry()
+        state = OrchestrationState("pipeline-task-1")
+
+        with patch("services.orchestrator.main.get_or_create_orchestration", new_callable=AsyncMock, return_value=state), \
+             patch("services.orchestrator.main.redis_async.from_url") as mock_from_url, \
+             patch("services.orchestrator.main.run_all_scrapers", new_callable=AsyncMock, return_value={
+                 "total_jobs": 4,
+                 "results_by_scraper": [{"scraper_id": "tokyodev", "jobs_scraped": 4}],
+                 "errors": [],
+             }), \
+             patch("services.orchestrator.main.run_batch_stage", new_callable=AsyncMock, side_effect=[(3, None), (2, None)]):
+            mock_redis = AsyncMock()
+            mock_from_url.return_value = mock_redis
+            await _run_scrape_extract_embed_pipeline_task("pipeline-task-1", registry, Mock())
+
+        assert state.status == "completed"
+        assert state.result["scraped_jobs"] == 4
+        assert state.result["extracted_count"] == 3
+        assert state.result["embedded_count"] == 2
+        mock_redis.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_run_scrape_extract_embed_pipeline_task_records_stage_errors(self):
+        from services.orchestrator.main import (
+            OrchestratorRegistry,
+            OrchestrationState,
+            _run_scrape_extract_embed_pipeline_task,
+        )
+
+        registry = OrchestratorRegistry()
+        state = OrchestrationState("pipeline-task-2")
+
+        with patch("services.orchestrator.main.get_or_create_orchestration", new_callable=AsyncMock, return_value=state), \
+             patch("services.orchestrator.main.redis_async.from_url") as mock_from_url, \
+             patch("services.orchestrator.main.run_all_scrapers", new_callable=AsyncMock, return_value={
+                 "total_jobs": 1,
+                 "results_by_scraper": [],
+                 "errors": ["scrape broke"],
+             }), \
+             patch("services.orchestrator.main.run_batch_stage", new_callable=AsyncMock, side_effect=[(0, "extract broke"), (0, "embed broke")]):
+            mock_redis = AsyncMock()
+            mock_from_url.return_value = mock_redis
+            await _run_scrape_extract_embed_pipeline_task("pipeline-task-2", registry, Mock())
+
+        assert state.status == "failed"
+        assert "scrape broke" in state.error
+        assert "extract broke" in state.error
+        assert "embed broke" in state.error
+
+
 class TestGetActiveOrchestration:
     """Test get_active_orchestration endpoint."""
 
@@ -704,6 +1245,72 @@ class TestGetActiveOrchestration:
             assert data["tasks"][0]["status"] == "matching"
         finally:
             del app.state.registry
+
+
+class TestCanonicalOrchestratorEndpoints:
+    def test_orchestrate_pipeline_endpoint_returns_pipeline_snapshot(self):
+        from fastapi.testclient import TestClient
+        from services.orchestrator.main import MatchResponse, app
+
+        async def _fake_spawn(_registry, _task_id, _task_type, coroutine, _message):
+            coroutine.close()
+            return MatchResponse(
+                success=True,
+                task_id="pipeline-123",
+                message="pipeline started",
+            )
+
+        app.state.registry = Mock()
+        app.state.ctx = Mock()
+        try:
+            with patch(
+                "services.orchestrator.main._spawn_background_task",
+                side_effect=_fake_spawn,
+            ):
+                with TestClient(app, raise_server_exceptions=False) as client:
+                    response = client.post("/orchestrate/pipelines/scrape-extract-embed")
+        finally:
+            del app.state.registry
+            del app.state.ctx
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["task_id"] == "pipeline-123"
+        assert data["task_type"] == "pipeline"
+        assert data["current_stage"] == "scrape"
+
+    def test_get_task_status_returns_404_when_missing(self):
+        from fastapi.testclient import TestClient
+        from services.orchestrator.main import app
+
+        app.state.registry = Mock()
+        try:
+            with patch(
+                "services.orchestrator.main._get_existing_task_snapshot",
+                new_callable=AsyncMock,
+                return_value=None,
+            ):
+                with TestClient(app, raise_server_exceptions=False) as client:
+                    response = client.get("/orchestrate/tasks/missing-task")
+        finally:
+            del app.state.registry
+
+        assert response.status_code == 404
+
+    def test_orchestrate_stage_rejects_unknown_stage(self):
+        from fastapi.testclient import TestClient
+        from services.orchestrator.main import app
+
+        app.state.registry = Mock()
+        app.state.ctx = Mock()
+        try:
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.post("/orchestrate/stages/unknown", json={"limit": 1})
+        finally:
+            del app.state.registry
+            del app.state.ctx
+
+        assert response.status_code == 404
 
     @pytest.mark.asyncio
     async def test_get_active_orchestration_no_tasks(self):
@@ -785,6 +1392,47 @@ class TestStopOrchestration:
             assert len(data["stopped"]) == 2
         finally:
             del app.state.registry
+
+
+class TestResumeEtlBackgroundCallback:
+    @pytest.mark.asyncio
+    async def test_orchestrate_resume_etl_done_callback_discards_and_logs_exceptions(self):
+        from services.orchestrator.main import ResumeEtlRequest, _etl_tasks, orchestrate_resume_etl
+
+        payload = ResumeEtlRequest(
+            task_id="resume-task-done",
+            file_path="/tmp/resume.pdf",
+            owner_id="00000000-0000-0000-0000-000000000001",
+            upload_id="upload-done",
+            resume_fingerprint="fp-done",
+            mode="extract_and_embed",
+        )
+        request = Mock()
+        task = Mock()
+        task.cancelled.return_value = False
+        task.exception.return_value = RuntimeError("boom")
+
+        callbacks = []
+
+        def add_done_callback(cb):
+            callbacks.append(cb)
+
+        task.add_done_callback = add_done_callback
+
+        def _mock_create_task(coro):
+            coro.close()
+            return task
+
+        with patch("services.orchestrator.main.set_task_state"), \
+             patch("services.orchestrator.main.asyncio.create_task", side_effect=_mock_create_task), \
+             patch("services.orchestrator.main.logger.error") as mock_logger_error:
+            await orchestrate_resume_etl(payload, request)
+            assert callbacks
+            _etl_tasks.add(task)
+            callbacks[0](task)
+            assert task not in _etl_tasks
+            mock_logger_error.assert_called_once()
+
 
 
 # ---------------------------------------------------------------------------
@@ -1278,6 +1926,40 @@ class TestLifespan:
                     async with lifespan(app):
                         assert isinstance(app.state.registry, OrchestratorRegistry)
                         assert app.state.ctx is mock_ctx
+
+    @pytest.mark.asyncio
+    async def test_lifespan_skips_scraper_scheduler_when_disabled(self, monkeypatch):
+        """Test lifespan does not start the scraper scheduler in disabled mode."""
+        from fastapi import FastAPI
+        from services.orchestrator.main import lifespan
+
+        monkeypatch.setenv("DISABLE_SCRAPER", "1")
+
+        app = FastAPI()
+        mock_ctx = Mock()
+        mock_ctx.config = Mock()
+        mock_ctx.aclose = AsyncMock()
+
+        created_coroutines = []
+        mock_cleanup_task = asyncio.create_task(asyncio.sleep(0))
+        await mock_cleanup_task
+
+        def create_mock_task(coro):
+            cr_code = getattr(coro, "cr_code", None)
+            created_coroutines.append(cr_code.co_name if cr_code is not None else None)
+            if hasattr(coro, "close"):
+                coro.close()
+            return mock_cleanup_task
+
+        with patch("services.orchestrator.main.load_config"):
+            with patch(
+                "services.orchestrator.main.AppContext.build", return_value=mock_ctx
+            ):
+                with patch("asyncio.create_task", side_effect=create_mock_task):
+                    async with lifespan(app):
+                        pass
+
+        assert "scraper_scheduler_loop" not in created_coroutines
 
     @pytest.mark.asyncio
     async def test_lifespan_cleanup_with_aclose(self):

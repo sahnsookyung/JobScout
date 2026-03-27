@@ -7,6 +7,23 @@ from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional, Dict, Any
 
 
+class ApiFieldError(BaseModel):
+    """Structured validation metadata for a single request field/path."""
+
+    path: List[str]
+    code: str
+    message: str
+
+
+class ApiError(BaseModel):
+    """Canonical error body for migrated API endpoints."""
+
+    code: str
+    message: str
+    detail: Optional[str] = None
+    fields: Optional[List[ApiFieldError]] = None
+
+
 class MatchSummary(BaseModel):
     """Summary of a job match."""
     model_config = ConfigDict(
@@ -167,12 +184,18 @@ class PipelineStatusResponse(BaseModel):
     """Response containing pipeline task status."""
     task_id: str
     status: str  # "pending", "running", "completed", "failed", "cancelled"
+    upload_id: Optional[str] = None
+    resume_fingerprint: Optional[str] = None
     matches_count: Optional[int] = None
     saved_count: Optional[int] = None
     notified_count: Optional[int] = None
     error: Optional[str] = None
     execution_time: Optional[float] = None
     step: Optional[str] = None
+    stale_due_to_newer_upload: bool = False
+    latest_upload_id: Optional[str] = None
+    latest_resume_fingerprint: Optional[str] = None
+    stale_message: Optional[str] = None
 
 
 class NotificationResponse(BaseModel):
@@ -216,7 +239,9 @@ class ResumeUploadResponse(BaseModel):
     success: bool
     resume_hash: str
     message: str
+    upload_id: Optional[str] = None
     task_id: Optional[str] = None
+    status: Optional[str] = None
 
 
 class ResumeStatusResponse(BaseModel):
@@ -224,8 +249,30 @@ class ResumeStatusResponse(BaseModel):
     task_id: str
     status: str  # processing | completed | failed
     step: Optional[str] = None  # extracting | embedding
+    message: Optional[str] = None
     error: Optional[str] = None
 
+
+class ResumeEligibilityResponse(BaseModel):
+    """Authoritative matching eligibility for the latest uploaded resume."""
+    can_run: bool
+    status: str
+    message: str
+    retryable: bool
+    upload_id: Optional[str] = None
+    resume_hash: Optional[str] = None
+    task_id: Optional[str] = None
+
+
+class ResumePreflightResponse(BaseModel):
+    """Read-only preflight result for a locally computed resume hash."""
+    status: str
+    message: str
+    retryable: bool
+    can_skip_upload: bool
+    resume_hash: str
+    upload_id: Optional[str] = None
+    task_id: Optional[str] = None
 
 class ScrapeJobsResponse(BaseModel):
     """Response after triggering job scraping."""

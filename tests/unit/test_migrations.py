@@ -1,17 +1,13 @@
 """
 Guard tests for database migration hygiene.
 
-SQLAlchemy's create_all() only runs CREATE TABLE IF NOT EXISTS — it never alters
-existing tables. So any new column added to an ORM model requires an explicit
-migration script to be applied to the live database.
+The baseline schema is now created by a committed migration artifact rather than
+runtime `create_all()`, and all future schema changes must continue through the
+numbered migration sequence.
 
-These tests catch the two structural failure modes:
+These tests catch the core structural failure modes:
   1. A migration file exists locally but was never committed (never applied to CI/prod).
   2. A migration file has no callable entry point and cannot be run.
-
-Note: testing that ORM model columns exist is NOT done here — that only checks
-the Python class definition, not the live database schema, so it cannot detect
-the actual bug (create_all skipping column additions to existing tables).
 """
 
 import subprocess
@@ -55,5 +51,5 @@ def test_all_migration_files_define_an_entry_point() -> None:
         has_entry = "def migrate(" in source or "def upgrade(" in source
         assert has_entry, (
             f"{path.name} defines neither migrate() nor upgrade() — "
-            "add a migrate() function so start.sh can apply it automatically"
+            "add a migrate() entry point so the migration runner can execute it"
         )

@@ -31,6 +31,7 @@ from core.redis_streams import (
 )
 from services.base.embeddings import run_embedding_extraction, generate_resume_embedding
 from database.init_db import init_db
+from database.models import DEFAULT_LEGACY_OWNER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ class EmbeddingsConsumer(StreamConsumerWithCompletion):
         if not is_valid:
             logger.error("❌ Invalid embeddings job: %s", error)
             return False, {"status": "failed", "error": error}
+        owner_id = msg.get("owner_id") or DEFAULT_LEGACY_OWNER_ID
 
         fp_preview = (resume_fingerprint or "")[:16]
         logger.info(
@@ -81,7 +83,12 @@ class EmbeddingsConsumer(StreamConsumerWithCompletion):
         )
 
         try:
-            await asyncio.to_thread(generate_resume_embedding, self.ctx, resume_fingerprint)
+            await asyncio.to_thread(
+                generate_resume_embedding,
+                self.ctx,
+                resume_fingerprint,
+                owner_id,
+            )
 
             logger.info(
                 "✅ Embeddings job done: task_id=%s, fingerprint=%s...",
@@ -91,6 +98,8 @@ class EmbeddingsConsumer(StreamConsumerWithCompletion):
             return True, {
                 "status": "completed",
                 "resume_fingerprint": resume_fingerprint,
+                "resume_upload_id": msg.get("resume_upload_id"),
+                "owner_id": owner_id,
             }
         except Exception as e:
             logger.error(
@@ -208,6 +217,7 @@ app = FastAPI(
 
 class EmbedResumeRequest(BaseModel):
     resume_fingerprint: str
+    owner_id: str = DEFAULT_LEGACY_OWNER_ID
 
 
 class EmbedResponse(BaseModel):
@@ -248,7 +258,12 @@ async def embed_resume(request: Request, body: EmbedResumeRequest):
     logger.info("Processing resume embedding request")
 
     try:
-        await asyncio.to_thread(generate_resume_embedding, state.ctx, body.resume_fingerprint)
+        await asyncio.to_thread(
+            generate_resume_embedding,
+            state.ctx,
+            body.resume_fingerprint,
+            body.owner_id,
+        )
         return EmbedResponse(success=True, message="Resume embedding completed", processed=1)
     except Exception:
         logger.error("Resume embedding failed", exc_info=True)

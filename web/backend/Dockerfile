@@ -19,6 +19,7 @@ RUN uv sync --frozen --no-dev --no-install-project --group web
 COPY core/ ./core/
 # Database: models, repositories, session management
 COPY database/ ./database/
+COPY migrations/ ./migrations/
 # ETL: ResumeParser for resume upload endpoint
 COPY etl/ ./etl/
 # Pipeline: matching pipeline runner for compact mode

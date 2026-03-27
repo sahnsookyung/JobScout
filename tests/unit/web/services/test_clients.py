@@ -22,6 +22,7 @@ from web.backend.services.clients import (
     get_scorer_matcher_client,
     get_orchestrator_client,
     HEALTH_ENDPOINT,
+    resolve_service_url,
 )
 
 
@@ -77,6 +78,33 @@ class TestValidateUrl:
             _validate_url("http://", "TEST_URL")
 
         assert "must be a valid HTTP/HTTPS URL" in str(exc_info.value)
+
+
+class TestResolveServiceUrl:
+    def test_prefers_internal_service_url(self):
+        with patch.dict(
+            os.environ,
+            {
+                "INTERNAL_ORCHESTRATOR_URL": "http://orchestrator:8084",
+                "ORCHESTRATOR_URL": "http://localhost:8084",
+            },
+            clear=False,
+        ):
+            assert (
+                resolve_service_url("INTERNAL_ORCHESTRATOR_URL", "ORCHESTRATOR_URL")
+                == "http://orchestrator:8084"
+            )
+
+    def test_falls_back_to_external_service_url(self):
+        with patch.dict(
+            os.environ,
+            {"INTERNAL_ORCHESTRATOR_URL": "", "ORCHESTRATOR_URL": "http://localhost:8084"},
+            clear=False,
+        ):
+            assert (
+                resolve_service_url("INTERNAL_ORCHESTRATOR_URL", "ORCHESTRATOR_URL")
+                == "http://localhost:8084"
+            )
 
 
 class TestServiceClient:
@@ -218,13 +246,21 @@ class TestServiceClient:
             mock_request.assert_called_once_with("POST", "/api/test", json={"data": "value"})
             assert result == {"success": True}
 
+    def test_close_closes_http_client(self):
+        client = ServiceClient("http://localhost:8080")
+        client._http_client = Mock()
+
+        client.close()
+
+        client._http_client.close.assert_called_once()
+
 
 class TestExtractionClient:
     """Test ExtractionClient."""
 
     def test_init_default_url(self):
         """Test initialization with default URL."""
-        with patch.dict(os.environ, {"EXTRACTION_URL": ""}, clear=False):
+        with patch.dict(os.environ, {"INTERNAL_EXTRACTION_URL": "", "EXTRACTION_URL": ""}, clear=False):
             with patch('web.backend.services.clients._validate_url', return_value=""):
                 client = ExtractionClient()
                 assert client.base_url == ""
@@ -237,14 +273,20 @@ class TestExtractionClient:
     def test_extract_resume(self):
         """Test extract_resume method."""
         client = ExtractionClient("http://extraction:8081")
+        owner_id = "user-123"
 
         with patch.object(client, 'post') as mock_post:
             mock_post.return_value = {"success": True, "resume_id": "123"}
 
-            result = client.extract_resume("/path/to/resume.pdf")
+            result = client.extract_resume("/path/to/resume.pdf", owner_id=owner_id)
 
             mock_post.assert_called_once_with(
-                "/extract/resume", json={"resume_file": "/path/to/resume.pdf"}
+                "/extract/resume",
+                json={
+                    "resume_file": "/path/to/resume.pdf",
+                    "force_re_extraction": False,
+                    "owner_id": owner_id,
+                },
             )
             assert result == {"success": True, "resume_id": "123"}
 
@@ -266,7 +308,7 @@ class TestEmbeddingsClient:
 
     def test_init_default_url(self):
         """Test initialization with default URL."""
-        with patch.dict(os.environ, {"EMBEDDINGS_URL": ""}, clear=False):
+        with patch.dict(os.environ, {"INTERNAL_EMBEDDINGS_URL": "", "EMBEDDINGS_URL": ""}, clear=False):
             with patch('web.backend.services.clients._validate_url', return_value=""):
                 client = EmbeddingsClient()
                 assert client.base_url == ""
@@ -279,14 +321,19 @@ class TestEmbeddingsClient:
     def test_embed_resume(self):
         """Test embed_resume method."""
         client = EmbeddingsClient("http://embeddings:8082")
+        owner_id = "user-123"
 
         with patch.object(client, 'post') as mock_post:
             mock_post.return_value = {"success": True, "fingerprint": "abc123"}
 
-            result = client.embed_resume("resume-fingerprint-123")
+            result = client.embed_resume("resume-fingerprint-123", owner_id=owner_id)
 
             mock_post.assert_called_once_with(
-                "/embed/resume", json={"resume_fingerprint": "resume-fingerprint-123"}
+                "/embed/resume",
+                json={
+                    "resume_fingerprint": "resume-fingerprint-123",
+                    "owner_id": owner_id,
+                },
             )
             assert result == {"success": True, "fingerprint": "abc123"}
 
@@ -308,7 +355,11 @@ class TestScorerMatcherClient:
 
     def test_init_default_url(self):
         """Test initialization with default URL."""
-        with patch.dict(os.environ, {"SCORER_MATCHER_URL": ""}, clear=False):
+        with patch.dict(
+            os.environ,
+            {"INTERNAL_SCORER_MATCHER_URL": "", "SCORER_MATCHER_URL": ""},
+            clear=False,
+        ):
             with patch('web.backend.services.clients._validate_url', return_value=""):
                 client = ScorerMatcherClient()
                 assert client.base_url == ""
@@ -364,10 +415,26 @@ class TestOrchestratorClient:
 
     def test_init_default_url(self):
         """Test initialization with default URL."""
-        with patch.dict(os.environ, {"ORCHESTRATOR_URL": ""}, clear=False):
+        with patch.dict(
+            os.environ,
+            {"INTERNAL_ORCHESTRATOR_URL": "", "ORCHESTRATOR_URL": ""},
+            clear=False,
+        ):
             with patch('web.backend.services.clients._validate_url', return_value=""):
                 client = OrchestratorClient()
                 assert client.base_url == ""
+
+    def test_init_prefers_internal_url_over_external(self):
+        with patch.dict(
+            os.environ,
+            {
+                "INTERNAL_ORCHESTRATOR_URL": "http://orchestrator:8084",
+                "ORCHESTRATOR_URL": "http://localhost:8084",
+            },
+            clear=False,
+        ):
+            client = OrchestratorClient()
+        assert client.base_url == "http://orchestrator:8084"
 
     def test_init_custom_url(self):
         """Test initialization with custom URL."""
@@ -564,6 +631,50 @@ class TestOrchestratorClient:
             mock_get.assert_called_once_with(HEALTH_ENDPOINT)
             assert result == {"status": "healthy"}
 
+    def test_process_resume_includes_all_optional_fields(self):
+        client = OrchestratorClient("http://orchestrator:8084")
+
+        with patch.object(client, 'post') as mock_post:
+            mock_post.return_value = {"success": True}
+
+            result = client.process_resume(
+                "/tmp/resume.pdf",
+                "task-1",
+                upload_id="upload-1",
+                owner_id="owner-1",
+                resume_fingerprint="fp-1",
+                mode="embed_only",
+            )
+
+            mock_post.assert_called_once_with(
+                "/orchestrate/resume-etl",
+                json={
+                    "task_id": "task-1",
+                    "mode": "embed_only",
+                    "file_path": "/tmp/resume.pdf",
+                    "upload_id": "upload-1",
+                    "owner_id": "owner-1",
+                    "resume_fingerprint": "fp-1",
+                },
+            )
+            assert result == {"success": True}
+
+    def test_process_resume_omits_none_fields(self):
+        client = OrchestratorClient("http://orchestrator:8084")
+
+        with patch.object(client, 'post') as mock_post:
+            mock_post.return_value = {"success": True}
+
+            client.process_resume(None, "task-2")
+
+            mock_post.assert_called_once_with(
+                "/orchestrate/resume-etl",
+                json={
+                    "task_id": "task-2",
+                    "mode": "extract_and_embed",
+                },
+            )
+
 
 class TestSingletonFunctions:
     """Test singleton getter functions."""
@@ -578,7 +689,7 @@ class TestSingletonFunctions:
 
     def test_get_extraction_client_creates_singleton(self):
         """Test get_extraction_client creates singleton instance."""
-        with patch('web.backend.services.clients.EXTRACTION_URL', ""):
+        with patch.dict(os.environ, {"INTERNAL_EXTRACTION_URL": "", "EXTRACTION_URL": ""}, clear=False):
             client1 = get_extraction_client()
             client2 = get_extraction_client()
 
@@ -587,7 +698,7 @@ class TestSingletonFunctions:
 
     def test_get_embeddings_client_creates_singleton(self):
         """Test get_embeddings_client creates singleton instance."""
-        with patch('web.backend.services.clients.EMBEDDINGS_URL', ""):
+        with patch.dict(os.environ, {"INTERNAL_EMBEDDINGS_URL": "", "EMBEDDINGS_URL": ""}, clear=False):
             client1 = get_embeddings_client()
             client2 = get_embeddings_client()
 
@@ -596,7 +707,11 @@ class TestSingletonFunctions:
 
     def test_get_scorer_matcher_client_creates_singleton(self):
         """Test get_scorer_matcher_client creates singleton instance."""
-        with patch('web.backend.services.clients.SCORER_MATCHER_URL', ""):
+        with patch.dict(
+            os.environ,
+            {"INTERNAL_SCORER_MATCHER_URL": "", "SCORER_MATCHER_URL": ""},
+            clear=False,
+        ):
             client1 = get_scorer_matcher_client()
             client2 = get_scorer_matcher_client()
 
@@ -605,7 +720,11 @@ class TestSingletonFunctions:
 
     def test_get_orchestrator_client_creates_singleton(self):
         """Test get_orchestrator_client creates singleton instance."""
-        with patch('web.backend.services.clients.ORCHESTRATOR_URL', ""):
+        with patch.dict(
+            os.environ,
+            {"INTERNAL_ORCHESTRATOR_URL": "", "ORCHESTRATOR_URL": ""},
+            clear=False,
+        ):
             client1 = get_orchestrator_client()
             client2 = get_orchestrator_client()
 
@@ -628,7 +747,7 @@ class TestLazyLoading:
         """Test lazy loading of extraction_client."""
         from web.backend.services import clients
 
-        with patch('web.backend.services.clients.EXTRACTION_URL', ""):
+        with patch.dict(os.environ, {"INTERNAL_EXTRACTION_URL": "", "EXTRACTION_URL": ""}, clear=False):
             client = clients.extraction_client
             assert isinstance(client, ExtractionClient)
 
@@ -636,7 +755,7 @@ class TestLazyLoading:
         """Test lazy loading of embeddings_client."""
         from web.backend.services import clients
 
-        with patch('web.backend.services.clients.EMBEDDINGS_URL', ""):
+        with patch.dict(os.environ, {"INTERNAL_EMBEDDINGS_URL": "", "EMBEDDINGS_URL": ""}, clear=False):
             client = clients.embeddings_client
             assert isinstance(client, EmbeddingsClient)
 
@@ -644,7 +763,11 @@ class TestLazyLoading:
         """Test lazy loading of scorer_matcher_client."""
         from web.backend.services import clients
 
-        with patch('web.backend.services.clients.SCORER_MATCHER_URL', ""):
+        with patch.dict(
+            os.environ,
+            {"INTERNAL_SCORER_MATCHER_URL": "", "SCORER_MATCHER_URL": ""},
+            clear=False,
+        ):
             client = clients.scorer_matcher_client
             assert isinstance(client, ScorerMatcherClient)
 
@@ -652,7 +775,11 @@ class TestLazyLoading:
         """Test lazy loading of orchestrator_client."""
         from web.backend.services import clients
 
-        with patch('web.backend.services.clients.ORCHESTRATOR_URL', ""):
+        with patch.dict(
+            os.environ,
+            {"INTERNAL_ORCHESTRATOR_URL": "", "ORCHESTRATOR_URL": ""},
+            clear=False,
+        ):
             client = clients.orchestrator_client
             assert isinstance(client, OrchestratorClient)
 

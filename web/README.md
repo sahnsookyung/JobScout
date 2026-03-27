@@ -345,7 +345,7 @@ export UVICORN_PORT=5000
 ### "No matches found" message
 
 If you see "No matches found":
-1. Make sure you've run the matching pipeline: `python main.py`
+1. Make sure you've uploaded a resume and triggered matching through the split web/API flow
 2. Check that matches exist in the database
 3. Verify the database connection URL is correct
 4. Try lowering the minimum score filter

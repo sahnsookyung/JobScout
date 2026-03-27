@@ -50,8 +50,8 @@ export SKIP_DB_TESTS=true
 
 ### Running the Application
 ```bash
-# Run main driver locally (requires services via docker-compose)
-uv run python main.py
+# Start the supported split stack locally
+./scripts/setup_local_env/start.sh --split
 
 # Run with full stack
 docker-compose up -d
