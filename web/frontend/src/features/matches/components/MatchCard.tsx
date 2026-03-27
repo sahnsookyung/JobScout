@@ -1,5 +1,5 @@
 import React from 'react';
-import { MapPin, Building2, Laptop, Eye, EyeOff, ArrowUpRight, Award, Sparkles } from 'lucide-react';
+import { MapPin, Building2, Laptop, Eye, EyeOff, ArrowUpRight, Award } from 'lucide-react';
 import type { MatchSummary } from '@/types/api';
 import { formatScore } from '@/utils/formatters';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -21,15 +21,19 @@ export const MatchCard: React.FC<MatchCardProps> = ({
 
     const toggleHiddenMutation = useMutation({
         mutationFn: (matchId: string) => matchesApi.toggleHidden(matchId),
-        onSuccess: (data, matchId) => {
-            const newlyHidden = data.data.is_hidden;
+        onSuccess: (response, matchId) => {
+            const newlyHidden = response?.data?.is_hidden;
+            if (typeof newlyHidden !== 'boolean') {
+                toast.error('Failed to update job visibility');
+                return;
+            }
 
             queryClient.setQueryData(['matches'], (old: any) => {
                 if (!old?.matches) return old;
                 return {
                     ...old,
                     matches: old.matches.map((m: MatchSummary) =>
-                        m.match_id === matchId ? { ...m, is_hidden: data.data.is_hidden } : m
+                        m.match_id === matchId ? { ...m, is_hidden: newlyHidden } : m
                     ),
                 };
             });
@@ -62,24 +66,40 @@ export const MatchCard: React.FC<MatchCardProps> = ({
 
     const isHighScore = match.overall_score >= 80;
     const isMediumScore = match.overall_score >= 60 && match.overall_score < 80;
+    const cardClasses = match.is_hidden
+        ? 'opacity-50 border-gray-200'
+        : isHighScore
+            ? 'border-transparent bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 hover:border-blue-300'
+            : 'border-gray-200 hover:border-blue-300';
+    const scoreBadgeGradient = isHighScore
+        ? 'from-blue-500 via-indigo-500 to-purple-500'
+        : isMediumScore
+            ? 'from-blue-400 to-indigo-400'
+            : 'from-gray-400 to-gray-500';
+    const hideButtonClasses = match.is_hidden
+        ? 'bg-gray-200/80 text-gray-600 hover:bg-gray-300/80'
+        : 'bg-white/80 text-gray-600 hover:bg-white hover:shadow-lg';
+
+    const handleCardKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onSelect(match.match_id);
+        }
+    };
 
     return (
-        <div
-            className={`group relative bg-white rounded-3xl p-8 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl border-2 overflow-hidden ${match.is_hidden
-                ? 'opacity-50 border-gray-200'
-                : isHighScore
-                    ? 'border-transparent bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 hover:border-blue-300'
-                    : 'border-gray-200 hover:border-blue-300'
-                }`}
+        <article
+            className={`group relative bg-white rounded-3xl p-8 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl border-2 overflow-hidden ${cardClasses}`}
             onClick={() => onSelect(match.match_id)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={handleCardKeyDown}
+            aria-label={`View details for ${match.title} at ${match.company}`}
         >
             {/* Score Badge Container */}
             <div className="absolute top-6 right-6 flex flex-col items-end gap-2">
                 {/* Score Badge */}
-                <div className={`w-20 h-20 rounded-xl bg-gradient-to-br shadow-md flex flex-col items-center justify-center ${isHighScore ? 'from-blue-500 via-indigo-500 to-purple-500' :
-                    isMediumScore ? 'from-blue-400 to-indigo-400' :
-                        'from-gray-400 to-gray-500'
-                    }`}>
+                <div className={`w-20 h-20 rounded-xl bg-gradient-to-br shadow-md flex flex-col items-center justify-center ${scoreBadgeGradient}`}>
                     <div className="text-2xl font-bold text-white leading-none">
                         {formatScore(match.overall_score)}
                     </div>
@@ -100,10 +120,7 @@ export const MatchCard: React.FC<MatchCardProps> = ({
                 <button
                     onClick={handleToggleHidden}
                     disabled={toggleHiddenMutation.isPending}
-                    className={`mt-0.5 p-2.5 rounded-xl transition-all duration-200 backdrop-blur-sm disabled:opacity-50 disabled:cursor-not-allowed ${match.is_hidden
-                        ? 'bg-gray-200/80 text-gray-600 hover:bg-gray-300/80'
-                        : 'bg-white/80 text-gray-600 hover:bg-white hover:shadow-lg'
-                        }`}
+                    className={`mt-0.5 p-2.5 rounded-xl transition-all duration-200 backdrop-blur-sm disabled:opacity-50 disabled:cursor-not-allowed ${hideButtonClasses}`}
                     title={match.is_hidden ? 'Unhide this job' : 'Hide this job'}
                     aria-label={match.is_hidden ? 'Unhide this job' : 'Hide this job'}
                     aria-pressed={match.is_hidden}
@@ -167,7 +184,7 @@ export const MatchCard: React.FC<MatchCardProps> = ({
                     </div>
                 </div>
             </div>
-        </div>
+        </article>
     );
 };
 

@@ -224,7 +224,7 @@ class MatchExplanationResponse(BaseModel):
     """Response containing match explanation."""
     success: bool
     match_id: str
-    explanation: Optional[Dict[str, Any]]
+    explanation: Optional[Dict[str, Any]] = None
     message: Optional[str] = None
 
 

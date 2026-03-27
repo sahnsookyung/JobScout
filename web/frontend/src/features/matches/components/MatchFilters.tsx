@@ -29,6 +29,9 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
     showHidden,
     onShowHiddenChange,
 }) => {
+    const statusId = 'match-filter-status';
+    const sortById = 'match-filter-sort-by';
+
     return (
         <div className="relative bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 rounded-3xl overflow-hidden">
             {/* Decorative background */}
@@ -38,11 +41,12 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     {/* Status Filter */}
                     <div>
-                        <label className="flex items-center gap-2 text-xs font-black text-gray-600 uppercase tracking-wider mb-3">
+                        <label htmlFor={statusId} className="flex items-center gap-2 text-xs font-black text-gray-600 uppercase tracking-wider mb-3">
                             <Filter className="w-4 h-4" aria-hidden="true" />
                             Status
                         </label>
                         <select
+                            id={statusId}
                             value={status}
                             onChange={(e) => onStatusChange(e.target.value as MatchStatus)}
                             className="w-full px-4 py-3 bg-white border-2 border-gray-200 rounded-xl font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-sm hover:shadow-md"
@@ -57,11 +61,12 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
 
                     {/* Sort By */}
                     <div>
-                        <label className="flex items-center gap-2 text-xs font-black text-gray-600 uppercase tracking-wider mb-3">
+                        <label htmlFor={sortById} className="flex items-center gap-2 text-xs font-black text-gray-600 uppercase tracking-wider mb-3">
                             <SortDesc className="w-4 h-4" aria-hidden="true" />
                             Sort By
                         </label>
                         <select
+                            id={sortById}
                             value={sortBy}
                             onChange={(e) => onSortByChange(e.target.value as SortBy)}
                             className="w-full px-4 py-3 bg-white border-2 border-gray-200 rounded-xl font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-sm hover:shadow-md"
@@ -76,9 +81,9 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
 
                     {/* Toggle Options */}
                     <div>
-                        <label className="text-xs font-black text-gray-600 uppercase tracking-wider mb-3 block">
+                        <p className="text-xs font-black text-gray-600 uppercase tracking-wider mb-3 block">
                             Display Options
-                        </label>
+                        </p>
                         <div className="space-y-2">
                             <ToggleOption
                                 icon={<Laptop className="w-4 h-4" />}

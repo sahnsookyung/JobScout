@@ -4,7 +4,6 @@ Custom exceptions and error handlers for the web application.
 """
 
 import logging
-from typing import Any, Dict
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
 
@@ -41,7 +40,7 @@ class NotificationException(ServiceException):
     pass
 
 
-async def service_exception_handler(
+def service_exception_handler(
     request: Request,
     exc: ServiceException
 ) -> JSONResponse:
@@ -73,8 +72,8 @@ async def service_exception_handler(
     )
 
 
-async def http_exception_handler(
-    request: Request,
+def http_exception_handler(
+    _request: Request,
     exc: HTTPException
 ) -> JSONResponse:
     """
@@ -97,7 +96,7 @@ async def http_exception_handler(
     )
 
 
-async def general_exception_handler(
+def general_exception_handler(
     request: Request,
     exc: Exception
 ) -> JSONResponse:
@@ -111,7 +110,7 @@ async def general_exception_handler(
     Returns:
         JSONResponse with error details.
     """
-    logger.exception(f"Unexpected error in {request.url.path}")
+    logger.exception("Unexpected error in %s: %s", request.url.path, exc)
     
     return JSONResponse(
         status_code=500,

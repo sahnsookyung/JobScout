@@ -87,11 +87,9 @@ class ScoringService:
         job = preliminary.job
 
         fit_penalties, penalty_details = penalty_calculations.calculate_fit_penalties(
-            job=job,
             matched_requirements=preliminary.requirement_matches,
             missing_requirements=preliminary.missing_requirements,
             config=self.config,
-            candidate_total_years=candidate_total_years,
             experience_sections=None,  # make this opt-in if needed
         )
 

@@ -57,7 +57,7 @@ class TestAddRateLimitHandlers:
         mock_request = MagicMock()
         mock_exc = MagicMock()
         mock_exc.__str__ = lambda self: "rate limit exceeded"
-        result = asyncio.run(_rate_limit_exceeded_handler(mock_request, mock_exc))
+        result = _rate_limit_exceeded_handler(mock_request, mock_exc)
         assert result.status_code == 429
 
 

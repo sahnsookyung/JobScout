@@ -206,6 +206,12 @@ class TestNotificationsRouter:
         assert 'high' in data['detail']
         assert 'urgent' in data['detail']
 
+    def test_send_notification_documents_invalid_priority_response(self, app):
+        schema = app.openapi()
+        responses = schema['paths']['/api/notifications/send']['post']['responses']
+
+        assert responses['400']['description'] == 'Invalid notification priority'
+
     def test_send_notification_missing_fields(self, client):
         """Test send notification with missing required fields."""
         # Missing recipient

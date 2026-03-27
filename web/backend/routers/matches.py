@@ -6,7 +6,7 @@ Match endpoints - view and manage job matches.
 import uuid
 import logging
 from typing import Annotated
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..dependencies import get_db
@@ -22,6 +22,8 @@ from ..models.responses import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/matches", tags=["matches"])
+
+DbSession = Annotated[Session, Depends(get_db)]
 
 
 def validate_uuid(match_id: str) -> str:
@@ -42,12 +44,12 @@ def validate_uuid(match_id: str) -> str:
     responses={422: {"description": "Invalid query parameter"}}
 )
 def get_matches(
-    status: str = Query(default="active", description="Match status: active, stale, or all"),
-    min_fit: float = Query(default=None, ge=0, le=100, description="Minimum fit score filter"),
-    top_k: int = Query(default=None, ge=1, le=500, description="Maximum results to return"),
-    remote_only: bool = Query(default=False, description="Filter to remote jobs only"),
-    show_hidden: bool = Query(default=False, description="Include hidden matches in results"),
-    db: Annotated[Session, Depends(get_db)] = None
+    db: DbSession,
+    status: Annotated[str, Query(description="Match status: active, stale, or all")] = "active",
+    min_fit: Annotated[float | None, Query(ge=0, le=100, description="Minimum fit score filter")] = None,
+    top_k: Annotated[int | None, Query(ge=1, le=500, description="Maximum results to return")] = None,
+    remote_only: Annotated[bool, Query(description="Filter to remote jobs only")] = False,
+    show_hidden: Annotated[bool, Query(description="Include hidden matches in results")] = False,
 ):
     """
     Get a list of job matches filtered by result policy.
@@ -89,8 +91,12 @@ def get_matches(
     )
 
 
-@router.get("/{match_id}", response_model=MatchDetailResponse)
-def get_match_details(match_id: str, db: Annotated[Session, Depends(get_db)]):
+@router.get(
+    "/{match_id}",
+    response_model=MatchDetailResponse,
+    responses={400: {"description": "Invalid match ID"}},
+)
+def get_match_details(match_id: str, db: DbSession):
     """
     Get detailed information about a specific match.
     
@@ -101,8 +107,12 @@ def get_match_details(match_id: str, db: Annotated[Session, Depends(get_db)]):
     return service.get_match_detail(match_id)
 
 
-@router.post("/{match_id}/hide", response_model=HideMatchResponse)
-def toggle_match_hidden(match_id: str, db: Annotated[Session, Depends(get_db)]):
+@router.post(
+    "/{match_id}/hide",
+    response_model=HideMatchResponse,
+    responses={400: {"description": "Invalid match ID"}},
+)
+def toggle_match_hidden(match_id: str, db: DbSession):
     """
     Toggle the hidden status of a match.
     
@@ -119,8 +129,12 @@ def toggle_match_hidden(match_id: str, db: Annotated[Session, Depends(get_db)]):
     )
 
 
-@router.get("/{match_id}/explanation", response_model=MatchExplanationResponse)
-def get_match_explanation(match_id: str, db: Annotated[Session, Depends(get_db)]):
+@router.get(
+    "/{match_id}/explanation",
+    response_model=MatchExplanationResponse,
+    responses={400: {"description": "Invalid match ID"}},
+)
+def get_match_explanation(match_id: str, db: DbSession):
     """
     Get explainability details for a specific match.
     

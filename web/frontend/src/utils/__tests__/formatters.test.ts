@@ -86,6 +86,11 @@ describe('formatters', () => {
             expect(result).toContain('$50,000');
         });
 
+        it('should fall back to USD for empty currency strings', () => {
+            const result = formatSalary(50000, null, '');
+            expect(result).toContain('$50,000');
+        });
+
         it('should format with different currency', () => {
             const result = formatSalary(50000, null, 'EUR');
             expect(result).toContain('€50,000');

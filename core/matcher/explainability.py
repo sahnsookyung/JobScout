@@ -132,6 +132,36 @@ def calculate_requirement_similarity_with_resume_sections(
     return best_similarity, match_details
 
 
+def _summarize_section_scores(section_scores: Dict[str, List[float]]) -> Dict[str, Dict[str, Any]]:
+    section_summary = {}
+    for section_type, scores in section_scores.items():
+        section_summary[section_type] = {
+            'avg_similarity': sum(scores) / len(scores) if scores else 0.0,
+            'max_similarity': max(scores) if scores else 0.0,
+            'requirements_covered': len(scores)
+        }
+    return section_summary
+
+
+def _build_strengths(requirement_explanations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    valid_scores = [
+        (explanation['similarity'], explanation['details'].get('best_section'))
+        for explanation in requirement_explanations
+        if explanation['similarity'] > 0 and explanation['details'].get('best_section')
+    ]
+    valid_scores.sort(reverse=True, key=lambda x: x[0])
+    return [{'section': section, 'score': score} for score, section in valid_scores[:3]]
+
+
+def _build_gaps(section_summary: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    low_scores = [
+        (section, data['avg_similarity'])
+        for section, data in section_summary.items()
+        if data['avg_similarity'] < 0.5
+    ]
+    return [{'section': section, 'avg_score': score} for section, score in low_scores]
+
+
 def explain_match(
     job_requirements: List[JobRequirementUnit],
     resume_fingerprint: str,
@@ -186,24 +216,9 @@ def explain_match(
                     section_scores[section_type] = []
                 section_scores[section_type].append(match['similarity'])
 
-    section_summary = {}
-    for section_type, scores in section_scores.items():
-        section_summary[section_type] = {
-            'avg_similarity': sum(scores) / len(scores) if scores else 0.0,
-            'max_similarity': max(scores) if scores else 0.0,
-            'requirements_covered': len(scores)
-        }
-
-    valid_scores = [(s['similarity'], s['details'].get('best_section')) 
-                   for s in requirement_explanations 
-                   if s['similarity'] > 0 and s['details'].get('best_section')]
-    valid_scores.sort(reverse=True, key=lambda x: x[0])
-    strengths = [{'section': sec, 'score': score} for score, sec in valid_scores[:3]]
-
-    sections_with_low_scores = [(sec, data['avg_similarity']) 
-                               for sec, data in section_summary.items() 
-                               if data['avg_similarity'] < 0.5]
-    gaps = [{'section': sec, 'avg_score': score} for sec, score in sections_with_low_scores]
+    section_summary = _summarize_section_scores(section_scores)
+    strengths = _build_strengths(requirement_explanations)
+    gaps = _build_gaps(section_summary)
 
     return {
         'per_requirement': requirement_explanations,

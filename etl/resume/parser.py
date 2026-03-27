@@ -56,6 +56,52 @@ class ResumeParser:
         """Initialize the resume parser."""
         self.logger = logging.getLogger(__name__)
 
+    @staticmethod
+    def _build_parsed_resume(
+        *,
+        data: Optional[Dict[str, Any]],
+        text: str,
+        format: str,
+        source_path: Path,
+    ) -> ParsedResume:
+        return ParsedResume(
+            data=data,
+            text=text,
+            format=format,
+            source_path=str(source_path),
+        )
+
+    @staticmethod
+    def _non_empty_lines(values: list[str]) -> list[str]:
+        return [value.strip() for value in values if value.strip()]
+
+    def _extract_docx_paragraphs(self, doc: Document) -> list[str]:
+        paragraphs = self._non_empty_lines([para.text for para in doc.paragraphs])
+
+        for table in doc.tables:
+            paragraphs.extend(self._extract_docx_table_rows(table))
+
+        return paragraphs
+
+    def _extract_docx_table_rows(self, table) -> list[str]:
+        rows = []
+        for row in table.rows:
+            row_texts = self._non_empty_lines([cell.text for cell in row.cells])
+            if row_texts:
+                rows.append(' '.join(row_texts))
+        return rows
+
+    def _extract_pdf_pages_text(self, reader: PdfReader) -> list[str]:
+        pages_text = []
+        for index, page in enumerate(reader.pages):
+            try:
+                page_text = page.extract_text()
+                if page_text and page_text.strip():
+                    pages_text.append(page_text.strip())
+            except Exception as e:
+                self.logger.warning(f"Failed to extract text from page {index + 1}: {e}")
+        return pages_text
+
     def parse(self, file_path: str) -> ParsedResume:
         """Parse a resume file and extract content.
 
@@ -125,11 +171,11 @@ class ResumeParser:
 
             self.logger.debug(f"Parsed JSON resume from {path}")
 
-            return ParsedResume(
+            return self._build_parsed_resume(
                 data=data,
                 text=text,
                 format='json',
-                source_path=str(path)
+                source_path=path,
             )
 
         except json.JSONDecodeError as e:
@@ -169,11 +215,11 @@ class ResumeParser:
 
             self.logger.debug(f"Parsed YAML resume from {path}")
 
-            return ParsedResume(
+            return self._build_parsed_resume(
                 data=data,
                 text=text,
                 format='yaml',
-                source_path=str(path)
+                source_path=path,
             )
 
         except yaml.YAMLError as e:
@@ -202,11 +248,11 @@ class ResumeParser:
             if not text.strip():
                 raise ValueError(f"Empty resume file: {path}")
 
-            return ParsedResume(
+            return self._build_parsed_resume(
                 data=None,
                 text=text,
                 format='txt',
-                source_path=str(path)
+                source_path=path,
             )
 
         except UnicodeDecodeError as e:
@@ -228,24 +274,7 @@ class ResumeParser:
         """
         try:
             doc = Document(str(path))
-
-            # Extract text from all paragraphs
-            paragraphs = []
-            for para in doc.paragraphs:
-                if para.text.strip():
-                    paragraphs.append(para.text.strip())
-
-            # Also extract from tables (common in resumes)
-            for table in doc.tables:
-                for row in table.rows:
-                    row_texts = []
-                    for cell in row.cells:
-                        cell_text = cell.text.strip()
-                        if cell_text:
-                            row_texts.append(cell_text)
-                    if row_texts:
-                        paragraphs.append(' '.join(row_texts))
-
+            paragraphs = self._extract_docx_paragraphs(doc)
             text = '\n\n'.join(paragraphs)
 
             if not text.strip():
@@ -253,11 +282,11 @@ class ResumeParser:
 
             self.logger.debug(f"Parsed DOCX resume from {path}")
 
-            return ParsedResume(
+            return self._build_parsed_resume(
                 data=None,
                 text=text,
                 format='docx',
-                source_path=str(path)
+                source_path=path,
             )
 
         except Exception as e:
@@ -280,16 +309,7 @@ class ResumeParser:
             if len(reader.pages) == 0:
                 raise ValueError("PDF file has no pages")
 
-            # Extract text from all pages
-            pages_text = []
-            for i, page in enumerate(reader.pages):
-                try:
-                    page_text = page.extract_text()
-                    if page_text and page_text.strip():
-                        pages_text.append(page_text.strip())
-                except Exception as e:
-                    self.logger.warning(f"Failed to extract text from page {i + 1}: {e}")
-
+            pages_text = self._extract_pdf_pages_text(reader)
             text = '\n\n'.join(pages_text)
 
             if not text.strip():
@@ -303,11 +323,11 @@ class ResumeParser:
                 f"{len(text)} chars extracted)"
             )
 
-            return ParsedResume(
+            return self._build_parsed_resume(
                 data=None,
                 text=text,
                 format='pdf',
-                source_path=str(path)
+                source_path=path,
             )
 
         except Exception as e:

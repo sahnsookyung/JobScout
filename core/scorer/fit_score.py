@@ -249,8 +249,6 @@ def calculate_fit_score(
     matched_pref = [m for m in adapted_matched if m.requirement.req_type == "preferred"]
 
     missing_req = [m for m in adapted_missing if m.requirement.req_type == "required"]
-    missing_pref = [m for m in adapted_missing if m.requirement.req_type == "preferred"]
-
     # --- Totals (weight-aware; denominator includes missing, so missing reduces coverage) ---
     total_required_weight = sum(m.requirement.weight for m in matched_req)
     # Keep missing_req separate for explicit penalties only

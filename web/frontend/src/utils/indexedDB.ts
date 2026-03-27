@@ -15,13 +15,84 @@ interface ResumeEntry {
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
+function toError(reason: unknown, fallbackMessage: string): Error {
+  if (reason instanceof Error) {
+    return reason;
+  }
+
+  if (typeof reason === 'string' && reason.length > 0) {
+    return new Error(reason);
+  }
+
+  return new Error(fallbackMessage);
+}
+
+function requestToPromise<T>(request: IDBRequest<T>, fallbackMessage: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onerror = () => reject(toError(request.error, fallbackMessage));
+    request.onsuccess = () => resolve(request.result);
+  });
+}
+
+function getStore(db: IDBDatabase, mode: IDBTransactionMode): IDBObjectStore {
+  return db.transaction(STORE_NAME, mode).objectStore(STORE_NAME);
+}
+
+function isExpiredEntry(entry: ResumeEntry): boolean {
+  const ageDays = (Date.now() - entry.timestamp) / (1000 * 60 * 60 * 24);
+  return ageDays > MAX_AGE_DAYS;
+}
+
+function logCleanupFailure(message: string, error: unknown): void {
+  console.error(message, toError(error, message));
+}
+
+async function deleteExpiredResume(hash: string, message: string): Promise<void> {
+  try {
+    await deleteResume(hash);
+  } catch (error) {
+    logCleanupFailure(message, error);
+  }
+}
+
+async function getResumeEntry(db: IDBDatabase, hash: string): Promise<ResumeEntry | undefined> {
+  const store = getStore(db, 'readonly');
+  return requestToPromise(store.get(hash), `Failed to load resume entry for ${hash}`);
+}
+
+async function getFreshResumeEntry(hash: string): Promise<ResumeEntry | null> {
+  const db = await openDB();
+  const entry = await getResumeEntry(db, hash);
+
+  if (!entry) {
+    return null;
+  }
+
+  if (isExpiredEntry(entry)) {
+    void deleteExpiredResume(hash, 'Failed to delete expired resume:');
+    return null;
+  }
+
+  return entry;
+}
+
+async function deleteHashesFromStore(store: IDBObjectStore, hashes: string[]): Promise<void> {
+  await Promise.all(
+    hashes.map((hash) =>
+      requestToPromise(store.delete(hash), `Failed to delete ${hash} during cleanup`).catch((error) => {
+        logCleanupFailure('Failed to delete entry during cleanup:', error);
+      })
+    )
+  );
+}
+
 function openDB(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
-  
+
   dbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-    request.onerror = () => reject(request.error);
+    request.onerror = () => reject(toError(request.error, 'IndexedDB open failed'));
     request.onsuccess = () => resolve(request.result);
     request.onblocked = () => reject(new Error('IndexedDB open blocked'));
 
@@ -32,195 +103,99 @@ function openDB(): Promise<IDBDatabase> {
       }
     };
   });
-  
+
+  dbPromise.catch(() => {
+    dbPromise = null;
+  });
+
   return dbPromise;
 }
 
 export async function saveResume(file: Blob, hash: string, filename?: string): Promise<void> {
   const db = await openDB();
+  const store = getStore(db, 'readwrite');
+  const entry: ResumeEntry = {
+    file,
+    timestamp: Date.now(),
+    hash,
+    filename,
+  };
 
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-
-    const entry: ResumeEntry = {
-      file,
-      timestamp: Date.now(),
-      hash,
-      filename,
-    };
-
-    const request = store.put(entry);
-
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => {
-      cleanupOldEntries(db).then(resolve).catch(reject);
-    };
-  });
+  await requestToPromise(store.put(entry), `Failed to save resume ${hash}`);
+  await cleanupOldEntries(db);
 }
 
 export async function getResume(hash: string): Promise<Blob | null> {
-  const db = await openDB();
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.get(hash);
-
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => {
-      const entry = request.result as ResumeEntry | undefined;
-
-      if (!entry) {
-        resolve(null);
-        return;
-      }
-
-      const now = Date.now();
-      const ageDays = (now - entry.timestamp) / (1000 * 60 * 60 * 24);
-
-      if (ageDays > MAX_AGE_DAYS) {
-        deleteResume(hash).catch(err => console.error('Failed to delete expired resume:', err));
-        resolve(null);
-        return;
-      }
-
-      resolve(entry.file);
-    };
-  });
+  const entry = await getFreshResumeEntry(hash);
+  return entry?.file ?? null;
 }
 
 export async function getResumeHash(): Promise<string | null> {
   const db = await openDB();
+  const store = getStore(db, 'readonly');
+  const keys = (await requestToPromise(
+    store.getAllKeys(),
+    'Failed to load resume keys'
+  )) as string[];
+  const hash = keys[0];
 
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.getAllKeys();
+  if (!hash) {
+    return null;
+  }
 
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => {
-      const keys = request.result as string[];
-      if (keys.length === 0) {
-        resolve(null);
-        return;
-      }
+  const entry = await getResumeEntry(db, hash);
+  if (!entry) {
+    return null;
+  }
 
-      const hash = keys[0];
-      const now = Date.now();
+  if (isExpiredEntry(entry)) {
+    void deleteExpiredResume(hash, 'Failed to delete expired resume:');
+    return null;
+  }
 
-      const getRequest = store.get(hash);
-      getRequest.onerror = () => reject(getRequest.error);
-      getRequest.onsuccess = () => {
-        const entry = getRequest.result as ResumeEntry | undefined;
-        if (!entry) {
-          resolve(null);
-          return;
-        }
-
-        const ageDays = (now - entry.timestamp) / (1000 * 60 * 60 * 24);
-        if (ageDays > MAX_AGE_DAYS) {
-          deleteResume(hash).catch(err => console.error('Failed to delete expired resume:', err));
-          resolve(null);
-          return;
-        }
-
-        resolve(hash);
-      };
-    };
-  });
+  return hash;
 }
 
 export async function getResumeFilename(): Promise<string | null> {
   const hash = await getResumeHash();
   if (!hash) return null;
 
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.get(hash);
-
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => {
-      const entry = request.result as ResumeEntry | undefined;
-      if (!entry || !entry.filename) {
-        resolve(null);
-        return;
-      }
-      resolve(entry.filename);
-    };
-  });
+  const entry = await getFreshResumeEntry(hash);
+  return entry?.filename ?? null;
 }
 
 export async function deleteResume(hash: string): Promise<void> {
   const db = await openDB();
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.delete(hash);
-
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve();
-  });
+  const store = getStore(db, 'readwrite');
+  await requestToPromise(store.delete(hash), `Failed to delete resume ${hash}`);
 }
 
 async function cleanupOldEntries(db: IDBDatabase): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-    const countRequest = store.count();
+  const store = getStore(db, 'readwrite');
+  const count = await requestToPromise(store.count(), 'Failed to count saved resumes');
 
-    countRequest.onsuccess = () => {
-      if (countRequest.result <= MAX_ENTRIES) {
-        resolve();
-        return;
-      }
+  if (count <= MAX_ENTRIES) {
+    return;
+  }
 
-      const getAllRequest = store.getAll();
-      getAllRequest.onerror = () => reject(getAllRequest.error);
-      getAllRequest.onsuccess = () => {
-        const entries = getAllRequest.result as ResumeEntry[];
-        const now = Date.now();
+  const entries = (await requestToPromise(
+    store.getAll(),
+    'Failed to load saved resumes for cleanup'
+  )) as ResumeEntry[];
+  const hashesToDelete = entries
+    .map((entry) => ({
+      hash: entry.hash,
+      age: Date.now() - entry.timestamp,
+    }))
+    .sort((a, b) => a.age - b.age)
+    .slice(MAX_ENTRIES)
+    .map((entry) => entry.hash);
 
-        const sortedEntries = entries
-          .map((entry) => ({
-            entry,
-            age: now - entry.timestamp,
-          }))
-          .sort((a, b) => a.age - b.age); // ascending: youngest first
+  if (hashesToDelete.length === 0) {
+    return;
+  }
 
-        // Keep the first MAX_ENTRIES (youngest), delete the rest (oldest)
-        const toDelete = sortedEntries.slice(MAX_ENTRIES);
-
-        if (toDelete.length === 0) {
-          resolve();
-          return;
-        }
-
-        let deletedCount = 0;
-        toDelete.forEach(({ entry }) => {
-          const deleteReq = store.delete(entry.hash);
-          deleteReq.onsuccess = () => {
-            deletedCount++;
-            if (deletedCount === toDelete.length) {
-              resolve();
-            }
-          };
-          deleteReq.onerror = () => {
-            console.error('Failed to delete entry during cleanup:', deleteReq.error);
-            deletedCount++;
-            if (deletedCount === toDelete.length) {
-              resolve();
-            }
-          };
-        });
-      };
-    };
-
-    countRequest.onerror = () => reject(countRequest.error);
-  });
+  await deleteHashesFromStore(store, hashesToDelete);
 }
 
 export async function hasResume(): Promise<boolean> {

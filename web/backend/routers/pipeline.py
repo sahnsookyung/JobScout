@@ -193,7 +193,7 @@ def add_rate_limit_handlers(app):
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
-async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
     if request.url.path.startswith("/api/pipeline"):
         return JSONResponse(
             status_code=429,

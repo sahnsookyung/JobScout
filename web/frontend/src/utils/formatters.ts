@@ -23,14 +23,14 @@ export const formatDate = (dateString: string | null | undefined): string => {
 export const formatSalary = (
     min: number | null,
     max: number | null,
-    currency: string | null
+    currency: string | null = 'USD'
 ): string => {
     if (!min && !max) return 'Not specified';
+    const resolvedCurrency = currency || 'USD';
 
-    const curr = currency || 'USD';
     const formatter = new Intl.NumberFormat('en-US', {
         style: 'currency',
-        currency: curr,
+        currency: resolvedCurrency,
         maximumFractionDigits: 0,
     });
 

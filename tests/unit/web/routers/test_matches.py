@@ -181,6 +181,13 @@ class TestMatchesRouter:
             response = client.get('/api/matches', params={'status': status})
             assert response.status_code == 200
 
+    def test_match_routes_document_invalid_match_id_response(self, app):
+        schema = app.openapi()
+
+        assert schema['paths']['/api/matches/{match_id}']['get']['responses']['400']['description'] == 'Invalid match ID'
+        assert schema['paths']['/api/matches/{match_id}/hide']['post']['responses']['400']['description'] == 'Invalid match ID'
+        assert schema['paths']['/api/matches/{match_id}/explanation']['get']['responses']['400']['description'] == 'Invalid match ID'
+
     def test_get_matches_min_fit_bounds(self, client, mock_match_service, mock_policy_service):
         """Test get matches with min_fit boundary values."""
         mock_match_service.get_matches.return_value = []
