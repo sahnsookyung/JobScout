@@ -11,6 +11,7 @@ This service:
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -20,7 +21,7 @@ from contextlib import asynccontextmanager
 from typing import Optional, Tuple, Dict, Any, List
 
 import redis.asyncio as redis_async
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -45,8 +46,10 @@ from core.redis_streams import (
     CHANNEL_EMBEDDINGS_BATCH_DONE,
     CHANNEL_MATCHING_DONE,
 )
+from core.resume_selection import evaluate_resume_eligibility, resolve_owner_id
 import redis  # used in /health
 from database.init_db import init_db
+from web.backend.dependencies import get_current_user
 
 # Configure logging at module level
 from core.logging_utils import setup_logging, is_nul_filter_active
@@ -172,10 +175,15 @@ async def lifespan(app: FastAPI):
 
         # Tear down AppContext — try async first, fall back to sync
         ctx: AppContext = app.state.ctx
-        if hasattr(ctx, "aclose"):
-            await ctx.aclose()  # type: ignore[func-returns-value]
-        elif hasattr(ctx, "close"):
-            ctx.close()  # type: ignore[call-arg]
+        aclose = getattr(ctx, "aclose", None)
+        if callable(aclose):
+            maybe_awaitable = aclose()
+            if inspect.isawaitable(maybe_awaitable):
+                await maybe_awaitable
+        else:
+            close = getattr(ctx, "close", None)
+            if callable(close):
+                close()
 
         logger.info("=" * 60)
         logger.info("SHUTTING DOWN ORCHESTRATOR SERVICE")
@@ -205,8 +213,12 @@ class StageRequest(BaseModel):
 
 
 class ResumeEtlRequest(BaseModel):
-    file_path: str
+    file_path: Optional[str] = None
     task_id: str
+    upload_id: Optional[str] = None
+    owner_id: str
+    resume_fingerprint: Optional[str] = None
+    mode: str = "extract_and_embed"
 
 
 class TaskStatusResponse(BaseModel):
@@ -1555,7 +1567,10 @@ async def get_task_status(task_id: str, request: Request):
 
 
 @app.post("/orchestrate/match", response_model=MatchResponse)
-async def orchestrate_match_endpoint(request: Request):
+async def orchestrate_match_endpoint(
+    request: Request,
+    user: Any = Depends(get_current_user),
+):
     """Trigger the full pipeline: extraction -> embeddings -> matching.
 
     If a resume has already been uploaded and processed, this will skip
@@ -1572,45 +1587,16 @@ async def orchestrate_match_endpoint(request: Request):
 
     registry: OrchestratorRegistry = request.app.state.registry
 
-    # Block matching if a resume upload is currently being processed
-    try:
-        _redis = get_redis_client()
-        _latest_resume_task_id = await asyncio.to_thread(_redis.get, "resume:upload:latest_task_id")
-        if _latest_resume_task_id:
-            _resume_state = await asyncio.to_thread(get_task_state, _latest_resume_task_id)
-            if _resume_state and _resume_state.get("status") == "processing":
-                logger.warning(
-                    "⚠️ Blocking match: resume upload in progress (task %s)", _latest_resume_task_id
-                )
-                return MatchResponse(
-                    success=False,
-                    task_id=task_id,
-                    message="Resume is currently being processed. Please wait and try again.",
-                )
-    except Exception:
-        logger.warning("Failed to check resume upload state from Redis — proceeding without guard")
+    eligibility = evaluate_resume_eligibility(resolve_owner_id(user))
+    if not eligibility.can_run or not eligibility.resume_fingerprint:
+        logger.warning("⚠️ Blocking match: %s", eligibility.message)
+        return MatchResponse(
+            success=False,
+            task_id=task_id,
+            message=eligibility.message,
+        )
 
-    from database.uow import job_uow
-
-    resume_fingerprint: Optional[str] = None
-
-    with job_uow() as repo:
-        latest_fingerprint = repo.resume.get_latest_stored_resume_fingerprint()
-        if latest_fingerprint:
-            logger.info(
-                "📄 Found existing resume in database: %s...",
-                latest_fingerprint[:16],
-            )
-            resume_fingerprint = latest_fingerprint
-        else:
-            logger.error(
-                "❌ No resume found in database. User must upload a resume via the web UI."
-            )
-            return MatchResponse(
-                success=False,
-                task_id=task_id,
-                message="No resume found. Please upload a resume first via the web UI.",
-            )
+    resume_fingerprint: Optional[str] = eligibility.resume_fingerprint
 
     logger.info(
         "🚀 Using existing resume from DB (fingerprint: %s...)",
@@ -1641,9 +1627,24 @@ async def orchestrate_resume_etl(payload: ResumeEtlRequest, request: Request):
 
     logger.info("Received /orchestrate/resume-etl request")
 
-    set_task_state(task_id, {"status": "running", "step": "extracting"}, ttl=3600)
+    initial_step = "embedding" if payload.mode == "embed_only" else "extracting"
+    initial_state = {"status": "running", "step": initial_step}
+    if payload.upload_id:
+        initial_state["upload_id"] = payload.upload_id
+    if payload.resume_fingerprint:
+        initial_state["resume_fingerprint"] = payload.resume_fingerprint
+    set_task_state(task_id, initial_state, ttl=3600)
 
-    etl_task = asyncio.create_task(_run_resume_etl(task_id, file_path))
+    etl_task = asyncio.create_task(
+        _run_resume_etl(
+            task_id,
+            file_path,
+            upload_id=payload.upload_id,
+            owner_id=payload.owner_id,
+            resume_fingerprint=payload.resume_fingerprint,
+            mode=payload.mode,
+        )
+    )
     _etl_tasks.add(etl_task)
 
     def _etl_done(t: asyncio.Task) -> None:
@@ -1657,7 +1658,15 @@ async def orchestrate_resume_etl(payload: ResumeEtlRequest, request: Request):
     return _JSONResponse(status_code=202, content={"task_id": task_id, "success": True})
 
 
-async def _run_resume_etl(task_id: str, file_path: str) -> None:
+async def _run_resume_etl(
+    task_id: str,
+    file_path: Optional[str],
+    *,
+    upload_id: Optional[str] = None,
+    owner_id: str,
+    resume_fingerprint: Optional[str] = None,
+    mode: str = "extract_and_embed",
+) -> None:
     """Background task: extraction → embeddings for a single resume.
 
     Writes progress to task:{task_id}:state so the web-backend can poll
@@ -1669,41 +1678,87 @@ async def _run_resume_etl(task_id: str, file_path: str) -> None:
         redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
         pubsub = redis_client.pubsub()
 
-        # ---- Stage 1: extraction ------------------------------------------------
-        await pubsub.subscribe(CHANNEL_EXTRACTION_DONE)
-        await asyncio.to_thread(enqueue_job, STREAM_EXTRACTION, {
-            "task_id": task_id,
-            "resume_file": file_path,
-        })
-        logger.info("Enqueued extraction stage for resume ETL")
+        fingerprint = resume_fingerprint
+        if mode != "embed_only":
+            await pubsub.subscribe(CHANNEL_EXTRACTION_DONE)
+            await asyncio.to_thread(
+                enqueue_job,
+                STREAM_EXTRACTION,
+                {
+                    "task_id": task_id,
+                    "resume_file": file_path,
+                    "known_fingerprint": resume_fingerprint,
+                    "resume_upload_id": upload_id,
+                    "owner_id": owner_id,
+                },
+            )
+            logger.info("Enqueued extraction stage for resume ETL")
 
-        async with asyncio.timeout(LISTENER_TIMEOUT):
-            extraction_data = await _wait_for_task_message(pubsub, task_id)
+            async with asyncio.timeout(LISTENER_TIMEOUT):
+                extraction_data = await _wait_for_task_message(pubsub, task_id)
 
-        await pubsub.unsubscribe(CHANNEL_EXTRACTION_DONE)
+            await pubsub.unsubscribe(CHANNEL_EXTRACTION_DONE)
 
-        if not extraction_data or extraction_data.get("status") == "failed":
-            err = (extraction_data or {}).get("error", "Extraction failed")
-            logger.error("Resume extraction stage failed")
-            set_task_state(task_id, {"status": "failed", "step": "extracting", "error": err}, ttl=3600)
+            if not extraction_data or extraction_data.get("status") == "failed":
+                err = (extraction_data or {}).get("error", "Extraction failed")
+                logger.error("Resume extraction stage failed")
+                set_task_state(task_id, {"status": "failed", "step": "extracting", "error": err}, ttl=3600)
+                return
+
+            fingerprint = extraction_data.get("resume_fingerprint")
+            if not fingerprint:
+                logger.error("Extraction stage returned no resume fingerprint")
+                set_task_state(
+                    task_id,
+                    {
+                        "status": "failed",
+                        "step": "extracting",
+                        "upload_id": upload_id,
+                        "owner_id": owner_id,
+                        "error": "No fingerprint in extraction response",
+                    },
+                    ttl=3600,
+                )
+                return
+
+            logger.info("Extraction stage completed")
+            set_task_state(
+                task_id,
+                {
+                    "status": "running",
+                    "step": "embedding",
+                    "upload_id": upload_id,
+                    "owner_id": owner_id,
+                    "resume_fingerprint": fingerprint,
+                },
+                ttl=3600,
+            )
+        elif not fingerprint:
+            set_task_state(
+                task_id,
+                {
+                    "status": "failed",
+                    "step": "embedding",
+                    "upload_id": upload_id,
+                    "owner_id": owner_id,
+                    "error": "Missing resume fingerprint for embed-only retry",
+                },
+                ttl=3600,
+            )
             return
-
-        fingerprint = extraction_data.get("resume_fingerprint")
-        if not fingerprint:
-            logger.error("Extraction stage returned no resume fingerprint")
-            set_task_state(task_id, {"status": "failed", "step": "extracting",
-                                     "error": "No fingerprint in extraction response"}, ttl=3600)
-            return
-
-        logger.info("Extraction stage completed")
-        set_task_state(task_id, {"status": "running", "step": "embedding"}, ttl=3600)
 
         # ---- Stage 2: embeddings ------------------------------------------------
         await pubsub.subscribe(CHANNEL_EMBEDDINGS_DONE)
-        await asyncio.to_thread(enqueue_job, STREAM_EMBEDDINGS, {
-            "task_id": task_id,
-            "resume_fingerprint": fingerprint,
-        })
+        await asyncio.to_thread(
+            enqueue_job,
+            STREAM_EMBEDDINGS,
+            {
+                "task_id": task_id,
+                "resume_fingerprint": fingerprint,
+                "resume_upload_id": upload_id,
+                "owner_id": owner_id,
+            },
+        )
         logger.info("Enqueued embedding stage for resume ETL")
 
         async with asyncio.timeout(LISTENER_TIMEOUT):
@@ -1714,18 +1769,58 @@ async def _run_resume_etl(task_id: str, file_path: str) -> None:
         if not embeddings_data or embeddings_data.get("status") == "failed":
             err = (embeddings_data or {}).get("error", "Embeddings failed")
             logger.error("Embedding stage failed")
-            set_task_state(task_id, {"status": "failed", "step": "embedding", "error": err}, ttl=3600)
+            set_task_state(
+                task_id,
+                {
+                    "status": "failed",
+                    "step": "embedding",
+                    "upload_id": upload_id,
+                    "owner_id": owner_id,
+                    "resume_fingerprint": fingerprint,
+                    "error": err,
+                },
+                ttl=3600,
+            )
             return
 
         logger.info("Resume ETL completed successfully")
-        set_task_state(task_id, {"status": "completed"}, ttl=3600)
+        set_task_state(
+            task_id,
+            {
+                "status": "completed",
+                "upload_id": upload_id,
+                "owner_id": owner_id,
+                "resume_fingerprint": fingerprint,
+            },
+            ttl=3600,
+        )
 
     except asyncio.TimeoutError:
         logger.error("Timeout during resume ETL")
-        set_task_state(task_id, {"status": "failed", "error": "Stage timeout"}, ttl=3600)
+        set_task_state(
+            task_id,
+            {
+                "status": "failed",
+                "upload_id": upload_id,
+                "owner_id": owner_id,
+                "resume_fingerprint": resume_fingerprint,
+                "error": "Stage timeout",
+            },
+            ttl=3600,
+        )
     except Exception as exc:
         logger.exception("Resume ETL failed due to an unhandled exception")
-        set_task_state(task_id, {"status": "failed", "error": str(exc)}, ttl=3600)
+        set_task_state(
+            task_id,
+            {
+                "status": "failed",
+                "upload_id": upload_id,
+                "owner_id": owner_id,
+                "resume_fingerprint": resume_fingerprint,
+                "error": str(exc),
+            },
+            ttl=3600,
+        )
     finally:
         if redis_client:
             await _cleanup_pubsub_and_client(redis_client, pubsub)

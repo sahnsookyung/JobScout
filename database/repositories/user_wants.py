@@ -11,13 +11,13 @@ logger = logging.getLogger(__name__)
 class UserWantsRepository(BaseRepository):
     def save_user_wants(
         self,
-        user_id: str,
+        user_id: Any,
         wants_text: str,
         embedding: List[float],
         facet_key: Optional[str] = None
     ) -> UserWants:
         user_want = UserWants(
-            user_id=user_id,
+            owner_id=user_id,
             wants_text=wants_text,
             embedding=embedding,
             facet_key=facet_key
@@ -27,8 +27,8 @@ class UserWantsRepository(BaseRepository):
 
     def get_user_wants_embeddings(
         self,
-        user_id: str
+        user_id: Any
     ) -> List[List[float]]:
-        stmt = select(UserWants.embedding).where(UserWants.user_id == user_id)
+        stmt = select(UserWants.embedding).where(UserWants.owner_id == user_id)
         results = self.db.execute(stmt).scalars().all()
         return list(results)

@@ -31,6 +31,7 @@ from core.redis_streams import (
 )
 from services.base.extraction import run_job_extraction, extract_resume as extract_resume_file
 from database.init_db import init_db
+from database.models import DEFAULT_LEGACY_OWNER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -91,12 +92,14 @@ class ExtractionConsumer(StreamConsumerWithCompletion):
         """
         task_id = msg.get("task_id")
         resume_file = msg.get("resume_file")
+        known_fingerprint = msg.get("known_fingerprint")
 
         # Validate required fields
         is_valid, error = validate_message(msg, ["task_id", "resume_file"])
         if not is_valid:
             logger.error("❌ Invalid extraction job: %s", error)
             return False, {"status": "failed", "error": error}
+        owner_id = msg.get("owner_id") or DEFAULT_LEGACY_OWNER_ID
 
         # Validate resume path
         is_valid, result = _validate_resume_path(resume_file)
@@ -114,7 +117,12 @@ class ExtractionConsumer(StreamConsumerWithCompletion):
         )
 
         changed, fingerprint = await asyncio.to_thread(
-            extract_resume_file, self.ctx, resume_path
+            extract_resume_file,
+            self.ctx,
+            resume_path,
+            known_fingerprint,
+            False,
+            owner_id,
         )
 
         status = "skipped" if not changed else "completed"
@@ -126,6 +134,8 @@ class ExtractionConsumer(StreamConsumerWithCompletion):
         return True, {
             "status": status,
             "resume_fingerprint": fingerprint or "",
+            "resume_upload_id": msg.get("resume_upload_id"),
+            "owner_id": owner_id,
         }
 
 
@@ -239,6 +249,7 @@ app = FastAPI(
 class ExtractResumeRequest(BaseModel):
     resume_file: str
     force_re_extraction: bool = False
+    owner_id: str = DEFAULT_LEGACY_OWNER_ID
 
 
 class ExtractResponse(BaseModel):
@@ -291,6 +302,7 @@ async def extract_resume(request: Request, body: ExtractResumeRequest):
             resume_path,
             None,
             body.force_re_extraction,
+            body.owner_id,
         )
         if changed:
             return ExtractResponse(

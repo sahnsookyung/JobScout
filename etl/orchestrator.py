@@ -23,6 +23,11 @@ from etl.resume import ResumeProfiler, ResumeParser
 from etl.resume.embedding_store import JobRepositoryAdapter
 
 logger = logging.getLogger(__name__)
+DEFAULT_LEGACY_OWNER_ID = "00000000-0000-0000-0000-000000000001"
+
+
+def _effective_owner_id(owner_id: Optional[Any]) -> Any:
+    return owner_id or DEFAULT_LEGACY_OWNER_ID
 
 
 def _validate_embedding_vector(vector: List[float], context: str) -> List[float]:
@@ -309,8 +314,11 @@ class JobETLService:
         repo: JobRepository,
         resume_file: str,
         force_re_extraction: bool = False,
+        *,
+        owner_id: Optional[Any] = None,
     ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
         """Run resumable extract+embed processing for a resume file."""
+        owner_id = _effective_owner_id(owner_id)
         if not os.path.exists(resume_file):
             logger.error(f"Resume file not found: {resume_file}")
             return False, "", None
@@ -351,6 +359,7 @@ class JobETLService:
             repo.set_resume_processing_state(
                 fingerprint,
                 RESUME_PROCESSING_FAILED,
+                owner_id=owner_id,
                 error=str(exc),
             )
             logger.error(f"Failed to parse resume file: {exc}")
@@ -366,7 +375,11 @@ class JobETLService:
                 fingerprint[:16],
             )
             try:
-                self.embed_resume_one(repo, fingerprint)
+                self.embed_resume_one(
+                    repo,
+                    fingerprint,
+                    owner_id=owner_id,
+                )
                 logger.info(
                     "Resume embedding completed for fingerprint: %s...",
                     fingerprint[:16],
@@ -376,6 +389,7 @@ class JobETLService:
                 repo.set_resume_processing_state(
                     fingerprint,
                     RESUME_PROCESSING_FAILED,
+                    owner_id=owner_id,
                     error=str(exc),
                 )
                 logger.error(f"Failed to resume embedding for resume: {exc}")
@@ -393,15 +407,22 @@ class JobETLService:
             repo.set_resume_processing_state(
                 fingerprint,
                 RESUME_PROCESSING_EXTRACTING,
+                owner_id=owner_id,
                 error=None,
             )
-            self.extract_resume_one(repo, resume_data, fingerprint)
+            self.extract_resume_one(
+                repo,
+                resume_data,
+                fingerprint,
+                owner_id=owner_id,
+            )
             logger.info(f"Resume ETL completed for fingerprint: {fingerprint[:16]}...")
             return True, fingerprint, resume_data
         except Exception as exc:
             repo.set_resume_processing_state(
                 fingerprint,
                 RESUME_PROCESSING_FAILED,
+                owner_id=owner_id,
                 error=str(exc),
             )
             logger.error(f"Failed to process resume: {exc}")
@@ -412,8 +433,11 @@ class JobETLService:
         repo: JobRepository,
         resume_data: Dict[str, Any],
         fingerprint: str,
+        *,
+        owner_id: Optional[Any] = None,
     ) -> None:
         """Extract structured resume data, persist it, then start embedding."""
+        owner_id = _effective_owner_id(owner_id)
         logger.info("Extracting structured resume data...")
 
         profiler = ResumeProfiler(ai_service=self.ai)
@@ -426,6 +450,7 @@ class JobETLService:
             resume.claimed_total_years or "unknown",
         )
         repo.save_structured_resume(
+            owner_id=owner_id,
             resume_fingerprint=fingerprint,
             extracted_data=resume.model_dump(),
             total_experience_years=resume.claimed_total_years,
@@ -437,22 +462,48 @@ class JobETLService:
         repo.set_resume_processing_state(
             fingerprint,
             RESUME_PROCESSING_EXTRACTED,
+            owner_id=owner_id,
             error=None,
             extraction_completed_at=datetime.now(timezone.utc),
         )
 
-        self.embed_resume_one(repo, fingerprint, resume)
+        self.embed_resume_one(
+            repo,
+            fingerprint,
+            resume,
+            owner_id=owner_id,
+        )
 
-    def embed_resume_one(
+    def _assert_resume_ready_artifacts(
+        self,
+        repo: JobRepository,
+        fingerprint: str,
+        persistence_payload: List[Dict[str, Any]],
+        evidence_units: List[Any],
+    ) -> None:
+        if not persistence_payload:
+            raise ValueError("No resume section embeddings were generated")
+        if not evidence_units:
+            raise ValueError("No resume evidence embeddings were generated")
+        if repo.get_resume_summary_embedding(fingerprint) is None:
+            raise ValueError("No summary embedding found after resume embedding")
+        if not repo.is_resume_ready(fingerprint):
+            raise ValueError("Resume artifacts were generated but readiness verification failed")
+
+    def ensure_resume_ready(
         self,
         repo: JobRepository,
         fingerprint: str,
         pre_extracted_resume: Optional[ResumeSchema] = None,
+        *,
+        owner_id: Optional[Any] = None,
     ) -> None:
-        """Generate resume embeddings and mark the fingerprint ready."""
+        """Generate all resume embeddings and promote the fingerprint to ready."""
+        owner_id = _effective_owner_id(owner_id)
         repo.set_resume_processing_state(
             fingerprint,
             RESUME_PROCESSING_EMBEDDING,
+            owner_id=owner_id,
             error=None,
         )
 
@@ -470,20 +521,37 @@ class JobETLService:
             {},
             resume_fingerprint=fingerprint,
             pre_extracted_resume=pre_extracted_resume,
+            owner_id=owner_id,
         )
-
-        if not persistence_payload:
-            raise ValueError("No resume section embeddings were generated")
-        if not evidence_units:
-            raise ValueError("No resume evidence embeddings were generated")
-        if repo.get_resume_summary_embedding(fingerprint) is None:
-            raise ValueError("No summary embedding found after resume embedding")
 
         repo.set_resume_processing_state(
             fingerprint,
             RESUME_PROCESSING_READY,
+            owner_id=owner_id,
             error=None,
             embedding_completed_at=datetime.now(timezone.utc),
+        )
+        self._assert_resume_ready_artifacts(
+            repo,
+            fingerprint,
+            persistence_payload,
+            evidence_units,
+        )
+
+    def embed_resume_one(
+        self,
+        repo: JobRepository,
+        fingerprint: str,
+        pre_extracted_resume: Optional[ResumeSchema] = None,
+        *,
+        owner_id: Optional[Any] = None,
+    ) -> None:
+        """Backward-compatible alias for lifecycle-aware embedding."""
+        self.ensure_resume_ready(
+            repo,
+            fingerprint,
+            pre_extracted_resume,
+            owner_id=owner_id,
         )
 
     def extract_and_embed_resume(
@@ -492,6 +560,8 @@ class JobETLService:
         resume_file: str,
         known_fingerprint: Optional[str] = None,
         on_progress: Optional[Any] = None,
+        *,
+        owner_id: Optional[Any] = None,
     ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
         """Full ETL: extract structured data AND generate embeddings.
 
@@ -519,14 +589,17 @@ class JobETLService:
 
         try:
             extracted, fingerprint, _ = self._extract_resume_data(
-                repo, fingerprint, cast(Dict[str, Any], resume_data)
+                repo,
+                fingerprint,
+                cast(Dict[str, Any], resume_data),
+                owner_id=owner_id,
             )
             if not extracted:
                 return False, fingerprint, None
 
             if on_progress:
                 on_progress("embedding")
-            self.embed_resume(repo, fingerprint)
+            self.embed_resume(repo, fingerprint, owner_id=owner_id)
             logger.info(f"Resume ETL completed for fingerprint: {fingerprint}")
             return True, fingerprint, resume_data
         except Exception as e:
@@ -537,7 +610,9 @@ class JobETLService:
         self,
         repo: JobRepository,
         fingerprint: str,
-        resume_data: Dict[str, Any]
+        resume_data: Dict[str, Any],
+        *,
+        owner_id: Optional[Any] = None,
     ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
         """Extract structured resume data from already-parsed data (no embeddings).
 
@@ -553,6 +628,7 @@ class JobETLService:
             Tuple of (extracted: bool, fingerprint: str, resume_data: dict or None)
         """
         try:
+            owner_id = _effective_owner_id(owner_id)
             profiler = ResumeProfiler(ai_service=self.ai)
             resume_schema = profiler.extract_only(resume_data)
 
@@ -560,6 +636,7 @@ class JobETLService:
                 logger.info(f"Resume extraction completed for fingerprint: {fingerprint}")
 
                 repo.save_structured_resume(
+                    owner_id=owner_id,
                     resume_fingerprint=fingerprint,
                     extracted_data=resume_schema.model_dump(),
                     total_experience_years=resume_schema.claimed_total_years,
@@ -567,6 +644,13 @@ class JobETLService:
                     extraction_warnings=resume_schema.extraction.warnings if resume_schema.extraction else []
                 )
                 logger.info("Saved structured resume to database")
+                repo.set_resume_processing_state(
+                    fingerprint,
+                    RESUME_PROCESSING_EXTRACTED,
+                    owner_id=owner_id,
+                    error=None,
+                    extraction_completed_at=datetime.now(timezone.utc),
+                )
 
                 return True, fingerprint, resume_data
             else:
@@ -582,7 +666,9 @@ class JobETLService:
         self,
         repo: JobRepository,
         resume_file: str,
-        known_fingerprint: Optional[str] = None
+        known_fingerprint: Optional[str] = None,
+        *,
+        owner_id: Optional[Any] = None,
     ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
         """Extract structured resume data (no embeddings).
 
@@ -599,6 +685,7 @@ class JobETLService:
             Tuple of (extracted: bool, fingerprint: str, resume_data: dict or None)
         """
         # If fingerprint is already known, skip file reading and use provided value
+        owner_id = _effective_owner_id(owner_id)
         if known_fingerprint:
             fingerprint = known_fingerprint
             # Check if already processed
@@ -613,6 +700,12 @@ class JobETLService:
                 parsed = parser.parse(resume_file)
                 resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
             except (ValueError, IOError) as e:
+                repo.set_resume_processing_state(
+                    fingerprint,
+                    RESUME_PROCESSING_FAILED,
+                    owner_id=owner_id,
+                    error=str(e),
+                )
                 logger.error(f"Failed to parse resume file: {e}")
                 return False, fingerprint, None
 
@@ -623,12 +716,25 @@ class JobETLService:
             if not changed:
                 return False, fingerprint, None
 
-        return self._extract_resume_data(repo, fingerprint, cast(Dict[str, Any], resume_data))
+        repo.set_resume_processing_state(
+            fingerprint,
+            RESUME_PROCESSING_EXTRACTING,
+            owner_id=owner_id,
+            error=None,
+        )
+        return self._extract_resume_data(
+            repo,
+            fingerprint,
+            cast(Dict[str, Any], resume_data),
+            owner_id=owner_id,
+        )
 
     def embed_resume(
         self,
         repo: JobRepository,
-        resume_fingerprint: str
+        resume_fingerprint: str,
+        *,
+        owner_id: Optional[Any] = None,
     ) -> Tuple[bool, str]:
         """Generate embeddings for already-extracted resume.
 
@@ -642,6 +748,7 @@ class JobETLService:
         Returns:
             Tuple of (embedded: bool, fingerprint: str)
         """
+        owner_id = _effective_owner_id(owner_id)
         existing = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
         if not existing:
             logger.error(f"Resume not found in DB: {resume_fingerprint}")
@@ -653,20 +760,55 @@ class JobETLService:
 
         logger.info(f"Generating embeddings for resume: {resume_fingerprint}")
 
-        from etl.resume.embedding_store import JobRepositoryAdapter
-        from core.llm.schema_models import ResumeSchema
-
         try:
             resume = ResumeSchema.model_validate(existing.extracted_data)
-            store = JobRepositoryAdapter(repo)
-            profiler = ResumeProfiler(ai_service=self.ai, store=store)
-
-            profiler.embed_only(resume_fingerprint, resume)
+            self.ensure_resume_ready(
+                repo,
+                resume_fingerprint,
+                pre_extracted_resume=resume,
+                owner_id=owner_id,
+            )
             logger.info(f"Resume embeddings completed for fingerprint: {resume_fingerprint}")
             return True, resume_fingerprint
         except Exception as e:
+            repo.set_resume_processing_state(
+                resume_fingerprint,
+                RESUME_PROCESSING_FAILED,
+                owner_id=owner_id,
+                error=str(e),
+            )
             logger.error(f"Failed to embed resume: {e}")
             raise
+
+    def extract_resume_stage(
+        self,
+        repo: JobRepository,
+        resume_file: str,
+        known_fingerprint: Optional[str] = None,
+        *,
+        owner_id: Optional[Any] = None,
+    ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+        """Named stage wrapper for split-service extraction."""
+        return self.extract_resume(
+            repo,
+            resume_file,
+            known_fingerprint,
+            owner_id=owner_id,
+        )
+
+    def embed_resume_stage(
+        self,
+        repo: JobRepository,
+        resume_fingerprint: str,
+        *,
+        owner_id: Optional[Any] = None,
+    ) -> Tuple[bool, str]:
+        """Named stage wrapper for split-service embedding."""
+        return self.embed_resume(
+            repo,
+            resume_fingerprint,
+            owner_id=owner_id,
+        )
 
     def unload_models(self):
         """Helper to unload models if the provider supports it."""

@@ -116,6 +116,42 @@ export interface PipelineTaskResponse {
     message: string;
 }
 
+export interface ResumeEligibilityResponse {
+    can_run: boolean;
+    status: string;
+    message: string;
+    retryable: boolean;
+    upload_id?: string;
+    resume_hash?: string;
+    task_id?: string;
+}
+
+export interface ResumePreflightResponse {
+    status: string;
+    message: string;
+    retryable: boolean;
+    can_skip_upload: boolean;
+    resume_hash: string;
+    upload_id?: string;
+    task_id?: string;
+}
+
+export interface ResumeUploadResponse {
+    success: boolean;
+    resume_hash: string;
+    message: string;
+    upload_id?: string;
+    task_id?: string;
+    status?: string;
+}
+
+export interface ResumeStatusResponse {
+    task_id: string;
+    status: string;
+    step?: string;
+    error?: string;
+}
+
 export interface PipelineStatusResponse {
     task_id: string;
     status:
@@ -126,12 +162,18 @@ export interface PipelineStatusResponse {
         | 'completed'
         | 'failed'
         | 'cancelled';
+    upload_id?: string;
+    resume_fingerprint?: string;
     matches_count?: number;
     saved_count?: number;
     notified_count?: number;
     error?: string;
     execution_time?: number;
     step?: string;
+    stale_due_to_newer_upload?: boolean;
+    latest_upload_id?: string;
+    latest_resume_fingerprint?: string;
+    stale_message?: string;
 }
 
 export type MatchStatus = 'active' | 'stale' | 'all';

@@ -1,7 +1,7 @@
 """Shared matching pipeline runner module.
 
-This module contains the core matching pipeline logic that can be
-used by both main.py and the web application.
+This module contains the core matching pipeline logic used by the
+scorer-matcher service and the web-triggered matching flow.
 """
 
 import os
@@ -94,49 +94,9 @@ def _get_configured_resume_file(ctx: AppContext) -> Optional[str]:
 def _load_configured_resume_fallback(
     ctx: AppContext,
 ) -> tuple[Optional[str], Optional[Dict[str, Any]], Optional[str]]:
-    """Process the configured resume file when storage has no ready resume yet."""
-    resume_file = _get_configured_resume_file(ctx)
-    if not resume_file:
-        return None, None, None
-    if not os.path.exists(resume_file):
-        return None, None, f"Resume file not found: {resume_file}"
-
-    etl_config = getattr(ctx.config, "etl", None)
-    force_re_extraction = bool(
-        etl_config
-        and getattr(etl_config, "resume", None)
-        and getattr(etl_config.resume, "force_re_extraction", False)
-    )
-
-    with job_uow() as repo:
-        _, resume_fingerprint, _ = ctx.job_etl_service.process_resume(
-            repo,
-            resume_file,
-            force_re_extraction=force_re_extraction,
-        )
-        if not resume_fingerprint:
-            return None, None, "Failed to load resume data"
-
-        structured_resume = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
-        if not structured_resume or not structured_resume.extracted_data:
-            return (
-                None,
-                None,
-                f"Configured resume {resume_fingerprint[:16]}... is missing structured data",
-            )
-
-        if not repo.is_resume_ready(resume_fingerprint):
-            state = repo.get_resume_processing_state(resume_fingerprint)
-            if state and state.processing_status in {"extracting", "extracted", "embedding"}:
-                return (
-                    None,
-                    None,
-                    "Configured resume is still processing "
-                    f"({state.processing_status}).",
-                )
-            return None, None, "Configured resume is not ready for matching."
-
-        return resume_fingerprint, structured_resume.extracted_data, None
+    """Configured resume fallback is no longer supported."""
+    del ctx
+    return None, None, "No ready resume found. Upload and process a resume first."
 
 
 # ---------------------------------------------------------------------------
@@ -261,11 +221,32 @@ def run_matching_pipeline(
                 success=False, matches_count=0, saved_count=0,
                 notified_count=0, error="Cancelled by user", cancelled=True,
             )
+        if stop_event.is_set():
+            return MatchingPipelineResult(
+                success=False,
+                matches_count=len(match_dtos),
+                saved_count=0,
+                notified_count=0,
+                error="Cancelled by user before saving results",
+                cancelled=True,
+            )
 
         # Step 4: Save matches
         if status_callback:
             status_callback("saving_results")
         saved_count = _save_matches_batch(match_dtos, resume_fingerprint, matching_config)
+
+        if stop_event.is_set():
+            execution_time = time.time() - pipeline_start_time
+            return MatchingPipelineResult(
+                success=False,
+                matches_count=len(match_dtos),
+                saved_count=saved_count,
+                notified_count=0,
+                error="Cancelled after saving results",
+                execution_time=execution_time,
+                cancelled=True,
+            )
 
         # Step 5: Send notifications
         notified_count = 0
@@ -280,6 +261,17 @@ def run_matching_pipeline(
         logger.info("=" * 60)
         logger.info("MATCHING PIPELINE COMPLETED in %.2fs", execution_time)
         logger.info("=" * 60)
+
+        if stop_event.is_set():
+            return MatchingPipelineResult(
+                success=False,
+                matches_count=len(match_dtos),
+                saved_count=saved_count,
+                notified_count=notified_count,
+                error="Cancelled by user",
+                execution_time=execution_time,
+                cancelled=True,
+            )
 
         return MatchingPipelineResult(
             success=True,
@@ -756,7 +748,10 @@ def _send_notifications(
     logger.info("=== MATCHING STEP 3: Sending Notifications ===")
 
     try:
-        user_id = notification_config.user_id or resume_data.get('email') or 'default_user'
+        user_id = notification_config.user_id
+        if not user_id:
+            logger.warning("Skipping notifications because notification_config.user_id is not configured")
+            return 0
 
         enabled_channels = [
             name for name, cfg in notification_config.channels.items() if cfg.enabled

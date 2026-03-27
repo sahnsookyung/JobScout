@@ -6,6 +6,8 @@
 
 x-service-common: &service-common
   depends_on:
+    db-migrate:
+      condition: service_completed_successfully
     postgres:
       condition: service_healthy
     redis:
@@ -79,6 +81,8 @@ services:
     <<: *service-common
     profiles: ["split"]
     depends_on:
+      db-migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:

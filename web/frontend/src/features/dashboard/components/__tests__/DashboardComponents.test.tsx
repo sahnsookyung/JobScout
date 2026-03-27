@@ -197,6 +197,22 @@ describe('StatusBanner', () => {
         expect(screen.getByText('Time: 45.50s')).toBeInTheDocument();
     });
 
+    it('renders stale-result warning when a newer upload exists', () => {
+        render(
+            <StatusBanner
+                status="completed"
+                matches_count={10}
+                saved_count={8}
+                stale_due_to_newer_upload
+                stale_message="These results were generated from an older resume upload."
+            />
+        );
+
+        expect(
+            screen.getByText('These results were generated from an older resume upload.')
+        ).toBeInTheDocument();
+    });
+
     it('renders failed status with error message', () => {
         render(<StatusBanner status="failed" error="Database connection failed" />);
 

@@ -130,10 +130,7 @@ export const usePipeline = () => {
     }, [clearTaskMutation]);
 
     /**
-     * Upload a resume file: compute hash → dedup check → upload if new → save to IndexedDB.
-     * Returns metadata the caller can use to show appropriate toasts.
-     * If the backend starts background processing, tracks the task so the Run button
-     * stays disabled until processing completes.
+     * Upload a resume file, persist it locally, and track any async processing task.
      */
     const uploadResume = React.useCallback(async (
         file: File
@@ -141,23 +138,40 @@ export const usePipeline = () => {
         setIsUploading(true);
         try {
             const hash = await computeFileHash(file);
-            const checkResp = await pipelineApi.checkResumeHash(hash);
+            const preflight = (await pipelineApi.preflightResume(hash)).data;
+            await saveResume(file, hash, file.name);
 
-            if (checkResp.data.exists) {
-                // File already on backend — just sync to IndexedDB
-                await saveResume(file, hash, file.name);
-                return { alreadyExists: true, message: 'An identical resume has already been uploaded.' };
+            if (preflight.status === 'ready_already_known') {
+                const selectResp = await pipelineApi.selectResume(hash, file.name);
+                return {
+                    alreadyExists: true,
+                    message: selectResp.data.message || 'Resume already ready',
+                };
             }
 
-            const uploadResp = await pipelineApi.uploadResume(file, hash);
-            await saveResume(file, hash, file.name);
+            if (preflight.status === 'processing_existing') {
+                if (preflight.task_id) {
+                    setPendingResumeTaskId(preflight.task_id);
+                }
+                return {
+                    alreadyExists: false,
+                    message: preflight.message,
+                };
+            }
+
+            let uploadResp;
+            if (preflight.status === 'failed_retryable' && preflight.upload_id) {
+                uploadResp = await pipelineApi.retryResume(preflight.upload_id);
+            } else {
+                uploadResp = await pipelineApi.uploadResume(file, hash);
+            }
 
             if (uploadResp.data.task_id) {
                 setPendingResumeTaskId(uploadResp.data.task_id);
             }
 
             return {
-                alreadyExists: false,
+                alreadyExists: uploadResp.data.status === 'ready',
                 message: uploadResp.data.message || 'Resume uploaded successfully',
             };
         } finally {
@@ -166,42 +180,48 @@ export const usePipeline = () => {
     }, []);
 
     /**
-     * Run the matching pipeline with a pre-flight guard:
-     * 1. Verify resume exists in IndexedDB.
-     * 2. If resume not on backend, upload it (and wait for processing).
-     * 3. If a previous upload is still being processed, abort with an error.
-     * 4. Start matching.
-     *
-     * @param onError  Called with a human-readable message if preflight fails.
+     * Run the matching pipeline using the backend eligibility decision as the source of truth.
      */
     const runPipeline = React.useCallback(async (onError?: (msg: string) => void) => {
         setIsRunningPreflight(true);
         try {
-            const hash = await getResumeHash();
-            if (!hash) {
-                onError?.('No resume found in browser storage. Please upload a resume first.');
-                return;
-            }
-
-            // Block if a previous explicit upload is still being processed
             if (pendingResumeTaskId) {
                 onError?.('Resume is still being processed. Please wait a moment and try again.');
                 return;
             }
 
-            // Auto-upload if the resume isn't on the backend (e.g. storage was cleared
-            // and the user re-added the file, or a first-run edge case).
-            const checkResp = await pipelineApi.checkResumeHash(hash);
-            if (!checkResp.data.exists) {
+            let eligibility = (await pipelineApi.getResumeEligibility()).data;
+
+            if (!eligibility.can_run && eligibility.task_id && ['extracting', 'extracted', 'embedding'].includes(eligibility.status)) {
+                setPendingResumeTaskId(eligibility.task_id);
+                onError?.(eligibility.message);
+                return;
+            }
+
+            if (!eligibility.can_run && eligibility.status === 'missing') {
+                const hash = await getResumeHash();
+                if (!hash) {
+                    onError?.('No resume found in browser storage. Please upload a resume first.');
+                    return;
+                }
+
                 const blob = await getResume(hash);
                 if (!blob) {
                     onError?.('Resume file not found in browser storage. Please re-upload.');
                     return;
                 }
+
                 const uploadResp = await pipelineApi.uploadResume(blob as File, hash);
                 if (uploadResp.data.task_id) {
+                    setPendingResumeTaskId(uploadResp.data.task_id);
                     await pollResumeProcessing(uploadResp.data.task_id);
                 }
+                eligibility = (await pipelineApi.getResumeEligibility()).data;
+            }
+
+            if (!eligibility.can_run) {
+                onError?.(eligibility.message);
+                return;
             }
 
             await runPipelineMutation.mutateAsync();

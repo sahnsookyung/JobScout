@@ -7,7 +7,11 @@ from database.models import (
     ResumeSectionEmbedding,
     ResumeEvidenceUnitEmbedding,
     ResumeProcessingState,
+    ResumeUpload,
     RESUME_PROCESSING_READY,
+    RESUME_FINGERPRINT_VERSION,
+    DEFAULT_LEGACY_OWNER_ID,
+    RESUME_UPLOAD_PENDING,
     UserWants,
 )
 from database.repositories.base import BaseRepository
@@ -32,24 +36,142 @@ class ResumeRepository(BaseRepository):
         ).limit(1)
         return self.db.execute(stmt).scalar_one_or_none()
 
+    def create_resume_upload(
+        self,
+        *,
+        owner_id: Any,
+        resume_hash: str,
+        resume_fingerprint: str,
+        original_filename: Optional[str] = None,
+        status: str = RESUME_UPLOAD_PENDING,
+        last_error: Optional[str] = None,
+        processing_task_id: Optional[str] = None,
+        retry_of_upload_id: Optional[Any] = None,
+        fingerprint_version: int = RESUME_FINGERPRINT_VERSION,
+        failure_stage: Optional[str] = None,
+        failure_class: Optional[str] = None,
+        retryable: Optional[bool] = None,
+        user_safe_message: Optional[str] = None,
+        failure_debug_context: Optional[Dict[str, Any]] = None,
+    ) -> ResumeUpload:
+        upload = ResumeUpload(
+            owner_id=owner_id,
+            resume_hash=resume_hash,
+            fingerprint_version=fingerprint_version,
+            resume_fingerprint=resume_fingerprint,
+            original_filename=original_filename,
+            status=status,
+            last_error=last_error,
+            processing_task_id=processing_task_id,
+            retry_of_upload_id=retry_of_upload_id,
+            failure_stage=failure_stage,
+            failure_class=failure_class,
+            retryable=retryable,
+            user_safe_message=user_safe_message,
+            failure_debug_context=failure_debug_context,
+        )
+        self.db.add(upload)
+        self.db.flush()
+        return upload
+
+    def get_resume_upload(
+        self,
+        upload_id: Any,
+        owner_id: Optional[Any] = None,
+    ) -> Optional[ResumeUpload]:
+        stmt = select(ResumeUpload).where(ResumeUpload.id == upload_id)
+        if owner_id is not None:
+            stmt = stmt.where(ResumeUpload.owner_id == owner_id)
+        return self.db.execute(stmt).scalar_one_or_none()
+
+    def get_latest_resume_upload(self, owner_id: Any) -> Optional[ResumeUpload]:
+        stmt = select(ResumeUpload).where(
+            ResumeUpload.owner_id == owner_id
+        ).order_by(
+            ResumeUpload.created_at.desc(),
+            ResumeUpload.id.desc(),
+        ).limit(1)
+        return self.db.execute(stmt).scalar_one_or_none()
+
+    def get_latest_resume_upload_for_hash(
+        self,
+        owner_id: Any,
+        resume_hash: str,
+    ) -> Optional[ResumeUpload]:
+        stmt = select(ResumeUpload).where(
+            ResumeUpload.owner_id == owner_id,
+            ResumeUpload.resume_hash == resume_hash,
+        ).order_by(
+            ResumeUpload.created_at.desc(),
+            ResumeUpload.id.desc(),
+        ).limit(1)
+        return self.db.execute(stmt).scalar_one_or_none()
+
+    def update_resume_upload(
+        self,
+        upload_id: Any,
+        *,
+        status: Optional[str] = None,
+        last_error: Optional[str] = None,
+        processing_task_id: Optional[str] = None,
+        failure_stage: Optional[str] = None,
+        failure_class: Optional[str] = None,
+        retryable: Optional[bool] = None,
+        user_safe_message: Optional[str] = None,
+        failure_debug_context: Optional[Dict[str, Any]] = None,
+    ) -> ResumeUpload:
+        upload = self.get_resume_upload(upload_id)
+        if upload is None:
+            raise ValueError(f"Resume upload not found: {upload_id}")
+
+        if status is not None:
+            upload.status = status
+        upload.last_error = last_error
+        if processing_task_id is not None:
+            upload.processing_task_id = processing_task_id
+        upload.failure_stage = failure_stage
+        upload.failure_class = failure_class
+        upload.retryable = retryable
+        upload.user_safe_message = user_safe_message
+        upload.failure_debug_context = failure_debug_context
+
+        self.db.flush()
+        return upload
+
     def set_resume_processing_state(
         self,
         resume_fingerprint: str,
         status: str,
+        *,
+        owner_id: Any = DEFAULT_LEGACY_OWNER_ID,
         error: Optional[str] = None,
         extraction_completed_at: Optional[Any] = None,
         embedding_completed_at: Optional[Any] = None,
+        fingerprint_version: int = RESUME_FINGERPRINT_VERSION,
+        failure_stage: Optional[str] = None,
+        failure_class: Optional[str] = None,
+        retryable: Optional[bool] = None,
+        user_safe_message: Optional[str] = None,
     ) -> ResumeProcessingState:
+        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
         state = self.get_resume_processing_state(resume_fingerprint)
         if state is None:
             state = ResumeProcessingState(
+                owner_id=owner_id,
+                fingerprint_version=fingerprint_version,
                 resume_fingerprint=resume_fingerprint,
                 processing_status=status,
             )
             self.db.add(state)
 
+        state.owner_id = owner_id
+        state.fingerprint_version = fingerprint_version
         state.processing_status = status
         state.last_error = error
+        state.failure_stage = failure_stage
+        state.failure_class = failure_class
+        state.retryable = retryable
+        state.user_safe_message = user_safe_message
         if extraction_completed_at is not None:
             state.extraction_completed_at = extraction_completed_at
         if embedding_completed_at is not None:
@@ -104,16 +226,22 @@ class ResumeRepository(BaseRepository):
         self,
         resume_fingerprint: str,
         extracted_data: Dict[str, Any],
+        *,
+        owner_id: Any = DEFAULT_LEGACY_OWNER_ID,
         total_experience_years: Optional[float] = None,
         extraction_confidence: Optional[float] = None,
-        extraction_warnings: Optional[List[str]] = None
+        extraction_warnings: Optional[List[str]] = None,
+        fingerprint_version: int = RESUME_FINGERPRINT_VERSION,
     ) -> StructuredResume:
+        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
         stmt = select(StructuredResume).where(
             StructuredResume.resume_fingerprint == resume_fingerprint
         )
         existing = self.db.execute(stmt).scalar_one_or_none()
 
         if existing:
+            existing.owner_id = owner_id
+            existing.fingerprint_version = fingerprint_version
             existing.extracted_data = extracted_data
             existing.total_experience_years = total_experience_years
             existing.extraction_confidence = extraction_confidence
@@ -121,6 +249,8 @@ class ResumeRepository(BaseRepository):
             resume_record = existing
         else:
             resume_record = StructuredResume(
+                owner_id=owner_id,
+                fingerprint_version=fingerprint_version,
                 resume_fingerprint=resume_fingerprint,
                 extracted_data=extracted_data,
                 total_experience_years=total_experience_years,
@@ -135,8 +265,12 @@ class ResumeRepository(BaseRepository):
     def save_resume_section_embeddings(
         self,
         resume_fingerprint: str,
-        sections: List[Dict[str, Any]]
+        sections: List[Dict[str, Any]],
+        *,
+        owner_id: Any = DEFAULT_LEGACY_OWNER_ID,
+        fingerprint_version: int = RESUME_FINGERPRINT_VERSION,
     ) -> List[ResumeSectionEmbedding]:
+        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
         self.db.execute(
             delete(ResumeSectionEmbedding).where(
                 ResumeSectionEmbedding.resume_fingerprint == resume_fingerprint
@@ -146,6 +280,8 @@ class ResumeRepository(BaseRepository):
         records = []
         for section in sections:
             record = ResumeSectionEmbedding(
+                owner_id=owner_id,
+                fingerprint_version=fingerprint_version,
                 resume_fingerprint=resume_fingerprint,
                 section_type=section['section_type'],
                 section_index=section['section_index'],
@@ -190,8 +326,12 @@ class ResumeRepository(BaseRepository):
     def save_evidence_unit_embeddings(
         self,
         resume_fingerprint: str,
-        evidence_units: List[Dict[str, Any]]
+        evidence_units: List[Dict[str, Any]],
+        *,
+        owner_id: Any = DEFAULT_LEGACY_OWNER_ID,
+        fingerprint_version: int = RESUME_FINGERPRINT_VERSION,
     ) -> List[ResumeEvidenceUnitEmbedding]:
+        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
         self.db.execute(
             delete(ResumeEvidenceUnitEmbedding).where(
                 ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint
@@ -201,6 +341,8 @@ class ResumeRepository(BaseRepository):
         records = []
         for unit in evidence_units:
             record = ResumeEvidenceUnitEmbedding(
+                owner_id=owner_id,
+                fingerprint_version=fingerprint_version,
                 resume_fingerprint=resume_fingerprint,
                 evidence_unit_id=unit['evidence_unit_id'],
                 source_text=unit['source_text'],

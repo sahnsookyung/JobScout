@@ -15,6 +15,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import (
     AsyncMock,
     MagicMock,
@@ -24,6 +25,7 @@ from unittest.mock import (
 )
 
 import pytest
+from uuid import UUID
 import redis
 
 
@@ -498,24 +500,24 @@ class TestOrchestrateMatchEndpoint:
         from core.app_context import AppContext
         from fastapi.testclient import TestClient
         from services.orchestrator.main import OrchestratorRegistry, app
+        from web.backend.dependencies import get_current_user
 
-        mock_ctx = Mock(spec=AppContext)
+        mock_ctx = Mock()
         mock_registry = OrchestratorRegistry()
 
         app.state.ctx = mock_ctx
         app.state.registry = mock_registry
 
-        # Mock database access - simulate existing resume in DB
-        mock_repo = MagicMock()
-        mock_repo.resume.get_latest_stored_resume_fingerprint.return_value = (
-            "test-fingerprint-123"
-        )
-        mock_uow = MagicMock()
-        mock_uow.__enter__ = MagicMock(return_value=mock_repo)
-        mock_uow.__exit__ = MagicMock(return_value=False)
-
         try:
-            with patch("database.uow.job_uow", return_value=mock_uow):
+            with patch("services.orchestrator.main.evaluate_resume_eligibility") as mock_eligibility:
+                mock_eligibility.return_value = SimpleNamespace(
+                    can_run=True,
+                    resume_fingerprint="test-fingerprint-123",
+                    message="Resume is ready for matching.",
+                )
+                app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+                    id=UUID("00000000-0000-0000-0000-000000000001")
+                )
                 client = TestClient(app)
 
                 with patch("asyncio.create_task") as mock_create:
@@ -538,6 +540,7 @@ class TestOrchestrateMatchEndpoint:
             assert "task_id" in data
             mock_create.assert_called_once()
         finally:
+            app.dependency_overrides.clear()
             del app.state.ctx
             del app.state.registry
 
@@ -547,33 +550,33 @@ class TestOrchestrateMatchEndpoint:
         from core.app_context import AppContext
         from fastapi.testclient import TestClient
         from services.orchestrator.main import OrchestratorRegistry, app
+        from web.backend.dependencies import get_current_user
 
-        mock_ctx = Mock(spec=AppContext)
+        mock_ctx = Mock()
         mock_registry = OrchestratorRegistry()
 
         app.state.ctx = mock_ctx
         app.state.registry = mock_registry
 
-        # Mock database access - no resume in DB
-        mock_repo = MagicMock()
-        mock_repo.resume.get_latest_stored_resume_fingerprint.return_value = None
-        mock_uow = MagicMock()
-        mock_uow.__enter__ = MagicMock(return_value=mock_repo)
-        mock_uow.__exit__ = MagicMock(return_value=False)
-
         try:
-            with patch("database.uow.job_uow", return_value=mock_uow):
+            with patch("services.orchestrator.main.evaluate_resume_eligibility") as mock_eligibility:
+                mock_eligibility.return_value = SimpleNamespace(
+                    can_run=False,
+                    resume_fingerprint=None,
+                    message="No resume has been uploaded yet.",
+                )
+                app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+                    id=UUID("00000000-0000-0000-0000-000000000001")
+                )
                 client = TestClient(app)
                 response = client.post("/orchestrate/match")
 
             assert response.status_code == 200
             data = response.json()
             assert data["success"] is False
-            assert (
-                data["message"]
-                == "No resume found. Please upload a resume first via the web UI."
-            )
+            assert data["message"] == "No resume has been uploaded yet."
         finally:
+            app.dependency_overrides.clear()
             del app.state.ctx
             del app.state.registry
 

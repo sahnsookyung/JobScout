@@ -1,9 +1,9 @@
-"""JobScout Main Driver - Refactored with Unit of Work pattern.
+"""Legacy monolithic helpers.
 
-Three CLI commands:
-- job-etl:    Scrapes and extracts jobs (steps 1-4)
-- resume-etl: Extracts and embeds resume (step 5)
-- matching:   Runs matching pipeline (requires jobs + resume in DB)
+The supported runtime is the split microservice topology started via Docker
+Compose and the web backend. This module remains only as a compatibility
+surface for a few internal imports while the last legacy callers are removed.
+Running it directly as a CLI is intentionally unsupported.
 """
 
 import time
@@ -12,7 +12,6 @@ import signal
 import sys
 import os
 import json
-import argparse
 import threading
 import traceback
 from typing import Optional, List
@@ -43,6 +42,10 @@ logger = logging.getLogger(__name__)
 logger.debug("NUL log sanitization active=%s", is_nul_filter_active())
 
 stop_event = threading.Event()
+DEFAULT_DEV_OWNER_ID = os.getenv(
+    "DEV_BYPASS_USER_ID",
+    "00000000-0000-0000-0000-000000000001",
+)
 
 
 def signal_handler(sig, frame):
@@ -292,6 +295,7 @@ def _run_resume_etl(ctx: AppContext) -> bool:
         )
         res = extraction_client.extract_resume(
             resume_file=resume_file,
+            owner_id=DEFAULT_DEV_OWNER_ID,
             force_re_extraction=force_re_extraction,
         )
         logger.info(f"Extraction microservice response for resume: {res}")
@@ -441,61 +445,11 @@ def _cleanup_jobspy_client(ctx: AppContext) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="JobScout Main Driver")
-    parser.add_argument(
-        '--mode', 
-        type=str, 
-        choices=['all', 'job-etl', 'resume-etl', 'matching'], 
-        default='all',
-        help='Pipeline mode to run: all (job-etl + resume-etl + matching), job-etl, resume-etl, or matching'
+    raise SystemExit(
+        "The monolithic `python main.py` runtime has been removed. "
+        "Start JobScout with the split microservice stack instead, for example "
+        "`./scripts/setup_local_env/start.sh --split`."
     )
-    args = parser.parse_args()
-
-    mode = args.mode
-    logger.info(f"Main driver starting in {mode.upper()} mode...")
-
-    if mode == 'all':
-        logger.info("Pipeline: Job ETL -> Resume ETL -> Matching")
-    elif mode == 'job-etl':
-        logger.info("Pipeline: Job ETL ONLY (gather, extract, facet, embed)")
-    elif mode == 'resume-etl':
-        logger.info("Pipeline: Resume ETL ONLY (extract, embed resume)")
-    elif mode == 'matching':
-        logger.info("Pipeline: Matching ONLY (match + score jobs)")
-
-    # Initialize DB
-    init_db()
-
-    # Initial config load (will be reloaded each cycle for hot-reload support)
-    initial_config = load_config()
-    initial_interval = initial_config.schedule.interval_seconds
-
-    cycle_count = 0
-    while not stop_event.is_set():
-        cycle_count += 1
-        cycle_start = time.time()
-        logger.info(f"=== Starting Cycle #{cycle_count} ({mode.upper()}) ===")
-
-        # Reload config each cycle for hot-reload support
-        # Use the same config instance for scheduling and dependency wiring
-        config = load_config()
-        interval = config.schedule.interval_seconds
-        if interval <= 0:
-            logger.error(f"Invalid interval: {interval}. Using default 3600s.")
-            interval = 3600
-
-        try:
-            # No lock needed - DB handles concurrency
-            run_internal_sequential_cycle(mode=mode, stop_event=stop_event, config=config)
-                
-        except Exception as e:
-            logger.error(f"Error in main loop: {e}", exc_info=True)
-
-        cycle_elapsed = time.time() - cycle_start
-        if not stop_event.is_set():
-            logger.info(f"=== Cycle #{cycle_count} completed in {cycle_elapsed:.2f}s. Sleeping for {interval} seconds... ===")
-            # Use stop_event.wait() for responsive shutdown
-            stop_event.wait(interval)
 
 
 if __name__ == "__main__":

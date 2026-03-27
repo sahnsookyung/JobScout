@@ -4,6 +4,7 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 from database.models import RESUME_PROCESSING_READY
 from database.repositories.resume import ResumeRepository
@@ -34,6 +35,35 @@ def test_get_latest_resume_processing_state_reads_latest_state():
 
     assert repo.get_latest_resume_processing_state() is state
 
+def test_create_resume_upload_persists_row():
+    db = MagicMock()
+    repo = ResumeRepository(db)
+
+    upload = repo.create_resume_upload(
+        owner_id=UUID("00000000-0000-0000-0000-000000000001"),
+        resume_hash="hash-1",
+        resume_fingerprint="fp-1",
+        original_filename="resume.pdf",
+        processing_task_id="task-1",
+    )
+
+    assert str(upload.owner_id) == "00000000-0000-0000-0000-000000000001"
+    assert upload.resume_hash == "hash-1"
+    assert upload.resume_fingerprint == "fp-1"
+    assert upload.original_filename == "resume.pdf"
+    assert upload.processing_task_id == "task-1"
+    db.add.assert_called_once_with(upload)
+    db.flush.assert_called_once_with()
+
+def test_get_latest_resume_upload_reads_latest_row():
+    db = MagicMock()
+    upload = SimpleNamespace(id="upload-1", resume_fingerprint="fp-1")
+    db.execute.return_value = _scalar_result(upload)
+
+    repo = ResumeRepository(db)
+
+    assert repo.get_latest_resume_upload(UUID("00000000-0000-0000-0000-000000000001")) is upload
+
 
 def test_set_resume_processing_state_creates_new_row():
     db = MagicMock()
@@ -46,6 +76,7 @@ def test_set_resume_processing_state_creates_new_row():
     state = repo.set_resume_processing_state(
         "fp-new",
         "ready",
+        owner_id=UUID("00000000-0000-0000-0000-000000000001"),
         error="none",
         extraction_completed_at=extraction_completed_at,
         embedding_completed_at=embedding_completed_at,
@@ -72,7 +103,12 @@ def test_set_resume_processing_state_updates_existing_row():
     repo = ResumeRepository(db)
     repo.get_resume_processing_state = MagicMock(return_value=existing)
 
-    state = repo.set_resume_processing_state("fp-existing", "failed", error="boom")
+    state = repo.set_resume_processing_state(
+        "fp-existing",
+        "failed",
+        owner_id=UUID("00000000-0000-0000-0000-000000000001"),
+        error="boom",
+    )
 
     assert state is existing
     assert state.processing_status == "failed"

@@ -258,9 +258,14 @@ class TestMatcherConsumer:
         mock_result.saved_count = 3
         mock_result.notified_count = 1
         mock_result.execution_time = 2.5
+        mock_result.cancelled = False
+        mock_result.error = None
 
         with patch("services.scorer_matcher.main._run_matching_pipeline_sync",
                    return_value=mock_result), \
+             patch("services.scorer_matcher.main.is_task_cancellation_requested", return_value=False), \
+             patch("services.scorer_matcher.main._compute_stale_result_metadata", return_value={}), \
+             patch("services.scorer_matcher.main.clear_task_cancellation_requested"), \
              patch("services.scorer_matcher.main.set_task_state") as mock_set_state:
             success, result = await consumer._do_process(
                 "msg-1",
@@ -273,16 +278,25 @@ class TestMatcherConsumer:
         assert mock_set_state.call_args_list[0].args[1] == {
             "status": "running",
             "step": "initializing",
+            "task_type": "matching",
+            "owner_id": None,
+            "upload_id": None,
+            "resume_fingerprint": "fp-123",
         }
         assert mock_set_state.call_args_list[-1].args[1] == {
             "status": "completed",
             "step": "initializing",
+            "task_type": "matching",
+            "owner_id": None,
+            "upload_id": None,
+            "resume_fingerprint": "fp-123",
             "result": {
                 "matches_count": 3,
                 "saved_count": 3,
                 "notified_count": 1,
                 "execution_time": 2.5,
             },
+            "error": None,
         }
 
     @pytest.mark.asyncio
@@ -294,7 +308,11 @@ class TestMatcherConsumer:
         consumer = MatcherConsumer(mock_ctx)
 
         with patch("services.scorer_matcher.main._run_matching_pipeline_sync",
-                   return_value=None):
+                   return_value=None), \
+             patch("services.scorer_matcher.main.is_task_cancellation_requested", return_value=False), \
+             patch("services.scorer_matcher.main._compute_stale_result_metadata", return_value={}), \
+             patch("services.scorer_matcher.main.clear_task_cancellation_requested"), \
+             patch("services.scorer_matcher.main.set_task_state"):
             success, result = await consumer._do_process(
                 "msg-1",
                 {"task_id": "t-1", "resume_fingerprint": "fp-123"}
@@ -314,6 +332,8 @@ class TestMatcherConsumer:
 
         with patch("services.scorer_matcher.main._run_matching_pipeline_sync",
                    side_effect=Exception("Pipeline failed")), \
+             patch("services.scorer_matcher.main.is_task_cancellation_requested", return_value=False), \
+             patch("services.scorer_matcher.main.clear_task_cancellation_requested"), \
              patch("services.scorer_matcher.main.set_task_state") as mock_set_state:
             success, result = await consumer._do_process(
                 "msg-1",
@@ -326,6 +346,10 @@ class TestMatcherConsumer:
         assert mock_set_state.call_args_list[-1].args[1] == {
             "status": "failed",
             "step": "initializing",
+            "task_type": "matching",
+            "owner_id": None,
+            "upload_id": None,
+            "resume_fingerprint": "fp-123",
             "error": "Pipeline failed",
         }
 
@@ -338,6 +362,8 @@ class TestMatcherConsumer:
         consumer = MatcherConsumer(mock_ctx)
 
         mock_result = Mock(matches_count=4, saved_count=2, notified_count=0, execution_time=1.25)
+        mock_result.cancelled = False
+        mock_result.error = None
 
         def fake_run(ctx, stop_event, resume_fingerprint, status_callback):
             status_callback("loading_resume")
@@ -348,6 +374,9 @@ class TestMatcherConsumer:
             return mock_result
 
         with patch("services.scorer_matcher.main._run_matching_pipeline_sync", side_effect=fake_run), \
+             patch("services.scorer_matcher.main.is_task_cancellation_requested", return_value=False), \
+             patch("services.scorer_matcher.main._compute_stale_result_metadata", return_value={}), \
+             patch("services.scorer_matcher.main.clear_task_cancellation_requested"), \
              patch("services.scorer_matcher.main.set_task_state") as mock_set_state:
             success, result = await consumer._do_process(
                 "msg-1",
@@ -369,6 +398,51 @@ class TestMatcherConsumer:
             "saving_results",
             "notifying",
         ]
+
+    @pytest.mark.asyncio
+    async def test_do_process_includes_stale_result_metadata(self):
+        """_do_process preserves stale-result metadata in terminal task state."""
+        from services.scorer_matcher.main import MatcherConsumer
+
+        mock_ctx = Mock()
+        consumer = MatcherConsumer(mock_ctx)
+
+        mock_result = Mock(
+            matches_count=2,
+            saved_count=2,
+            notified_count=0,
+            execution_time=0.5,
+            cancelled=False,
+            error=None,
+        )
+
+        with patch("services.scorer_matcher.main._run_matching_pipeline_sync", return_value=mock_result), \
+             patch(
+                 "services.scorer_matcher.main._compute_stale_result_metadata",
+                 return_value={
+                     "stale_due_to_newer_upload": True,
+                     "latest_upload_id": "upload-new",
+                     "latest_resume_fingerprint": "fp-new",
+                     "stale_message": "These results were generated from an older resume upload.",
+                 },
+             ), \
+             patch("services.scorer_matcher.main.is_task_cancellation_requested", return_value=False), \
+             patch("services.scorer_matcher.main.clear_task_cancellation_requested"), \
+             patch("services.scorer_matcher.main.set_task_state") as mock_set_state:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {
+                    "task_id": "t-1",
+                    "resume_fingerprint": "fp-old",
+                    "owner_id": "00000000-0000-0000-0000-000000000001",
+                    "resume_upload_id": "upload-old",
+                },
+            )
+
+        assert success is True
+        assert result["status"] == "completed"
+        assert mock_set_state.call_args_list[-1].args[1]["stale_due_to_newer_upload"] is True
+        assert mock_set_state.call_args_list[-1].args[1]["latest_upload_id"] == "upload-new"
 
 
 class TestMatcherAppLifespan:

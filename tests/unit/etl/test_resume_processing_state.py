@@ -74,12 +74,17 @@ class TestResumeProcessingState(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(fingerprint, "fp-ready")
         self.assertEqual(resume_data, {"name": "Test User"})
-        self.mock_repo.set_resume_processing_state.assert_called_once_with(
+        self.mock_repo.set_resume_processing_state.assert_called_once()
+        args, kwargs = self.mock_repo.set_resume_processing_state.call_args
+        self.assertEqual(args[:2], ("fp-ready", RESUME_PROCESSING_EXTRACTING))
+        self.assertEqual(kwargs["owner_id"], "00000000-0000-0000-0000-000000000001")
+        self.assertIsNone(kwargs["error"])
+        mock_extract.assert_called_once_with(
+            self.mock_repo,
+            {"name": "Test User"},
             "fp-ready",
-            RESUME_PROCESSING_EXTRACTING,
-            error=None,
+            owner_id="00000000-0000-0000-0000-000000000001",
         )
-        mock_extract.assert_called_once_with(self.mock_repo, {"name": "Test User"}, "fp-ready")
 
     @patch("etl.orchestrator.generate_file_fingerprint", return_value="fp-extracted")
     @patch.object(JobETLService, "embed_resume_one")
@@ -95,7 +100,11 @@ class TestResumeProcessingState(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(fingerprint, "fp-extracted")
         self.assertEqual(resume_data, {"name": "Test User"})
-        mock_embed.assert_called_once_with(self.mock_repo, "fp-extracted")
+        mock_embed.assert_called_once_with(
+            self.mock_repo,
+            "fp-extracted",
+            owner_id="00000000-0000-0000-0000-000000000001",
+        )
 
     @patch("etl.orchestrator.generate_file_fingerprint", return_value="fp-extracted")
     @patch.object(JobETLService, "embed_resume_one", side_effect=RuntimeError("embed failed"))
@@ -143,11 +152,11 @@ class TestResumeProcessingState(unittest.TestCase):
         self.assertFalse(changed)
         self.assertEqual(fingerprint, "")
         self.assertIsNone(resume_data)
-        self.mock_repo.set_resume_processing_state.assert_called_once_with(
-            "fp-bad-parse",
-            RESUME_PROCESSING_FAILED,
-            error="bad resume",
-        )
+        self.mock_repo.set_resume_processing_state.assert_called_once()
+        args, kwargs = self.mock_repo.set_resume_processing_state.call_args
+        self.assertEqual(args[:2], ("fp-bad-parse", RESUME_PROCESSING_FAILED))
+        self.assertEqual(kwargs["owner_id"], "00000000-0000-0000-0000-000000000001")
+        self.assertEqual(kwargs["error"], "bad resume")
 
     @patch("etl.orchestrator.ResumeParser")
     @patch("etl.orchestrator.generate_file_fingerprint", return_value="fp-new")
@@ -171,12 +180,17 @@ class TestResumeProcessingState(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(fingerprint, "fp-new")
         self.assertEqual(resume_data, {"name": "Test User"})
-        self.mock_repo.set_resume_processing_state.assert_called_once_with(
+        self.mock_repo.set_resume_processing_state.assert_called_once()
+        args, kwargs = self.mock_repo.set_resume_processing_state.call_args
+        self.assertEqual(args[:2], ("fp-new", RESUME_PROCESSING_EXTRACTING))
+        self.assertEqual(kwargs["owner_id"], "00000000-0000-0000-0000-000000000001")
+        self.assertIsNone(kwargs["error"])
+        mock_extract.assert_called_once_with(
+            self.mock_repo,
+            {"name": "Test User"},
             "fp-new",
-            RESUME_PROCESSING_EXTRACTING,
-            error=None,
+            owner_id="00000000-0000-0000-0000-000000000001",
         )
-        mock_extract.assert_called_once_with(self.mock_repo, {"name": "Test User"}, "fp-new")
 
     @patch("etl.orchestrator.ResumeParser")
     @patch("etl.orchestrator.generate_file_fingerprint", return_value="fp-fail")
@@ -219,6 +233,7 @@ class TestResumeProcessingState(unittest.TestCase):
         self.service.extract_resume_one(self.mock_repo, {"raw_text": "resume"}, "fp-structured")
 
         self.mock_repo.save_structured_resume.assert_called_once_with(
+            owner_id="00000000-0000-0000-0000-000000000001",
             resume_fingerprint="fp-structured",
             extracted_data=resume.model_dump.return_value,
             total_experience_years=7.0,
@@ -230,8 +245,14 @@ class TestResumeProcessingState(unittest.TestCase):
         self.assertEqual(args[0], "fp-structured")
         self.assertEqual(args[1], RESUME_PROCESSING_EXTRACTED)
         self.assertIsNone(kwargs["error"])
+        self.assertEqual(kwargs["owner_id"], "00000000-0000-0000-0000-000000000001")
         self.assertIn("extraction_completed_at", kwargs)
-        mock_embed.assert_called_once_with(self.mock_repo, "fp-structured", resume)
+        mock_embed.assert_called_once_with(
+            self.mock_repo,
+            "fp-structured",
+            resume,
+            owner_id="00000000-0000-0000-0000-000000000001",
+        )
 
     @patch("etl.orchestrator.ResumeProfiler")
     def test_extract_resume_one_raises_when_structured_resume_is_missing(self, mock_profiler_cls):

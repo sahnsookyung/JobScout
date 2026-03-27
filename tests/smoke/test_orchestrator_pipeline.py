@@ -156,18 +156,7 @@ def start_test_infrastructure():
         "--network", "test-network",
         "-e", "DATABASE_URL=postgresql://user:password@postgres-test:5432/jobscout_test",
         "jobscout-orchestrator:latest",
-        "uv", "run", "python", "-c",
-        """
-from sqlalchemy import create_engine, text
-from database.models.base import Base
-import os
-engine = create_engine(os.environ['DATABASE_URL'])
-with engine.connect() as conn:
-    conn.execute(text('CREATE EXTENSION IF NOT EXISTS vector;'))
-    conn.commit()
-Base.metadata.create_all(bind=engine)
-print('Database tables created with pgvector extension')
-        """
+        "python", "-m", "database.migrate"
     ], check=True)
 
 

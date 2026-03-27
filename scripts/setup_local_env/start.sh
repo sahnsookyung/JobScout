@@ -19,7 +19,6 @@
 #   -u, --web-ui        Start Vite frontend UI dev server (port 5173)
 #   -m, --microservices Start pipeline microservices (extraction, embeddings, scorer-matcher, orchestrator)
 #      --split          Start split topology (infra + web + microservices)
-#   -o, --ollama        Deprecated; Ollama should run natively, not in Docker
 #   -c, --clean         Stop existing services first
 #      --build          Rebuild images before starting (default: use cached images)
 #      --dev            Mount source code and enable hot reload on all services
@@ -289,7 +288,7 @@ start_docker() {
     elif [[ "$MICROSERVICES" == true ]]; then
         log_info "Starting split topology (infra + microservices)..."
         INFRA=true
-        SERVICES_TO_START="postgres redis jobspy extraction embeddings scorer-matcher orchestrator"
+        SERVICES_TO_START="postgres redis jobspy db-migrate extraction embeddings scorer-matcher orchestrator"
     elif [[ "$INFRA" == true ]]; then
         # Start all default infra services
         log_info "Starting all Docker services (postgres, redis)..."
@@ -369,6 +368,23 @@ start_docker() {
             log_info "Capturing ${service} logs to ${LOGS_DIR}/${service}.log"
         fi
     done
+    return 0
+}
+
+run_migrations() {
+    log_info "Applying database migrations..."
+
+    if ! command -v uv &> /dev/null; then
+        log_error "uv is not installed. Install with: pip install uv" >&2
+        return 1
+    fi
+
+    (
+        cd "${PROJECT_ROOT}" &&
+        uv run python -m database.migrate
+    )
+
+    log_success "Database migrations applied"
     return 0
 }
 
@@ -574,6 +590,11 @@ main() {
 
     if [[ "$INFRA" == true ]] || [[ "$DATABASE" == true ]] || [[ "$REDIS" == true ]] || [[ "$MICROSERVICES" == true ]]; then
         start_docker
+        echo ""
+    fi
+
+    if [[ "$DATABASE" == true ]] || [[ "$INFRA" == true ]] || [[ "$WEB_APP" == true ]] || [[ "$MICROSERVICES" == true ]]; then
+        run_migrations
         echo ""
     fi
 

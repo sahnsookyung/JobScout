@@ -83,13 +83,19 @@ class ExtractionClient(ServiceClient):
     def __init__(self, base_url: str = EXTRACTION_URL):
         super().__init__(base_url, env_var="EXTRACTION_URL")
     
-    def extract_resume(self, resume_file: str, force_re_extraction: bool = False) -> dict:
+    def extract_resume(
+        self,
+        resume_file: str,
+        owner_id: str,
+        force_re_extraction: bool = False,
+    ) -> dict:
         """Extract resume data."""
         return self.post(
             "/extract/resume",
             json={
                 "resume_file": resume_file,
                 "force_re_extraction": force_re_extraction,
+                "owner_id": owner_id,
             },
         )
     
@@ -104,9 +110,12 @@ class EmbeddingsClient(ServiceClient):
     def __init__(self, base_url: str = EMBEDDINGS_URL):
         super().__init__(base_url, env_var="EMBEDDINGS_URL")
     
-    def embed_resume(self, resume_fingerprint: str) -> dict:
+    def embed_resume(self, resume_fingerprint: str, owner_id: str) -> dict:
         """Generate resume embeddings."""
-        return self.post("/embed/resume", json={"resume_fingerprint": resume_fingerprint})
+        return self.post(
+            "/embed/resume",
+            json={"resume_fingerprint": resume_fingerprint, "owner_id": owner_id},
+        )
     
     def health(self) -> dict:
         """Check service health."""
@@ -204,15 +213,32 @@ class OrchestratorClient(ServiceClient):
         
         return {"success": False, "status": "timeout", "error": f"Timeout waiting for task {task_id}"}
 
-    def process_resume(self, file_path: str, task_id: str) -> dict:
+    def process_resume(
+        self,
+        file_path: str | None,
+        task_id: str,
+        *,
+        upload_id: str | None = None,
+        owner_id: str | None = None,
+        resume_fingerprint: str | None = None,
+        mode: str = "extract_and_embed",
+    ) -> dict:
         """Sequence extraction → embeddings for a resume file.
 
         The orchestrator writes progress to task:{task_id}:state so the
         web-backend can poll Redis directly without a status proxy.
         Returns immediately (202 accepted); processing is asynchronous.
         """
-        return self.post("/orchestrate/resume-etl",
-                         json={"file_path": file_path, "task_id": task_id})
+        payload = {"task_id": task_id, "mode": mode}
+        if file_path is not None:
+            payload["file_path"] = file_path
+        if upload_id is not None:
+            payload["upload_id"] = upload_id
+        if owner_id is not None:
+            payload["owner_id"] = owner_id
+        if resume_fingerprint is not None:
+            payload["resume_fingerprint"] = resume_fingerprint
+        return self.post("/orchestrate/resume-etl", json=payload)
 
     def health(self) -> dict:
         """Check service health."""

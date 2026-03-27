@@ -196,11 +196,16 @@ class TestJobRepositoryAdapter:
         adapter = JobRepositoryAdapter(mock_repo)
         
         sections = [{"section_type": "experience", "embedding": [0.1, 0.2, 0.3]}]
-        adapter.save_resume_section_embeddings("test-fingerprint", sections)
+        adapter.save_resume_section_embeddings(
+            "test-fingerprint",
+            sections,
+            owner_id="owner-1",
+        )
         
         mock_repo.save_resume_section_embeddings.assert_called_once_with(
             resume_fingerprint="test-fingerprint",
-            sections=sections
+            sections=sections,
+            owner_id="owner-1",
         )
     
     def test_adapter_wraps_get_call(self):

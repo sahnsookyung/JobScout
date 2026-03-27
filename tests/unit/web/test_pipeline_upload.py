@@ -11,7 +11,9 @@ import tempfile
 import os
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
+from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -21,6 +23,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
 
     def setUp(self):
         from fastapi.testclient import TestClient
+        from web.backend.dependencies import get_current_user
         from web.backend.routers.pipeline import router, limiter
         from fastapi import FastAPI
 
@@ -28,6 +31,9 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         limiter.enabled = False
 
         self.app = FastAPI()
+        self.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id=UUID("00000000-0000-0000-0000-000000000001")
+        )
         self.app.include_router(router)
         self.client = TestClient(self.app, raise_server_exceptions=False)
 
@@ -247,6 +253,7 @@ class TestResumeHashCheckEndpoint(unittest.TestCase):
 
     def setUp(self):
         from fastapi.testclient import TestClient
+        from web.backend.dependencies import get_current_user
         from web.backend.routers.pipeline import router, limiter
         from fastapi import FastAPI
 
@@ -254,6 +261,9 @@ class TestResumeHashCheckEndpoint(unittest.TestCase):
         limiter.enabled = False
 
         self.app = FastAPI()
+        self.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id=UUID("00000000-0000-0000-0000-000000000001")
+        )
         self.app.include_router(router)
         self.client = TestClient(self.app, raise_server_exceptions=False)
 
@@ -261,11 +271,8 @@ class TestResumeHashCheckEndpoint(unittest.TestCase):
         """Test /check-resume-hash returns exists=true when hash exists in DB."""
         test_hash = "abc123def45678901234567890123456"
 
-        with patch('database.uow.job_uow') as mock_uow:
-            mock_repo = MagicMock()
-            mock_repo.resume.resume_hash_exists.return_value = True
-            mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
-            mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+        with patch('web.backend.routers.pipeline.evaluate_resume_preflight') as mock_preflight:
+            mock_preflight.return_value = MagicMock(status='ready_already_known')
 
             response = self.client.post(
                 '/api/pipeline/check-resume-hash',
@@ -281,11 +288,8 @@ class TestResumeHashCheckEndpoint(unittest.TestCase):
         """Test /check-resume-hash returns exists=false when hash not in DB."""
         test_hash = "nonexistent_hash_123456789"
 
-        with patch('database.uow.job_uow') as mock_uow:
-            mock_repo = MagicMock()
-            mock_repo.resume.resume_hash_exists.return_value = False
-            mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
-            mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+        with patch('web.backend.routers.pipeline.evaluate_resume_preflight') as mock_preflight:
+            mock_preflight.return_value = MagicMock(status='upload_required')
 
             response = self.client.post(
                 '/api/pipeline/check-resume-hash',
@@ -312,6 +316,7 @@ class TestResumeUploadSecurity(unittest.TestCase):
 
     def setUp(self):
         from fastapi.testclient import TestClient
+        from web.backend.dependencies import get_current_user
         from web.backend.routers.pipeline import router, limiter
         from fastapi import FastAPI
 
@@ -319,6 +324,9 @@ class TestResumeUploadSecurity(unittest.TestCase):
         limiter.enabled = False
 
         self.app = FastAPI()
+        self.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id=UUID("00000000-0000-0000-0000-000000000001")
+        )
         self.app.include_router(router)
         self.client = TestClient(self.app, raise_server_exceptions=False)
 
@@ -422,6 +430,7 @@ class TestResumeUploadDeduplication(unittest.TestCase):
 
     def setUp(self):
         from fastapi.testclient import TestClient
+        from web.backend.dependencies import get_current_user
         from web.backend.routers.pipeline import router, limiter
         from fastapi import FastAPI
 
@@ -429,6 +438,9 @@ class TestResumeUploadDeduplication(unittest.TestCase):
         limiter.enabled = False
 
         self.app = FastAPI()
+        self.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id=UUID("00000000-0000-0000-0000-000000000001")
+        )
         self.app.include_router(router)
         self.client = TestClient(self.app, raise_server_exceptions=False)
 

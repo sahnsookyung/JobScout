@@ -5,10 +5,16 @@ import { Badge } from '@/components/ui/Badge';
 export interface StatusBannerProps {
     status: string;
     step?: string;
+    upload_id?: string;
+    resume_fingerprint?: string;
     matches_count?: number;
     saved_count?: number;
     execution_time?: number;
     error?: string;
+    stale_due_to_newer_upload?: boolean;
+    latest_upload_id?: string;
+    latest_resume_fingerprint?: string;
+    stale_message?: string;
 }
 
 export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
@@ -102,6 +108,11 @@ export const StatusBanner: React.FC<StatusBannerProps> = (statusData) => {
                                 <span className="font-semibold">Saved: {statusData.saved_count ?? 0}</span>
                                 <span className="font-semibold">Time: {formatTime(statusData.execution_time)}s</span>
                             </div>
+                            {statusData.stale_due_to_newer_upload && statusData.stale_message && (
+                                <p className="mt-3 text-sm text-amber-800 bg-amber-50 p-3 rounded-lg border border-amber-200">
+                                    {statusData.stale_message}
+                                </p>
+                            )}
                         </div>
                     )}
                     {isFailedStatus && (

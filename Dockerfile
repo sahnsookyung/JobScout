@@ -16,13 +16,17 @@ RUN uv sync --frozen --no-dev --no-install-project --group web
 # Copy application source
 COPY core/ ./core/
 COPY database/ ./database/
+COPY migrations/ ./migrations/
 COPY etl/ ./etl/
 COPY pipeline/ ./pipeline/
 COPY notification/ ./notification/
 COPY services/base/ ./services/base/
+COPY services/extraction/ ./services/extraction/
+COPY services/embeddings/ ./services/embeddings/
+COPY services/scorer_matcher/ ./services/scorer_matcher/
+COPY services/orchestrator/ ./services/orchestrator/
 COPY web/backend/ ./web/backend/
 COPY config.yaml ./
-COPY main.py ./
 
 RUN uv sync --frozen --no-dev --group web
 
@@ -41,4 +45,4 @@ ENV PYTHONPATH=/app
 
 USER appuser
 
-CMD ["python", "main.py"]
+CMD ["python", "-c", "raise SystemExit('Use a service-specific Dockerfile or ./scripts/setup_local_env/start.sh --split; the root monolithic image is no longer runnable.')"]

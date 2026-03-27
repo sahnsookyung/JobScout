@@ -56,6 +56,22 @@ services:
       retries: 3
       start_period: 10s
 
+  db-migrate:
+    profiles: ["web", "split"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-jobscout}
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    command: ["python", "-m", "database.migrate"]
+    restart: "no"
+
 volumes:
   postgres_data:
   redis_data:

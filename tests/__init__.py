@@ -89,10 +89,10 @@ def setup_test_database():
     """
     try:
         from sqlalchemy import create_engine
-        from database.models import Base
+        from database.migrate import migrate_database
         
         engine = create_engine(TEST_DB_URL)
-        Base.metadata.create_all(engine)
+        migrate_database(engine=engine)
         print("✓ Test database tables created")
         return True
         

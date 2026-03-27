@@ -237,17 +237,19 @@ class TestExtractionClient:
     def test_extract_resume(self):
         """Test extract_resume method."""
         client = ExtractionClient("http://extraction:8081")
+        owner_id = "user-123"
 
         with patch.object(client, 'post') as mock_post:
             mock_post.return_value = {"success": True, "resume_id": "123"}
 
-            result = client.extract_resume("/path/to/resume.pdf")
+            result = client.extract_resume("/path/to/resume.pdf", owner_id=owner_id)
 
             mock_post.assert_called_once_with(
                 "/extract/resume",
                 json={
                     "resume_file": "/path/to/resume.pdf",
                     "force_re_extraction": False,
+                    "owner_id": owner_id,
                 },
             )
             assert result == {"success": True, "resume_id": "123"}
@@ -283,14 +285,19 @@ class TestEmbeddingsClient:
     def test_embed_resume(self):
         """Test embed_resume method."""
         client = EmbeddingsClient("http://embeddings:8082")
+        owner_id = "user-123"
 
         with patch.object(client, 'post') as mock_post:
             mock_post.return_value = {"success": True, "fingerprint": "abc123"}
 
-            result = client.embed_resume("resume-fingerprint-123")
+            result = client.embed_resume("resume-fingerprint-123", owner_id=owner_id)
 
             mock_post.assert_called_once_with(
-                "/embed/resume", json={"resume_fingerprint": "resume-fingerprint-123"}
+                "/embed/resume",
+                json={
+                    "resume_fingerprint": "resume-fingerprint-123",
+                    "owner_id": owner_id,
+                },
             )
             assert result == {"success": True, "fingerprint": "abc123"}
 

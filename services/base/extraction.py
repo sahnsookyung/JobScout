@@ -1,9 +1,8 @@
 """
 Extraction module - handles job and resume ETL.
 
-This module provides extraction functionality that can be used by:
-- main.py (backwards compatible)
-- services/extraction/main.py (new microservice)
+This module provides extraction functionality for the split extraction
+service and shared extraction helpers used by the current runtime.
 """
 
 import json
@@ -16,7 +15,7 @@ from core.config_loader import load_config
 from core.app_context import AppContext
 from database.uow import job_uow
 from etl.resume.loader import load_resume_with_parser
-from database.models import generate_file_fingerprint
+from database.models import DEFAULT_LEGACY_OWNER_ID, generate_file_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -333,6 +332,7 @@ def extract_resume(
     resume_file: str, 
     known_fingerprint: Optional[str] = None,
     force_re_extraction: bool = False,
+    owner_id: str = "",
 ) -> tuple[bool, Optional[str]]:
     """
     Extract resume data (no embeddings).
@@ -347,6 +347,7 @@ def extract_resume(
         Tuple of (extracted: bool, fingerprint: Optional[str])
     """
     logger.info(f"Extracting resume: {resume_file}")
+    owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
 
     with job_uow() as repo:
         if force_re_extraction:
@@ -354,12 +355,14 @@ def extract_resume(
                 repo,
                 resume_file,
                 force_re_extraction=True,
+                owner_id=owner_id,
             )
         else:
-            extracted, fingerprint, _ = ctx.job_etl_service.extract_resume(
+            extracted, fingerprint, _ = ctx.job_etl_service.extract_resume_stage(
                 repo,
                 resume_file,
                 known_fingerprint,
+                owner_id=owner_id,
             )
 
     return extracted, fingerprint

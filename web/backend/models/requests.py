@@ -31,3 +31,19 @@ class NotificationRequest(BaseModel):
 class ResumeHashCheckRequest(BaseModel):
     """Request to check if a resume hash already exists in the database."""
     resume_hash: str = Field(..., description="SHA-256 hash of the resume file (first 32 chars)")
+
+
+class ResumePreflightRequest(BaseModel):
+    """Read-only preflight check for a locally computed resume hash."""
+    resume_hash: str = Field(..., description="Client-computed resume hash")
+
+
+class ResumeSelectRequest(BaseModel):
+    """Select a previously processed resume as the latest upload intent."""
+    resume_hash: str = Field(..., description="Client-computed resume hash")
+    original_filename: Optional[str] = Field(None, description="Original filename for display")
+
+
+class ResumeRetryRequest(BaseModel):
+    """Retry a failed upload attempt."""
+    upload_id: str = Field(..., description="Upload attempt identifier to retry")

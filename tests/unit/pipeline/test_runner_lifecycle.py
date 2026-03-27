@@ -236,7 +236,7 @@ def test_run_matching_pipeline_materializes_ready_resume_before_uow_closes():
     }
 
 
-def test_run_matching_pipeline_falls_back_to_configured_resume_file_when_no_ready_resume():
+def test_run_matching_pipeline_does_not_fall_back_to_configured_resume_file_when_no_ready_resume():
     ctx = _ctx()
     ctx.config.etl = SimpleNamespace(
         resume=SimpleNamespace(
@@ -251,40 +251,15 @@ def test_run_matching_pipeline_falls_back_to_configured_resume_file_when_no_read
     select_repo.get_latest_ready_resume_fingerprint.return_value = None
     select_repo.get_latest_resume_processing_state.return_value = None
 
-    fallback_repo = MagicMock()
-    fallback_repo.resume.get_structured_resume_by_fingerprint.return_value = _structured_resume(
-        {"profile": {"summary": {"text": "Configured summary"}, "experience": []}}
-    )
-    fallback_repo.is_resume_ready.return_value = True
-
-    matching_repo = MagicMock()
-    matching_repo.resume.get_structured_resume_by_fingerprint.return_value = _structured_resume(
-        {"profile": {"summary": {"text": "Configured summary"}, "experience": []}}
-    )
-
-    matcher = MagicMock()
-    matcher.match_resume_two_stage.return_value = []
-    scorer = MagicMock()
-    scorer.score_matches.return_value = []
-
     with patch("pipeline.runner.os.path.exists", return_value=True), patch(
         "pipeline.runner.job_uow",
-        side_effect=[_uow(select_repo), _uow(fallback_repo), _uow(matching_repo)],
-    ), patch("pipeline.runner.MatcherService", return_value=matcher), patch(
-        "pipeline.runner.ScoringService", return_value=scorer
-    ), patch(
-        "pipeline.runner.ResumeSchema.model_validate",
-        return_value=SimpleNamespace(profile=SimpleNamespace()),
-    ), patch("pipeline.runner._save_matches_batch", return_value=0):
+        side_effect=[_uow(select_repo)],
+    ):
         result = run_matching_pipeline(ctx)
 
-    assert result.success is True
-    ctx.job_etl_service.process_resume.assert_called_once_with(
-        fallback_repo,
-        "/tmp/resume.json",
-        force_re_extraction=False,
-    )
-    assert matcher.match_resume_two_stage.call_args.kwargs["resume_fingerprint"] == "fp-config"
+    assert result.success is False
+    assert result.error == "No ready resume found. Upload and process a resume first."
+    ctx.job_etl_service.process_resume.assert_not_called()
 
 
 def test_run_matching_pipeline_reports_cancelled_before_save_when_stop_requested():
