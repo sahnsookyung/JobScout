@@ -311,6 +311,7 @@ class TestGetResumeStatus:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "processing"
+        assert data["message"] == "Resume processing is in progress."
 
     def test_valid_task_with_completed_state_returns_200(self, pipeline_client):
         state = {
@@ -321,6 +322,7 @@ class TestGetResumeStatus:
         with patch("web.backend.routers.pipeline.get_task_state", return_value=state):
             response = pipeline_client.get("/api/pipeline/resume-status/task-done")
         assert response.status_code == 200
+        assert response.json()["message"] == "Resume processing completed successfully."
 
     def test_task_not_found_returns_404(self, pipeline_client):
         with patch("web.backend.routers.pipeline.get_task_state", return_value=None):
@@ -373,6 +375,7 @@ class TestGetResumeStatus:
         data = response.json()
         assert data["status"] == "failed"
         assert "timed out" in data["error"].lower()
+        assert "timed out" in data["message"].lower()
 
 
 # ---------------------------------------------------------------------------

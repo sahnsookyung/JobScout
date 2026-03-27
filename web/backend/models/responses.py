@@ -232,6 +232,7 @@ class ResumeStatusResponse(BaseModel):
     task_id: str
     status: str  # processing | completed | failed
     step: Optional[str] = None  # extracting | embedding
+    message: Optional[str] = None
     error: Optional[str] = None
 
 

@@ -149,6 +149,7 @@ export interface ResumeStatusResponse {
     task_id: string;
     status: string;
     step?: string;
+    message?: string;
     error?: string;
 }
 

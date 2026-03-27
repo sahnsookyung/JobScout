@@ -3,10 +3,12 @@ import logging
 import sys
 
 from core.logging_utils import (
+    LoggerNameAliasFilter,
     NulCharacterFilter,
     NulSafeFormatter,
     NulSafeTextIO,
     is_nul_filter_active,
+    setup_service_logging,
     setup_logging,
 )
 
@@ -84,6 +86,79 @@ def test_setup_logging_attaches_filter_to_existing_uvicorn_handler() -> None:
     finally:
         uvicorn_logger.handlers = original_handlers
         uvicorn_logger.setLevel(original_level)
+
+def test_setup_service_logging_aliases_uvicorn_startup_logs_to_service_logger() -> None:
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(name)s - %(message)s"))
+
+    service_logger = logging.getLogger("services.extraction.main")
+    uvicorn_logger = logging.getLogger("uvicorn.error")
+    original_service_handlers = list(service_logger.handlers)
+    original_service_level = service_logger.level
+    original_service_propagate = service_logger.propagate
+    original_uvicorn_handlers = list(uvicorn_logger.handlers)
+    original_uvicorn_level = uvicorn_logger.level
+    original_uvicorn_propagate = uvicorn_logger.propagate
+
+    try:
+        service_logger.handlers = []
+        service_logger.setLevel(logging.INFO)
+        service_logger.propagate = False
+
+        uvicorn_logger.handlers = [handler]
+        uvicorn_logger.setLevel(logging.INFO)
+        uvicorn_logger.propagate = False
+
+        setup_service_logging(service_logger)
+        assert any(isinstance(f, LoggerNameAliasFilter) for f in handler.filters)
+
+        uvicorn_logger.info("Application startup complete.")
+        output = stream.getvalue()
+        assert "services.extraction.main - INFO - Application startup complete." in output
+        assert "uvicorn.error" not in output
+    finally:
+        service_logger.handlers = original_service_handlers
+        service_logger.setLevel(original_service_level)
+        service_logger.propagate = original_service_propagate
+        uvicorn_logger.handlers = original_uvicorn_handlers
+        uvicorn_logger.setLevel(original_uvicorn_level)
+        uvicorn_logger.propagate = original_uvicorn_propagate
+
+def test_setup_service_logging_keeps_uvicorn_access_logger_name() -> None:
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(name)s - %(message)s"))
+
+    service_logger = logging.getLogger("services.extraction.main")
+    access_logger = logging.getLogger("uvicorn.access")
+    original_service_handlers = list(service_logger.handlers)
+    original_service_level = service_logger.level
+    original_service_propagate = service_logger.propagate
+    original_access_handlers = list(access_logger.handlers)
+    original_access_level = access_logger.level
+    original_access_propagate = access_logger.propagate
+
+    try:
+        service_logger.handlers = []
+        service_logger.setLevel(logging.INFO)
+        service_logger.propagate = False
+
+        access_logger.handlers = [handler]
+        access_logger.setLevel(logging.INFO)
+        access_logger.propagate = False
+
+        setup_service_logging(service_logger)
+        access_logger.info("GET /health")
+        output = stream.getvalue()
+        assert "uvicorn.access - INFO - GET /health" in output
+    finally:
+        service_logger.handlers = original_service_handlers
+        service_logger.setLevel(original_service_level)
+        service_logger.propagate = original_service_propagate
+        access_logger.handlers = original_access_handlers
+        access_logger.setLevel(original_access_level)
+        access_logger.propagate = original_access_propagate
 
 
 def test_sanitize_logger_handlers_adds_handler_when_missing() -> None:

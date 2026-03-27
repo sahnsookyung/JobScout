@@ -490,6 +490,7 @@ def _resume_status_from_upload(task_id: str, upload) -> Optional[ResumeStatusRes
             task_id=task_id,
             status="completed",
             step=None,
+            message="Resume processing completed successfully.",
             error=None,
         )
 
@@ -501,10 +502,61 @@ def _resume_status_from_upload(task_id: str, upload) -> Optional[ResumeStatusRes
             task_id=task_id,
             status="failed",
             step=None,
+            message=upload.user_safe_message or upload.last_error,
             error=upload.user_safe_message or upload.last_error,
         )
 
     return None
+
+
+def _resume_status_message(status: str, step: Optional[str], error: Optional[str]) -> Optional[str]:
+    """Return a user-facing message for resume task polling responses."""
+    if error:
+        return error
+    if status == "completed":
+        return "Resume processing completed successfully."
+    if status == "failed":
+        return "Resume processing failed."
+    if status == "processing":
+        if step == "extracting":
+            return "Resume extraction is in progress."
+        if step == "embedding":
+            return "Resume embedding is in progress."
+        return "Resume processing is in progress."
+    return None
+
+
+def _resume_status_from_task_state(task_id: str, state: dict) -> ResumeStatusResponse:
+    """Convert owned Redis task state into the shared resume status response shape."""
+    status = state.get("status", "unknown")
+    step = state.get("step")
+    error = state.get("error")
+    return ResumeStatusResponse(
+        task_id=task_id,
+        status=status,
+        step=step,
+        message=_resume_status_message(status, step, error),
+        error=error,
+    )
+
+
+def _get_resume_upload_status(repo, owner_id, task_id: str) -> Optional[ResumeStatusResponse]:
+    """Best-effort DB lookup for persisted upload state associated with a task."""
+    try:
+        upload = repo.get_resume_upload_by_task_id(owner_id, task_id)
+        if upload is None:
+            return None
+        upload = _reconcile_resume_upload_task(repo, upload)
+        return _resume_status_from_upload(task_id, upload)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning(
+            "Failed to load persisted resume upload state for task %s",
+            task_id,
+            exc_info=True,
+        )
+        return None
 
 
 def _ensure_no_active_matching_task(redis, owner_id: str) -> None:
@@ -1108,20 +1160,34 @@ def get_resume_status(
             detail="Invalid task_id format. Must be alphanumeric with hyphens, max 50 characters."
         )
     owner_id = resolve_owner_id(user)
-    with job_uow() as repo:
-        upload = repo.get_resume_upload_by_task_id(owner_id, task_id)
-        if upload is not None:
-            upload = _reconcile_resume_upload_task(repo, upload)
-            upload_status = _resume_status_from_upload(task_id, upload)
+    state: Optional[dict] = None
+    try:
+        state = _get_owned_resume_task_state(task_id, owner_id)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+
+    try:
+        with job_uow() as repo:
+            upload_status = _get_resume_upload_status(repo, owner_id, task_id)
             if upload_status is not None:
                 return upload_status
-    state = _get_owned_resume_task_state(task_id, owner_id)
-    return ResumeStatusResponse(
-        task_id=task_id,
-        status=state.get("status", "unknown"),
-        step=state.get("step"),
-        error=state.get("error")
-    )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning(
+            "Resume status DB lookup unavailable for task %s; falling back to task state only",
+            task_id,
+            exc_info=True,
+        )
+
+    if state is None:
+        raise HTTPException(
+            status_code=404,
+            detail=TASK_NOT_FOUND_OR_EXPIRED_DETAIL,
+        )
+
+    return _resume_status_from_task_state(task_id, state)
 
 
 @router.post("/check-resume-hash", response_model=ResumeHashCheckResponse)

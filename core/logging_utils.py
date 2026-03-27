@@ -6,6 +6,7 @@ import sys
 
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+_UVICORN_SERVICE_LOGGERS = {"uvicorn", "uvicorn.error", "fastapi"}
 
 
 def _strip_nul(s: str) -> str:
@@ -33,6 +34,19 @@ class NulCharacterFilter(logging.Filter):
                     _strip_nul(arg) if isinstance(arg, str) else arg
                     for arg in record.args
                 )
+        return True
+
+class LoggerNameAliasFilter(logging.Filter):
+    """Rewrite selected logger names to a service logger for cleaner output."""
+
+    def __init__(self, target_name: str, source_names: set[str]) -> None:
+        super().__init__()
+        self._target_name = target_name
+        self._source_names = set(source_names)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name in self._source_names:
+            record.name = self._target_name
         return True
 
 
@@ -89,6 +103,21 @@ def _ensure_nul_filter(handler: logging.Handler) -> None:
         if isinstance(existing_filter, NulCharacterFilter):
             return
     handler.addFilter(NulCharacterFilter())
+
+def _ensure_logger_name_alias_filter(
+    handler: logging.Handler,
+    target_name: str,
+    source_names: set[str],
+) -> None:
+    """Attach the logger alias filter once for a given target/source set."""
+    for existing_filter in handler.filters:
+        if (
+            isinstance(existing_filter, LoggerNameAliasFilter)
+            and existing_filter._target_name == target_name
+            and existing_filter._source_names == source_names
+        ):
+            return
+    handler.addFilter(LoggerNameAliasFilter(target_name, source_names))
 
 def _ensure_default_formatter(handler: logging.Handler) -> None:
     """Attach NulSafeFormatter to handler, overriding any existing formatter."""
@@ -160,4 +189,12 @@ def setup_service_logging(logger: logging.Logger) -> None:
     service, so they can all call this single shared helper instead.
     """
     setup_logging()
+    for logger_name in ("", "uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"):
+        current_logger = logging.getLogger(logger_name or None)
+        for handler in current_logger.handlers:
+            _ensure_logger_name_alias_filter(
+                handler,
+                logger.name,
+                _UVICORN_SERVICE_LOGGERS,
+            )
     logger.debug("NUL log sanitization active=%s", is_nul_filter_active())
