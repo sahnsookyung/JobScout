@@ -104,6 +104,9 @@ STALE_RESUME_UPLOAD_TIMEOUT_SECONDS = 600
 RESUME_ETL_WAIT_TIMEOUT_SECONDS = float(
     os.getenv("RESUME_ETL_WAIT_TIMEOUT_SECONDS", "600")
 )
+RESUME_PROCESSING_FAILED_MESSAGE = "Resume processing failed."
+RESUME_PROCESSING_COMPLETED_MESSAGE = "Resume processing completed successfully."
+RESUME_PROCESSING_TIMED_OUT_MESSAGE = "Resume processing timed out. Please retry."
 
 # Strong references to fire-and-forget upload tasks — prevents GC on Python 3.12+
 # where the event loop only keeps weak refs to asyncio.Task objects.
@@ -490,8 +493,8 @@ def _mark_resume_upload_failed_from_stale_task(repo, upload, task_id: str) -> No
     upload_status, upload_error, retryable = _classify_failed_resume_upload(
         repo, upload.resume_fingerprint
     )
-    if upload_error == "Resume processing failed.":
-        upload_error = "Resume processing timed out. Please retry."
+    if upload_error == RESUME_PROCESSING_FAILED_MESSAGE:
+        upload_error = RESUME_PROCESSING_TIMED_OUT_MESSAGE
 
     repo.update_resume_upload(
         upload.id,
@@ -550,7 +553,7 @@ def _reconcile_resume_upload_task(repo, upload):
             last_error=None,
             processing_task_id=task_id,
             retryable=False,
-            user_safe_message="Resume processing completed successfully.",
+            user_safe_message=RESUME_PROCESSING_COMPLETED_MESSAGE,
         )
         return repo.get_resume_upload(upload.id)
 
@@ -581,7 +584,7 @@ def _resume_status_from_upload(task_id: str, upload) -> Optional[ResumeStatusRes
             task_id=task_id,
             status="completed",
             step=None,
-            message="Resume processing completed successfully.",
+            message=RESUME_PROCESSING_COMPLETED_MESSAGE,
             error=None,
         )
 
@@ -605,9 +608,9 @@ def _resume_status_message(status: str, step: Optional[str], error: Optional[str
     if error:
         return error
     if status == "completed":
-        return "Resume processing completed successfully."
+        return RESUME_PROCESSING_COMPLETED_MESSAGE
     if status == "failed":
-        return "Resume processing failed."
+        return RESUME_PROCESSING_FAILED_MESSAGE
     if status == "processing":
         if step == "extracting":
             return "Resume extraction is in progress."
@@ -1340,7 +1343,7 @@ def get_resume_status(
     except Exception:
         logger.warning(
             "Resume status DB lookup unavailable for task %s; falling back to task state only",
-            task_id,
+            _sanitize_for_logging(task_id),
             exc_info=True,
         )
 
@@ -1651,7 +1654,7 @@ def _process_resume_background(
                 last_error=None,
                 processing_task_id=task_id,
                 retryable=False,
-                user_safe_message="Resume processing completed successfully.",
+                user_safe_message=RESUME_PROCESSING_COMPLETED_MESSAGE,
             )
     except Exception as exc:
         logger.exception("Background resume processing failed")
@@ -1713,7 +1716,7 @@ def _retry_resume_background(
                 last_error=None,
                 processing_task_id=task_id,
                 retryable=False,
-                user_safe_message="Resume processing completed successfully.",
+                user_safe_message=RESUME_PROCESSING_COMPLETED_MESSAGE,
             )
     except Exception as exc:
         logger.exception("Background resume retry failed")

@@ -6,7 +6,18 @@ import sys
 
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-_UVICORN_SERVICE_LOGGERS = {"uvicorn", "uvicorn.error", "fastapi"}
+UVICORN_LOGGER = "uvicorn"
+UVICORN_ERROR_LOGGER = "uvicorn.error"
+UVICORN_ACCESS_LOGGER = "uvicorn.access"
+FASTAPI_LOGGER = "fastapi"
+_UVICORN_SERVICE_LOGGERS = {UVICORN_LOGGER, UVICORN_ERROR_LOGGER, FASTAPI_LOGGER}
+_NUL_FILTER_LOGGERS = [
+    "",
+    UVICORN_LOGGER,
+    UVICORN_ERROR_LOGGER,
+    UVICORN_ACCESS_LOGGER,
+    FASTAPI_LOGGER,
+]
 
 
 def _strip_nul(s: str) -> str:
@@ -145,7 +156,7 @@ def _sanitize_logger_handlers(
 
 def is_nul_filter_active(logger_names: list[str] | None = None) -> bool:
     """Return True if all inspected handlers include NulCharacterFilter."""
-    names = logger_names or ["", "uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"]
+    names = logger_names or _NUL_FILTER_LOGGERS
     for name in names:
         logger = logging.getLogger(name or None)
         for handler in logger.handlers:
@@ -169,7 +180,12 @@ def setup_logging(name: str = None, level: int = logging.INFO) -> None:
         _sanitize_logger_handlers(root_logger, level, add_handler_if_missing=True)
 
         # Uvicorn/FastAPI may install dedicated handlers.
-        for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"):
+        for logger_name in (
+            UVICORN_LOGGER,
+            UVICORN_ERROR_LOGGER,
+            UVICORN_ACCESS_LOGGER,
+            FASTAPI_LOGGER,
+        ):
             _sanitize_logger_handlers(
                 logging.getLogger(logger_name),
                 level,
@@ -189,7 +205,7 @@ def setup_service_logging(logger: logging.Logger) -> None:
     service, so they can all call this single shared helper instead.
     """
     setup_logging()
-    for logger_name in ("", "uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"):
+    for logger_name in _NUL_FILTER_LOGGERS:
         current_logger = logging.getLogger(logger_name or None)
         for handler in current_logger.handlers:
             _ensure_logger_name_alias_filter(

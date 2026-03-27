@@ -48,6 +48,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
 
+function toSafeString(value: unknown, fallback: string): string {
+    return typeof value === 'string' ? value : fallback;
+}
+
 function extractValidationFields(detail: unknown): ApiFieldError[] | undefined {
     if (!Array.isArray(detail)) {
         return undefined;
@@ -55,9 +59,9 @@ function extractValidationFields(detail: unknown): ApiFieldError[] | undefined {
     const fields = detail
         .filter(isRecord)
         .map((entry) => ({
-            path: Array.isArray(entry['loc']) ? entry['loc'].map((part) => String(part)) : [],
-            code: String(entry['type'] ?? 'validation_error'),
-            message: String(entry['msg'] ?? 'Invalid value'),
+            path: Array.isArray(entry['loc']) ? entry['loc'].map(String) : [],
+            code: toSafeString(entry['type'], 'validation_error'),
+            message: toSafeString(entry['msg'], 'Invalid value'),
         }));
     return fields.length > 0 ? fields : undefined;
 }
