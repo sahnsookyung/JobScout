@@ -2156,33 +2156,13 @@ class TestOrchestratorSubscriptionOrder:
         from services.orchestrator.main import orchestrate_match
 
         mock_client, mock_pubsub = mock_redis_async
+        task_id = f"test-{uuid.uuid4().hex[:8]}"
 
         mock_state = AsyncMock()
         mock_state.status = "pending"
         mock_state.notify = AsyncMock()
         mock_state._save_to_redis = AsyncMock()
         mock_state.resume_fingerprint = "abc123"
-
-        call_count = 0
-        async def multi_stage_gen():
-            nonlocal call_count
-            if call_count == 0:
-                call_count += 1
-                yield {
-                    "type": "message",
-                    "data": '{"task_id": "test-123", "status": "completed", "resume_fingerprint": "abc123"}',
-                }
-            elif call_count == 1:
-                call_count += 1
-                yield {
-                    "type": "message",
-                    "data": '{"task_id": "test-123", "status": "completed"}',
-                }
-            # Prevent infinite loop
-            while True:
-                await asyncio.sleep(10)
-
-        mock_pubsub.listen = MagicMock(return_value=multi_stage_gen())
 
         mock_registry = MagicMock()
         mock_registry.lock = AsyncMock()
@@ -2196,15 +2176,26 @@ class TestOrchestratorSubscriptionOrder:
                 return_value=mock_client,
             ):
                 with patch("services.orchestrator.main.enqueue_job"):
-                    with patch("services.orchestrator.main.OrchestrationState"):
-                        task_id = f"test-{uuid.uuid4().hex[:8]}"
-                        try:
-                            async with asyncio.timeout(0.1):
-                                await orchestrate_match(
-                                    task_id, mock_registry, resume_fingerprint=None
-                                )
-                        except asyncio.TimeoutError:
-                            pass  # Expected
+                    with patch(
+                        "services.orchestrator.main._run_pipeline_stage",
+                        new=AsyncMock(
+                            side_effect=[
+                                (
+                                    True,
+                                    {
+                                        "task_id": task_id,
+                                        "status": "completed",
+                                        "resume_fingerprint": "abc123",
+                                    },
+                                ),
+                                (True, {"task_id": task_id, "status": "completed"}),
+                                (True, {"task_id": task_id, "status": "completed"}),
+                            ]
+                        ),
+                    ):
+                        await orchestrate_match(
+                            task_id, mock_registry, resume_fingerprint=None
+                        )
 
         # Robust: verify both subscribe and unsubscribe were called
         assert mock_pubsub.subscribe.called, "Should subscribe to channels"
@@ -2879,15 +2870,11 @@ class TestRunExtractionStage:
 
         mock_pubsub.listen = MagicMock(return_value=gen())
 
-        mock_client = AsyncMock()
-
         with patch("services.orchestrator.main.enqueue_job"):
             with patch("services.orchestrator.main.asyncio.to_thread"):
                 try:
                     async with asyncio.timeout(0.1):
-                        result = await _run_extraction_stage(
-                            state, "test-123", mock_client, mock_pubsub
-                        )
+                        result = await _run_extraction_stage(state, "test-123", mock_pubsub)
                 except asyncio.TimeoutError:
                     pass
 
@@ -2923,15 +2910,11 @@ class TestRunEmbeddingsStage:
 
         mock_pubsub.listen = MagicMock(return_value=gen())
 
-        mock_client = AsyncMock()
-
         with patch("services.orchestrator.main.enqueue_job"):
             with patch("services.orchestrator.main.asyncio.to_thread"):
                 try:
                     async with asyncio.timeout(0.1):
-                        result = await _run_embeddings_stage(
-                            state, "test-123", mock_client, mock_pubsub
-                        )
+                        result = await _run_embeddings_stage(state, "test-123", mock_pubsub)
                 except asyncio.TimeoutError:
                     pass
 
