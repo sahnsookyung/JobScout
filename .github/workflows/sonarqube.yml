@@ -107,18 +107,6 @@ jobs:
           docker rm redis-test || true
           docker rmi jobscout-orchestrator:latest || true
 
-      - name: SonarQube token preflight
-        run: |
-          if [ -n "${SONAR_TOKEN:-}" ]; then
-            echo "SONAR_TOKEN is present"
-            echo "sonar_token_present=true" >> "$GITHUB_ENV"
-          else
-            echo "::warning::SONAR_TOKEN is empty"
-            echo "sonar_token_present=false" >> "$GITHUB_ENV"
-          fi
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9
         env:
