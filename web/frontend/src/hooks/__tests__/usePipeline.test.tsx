@@ -188,6 +188,30 @@ describe('usePipeline', () => {
             expect(pipelineApi.runMatching).not.toHaveBeenCalled();
         });
 
+        it('blocks matching immediately when a resume task is already pending', async () => {
+            const mockFile = new File(['test'], 'resume.pdf');
+            vi.mocked(pipelineApi.preflightResume).mockResolvedValue({
+                data: { status: 'processing_existing', message: 'Processing...', task_id: 'resume-task-pending' },
+            } as never);
+            vi.mocked(pipelineApi.getResumeStatus).mockResolvedValue({
+                data: { status: 'running' },
+            } as never);
+
+            const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
+            const onError = vi.fn();
+
+            await act(async () => {
+                await result.current.uploadResume(mockFile);
+            });
+
+            await act(async () => {
+                await result.current.runPipeline(onError);
+            });
+
+            expect(onError).toHaveBeenCalledWith('Resume is still being processed. Please wait a moment and try again.');
+            expect(pipelineApi.getResumeEligibility).not.toHaveBeenCalled();
+        });
+
         it('calls runMatching when resume exists on backend', async () => {
             vi.mocked(pipelineApi.getResumeEligibility).mockResolvedValue({
                 data: {
@@ -246,6 +270,113 @@ describe('usePipeline', () => {
 
             expect(pipelineApi.uploadResume).toHaveBeenCalled();
             expect(pipelineApi.runMatching).toHaveBeenCalledTimes(1);
+        });
+
+        it('asks for re-upload when IndexedDB hash exists but file blob is missing', async () => {
+            const { getResumeHash, getResume } = await import('@/utils/indexedDB');
+            vi.mocked(getResumeHash).mockResolvedValue('abc123');
+            vi.mocked(getResume).mockResolvedValue(null);
+            vi.mocked(pipelineApi.getResumeEligibility).mockResolvedValue({
+                data: {
+                    can_run: false,
+                    status: 'missing',
+                    message: 'Missing resume',
+                },
+            } as never);
+
+            const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
+            const onError = vi.fn();
+
+            await act(async () => {
+                await result.current.runPipeline(onError);
+            });
+
+            expect(onError).toHaveBeenCalledWith('Resume file not found in browser storage. Please re-upload.');
+            expect(pipelineApi.uploadResume).not.toHaveBeenCalled();
+        });
+
+        it('tracks pending task when eligibility reports existing processing', async () => {
+            vi.mocked(pipelineApi.getResumeEligibility).mockResolvedValue({
+                data: {
+                    can_run: false,
+                    status: 'embedding',
+                    task_id: 'resume-task-embedding',
+                    message: 'Resume is still processing.',
+                },
+            } as never);
+
+            const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
+            const onError = vi.fn();
+
+            await act(async () => {
+                await result.current.runPipeline(onError);
+            });
+
+            expect(onError).toHaveBeenCalledWith('Resume is still processing.');
+            expect(result.current.isPreparingResume).toBe(true);
+            expect(pipelineApi.runMatching).not.toHaveBeenCalled();
+        });
+
+        it('reports backend eligibility error after browser fallback upload completes', async () => {
+            vi.useFakeTimers();
+            const { getResumeHash, getResume } = await import('@/utils/indexedDB');
+            vi.mocked(getResumeHash).mockResolvedValue('abc123');
+            vi.mocked(getResume).mockResolvedValue(new File(['data'], 'resume.pdf', { type: 'application/pdf' }));
+            vi.mocked(pipelineApi.getResumeEligibility)
+                .mockResolvedValueOnce({
+                    data: {
+                        can_run: false,
+                        status: 'missing',
+                        message: 'Missing resume',
+                    },
+                } as never)
+                .mockResolvedValueOnce({
+                    data: {
+                        can_run: false,
+                        status: 'failed_retryable',
+                        message: 'Resume failed and needs attention.',
+                    },
+                } as never);
+            vi.mocked(pipelineApi.uploadResume).mockResolvedValue({
+                data: { message: 'Uploaded', task_id: 'resume-task-1', status: 'in_progress' },
+            } as never);
+            vi.mocked(pipelineApi.getResumeStatus).mockResolvedValue({
+                data: { status: 'completed' },
+            } as never);
+
+            const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
+            const onError = vi.fn();
+
+            await act(async () => {
+                const promise = result.current.runPipeline(onError);
+                await vi.advanceTimersByTimeAsync(2000);
+                await promise;
+            });
+
+            expect(pipelineApi.getResumeStatus).toHaveBeenCalledWith('resume-task-1');
+            expect(onError).toHaveBeenCalledWith('Resume failed and needs attention.');
+            expect(pipelineApi.runMatching).not.toHaveBeenCalled();
+            vi.useRealTimers();
+        });
+
+        it('reports mutate failure through the generic error handler', async () => {
+            vi.mocked(pipelineApi.getResumeEligibility).mockResolvedValue({
+                data: {
+                    can_run: true,
+                    status: 'ready',
+                    message: 'Resume ready',
+                },
+            } as never);
+            vi.mocked(pipelineApi.runMatching).mockRejectedValue(new Error('server exploded'));
+
+            const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
+            const onError = vi.fn();
+
+            await act(async () => {
+                await result.current.runPipeline(onError);
+            });
+
+            expect(onError).toHaveBeenCalledWith('Failed to start matching: server exploded');
         });
     });
 
@@ -361,6 +492,29 @@ describe('usePipeline', () => {
             });
 
             expect(result.current.isUploading).toBe(false);
+        });
+
+        it('retries existing retryable upload when preflight allows it', async () => {
+            const mockFile = new File(['test'], 'resume.pdf');
+            vi.mocked(pipelineApi.preflightResume).mockResolvedValue({
+                data: {
+                    status: 'failed_retryable',
+                    message: 'Retryable failure',
+                    upload_id: 'upload-1',
+                },
+            } as never);
+            vi.mocked(pipelineApi.retryResume).mockResolvedValue({
+                data: { message: 'Retry started', task_id: 'retry-task-1', status: 'in_progress' },
+            } as never);
+
+            const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
+
+            await act(async () => {
+                await result.current.uploadResume(mockFile);
+            });
+
+            expect(pipelineApi.retryResume).toHaveBeenCalledWith('upload-1');
+            expect(pipelineApi.uploadResume).not.toHaveBeenCalled();
         });
     });
 

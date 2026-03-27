@@ -10,7 +10,8 @@ Usage:
 import asyncio
 import pytest
 import threading
-from unittest.mock import Mock, patch, AsyncMock
+from types import SimpleNamespace
+from unittest.mock import Mock, patch, AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
 
@@ -89,6 +90,99 @@ class TestMatcherLogging:
         from services.scorer_matcher.main import _setup_logging
         # Just verify it runs without error
         _setup_logging()
+
+
+class TestMatcherHelpers:
+    def test_serialize_task_state_coerces_non_json_values(self):
+        from services.scorer_matcher.main import _serialize_task_state
+
+        result = _serialize_task_state({"owner_id": object(), "count": 1})
+
+        assert result["count"] == 1
+        assert isinstance(result["owner_id"], str)
+
+    def test_compute_stale_result_metadata_returns_empty_for_missing_identifiers(self):
+        from services.scorer_matcher.main import _compute_stale_result_metadata
+
+        assert _compute_stale_result_metadata(None, "upload-1") == {}
+        assert _compute_stale_result_metadata("owner-1", None) == {}
+
+    def test_compute_stale_result_metadata_returns_empty_for_invalid_owner(self):
+        from services.scorer_matcher.main import _compute_stale_result_metadata
+
+        assert _compute_stale_result_metadata("not-a-uuid", "upload-1") == {}
+
+    def test_compute_stale_result_metadata_returns_empty_when_no_latest_upload(self):
+        from services.scorer_matcher.main import _compute_stale_result_metadata
+
+        repo = Mock()
+        repo.get_latest_resume_upload.return_value = None
+        mock_uow = MagicMock()
+        mock_uow.__enter__.return_value = repo
+        mock_uow.__exit__.return_value = False
+
+        with patch("services.scorer_matcher.main.job_uow", return_value=mock_uow):
+            result = _compute_stale_result_metadata(
+                "00000000-0000-0000-0000-000000000001",
+                "upload-1",
+            )
+
+        assert result == {}
+
+    def test_compute_stale_result_metadata_marks_same_upload_fresh(self):
+        from services.scorer_matcher.main import _compute_stale_result_metadata
+
+        repo = Mock()
+        repo.get_latest_resume_upload.return_value = SimpleNamespace(
+            id="upload-1",
+            resume_fingerprint="fp-1",
+        )
+        mock_uow = MagicMock()
+        mock_uow.__enter__.return_value = repo
+        mock_uow.__exit__.return_value = False
+
+        with patch("services.scorer_matcher.main.job_uow", return_value=mock_uow):
+            result = _compute_stale_result_metadata(
+                "00000000-0000-0000-0000-000000000001",
+                "upload-1",
+            )
+
+        assert result["stale_due_to_newer_upload"] is False
+
+    def test_compute_stale_result_metadata_marks_newer_upload_stale(self):
+        from services.scorer_matcher.main import _compute_stale_result_metadata
+
+        repo = Mock()
+        repo.get_latest_resume_upload.return_value = SimpleNamespace(
+            id="upload-2",
+            resume_fingerprint="fp-2",
+        )
+        mock_uow = MagicMock()
+        mock_uow.__enter__.return_value = repo
+        mock_uow.__exit__.return_value = False
+
+        with patch("services.scorer_matcher.main.job_uow", return_value=mock_uow):
+            result = _compute_stale_result_metadata(
+                "00000000-0000-0000-0000-000000000001",
+                "upload-1",
+            )
+
+        assert result["stale_due_to_newer_upload"] is True
+        assert "latest resume" in result["stale_message"]
+
+    def test_compute_stale_result_metadata_returns_empty_on_repository_error(self):
+        from services.scorer_matcher.main import _compute_stale_result_metadata
+
+        mock_uow = MagicMock()
+        mock_uow.__enter__.side_effect = RuntimeError("db down")
+
+        with patch("services.scorer_matcher.main.job_uow", return_value=mock_uow):
+            result = _compute_stale_result_metadata(
+                "00000000-0000-0000-0000-000000000001",
+                "upload-1",
+            )
+
+        assert result == {}
 
 
 class TestMatcherEndpoints:
@@ -444,6 +538,158 @@ class TestMatcherConsumer:
         assert mock_set_state.call_args_list[-1].args[1]["stale_due_to_newer_upload"] is True
         assert mock_set_state.call_args_list[-1].args[1]["latest_upload_id"] == "upload-new"
 
+    @pytest.mark.asyncio
+    async def test_do_process_marks_cancellation_requested_before_save_boundary(self):
+        """Cancellation before saving uses cancellation_requested state."""
+        from services.scorer_matcher.main import MatcherConsumer
+
+        mock_ctx = Mock()
+        consumer = MatcherConsumer(mock_ctx)
+
+        mock_result = Mock(
+            matches_count=0,
+            saved_count=0,
+            notified_count=0,
+            execution_time=0.1,
+            cancelled=True,
+            error="Cancelled by user",
+        )
+
+        def fake_run(_ctx, _stop_event, _resume_fingerprint, status_callback):
+            status_callback("scoring")
+            return mock_result
+
+        with patch("services.scorer_matcher.main._run_matching_pipeline_sync", side_effect=fake_run), \
+             patch("services.scorer_matcher.main.is_task_cancellation_requested", return_value=True), \
+             patch("services.scorer_matcher.main._compute_stale_result_metadata", return_value={}), \
+             patch("services.scorer_matcher.main.clear_task_cancellation_requested"), \
+             patch("services.scorer_matcher.main.set_task_state") as mock_set_state:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "t-1", "resume_fingerprint": "fp-123"},
+            )
+
+        assert success is False
+        assert result["status"] == "cancelled"
+        running_states = [call.args[1] for call in mock_set_state.call_args_list[:-1]]
+        assert any(state["status"] == "cancellation_requested" for state in running_states)
+
+    @pytest.mark.asyncio
+    async def test_do_process_marks_persisting_after_save_boundary(self):
+        """Cancellation after save boundary uses persisting state."""
+        from services.scorer_matcher.main import MatcherConsumer
+
+        mock_ctx = Mock()
+        consumer = MatcherConsumer(mock_ctx)
+
+        mock_result = Mock(
+            matches_count=1,
+            saved_count=1,
+            notified_count=0,
+            execution_time=0.2,
+            cancelled=True,
+            error="Cancelled during save",
+        )
+
+        def fake_run(_ctx, _stop_event, _resume_fingerprint, status_callback):
+            status_callback("saving_results")
+            return mock_result
+
+        with patch("services.scorer_matcher.main._run_matching_pipeline_sync", side_effect=fake_run), \
+             patch("services.scorer_matcher.main.is_task_cancellation_requested", return_value=True), \
+             patch("services.scorer_matcher.main._compute_stale_result_metadata", return_value={}), \
+             patch("services.scorer_matcher.main.clear_task_cancellation_requested"), \
+             patch("services.scorer_matcher.main.set_task_state") as mock_set_state:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "t-1", "resume_fingerprint": "fp-123"},
+            )
+
+        assert success is False
+        assert result["status"] == "cancelled"
+        running_states = [call.args[1] for call in mock_set_state.call_args_list[:-1]]
+        assert any(state["status"] == "persisting" for state in running_states)
+
+    @pytest.mark.asyncio
+    async def test_do_process_ignores_cancellation_lookup_failures(self):
+        from services.scorer_matcher.main import MatcherConsumer
+
+        consumer = MatcherConsumer(Mock())
+        mock_result = Mock(
+            matches_count=1,
+            saved_count=1,
+            notified_count=0,
+            execution_time=0.1,
+            cancelled=False,
+            error=None,
+        )
+
+        with patch("services.scorer_matcher.main._run_matching_pipeline_sync", return_value=mock_result), \
+             patch("services.scorer_matcher.main.is_task_cancellation_requested", side_effect=RuntimeError("redis down")), \
+             patch("services.scorer_matcher.main._compute_stale_result_metadata", return_value={}), \
+             patch("services.scorer_matcher.main.clear_task_cancellation_requested"), \
+             patch("services.scorer_matcher.main.set_task_state") as mock_set_state:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "t-1", "resume_fingerprint": "fp-123"},
+            )
+
+        assert success is True
+        assert result["status"] == "completed"
+        assert mock_set_state.call_args_list[0].args[1]["status"] == "running"
+
+    @pytest.mark.asyncio
+    async def test_do_process_logs_when_completed_state_write_fails(self):
+        from services.scorer_matcher.main import MatcherConsumer
+
+        consumer = MatcherConsumer(Mock())
+        mock_result = Mock(
+            matches_count=1,
+            saved_count=1,
+            notified_count=0,
+            execution_time=0.1,
+            cancelled=False,
+            error=None,
+        )
+
+        set_state = Mock(side_effect=[None, RuntimeError("write failed")])
+
+        with patch("services.scorer_matcher.main._run_matching_pipeline_sync", return_value=mock_result), \
+             patch("services.scorer_matcher.main.is_task_cancellation_requested", return_value=False), \
+             patch("services.scorer_matcher.main._compute_stale_result_metadata", return_value={}), \
+             patch("services.scorer_matcher.main.clear_task_cancellation_requested"), \
+             patch("services.scorer_matcher.main.set_task_state", set_state), \
+             patch("services.scorer_matcher.main.logger.warning") as mock_warning:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "t-1", "resume_fingerprint": "fp-123"},
+            )
+
+        assert success is True
+        assert result["status"] == "completed"
+        mock_warning.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_do_process_logs_when_failed_state_write_fails(self):
+        from services.scorer_matcher.main import MatcherConsumer
+
+        consumer = MatcherConsumer(Mock())
+        set_state = Mock(side_effect=[None, RuntimeError("write failed")])
+
+        with patch("services.scorer_matcher.main._run_matching_pipeline_sync", side_effect=Exception("Pipeline failed")), \
+             patch("services.scorer_matcher.main.is_task_cancellation_requested", return_value=False), \
+             patch("services.scorer_matcher.main.clear_task_cancellation_requested"), \
+             patch("services.scorer_matcher.main.set_task_state", set_state), \
+             patch("services.scorer_matcher.main.logger.warning") as mock_warning:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "t-1", "resume_fingerprint": "fp-123"},
+            )
+
+        assert success is False
+        assert result["status"] == "failed"
+        mock_warning.assert_called()
+
 
 class TestMatcherAppLifespan:
     """Test matcher app lifespan."""
@@ -502,6 +748,54 @@ class TestMatcherAppLifespan:
         asyncio.run(state.ctx.aclose())
 
         mock_ctx.aclose.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_lifespan_starts_consumer_and_closes_async_context(self):
+        from services.scorer_matcher.main import app, lifespan
+
+        mock_ctx = Mock()
+        mock_ctx.aclose = AsyncMock()
+        created_task = Mock()
+        created_task.cancel = Mock()
+
+        def _mock_create_task(coro):
+            coro.close()
+            return created_task
+
+        with patch("services.scorer_matcher.main.init_db"), \
+             patch("services.scorer_matcher.main.load_config", return_value=Mock()), \
+             patch("services.scorer_matcher.main.AppContext.build", return_value=mock_ctx), \
+             patch("services.scorer_matcher.main.asyncio.create_task", side_effect=_mock_create_task) as mock_create_task, \
+             patch("services.scorer_matcher.main.asyncio.gather", new_callable=AsyncMock) as mock_gather:
+            async with lifespan(app):
+                assert app.state.matcher.ctx is mock_ctx
+                mock_create_task.assert_called_once()
+
+        created_task.cancel.assert_called_once()
+        mock_gather.assert_awaited_once()
+        mock_ctx.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_lifespan_closes_sync_context_when_async_close_missing(self):
+        from services.scorer_matcher.main import app, lifespan
+
+        mock_ctx = SimpleNamespace(close=Mock())
+        created_task = Mock()
+        created_task.cancel = Mock()
+
+        def _mock_create_task(coro):
+            coro.close()
+            return created_task
+
+        with patch("services.scorer_matcher.main.init_db"), \
+             patch("services.scorer_matcher.main.load_config", return_value=Mock()), \
+             patch("services.scorer_matcher.main.AppContext.build", return_value=mock_ctx), \
+             patch("services.scorer_matcher.main.asyncio.create_task", side_effect=_mock_create_task), \
+             patch("services.scorer_matcher.main.asyncio.gather", new_callable=AsyncMock):
+            async with lifespan(app):
+                pass
+
+        mock_ctx.close.assert_called_once()
 
 
 class TestRunMatchingPipelineSync:

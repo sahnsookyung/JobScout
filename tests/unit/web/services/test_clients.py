@@ -218,6 +218,14 @@ class TestServiceClient:
             mock_request.assert_called_once_with("POST", "/api/test", json={"data": "value"})
             assert result == {"success": True}
 
+    def test_close_closes_http_client(self):
+        client = ServiceClient("http://localhost:8080")
+        client._http_client = Mock()
+
+        client.close()
+
+        client._http_client.close.assert_called_once()
+
 
 class TestExtractionClient:
     """Test ExtractionClient."""
@@ -574,6 +582,50 @@ class TestOrchestratorClient:
 
             mock_get.assert_called_once_with(HEALTH_ENDPOINT)
             assert result == {"status": "healthy"}
+
+    def test_process_resume_includes_all_optional_fields(self):
+        client = OrchestratorClient("http://orchestrator:8084")
+
+        with patch.object(client, 'post') as mock_post:
+            mock_post.return_value = {"success": True}
+
+            result = client.process_resume(
+                "/tmp/resume.pdf",
+                "task-1",
+                upload_id="upload-1",
+                owner_id="owner-1",
+                resume_fingerprint="fp-1",
+                mode="embed_only",
+            )
+
+            mock_post.assert_called_once_with(
+                "/orchestrate/resume-etl",
+                json={
+                    "task_id": "task-1",
+                    "mode": "embed_only",
+                    "file_path": "/tmp/resume.pdf",
+                    "upload_id": "upload-1",
+                    "owner_id": "owner-1",
+                    "resume_fingerprint": "fp-1",
+                },
+            )
+            assert result == {"success": True}
+
+    def test_process_resume_omits_none_fields(self):
+        client = OrchestratorClient("http://orchestrator:8084")
+
+        with patch.object(client, 'post') as mock_post:
+            mock_post.return_value = {"success": True}
+
+            client.process_resume(None, "task-2")
+
+            mock_post.assert_called_once_with(
+                "/orchestrate/resume-etl",
+                json={
+                    "task_id": "task-2",
+                    "mode": "extract_and_embed",
+                },
+            )
 
 
 class TestSingletonFunctions:

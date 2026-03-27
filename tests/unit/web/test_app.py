@@ -62,6 +62,16 @@ class TestCreateApp:
         assert HTTPException in handler_keys
         assert Exception in handler_keys
 
+    def test_lifespan_calls_dev_bypass_guard(self):
+        from fastapi.testclient import TestClient
+        from web.backend.app import create_app
+
+        with patch("web.backend.app._ensure_dev_bypass_allowed") as mock_guard:
+            with TestClient(create_app()):
+                pass
+
+        mock_guard.assert_called()
+
 
 class TestHealthCheckEndpoint:
     """Test GET /health endpoint."""

@@ -230,6 +230,22 @@ describe('StatusBanner', () => {
         expect(screen.getByText('Pipeline cancelled')).toBeInTheDocument();
     });
 
+    it('renders cancellation requested warning state', () => {
+        render(<StatusBanner status="cancellation_requested" step="scoring" />);
+
+        expect(screen.getByText('Stopping as soon as it is safe')).toBeInTheDocument();
+        expect(screen.getByText('Cancellation was requested. The worker is still winding down.')).toBeInTheDocument();
+        expect(screen.getByTestId('badge')).toHaveAttribute('data-variant', 'warning');
+    });
+
+    it('renders persisting warning state', () => {
+        render(<StatusBanner status="persisting" step="saving_results" />);
+
+        expect(screen.getByText('Finishing writes')).toBeInTheDocument();
+        expect(screen.getByText('The pipeline crossed the save boundary and is finishing safely.')).toBeInTheDocument();
+        expect(screen.getByTestId('badge')).toHaveAttribute('data-variant', 'warning');
+    });
+
     it('shows current step when running', () => {
         const { rerender } = render(<StatusBanner status="running" step="loading_resume" />);
         expect(screen.getByText('Loading Resume')).toBeInTheDocument();
@@ -576,5 +592,32 @@ describe('ActionButton', () => {
 
         const button = container.querySelector('button');
         expect(button).toHaveClass('bg-red-500');
+    });
+
+    it('shows persisting label and amber styling', () => {
+        const { container } = render(<ActionButton {...defaultProps} isPersistingStatus />);
+
+        expect(screen.getByText('Finishing...')).toBeInTheDocument();
+        const button = container.querySelector('button');
+        expect(button).toHaveClass('bg-amber-500');
+    });
+
+    it('shows cancellation requested label', () => {
+        render(<ActionButton {...defaultProps} isCancellationRequested />);
+
+        expect(screen.getByText('Stopping...')).toBeInTheDocument();
+    });
+
+    it('shows resume processing label for known extracting step', () => {
+        render(<ActionButton {...defaultProps} isProcessingResume processingStep="extracting" />);
+
+        expect(screen.getByText('Parsing resume...')).toBeInTheDocument();
+        expect(screen.getByTestId('loader-icon')).toBeInTheDocument();
+    });
+
+    it('falls back to generic preparing label for unknown processing step', () => {
+        render(<ActionButton {...defaultProps} isProcessingResume processingStep="unknown-step" />);
+
+        expect(screen.getByText('Preparing...')).toBeInTheDocument();
     });
 });
