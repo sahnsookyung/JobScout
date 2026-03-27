@@ -40,8 +40,29 @@ from core.redis_streams import (
 )
 from database.uow import job_uow
 from database.repositories.resume import ResumeUploadCreateParams
+from web.backend.api_error_codes import (
+    COMMON_RATE_LIMIT_EXCEEDED,
+    PIPELINE_MATCH_ALREADY_RUNNING,
+    PIPELINE_MATCH_START_FAILED,
+    PIPELINE_MATCH_STOP_FAILED,
+    PIPELINE_MATCH_STOP_NOT_FOUND,
+    PIPELINE_RESUME_FILE_EMPTY,
+    PIPELINE_RESUME_FILE_REQUIRED,
+    PIPELINE_RESUME_FILE_TOO_LARGE,
+    PIPELINE_RESUME_FILE_UNSUPPORTED,
+    PIPELINE_RESUME_HASH_MISMATCH,
+    PIPELINE_RESUME_NOT_READY,
+    PIPELINE_RESUME_REUPLOAD_REQUIRED,
+    PIPELINE_RESUME_UPLOAD_IN_PROGRESS,
+    PIPELINE_RESUME_UPLOAD_NOT_FOUND,
+    PIPELINE_RESUME_UPLOAD_NOT_RETRYABLE,
+    PIPELINE_STATUS_LOOKUP_FAILED,
+    PIPELINE_TASK_INVALID_ID,
+    PIPELINE_TASK_NOT_FOUND,
+)
 from ..dependencies import get_current_user
 from ..models.responses import (
+    ApiError,
     PipelineTaskResponse,
     PipelineStatusResponse,
     ResumeEligibilityResponse,
@@ -97,6 +118,48 @@ router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 TASK_ID_PATTERN = re.compile(r'^[a-zA-Z0-9-]{1,50}$')
 
 
+class PipelineApiError(HTTPException):
+    """Endpoint-local error used to return canonical ApiError bodies."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        code: str,
+        message: str,
+        detail: Optional[str] = None,
+    ) -> None:
+        super().__init__(status_code=status_code, detail=message)
+        self.status_code = status_code
+        self.payload = ApiError(
+            code=code,
+            message=message,
+            detail=detail,
+        )
+
+
+def _pipeline_error_response(exc: PipelineApiError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.payload.model_dump(exclude_none=True),
+    )
+
+
+def _raise_pipeline_error(
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    detail: Optional[str] = None,
+) -> None:
+    raise PipelineApiError(
+        status_code=status_code,
+        code=code,
+        message=message,
+        detail=detail,
+    )
+
+
 def _sanitize_for_logging(value: str) -> str:
     """Remove log injection characters (CRLF) from user input.
 
@@ -140,6 +203,14 @@ def add_rate_limit_handlers(app):
 
 
 async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    if request.url.path.startswith("/api/pipeline"):
+        return JSONResponse(
+            status_code=429,
+            content=ApiError(
+                code=COMMON_RATE_LIMIT_EXCEEDED,
+                message=str(exc),
+            ).model_dump(),
+        )
     return JSONResponse(
         status_code=429,
         content={"detail": str(exc)}
@@ -150,9 +221,9 @@ async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded)
     "/run-matching",
     response_model=PipelineTaskResponse,
     responses={
-        400: {"description": "No resume found"},
-        409: {"description": "Pipeline is already running"},
-        500: {"description": "Internal server error"},
+        400: {"model": ApiError, "description": "Matching cannot start with the current resume state."},
+        409: {"model": ApiError, "description": "A matching task or resume upload is already in progress."},
+        500: {"model": ApiError, "description": "Internal server error"},
     }
 )
 def run_matching_pipeline_endpoint(user: Annotated[None, Depends(get_current_user)] = None):
@@ -172,7 +243,10 @@ def run_matching_pipeline_endpoint(user: Annotated[None, Depends(get_current_use
         409: Pipeline is already running.
         500: Internal error starting the pipeline.
     """
-    return _start_matching(user)
+    try:
+        return _start_matching(user)
+    except PipelineApiError as exc:
+        return _pipeline_error_response(exc)
 
 
 def _guard_resume_not_uploading(redis, owner_id: str) -> None:
@@ -196,11 +270,12 @@ def _guard_resume_not_uploading(redis, owner_id: str) -> None:
             # "processing" = web-backend initial write; "running" = orchestrator stage active.
             # Both mean extraction/embedding is in progress; matching against the old
             # fingerprint would produce stale results.
-            raise HTTPException(
+            _raise_pipeline_error(
                 status_code=409,
-                detail="Resume is currently being processed. Please wait and try again.",
+                code=PIPELINE_RESUME_UPLOAD_IN_PROGRESS,
+                message="Resume is currently being processed. Please wait and try again.",
             )
-    except HTTPException:
+    except PipelineApiError:
         raise
     except Exception:
         pass  # Redis unavailable — proceed without guard
@@ -261,14 +336,26 @@ def _get_owned_resume_task_state(task_id: str, owner_id) -> dict:
     """Load resume-upload task state and enforce owner visibility."""
     state = get_task_state(task_id)
     if state is None:
-        raise HTTPException(status_code=404, detail=TASK_NOT_FOUND_OR_EXPIRED_DETAIL)
+        _raise_pipeline_error(
+            status_code=404,
+            code=PIPELINE_TASK_NOT_FOUND,
+            message=TASK_NOT_FOUND_OR_EXPIRED_DETAIL,
+        )
 
     task_type = state.get("task_type")
     if task_type not in (None, "resume_upload"):
-        raise HTTPException(status_code=404, detail=TASK_NOT_FOUND_OR_EXPIRED_DETAIL)
+        _raise_pipeline_error(
+            status_code=404,
+            code=PIPELINE_TASK_NOT_FOUND,
+            message=TASK_NOT_FOUND_OR_EXPIRED_DETAIL,
+        )
 
     if not _resume_task_belongs_to_owner(state, owner_id):
-        raise HTTPException(status_code=404, detail=TASK_NOT_FOUND_OR_EXPIRED_DETAIL)
+        _raise_pipeline_error(
+            status_code=404,
+            code=PIPELINE_TASK_NOT_FOUND,
+            message=TASK_NOT_FOUND_OR_EXPIRED_DETAIL,
+        )
 
     return state
 
@@ -572,8 +659,12 @@ def _ensure_no_active_matching_task(redis, owner_id: str) -> None:
         active_id = _decode_redis_value(active_id_raw)
         state = get_task_state(active_id)
         if state and state.get("status") in ("pending", "running", "cancellation_requested", "persisting"):
-            raise HTTPException(status_code=409, detail="Matching pipeline is already running")
-    except HTTPException:
+            _raise_pipeline_error(
+                status_code=409,
+                code=PIPELINE_MATCH_ALREADY_RUNNING,
+                message="Matching pipeline is already running.",
+            )
+    except PipelineApiError:
         raise
     except Exception:
         logger.warning("Failed to check active task state in Redis")
@@ -589,7 +680,16 @@ def _require_resume_eligibility_or_raise(owner_id):
         "extracted",
         "embedding",
     } else 400
-    raise HTTPException(status_code=status_code, detail=eligibility.message)
+    error_code = (
+        PIPELINE_RESUME_UPLOAD_IN_PROGRESS
+        if status_code == 409
+        else PIPELINE_RESUME_NOT_READY
+    )
+    _raise_pipeline_error(
+        status_code=status_code,
+        code=error_code,
+        message=eligibility.message,
+    )
 
 
 def _set_initial_matching_task_state(
@@ -658,7 +758,11 @@ def _enqueue_matching_job_or_500(
                     redis.delete(active_key)
             except Exception:
                 logger.warning("Failed to clear active task marker after enqueue failure")
-        raise HTTPException(status_code=500, detail="Failed to start matching pipeline")
+        _raise_pipeline_error(
+            status_code=500,
+            code=PIPELINE_MATCH_START_FAILED,
+            message="Failed to start matching pipeline.",
+        )
 
 
 def _start_matching(user) -> PipelineTaskResponse:
@@ -701,7 +805,11 @@ def _stop_matching(user) -> PipelineTaskResponse:
         owner_id = serialize_owner_id(resolve_owner_id(user))
         active_id_raw = redis.get(_active_task_key(owner_id))
         if not active_id_raw:
-            raise HTTPException(status_code=404, detail="No active pipeline to stop")
+            _raise_pipeline_error(
+                status_code=404,
+                code=PIPELINE_MATCH_STOP_NOT_FOUND,
+                message="No active pipeline to stop.",
+            )
 
         task_id = active_id_raw if isinstance(active_id_raw, str) else active_id_raw.decode()
         state = get_task_state(task_id)
@@ -711,7 +819,11 @@ def _stop_matching(user) -> PipelineTaskResponse:
             "cancellation_requested",
             "persisting",
         ):
-            raise HTTPException(status_code=404, detail="No active pipeline to stop")
+            _raise_pipeline_error(
+                status_code=404,
+                code=PIPELINE_MATCH_STOP_NOT_FOUND,
+                message="No active pipeline to stop.",
+            )
 
         cancelled_state = {"status": "cancellation_requested"}
         normalized_step = _normalize_matching_step(state.get("step"), default="initializing")
@@ -727,14 +839,25 @@ def _stop_matching(user) -> PipelineTaskResponse:
             task_id=task_id,
             message="Pipeline cancellation requested.",
         )
-    except HTTPException:
+    except PipelineApiError:
         raise
     except Exception:
         logger.exception("Failed to stop pipeline")
-        raise HTTPException(status_code=500, detail=STOP_PIPELINE_ERROR)
+        _raise_pipeline_error(
+            status_code=500,
+            code=PIPELINE_MATCH_STOP_FAILED,
+            message=STOP_PIPELINE_ERROR,
+        )
 
 
-@router.get("/status/{task_id}", response_model=PipelineStatusResponse, responses={500: {"description": "Internal server error"}, 404: {"description": "Task not found"}})
+@router.get(
+    "/status/{task_id}",
+    response_model=PipelineStatusResponse,
+    responses={
+        404: {"model": ApiError, "description": "Task not found"},
+        500: {"model": ApiError, "description": "Internal server error"},
+    },
+)
 def get_pipeline_status(task_id: str):
     """
     Get the status of a pipeline task.
@@ -759,7 +882,11 @@ def get_pipeline_status(task_id: str):
         result = orchestrator_client.get_task_status(task_id)
 
         if not result.get("success"):
-            raise HTTPException(status_code=404, detail=TASK_NOT_FOUND_DETAIL)
+            _raise_pipeline_error(
+                status_code=404,
+                code=PIPELINE_TASK_NOT_FOUND,
+                message=TASK_NOT_FOUND_DETAIL,
+            )
 
         return PipelineStatusResponse(
             task_id=task_id,
@@ -774,11 +901,17 @@ def get_pipeline_status(task_id: str):
             execution_time=result.get("result", {}).get("execution_time"),
             error=result.get("error")
         )
-    except HTTPException:
-        raise
+    except PipelineApiError as exc:
+        return _pipeline_error_response(exc)
     except Exception:
         logger.exception("Failed to get pipeline status")
-        raise HTTPException(status_code=500, detail="Failed to get pipeline status")
+        return _pipeline_error_response(
+            PipelineApiError(
+                status_code=500,
+                code=PIPELINE_STATUS_LOOKUP_FAILED,
+                message="Failed to get pipeline status.",
+            )
+        )
 
 
 @router.get("/active", response_model=Optional[PipelineStatusResponse])
@@ -817,8 +950,8 @@ def _get_active_task(user) -> Optional[PipelineStatusResponse]:
     "/stop",
     response_model=PipelineTaskResponse,
     responses={
-        404: {"description": "No active pipeline to stop"},
-        500: {"description": "Internal server error"},
+        404: {"model": ApiError, "description": "No active pipeline to stop"},
+        500: {"model": ApiError, "description": "Internal server error"},
     }
 )
 def stop_matching_pipeline(user: Annotated[None, Depends(get_current_user)] = None):
@@ -829,7 +962,10 @@ def stop_matching_pipeline(user: Annotated[None, Depends(get_current_user)] = No
         404: No active pipeline is running.
         500: Internal error stopping the pipeline.
     """
-    return _stop_matching(user)
+    try:
+        return _stop_matching(user)
+    except PipelineApiError as exc:
+        return _pipeline_error_response(exc)
 
 @router.get("/resume-eligibility", response_model=ResumeEligibilityResponse)
 def get_resume_eligibility(user: Annotated[None, Depends(get_current_user)] = None):
@@ -849,51 +985,58 @@ def resume_preflight(
 @router.post(
     "/select-resume",
     response_model=ResumeUploadResponse,
-    responses={409: {"description": "Resume is not ready to select yet."}},
+    responses={409: {"model": ApiError, "description": "Resume is not ready to select yet."}},
 )
 def select_ready_resume(
     body: ResumeSelectRequest,
     user: Annotated[None, Depends(get_current_user)] = None,
 ):
     """Commit a new latest-upload intent for an already-ready resume hash."""
-    owner_id = resolve_owner_id(user)
-    owner_key = serialize_owner_id(owner_id)
-    resume_fingerprint = build_resume_fingerprint(owner_id, body.resume_hash)
-    upload_id: Optional[str] = None
+    try:
+        owner_id = resolve_owner_id(user)
+        owner_key = serialize_owner_id(owner_id)
+        resume_fingerprint = build_resume_fingerprint(owner_id, body.resume_hash)
+        upload_id: Optional[str] = None
 
-    with job_uow() as repo:
-        if not repo.is_resume_ready(resume_fingerprint):
-            raise HTTPException(status_code=409, detail="Resume is not ready to select yet.")
+        with job_uow() as repo:
+            if not repo.is_resume_ready(resume_fingerprint):
+                _raise_pipeline_error(
+                    status_code=409,
+                    code=PIPELINE_RESUME_NOT_READY,
+                    message="Resume is not ready to select yet.",
+                )
 
-        upload = repo.create_resume_upload(
-            ResumeUploadCreateParams(
-                owner_id=owner_id,
-                resume_hash=body.resume_hash,
-                resume_fingerprint=resume_fingerprint,
-                original_filename=body.original_filename,
-                status=RESUME_UPLOAD_READY,
-                user_safe_message="Resume selected and ready for matching.",
+            upload = repo.create_resume_upload(
+                ResumeUploadCreateParams(
+                    owner_id=owner_id,
+                    resume_hash=body.resume_hash,
+                    resume_fingerprint=resume_fingerprint,
+                    original_filename=body.original_filename,
+                    status=RESUME_UPLOAD_READY,
+                    user_safe_message="Resume selected and ready for matching.",
+                )
             )
+            upload_id = str(upload.id)
+
+        _clear_latest_upload_task_marker(owner_key)
+
+        return ResumeUploadResponse(
+            success=True,
+            resume_hash=body.resume_hash,
+            upload_id=upload_id,
+            message="Resume selected and ready for matching.",
+            status=RESUME_UPLOAD_READY,
         )
-        upload_id = str(upload.id)
-
-    _clear_latest_upload_task_marker(owner_key)
-
-    return ResumeUploadResponse(
-        success=True,
-        resume_hash=body.resume_hash,
-        upload_id=upload_id,
-        message="Resume selected and ready for matching.",
-        status=RESUME_UPLOAD_READY,
-    )
+    except PipelineApiError as exc:
+        return _pipeline_error_response(exc)
 
 
 @router.post(
     "/retry-resume",
     response_model=ResumeUploadResponse,
     responses={
-        404: {"description": "Resume upload not found."},
-        409: {"description": "Resume upload cannot be retried in its current state."},
+        404: {"model": ApiError, "description": "Resume upload not found."},
+        409: {"model": ApiError, "description": "Resume upload cannot be retried in its current state."},
     },
 )
 async def retry_resume(
@@ -908,42 +1051,57 @@ async def retry_resume(
     retry_upload_id: Optional[str] = None
     source_resume_hash: Optional[str] = None
     source_resume_fingerprint: Optional[str] = None
-    with job_uow() as repo:
-        source_upload = repo.get_resume_upload(body.upload_id, owner_id)
-        if source_upload is None:
-            raise HTTPException(status_code=404, detail="Resume upload not found.")
-        if source_upload.status != RESUME_UPLOAD_FAILED_RETRYABLE:
-            raise HTTPException(status_code=409, detail="Resume upload is not retryable.")
-        if repo.get_structured_resume_by_fingerprint(source_upload.resume_fingerprint) is None:
-            raise HTTPException(status_code=409, detail="Retry requires re-upload because extracted artifacts are missing.")
+    try:
+        with job_uow() as repo:
+            source_upload = repo.get_resume_upload(body.upload_id, owner_id)
+            if source_upload is None:
+                _raise_pipeline_error(
+                    status_code=404,
+                    code=PIPELINE_RESUME_UPLOAD_NOT_FOUND,
+                    message="Resume upload not found.",
+                )
+            if source_upload.status != RESUME_UPLOAD_FAILED_RETRYABLE:
+                _raise_pipeline_error(
+                    status_code=409,
+                    code=PIPELINE_RESUME_UPLOAD_NOT_RETRYABLE,
+                    message="Resume upload is not retryable.",
+                )
+            if repo.get_structured_resume_by_fingerprint(source_upload.resume_fingerprint) is None:
+                _raise_pipeline_error(
+                    status_code=409,
+                    code=PIPELINE_RESUME_REUPLOAD_REQUIRED,
+                    message="Retry requires re-upload because extracted artifacts are missing.",
+                )
 
-        source_resume_hash = source_upload.resume_hash
-        source_resume_fingerprint = source_upload.resume_fingerprint
-        task_id = str(_uuid.uuid4())
-        retry_upload = repo.create_resume_upload(
-            ResumeUploadCreateParams(
-                owner_id=owner_id,
-                resume_hash=source_resume_hash,
-                resume_fingerprint=source_resume_fingerprint,
-                original_filename=source_upload.original_filename,
-                status=RESUME_UPLOAD_PENDING,
-                processing_task_id=task_id,
-                retry_of_upload_id=source_upload.id,
-                retryable=True,
+            source_resume_hash = source_upload.resume_hash
+            source_resume_fingerprint = source_upload.resume_fingerprint
+            task_id = str(_uuid.uuid4())
+            retry_upload = repo.create_resume_upload(
+                ResumeUploadCreateParams(
+                    owner_id=owner_id,
+                    resume_hash=source_resume_hash,
+                    resume_fingerprint=source_resume_fingerprint,
+                    original_filename=source_upload.original_filename,
+                    status=RESUME_UPLOAD_PENDING,
+                    processing_task_id=task_id,
+                    retry_of_upload_id=source_upload.id,
+                    retryable=True,
+                )
             )
-        )
-        retry_upload_id = str(retry_upload.id)
-        repo.update_resume_upload(
-            retry_upload.id,
-            status=RESUME_UPLOAD_IN_PROGRESS,
-            processing_task_id=task_id,
-            last_error=None,
-            failure_stage=None,
-            failure_class=None,
-            retryable=True,
-            user_safe_message=None,
-            failure_debug_context=None,
-        )
+            retry_upload_id = str(retry_upload.id)
+            repo.update_resume_upload(
+                retry_upload.id,
+                status=RESUME_UPLOAD_IN_PROGRESS,
+                processing_task_id=task_id,
+                last_error=None,
+                failure_stage=None,
+                failure_class=None,
+                retryable=True,
+                user_safe_message=None,
+                failure_debug_context=None,
+            )
+    except PipelineApiError as exc:
+        return _pipeline_error_response(exc)
 
     try:
         redis = get_redis_client()
@@ -1138,8 +1296,8 @@ async def pipeline_events(task_id: str):
     "/resume-status/{task_id}",
     response_model=ResumeStatusResponse,
     responses={
-        400: {"description": "Invalid task_id format"},
-        404: {"description": "Task not found"},
+        400: {"model": ApiError, "description": "Invalid task_id format"},
+        404: {"model": ApiError, "description": "Task not found"},
     }
 )
 def get_resume_status(
@@ -1154,26 +1312,27 @@ def get_resume_status(
     - completed: Resume was extracted and embedded successfully
     - failed: Resume processing encountered an error
     """
-    if not _validate_task_id(task_id):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid task_id format. Must be alphanumeric with hyphens, max 50 characters."
-        )
-    owner_id = resolve_owner_id(user)
-    state: Optional[dict] = None
     try:
-        state = _get_owned_resume_task_state(task_id, owner_id)
-    except HTTPException as exc:
-        if exc.status_code != 404:
-            raise
+        if not _validate_task_id(task_id):
+            _raise_pipeline_error(
+                status_code=400,
+                code=PIPELINE_TASK_INVALID_ID,
+                message="Invalid task_id format. Must be alphanumeric with hyphens, max 50 characters.",
+            )
+        owner_id = resolve_owner_id(user)
+        state: Optional[dict] = None
+        try:
+            state = _get_owned_resume_task_state(task_id, owner_id)
+        except PipelineApiError as exc:
+            if exc.status_code != 404:
+                raise
 
-    try:
         with job_uow() as repo:
             upload_status = _get_resume_upload_status(repo, owner_id, task_id)
             if upload_status is not None:
                 return upload_status
-    except HTTPException:
-        raise
+    except PipelineApiError as exc:
+        return _pipeline_error_response(exc)
     except Exception:
         logger.warning(
             "Resume status DB lookup unavailable for task %s; falling back to task state only",
@@ -1182,9 +1341,12 @@ def get_resume_status(
         )
 
     if state is None:
-        raise HTTPException(
-            status_code=404,
-            detail=TASK_NOT_FOUND_OR_EXPIRED_DETAIL,
+        return _pipeline_error_response(
+            PipelineApiError(
+                status_code=404,
+                code=PIPELINE_TASK_NOT_FOUND,
+                message=TASK_NOT_FOUND_OR_EXPIRED_DETAIL,
+            )
         )
 
     return _resume_status_from_task_state(task_id, state)
@@ -1212,9 +1374,9 @@ def check_resume_hash_endpoint(request: Request, body: ResumeHashCheckRequest, u
     "/upload-resume",
     response_model=ResumeUploadResponse,
     responses={
-        400: {"description": "Invalid file, empty file, or hash mismatch"},
-        413: {"description": "File size exceeds 2MB limit"},
-        415: {"description": "Unsupported file format"},
+        400: {"model": ApiError, "description": "Invalid file, empty file, or hash mismatch"},
+        413: {"model": ApiError, "description": "File size exceeds 2MB limit"},
+        415: {"model": ApiError, "description": "Unsupported file format"},
         429: {"description": "Rate limit exceeded"},
     }
 )
@@ -1237,155 +1399,170 @@ async def upload_resume_endpoint(
     """
     from database.uow import job_uow
 
-    # Validate file
-    content = await _validate_resume_file(file)
+    try:
+        content = await _validate_resume_file(file)
 
-    resume_hash = _compute_and_verify_hash(content, resume_hash)
-    owner_id = resolve_owner_id(user)
-    owner_key = serialize_owner_id(owner_id)
-    resume_fingerprint = build_resume_fingerprint(owner_id, resume_hash)
+        resume_hash = _compute_and_verify_hash(content, resume_hash)
+        owner_id = resolve_owner_id(user)
+        owner_key = serialize_owner_id(owner_id)
+        resume_fingerprint = build_resume_fingerprint(owner_id, resume_hash)
 
-    task_id: Optional[str] = None
-    upload_id: Optional[str] = None
-    with job_uow() as repo:
-        latest_same_upload = repo.get_latest_resume_upload_for_hash(owner_id, resume_hash)
-        if latest_same_upload is not None:
-            latest_same_upload = _reconcile_resume_upload_task(repo, latest_same_upload)
-        if repo.is_resume_ready(resume_fingerprint):
+        task_id: Optional[str] = None
+        upload_id: Optional[str] = None
+        with job_uow() as repo:
+            latest_same_upload = repo.get_latest_resume_upload_for_hash(owner_id, resume_hash)
+            if latest_same_upload is not None:
+                latest_same_upload = _reconcile_resume_upload_task(repo, latest_same_upload)
+            if repo.is_resume_ready(resume_fingerprint):
+                upload = repo.create_resume_upload(
+                    ResumeUploadCreateParams(
+                        owner_id=owner_id,
+                        resume_hash=resume_hash,
+                        resume_fingerprint=resume_fingerprint,
+                        original_filename=file.filename,
+                        processing_task_id=None,
+                        status=RESUME_UPLOAD_READY,
+                        user_safe_message="Resume already processed and ready for matching.",
+                    )
+                )
+                return ResumeUploadResponse(
+                    success=True,
+                    resume_hash=resume_hash,
+                    upload_id=str(upload.id),
+                    message="Resume already processed and ready for matching.",
+                    task_id=None,
+                    status=RESUME_UPLOAD_READY,
+                )
+
+            if latest_same_upload and latest_same_upload.status in {
+                RESUME_UPLOAD_PENDING,
+                RESUME_UPLOAD_IN_PROGRESS,
+            }:
+                task_id = getattr(latest_same_upload, "processing_task_id", None)
+                if not isinstance(task_id, str):
+                    task_id = None
+                return ResumeUploadResponse(
+                    success=True,
+                    resume_hash=resume_hash,
+                    upload_id=str(latest_same_upload.id),
+                    message="Resume is already being processed.",
+                    task_id=task_id,
+                    status=RESUME_UPLOAD_IN_PROGRESS,
+                )
+
+            import uuid as _uuid
+            task_id = str(_uuid.uuid4())
             upload = repo.create_resume_upload(
                 ResumeUploadCreateParams(
                     owner_id=owner_id,
                     resume_hash=resume_hash,
                     resume_fingerprint=resume_fingerprint,
                     original_filename=file.filename,
-                    processing_task_id=None,
-                    status=RESUME_UPLOAD_READY,
-                    user_safe_message="Resume already processed and ready for matching.",
+                    status=RESUME_UPLOAD_PENDING,
+                    processing_task_id=task_id,
                 )
             )
-            return ResumeUploadResponse(
-                success=True,
-                resume_hash=resume_hash,
-                upload_id=str(upload.id),
-                message="Resume already processed and ready for matching.",
-                task_id=None,
-                status=RESUME_UPLOAD_READY,
-            )
-
-        if latest_same_upload and latest_same_upload.status in {
-            RESUME_UPLOAD_PENDING,
-            RESUME_UPLOAD_IN_PROGRESS,
-        }:
-            task_id = getattr(latest_same_upload, "processing_task_id", None)
-            if not isinstance(task_id, str):
-                task_id = None
-            return ResumeUploadResponse(
-                success=True,
-                resume_hash=resume_hash,
-                upload_id=str(latest_same_upload.id),
-                message="Resume is already being processed.",
-                task_id=task_id,
+            repo.update_resume_upload(
+                upload.id,
                 status=RESUME_UPLOAD_IN_PROGRESS,
-            )
-
-        import uuid as _uuid
-        task_id = str(_uuid.uuid4())
-        upload = repo.create_resume_upload(
-            ResumeUploadCreateParams(
-                owner_id=owner_id,
-                resume_hash=resume_hash,
-                resume_fingerprint=resume_fingerprint,
-                original_filename=file.filename,
-                status=RESUME_UPLOAD_PENDING,
                 processing_task_id=task_id,
+                last_error=None,
+                failure_stage=None,
+                failure_class=None,
+                retryable=True,
+                user_safe_message=None,
+                failure_debug_context=None,
+            )
+            upload_id = str(upload.id)
+
+        try:
+            redis = get_redis_client()
+            redis.set(_latest_upload_task_key(owner_key), task_id, ex=3600)
+            set_task_state(
+                task_id,
+                {
+                    "status": "pending",
+                    "step": "extracting",
+                    "task_type": "resume_upload",
+                    "upload_id": upload_id,
+                    "owner_id": owner_key,
+                    "resume_fingerprint": resume_fingerprint,
+                },
+                ttl=3600,
+            )
+        except Exception:
+            logger.warning("Failed to set resume:upload:latest_task_id in Redis — guard will not work")
+
+        background_task = asyncio.create_task(
+            asyncio.to_thread(
+                _process_resume_background,
+                content,
+                file.filename,
+                task_id,
+                upload_id,
+                owner_id,
+                resume_hash,
+                resume_fingerprint,
             )
         )
-        repo.update_resume_upload(
-            upload.id,
+        _upload_tasks.add(background_task)
+
+        def _upload_done(t: asyncio.Task) -> None:
+            _upload_tasks.discard(t)
+            if not t.cancelled() and t.exception() is not None:
+                logger.error("Upload background task raised unhandled: %s", t.exception())
+
+        background_task.add_done_callback(_upload_done)
+
+        return ResumeUploadResponse(
+            success=True,
+            resume_hash=resume_hash,
+            upload_id=upload_id,
+            message="Resume uploaded. Processing in background...",
+            task_id=task_id,
             status=RESUME_UPLOAD_IN_PROGRESS,
-            processing_task_id=task_id,
-            last_error=None,
-            failure_stage=None,
-            failure_class=None,
-            retryable=True,
-            user_safe_message=None,
-            failure_debug_context=None,
         )
-        upload_id = str(upload.id)
-
-    try:
-        redis = get_redis_client()
-        redis.set(_latest_upload_task_key(owner_key), task_id, ex=3600)
-        set_task_state(
-            task_id,
-            {
-                "status": "pending",
-                "step": "extracting",
-                "task_type": "resume_upload",
-                "upload_id": upload_id,
-                "owner_id": owner_key,
-                "resume_fingerprint": resume_fingerprint,
-            },
-            ttl=3600,
-        )
-    except Exception:
-        logger.warning("Failed to set resume:upload:latest_task_id in Redis — guard will not work")
-
-    background_task = asyncio.create_task(
-        asyncio.to_thread(
-            _process_resume_background,
-            content,
-            file.filename,
-            task_id,
-            upload_id,
-            owner_id,
-            resume_hash,
-            resume_fingerprint,
-        )
-    )
-    _upload_tasks.add(background_task)
-
-    def _upload_done(t: asyncio.Task) -> None:
-        _upload_tasks.discard(t)
-        if not t.cancelled() and t.exception() is not None:
-            logger.error("Upload background task raised unhandled: %s", t.exception())
-
-    background_task.add_done_callback(_upload_done)
-
-    return ResumeUploadResponse(
-        success=True,
-        resume_hash=resume_hash,
-        upload_id=upload_id,
-        message="Resume uploaded. Processing in background...",
-        task_id=task_id,
-        status=RESUME_UPLOAD_IN_PROGRESS,
-    )
+    except PipelineApiError as exc:
+        return _pipeline_error_response(exc)
 
 
 async def _validate_resume_file(file: UploadFile) -> bytes:
     """Validate resume file and return its content."""
     if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided")
+        _raise_pipeline_error(
+            status_code=400,
+            code=PIPELINE_RESUME_FILE_REQUIRED,
+            message="No file provided.",
+        )
 
     # Validate file format — 415 Unsupported Media Type
     parser = ResumeParser()
     if not parser.is_supported(file.filename):
         supported = ', '.join(ResumeParser.get_supported_formats())
-        raise HTTPException(
+        _raise_pipeline_error(
             status_code=415,
-            detail=f"Unsupported file format. Supported formats: {supported}"
+            code=PIPELINE_RESUME_FILE_UNSUPPORTED,
+            message=f"Unsupported file format. Supported formats: {supported}",
         )
 
     content = await file.read()
 
     if len(content) == 0:
-        raise HTTPException(status_code=400, detail="Empty file")
+        _raise_pipeline_error(
+            status_code=400,
+            code=PIPELINE_RESUME_FILE_EMPTY,
+            message="Empty file.",
+        )
 
     # File too large — 413 Payload Too Large
     if len(content) > RESUME_MAX_SIZE:
         limit_mb = RESUME_MAX_SIZE / (1024 * 1024)
         limit_str = f"{limit_mb:.1f}MB" if limit_mb >= 1 else f"{RESUME_MAX_SIZE // 1024}KB"
-        raise HTTPException(status_code=413, detail=f"File size exceeds {limit_str} limit")
+        _raise_pipeline_error(
+            status_code=413,
+            code=PIPELINE_RESUME_FILE_TOO_LARGE,
+            message=f"File size exceeds {limit_str} limit.",
+        )
 
     return content
 
@@ -1400,9 +1577,10 @@ def _compute_and_verify_hash(content: bytes, provided_hash: Optional[str]) -> st
     # If client provided a hash, verify it matches
     if provided_hash and provided_hash != computed_hash:
         logger.debug(f"Hash mismatch - provided: {provided_hash}, computed: {computed_hash}")
-        raise HTTPException(
+        _raise_pipeline_error(
             status_code=400,
-            detail="File hash mismatch. The provided hash does not match the file content."
+            code=PIPELINE_RESUME_HASH_MISMATCH,
+            message="File hash mismatch. The provided hash does not match the file content.",
         )
 
     return computed_hash

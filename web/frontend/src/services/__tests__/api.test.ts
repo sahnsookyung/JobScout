@@ -136,16 +136,36 @@ describe('apiClient', () => {
                 status: 400,
                 data: { detail: 'Invalid input' },
             });
-            testErrorInterceptor(mockError, 'Invalid input');
+            return testErrorInterceptor(mockError, 'Invalid input', {
+                code: 'common.http.400',
+            });
         });
 
-        it('should extract error field from error response', () => {
+        it('should extract legacy error field from error response', () => {
             const mockError = createMockError({
                 message: 'Error',
                 status: 500,
                 data: { error: 'Server error' },
             });
-            testErrorInterceptor(mockError, 'Server error');
+            return testErrorInterceptor(mockError, 'Server error', {
+                code: 'common.http.500',
+            });
+        });
+
+        it('should preserve canonical ApiError bodies', () => {
+            const mockError = createMockError({
+                message: 'Error',
+                status: 409,
+                data: {
+                    code: 'pipeline.match.already_running',
+                    message: 'Matching pipeline is already running.',
+                    detail: 'Only one active matching task is allowed per user.',
+                },
+            });
+            return testErrorInterceptor(mockError, 'Matching pipeline is already running.', {
+                code: 'pipeline.match.already_running',
+                detail: 'Only one active matching task is allowed per user.',
+            });
         });
 
         it('should handle FastAPI validation errors', () => {
@@ -162,7 +182,10 @@ describe('apiClient', () => {
                     ],
                 },
             });
-            testErrorInterceptor(mockError, 'required');
+            return testErrorInterceptor(mockError, 'required', {
+                code: 'common.validation.invalid_request',
+                fieldsLength: 1,
+            });
         });
 
         it('should use original message when no detail', () => {
@@ -171,14 +194,18 @@ describe('apiClient', () => {
                 status: 503,
                 data: {},
             });
-            testErrorInterceptor(mockError, 'Network error');
+            return testErrorInterceptor(mockError, 'Network error', {
+                code: 'common.http.503',
+            });
         });
 
         it('should handle missing response', () => {
             const mockError = createMockError({
                 message: 'Network Error',
             });
-            testErrorInterceptor(mockError, 'Network Error');
+            return testErrorInterceptor(mockError, 'Network Error', {
+                code: 'common.network.request_failed',
+            });
         });
     });
 });

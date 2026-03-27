@@ -1,5 +1,7 @@
 import axios, { type AxiosError } from 'axios';
 
+import type { ApiErrorResponse, ApiFieldError } from '@/types/api';
+
 export const apiClient = axios.create({
     baseURL: import.meta.env.VITE_API_URL || '/api',
     timeout: 30000,
@@ -17,32 +19,102 @@ apiClient.interceptors.request.use(
     (error) => Promise.reject(error)
 );
 
-/** Extract a human-readable message from a FastAPI error response. */
-function extractErrorMessage(error: AxiosError): string {
-    const data = error.response?.data as Record<string, unknown> | undefined;
-    if (!data) return error.message;
-    const detail = data['detail'] ?? data['error'];
-    if (typeof detail === 'string') return detail;
-    if (Array.isArray(detail)) {
-        // FastAPI 422 validation errors: [{ loc, msg, type }]
-        return detail
-            .map((d: unknown) => (d && typeof d === 'object' && 'msg' in d ? String((d as Record<string, unknown>)['msg']) : String(d)))
-            .join('; ');
+export class NormalizedApiError extends Error {
+    status?: number;
+    code: string;
+    detail?: string;
+    fields?: ApiFieldError[];
+    originalError: AxiosError;
+
+    constructor(args: {
+        message: string;
+        code: string;
+        status?: number;
+        detail?: string;
+        fields?: ApiFieldError[];
+        originalError: AxiosError;
+    }) {
+        super(args.message);
+        this.name = 'NormalizedApiError';
+        this.status = args.status;
+        this.code = args.code;
+        this.detail = args.detail;
+        this.fields = args.fields;
+        this.originalError = args.originalError;
     }
-    return error.message;
 }
 
-// Response interceptor for error handling
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
+function extractValidationFields(detail: unknown): ApiFieldError[] | undefined {
+    if (!Array.isArray(detail)) {
+        return undefined;
+    }
+    const fields = detail
+        .filter(isRecord)
+        .map((entry) => ({
+            path: Array.isArray(entry['loc']) ? entry['loc'].map((part) => String(part)) : [],
+            code: String(entry['type'] ?? 'validation_error'),
+            message: String(entry['msg'] ?? 'Invalid value'),
+        }));
+    return fields.length > 0 ? fields : undefined;
+}
+
+function normalizeApiError(error: AxiosError): NormalizedApiError {
+    const status = error.response?.status;
+    const data = error.response?.data;
+    const fallbackCode = status ? `common.http.${status}` : 'common.network.request_failed';
+
+    if (isRecord(data) && typeof data['code'] === 'string' && typeof data['message'] === 'string') {
+        const apiError = data as ApiErrorResponse;
+        return new NormalizedApiError({
+            message: apiError.message,
+            code: apiError.code,
+            status,
+            detail: apiError.detail,
+            fields: apiError.fields,
+            originalError: error,
+        });
+    }
+
+    if (isRecord(data)) {
+        const detail = data['detail'] ?? data['error'];
+        if (typeof detail === 'string') {
+            return new NormalizedApiError({
+                message: detail,
+                code: fallbackCode,
+                status,
+                originalError: error,
+            });
+        }
+
+        const fields = extractValidationFields(detail);
+        if (fields) {
+            return new NormalizedApiError({
+                message: fields.map((field) => field.message).join('; '),
+                code: 'common.validation.invalid_request',
+                status,
+                fields,
+                originalError: error,
+            });
+        }
+    }
+
+    return new NormalizedApiError({
+        message: error.message,
+        code: fallbackCode,
+        status,
+        originalError: error,
+    });
+}
+
 apiClient.interceptors.response.use(
     (response) => response,
     (error: AxiosError) => {
-        const message = extractErrorMessage(error);
-        const status = error.response?.status;
-        console.error(`[API Error] ${status ?? 'network'}: ${message}`);
-        // Attach normalised message so callers can do error.message without parsing
-        const normalised = new Error(message) as Error & { status?: number; originalError: AxiosError };
-        normalised.status = status;
-        normalised.originalError = error;
+        const normalised = normalizeApiError(error);
+        console.error(`[API Error] ${normalised.status ?? 'network'}: ${normalised.message}`);
         return Promise.reject(normalised);
     }
 );

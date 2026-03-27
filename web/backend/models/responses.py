@@ -7,6 +7,23 @@ from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional, Dict, Any
 
 
+class ApiFieldError(BaseModel):
+    """Structured validation metadata for a single request field/path."""
+
+    path: List[str]
+    code: str
+    message: str
+
+
+class ApiError(BaseModel):
+    """Canonical error body for migrated API endpoints."""
+
+    code: str
+    message: str
+    detail: Optional[str] = None
+    fields: Optional[List[ApiFieldError]] = None
+
+
 class MatchSummary(BaseModel):
     """Summary of a job match."""
     model_config = ConfigDict(

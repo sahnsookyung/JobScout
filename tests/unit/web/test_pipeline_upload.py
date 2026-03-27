@@ -110,7 +110,8 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
         self.assertEqual(response.status_code, 415)  # Unsupported Media Type
-        self.assertIn('Unsupported file format', response.json()['detail'])
+        self.assertEqual(response.json()['code'], 'pipeline.resume.file_unsupported')
+        self.assertIn('Unsupported file format', response.json()['message'])
 
     def test_upload_without_extension_rejected(self):
         """Test that files without extension are rejected."""
@@ -119,7 +120,8 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
         self.assertEqual(response.status_code, 415)  # Unsupported Media Type
-        self.assertIn('Unsupported file format', response.json()['detail'])
+        self.assertEqual(response.json()['code'], 'pipeline.resume.file_unsupported')
+        self.assertIn('Unsupported file format', response.json()['message'])
 
     def test_upload_txt_file_accepted(self):
         """Test that .txt files are now accepted (multi-format support)."""
@@ -195,7 +197,8 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn('Empty file', response.json()['detail'])
+        self.assertEqual(response.json()['code'], 'pipeline.resume.file_empty')
+        self.assertIn('Empty file', response.json()['message'])
 
     def test_upload_file_size_limit_exceeded(self):
         """Test that files exceeding size limit are rejected."""
@@ -205,7 +208,8 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
         self.assertEqual(response.status_code, 413)  # Payload Too Large
-        self.assertIn('2', response.json()['detail'])
+        self.assertEqual(response.json()['code'], 'pipeline.resume.file_too_large')
+        self.assertIn('2', response.json()['message'])
 
     def test_response_message_includes_fingerprint(self):
         """Test that successful response includes fingerprint in message."""
@@ -338,7 +342,8 @@ class TestResumeUploadSecurity(unittest.TestCase):
         response = self.client.post('/api/pipeline/upload-resume', files=files)
 
         self.assertEqual(response.status_code, 413)  # Payload Too Large
-        self.assertIn('2', response.json()['detail'])
+        self.assertEqual(response.json()['code'], 'pipeline.resume.file_too_large')
+        self.assertIn('2', response.json()['message'])
 
     def test_upload_hash_mismatch_rejected(self):
         """Test that server rejects file when client hash doesn't match computed hash (security)."""
@@ -376,7 +381,8 @@ class TestResumeUploadSecurity(unittest.TestCase):
 
         # Server should reject due to hash mismatch
         self.assertEqual(response.status_code, 400)
-        self.assertIn('hash', response.json()['detail'].lower())
+        self.assertEqual(response.json()['code'], 'pipeline.resume.hash_mismatch')
+        self.assertIn('hash', response.json()['message'].lower())
 
     def test_upload_hash_match_succeeds(self):
         """Test that server accepts when client hash matches computed hash."""

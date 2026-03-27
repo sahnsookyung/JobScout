@@ -63,7 +63,9 @@ class TestPipelineRoutes(unittest.TestCase):
         response = self.client.post("/api/pipeline/run-matching")
 
         self.assertEqual(response.status_code, 409)
-        self.assertIn("still processing (embedding)", response.json()["detail"])
+        data = response.json()
+        self.assertEqual(data["code"], "pipeline.resume.upload_in_progress")
+        self.assertIn("still processing (embedding)", data["message"])
 
     @patch("web.backend.routers.pipeline.evaluate_resume_eligibility")
     def test_resume_eligibility_endpoint_returns_authoritative_status(self, mock_eligibility):

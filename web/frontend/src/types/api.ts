@@ -153,6 +153,19 @@ export interface ResumeStatusResponse {
     error?: string;
 }
 
+export interface ApiFieldError {
+    path: string[];
+    code: string;
+    message: string;
+}
+
+export interface ApiErrorResponse {
+    code: string;
+    message: string;
+    detail?: string;
+    fields?: ApiFieldError[];
+}
+
 export interface PipelineStatusResponse {
     task_id: string;
     status:
