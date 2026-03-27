@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@linear/sdk": "^78.0.0"
+  }
+}

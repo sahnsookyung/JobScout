@@ -1,38 +1,7 @@
 #!/usr/bin/env python3
 """
 Notification Tracker - Deduplication Service
-
 Implements deduplication for notifications to prevent notification fatigue.
-Follows SOLID principles:
-- Single Responsibility: Tracks and manages notification history
-- Open/Closed: Extensible tracking strategies
-- Dependency Inversion: Depends on abstractions
-
-Usage:
-    from notification.tracker import NotificationTrackerService
-    
-    tracker = NotificationTrackerService(repo)
-    
-    # Check if notification should be sent
-    if tracker.should_send_notification(
-        user_id="user123",
-        job_match_id="match456",
-        event_type="new_high_score_match",
-        channel="email"
-    ):
-        # Send notification
-        notification_service.send(...)
-        
-        # Record that it was sent
-        tracker.record_notification(
-            user_id="user123",
-            job_match_id="match456",
-            event_type="new_high_score_match",
-            channel="email",
-            recipient="user@example.com",
-            subject="New Match!",
-            success=True
-        )
 """
 
 import hashlib
@@ -284,40 +253,19 @@ class NotificationTrackerService:
     
     def record_notification(
         self,
-        user_id: str,
-        job_match_id: Optional[str],
-        event_type: str,
-        channel_type: str,
-        notification_type: str,  # e.g., "new_match", "batch_complete"
-        recipient: str,
-        subject: str,
-        body: str,
-        success: bool,
-        error_message: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        allow_resend: bool = True,
+        user_id: str, # User who received notification
+        job_match_id: Optional[str], # Related job match (optional)
+        event_type: str, # Event that triggered notification
+        channel_type: str, # Channel used (email, discord, etc.)
+        recipient: str, # Actual recipient address/ID
+        subject: str, # Notification subject
+        body: str, # Notification body
+        success: bool, # Whether sending succeeded
+        error_message: Optional[str] = None, # Error if failed
+        metadata: Optional[Dict[str, Any]] = None, # Additional context
+        allow_resend: bool = True, # Whether to allow future resends
         commit: bool = True
     ) -> NotificationTracker:
-        """
-        Record that a notification was sent.
-        
-        Args:
-            user_id: User who received notification
-            job_match_id: Related job match (optional)
-            event_type: Event that triggered notification
-            channel_type: Channel used (email, discord, etc.)
-            notification_type: Type of notification
-            recipient: Actual recipient address/ID
-            subject: Notification subject
-            body: Notification body
-            success: Whether sending succeeded
-            error_message: Error if failed
-            metadata: Additional context
-            allow_resend: Whether to allow future resends
-        
-        Returns:
-            NotificationTracker record
-        """
         dedup_hash = self.generate_dedup_hash(user_id, job_match_id, event_type, channel_type)
         content_hash = self.generate_content_hash(subject, body, metadata)
         
@@ -339,7 +287,6 @@ class NotificationTrackerService:
             tracker = NotificationTracker(
                 user_id=user_id,
                 job_match_id=job_match_id,
-                notification_type=notification_type,
                 channel_type=channel_type,
                 dedup_hash=dedup_hash,
                 content_hash=content_hash,
@@ -347,6 +294,7 @@ class NotificationTrackerService:
                 event_data=metadata or {},
                 recipient=recipient,
                 subject=subject,
+                body=body,
                 sent_successfully=success,
                 error_message=error_message,
                 allow_resend=allow_resend,
@@ -372,12 +320,6 @@ def should_notify_user(
 ) -> bool:
     """
     Quick check if user should be notified about a job match.
-    
-    This is a convenience function for use in the main pipeline.
-    
-    Example:
-        if should_notify_user(repo, "user123", "match456"):
-            notification_service.notify_new_match(...)
     """
     tracker_service = tracker or NotificationTrackerService(repo)
     return tracker_service.should_send_notification(

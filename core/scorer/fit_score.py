@@ -118,7 +118,10 @@ def _as_requirement(obj: Any) -> _AdaptedRequirement:
 
     req_type = getattr(req, "req_type", None)
     if req_type not in ("required", "preferred"):
-        raise TypeError(f"Requirement missing/invalid req_type: {req_type!r}")
+        # req_types like 'responsibility', 'constraint', 'benefit' are valid DB values
+        # but are not scored by fit_score; pass through so the caller's filter drops them.
+        logger.debug("Skipping unscored req_type=%r in fit score calculation", req_type)
+        return _AdaptedRequirement(req_type=req_type, weight=0.0)  # type: ignore[arg-type]
 
     weight = getattr(req, "weight", 1.0)
     try:

@@ -10,8 +10,10 @@ These tests verify CRUD operations for user wants data.
 """
 
 import unittest
+import uuid
 from unittest.mock import MagicMock, Mock, patch
 import numpy as np
+import pytest
 
 from database.repositories.user_wants import UserWantsRepository
 from database.models import UserWants
@@ -229,38 +231,66 @@ class TestGetUserWantsEmbeddings(unittest.TestCase):
         # The actual query construction is verified by the call being made
 
 
-class TestUserWantsIntegration(unittest.TestCase):
-    """Integration tests for save + get workflow."""
+@pytest.mark.db
+class TestUserWantsIntegration:
+    """Real save→get roundtrip against a live DB container.
 
-    def setUp(self):
-        """Set up test fixtures."""
-        self.mock_db = MagicMock()
-        self.repo = UserWantsRepository(self.mock_db)
+    The previous implementation used mock_db.execute manually set to return
+    what was 'saved' — a circular mock that proved nothing about actual DB
+    persistence.  This version writes and reads from a real pgvector DB.
+    """
 
-    def test_save_and_get_roundtrip(self):
-        """Save should create object that can be retrieved."""
-        # Save a user want
-        saved = self.repo.save_user_wants(
-            user_id="user_roundtrip",
-            wants_text="Roundtrip test",
-            embedding=[1.0, 2.0, 3.0]
+    @pytest.fixture
+    def db_session(self, test_database):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        engine = create_engine(test_database)
+        connection = engine.connect()
+        transaction = connection.begin()
+        session = sessionmaker(bind=connection)()
+        yield session
+        session.close()
+        if transaction.is_active:
+            transaction.rollback()
+        connection.close()
+
+    def test_save_and_get_roundtrip(self, db_session):
+        """Saved embedding is actually persisted and retrievable from the DB."""
+        repo = UserWantsRepository(db_session)
+        user_id = str(uuid.uuid4())
+        embedding = [0.1] * 1024
+
+        saved = repo.save_user_wants(
+            user_id=user_id,
+            wants_text="Real roundtrip test",
+            embedding=embedding,
         )
-        
-        # Verify save returned correct data
-        self.assertEqual(saved.user_id, "user_roundtrip")
-        self.assertEqual(saved.wants_text, "Roundtrip test")
-        
-        # Mock the get to return what was "saved"
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [[1.0, 2.0, 3.0]]
-        self.mock_db.execute.return_value = mock_result
-        
-        # Get embeddings
-        embeddings = self.repo.get_user_wants_embeddings("user_roundtrip")
-        
-        # Verify we got back what we saved
-        self.assertEqual(len(embeddings), 1)
-        self.assertEqual(embeddings[0], [1.0, 2.0, 3.0])
+        db_session.flush()
+
+        assert saved.user_id == user_id
+        assert saved.wants_text == "Real roundtrip test"
+
+        embeddings = repo.get_user_wants_embeddings(user_id)
+        assert len(embeddings) == 1
+        assert embeddings[0] == pytest.approx(embedding, rel=1e-5)
+
+    def test_save_multiple_and_get_all(self, db_session):
+        """Multiple saves for the same user return all embeddings."""
+        repo = UserWantsRepository(db_session)
+        user_id = str(uuid.uuid4())
+
+        repo.save_user_wants(user_id=user_id, wants_text="Want A", embedding=[0.1] * 1024)
+        repo.save_user_wants(user_id=user_id, wants_text="Want B", embedding=[0.2] * 1024)
+        db_session.flush()
+
+        embeddings = repo.get_user_wants_embeddings(user_id)
+        assert len(embeddings) == 2
+
+    def test_get_returns_empty_for_unknown_user(self, db_session):
+        """An unknown user_id returns an empty list, not an error."""
+        repo = UserWantsRepository(db_session)
+        result = repo.get_user_wants_embeddings(str(uuid.uuid4()))
+        assert result == []
 
 
 class TestUserWantsModel(unittest.TestCase):

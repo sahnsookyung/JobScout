@@ -64,7 +64,7 @@ def main():
 
     with open(args.resume, 'rb') as f:
         fingerprint = generate_file_fingerprint(f.read())
-    logger.info(f"Resume fingerprint: {fingerprint[:16]}...")
+    logger.info(f"Resume fingerprint: {fingerprint}")
 
     config = load_config()
     ctx = AppContext.build(config)

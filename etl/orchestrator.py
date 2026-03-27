@@ -1,8 +1,9 @@
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Tuple, Optional, cast
 import time
 import logging
 import json
 import os
+import math
 from database.repository import JobRepository
 from core.llm.interfaces import LLMProvider
 from core.utils import JobFingerprinter
@@ -13,6 +14,20 @@ from database.models import generate_file_fingerprint
 from etl.resume import ResumeProfiler, ResumeParser
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_embedding_vector(vector: List[float], context: str) -> List[float]:
+    """Ensure embedding vectors are non-empty finite numeric lists."""
+    if not isinstance(vector, list) or not vector:
+        raise ValueError(f"Invalid embedding vector for {context}: empty or non-list")
+
+    validated: List[float] = []
+    for value in vector:
+        if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            raise ValueError(f"Invalid embedding vector for {context}: non-finite value")
+        validated.append(float(value))
+
+    return validated
 
 
 class JobETLService:
@@ -135,31 +150,49 @@ class JobETLService:
             logger.error(f"Facet extraction failed for job {job.id}: {e}")
             raise
 
-    def embed_facets_one(self, repo: JobRepository, job) -> None:
+    def embed_facets_one(self, repo: JobRepository, job) -> int:
         """Generate embeddings for extracted facets of a single job.
 
         Args:
             repo: JobRepository instance (provided by UoW)
             job: JobPost ORM instance (loaded within this UoW session)
-        """
-        logger.info(f"Embedding facets for job {job.id}: {job.title}")
 
+        Returns:
+            Number of new facet embeddings created (0 if all already embedded).
+        """
         try:
             facets = repo.get_facets_for_job(job.id)
             if not facets:
                 logger.debug(f"No facets found for job {job.id}")
-                return
+                return 0
 
+            unembedded = [f for f in facets if f.embedding is None]
+            if not unembedded:
+                logger.debug(
+                    f"All {len(facets)} facets already embedded for job {job.id} — skipping"
+                )
+                return 0
+
+            logger.info(
+                f"Embedding {len(unembedded)}/{len(facets)} facets for job {job.id}: {job.title}"
+            )
             content_hash = job.content_hash or ''
             saved_count = 0
 
-            for facet in facets:
-                if facet.embedding is None:
-                    embedding = self.ai.generate_embedding(facet.text)
-                    repo.update_facet_embedding(facet.id, embedding, content_hash)
-                    saved_count += 1
+            for facet in unembedded:
+                # DB model stores facet content in facet_text; keep text fallback for older mocks.
+                facet_text = getattr(facet, "facet_text", None) or getattr(facet, "text", None)
+                if not facet_text:
+                    logger.debug(f"Facet {getattr(facet, 'id', 'unknown')} has no text, skipping")
+                    continue
+                embedding = _validate_embedding_vector(
+                    self.ai.generate_embedding(facet_text),
+                    f"job facet {facet.id}",
+                )
+                repo.update_facet_embedding(facet.id, embedding, content_hash)
+                saved_count += 1
 
-            logger.info(f"Embedded {saved_count} facets for job {job.id}")
+            return saved_count
 
         except Exception as e:
             logger.error(f"Facet embedding failed for job {job.id}: {e}")
@@ -186,7 +219,10 @@ class JobETLService:
             logger.warning(f"Job {job.id} has no requirements/benefits, using description for summary_embedding")
             text = job.description[:5000] if job.description else ""
 
-        vector = self.ai.generate_embedding(text)
+        vector = _validate_embedding_vector(
+            self.ai.generate_embedding(text),
+            f"job {job.id}",
+        )
 
         repo.save_job_embedding(job, vector)
 
@@ -197,23 +233,86 @@ class JobETLService:
             repo: JobRepository instance (provided by UoW)
             req: JobRequirementUnit ORM instance (loaded within this UoW session)
         """
-        vector = self.ai.generate_embedding(req.text)
+        vector = _validate_embedding_vector(
+            self.ai.generate_embedding(req.text),
+            f"requirement {req.id}",
+        )
         repo.save_requirement_embedding(req.id, vector)
 
-    def process_resume(
+    def _load_and_check_resume(
         self,
         repo: JobRepository,
-        resume_file: str
+        resume_file: str,
+        known_fingerprint: Optional[str] = None
     ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
-        """Process resume ETL with fingerprint-based change detection.
+        """Common logic: load resume file, generate fingerprint, check if changed.
 
-        This method implements the resume ETL step that should be called
-        within a job_uow() context manager. It checks if the resume has
-        changed using fingerprinting and only processes if needed.
+        Args:
+            repo: JobRepository instance (provided by UoW)
+            resume_file: Path to resume file
+            known_fingerprint: Optional pre-computed fingerprint from raw file bytes.
+                              If provided, skips re-reading file for fingerprint.
+
+        Returns:
+            Tuple of (resume_changed: bool, fingerprint: str, resume_data: dict or None)
+            - resume_changed: True if resume is new/changed, False if unchanged
+            - fingerprint: The resume fingerprint
+            - resume_data: The loaded resume data (or None if file not found/error)
+        """
+        # Use provided fingerprint if available
+        if known_fingerprint:
+            fingerprint = known_fingerprint
+        else:
+            # Read file and compute fingerprint
+            if not os.path.exists(resume_file):
+                logger.error(f"Resume file not found: {resume_file}")
+                return False, "", None
+
+            try:
+                with open(resume_file, 'rb') as f:
+                    file_bytes = f.read()
+                fingerprint = generate_file_fingerprint(file_bytes)
+            except IOError as e:
+                logger.error(f"Failed to read resume file: {e}")
+                return False, "", None
+
+        logger.info(f"Resume fingerprint: {fingerprint}")
+
+        existing = repo.resume.get_structured_resume_by_fingerprint(fingerprint)
+        if existing:
+            logger.info(f"Resume unchanged (fingerprint: {fingerprint}), skipping")
+            return False, fingerprint, None
+
+        # Parse the resume
+        try:
+            parser = ResumeParser()
+            parsed = parser.parse(resume_file)
+            resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
+        except (ValueError, IOError) as e:
+            logger.error(f"Failed to parse resume file: {e}")
+            return False, fingerprint, None
+
+        logger.info(f"Resume changed (fingerprint: {fingerprint}), processing...")
+        return True, fingerprint, resume_data
+
+    def extract_and_embed_resume(
+        self,
+        repo: JobRepository,
+        resume_file: str,
+        known_fingerprint: Optional[str] = None,
+        on_progress: Optional[Any] = None,
+    ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+        """Full ETL: extract structured data AND generate embeddings.
+
+        This method implements the complete resume ETL pipeline with fingerprint-based
+        change detection. It checks if the resume has changed and only processes
+        if needed.
 
         Args:
             repo: JobRepository instance (provided by UoW)
             resume_file: Path to resume JSON file
+            known_fingerprint: Optional pre-computed fingerprint from raw file bytes.
+                              If provided, skips re-reading file for fingerprint.
 
         Returns:
             Tuple of (resume_changed: bool, fingerprint: str, resume_data: dict or None)
@@ -221,107 +320,162 @@ class JobETLService:
             - fingerprint: The resume fingerprint
             - resume_data: The loaded resume data (or None if file not found)
         """
-        # Load resume file
-        if not os.path.exists(resume_file):
-            logger.error(f"Resume file not found: {resume_file}")
-            return False, "", None
-
-        # Generate fingerprint from raw file bytes
-        try:
-            with open(resume_file, 'rb') as f:
-                file_bytes = f.read()
-            fingerprint = generate_file_fingerprint(file_bytes)
-        except IOError as e:
-            logger.error(f"Failed to read resume file: {e}")
-            return False, "", None
-
-        logger.info(f"Resume fingerprint: {fingerprint[:16]}...")
-
-        # Check if resume already exists (unchanged)
-        existing = repo.resume.get_structured_resume_by_fingerprint(fingerprint)
-        if existing:
-            logger.info(f"Resume unchanged (fingerprint: {fingerprint[:16]}...), skipping ETL")
+        changed, fingerprint, resume_data = self._load_and_check_resume(
+            repo, resume_file, known_fingerprint
+        )
+        if not changed:
             return False, fingerprint, None
 
-        # Parse for processing
         try:
-            parser = ResumeParser()
-            parsed = parser.parse(resume_file)
-            resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
-        except (ValueError, IOError) as e:
-            logger.error(f"Failed to parse resume file: {e}")
-            return False, "", None
+            extracted, fingerprint, _ = self._extract_resume_data(
+                repo, fingerprint, cast(Dict[str, Any], resume_data)
+            )
+            if not extracted:
+                return False, fingerprint, None
 
-        logger.info(f"Resume changed (fingerprint: {fingerprint[:16]}...), processing...")
-
-        # Process the resume
-        try:
-            self.extract_resume_one(repo, resume_data, fingerprint)
-            logger.info(f"Resume ETL completed for fingerprint: {fingerprint[:16]}...")
+            if on_progress:
+                on_progress("embedding")
+            self.embed_resume(repo, fingerprint)
+            logger.info(f"Resume ETL completed for fingerprint: {fingerprint}")
             return True, fingerprint, resume_data
         except Exception as e:
             logger.error(f"Failed to process resume: {e}")
             raise
 
-    def extract_resume_one(
+    def _extract_resume_data(
         self,
         repo: JobRepository,
-        resume_data: Dict[str, Any],
-        fingerprint: str
-    ) -> None:
-        """Extract structured data from resume and save to DB.
+        fingerprint: str,
+        resume_data: Dict[str, Any]
+    ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+        """Extract structured resume data from already-parsed data (no embeddings).
+
+        This is an internal helper that performs extraction without re-checking
+        fingerprint or re-parsing the file.
 
         Args:
             repo: JobRepository instance (provided by UoW)
-            resume_data: Raw resume JSON data
             fingerprint: Resume fingerprint
+            resume_data: Already-parsed resume data
+
+        Returns:
+            Tuple of (extracted: bool, fingerprint: str, resume_data: dict or None)
         """
-        logger.info(f"Extracting structured resume data...")
+        try:
+            profiler = ResumeProfiler(ai_service=self.ai)
+            resume_schema = profiler.extract_only(resume_data)
 
-        # Create profiler (no store - we handle persistence manually)
-        profiler = ResumeProfiler(ai_service=self.ai)
+            if resume_schema:
+                logger.info(f"Resume extraction completed for fingerprint: {fingerprint}")
 
-        # Run complete profiling pipeline
-        resume, evidence_units, _ = profiler.profile_resume(resume_data, resume_fingerprint=fingerprint)
+                repo.save_structured_resume(
+                    resume_fingerprint=fingerprint,
+                    extracted_data=resume_schema.model_dump(),
+                    total_experience_years=resume_schema.claimed_total_years,
+                    extraction_confidence=resume_schema.extraction.confidence if resume_schema.extraction else None,
+                    extraction_warnings=resume_schema.extraction.warnings if resume_schema.extraction else []
+                )
+                logger.info("Saved structured resume to database")
 
-        if resume:
-            years_msg = f"Total experience: {resume.claimed_total_years or 'unknown'} years"
-            logger.info(years_msg)
+                return True, fingerprint, resume_data
+            else:
+                logger.error("Failed to extract schema from resume")
+                return False, fingerprint, None
+        except Exception as e:
+            logger.error(f"Failed to extract resume: {e}")
+            raise
 
-            # Save structured resume to database
-            repo.save_structured_resume(
-                resume_fingerprint=fingerprint,
-                extracted_data=resume.model_dump(),
-                total_experience_years=resume.claimed_total_years,
-                extraction_confidence=resume.extraction.confidence if resume.extraction else None,
-                extraction_warnings=resume.extraction.warnings if resume.extraction else []
-            )
-            logger.info(f"Saved structured resume to database")
+        return False, fingerprint, None
 
-        # Save evidence unit embeddings (already generated by profiler)
-        if evidence_units:
-            logger.info(f"Saving {len(evidence_units)} evidence units...")
+    def extract_resume(
+        self,
+        repo: JobRepository,
+        resume_file: str,
+        known_fingerprint: Optional[str] = None
+    ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+        """Extract structured resume data (no embeddings).
 
-            units_data = []
-            for unit in evidence_units:
-                if unit.embedding:
-                    units_data.append({
-                        'evidence_unit_id': unit.id,
-                        'source_text': unit.text,
-                        'source_section': unit.source_section,
-                        'tags': unit.tags,
-                        'embedding': unit.embedding,
-                        'years_value': unit.years_value,
-                        'years_context': unit.years_context,
-                        'is_total_years_claim': unit.is_total_years_claim,
-                    })
+        This method reads the resume file, generates fingerprint, extracts
+        structured data, and saves to DB. Does NOT generate embeddings.
 
-            if units_data:
-                repo.save_evidence_unit_embeddings(fingerprint, units_data)
-                logger.info(f"Saved {len(units_data)} evidence unit embeddings")
+        Args:
+            repo: JobRepository instance (provided by UoW)
+            resume_file: Path to resume file
+            known_fingerprint: Optional pre-computed fingerprint from raw file bytes.
+                              If provided, skips re-reading file for fingerprint.
 
-            units_with_years = [u for u in evidence_units if u.years_value is not None]
-            logger.info(f"Extracted years from {len(units_with_years)} evidence units")
+        Returns:
+            Tuple of (extracted: bool, fingerprint: str, resume_data: dict or None)
+        """
+        # If fingerprint is already known, skip file reading and use provided value
+        if known_fingerprint:
+            fingerprint = known_fingerprint
+            # Check if already processed
+            existing = repo.resume.get_structured_resume_by_fingerprint(fingerprint)
+            if existing:
+                logger.info(f"Resume unchanged (fingerprint: {fingerprint}), skipping")
+                return False, fingerprint, None
+            
+            # Parse the resume (file still needs to be read for parsing)
+            try:
+                parser = ResumeParser()
+                parsed = parser.parse(resume_file)
+                resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
+            except (ValueError, IOError) as e:
+                logger.error(f"Failed to parse resume file: {e}")
+                return False, fingerprint, None
+            
+            logger.info(f"Resume changed (fingerprint: {fingerprint}), processing...")
+        else:
+            # Full flow: load, check fingerprint, parse
+            changed, fingerprint, resume_data = self._load_and_check_resume(repo, resume_file)
+            if not changed:
+                return False, fingerprint, None
+        
+        return self._extract_resume_data(repo, fingerprint, cast(Dict[str, Any], resume_data))
+
+    def embed_resume(
+        self,
+        repo: JobRepository,
+        resume_fingerprint: str
+    ) -> Tuple[bool, str]:
+        """Generate embeddings for already-extracted resume.
+        
+        This method reads the structured resume from DB, generates embeddings,
+        and saves them to DB. Requires extraction to have already been done.
+        
+        Args:
+            repo: JobRepository instance (provided by UoW)
+            resume_fingerprint: Resume fingerprint
+            
+        Returns:
+            Tuple of (embedded: bool, fingerprint: str)
+        """
+        existing = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
+        if not existing:
+            logger.error(f"Resume not found in DB: {resume_fingerprint}")
+            return False, resume_fingerprint
+
+        if not existing.extracted_data:
+            logger.error(f"No extracted data for resume: {resume_fingerprint}")
+            return False, resume_fingerprint
+
+        logger.info(f"Generating embeddings for resume: {resume_fingerprint}")
+
+        from etl.resume.embedding_store import JobRepositoryAdapter
+        from core.llm.schema_models import ResumeSchema
+
+        try:
+            resume = ResumeSchema.model_validate(existing.extracted_data)
+            store = JobRepositoryAdapter(repo)
+            profiler = ResumeProfiler(ai_service=self.ai, store=store)
+
+            profiler.embed_only(resume_fingerprint, resume)
+            logger.info(f"Resume embeddings completed for fingerprint: {resume_fingerprint}")
+            return True, resume_fingerprint
+        except Exception as e:
+            logger.error(f"Failed to embed resume: {e}")
+            raise
 
     def unload_models(self):
         """Helper to unload models if the provider supports it."""

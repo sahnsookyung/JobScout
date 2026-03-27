@@ -1,0 +1,54 @@
+# Development overlay for Dockerized hot reload
+# Use via: ./scripts/setup_local_env/start.sh --split --dev
+# Or manually: docker compose -f docker-compose.yml -f docker-compose.microservices.yml -f docker-compose.web.yml -f docker-compose.dev.yml --profile split --profile web up -d
+
+services:
+  extraction:
+    command: ["uvicorn", "services.extraction.main:app", "--host", "0.0.0.0", "--port", "8081",
+              "--reload", "--reload-dir", "/app/services/extraction", "--reload-dir", "/app/core", "--reload-dir", "/app/database"]
+    volumes:
+      - ./core:/app/core
+      - ./database:/app/database
+      - ./services/base:/app/services/base
+      - ./services/extraction:/app/services/extraction
+
+  embeddings:
+    command: ["uvicorn", "services.embeddings.main:app", "--host", "0.0.0.0", "--port", "8082",
+              "--reload", "--reload-dir", "/app/services/embeddings", "--reload-dir", "/app/core", "--reload-dir", "/app/database"]
+    volumes:
+      - ./core:/app/core
+      - ./database:/app/database
+      - ./services/base:/app/services/base
+      - ./services/embeddings:/app/services/embeddings
+
+  scorer-matcher:
+    command: ["uvicorn", "services.scorer_matcher.main:app", "--host", "0.0.0.0", "--port", "8083",
+              "--reload", "--reload-dir", "/app/services/scorer_matcher", "--reload-dir", "/app/core", "--reload-dir", "/app/database"]
+    volumes:
+      - ./core:/app/core
+      - ./database:/app/database
+      - ./pipeline:/app/pipeline
+      - ./services/scorer_matcher:/app/services/scorer_matcher
+
+  orchestrator:
+    command: ["uvicorn", "services.orchestrator.main:app", "--host", "0.0.0.0", "--port", "8084",
+              "--reload", "--reload-dir", "/app/services/orchestrator", "--reload-dir", "/app/core", "--reload-dir", "/app/database"]
+    volumes:
+      - ./core:/app/core
+      - ./database:/app/database
+      - ./services/base:/app/services/base
+      - ./services/orchestrator:/app/services/orchestrator
+
+  web-backend:
+    command: ["uvicorn", "web.backend.app:app", "--host", "0.0.0.0", "--port", "8080",
+              "--reload", "--reload-dir", "/app/web/backend", "--reload-dir", "/app/core",
+              "--reload-dir", "/app/database", "--reload-dir", "/app/services/base"]
+    volumes:
+      - ./core:/app/core
+      - ./database:/app/database
+      - ./services/base:/app/services/base
+      - ./web/backend:/app/web/backend
+      - ./web/shared:/app/web/shared
+
+  # web-frontend runs natively via: cd web/frontend && npm run dev
+  # start.sh --web-ui handles this automatically

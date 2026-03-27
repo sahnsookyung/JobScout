@@ -13,6 +13,7 @@ from core.llm.schema_models import ResumeSchema
 from etl.resume.profiler import ResumeProfiler
 from etl.resume.models import ResumeEvidenceUnit
 from etl.resume.parser import ResumeParser, ParsedResume
+from etl.resume.loader import load_resume_with_parser
 
 __all__ = [
     'ResumeProfiler',
@@ -20,4 +21,5 @@ __all__ = [
     'ResumeSchema',
     'ResumeParser',
     'ParsedResume',
+    'load_resume_with_parser',
 ]

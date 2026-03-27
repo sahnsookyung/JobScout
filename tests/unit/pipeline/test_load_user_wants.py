@@ -190,14 +190,14 @@ class TestLoadUserWantsData(unittest.TestCase):
         """Should be able to read from read-only file."""
         content = "Read-only want"
         file_path = self._create_wants_file(content)
-        os.chmod(file_path, 0o444)  # Read-only
+        os.chmod(file_path, 0o444)  # NOSONAR - testing read-only file handling
         
         try:
             result = load_user_wants_data(file_path)
             self.assertEqual(len(result), 1)
             self.assertEqual(result[0], "Read-only want")
         finally:
-            os.chmod(file_path, 0o644)  # Restore permissions for cleanup
+            os.chmod(file_path, 0o644)  # NOSONAR - restore permissions for cleanup
 
 
 class TestLoadUserWantsDataIntegration(unittest.TestCase):

@@ -9,6 +9,28 @@ from pgvector.sqlalchemy import Vector
 from .base import Base
 
 
+# ============================================================================
+# Constants - avoid duplication across models
+# ============================================================================
+
+# SQLAlchemy cascade specification
+CASCADE_DELETE_ORPHAN = "all, delete-orphan"
+
+# Server default for UTC timestamps
+UTC_NOW = sql_text("timezone('UTC', now())")
+
+# Common foreign key references
+JOB_POST_ID_FK = 'job_post.id'
+JOB_REQUIREMENT_UNIT_ID_FK = 'job_requirement_unit.id'
+
+# Table name constants
+JOB_POST_TABLE = 'job_post'
+JOB_REQUIREMENT_UNIT_TABLE = 'job_requirement_unit'
+TENANT_TABLE = 'tenant'
+RESUME_TABLE = 'resume'
+JOB_MATCH_TABLE = 'job_match'
+
+
 class JobPost(Base):
     __tablename__ = 'job_post'
 
@@ -24,13 +46,23 @@ class JobPost(Base):
     # Fingerprinting / Tracking
     canonical_fingerprint = Column(Text, nullable=False)
     fingerprint_version = Column(Integer, nullable=False, default=1)
-    first_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
-    last_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    first_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
+    last_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
     status = Column(Text, nullable=False, default='active') # active|expired|unknown
     
     # State Flags
     is_extracted = Column(Boolean, nullable=False, default=False)
     is_embedded = Column(Boolean, nullable=False, default=False)
+    extraction_status = Column(Text, nullable=False, default='pending')
+    extraction_attempts = Column(Integer, nullable=False, default=0)
+    extraction_last_error = Column(Text)
+    extraction_last_attempt_at = Column(TIMESTAMP(timezone=True))
+    extraction_next_retry_at = Column(TIMESTAMP(timezone=True))
+    embedding_status = Column(Text, nullable=False, default='pending')
+    embedding_attempts = Column(Integer, nullable=False, default=0)
+    embedding_last_error = Column(Text)
+    embedding_last_attempt_at = Column(TIMESTAMP(timezone=True))
+    embedding_next_retry_at = Column(TIMESTAMP(timezone=True))
 
     # Facet Extraction State
     facet_status = Column(Text, default='pending')  # pending|in_progress|done|failed|quarantined
@@ -77,10 +109,10 @@ class JobPost(Base):
     summary_embedding = Column(Vector(1024))
 
     # Relationships
-    sources = relationship("JobPostSource", back_populates="job_post", cascade="all, delete-orphan")
-    requirements = relationship("JobRequirementUnit", back_populates="job_post", cascade="all, delete-orphan")
-    benefits = relationship("JobBenefit", back_populates="job_post", cascade="all, delete-orphan")
-    matches = relationship("JobMatch", back_populates="job_post", cascade="all, delete-orphan")
+    sources = relationship("JobPostSource", back_populates="job_post", cascade=CASCADE_DELETE_ORPHAN)
+    requirements = relationship("JobRequirementUnit", back_populates="job_post", cascade=CASCADE_DELETE_ORPHAN)
+    benefits = relationship("JobBenefit", back_populates="job_post", cascade=CASCADE_DELETE_ORPHAN)
+    matches = relationship("JobMatch", back_populates="job_post", cascade=CASCADE_DELETE_ORPHAN)
 
     __table_args__ = (
         UniqueConstraint('tenant_id', 'fingerprint_version', 'canonical_fingerprint', name='uq_job_post_fingerprint'),
@@ -89,6 +121,8 @@ class JobPost(Base):
         Index('idx_job_post_remote', 'is_remote'),
         Index('idx_job_post_tenant', 'tenant_id'),
         Index('idx_job_post_content_hash', 'content_hash'),
+        Index('idx_job_post_extraction_retry', 'extraction_status', 'extraction_next_retry_at'),
+        Index('idx_job_post_embedding_retry', 'embedding_status', 'embedding_next_retry_at'),
         # HNSW index for vector similarity search on summary_embedding
         Index('idx_job_post_summary_embedding_hnsw', 'summary_embedding', postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}, postgresql_ops={'summary_embedding': 'vector_cosine_ops'}),
     )
@@ -97,7 +131,7 @@ class JobPostSource(Base):
     __tablename__ = 'job_post_source'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_post_id = Column(UUID(as_uuid=True), ForeignKey('job_post.id', ondelete='CASCADE'), nullable=False)
+    job_post_id = Column(UUID(as_uuid=True), ForeignKey(JOB_POST_ID_FK, ondelete='CASCADE'), nullable=False)
     
     site = Column(Text, nullable=False)
     job_url = Column(Text, nullable=False)
@@ -105,8 +139,8 @@ class JobPostSource(Base):
     source_job_id = Column(Text)
     date_posted = Column(Date)
     
-    first_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
-    last_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    first_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
+    last_seen_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
     is_active = Column(Boolean, nullable=False, default=True)
 
     job_post = relationship("JobPost", back_populates="sources")
@@ -121,7 +155,7 @@ class JobRequirementUnit(Base):
     __tablename__ = 'job_requirement_unit'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_post_id = Column(UUID(as_uuid=True), ForeignKey('job_post.id', ondelete='CASCADE'), nullable=False)
+    job_post_id = Column(UUID(as_uuid=True), ForeignKey(JOB_POST_ID_FK, ondelete='CASCADE'), nullable=False)
     
     req_type = Column(Text, nullable=False) # required|preferred|responsibility|constraint|benefit
     text = Column(Text, nullable=False)
@@ -132,11 +166,11 @@ class JobRequirementUnit(Base):
     min_years = Column(Integer)  # Minimum years required
     years_context = Column(Text)  # What the years refer to (e.g., "Python", "total")
     
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
 
     job_post = relationship("JobPost", back_populates="requirements")
-    embedding_row = relationship("JobRequirementUnitEmbedding", uselist=False, back_populates="unit", cascade="all, delete-orphan")
-    match_requirements = relationship("JobMatchRequirement", back_populates="requirement", cascade="all, delete-orphan")
+    embedding_row = relationship("JobRequirementUnitEmbedding", uselist=False, back_populates="unit", cascade=CASCADE_DELETE_ORPHAN)
+    match_requirements = relationship("JobMatchRequirement", back_populates="requirement", cascade=CASCADE_DELETE_ORPHAN)
 
     __table_args__ = (
         Index('idx_jru_job', 'job_post_id'),
@@ -145,9 +179,9 @@ class JobRequirementUnit(Base):
 class JobRequirementUnitEmbedding(Base):
     __tablename__ = 'job_requirement_unit_embedding'
 
-    job_requirement_unit_id = Column(UUID(as_uuid=True), ForeignKey('job_requirement_unit.id', ondelete='CASCADE'), primary_key=True)
+    job_requirement_unit_id = Column(UUID(as_uuid=True), ForeignKey(JOB_REQUIREMENT_UNIT_ID_FK, ondelete='CASCADE'), primary_key=True)
     embedding = Column(Vector(1024), nullable=False)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
 
     unit = relationship("JobRequirementUnit", back_populates="embedding_row")
 
@@ -159,13 +193,13 @@ class JobBenefit(Base):
     __tablename__ = 'job_benefit'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_post_id = Column(UUID(as_uuid=True), ForeignKey('job_post.id', ondelete='CASCADE'), nullable=False)
+    job_post_id = Column(UUID(as_uuid=True), ForeignKey(JOB_POST_ID_FK, ondelete='CASCADE'), nullable=False)
 
     category = Column(Text, nullable=False)
     text = Column(Text, nullable=False)
     ordinal = Column(Integer)
 
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
 
     job_post = relationship("JobPost", back_populates="benefits")
 
@@ -190,14 +224,14 @@ class JobFacetEmbedding(Base):
     __tablename__ = 'job_facet_embedding'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_post_id = Column(UUID(as_uuid=True), ForeignKey('job_post.id', ondelete='CASCADE'), nullable=False)
+    job_post_id = Column(UUID(as_uuid=True), ForeignKey(JOB_POST_ID_FK, ondelete='CASCADE'), nullable=False)
 
     facet_key = Column(Text, nullable=False)
     facet_text = Column(Text, nullable=False)
-    embedding = Column(Vector(1024), nullable=False)
+    embedding = Column(Vector(1024), nullable=True)
 
     content_hash = Column(Text)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
 
     __table_args__ = (
         UniqueConstraint('job_post_id', 'facet_key', name='uq_job_facet_job_key'),

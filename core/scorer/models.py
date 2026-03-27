@@ -20,6 +20,9 @@ class ScoredJobMatch:
     fit_components: Dict[str, Any] = field(default_factory=dict)
     want_components: Dict[str, Any] = field(default_factory=dict)
 
+    fit_weight: float = 0.0
+    want_weight: float = 0.0
+
     base_score: float = 0.0
     penalties: float = 0.0
     jd_required_coverage: float = 0.0
