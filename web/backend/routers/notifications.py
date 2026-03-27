@@ -24,7 +24,11 @@ def get_notification_service(db: Annotated[Session, Depends(get_db)]) -> Notific
     return NotificationServiceWrapper(db)
 
 
-@router.post("/send", response_model=NotificationResponse)
+@router.post(
+    "/send",
+    response_model=NotificationResponse,
+    responses={400: {"description": "Invalid notification priority"}},
+)
 def send_notification(
     request: NotificationRequest,
     notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)]

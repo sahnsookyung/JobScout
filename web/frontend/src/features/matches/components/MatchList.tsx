@@ -82,7 +82,7 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
             />
 
             <div className="text-sm text-gray-600">
-                Showing {sortedMatches.length} match{sortedMatches.length !== 1 ? 'es' : ''}
+                Showing {sortedMatches.length} match{sortedMatches.length === 1 ? '' : 'es'}
             </div>
 
             <div className="grid grid-cols-1 gap-4">

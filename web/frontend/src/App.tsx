@@ -4,7 +4,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MatchList } from '@/features/matches/components/MatchList';
 import { MatchDetailsModal } from '@/features/matches/components/MatchDetailsModal';
 import { PolicyPanel } from '@/features/config/components/PolicyPanel';
-import { StatsPanel } from '@/features/stats/components/StatsPanel';
 import { DashboardControls } from '@/features/dashboard/components/DashboardControls';
 import { RefreshCw, Briefcase } from 'lucide-react';
 import { Button } from '@/components/ui/Button';

@@ -28,14 +28,14 @@ class DatabaseManager:
             pool_size=10,
             max_overflow=20,
         )
-        self.SessionLocal = sessionmaker(
+        self.session_local = sessionmaker(
             autocommit=False,
             autoflush=False,
             bind=self.engine,
         )
 
     def get_session(self) -> Generator[Session, None, None]:
-        session = self.SessionLocal()
+        session = self.session_local()
         try:
             yield session
         finally:
@@ -62,7 +62,7 @@ def get_current_user():
     _ensure_dev_bypass_allowed()
     auth_mode = _auth_mode()
     if auth_mode == "dev-bypass":
-        session = _db_manager.SessionLocal()
+        session = _db_manager.session_local()
         try:
             user = _ensure_dev_user(session)
             session.expunge(user)

@@ -1,14 +1,14 @@
 // MatchDetailsModal.tsx
 import React, { useEffect } from 'react';
-import { X, MapPin, Building2, Laptop, TrendingUp, CheckCircle, XCircle, Award, Sparkles } from 'lucide-react';
+import { X, MapPin, Building2, Laptop, XCircle, Award, Sparkles } from 'lucide-react';
 import { useMatchDetails } from '@/hooks/useMatchDetails';
 import { Badge } from '@/components/ui/Badge';
 import { formatScore, formatSalary } from '@/utils/formatters';
 
-interface MatchDetailsModalProps {
+type MatchDetailsModalProps = Readonly<{
     matchId: string | null;
     onClose: () => void;
-}
+}>;
 
 function useEscapeKey(onClose: () => void, enabled: boolean) {
     useEffect(() => {
@@ -16,8 +16,8 @@ function useEscapeKey(onClose: () => void, enabled: boolean) {
         const handleEscape = (e: KeyboardEvent) => {
             if (e.key === 'Escape') onClose();
         };
-        window.addEventListener('keydown', handleEscape);
-        return () => window.removeEventListener('keydown', handleEscape);
+        globalThis.addEventListener('keydown', handleEscape);
+        return () => globalThis.removeEventListener('keydown', handleEscape);
     }, [enabled, onClose]);
 }
 
@@ -25,16 +25,17 @@ function ModalShell({
     title,
     onClose,
     children,
-}: {
+}: Readonly<{
     title: string;
     onClose: () => void;
     children: React.ReactNode;
-}) {
+}>) {
     return (
         <div className="fixed inset-0 z-50 overflow-y-auto">
             <div
                 className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
                 onClick={onClose}
+                aria-hidden="true"
             />
 
             <div className="flex min-h-full items-center justify-center p-4">
@@ -74,7 +75,7 @@ function LoadingState() {
     );
 }
 
-function ErrorState({ message }: { message: string }) {
+function ErrorState({ message }: Readonly<{ message: string }>) {
     return (
         <div className="text-center py-16">
             <div className="inline-flex items-center gap-3 px-6 py-4 bg-red-50 text-red-700 rounded-2xl border-2 border-red-200">
@@ -85,7 +86,7 @@ function ErrorState({ message }: { message: string }) {
     );
 }
 
-function ScoreDisplay({ label, value, gradient }: { label: string; value: number; gradient: string }) {
+function ScoreDisplay({ label, value, gradient }: Readonly<{ label: string; value: number; gradient: string }>) {
     return (
         <div className="relative">
             <div className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-10 blur-xl rounded-2xl`} />
@@ -106,7 +107,7 @@ function ScoreDisplay({ label, value, gradient }: { label: string; value: number
     );
 }
 
-function JobInfoSection({ job }: { job: any }) {
+function JobInfoSection({ job }: Readonly<{ job: any }>) {
     const hasSalary = Boolean(job.salary_min || job.salary_max);
 
     return (
@@ -172,7 +173,7 @@ function JobInfoSection({ job }: { job: any }) {
     );
 }
 
-function ScoresSection({ match }: { match: any }) {
+function ScoresSection({ match }: Readonly<{ match: any }>) {
     const isHighScore = match.overall_score >= 80;
 
     return (
@@ -220,7 +221,7 @@ function ScoresSection({ match }: { match: any }) {
     );
 }
 
-function RequirementCard({ req }: { req: any }) {
+function RequirementCard({ req }: Readonly<{ req: any }>) {
     const isRequired = req.req_type === 'required';
     const isCovered = req.is_covered;
 
@@ -228,7 +229,7 @@ function RequirementCard({ req }: { req: any }) {
         <div className={`p-5 rounded-2xl border-2 transition-all duration-200 ${isCovered
             ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200 hover:border-blue-300'
             : 'bg-gray-50 border-gray-200 hover:border-gray-300'
-            }`}>
+        }`}>
             <div className="flex items-start justify-between gap-4 mb-3">
                 <div className="flex items-center gap-2">
                     <Badge variant={isRequired ? 'info' : 'default'} className="font-bold">
@@ -260,7 +261,7 @@ function RequirementCard({ req }: { req: any }) {
     );
 }
 
-function RequirementsSection({ requirements }: { requirements: any[] }) {
+function RequirementsSection({ requirements }: Readonly<{ requirements: any[] }>) {
     const requiredReqs = requirements.filter((req) => req.req_type === 'required');
     const preferredReqs = requirements.filter((req) => req.req_type === 'preferred');
 
@@ -318,7 +319,7 @@ function RequirementsSection({ requirements }: { requirements: any[] }) {
     );
 }
 
-function JobDescriptionSection({ description }: { description: string }) {
+function JobDescriptionSection({ description }: Readonly<{ description: string }>) {
     return (
         <section>
             <h4 className="text-xl font-black text-gray-900 mb-4">Job Description</h4>
@@ -329,7 +330,7 @@ function JobDescriptionSection({ description }: { description: string }) {
     );
 }
 
-function ModalBody({ isLoading, data }: { isLoading: boolean; data: any }) {
+function ModalBody({ isLoading, data }: Readonly<{ isLoading: boolean; data: any }>) {
     if (isLoading) return <LoadingState />;
     if (!data) return <ErrorState message="Failed to load match details" />;
 

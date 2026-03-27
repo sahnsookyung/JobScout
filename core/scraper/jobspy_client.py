@@ -17,6 +17,8 @@ from core.config_loader import ScraperConfig
 
 logger = logging.getLogger(__name__)
 
+_FAILED_POLL_RESULT = object()
+
 
 def _is_retryable_error(exc: Exception) -> bool:
     """
@@ -132,6 +134,43 @@ class JobSpyClient:
             raise requests.HTTPError(f"Server error {response.status_code}")
         else:
             return None
+
+    @staticmethod
+    def _is_cancelled(task_id: str, stop_event: Optional[threading.Event]) -> bool:
+        if stop_event and stop_event.is_set():
+            logger.info(f"Polling cancelled for task {task_id}")
+            return True
+        return False
+
+    @staticmethod
+    def _handle_poll_result(task_id: str, result: Optional[Dict[str, Any]]) -> object | List[Dict[str, Any]] | None:
+        if not result:
+            return None
+
+        status = result.get("status")
+        if status == "completed":
+            count = result.get("count", 0)
+            logger.info(f"Job {task_id} completed. Found {count} jobs.")
+            return result.get("data", [])
+
+        if status == "failed":
+            error = result.get("error", "Unknown error")
+            logger.error(f"Job {task_id} failed: {error}")
+            return _FAILED_POLL_RESULT
+
+        return None
+
+    @staticmethod
+    def _sleep_for_poll_interval(
+        poll_interval: int,
+        stop_event: Optional[threading.Event],
+    ) -> None:
+        if stop_event:
+            stop_event.wait(poll_interval)
+            return
+
+        import time
+        time.sleep(poll_interval)
     
     def wait_for_result(
         self,
@@ -149,25 +188,18 @@ class JobSpyClient:
         waited = 0
         
         while True:
-            if stop_event and stop_event.is_set():
-                logger.info(f"Polling cancelled for task {task_id}")
+            if self._is_cancelled(task_id, stop_event):
                 return None
             
             try:
-                result = self._poll_status(task_id, request_timeout_s)
-                
-                if result:
-                    status = result.get("status")
-                    
-                    if status == "completed":
-                        count = result.get("count", 0)
-                        logger.info(f"Job {task_id} completed. Found {count} jobs.")
-                        return result.get("data", [])
-                    elif status == "failed":
-                        error = result.get("error", "Unknown error")
-                        logger.error(f"Job {task_id} failed: {error}")
-                        return None
-                
+                poll_result = self._handle_poll_result(
+                    task_id,
+                    self._poll_status(task_id, request_timeout_s),
+                )
+                if poll_result is _FAILED_POLL_RESULT:
+                    return None
+                if poll_result is not None:
+                    return poll_result
             except Exception as e:
                 logger.warning(f"Polling error for {task_id}: {e}")
             
@@ -175,12 +207,7 @@ class JobSpyClient:
                 logger.warning(f"Timeout waiting for job {task_id}")
                 return None
             
-            if stop_event:
-                stop_event.wait(poll_interval)
-            else:
-                import time
-                time.sleep(poll_interval)
-            
+            self._sleep_for_poll_interval(poll_interval, stop_event)
             waited += poll_interval
     
     def close(self):

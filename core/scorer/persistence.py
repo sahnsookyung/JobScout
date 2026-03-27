@@ -8,7 +8,6 @@ Supports both ScoredJobMatch ORM objects and MatchResultDTO data transfer object
 """
 
 import logging
-from typing import Union
 
 from sqlalchemy import select, delete, func
 
@@ -17,6 +16,8 @@ from core.scorer.models import ScoredJobMatch
 from core.matcher.dto import MatchResultDTO
 
 logger = logging.getLogger(__name__)
+
+ScoredMatch = ScoredJobMatch | MatchResultDTO
 
 
 def _to_float(value):
@@ -41,7 +42,7 @@ def _to_native_types(obj):
     return obj
 
 
-def _extract_job_data(scored_match: Union[ScoredJobMatch, MatchResultDTO]):
+def _extract_job_data(scored_match: ScoredMatch):
     """Extract job data from either ORM object or DTO."""
     if isinstance(scored_match, MatchResultDTO):
         # DTO case - job is JobMatchDTO
@@ -58,7 +59,7 @@ def _extract_job_data(scored_match: Union[ScoredJobMatch, MatchResultDTO]):
         }
 
 
-def _extract_requirement_matches(scored_match: Union[ScoredJobMatch, MatchResultDTO]):
+def _extract_requirement_matches(scored_match: ScoredMatch):
     """Extract requirement matches from either ORM object or DTO."""
     if isinstance(scored_match, MatchResultDTO):
         # DTO case - requirements are RequirementMatchDTO
@@ -105,7 +106,7 @@ def _extract_requirement_matches(scored_match: Union[ScoredJobMatch, MatchResult
         return matched, missing
 
 
-def _extract_scores(scored_match: Union[ScoredJobMatch, MatchResultDTO]):
+def _extract_scores(scored_match: ScoredMatch):
     """Extract score values from either ORM object or DTO."""
     if isinstance(scored_match, MatchResultDTO):
         return {
@@ -146,8 +147,166 @@ def _extract_scores(scored_match: Union[ScoredJobMatch, MatchResultDTO]):
         }
 
 
+def _build_match_values(scores, matched_reqs, missing_reqs, job_content_hash):
+    total_requirements = len(matched_reqs) + len(missing_reqs)
+    return {
+        'job_similarity': _to_float(scores['job_similarity']),
+        'fit_score': _to_float(scores['fit_score']),
+        'want_score': _to_float(scores['want_score']),
+        'overall_score': _to_float(scores['overall_score']),
+        'fit_components': _to_native_types(scores['fit_components']),
+        'want_components': _to_native_types(scores['want_components']),
+        'fit_weight': scores['fit_weight'],
+        'want_weight': scores['want_weight'],
+        'base_score': _to_float(scores['base_score']),
+        'penalties': _to_float(scores['penalties']),
+        'penalty_details': scores['penalty_details'],
+        'required_coverage': _to_float(scores['jd_required_coverage']),
+        'preferred_coverage': _to_float(scores['jd_preferences_coverage']),
+        'total_requirements': total_requirements,
+        'matched_requirements_count': len(matched_reqs),
+        'match_type': scores['match_type'],
+        'job_content_hash': job_content_hash,
+        'calculated_at': func.now(),
+    }
+
+
+def _apply_match_values(match_record: JobMatch, values) -> None:
+    match_record.job_similarity = values['job_similarity']
+    match_record.fit_score = values['fit_score']
+    match_record.want_score = values['want_score']
+    match_record.overall_score = values['overall_score']
+    match_record.fit_components = values['fit_components']
+    match_record.want_components = values['want_components']
+    match_record.fit_weight = values['fit_weight']
+    match_record.want_weight = values['want_weight']
+    match_record.base_score = values['base_score']
+    match_record.penalties = values['penalties']
+    match_record.penalty_details = values['penalty_details']
+    match_record.required_coverage = values['required_coverage']
+    match_record.preferred_coverage = values['preferred_coverage']
+    match_record.total_requirements = values['total_requirements']
+    match_record.matched_requirements_count = values['matched_requirements_count']
+    match_record.match_type = values['match_type']
+    match_record.job_content_hash = values['job_content_hash']
+    match_record.calculated_at = values['calculated_at']
+
+
+def _find_existing_match(repo, job_id: str, resume_fingerprint: str):
+    existing_stmt = select(JobMatch).where(
+        JobMatch.job_post_id == job_id,
+        JobMatch.resume_fingerprint == resume_fingerprint,
+    )
+    existing = repo.db.execute(existing_stmt).scalar_one_or_none()
+    return existing_stmt, existing
+
+
+def _resolve_hidden_state(repo, job_id: str, existing: JobMatch | None) -> bool:
+    if existing:
+        return existing.is_hidden
+
+    hidden_stmt = select(JobMatch).where(
+        JobMatch.job_post_id == job_id,
+        JobMatch.is_hidden.is_(True),
+    ).limit(1)
+    hidden_match = repo.db.execute(hidden_stmt).scalar_one_or_none()
+    return bool(hidden_match)
+
+
+def _create_match_record(scored_match: ScoredMatch, values, is_hidden: bool) -> JobMatch:
+    return JobMatch(
+        job_post_id=values['job_post_id'],
+        resume_fingerprint=scored_match.resume_fingerprint,
+        job_similarity=values['job_similarity'],
+        fit_score=values['fit_score'],
+        want_score=values['want_score'],
+        overall_score=values['overall_score'],
+        fit_components=values['fit_components'],
+        want_components=values['want_components'],
+        fit_weight=values['fit_weight'],
+        want_weight=values['want_weight'],
+        base_score=values['base_score'],
+        penalties=values['penalties'],
+        penalty_details=values['penalty_details'],
+        required_coverage=values['required_coverage'],
+        preferred_coverage=values['preferred_coverage'],
+        total_requirements=values['total_requirements'],
+        matched_requirements_count=values['matched_requirements_count'],
+        match_type=values['match_type'],
+        job_content_hash=values['job_content_hash'],
+        notified=False,
+        is_hidden=is_hidden,
+        calculated_at=values['calculated_at'],
+    )
+
+
+def _upsert_match_record(
+    repo,
+    scored_match: ScoredMatch,
+    existing: JobMatch | None,
+    values,
+    is_hidden: bool,
+    is_stale_replacement: bool,
+) -> JobMatch:
+    if existing and not is_stale_replacement:
+        existing.status = 'active'
+        _apply_match_values(existing, values)
+        return existing
+
+    match_record = _create_match_record(scored_match, values, is_hidden)
+    repo.db.add(match_record)
+    return match_record
+
+
+def _flush_match_record(repo, match_record: JobMatch, existing_stmt, job_id: str) -> tuple[JobMatch, bool]:
+    from sqlalchemy.exc import IntegrityError
+
+    try:
+        repo.db.flush()
+        return match_record, False
+    except IntegrityError:
+        repo.db.rollback()
+        logger.warning("Race condition detected for job %s, refetching existing match", job_id)
+        existing = repo.db.execute(existing_stmt).scalar_one_or_none()
+        if not existing:
+            raise
+        return existing, True
+
+
+def _delete_existing_requirements(repo, match_record: JobMatch, should_replace: bool) -> None:
+    if not should_replace:
+        return
+
+    repo.db.execute(
+        delete(JobMatchRequirement).where(
+            JobMatchRequirement.job_match_id == match_record.id
+        )
+    )
+
+
+def _build_requirement_record(match_record: JobMatch, requirement_data, *, is_missing: bool) -> JobMatchRequirement:
+    return JobMatchRequirement(
+        job_match_id=match_record.id,
+        job_requirement_unit_id=requirement_data['requirement_id'],
+        evidence_text="" if is_missing else requirement_data['evidence_text'],
+        evidence_section=None if is_missing else requirement_data['evidence_section'],
+        evidence_tags={} if is_missing else requirement_data['evidence_tags'],
+        similarity_score=_to_float(requirement_data['similarity']),
+        is_covered=False if is_missing else requirement_data['is_covered'],
+        req_type=requirement_data['req_type'],
+    )
+
+
+def _persist_requirement_matches(repo, match_record: JobMatch, matched_reqs, missing_reqs) -> None:
+    for req in matched_reqs:
+        repo.db.add(_build_requirement_record(match_record, req, is_missing=False))
+
+    for req in missing_reqs:
+        repo.db.add(_build_requirement_record(match_record, req, is_missing=True))
+
+
 def save_match_to_db(
-    scored_match: Union[ScoredJobMatch, MatchResultDTO],
+    scored_match: ScoredMatch,
     repo,
     is_stale_replacement: bool = False,
 ) -> JobMatch:
@@ -166,153 +325,42 @@ def save_match_to_db(
     Returns:
         JobMatch record that was created or updated
     """
-    from sqlalchemy.exc import IntegrityError
-    
     job_data = _extract_job_data(scored_match)
     job_id = job_data['id']
     job_content_hash = job_data['content_hash']
     scores = _extract_scores(scored_match)
     matched_reqs, missing_reqs = _extract_requirement_matches(scored_match)
-
-    existing_stmt = select(JobMatch).where(
-        JobMatch.job_post_id == job_id,
-        JobMatch.resume_fingerprint == scored_match.resume_fingerprint
+    existing_stmt, existing = _find_existing_match(
+        repo,
+        job_id,
+        scored_match.resume_fingerprint,
     )
-    existing = repo.db.execute(existing_stmt).scalar_one_or_none()
+    values = _build_match_values(scores, matched_reqs, missing_reqs, job_content_hash)
+    values['job_post_id'] = job_id
+    is_hidden = _resolve_hidden_state(repo, job_id, existing)
+    match_record = _upsert_match_record(
+        repo,
+        scored_match,
+        existing,
+        values,
+        is_hidden,
+        is_stale_replacement,
+    )
+    match_record, reused_existing_record = _flush_match_record(
+        repo,
+        match_record,
+        existing_stmt,
+        job_id,
+    )
+    should_replace_requirements = not is_stale_replacement and (
+        existing is not None or reused_existing_record
+    )
+    match_record.status = 'active'
+    _apply_match_values(match_record, values)
+    repo.db.flush()
 
-    # Determine if this job was previously hidden
-    is_hidden = False
-    if existing:
-        is_hidden = existing.is_hidden
-    else:
-        # Query if any match for this job is hidden (e.g. from an older resume)
-        hidden_stmt = select(JobMatch).where(
-            JobMatch.job_post_id == job_id,
-            JobMatch.is_hidden.is_(True)
-        ).limit(1)
-        hidden_match = repo.db.execute(hidden_stmt).scalar_one_or_none()
-        if hidden_match:
-            is_hidden = True
-
-    # If we're replacing a stale match (job content changed), create new record
-    # Otherwise update existing record in place
-    if existing and not is_stale_replacement:
-        match_record = existing
-        match_record.status = 'active'
-        # Preserve user's hidden preference - don't reset on re-score
-        # is_hidden is intentionally NOT updated here
-        match_record.job_similarity = _to_float(scores['job_similarity'])
-        match_record.fit_score = _to_float(scores['fit_score'])
-        match_record.want_score = _to_float(scores['want_score'])
-        match_record.overall_score = _to_float(scores['overall_score'])
-        match_record.fit_components = _to_native_types(scores['fit_components'])
-        match_record.want_components = _to_native_types(scores['want_components'])
-        match_record.fit_weight = scores['fit_weight']
-        match_record.want_weight = scores['want_weight']
-        match_record.base_score = _to_float(scores['base_score'])
-        match_record.penalties = _to_float(scores['penalties'])
-        match_record.penalty_details = scores['penalty_details']
-        match_record.required_coverage = _to_float(scores['jd_required_coverage'])
-        match_record.preferred_coverage = _to_float(scores['jd_preferences_coverage'])
-        match_record.total_requirements = len(matched_reqs) + len(missing_reqs)
-        match_record.matched_requirements_count = len(matched_reqs)
-        match_record.match_type = scores['match_type']
-        match_record.job_content_hash = job_content_hash
-        match_record.calculated_at = func.now()
-    else:
-        match_record = JobMatch(
-            job_post_id=job_id,
-            resume_fingerprint=scored_match.resume_fingerprint,
-            job_similarity=_to_float(scores['job_similarity']),
-            fit_score=_to_float(scores['fit_score']),
-            want_score=_to_float(scores['want_score']),
-            overall_score=_to_float(scores['overall_score']),
-            fit_components=_to_native_types(scores['fit_components']),
-            want_components=_to_native_types(scores['want_components']),
-            fit_weight=scores['fit_weight'],
-            want_weight=scores['want_weight'],
-            base_score=_to_float(scores['base_score']),
-            penalties=_to_float(scores['penalties']),
-            penalty_details=scores['penalty_details'],
-            required_coverage=_to_float(scores['jd_required_coverage']),
-            preferred_coverage=_to_float(scores['jd_preferences_coverage']),
-            total_requirements=len(matched_reqs) + len(missing_reqs),
-            matched_requirements_count=len(matched_reqs),
-            match_type=scores['match_type'],
-            job_content_hash=job_content_hash,
-            notified=False,
-            is_hidden=is_hidden,
-            calculated_at=func.now()
-        )
-        repo.db.add(match_record)
-
-    try:
-        repo.db.flush()
-    except IntegrityError:
-        # Race condition: another process created this match between our check and insert
-        # Rollback and refetch the existing match to update it instead
-        repo.db.rollback()
-        logger.warning(f"Race condition detected for job {job_id}, refetching existing match")
-        existing = repo.db.execute(existing_stmt).scalar_one_or_none()
-        if not existing:
-            # This shouldn't happen, but if it does, re-raise the original error
-            raise
-        match_record = existing
-        match_record.status = 'active'
-        match_record.job_similarity = _to_float(scores['job_similarity'])
-        match_record.fit_score = _to_float(scores['fit_score'])
-        match_record.want_score = _to_float(scores['want_score'])
-        match_record.overall_score = _to_float(scores['overall_score'])
-        match_record.fit_components = _to_native_types(scores['fit_components'])
-        match_record.want_components = _to_native_types(scores['want_components'])
-        match_record.fit_weight = scores['fit_weight']
-        match_record.want_weight = scores['want_weight']
-        match_record.base_score = _to_float(scores['base_score'])
-        match_record.penalties = _to_float(scores['penalties'])
-        match_record.penalty_details = scores['penalty_details']
-        match_record.required_coverage = _to_float(scores['jd_required_coverage'])
-        match_record.preferred_coverage = _to_float(scores['jd_preferences_coverage'])
-        match_record.total_requirements = len(matched_reqs) + len(missing_reqs)
-        match_record.matched_requirements_count = len(matched_reqs)
-        match_record.match_type = scores['match_type']
-        match_record.job_content_hash = job_content_hash
-        match_record.calculated_at = func.now()
-        repo.db.flush()
-
-    # Only delete requirements when updating existing record in place
-    # When creating new record (is_stale_replacement=True), old record stays with its requirements
-    if existing and not is_stale_replacement:
-        repo.db.execute(
-            delete(JobMatchRequirement).where(
-                JobMatchRequirement.job_match_id == match_record.id
-            )
-        )
-
-    for req in matched_reqs:
-        jmr = JobMatchRequirement(
-            job_match_id=match_record.id,
-            job_requirement_unit_id=req['requirement_id'],
-            evidence_text=req['evidence_text'],
-            evidence_section=req['evidence_section'],
-            evidence_tags=req['evidence_tags'],
-            similarity_score=_to_float(req['similarity']),
-            is_covered=req['is_covered'],
-            req_type=req['req_type']
-        )
-        repo.db.add(jmr)
-
-    for req in missing_reqs:
-        jmr = JobMatchRequirement(
-            job_match_id=match_record.id,
-            job_requirement_unit_id=req['requirement_id'],
-            evidence_text="",
-            evidence_section=None,
-            evidence_tags={},
-            similarity_score=_to_float(req['similarity']),
-            is_covered=False,
-            req_type=req['req_type']
-        )
-        repo.db.add(jmr)
+    _delete_existing_requirements(repo, match_record, should_replace_requirements)
+    _persist_requirement_matches(repo, match_record, matched_reqs, missing_reqs)
 
     repo.db.commit()
 

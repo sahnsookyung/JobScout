@@ -9,9 +9,9 @@ import { computeFileHash, validateFileSize } from '../fileUtils';
 import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
 
 // Polyfill crypto.subtle for JSDOM environment (needed for xxhash)
-if (typeof globalThis.crypto?.subtle === 'undefined') {
+if (globalThis.crypto?.subtle === undefined) {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    Object.defineProperty(globalThis, 'crypto', { value: require('crypto').webcrypto });
+    Object.defineProperty(globalThis, 'crypto', { value: require('node:crypto').webcrypto });
 }
 
 describe('IndexedDB Resume Storage', () => {
@@ -191,4 +191,3 @@ describe('File Size Validation', () => {
         expect(result.valid).toBe(true);
     });
 });
-

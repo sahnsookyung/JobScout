@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { Toaster, toast } from 'sonner';
+import { Toaster } from 'sonner';
 
 export const ToastProvider = () => (
     <Toaster
@@ -15,4 +15,4 @@ export const ToastProvider = () => (
     />
 );
 
-export { toast };
+export { toast } from 'sonner';

@@ -203,41 +203,56 @@ class MatchService:
             "match_id": match_id,
             "explanation": explanation
         }
-    
+
     # Private helper methods
-    
-    def _to_match_summary(self, match: JobMatch) -> MatchSummary:
-        """Convert ORM model to MatchSummary response model."""
+
+    def _extract_summary_job_fields(self, match: JobMatch) -> Dict[str, Any]:
         job = match.job_post
 
         try:
-            job_id = str(job.id) if job else None
-            title = job.title if job and hasattr(job, 'title') else "Unknown"
-            company = job.company if job and hasattr(job, 'company') else "Unknown"
-            location = job.location_text if job and hasattr(job, 'location_text') else None
-            is_remote = job.is_remote if job and hasattr(job, 'is_remote') else False
-        except Exception as e:
-            logger.warning(f"Error accessing job_post fields for match {match.id}: {e}")
-            job_id = None
-            title = "Unknown"
-            company = "Unknown"
-            location = None
-            is_remote = False
+            return {
+                "job_id": str(job.id) if job else None,
+                "title": job.title if job and hasattr(job, 'title') else "Unknown",
+                "company": job.company if job and hasattr(job, 'company') else "Unknown",
+                "location": job.location_text if job and hasattr(job, 'location_text') else None,
+                "is_remote": job.is_remote if job and hasattr(job, 'is_remote') else False,
+            }
+        except Exception as exc:
+            logger.warning(f"Error accessing job_post fields for match {match.id}: {exc}")
+            return {
+                "job_id": None,
+                "title": "Unknown",
+                "company": "Unknown",
+                "location": None,
+                "is_remote": False,
+            }
+
+    @staticmethod
+    def _optional_float(value: Optional[float]) -> Optional[float]:
+        return safe_float(value) if value is not None else None
+
+    @staticmethod
+    def _float_or_zero(value: Optional[float]) -> float:
+        return safe_float(value) if value is not None else 0.0
+
+    def _to_match_summary(self, match: JobMatch) -> MatchSummary:
+        """Convert ORM model to MatchSummary response model."""
+        job_fields = self._extract_summary_job_fields(match)
 
         return MatchSummary(
             match_id=str(match.id),
-            job_id=job_id,
-            title=title,
-            company=company,
-            location=location,
-            is_remote=is_remote,
-            fit_score=safe_float(match.fit_score) if match.fit_score is not None else None,
-            want_score=safe_float(match.want_score) if match.want_score is not None else None,
-            overall_score=safe_float(match.overall_score) if match.overall_score is not None else 0.0,
-            base_score=safe_float(match.base_score) if match.base_score is not None else 0.0,
-            penalties=safe_float(match.penalties) if match.penalties is not None else 0.0,
-            required_coverage=safe_float(match.required_coverage) if match.required_coverage is not None else 0.0,
-            preferred_coverage=safe_float(match.preferred_coverage) if match.preferred_coverage is not None else 0.0,
+            job_id=job_fields["job_id"],
+            title=job_fields["title"],
+            company=job_fields["company"],
+            location=job_fields["location"],
+            is_remote=job_fields["is_remote"],
+            fit_score=self._optional_float(match.fit_score),
+            want_score=self._optional_float(match.want_score),
+            overall_score=self._float_or_zero(match.overall_score),
+            base_score=self._float_or_zero(match.base_score),
+            penalties=self._float_or_zero(match.penalties),
+            required_coverage=self._float_or_zero(match.required_coverage),
+            preferred_coverage=self._float_or_zero(match.preferred_coverage),
             match_type=safe_str(match.match_type, "unknown"),
             is_hidden=match.is_hidden or False,
             created_at=safe_datetime_iso(match.created_at),

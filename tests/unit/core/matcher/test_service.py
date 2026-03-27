@@ -201,11 +201,9 @@ class TestMultiEmbeddingMatching:
         config.wants_remote = False
         
         _, details = penalties.calculate_fit_penalties(
-            job=job,
             matched_requirements=[req_match],
             missing_requirements=[],
             config=config,
-            candidate_total_years=3.0,
             experience_sections=[section]
         )
         

@@ -52,6 +52,8 @@ from notification.message_builder import NotificationMessageBuilder, JobNotifica
 
 logger = logging.getLogger(__name__)
 
+REDIS_URL_DEFAULT = 'redis://localhost:6379/0'
+
 
 class NotificationRateLimiter:
     """
@@ -63,7 +65,7 @@ class NotificationRateLimiter:
     
     RATE_LIMIT_PREFIX = "notification:rate_limit:"
     
-    def __init__(self, redis_url: str = 'redis://localhost:6379/0', max_wait_seconds: int = 300):
+    def __init__(self, redis_url: str = REDIS_URL_DEFAULT, max_wait_seconds: int = 300):
         self.redis_url = redis_url
         self.max_wait_seconds = max_wait_seconds
         self._redis = None
@@ -161,7 +163,7 @@ class NotificationService:
         # Initialize Redis Queue
         self.redis_url = redis_url or os.environ.get(
             'REDIS_URL',
-            'redis://localhost:6379/0'
+            REDIS_URL_DEFAULT
         )
 
         # Base URL injected from config (no direct config.yaml read)
@@ -314,7 +316,7 @@ class NotificationService:
 
         for channel in channels:
             try:
-                recipient = self._get_recipient_for_channel(user_id, channel)
+                recipient = self._get_recipient_for_channel(channel)
 
                 metadata = {
                     'job_title': content.job.title,
@@ -374,7 +376,7 @@ JobScout
         
         for channel in channels:
             try:
-                recipient = self._get_recipient_for_channel(user_id, channel)
+                recipient = self._get_recipient_for_channel(channel)
                 
                 notification_id = self.send_notification(
                     channel_type=channel,
@@ -400,12 +402,11 @@ JobScout
         
         return results
     
-    def _get_recipient_for_channel(self, user_id: str, channel: str) -> str:
+    def _get_recipient_for_channel(self, channel: str) -> str:
         """
         Get recipient address for a given notification channel.
         
         Args:
-            user_id: The user ID to look up preferences for
             channel: The notification channel type (email, discord, telegram)
             
         Returns:
@@ -454,7 +455,7 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
     channel_type = notification_data['channel_type']
     
     # Read Redis URL from environment (not from notification data - keeps job payload clean)
-    redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+    redis_url = os.environ.get('REDIS_URL', REDIS_URL_DEFAULT)
     max_wait_seconds = int(os.environ.get('NOTIFICATION_RATE_LIMIT_MAX_WAIT', '300'))
     
     logger.info(f"Processing notification {notification_id} via {channel_type}")

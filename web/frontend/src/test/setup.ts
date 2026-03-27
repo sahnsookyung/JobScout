@@ -119,21 +119,24 @@ vi.mock('idb-keyval', () => ({
     createStore: vi.fn(),
 }));
 
-// Polyfill Blob.arrayBuffer() for jsdom (also covers File since File extends Blob)
-// Required for computeFileHash() tests in jsdom environment
-// This is a polyfill for older browsers where native Blob.arrayBuffer()
-// is not available in the jsdom environment
+// Polyfill Blob.arrayBuffer() for jsdom environments that do not provide it.
+// Prefer the Response-based path when Blob.stream() is available; otherwise
+// use a FileReader fallback that works in older jsdom implementations.
 if (!Blob.prototype.arrayBuffer) {
+    const readBlobAsArrayBuffer = (blob: Blob): Promise<ArrayBuffer> =>
+        new Promise((resolve, reject) => {
+            const fileReader = new FileReader();
+            fileReader.onload = () => resolve(fileReader.result as ArrayBuffer);
+            fileReader.onerror = () => reject(new Error('FileReader error'));
+            const readAsArrayBuffer = fileReader.readAsArrayBuffer.bind(fileReader);
+            readAsArrayBuffer(blob);
+        });
+
     Blob.prototype.arrayBuffer = async function(): Promise<ArrayBuffer> {
         if (typeof this.stream === 'function') {
             return new Response(this).arrayBuffer();
         }
 
-        return new Promise((resolve, reject) => {
-            const fileReader = new FileReader();
-            fileReader.onload = () => resolve(fileReader.result as ArrayBuffer);
-            fileReader.onerror = () => reject(new Error('FileReader error'));
-            fileReader.readAsArrayBuffer(this);
-        });
+        return readBlobAsArrayBuffer(this);
     };
 }

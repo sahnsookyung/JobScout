@@ -159,8 +159,178 @@ def _mask_email(email: str) -> str:
     """
     if '@' not in email:
         return "***"
-    local, domain = email.rsplit('@', 1)
+    _, domain = email.rsplit('@', 1)
     return f"***@{domain}"
+
+
+def _notification_job_parts(job: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    """Return the job, match, and requirement payloads for a notification item."""
+    return (
+        job.get('job', {}),
+        job.get('match', {}),
+        job.get('requirements', {}),
+    )
+
+
+def _escaped_job_detail(job_info: Dict[str, Any], key: str) -> str:
+    """Return an escaped optional job detail."""
+    return html.escape(job_info.get(key, '') or '')
+
+
+def _build_job_type_details(job_info: Dict[str, Any]) -> List[str]:
+    """Return the escaped job type details to display."""
+    return [
+        detail
+        for detail in (
+            _escaped_job_detail(job_info, 'job_type'),
+            _escaped_job_detail(job_info, 'job_level'),
+        )
+        if detail
+    ]
+
+
+def _build_email_optional_job_details(job_info: Dict[str, Any]) -> List[str]:
+    """Build optional email detail rows for location, salary, and role metadata."""
+    details: List[str] = []
+
+    location = _escaped_job_detail(job_info, 'location')
+    if location:
+        details.append(f'            <div class="job-detail">📍 {location}</div>\n')
+
+    salary = _escaped_job_detail(job_info, 'salary')
+    if salary:
+        details.append(f'            <div class="job-detail">💰 {salary}</div>\n')
+
+    job_type_details = _build_job_type_details(job_info)
+    if job_type_details:
+        details.append(
+            f'            <div class="job-detail">📋 {" | ".join(job_type_details)}</div>\n'
+        )
+
+    return details
+
+
+def _build_email_job_links(job: Dict[str, Any], metadata: Dict[str, Any]) -> List[str]:
+    """Build optional apply/details links for an email job card."""
+    links: List[str] = []
+
+    apply_url = job.get('apply_url')
+    if apply_url:
+        safe_url = _sanitize_url(apply_url)
+        if safe_url:
+            links.append(
+                f'            <div class="job-detail"><strong>🔗 <a href="{safe_url}">Apply Here</a></strong></div>\n'
+            )
+
+    match_id = metadata.get('match_id')
+    if match_id:
+        safe_match_id = html.escape(str(match_id), quote=True)
+        links.append(
+            f'            <div class="job-detail"><strong>🔍 <a href="/api/matches/{safe_match_id}">View Details</a></strong></div>\n'
+        )
+
+    return links
+
+
+def _build_email_job_card(job: Dict[str, Any], metadata: Dict[str, Any]) -> str:
+    """Build a single HTML email job card."""
+    job_info, match_info, req_info = _notification_job_parts(job)
+    title = html.escape(job_info.get('title', 'Unknown Position'))
+    company = html.escape(job_info.get('company', 'Unknown'))
+    overall_score = match_info.get('overall_score', 0)
+    fit_score = match_info.get('fit_score', 0)
+    want_score = match_info.get('want_score')
+    total = req_info.get('total', 0)
+    matched = req_info.get('matched', 0)
+
+    html_parts = [
+        f"""        <div class="job-card">
+            <div class="job-title">{title}</div>
+            <div class="job-detail"><strong>🏢 Company:</strong> {company}</div>
+""",
+        *_build_email_optional_job_details(job_info),
+        f"""
+            <div class="job-detail"><strong>📊 Match:</strong> {overall_score:.0f}%</div>
+            <div class="job-detail"><strong>🎯 Fit:</strong> {fit_score:.0f}%</div>
+""",
+    ]
+
+    if want_score:
+        html_parts.append(
+            f'            <div class="job-detail"><strong>💡 Want:</strong> {want_score:.0f}%</div>\n'
+        )
+
+    html_parts.append(
+        f'            <div class="job-detail"><strong>✅ Requirements:</strong> {matched}/{total} matched</div>\n'
+    )
+    html_parts.extend(_build_email_job_links(job, metadata))
+    html_parts.append("        </div>\n")
+    return "".join(html_parts)
+
+
+def _build_telegram_optional_lines(job_info: Dict[str, Any]) -> List[str]:
+    """Build optional Telegram lines for a job payload."""
+    lines: List[str] = []
+
+    location = job_info.get('location')
+    if location:
+        lines.append(f"📍 {_escape_html(location)}")
+
+    salary = job_info.get('salary')
+    if salary:
+        lines.append(f"💰 {_escape_html(salary)}")
+
+    job_type_details = [
+        _escape_html(detail)
+        for detail in (job_info.get('job_type'), job_info.get('job_level'))
+        if detail
+    ]
+    if job_type_details:
+        lines.append(f"📋 {' | '.join(job_type_details)}")
+
+    return lines
+
+
+def _build_telegram_job_links(job: Dict[str, Any], metadata: Dict[str, Any]) -> List[str]:
+    """Build optional apply/details links for a Telegram message."""
+    links: List[str] = []
+
+    apply_url = job.get('apply_url')
+    if apply_url:
+        safe_url = _sanitize_url(apply_url)
+        if safe_url:
+            links.append(f"🔗 <a href=\"{safe_url}\">Apply Here</a>")
+
+    match_id = metadata.get('match_id')
+    if match_id:
+        safe_match_id = _escape_html(str(match_id))
+        links.append(f"🔍 <a href=\"/api/matches/{safe_match_id}\">View Details</a>")
+
+    return links
+
+
+def _build_telegram_job_lines(job: Dict[str, Any], metadata: Dict[str, Any]) -> List[str]:
+    """Build the Telegram lines for a single job notification."""
+    job_info, match_info, req_info = _notification_job_parts(job)
+    total = req_info.get('total', 0)
+    matched = req_info.get('matched', 0)
+    want_score = match_info.get('want_score')
+
+    lines = [
+        f"🎯 <b>{_escape_html(job_info.get('title', 'Unknown Position'))}</b>",
+        f"🏢 {_escape_html(job_info.get('company', 'Unknown'))}",
+        *_build_telegram_optional_lines(job_info),
+        "",
+        f"📊 <b>{match_info.get('overall_score', 0):.0f}%</b> Match",
+        f"   Fit: {match_info.get('fit_score', 0):.0f}%",
+    ]
+
+    if want_score:
+        lines.append(f"   Want: {want_score:.0f}%")
+
+    lines.append(f"✅ {matched}/{total} requirements matched")
+    lines.extend(_build_telegram_job_links(job, metadata))
+    return lines
 
 
 class NotificationChannel(ABC):
@@ -284,61 +454,7 @@ class EmailChannel(NotificationChannel):
         for i, job in enumerate(job_contents):
             if i > 0:
                 html_body += '<div class="separator"></div>\n'
-            
-            job_info = job.get('job', {})
-            match_info = job.get('match', {})
-            req_info = job.get('requirements', {})
-            
-            title = html.escape(job_info.get('title', 'Unknown Position'))
-            company = html.escape(job_info.get('company', 'Unknown'))
-            location = html.escape(job_info.get('location', ''))
-            
-            html_body += f"""        <div class="job-card">
-            <div class="job-title">{title}</div>
-            <div class="job-detail"><strong>🏢 Company:</strong> {company}</div>
-"""
-            
-            if location:
-                html_body += f'            <div class="job-detail">📍 {location}</div>\n'
-            
-            if job_info.get('salary'):
-                salary = html.escape(job_info.get('salary', ''))
-                html_body += f'            <div class="job-detail">💰 {salary}</div>\n'
-            
-            if job_info.get('job_type') or job_info.get('job_level'):
-                job_type = html.escape(job_info.get('job_type', '') or '')
-                job_level = html.escape(job_info.get('job_level', '') or '')
-                details = [d for d in [job_type, job_level] if d]
-                html_body += f'            <div class="job-detail">📋 {" | ".join(details)}</div>\n'
-            
-            overall_score = match_info.get('overall_score', 0)
-            fit_score = match_info.get('fit_score', 0)
-            want_score = match_info.get('want_score')
-            
-            html_body += f"""
-            <div class="job-detail"><strong>📊 Match:</strong> {overall_score:.0f}%</div>
-            <div class="job-detail"><strong>🎯 Fit:</strong> {fit_score:.0f}%</div>
-"""
-            
-            if want_score:
-                html_body += f'            <div class="job-detail"><strong>💡 Want:</strong> {want_score:.0f}%</div>\n'
-            
-            total = req_info.get('total', 0)
-            matched = req_info.get('matched', 0)
-            html_body += f'            <div class="job-detail"><strong>✅ Requirements:</strong> {matched}/{total} matched</div>\n'
-            
-            apply_url = job.get('apply_url')
-            if apply_url:
-                safe_url = _sanitize_url(apply_url)
-                if safe_url:
-                    html_body += f'            <div class="job-detail"><strong>🔗 <a href="{safe_url}">Apply Here</a></strong></div>\n'
-            
-            match_id = metadata.get('match_id')
-            if match_id:
-                safe_match_id = html.escape(str(match_id), quote=True)
-                html_body += f'            <div class="job-detail"><strong>🔍 <a href="/api/matches/{safe_match_id}">View Details</a></strong></div>\n'
-            
-            html_body += "        </div>\n"
+            html_body += _build_email_job_card(job, metadata)
         
         html_body += """    </div>
     <div class="footer">
@@ -563,45 +679,7 @@ class TelegramChannel(NotificationChannel):
         for i, job in enumerate(job_contents):
             if i > 0:
                 lines.append("\n" + "─" * 30 + "\n")
-            
-            job_info = job.get('job', {})
-            match_info = job.get('match', {})
-            req_info = job.get('requirements', {})
-            
-            lines.append(f"🎯 <b>{_escape_html(job_info.get('title', 'Unknown Position'))}</b>")
-            lines.append(f"🏢 {_escape_html(job_info.get('company', 'Unknown'))}")
-            
-            if job_info.get('location'):
-                lines.append(f"📍 {_escape_html(job_info.get('location'))}")
-            
-            if job_info.get('salary'):
-                lines.append(f"💰 {_escape_html(job_info.get('salary'))}")
-            
-            if job_info.get('job_type') or job_info.get('job_level'):
-                details = [_escape_html(d) for d in [job_info.get('job_type'), job_info.get('job_level')] if d]
-                lines.append(f"📋 {' | '.join(details)}")
-            
-            lines.append("")
-            lines.append(f"📊 <b>{match_info.get('overall_score', 0):.0f}%</b> Match")
-            lines.append(f"   Fit: {match_info.get('fit_score', 0):.0f}%")
-            
-            if match_info.get('want_score'):
-                lines.append(f"   Want: {match_info.get('want_score'):.0f}%")
-            
-            total = req_info.get('total', 0)
-            matched = req_info.get('matched', 0)
-            lines.append(f"✅ {matched}/{total} requirements matched")
-            
-            apply_url = job.get('apply_url')
-            if apply_url:
-                safe_url = _sanitize_url(apply_url)
-                if safe_url:
-                    lines.append(f"🔗 <a href=\"{safe_url}\">Apply Here</a>")
-            
-            match_id = metadata.get('match_id')
-            if match_id:
-                safe_match_id = _escape_html(str(match_id))
-                lines.append(f"🔍 <a href=\"/api/matches/{safe_match_id}\">View Details</a>")
+            lines.extend(_build_telegram_job_lines(job, metadata))
         
         return "\n".join(lines)
 

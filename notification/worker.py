@@ -39,15 +39,15 @@ def start_worker(burst: bool = False, queues: list = None):
     if queues is None:
         queues = ['notifications']
     
-    logger.info(f"Starting RQ Worker")
-    logger.info(f"Redis URL: {redis_url}")
-    logger.info(f"Queues: {', '.join(queues)}")
-    logger.info(f"Burst mode: {burst}")
+    logger.info("Starting RQ Worker")
+    logger.info("Redis URL: %s", redis_url)
+    logger.info("Queues: %s", ", ".join(queues))
+    logger.info("Burst mode: %s", burst)
     
     try:
         redis_conn = Redis.from_url(redis_url)
         redis_conn.ping()
-        logger.info("✓ Connected to Redis")
+        logger.info("Connected to Redis")
         
         worker = Worker(queues, connection=redis_conn)
         
@@ -61,7 +61,7 @@ def start_worker(burst: bool = False, queues: list = None):
     except KeyboardInterrupt:
         logger.info("\nWorker stopped")
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error("Error: %s", e)
         sys.exit(1)
 
 

@@ -71,9 +71,9 @@ export const PolicyPanel: React.FC = () => {
 
                 {/* Presets */}
                 <div className="mb-5">
-                    <label className="block text-xs font-black text-gray-600 mb-3 uppercase tracking-wider">
+                    <p className="block text-xs font-black text-gray-600 mb-3 uppercase tracking-wider">
                         Quick Presets
-                    </label>
+                    </p>
                     <div className="grid grid-cols-3 gap-2">
                         {Object.entries(POLICY_PRESETS).map(([key, { label }]) => (
                             <button

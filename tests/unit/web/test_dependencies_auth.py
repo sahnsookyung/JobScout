@@ -88,7 +88,7 @@ def test_get_current_user_returns_seeded_user_in_dev_bypass(monkeypatch):
     fake_user = SimpleNamespace(id="user-1")
 
     with patch.object(module, "_ensure_dev_user", return_value=fake_user) as mock_ensure_user:
-        module._db_manager = SimpleNamespace(SessionLocal=lambda: fake_session)
+        module._db_manager = SimpleNamespace(session_local=lambda: fake_session)
         result = module.get_current_user()
 
     assert result is fake_user

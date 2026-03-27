@@ -99,6 +99,219 @@ def _load_configured_resume_fallback(
     return None, None, "No ready resume found. Upload and process a resume first."
 
 
+def _error_result(
+    error: str,
+    *,
+    matches_count: int = 0,
+    saved_count: int = 0,
+    notified_count: int = 0,
+    execution_time: float = 0.0,
+    cancelled: bool = False,
+) -> MatchingPipelineResult:
+    """Build an error result with consistent defaults."""
+    return MatchingPipelineResult(
+        success=False,
+        matches_count=matches_count,
+        saved_count=saved_count,
+        notified_count=notified_count,
+        error=error,
+        execution_time=execution_time,
+        cancelled=cancelled,
+    )
+
+
+def _success_result(
+    matches_count: int,
+    saved_count: int,
+    notified_count: int,
+    execution_time: float,
+) -> MatchingPipelineResult:
+    """Build a successful pipeline result."""
+    return MatchingPipelineResult(
+        success=True,
+        matches_count=matches_count,
+        saved_count=saved_count,
+        notified_count=notified_count,
+        execution_time=execution_time,
+    )
+
+
+def _cancelled_result(
+    error: str,
+    *,
+    matches_count: int = 0,
+    saved_count: int = 0,
+    notified_count: int = 0,
+    execution_time: float = 0.0,
+) -> MatchingPipelineResult:
+    """Build a cancelled pipeline result."""
+    return _error_result(
+        error,
+        matches_count=matches_count,
+        saved_count=saved_count,
+        notified_count=notified_count,
+        execution_time=execution_time,
+        cancelled=True,
+    )
+
+
+def _requested_resume_not_found_result(resume_fingerprint: str) -> MatchingPipelineResult:
+    """Build the explicit-fingerprint not found result."""
+    return _error_result(
+        "Resume not found in DB for fingerprint: %s..." % resume_fingerprint[:16],
+    )
+
+
+def _load_requested_resume(
+    resume_fingerprint: str,
+) -> tuple[Optional[Dict[str, Any]], bool, Optional[MatchingPipelineResult]]:
+    """Load resume data for an explicitly requested fingerprint."""
+    resume_data = _load_resume_from_db(resume_fingerprint)
+    if not resume_data:
+        return None, False, _requested_resume_not_found_result(resume_fingerprint)
+
+    logger.info("Loaded resume from database (fingerprint: %s...)", resume_fingerprint[:16])
+    return resume_data, False, None
+
+
+def _missing_structured_resume_result(resume_fingerprint: str) -> MatchingPipelineResult:
+    """Build the missing structured resume result."""
+    return _error_result(
+        f"Ready resume {resume_fingerprint[:16]}... is missing structured data",
+    )
+
+
+def _processing_resume_result(processing_status: str) -> MatchingPipelineResult:
+    """Build the processing-in-progress result."""
+    return _error_result(
+        "Latest resume upload is still processing "
+        f"({processing_status}).",
+    )
+
+
+def _no_ready_resume_result(fallback_error: Optional[str]) -> MatchingPipelineResult:
+    """Build the no-ready-resume result."""
+    return _error_result(
+        fallback_error or "No ready resume found. Upload and process a resume first.",
+    )
+
+
+def _load_latest_ready_resume(
+    ctx: AppContext,
+) -> tuple[Optional[str], Optional[Dict[str, Any]], bool, Optional[MatchingPipelineResult]]:
+    """Load the latest ready resume data from storage."""
+    latest_processing_state = None
+    resume_data = None
+
+    with job_uow() as repo:
+        resume_fingerprint = repo.get_latest_ready_resume_fingerprint()
+        latest_processing_state = repo.get_latest_resume_processing_state()
+
+        if resume_fingerprint:
+            structured_resume = repo.resume.get_structured_resume_by_fingerprint(
+                resume_fingerprint
+            )
+            if not structured_resume or not structured_resume.extracted_data:
+                return None, None, False, _missing_structured_resume_result(resume_fingerprint)
+            resume_data = structured_resume.extracted_data
+
+    if resume_fingerprint:
+        return resume_fingerprint, resume_data, False, None
+
+    if latest_processing_state and latest_processing_state.processing_status in {
+        "extracting",
+        "extracted",
+        "embedding",
+    }:
+        return (
+            None,
+            None,
+            False,
+            _processing_resume_result(latest_processing_state.processing_status),
+        )
+
+    resume_fingerprint, resume_data, fallback_error = _load_configured_resume_fallback(ctx)
+    if not resume_fingerprint:
+        return None, None, False, _no_ready_resume_result(fallback_error)
+
+    return resume_fingerprint, resume_data, False, None
+
+
+def _load_pipeline_resume(
+    ctx: AppContext,
+    resume_fingerprint: Optional[str],
+) -> tuple[Optional[Dict[str, Any]], Optional[str], bool, Optional[MatchingPipelineResult]]:
+    """Load the resume data used by the matching pipeline."""
+    if resume_fingerprint:
+        resume_data, should_re_extract, error_result = _load_requested_resume(resume_fingerprint)
+        return resume_data, resume_fingerprint, should_re_extract, error_result
+
+    latest_fingerprint, resume_data, should_re_extract, error_result = _load_latest_ready_resume(ctx)
+    return resume_data, latest_fingerprint, should_re_extract, error_result
+
+
+def _result_after_matching(
+    match_dtos: List[MatchResultDTO],
+    stop_event: threading.Event,
+) -> Optional[MatchingPipelineResult]:
+    """Return the appropriate result when matching finished under cancellation."""
+    if not stop_event.is_set():
+        return None
+    if not match_dtos:
+        return _cancelled_result("Cancelled by user")
+    return _cancelled_result(
+        "Cancelled by user before saving results",
+        matches_count=len(match_dtos),
+    )
+
+
+def _result_after_saving(
+    match_dtos: List[MatchResultDTO],
+    saved_count: int,
+    stop_event: threading.Event,
+    pipeline_start_time: float,
+) -> Optional[MatchingPipelineResult]:
+    """Return the appropriate result when the save step finished under cancellation."""
+    if not stop_event.is_set():
+        return None
+    return _cancelled_result(
+        "Cancelled after saving results",
+        matches_count=len(match_dtos),
+        saved_count=saved_count,
+        execution_time=time.time() - pipeline_start_time,
+    )
+
+
+def _finish_pipeline_result(
+    match_dtos: List[MatchResultDTO],
+    saved_count: int,
+    notified_count: int,
+    stop_event: threading.Event,
+    pipeline_start_time: float,
+) -> MatchingPipelineResult:
+    """Build the final pipeline result after completion logging."""
+    execution_time = time.time() - pipeline_start_time
+    logger.info("=" * 60)
+    logger.info("MATCHING PIPELINE COMPLETED in %.2fs", execution_time)
+    logger.info("=" * 60)
+
+    if stop_event.is_set():
+        return _cancelled_result(
+            "Cancelled by user",
+            matches_count=len(match_dtos),
+            saved_count=saved_count,
+            notified_count=notified_count,
+            execution_time=execution_time,
+        )
+
+    return _success_result(
+        matches_count=len(match_dtos),
+        saved_count=saved_count,
+        notified_count=notified_count,
+        execution_time=execution_time,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Pipeline entry point
 # ---------------------------------------------------------------------------
@@ -144,69 +357,12 @@ def run_matching_pipeline(
         )
 
     try:
-        # Step 1: Load resume data
-        if resume_fingerprint:
-            resume_data = _load_resume_from_db(resume_fingerprint)
-            if not resume_data:
-                return MatchingPipelineResult(
-                    success=False, matches_count=0, saved_count=0,
-                    notified_count=0,
-                    error="Resume not found in DB for fingerprint: %s..." % resume_fingerprint[:16],
-                )
-            should_re_extract = False
-            logger.info("Loaded resume from database (fingerprint: %s...)", resume_fingerprint[:16])
-        else:
-            resume_data = None
-            latest_processing_state = None
-            with job_uow() as repo:
-                resume_fingerprint = repo.get_latest_ready_resume_fingerprint()
-                latest_processing_state = repo.get_latest_resume_processing_state()
-
-                if resume_fingerprint:
-                    structured_resume = repo.resume.get_structured_resume_by_fingerprint(
-                        resume_fingerprint
-                    )
-                    if not structured_resume or not structured_resume.extracted_data:
-                        return MatchingPipelineResult(
-                            success=False,
-                            matches_count=0,
-                            saved_count=0,
-                            notified_count=0,
-                            error=(
-                                f"Ready resume {resume_fingerprint[:16]}... "
-                                "is missing structured data"
-                            ),
-                        )
-                    resume_data = structured_resume.extracted_data
-
-            if not resume_fingerprint:
-                if latest_processing_state and latest_processing_state.processing_status in {
-                    "extracting",
-                    "extracted",
-                    "embedding",
-                }:
-                    return MatchingPipelineResult(
-                        success=False,
-                        matches_count=0,
-                        saved_count=0,
-                        notified_count=0,
-                        error=(
-                            "Latest resume upload is still processing "
-                            f"({latest_processing_state.processing_status})."
-                        ),
-                    )
-
-                resume_fingerprint, resume_data, fallback_error = _load_configured_resume_fallback(ctx)
-                if not resume_fingerprint:
-                    return MatchingPipelineResult(
-                        success=False,
-                        matches_count=0,
-                        saved_count=0,
-                        notified_count=0,
-                        error=fallback_error or "No ready resume found. Upload and process a resume first.",
-                    )
-
-            should_re_extract = False
+        resume_data, resume_fingerprint, should_re_extract, error_result = _load_pipeline_resume(
+            ctx,
+            resume_fingerprint,
+        )
+        if error_result:
+            return error_result
 
         # Step 2: Load user wants embeddings
         user_want_embeddings = _load_user_wants_embeddings(matching_config, ctx.ai_service)
@@ -216,37 +372,23 @@ def run_matching_pipeline(
             ctx, resume_data, resume_fingerprint, should_re_extract,
             matching_config, user_want_embeddings, stop_event, status_callback,
         )
-        if not match_dtos and stop_event.is_set():
-            return MatchingPipelineResult(
-                success=False, matches_count=0, saved_count=0,
-                notified_count=0, error="Cancelled by user", cancelled=True,
-            )
-        if stop_event.is_set():
-            return MatchingPipelineResult(
-                success=False,
-                matches_count=len(match_dtos),
-                saved_count=0,
-                notified_count=0,
-                error="Cancelled by user before saving results",
-                cancelled=True,
-            )
+        matching_result = _result_after_matching(match_dtos, stop_event)
+        if matching_result:
+            return matching_result
 
         # Step 4: Save matches
         if status_callback:
             status_callback("saving_results")
         saved_count = _save_matches_batch(match_dtos, resume_fingerprint, matching_config)
 
-        if stop_event.is_set():
-            execution_time = time.time() - pipeline_start_time
-            return MatchingPipelineResult(
-                success=False,
-                matches_count=len(match_dtos),
-                saved_count=saved_count,
-                notified_count=0,
-                error="Cancelled after saving results",
-                execution_time=execution_time,
-                cancelled=True,
-            )
+        save_result = _result_after_saving(
+            match_dtos,
+            saved_count,
+            stop_event,
+            pipeline_start_time,
+        )
+        if save_result:
+            return save_result
 
         # Step 5: Send notifications
         notified_count = 0
@@ -257,28 +399,12 @@ def run_matching_pipeline(
                 ctx, match_dtos, saved_count, resume_fingerprint, stop_event,
             )
 
-        execution_time = time.time() - pipeline_start_time
-        logger.info("=" * 60)
-        logger.info("MATCHING PIPELINE COMPLETED in %.2fs", execution_time)
-        logger.info("=" * 60)
-
-        if stop_event.is_set():
-            return MatchingPipelineResult(
-                success=False,
-                matches_count=len(match_dtos),
-                saved_count=saved_count,
-                notified_count=notified_count,
-                error="Cancelled by user",
-                execution_time=execution_time,
-                cancelled=True,
-            )
-
-        return MatchingPipelineResult(
-            success=True,
-            matches_count=len(match_dtos),
-            saved_count=saved_count,
-            notified_count=notified_count,
-            execution_time=execution_time,
+        return _finish_pipeline_result(
+            match_dtos,
+            saved_count,
+            notified_count,
+            stop_event,
+            pipeline_start_time,
         )
 
     except Exception as e:
@@ -487,8 +613,89 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, user_want_
         logger.info("Using Fit-only scoring")
         scored_matches = scorer.score_matches(**common_kwargs)
 
-    logger.info("MATCHING Step 2 completed: Scored %d matches", len(scored_matches))
     return scored_matches
+
+
+def _log_resume_preparation(structured_resume, resume_fingerprint: str) -> None:
+    """Log whether a stored resume will be reused or re-extracted."""
+    if structured_resume:
+        logger.info("Loaded resume from database (fingerprint: %s)", resume_fingerprint)
+        logger.info("Resume experience: %s years", structured_resume.total_experience_years)
+        return
+    logger.info("Will re-extract resume (fingerprint: %s)", resume_fingerprint)
+
+
+def _prepare_matching_run(
+    ctx: AppContext,
+    repo,
+    matching_config,
+    resume_fingerprint: str,
+    should_re_extract: bool,
+):
+    """Load the structured resume and matcher service for matching."""
+    structured_resume = _load_structured_resume(repo, resume_fingerprint, should_re_extract)
+    if not structured_resume and not should_re_extract:
+        raise ValueError(
+            "Resume not found in database for fingerprint: %s. "
+            "Make sure Resume ETL has been run." % resume_fingerprint
+        )
+
+    _log_resume_preparation(structured_resume, resume_fingerprint)
+    matcher = _prepare_matcher_service(ctx, repo, matching_config)
+    return structured_resume, matcher
+
+
+def _run_preliminary_matching(
+    matcher,
+    repo,
+    resume_data: dict,
+    stop_event: threading.Event,
+    status_callback: Optional[Callable[[str], None]],
+    structured_resume,
+    should_re_extract: bool,
+    resume_fingerprint: str,
+):
+    """Run vector matching and log its completion timing."""
+    step_start = time.time()
+    if status_callback:
+        status_callback("vector_matching")
+
+    pre_extracted_resume = _get_pre_extracted_resume(structured_resume, should_re_extract)
+    preliminary_matches = _run_vector_matching(
+        matcher, repo, resume_data, stop_event, pre_extracted_resume, resume_fingerprint,
+    )
+
+    step_elapsed = time.time() - step_start
+    logger.info(
+        "MATCHING Step 1 completed: Matched against %d jobs in %.2fs",
+        len(preliminary_matches), step_elapsed,
+    )
+    return preliminary_matches
+
+
+def _build_job_facet_embeddings_map(repo, preliminary_matches) -> Dict[str, Any]:
+    """Load facet embeddings once per unique job id."""
+    job_facet_embeddings_map: Dict[str, Any] = {}
+    for preliminary in preliminary_matches:
+        job_id = str(preliminary.job.id)
+        if job_id in job_facet_embeddings_map:
+            continue
+        job_facet_embeddings_map[job_id] = repo.get_job_facet_embeddings(preliminary.job.id)
+    return job_facet_embeddings_map
+
+
+def _log_match_results(match_dtos: List[MatchResultDTO]) -> None:
+    """Log the top match summary for observability."""
+    if not match_dtos:
+        return
+
+    logger.info("Top 5 Matches:")
+    for i, dto in enumerate(match_dtos[:5], 1):
+        logger.info(
+            "  %d. %s @ %s: overall=%.1f/100 (fit=%.1f, want=%.1f)",
+            i, dto.job.title, dto.job.company,
+            dto.overall_score, dto.fit_score, dto.want_score,
+        )
 
 
 # pylint: disable=too-many-branches
@@ -506,62 +713,42 @@ def _run_matching_and_scoring(
     if status_callback:
         status_callback("loading_resume")
 
-    step_start = time.time()
+    preparation_start = time.time()
     logger.info("=== RESUME ETL STEP 1: Prepare Resume & Compare Fingerprint ===")
 
-    job_facet_embeddings_map = {}
     match_dtos = []
 
     with job_uow() as repo:
-        structured_resume = _load_structured_resume(repo, resume_fingerprint, should_re_extract)
+        structured_resume, matcher = _prepare_matching_run(
+            ctx,
+            repo,
+            matching_config,
+            resume_fingerprint,
+            should_re_extract,
+        )
 
-        # Handle case where resume is not found and re-extraction not requested
-        if not structured_resume and not should_re_extract:
-            raise ValueError(
-                "Resume not found in database for fingerprint: %s. "
-                "Make sure Resume ETL has been run." % resume_fingerprint
-            )
-
-        # Log resume status when found or when re-extraction is expected
-        if structured_resume:
-            logger.info("Loaded resume from database (fingerprint: %s)", resume_fingerprint)
-            logger.info("Resume experience: %s years", structured_resume.total_experience_years)
-        else:
-            logger.info("Will re-extract resume (fingerprint: %s)", resume_fingerprint)
-
-        matcher = _prepare_matcher_service(ctx, repo, matching_config)
-
-        step_elapsed = time.time() - step_start
+        step_elapsed = time.time() - preparation_start
         logger.info("RESUME ETL Step 1 completed: Resume prepared in %.2fs", step_elapsed)
 
-        # Check for early termination conditions
         if _should_terminate_early(stop_event, status_callback):
             return []
 
-        # Run vector matching
-        step_start = time.time()
-        if status_callback:
-            status_callback("vector_matching")
-        pre_extracted_resume = _get_pre_extracted_resume(structured_resume, should_re_extract)
-        preliminary_matches = _run_vector_matching(
-            matcher, repo, resume_data, stop_event, pre_extracted_resume, resume_fingerprint,
+        preliminary_matches = _run_preliminary_matching(
+            matcher,
+            repo,
+            resume_data,
+            stop_event,
+            status_callback,
+            structured_resume,
+            should_re_extract,
+            resume_fingerprint,
         )
 
-        step_elapsed = time.time() - step_start
-        logger.info(
-            "MATCHING Step 1 completed: Matched against %d jobs in %.2fs",
-            len(preliminary_matches), step_elapsed,
-        )
-
-        # Check for early termination conditions after vector matching
         if _should_terminate_early(stop_event, status_callback):
             return []
 
-        # Populate job facet embeddings map
-        for preliminary in preliminary_matches:
-            job_id = str(preliminary.job.id)
-            if job_id not in job_facet_embeddings_map:
-                job_facet_embeddings_map[job_id] = repo.get_job_facet_embeddings(preliminary.job.id)
+        scoring_start = time.time()
+        job_facet_embeddings_map = _build_job_facet_embeddings_map(repo, preliminary_matches)
 
         if status_callback:
             status_callback("scoring")
@@ -573,18 +760,9 @@ def _run_matching_and_scoring(
 
         match_dtos = _convert_matches_to_dtos(scored_matches)
 
-    step_elapsed = time.time() - step_start
+    step_elapsed = time.time() - scoring_start
     logger.info("MATCHING Step 2 completed: Scored %d matches in %.2fs", len(match_dtos), step_elapsed)
-
-    if match_dtos:
-        logger.info("Top 5 Matches:")
-        for i, dto in enumerate(match_dtos[:5], 1):
-            logger.info(
-                "  %d. %s @ %s: overall=%.1f/100 (fit=%.1f, want=%.1f)",
-                i, dto.job.title, dto.job.company,
-                dto.overall_score, dto.fit_score, dto.want_score,
-            )
-
+    _log_match_results(match_dtos)
     return match_dtos
 
 

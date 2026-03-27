@@ -13,7 +13,6 @@ from typing import List, Dict, Any, Optional, Tuple
 import logging
 import re
 
-from database.models import JobPost
 from core.config_loader import ScorerConfig
 from core.matcher import RequirementMatchResult
 
@@ -157,11 +156,9 @@ def _calculate_experience_penalty(
 
 
 def calculate_fit_penalties(
-    job: JobPost,
     matched_requirements: List[RequirementMatchResult],
     missing_requirements: List[RequirementMatchResult],
     config: ScorerConfig,
-    candidate_total_years: Optional[float] = None,
     experience_sections: Optional[List[Dict[str, Any]]] = None
 ) -> Tuple[float, List[Dict[str, Any]]]:
     """
@@ -177,11 +174,9 @@ def calculate_fit_penalties(
     not penalties. They are NOT included in this function.
 
     Args:
-        job: Job post being scored
         matched_requirements: List of matched requirements
         missing_requirements: List of missing requirements
         config: ScorerConfig with penalty settings
-        candidate_total_years: Deprecated - kept for API compatibility, not currently used
         experience_sections: Pre-fetched experience sections (list of dicts with source_data, source_text, etc.)
 
     Returns: (total_penalties, penalty_details)
