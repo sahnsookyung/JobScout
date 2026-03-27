@@ -125,6 +125,15 @@ vi.mock('idb-keyval', () => ({
 // is not available in the jsdom environment
 if (!Blob.prototype.arrayBuffer) {
     Blob.prototype.arrayBuffer = async function(): Promise<ArrayBuffer> {
-        return new Response(this).arrayBuffer();
+        if (typeof this.stream === 'function') {
+            return new Response(this).arrayBuffer();
+        }
+
+        return new Promise((resolve, reject) => {
+            const fileReader = new FileReader();
+            fileReader.onload = () => resolve(fileReader.result as ArrayBuffer);
+            fileReader.onerror = () => reject(new Error('FileReader error'));
+            fileReader.readAsArrayBuffer(this);
+        });
     };
 }
