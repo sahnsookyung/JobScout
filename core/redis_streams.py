@@ -437,3 +437,18 @@ def delete_task_state(task_id: str) -> None:
     client = get_redis_client()
     key = f"task:{task_id}:state"
     client.delete(key)
+
+def is_task_cancellation_requested(task_id: str) -> bool:
+    client = get_redis_client()
+    key = f"task:{task_id}:cancel_requested"
+    return bool(client.get(key))
+
+def set_task_cancellation_requested(task_id: str, ttl: int = 3600) -> None:
+    client = get_redis_client()
+    key = f"task:{task_id}:cancel_requested"
+    client.setex(key, ttl, "1")
+
+def clear_task_cancellation_requested(task_id: str) -> None:
+    client = get_redis_client()
+    key = f"task:{task_id}:cancel_requested"
+    client.delete(key)

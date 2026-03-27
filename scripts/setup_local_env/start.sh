@@ -19,7 +19,6 @@
 #   -u, --web-ui        Start Vite frontend UI dev server (port 5173)
 #   -m, --microservices Start pipeline microservices (extraction, embeddings, scorer-matcher, orchestrator)
 #      --split          Start split topology (infra + web + microservices)
-#   -o, --ollama        Deprecated; Ollama should run natively, not in Docker
 #   -c, --clean         Stop existing services first
 #      --build          Rebuild images before starting (default: use cached images)
 #      --dev            Mount source code and enable hot reload on all services
@@ -44,6 +43,7 @@ export DOCKER_BUILDKIT=1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"  # Go up 2 levels to project root
 LOGS_DIR="${SCRIPT_DIR}/logs"  # Logs stay in scripts/setup_local_env/logs
+LOG_PIDS_DIR=""
 BACKEND_PORT=8080
 FRONTEND_PORT=5173
 DOCKER_COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
@@ -82,6 +82,63 @@ ensure_logs_dir() {
         mkdir -p "${LOGS_DIR}"
         log_info "Created logs directory: ${LOGS_DIR}"
     fi
+    LOG_PIDS_DIR="${LOGS_DIR}/.pids"
+    if [[ ! -d "${LOG_PIDS_DIR}" ]]; then
+        mkdir -p "${LOG_PIDS_DIR}"
+    fi
+    return 0
+}
+
+log_capture_pid_file() {
+    local name="$1"
+    printf "%s/%s.pid" "${LOG_PIDS_DIR}" "${name}"
+}
+
+stop_log_capture() {
+    local name="$1"
+    local pid_file
+    local pid
+
+    ensure_logs_dir
+    pid_file="$(log_capture_pid_file "${name}")"
+    if [[ ! -f "${pid_file}" ]]; then
+        return 0
+    fi
+
+    pid="$(cat "${pid_file}" 2>/dev/null || true)"
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+        kill "${pid}" 2>/dev/null || true
+        wait "${pid}" 2>/dev/null || true
+    fi
+    rm -f "${pid_file}"
+    return 0
+}
+
+stop_all_log_captures() {
+    local pid_file
+
+    ensure_logs_dir
+    if [[ ! -d "${LOG_PIDS_DIR}" ]]; then
+        return 0
+    fi
+
+    for pid_file in "${LOG_PIDS_DIR}"/*.pid; do
+        [[ -f "${pid_file}" ]] || continue
+        stop_log_capture "$(basename "${pid_file}" .pid)"
+    done
+    return 0
+}
+
+start_log_capture() {
+    local name="$1"
+    local logfile="$2"
+    shift 2
+
+    ensure_logs_dir
+    stop_log_capture "${name}"
+    rm -f "${logfile}"
+    "$@" > "${logfile}" 2>&1 &
+    echo $! > "$(log_capture_pid_file "${name}")"
     return 0
 }
 
@@ -289,7 +346,7 @@ start_docker() {
     elif [[ "$MICROSERVICES" == true ]]; then
         log_info "Starting split topology (infra + microservices)..."
         INFRA=true
-        SERVICES_TO_START="postgres redis jobspy extraction embeddings scorer-matcher orchestrator"
+        SERVICES_TO_START="postgres redis jobspy db-migrate extraction embeddings scorer-matcher orchestrator"
     elif [[ "$INFRA" == true ]]; then
         # Start all default infra services
         log_info "Starting all Docker services (postgres, redis)..."
@@ -355,20 +412,40 @@ start_docker() {
 
     # Start background log capture for Docker services
     ensure_logs_dir
+    stop_all_log_captures
 
     # Capture postgres logs
     if docker compose "${compose_files[@]}" ps postgres 2>/dev/null | grep -q "Up"; then
-        docker compose "${compose_files[@]}" logs -f postgres > "${LOGS_DIR}/postgres.log" 2>&1 &
+        start_log_capture "postgres" "${LOGS_DIR}/postgres.log" \
+            docker compose "${compose_files[@]}" logs -f postgres
         log_info "Capturing PostgreSQL logs to ${LOGS_DIR}/postgres.log"
     fi
 
     # Capture microservice logs
     for service in extraction embeddings scorer-matcher orchestrator; do
         if docker compose "${compose_files[@]}" ps $service 2>/dev/null | grep -q "Up"; then
-            docker compose "${compose_files[@]}" logs -f $service > "${LOGS_DIR}/${service}.log" 2>&1 &
+            start_log_capture "${service}" "${LOGS_DIR}/${service}.log" \
+                docker compose "${compose_files[@]}" logs -f "${service}"
             log_info "Capturing ${service} logs to ${LOGS_DIR}/${service}.log"
         fi
     done
+    return 0
+}
+
+run_migrations() {
+    log_info "Applying database migrations..."
+
+    if ! command -v uv &> /dev/null; then
+        log_error "uv is not installed. Install with: pip install uv" >&2
+        return 1
+    fi
+
+    (
+        cd "${PROJECT_ROOT}" &&
+        uv run python -m database.migrate
+    )
+
+    log_success "Database migrations applied"
     return 0
 }
 
@@ -426,7 +503,8 @@ start_web_app() {
             if [[ "${WEB_DEV:-false}" != "true" ]]; then
                 ensure_logs_dir
                 local log_compose_files=(-f "${PROJECT_ROOT}/docker-compose.yml" -f "${PROJECT_ROOT}/docker-compose.web.yml")
-                docker compose "${log_compose_files[@]}" logs -f web-backend > "${LOGS_DIR}/web-backend.log" 2>&1 &
+                start_log_capture "web-backend" "${LOGS_DIR}/web-backend.log" \
+                    docker compose "${log_compose_files[@]}" logs -f web-backend
                 log_info "Capturing web-backend logs to ${LOGS_DIR}/web-backend.log"
             fi
             return 0
@@ -574,6 +652,11 @@ main() {
 
     if [[ "$INFRA" == true ]] || [[ "$DATABASE" == true ]] || [[ "$REDIS" == true ]] || [[ "$MICROSERVICES" == true ]]; then
         start_docker
+        echo ""
+    fi
+
+    if [[ "$DATABASE" == true ]] || [[ "$INFRA" == true ]] || [[ "$WEB_APP" == true ]] || [[ "$MICROSERVICES" == true ]]; then
+        run_migrations
         echo ""
     fi
 

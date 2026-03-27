@@ -38,6 +38,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 DOCKER_COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
 BACKEND_PORT=8080
 FRONTEND_PORT=5173
+DEFAULT_LOGS_DIR="${SCRIPT_DIR}/logs"
 
 # Colors for output
 RED='\033[0;31m'
@@ -64,6 +65,29 @@ log_warn() {
 
 log_error() {
     printf "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') - %s\n" "$1" >&2
+    return 0
+}
+
+cleanup_log_capture_pids() {
+    local log_root
+    local pid_dir
+    local pid_file
+    local pid
+
+    for log_root in "${DEFAULT_LOGS_DIR}" "${DEFAULT_LOGS_DIR}/split"; do
+        pid_dir="${log_root}/.pids"
+        [[ -d "${pid_dir}" ]] || continue
+
+        for pid_file in "${pid_dir}"/*.pid; do
+            [[ -f "${pid_file}" ]] || continue
+            pid="$(cat "${pid_file}" 2>/dev/null || true)"
+            if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+                kill "${pid}" 2>/dev/null || true
+                wait "${pid}" 2>/dev/null || true
+            fi
+            rm -f "${pid_file}"
+        done
+    done
     return 0
 }
 
@@ -186,6 +210,7 @@ parse_args() {
 # Stop Docker services
 stop_docker() {
     log_info "Stopping Docker infrastructure..."
+    cleanup_log_capture_pids
 
     # Check if docker-compose.yml exists
     if [[ ! -f "${DOCKER_COMPOSE_FILE}" ]]; then

@@ -44,7 +44,7 @@ pytestmark = pytest.mark.usefixtures("test_database", "redis_container")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from database.models import Base, JobPost, JobRequirementUnit, JobMatch
+from database.models import Base, JobPost, JobRequirementUnit, JobMatch, DEFAULT_LEGACY_OWNER_ID
 from database.repository import JobRepository
 from core.matcher import MatcherService
 from etl.resume import ResumeProfiler, ResumeEvidenceUnit
@@ -264,12 +264,9 @@ class TestFullPipelineIntegration(unittest.TestCase):
     
     @classmethod
     def _setup_database(cls):
-        """Create tables and enable pgvector extension."""
-        from sqlalchemy import text
-        with cls.engine.connect() as conn:
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
-            conn.commit()
-        Base.metadata.create_all(cls.engine)
+        """Create the test schema using the migration runner."""
+        from database.migrate import migrate_database
+        migrate_database(engine=cls.engine)
     
     @classmethod
     def tearDownClass(cls):
@@ -530,7 +527,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
             return
         
         # Get user ID from resume
-        user_id = self.resume_data.get('email', 'test-pipeline-user')
+        user_id = DEFAULT_LEGACY_OWNER_ID
         
         # Trigger notifications
         notification_count = 0

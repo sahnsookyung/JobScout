@@ -422,32 +422,34 @@ class TestExtractResume:
         from services.base.extraction import extract_resume
         with patch('services.base.extraction.job_uow') as mock_job_uow:
             mock_ctx = MagicMock()
-            mock_ctx.job_etl_service.extract_resume = Mock(return_value=(True, "fingerprint123", {}))
+            mock_ctx.job_etl_service.extract_resume_stage = Mock(return_value=(True, "fingerprint123", {}))
             
             mock_context = MagicMock()
-            mock_context.__enter__ = Mock(return_value=mock_ctx.job_etl_service)
+            mock_context.__enter__ = Mock(return_value=MagicMock())
             mock_context.__exit__ = Mock(return_value=False)
             mock_job_uow.return_value = mock_context
 
             result = extract_resume(mock_ctx, "/path/to/resume.json")
 
             assert result == (True, "fingerprint123")
+            mock_ctx.job_etl_service.extract_resume_stage.assert_called_once()
 
     def test_extract_resume_failure(self):
         """Test extract resume returns False."""
         from services.base.extraction import extract_resume
         with patch('services.base.extraction.job_uow') as mock_job_uow:
             mock_ctx = MagicMock()
-            mock_ctx.job_etl_service.extract_resume = Mock(return_value=(False, "", None))
+            mock_ctx.job_etl_service.extract_resume_stage = Mock(return_value=(False, "", None))
             
             mock_context = MagicMock()
-            mock_context.__enter__ = Mock(return_value=mock_ctx.job_etl_service)
+            mock_context.__enter__ = Mock(return_value=MagicMock())
             mock_context.__exit__ = Mock(return_value=False)
             mock_job_uow.return_value = mock_context
 
             result = extract_resume(mock_ctx, "/path/to/resume.json")
 
             assert result == (False, "")
+            mock_ctx.job_etl_service.extract_resume_stage.assert_called_once()
 
 
 class TestRunExtractionBatchAdditional:

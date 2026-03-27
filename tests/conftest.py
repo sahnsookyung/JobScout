@@ -58,6 +58,12 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "redis: marks tests as requiring Redis (deselect with '-m \"not redis\"')"
     )
+    config.addinivalue_line(
+        "markers", "integration: marks tests as cross-service/integration coverage"
+    )
+    config.addinivalue_line(
+        "markers", "slow: marks tests as slower end-to-end or container-backed coverage"
+    )
 
 
 @pytest.fixture(scope="session")
@@ -100,66 +106,10 @@ def test_database():
         os.environ["TEST_DATABASE_URL"] = db_url
         
         # Create tables (first create pgvector extension)
-        from sqlalchemy import create_engine, text
-        from database.models import Base
+        from sqlalchemy import create_engine
+        from database.migrate import migrate_database
         engine = create_engine(db_url)
-        with engine.connect() as conn:
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            conn.commit()
-        Base.metadata.create_all(engine)
-        
-        # Create ENUM types for user_files table (not created by Base.metadata.create_all)
-        with engine.connect() as conn:
-            conn.execute(text("""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'upload_status') THEN
-                        CREATE TYPE upload_status AS ENUM ('pending', 'scanned', 'rejected', 'ready');
-                    END IF;
-                END
-                $$;
-            """))
-            
-            conn.execute(text("""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'file_type') THEN
-                        CREATE TYPE file_type AS ENUM ('resume');
-                    END IF;
-                END
-                $$;
-            """))
-            
-            # Check and alter upload_status column
-            result = conn.execute(text("""
-                SELECT data_type FROM information_schema.columns 
-                WHERE table_name = 'user_files' AND column_name = 'upload_status'
-            """))
-            row = result.fetchone()
-            if row and row[0] != 'USER-DEFINED':
-                conn.execute(text("""
-                    ALTER TABLE user_files ALTER COLUMN upload_status TYPE upload_status 
-                    USING upload_status::upload_status
-                """))
-            
-            # Check and alter file_type column
-            result = conn.execute(text("""
-                SELECT data_type FROM information_schema.columns 
-                WHERE table_name = 'user_files' AND column_name = 'file_type'
-            """))
-            row = result.fetchone()
-            if row and row[0] != 'USER-DEFINED':
-                conn.execute(text("""
-                    ALTER TABLE user_files ALTER COLUMN file_type TYPE file_type 
-                    USING file_type::file_type
-                """))
-            
-            # Always set the default for upload_status
-            conn.execute(text("""
-                ALTER TABLE user_files ALTER COLUMN upload_status SET DEFAULT 'pending'::upload_status
-            """))
-            
-            conn.commit()
+        migrate_database(engine=engine)
         
         print(f"\n✓ Test database started: {db_url}")
         
@@ -261,23 +211,6 @@ def reset_redis_module_state():
             original_connection_pool.disconnect()
         except Exception:
             pass  # Ignore errors on disconnect
-
-
-@pytest.fixture(autouse=True)
-def reset_pipeline_manager_state():
-    """Reset pipeline manager global state between tests.
-
-    This fixture resets the global pipeline manager to ensure tests
-    don't share state.
-    """
-    from web.backend.services import pipeline_service
-    # Backup original manager
-    original_manager = pipeline_service._pipeline_manager
-
-    yield
-
-    # Restore original manager
-    pipeline_service._pipeline_manager = original_manager
 
 
 @pytest.fixture(autouse=True)

@@ -112,6 +112,7 @@ class TestExtractionModels:
 
         req = ExtractResumeRequest(resume_file="/app/resume.pdf")
         assert req.resume_file == "/app/resume.pdf"
+        assert req.force_re_extraction is False
 
     def test_extract_response_defaults(self):
         """ExtractResponse has default processed."""

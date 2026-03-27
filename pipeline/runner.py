@@ -1,14 +1,14 @@
 """Shared matching pipeline runner module.
 
-This module contains the core matching pipeline logic that can be
-used by both main.py and the web application.
+This module contains the core matching pipeline logic used by the
+scorer-matcher service and the web-triggered matching flow.
 """
 
 import os
 import time
 import logging
 import threading
-from typing import List, Optional, Callable, Tuple
+from typing import List, Optional, Dict, Any, Callable, Tuple
 
 from dataclasses import dataclass
 
@@ -38,6 +38,7 @@ class MatchingPipelineResult:
     notified_count: int
     error: Optional[str] = None
     execution_time: float = 0.0
+    cancelled: bool = False
 
 
 
@@ -72,6 +73,30 @@ def _load_resume_from_db(resume_fingerprint: str) -> Optional[dict]:
     except Exception as e:
         logger.error("Error loading resume from DB: %s", e)
         return None
+
+
+def _get_configured_resume_file(ctx: AppContext) -> Optional[str]:
+    """Resolve the configured resume file path, if one exists."""
+    etl_config = getattr(ctx.config, "etl", None)
+    resume_file = None
+    if etl_config and getattr(etl_config, "resume", None):
+        resume_file = etl_config.resume.resume_file
+    elif etl_config and getattr(etl_config, "resume_file", None):
+        resume_file = etl_config.resume_file
+
+    if not resume_file:
+        return None
+    if not os.path.isabs(resume_file):
+        return os.path.join(os.getcwd(), resume_file)
+    return resume_file
+
+
+def _load_configured_resume_fallback(
+    ctx: AppContext,
+) -> tuple[Optional[str], Optional[Dict[str, Any]], Optional[str]]:
+    """Configured resume fallback is no longer supported."""
+    del ctx
+    return None, None, "No ready resume found. Upload and process a resume first."
 
 
 # ---------------------------------------------------------------------------
@@ -120,8 +145,6 @@ def run_matching_pipeline(
 
     try:
         # Step 1: Load resume data
-        # If resume_fingerprint is provided (from orchestrator), load from DB.
-        # Otherwise fall back to loading from file (backward compatibility).
         if resume_fingerprint:
             resume_data = _load_resume_from_db(resume_fingerprint)
             if not resume_data:
@@ -133,16 +156,57 @@ def run_matching_pipeline(
             should_re_extract = False
             logger.info("Loaded resume from database (fingerprint: %s...)", resume_fingerprint[:16])
         else:
-            # FIX: step numbering was 1 → 3 (skipping 2); now sequential
-            resume_file, resume_data = _load_resume_file(ctx.config.etl)
-            if not resume_file or not resume_data:
-                return MatchingPipelineResult(
-                    success=False, matches_count=0, saved_count=0,
-                    notified_count=0, error="Failed to load resume",
-                )
-            resume_fingerprint, should_re_extract = _determine_resume_extraction(
-                resume_file, ctx.config.etl
-            )
+            resume_data = None
+            latest_processing_state = None
+            with job_uow() as repo:
+                resume_fingerprint = repo.get_latest_ready_resume_fingerprint()
+                latest_processing_state = repo.get_latest_resume_processing_state()
+
+                if resume_fingerprint:
+                    structured_resume = repo.resume.get_structured_resume_by_fingerprint(
+                        resume_fingerprint
+                    )
+                    if not structured_resume or not structured_resume.extracted_data:
+                        return MatchingPipelineResult(
+                            success=False,
+                            matches_count=0,
+                            saved_count=0,
+                            notified_count=0,
+                            error=(
+                                f"Ready resume {resume_fingerprint[:16]}... "
+                                "is missing structured data"
+                            ),
+                        )
+                    resume_data = structured_resume.extracted_data
+
+            if not resume_fingerprint:
+                if latest_processing_state and latest_processing_state.processing_status in {
+                    "extracting",
+                    "extracted",
+                    "embedding",
+                }:
+                    return MatchingPipelineResult(
+                        success=False,
+                        matches_count=0,
+                        saved_count=0,
+                        notified_count=0,
+                        error=(
+                            "Latest resume upload is still processing "
+                            f"({latest_processing_state.processing_status})."
+                        ),
+                    )
+
+                resume_fingerprint, resume_data, fallback_error = _load_configured_resume_fallback(ctx)
+                if not resume_fingerprint:
+                    return MatchingPipelineResult(
+                        success=False,
+                        matches_count=0,
+                        saved_count=0,
+                        notified_count=0,
+                        error=fallback_error or "No ready resume found. Upload and process a resume first.",
+                    )
+
+            should_re_extract = False
 
         # Step 2: Load user wants embeddings
         user_want_embeddings = _load_user_wants_embeddings(matching_config, ctx.ai_service)
@@ -155,7 +219,16 @@ def run_matching_pipeline(
         if not match_dtos and stop_event.is_set():
             return MatchingPipelineResult(
                 success=False, matches_count=0, saved_count=0,
-                notified_count=0, error="Interrupted by system",
+                notified_count=0, error="Cancelled by user", cancelled=True,
+            )
+        if stop_event.is_set():
+            return MatchingPipelineResult(
+                success=False,
+                matches_count=len(match_dtos),
+                saved_count=0,
+                notified_count=0,
+                error="Cancelled by user before saving results",
+                cancelled=True,
             )
 
         # Step 4: Save matches
@@ -163,19 +236,42 @@ def run_matching_pipeline(
             status_callback("saving_results")
         saved_count = _save_matches_batch(match_dtos, resume_fingerprint, matching_config)
 
+        if stop_event.is_set():
+            execution_time = time.time() - pipeline_start_time
+            return MatchingPipelineResult(
+                success=False,
+                matches_count=len(match_dtos),
+                saved_count=saved_count,
+                notified_count=0,
+                error="Cancelled after saving results",
+                execution_time=execution_time,
+                cancelled=True,
+            )
+
         # Step 5: Send notifications
         notified_count = 0
         if ctx.notification_service and not stop_event.is_set():
             if status_callback:
                 status_callback("notifying")
             notified_count = _send_notifications(
-                ctx, match_dtos, saved_count, resume_data, resume_fingerprint, stop_event,
+                ctx, match_dtos, saved_count, resume_fingerprint, stop_event,
             )
 
         execution_time = time.time() - pipeline_start_time
         logger.info("=" * 60)
         logger.info("MATCHING PIPELINE COMPLETED in %.2fs", execution_time)
         logger.info("=" * 60)
+
+        if stop_event.is_set():
+            return MatchingPipelineResult(
+                success=False,
+                matches_count=len(match_dtos),
+                saved_count=saved_count,
+                notified_count=notified_count,
+                error="Cancelled by user",
+                execution_time=execution_time,
+                cancelled=True,
+            )
 
         return MatchingPipelineResult(
             success=True,
@@ -348,12 +444,11 @@ def _get_pre_extracted_resume(structured_resume, should_re_extract: bool):
         pre_extracted = ResumeSchema.model_validate(structured_resume.extracted_data)
         logger.info(
             "Using stored structured resume (fingerprint: %s)",
-            structured_resume.resume_fingerprint or '',
+            getattr(structured_resume, "resume_fingerprint", "") or '',
         )
         return pre_extracted
     except Exception as e:
-        logger.warning("Failed to parse stored resume: %s. Will re-extract.", e)
-        return None
+        raise ValueError(f"Failed to parse stored ready resume: {e}") from e
 
 
 def _run_vector_matching(matcher, repo, resume_data, stop_event, pre_extracted_resume, resume_fingerprint):
@@ -422,11 +517,10 @@ def _run_matching_and_scoring(
 
         # Handle case where resume is not found and re-extraction not requested
         if not structured_resume and not should_re_extract:
-            logger.error(
+            raise ValueError(
                 "Resume not found in database for fingerprint: %s. "
-                "Make sure Resume ETL has been run.", resume_fingerprint,
+                "Make sure Resume ETL has been run." % resume_fingerprint
             )
-            return []
 
         # Log resume status when found or when re-extraction is expected
         if structured_resume:
@@ -635,7 +729,6 @@ def _send_notifications(
     ctx: AppContext,
     scored_match_dtos: List[MatchResultDTO],
     saved_count: int,
-    resume_data: dict,
     resume_fingerprint: str,
     stop_event: threading.Event,
 ) -> int:
@@ -654,7 +747,10 @@ def _send_notifications(
     logger.info("=== MATCHING STEP 3: Sending Notifications ===")
 
     try:
-        user_id = notification_config.user_id or resume_data.get('email') or 'default_user'
+        user_id = notification_config.user_id
+        if not user_id:
+            logger.warning("Skipping notifications because notification_config.user_id is not configured")
+            return 0
 
         enabled_channels = [
             name for name, cfg in notification_config.channels.items() if cfg.enabled

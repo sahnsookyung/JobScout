@@ -61,6 +61,22 @@ describe('pipelineApi', () => {
         });
     });
 
+    describe('getResumeEligibility', () => {
+        it('calls GET /pipeline/resume-eligibility', () => {
+            mockGet.mockResolvedValueOnce({ data: { can_run: true } } as any);
+            pipelineApi.getResumeEligibility();
+            expect(mockGet).toHaveBeenCalledWith('/pipeline/resume-eligibility');
+        });
+    });
+
+    describe('preflightResume', () => {
+        it('calls POST /pipeline/resume-preflight with the hash payload', () => {
+            mockPost.mockResolvedValueOnce({ data: { status: 'upload_required' } } as any);
+            pipelineApi.preflightResume('hash-123');
+            expect(mockPost).toHaveBeenCalledWith('/pipeline/resume-preflight', { resume_hash: 'hash-123' });
+        });
+    });
+
     describe('stopMatching', () => {
         it('calls POST /pipeline/stop', () => {
             mockPost.mockResolvedValueOnce({ data: { task_id: 'stop-1', status: 'stopped' } } as any);
@@ -156,6 +172,36 @@ describe('pipelineApi', () => {
             mockPost.mockResolvedValueOnce(expected as any);
             const result = await pipelineApi.uploadResume(file, 'hash123');
             expect(result).toEqual(expected);
+        });
+    });
+
+    describe('selectResume', () => {
+        it('calls POST /pipeline/select-resume with resume hash and original filename', () => {
+            mockPost.mockResolvedValueOnce({ data: { status: 'ready' } } as any);
+            pipelineApi.selectResume('hash-1', 'resume.pdf');
+            expect(mockPost).toHaveBeenCalledWith('/pipeline/select-resume', {
+                resume_hash: 'hash-1',
+                original_filename: 'resume.pdf',
+            });
+        });
+
+        it('allows original filename to be omitted', () => {
+            mockPost.mockResolvedValueOnce({ data: { status: 'ready' } } as any);
+            pipelineApi.selectResume('hash-2');
+            expect(mockPost).toHaveBeenCalledWith('/pipeline/select-resume', {
+                resume_hash: 'hash-2',
+                original_filename: undefined,
+            });
+        });
+    });
+
+    describe('retryResume', () => {
+        it('calls POST /pipeline/retry-resume with upload id', () => {
+            mockPost.mockResolvedValueOnce({ data: { status: 'in_progress' } } as any);
+            pipelineApi.retryResume('upload-9');
+            expect(mockPost).toHaveBeenCalledWith('/pipeline/retry-resume', {
+                upload_id: 'upload-9',
+            });
         });
     });
 });

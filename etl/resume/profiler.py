@@ -21,6 +21,11 @@ from etl.resume.embedding_store import (
 from core.llm.schema_models import ResumeSchema, Profile
 
 logger = logging.getLogger(__name__)
+DEFAULT_LEGACY_OWNER_ID = "00000000-0000-0000-0000-000000000001"
+
+
+def _normalize_owner_id(owner_id: Any) -> Any:
+    return owner_id or DEFAULT_LEGACY_OWNER_ID
 
 
 class ResumeProfiler:
@@ -262,7 +267,13 @@ class ResumeProfiler:
             if unit.embedding is None:
                 unit.embedding = self.ai.generate_embedding(unit.text)
 
-    def save_evidence_unit_embeddings(self, resume_fingerprint: str, evidence_units: List[ResumeEvidenceUnit]) -> None:
+    def save_evidence_unit_embeddings(
+        self,
+        resume_fingerprint: str,
+        evidence_units: List[ResumeEvidenceUnit],
+        *,
+        owner_id: Any = None,
+    ) -> None:
         """Persist evidence unit embeddings to DB."""
         if not evidence_units or not self.store:
             return
@@ -282,28 +293,85 @@ class ResumeProfiler:
         ]
 
         if payload:
-            self.store.save_evidence_unit_embeddings(resume_fingerprint, payload)
+            self.store.save_evidence_unit_embeddings(
+                resume_fingerprint,
+                payload,
+                owner_id=_normalize_owner_id(owner_id),
+            )
             logger.info(f"Saved {len(payload)} evidence unit embeddings for fingerprint {resume_fingerprint}")
 
-    def save_resume_section_embeddings(self, resume_fingerprint: str, resume: ResumeSchema) -> List[Dict[str, Any]]:
-        """Generate and optionally persist embeddings for individual resume sections."""
+    def _build_experience_section_payloads(self, profile: Profile) -> List[Dict[str, Any]]:
+        """Create section payloads for experience entries with embedding text."""
         sections = []
-        profile = resume.profile
-
         for idx, exp in enumerate(profile.experience):
-            if text := exp.to_embedding_text():
-                sections.append({'section_type': 'experience', 'section_index': idx, 'source_text': text, 'source_data': exp.model_dump()})
+            text = exp.to_embedding_text()
+            if text:
+                sections.append(
+                    {
+                        'section_type': 'experience',
+                        'section_index': idx,
+                        'source_text': text,
+                        'source_data': exp.model_dump(),
+                    }
+                )
+        return sections
 
-        if text := profile.skills.to_embedding_text():
-            sections.append({'section_type': 'skills', 'section_index': 0, 'source_text': text, 'source_data': profile.skills.model_dump()})
-
+    def _build_summary_text(self, profile: Profile) -> Optional[str]:
+        """Derive summary text from the structured summary or fallback fields."""
         if profile.summary and profile.summary.text:
-            sections.append({'section_type': 'summary', 'section_index': 0, 'source_text': profile.summary.text, 'source_data': profile.summary.model_dump()})
+            return profile.summary.text
+
+        summary_parts = []
+        for exp in profile.experience[:2]:
+            text = exp.to_embedding_text()
+            if text:
+                summary_parts.append(text)
+
+        skills_text = profile.skills.to_embedding_text()
+        if skills_text:
+            summary_parts.append(skills_text)
+
+        return " | ".join(summary_parts) if summary_parts else None
+
+    def save_resume_section_embeddings(
+        self,
+        resume_fingerprint: str,
+        resume: ResumeSchema,
+        *,
+        owner_id: Any = None,
+    ) -> List[Dict[str, Any]]:
+        """Generate and optionally persist embeddings for individual resume sections."""
+        profile = resume.profile
+        sections = self._build_experience_section_payloads(profile)
+
+        skills_text = profile.skills.to_embedding_text()
+        if skills_text:
+            sections.append(
+                {
+                    'section_type': 'skills',
+                    'section_index': 0,
+                    'source_text': skills_text,
+                    'source_data': profile.skills.model_dump(),
+                }
+            )
+
+        summary_text = self._build_summary_text(profile)
+        if summary_text:
+            sections.append({
+                'section_type': 'summary',
+                'section_index': 0,
+                'source_text': summary_text,
+                'source_data': profile.summary.model_dump() if profile.summary else {},
+            })
 
         payload = [{**sec, 'embedding': self.ai.generate_embedding(sec['source_text'])} for sec in sections]
 
         if payload and self.store:
-            self.store.save_resume_section_embeddings(resume_fingerprint, payload)
+            self.store.save_resume_section_embeddings(
+                resume_fingerprint,
+                payload,
+                owner_id=_normalize_owner_id(owner_id),
+            )
             logger.info(f"Saved {len(payload)} resume section embeddings for fingerprint {resume_fingerprint}")
 
         return payload
@@ -329,7 +397,9 @@ class ResumeProfiler:
         self,
         resume_fingerprint: str,
         resume: ResumeSchema,
-        stop_event: Optional[threading.Event] = None
+        stop_event: Optional[threading.Event] = None,
+        *,
+        owner_id: Any = None,
     ) -> List[ResumeEvidenceUnit]:
         """Generate embeddings for already-extracted resume.
 
@@ -348,11 +418,19 @@ class ResumeProfiler:
 
         self._check_interrupted(stop_event)
         self.embed_evidence_units(evidence_units)
-        self.save_evidence_unit_embeddings(resume_fingerprint, evidence_units)
+        self.save_evidence_unit_embeddings(
+            resume_fingerprint,
+            evidence_units,
+            owner_id=owner_id,
+        )
 
         # Skip interruption check between saves to minimize partial persistence risk
         # Note: These saves are not atomic - partial data may occur if crash happens between calls
-        self.save_resume_section_embeddings(resume_fingerprint, resume)
+        self.save_resume_section_embeddings(
+            resume_fingerprint,
+            resume,
+            owner_id=owner_id,
+        )
 
         return evidence_units
 
@@ -362,6 +440,8 @@ class ResumeProfiler:
         resume_fingerprint: str,
         stop_event: Optional[threading.Event] = None,
         pre_extracted_resume: Optional[ResumeSchema] = None,
+        *,
+        owner_id: Any = None,
     ) -> tuple[Optional[ResumeSchema], List[ResumeEvidenceUnit], List[Dict[str, Any]]]:
         """Complete resume profiling pipeline."""
         if pre_extracted_resume:
@@ -381,8 +461,16 @@ class ResumeProfiler:
 
             self._check_interrupted(stop_event)
             self.embed_evidence_units(evidence_units)
-            self.save_evidence_unit_embeddings(resume_fingerprint, evidence_units)
+            self.save_evidence_unit_embeddings(
+                resume_fingerprint,
+                evidence_units,
+                owner_id=owner_id,
+            )
 
-            persistence_payload = self.save_resume_section_embeddings(resume_fingerprint, resume)
+            persistence_payload = self.save_resume_section_embeddings(
+                resume_fingerprint,
+                resume,
+                owner_id=owner_id,
+            )
 
         return resume, evidence_units, persistence_payload

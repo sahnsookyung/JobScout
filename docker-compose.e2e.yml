@@ -1,0 +1,35 @@
+# Compose overrides for deterministic split-stack E2E tests.
+
+services:
+  web-backend:
+    environment:
+      - JOBSCOUT_ENV=test
+      - AUTH_MODE=dev-bypass
+      - JOBSCOUT_FAKE_AI=1
+      - DEV_BYPASS_USER_ID=00000000-0000-0000-0000-000000000001
+      - DEV_BYPASS_EMAIL=dev-user@jobscout.local
+      - DEV_BYPASS_NAME=JobScout Dev User
+      - RESUME_ETL_WAIT_TIMEOUT_SECONDS=${RESUME_ETL_WAIT_TIMEOUT_SECONDS:-90}
+
+  extraction:
+    environment:
+      - JOBSCOUT_ENV=test
+      - JOBSCOUT_FAKE_AI=1
+
+  embeddings:
+    environment:
+      - JOBSCOUT_ENV=test
+      - JOBSCOUT_FAKE_AI=1
+
+  scorer-matcher:
+    environment:
+      - JOBSCOUT_ENV=test
+      - JOBSCOUT_FAKE_AI=1
+
+  orchestrator:
+    environment:
+      - JOBSCOUT_ENV=test
+      - AUTH_MODE=dev-bypass
+      - JOBSCOUT_FAKE_AI=1
+      - DISABLE_SCRAPER=1
+      - LISTENER_TIMEOUT_SECONDS=${LISTENER_TIMEOUT_SECONDS:-90}

@@ -6,14 +6,7 @@
 
 ## Overview
 
-JobScout is an AI-powered job matching platform that scrapes job postings, extracts structured requirements via LLM, embeds them into vector space, and scores them against a candidate's resume. It ships in two runtime modes:
-
-| Mode | Entry point | When to use |
-|------|------------|-------------|
-| **Monolith** | `main.py` | Local development, single-process sequential run |
-| **Microservices** | `docker-compose.microservices.yml` | Production — each stage runs as an independent FastAPI service |
-
-Both modes share the same domain logic, repositories, and database schema. The microservices mode adds Redis Streams for async inter-service messaging.
+JobScout is an AI-powered job matching platform that scrapes job postings, extracts structured requirements via LLM, embeds them into vector space, and scores them against a candidate's resume. The supported runtime is the split microservice topology launched from `docker-compose.microservices.yml`, with Redis Streams coordinating extraction, embedding, orchestration, and matching.
 
 ---
 
@@ -79,10 +72,6 @@ graph TB
         RQ_WORKER[RQ Worker<br/>Redis Queue]
     end
 
-    subgraph "Monolith Mode"
-        MAIN[main.py<br/>sequential pipeline]
-    end
-
     %% Scraping
     SCRAPER --> ORCH
     ORCH -->|extraction:jobs stream| EXTR
@@ -121,11 +110,6 @@ graph TB
     RQ_WORKER --> NOTIF_CHANNELS
     RQ_WORKER --> REDIS
 
-    %% Monolith
-    MAIN --> ETL
-    MAIN --> MATCHER
-    MAIN --> SCORER
-    MAIN --> PG
 ```
 
 ---
@@ -150,20 +134,20 @@ On startup each microservice calls `init_db()` (creates missing tables via `Base
 
 ---
 
-### 2. Monolith Pipeline → Database Commit (6 steps)
+### 2. Web/API Trigger → Matching Task State (6 steps)
 
-**Trigger**: `python main.py` or scheduled run.
+**Trigger**: `POST /api/pipeline/run-matching` from the dashboard or API.
 
 ```
-main.py  main()
-  └─ main.py  run_internal_sequential_cycle()
-       └─ main.py  _run_job_etl_phase()
-            └─ main.py  run_job_etl()
-                 └─ database/uow.py  job_uow()          ← Unit of Work context manager
-                      └─ database/repository.py  commit()
+web/backend/routers/pipeline.py  run_matching()
+  └─ web/backend/routers/pipeline.py  _start_matching()
+       └─ core/resume_selection.py  evaluate_resume_eligibility()
+            └─ core/redis_streams.py  enqueue_job()
+                 └─ services/scorer_matcher/main.py  MatcherConsumer._do_process()
+                      └─ core/redis_streams.py  set_task_state()
 ```
 
-The monolith runs scrape → ETL → match → score sequentially. Each ETL phase is wrapped in a `job_uow()` Unit of Work that provides a scoped session and auto-commits or rolls back on error.
+Matching runs are pinned to the latest eligible uploaded resume at trigger time. Redis task state carries progress, cancellation, and stale-result metadata while the scorer-matcher service executes the pipeline.
 
 ---
 
@@ -280,4 +264,4 @@ All tunable parameters live in YAML config files loaded by `core/config_loader.p
 | Repository tests | pgvector testcontainer | Column names exist in schema; queries execute; constraints enforced |
 | Redis protocol tests | Redis testcontainer | Stream/PEL/pub-sub behavior; consumer group idempotency |
 | Integration tests | Session-scoped testcontainers | Full pipeline roundtrip with real DB and Redis |
-| Smoke tests (`tests/smoke/`) | Live services | Full stack with running microservices (`SMOKE_TESTS=1`) |
+| Smoke tests (`tests/smoke/`) | Live services | Manual or exploratory coverage against running services |

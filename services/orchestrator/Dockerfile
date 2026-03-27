@@ -16,6 +16,7 @@ RUN uv sync --frozen --no-dev --no-install-project --group web
 # Copy application source
 COPY core/ ./core/
 COPY database/ ./database/
+COPY migrations/ ./migrations/
 COPY etl/ ./etl/
 COPY notification/ ./notification/
 COPY pipeline/ ./pipeline/

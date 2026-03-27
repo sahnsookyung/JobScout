@@ -14,9 +14,10 @@ import uuid
 from unittest.mock import MagicMock, Mock, patch
 import numpy as np
 import pytest
+from sqlalchemy import select
 
 from database.repositories.user_wants import UserWantsRepository
-from database.models import UserWants
+from database.models import UserWants, User
 
 
 class TestSaveUserWants(unittest.TestCase):
@@ -257,7 +258,9 @@ class TestUserWantsIntegration:
     def test_save_and_get_roundtrip(self, db_session):
         """Saved embedding is actually persisted and retrievable from the DB."""
         repo = UserWantsRepository(db_session)
-        user_id = str(uuid.uuid4())
+        user_id = uuid.uuid4()
+        db_session.add(User(id=user_id, email=f"{user_id}@example.com", is_active=True))
+        db_session.flush()
         embedding = [0.1] * 1024
 
         saved = repo.save_user_wants(
@@ -277,7 +280,9 @@ class TestUserWantsIntegration:
     def test_save_multiple_and_get_all(self, db_session):
         """Multiple saves for the same user return all embeddings."""
         repo = UserWantsRepository(db_session)
-        user_id = str(uuid.uuid4())
+        user_id = uuid.uuid4()
+        db_session.add(User(id=user_id, email=f"{user_id}@example.com", is_active=True))
+        db_session.flush()
 
         repo.save_user_wants(user_id=user_id, wants_text="Want A", embedding=[0.1] * 1024)
         repo.save_user_wants(user_id=user_id, wants_text="Want B", embedding=[0.2] * 1024)
@@ -289,7 +294,7 @@ class TestUserWantsIntegration:
     def test_get_returns_empty_for_unknown_user(self, db_session):
         """An unknown user_id returns an empty list, not an error."""
         repo = UserWantsRepository(db_session)
-        result = repo.get_user_wants_embeddings(str(uuid.uuid4()))
+        result = repo.get_user_wants_embeddings(uuid.uuid4())
         assert result == []
 
 

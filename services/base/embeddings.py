@@ -1,9 +1,8 @@
 """
 Embeddings module - handles vector generation.
 
-This module provides embedding functionality that can be used by:
-- main.py (backwards compatible)
-- services/embeddings/main.py (new microservice)
+This module provides embedding functionality for the split embeddings
+service and shared embedding helpers used by the current runtime.
 """
 
 import logging
@@ -11,6 +10,7 @@ import threading
 
 from core.app_context import AppContext
 from database.uow import job_uow
+from database.models import DEFAULT_LEGACY_OWNER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +189,11 @@ def run_embedding_extraction(ctx: AppContext, stop_event: threading.Event, limit
     return facet_count + embed_count
 
 
-def generate_resume_embedding(ctx: AppContext, resume_fingerprint: str) -> bool:
+def generate_resume_embedding(
+    ctx: AppContext,
+    resume_fingerprint: str,
+    owner_id: str = "",
+) -> bool:
     """
     Generate embeddings for a resume.
     
@@ -200,9 +204,14 @@ def generate_resume_embedding(ctx: AppContext, resume_fingerprint: str) -> bool:
     Returns:
         True if embedded, False if resume not found
     """
+    owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
     logger.info(f"Generating embeddings for resume: {resume_fingerprint}")
 
     with job_uow() as repo:
-        embedded, _ = ctx.job_etl_service.embed_resume(repo, resume_fingerprint)
+        embedded, _ = ctx.job_etl_service.embed_resume_stage(
+            repo,
+            resume_fingerprint,
+            owner_id=owner_id,
+        )
 
     return embedded

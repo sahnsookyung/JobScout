@@ -4,12 +4,66 @@ import pytest
 from unittest.mock import MagicMock
 
 from database.repositories.resume import ResumeRepository
-from database.models import StructuredResume, ResumeSectionEmbedding, ResumeEvidenceUnitEmbedding
+from database.models import StructuredResume, ResumeSectionEmbedding, ResumeEvidenceUnitEmbedding, ResumeUpload
 
 
 def make_repo():
     mock_db = MagicMock()
     return ResumeRepository(mock_db), mock_db
+
+
+class TestResumeUploads:
+    def test_get_resume_upload_applies_owner_filter_when_provided(self):
+        repo, mock_db = make_repo()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        repo.get_resume_upload("upload-1", owner_id="user-1")
+
+        mock_db.execute.assert_called_once()
+
+    def test_get_latest_resume_upload_for_hash_executes_query(self):
+        repo, mock_db = make_repo()
+        upload = MagicMock(spec=ResumeUpload)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = upload
+
+        result = repo.get_latest_resume_upload_for_hash("user-1", "hash-1")
+
+        assert result is upload
+
+    def test_update_resume_upload_raises_when_missing(self):
+        repo, mock_db = make_repo()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        with pytest.raises(ValueError, match="Resume upload not found"):
+            repo.update_resume_upload("upload-missing")
+
+    def test_update_resume_upload_updates_fields(self):
+        repo, mock_db = make_repo()
+        upload = MagicMock(spec=ResumeUpload)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = upload
+
+        result = repo.update_resume_upload(
+            "upload-1",
+            status="ready",
+            last_error="boom",
+            processing_task_id="task-1",
+            failure_stage="embedding",
+            failure_class="transient",
+            retryable=True,
+            user_safe_message="Retry later",
+            failure_debug_context={"detail": "x"},
+        )
+
+        assert result is upload
+        assert upload.status == "ready"
+        assert upload.last_error == "boom"
+        assert upload.processing_task_id == "task-1"
+        assert upload.failure_stage == "embedding"
+        assert upload.failure_class == "transient"
+        assert upload.retryable is True
+        assert upload.user_safe_message == "Retry later"
+        assert upload.failure_debug_context == {"detail": "x"}
+        mock_db.flush.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

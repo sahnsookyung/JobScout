@@ -6,6 +6,8 @@
 
 x-service-common: &service-common
   depends_on:
+    db-migrate:
+      condition: service_completed_successfully
     postgres:
       condition: service_healthy
     redis:
@@ -37,7 +39,7 @@ services:
     ports:
       - "${EXTRACTION_PORT:-8081}:8081"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -54,7 +56,7 @@ services:
     ports:
       - "${EMBEDDINGS_PORT:-8082}:8082"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -69,7 +71,7 @@ services:
     ports:
       - "${SCORER_MATCHER_PORT:-8083}:8083"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8083/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -79,11 +81,11 @@ services:
     <<: *service-common
     profiles: ["split"]
     depends_on:
+      db-migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      jobspy:
         condition: service_healthy
     build:
       context: .
@@ -101,7 +103,7 @@ services:
     volumes:
       - resume_uploads:/data/resume_uploads
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8084/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8084/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
