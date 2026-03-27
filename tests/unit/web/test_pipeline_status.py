@@ -32,3 +32,7 @@ class TestPipelineStatusOpenAPI(unittest.TestCase):
 
         self.assertIn("404", responses)
         self.assertEqual(responses["404"]["description"], "Task not found")
+
+
+if __name__ == "__main__":
+    unittest.main()
