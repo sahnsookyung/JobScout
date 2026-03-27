@@ -108,6 +108,9 @@ jobs:
           docker rmi jobscout-orchestrator:latest || true
 
       - name: SonarQube Scan
+        # Temporary experiment: skip Sonar on Dependabot PRs until secret propagation is confirmed.
+        # Roll this back after we validate the PR secret path.
+        if: github.event_name != 'pull_request' || github.actor != 'dependabot[bot]'
         uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
