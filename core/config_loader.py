@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Sequence, Union
+from typing import Any, Dict, List, Literal, Optional, Sequence
 
 import yaml
 from pydantic import BaseModel, Field
@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 EnvMapping = tuple[Sequence[str], Sequence[str]]
 HeaderMapping = tuple[str, Sequence[str]]
+ConfigPath = str | os.PathLike[str]
+DEFAULT_CONFIG_FILENAME = "config.yaml"
 
 
 class ScraperConfig(BaseModel):
@@ -222,9 +224,9 @@ DEFAULT_HEADER_MAPPINGS: tuple[HeaderMapping, ...] = (
 
 
 def resolve_config_path(
-    config_path: Union[str, os.PathLike[str]] = "config.yaml",
+    config_path: ConfigPath = DEFAULT_CONFIG_FILENAME,
     *,
-    fallback_path: Optional[Union[str, os.PathLike[str]]] = None,
+    fallback_path: ConfigPath | None = None,
 ) -> Path:
     """Resolve the config file path, falling back to the repository config when needed."""
     resolved = Path(config_path)
@@ -236,7 +238,7 @@ def resolve_config_path(
         if fallback.exists():
             return fallback
 
-    return Path(__file__).resolve().parents[1] / "config.yaml"
+    return Path(__file__).resolve().parents[1] / DEFAULT_CONFIG_FILENAME
 
 
 def apply_env_overrides(
@@ -262,9 +264,9 @@ def apply_env_overrides(
 
 
 def load_config_data(
-    config_path: Union[str, os.PathLike[str]] = "config.yaml",
+    config_path: ConfigPath = DEFAULT_CONFIG_FILENAME,
     *,
-    fallback_path: Optional[Union[str, os.PathLike[str]]] = None,
+    fallback_path: ConfigPath | None = None,
     env_mappings: Sequence[EnvMapping] = DEFAULT_ENV_MAPPINGS,
     header_mappings: Sequence[HeaderMapping] = DEFAULT_HEADER_MAPPINGS,
 ) -> Dict[str, Any]:
@@ -280,6 +282,6 @@ def load_config_data(
     )
 
 
-def load_config(config_path: str = "config.yaml") -> AppConfig:
+def load_config(config_path: ConfigPath = DEFAULT_CONFIG_FILENAME) -> AppConfig:
     data = load_config_data(config_path)
     return AppConfig(**data)
