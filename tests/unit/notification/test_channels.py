@@ -25,6 +25,7 @@ from notification.channels import (
     _mask_email, _validate_channel_file_path,
     NotificationChannelFactory, InAppChannel
 )
+from notification.exceptions import TerminalNotificationError, TransientNotificationError
 from notification.service import NotificationRateLimiter
 from notification.message_builder import JobNotificationContent, JobInfo, MatchInfo, RequirementsInfo
 
@@ -422,19 +423,17 @@ class TestWebhookChannelRichContent:
 
     @patch('notification.channels.requests.post')
     def test_webhook_send_with_invalid_url(self, mock_post, caplog):
-        """Test webhook send with invalid URL is rejected."""
+        """Test webhook send with invalid URL raises TerminalNotificationError."""
         # Mock URL validation to fail
         with patch('notification.channels._validate_webhook_url', return_value=False):
             channel = WebhookChannel()
-            result = channel.send(
-                recipient='http://127.0.0.1/invalid',
-                subject='Test',
-                body='Body',
-                metadata={}
-            )
-
-            assert result is False
-            assert "Invalid or unsafe webhook URL" in caplog.text
+            with pytest.raises(TerminalNotificationError, match="Invalid or unsafe webhook URL"):
+                channel.send(
+                    recipient='http://127.0.0.1/invalid',
+                    subject='Test',
+                    body='Body',
+                    metadata={}
+                )
 
 
 class TestDiscordChannelRichContent:
@@ -841,15 +840,14 @@ class TestNotificationChannelFactory:
 class TestEmailChannelUncoveredPaths:
     """Cover remaining email channel branches."""
 
-    def test_email_not_configured_returns_false(self, caplog):
-        """EmailChannel.send returns False when SMTP not configured."""
+    def test_email_not_configured_raises_terminal_error(self, caplog):
+        """EmailChannel.send raises TerminalNotificationError when SMTP not configured."""
         channel = EmailChannel()
         for var in ['SMTP_SERVER', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD']:
             os.environ.pop(var, None)
 
-        result = channel.send('user@example.com', 'Subject', 'Body', {})
-        assert result is False
-        assert "Email not configured" in caplog.text
+        with pytest.raises(TerminalNotificationError, match="Email not configured"):
+            channel.send('user@example.com', 'Subject', 'Body', {})
 
     @patch('notification.channels.smtplib.SMTP')
     def test_email_plain_text_fallback(self, mock_smtp_class):
@@ -1005,17 +1003,16 @@ class TestDiscordChannelUncoveredPaths:
 class TestTelegramChannelUncoveredPaths:
     """Cover remaining Telegram channel branches."""
 
-    def test_telegram_no_bot_token_returns_false(self, caplog):
-        """TelegramChannel.send returns False with no bot token."""
+    def test_telegram_no_bot_token_raises_terminal_error(self, caplog):
+        """TelegramChannel.send raises TerminalNotificationError with no bot token."""
         os.environ.pop('TELEGRAM_BOT_TOKEN', None)
         channel = TelegramChannel()
-        result = channel.send('@channel', 'Subject', 'Body', {})
-        assert result is False
-        assert "TELEGRAM_BOT_TOKEN not set" in caplog.text
+        with pytest.raises(TerminalNotificationError, match="TELEGRAM_BOT_TOKEN not set"):
+            channel.send('@channel', 'Subject', 'Body', {})
 
     @patch('notification.channels.requests.post')
-    def test_telegram_non_200_status_returns_false(self, mock_post, caplog):
-        """TelegramChannel.send returns False on non-200 status."""
+    def test_telegram_non_200_status_raises_transient_error(self, mock_post, caplog):
+        """TelegramChannel.send raises TransientNotificationError on non-200 status."""
         mock_response = Mock()
         mock_response.status_code = 400
         mock_response.text = 'Bad Request'
@@ -1023,9 +1020,8 @@ class TestTelegramChannelUncoveredPaths:
 
         os.environ['TELEGRAM_BOT_TOKEN'] = 'test-token'
         channel = TelegramChannel()
-        result = channel.send('@channel', 'Subject', 'Body', {})
-        assert result is False
-        assert "Telegram API error" in caplog.text
+        with pytest.raises(TransientNotificationError, match="Telegram API error"):
+            channel.send('@channel', 'Subject', 'Body', {})
 
     @patch('notification.channels.requests.post', side_effect=Exception("connection error"))
     def test_telegram_exception_returns_false(self, mock_post, caplog):
