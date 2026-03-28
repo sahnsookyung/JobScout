@@ -95,6 +95,64 @@ def _mark_settings_test_result(
         logger.debug("Failed to persist settings test status", exc_info=True)
 
 
+def _handle_notification_processing_exception(
+    notification_id: str,
+    notification_data: Dict[str, Any],
+    channel_type: str,
+    error: Exception,
+    raise_transient: bool,
+    transient_retries: int,
+) -> tuple[str, int]:
+    """Return the next action for notification processing failures."""
+    if isinstance(error, TerminalNotificationError):
+        logger.error(f"Failed to process notification {notification_id}: {error}", exc_info=True)
+        _record_notification_failure(
+            notification_id,
+            notification_data,
+            str(error),
+            failure_class=error.failure_class,
+        )
+        return "return", transient_retries
+
+    if isinstance(error, TransientNotificationError) and raise_transient:
+        if transient_retries >= len(TRANSIENT_RETRY_INTERVALS):
+            logger.error(
+                "Max transient retries (%s) exceeded for notification %s",
+                len(TRANSIENT_RETRY_INTERVALS),
+                notification_id,
+            )
+            _record_notification_failure(
+                notification_id,
+                notification_data,
+                str(error),
+                failure_class=error.failure_class,
+            )
+            return "return", transient_retries
+
+        wait_seconds = TRANSIENT_RETRY_INTERVALS[transient_retries]
+        next_retry = transient_retries + 1
+        logger.warning(
+            "Transient notification failure for %s via %s: %s. Retrying in %ss (%s/%s)",
+            notification_id,
+            channel_type,
+            error,
+            wait_seconds,
+            next_retry,
+            len(TRANSIENT_RETRY_INTERVALS),
+        )
+        time.sleep(wait_seconds)
+        return "retry", next_retry
+
+    logger.error(f"Failed to process notification {notification_id}: {error}", exc_info=True)
+    _record_notification_failure(
+        notification_id,
+        notification_data,
+        str(error),
+        failure_class=getattr(error, "failure_class", "unknown"),
+    )
+    return "return", transient_retries
+
+
 class NotificationRateLimiter:
     """
     Rate limiter using Redis to coordinate across workers.
@@ -625,52 +683,16 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
             continue
         
         except Exception as e:
-            if isinstance(e, TerminalNotificationError):
-                logger.error(f"Failed to process notification {notification_id}: {e}", exc_info=True)
-                _record_notification_failure(
-                    notification_id,
-                    notification_data,
-                    str(e),
-                    failure_class=e.failure_class,
-                )
-                return notification_id
-
-            if isinstance(e, TransientNotificationError) and raise_transient:
-                if transient_retries >= len(TRANSIENT_RETRY_INTERVALS):
-                    logger.error(
-                        "Max transient retries (%s) exceeded for notification %s",
-                        len(TRANSIENT_RETRY_INTERVALS),
-                        notification_id,
-                    )
-                    _record_notification_failure(
-                        notification_id,
-                        notification_data,
-                        str(e),
-                        failure_class=e.failure_class,
-                    )
-                    return notification_id
-
-                wait_seconds = TRANSIENT_RETRY_INTERVALS[transient_retries]
-                transient_retries += 1
-                logger.warning(
-                    "Transient notification failure for %s via %s: %s. Retrying in %ss (%s/%s)",
-                    notification_id,
-                    channel_type,
-                    e,
-                    wait_seconds,
-                    transient_retries,
-                    len(TRANSIENT_RETRY_INTERVALS),
-                )
-                time.sleep(wait_seconds)
-                continue
-
-            logger.error(f"Failed to process notification {notification_id}: {e}", exc_info=True)
-            _record_notification_failure(
+            action, transient_retries = _handle_notification_processing_exception(
                 notification_id,
                 notification_data,
-                str(e),
-                failure_class=getattr(e, "failure_class", "unknown"),
+                channel_type,
+                e,
+                raise_transient,
+                transient_retries,
             )
+            if action == "retry":
+                continue
             return notification_id
 
 

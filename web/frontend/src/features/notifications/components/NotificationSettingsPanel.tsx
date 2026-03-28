@@ -54,13 +54,16 @@ function toDraft(settings: NotificationSettings): EditableSettings {
 function buildPayload(draft: EditableSettings): NotificationSettingsUpdateRequest {
     const channels: NotificationSettingsUpdateRequest['channels'] = {};
     for (const [channelType, channel] of Object.entries(draft.channels)) {
+        let secretPatch: { secret_value?: string | null } = {};
+        if (channel.clear_secret) {
+            secretPatch = { secret_value: null };
+        } else if (channel.secret_value) {
+            secretPatch = { secret_value: channel.secret_value };
+        }
+
         channels[channelType] = {
             enabled: channel.enabled,
-            ...(channel.clear_secret
-                ? { secret_value: null }
-                : channel.secret_value
-                    ? { secret_value: channel.secret_value }
-                    : {}),
+            ...secretPatch,
         };
     }
     return {
@@ -208,7 +211,7 @@ export function NotificationSettingsPanel() {
                                         )}
                                     </div>
                                     <label className="flex items-center gap-2 text-xs font-semibold text-gray-600">
-                                        Enabled
+                                        <span>Enabled</span>
                                         <input
                                             type="checkbox"
                                             checked={editableChannel.enabled}

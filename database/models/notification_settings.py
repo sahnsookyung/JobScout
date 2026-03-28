@@ -39,7 +39,7 @@ class UserNotificationSettings(Base):
         TIMESTAMP(timezone=True),
         nullable=False,
         server_default=UTC_NOW,
-        onupdate=sql_text("timezone('UTC', now())"),
+        onupdate=UTC_NOW,
     )
 
     channels = relationship(
@@ -76,7 +76,7 @@ class UserNotificationChannel(Base):
         TIMESTAMP(timezone=True),
         nullable=False,
         server_default=UTC_NOW,
-        onupdate=sql_text("timezone('UTC', now())"),
+        onupdate=UTC_NOW,
     )
 
     settings = relationship(

@@ -25,6 +25,7 @@ from notification.secrets import FernetSecretEncryptionProvider, SecretEncryptio
 
 SUPPORTED_CHANNELS = ("email", "discord", "telegram", "webhook", "in_app")
 SECRET_CHANNELS = {"discord", "telegram", "webhook"}
+IN_APP_INBOX_LABEL = "In-app inbox"
 
 
 def _mask_email(email: str | None) -> str | None:
@@ -58,7 +59,7 @@ def _mask_channel_recipient(channel_type: str, value: str | None, user: User | N
     if channel_type == "telegram":
         return _mask_telegram(value)
     if channel_type == "in_app":
-        return "In-app inbox"
+        return IN_APP_INBOX_LABEL
     return None
 
 
@@ -315,7 +316,7 @@ class UserNotificationSettingsService:
 
         if channel_type == "in_app":
             channel.configured = True
-            channel.masked_recipient = "In-app inbox"
+            channel.masked_recipient = IN_APP_INBOX_LABEL
             channel.secret_ciphertext = None
             channel.secret_key_version = None
             return
@@ -384,7 +385,7 @@ class UserNotificationSettingsService:
             masked_recipient = _mask_email(user.email)
         elif channel_type == "in_app":
             configured = True
-            masked_recipient = "In-app inbox"
+            masked_recipient = IN_APP_INBOX_LABEL
 
         return ChannelSnapshot(
             channel_type=channel_type,

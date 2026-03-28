@@ -82,7 +82,11 @@ def get_notification_settings(
     return NotificationSettingsResponse(**notification_service.get_settings(user))
 
 
-@router.put("/api/v1/notification-settings", response_model=NotificationSettingsResponse)
+@router.put(
+    "/api/v1/notification-settings",
+    response_model=NotificationSettingsResponse,
+    responses={400: {"description": "Invalid notification settings"}},
+)
 def update_notification_settings(
     request: NotificationSettingsUpdateRequest,
     notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)],
@@ -112,7 +116,11 @@ def update_notification_settings(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/api/v1/notification-settings/test", response_model=NotificationSettingsTestResponse)
+@router.post(
+    "/api/v1/notification-settings/test",
+    response_model=NotificationSettingsTestResponse,
+    responses={400: {"description": "Invalid notification test request"}},
+)
 def send_notification_settings_test(
     request: NotificationSettingsTestRequest,
     notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)],
