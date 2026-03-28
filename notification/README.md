@@ -678,7 +678,7 @@ services:
       - redis_data:/data
 
   db:
-    image: ankane/pgvector:latest
+    image: pgvector/pgvector:pg17
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
