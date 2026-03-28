@@ -346,7 +346,7 @@ start_docker() {
     elif [[ "$MICROSERVICES" == true ]]; then
         log_info "Starting split topology (infra + microservices)..."
         INFRA=true
-        SERVICES_TO_START="postgres redis jobspy db-migrate extraction embeddings scorer-matcher orchestrator"
+        SERVICES_TO_START="postgres redis mailpit jobspy db-migrate extraction embeddings scorer-matcher notification-worker orchestrator"
     elif [[ "$INFRA" == true ]]; then
         # Start all default infra services
         log_info "Starting all Docker services (postgres, redis)..."
@@ -409,6 +409,10 @@ start_docker() {
     log_success "Docker services started"
     log_info "  - PostgreSQL: localhost:5432"
     log_info "  - Redis: localhost:6379"
+    if docker compose "${compose_files[@]}" ps mailpit 2>/dev/null | grep -q "Up"; then
+        log_info "  - Mailpit SMTP: localhost:${MAILPIT_SMTP_PORT:-1025}"
+        log_info "  - Mailpit UI: http://localhost:${MAILPIT_UI_PORT:-8025}"
+    fi
 
     # Start background log capture for Docker services
     ensure_logs_dir
@@ -422,7 +426,7 @@ start_docker() {
     fi
 
     # Capture microservice logs
-    for service in extraction embeddings scorer-matcher orchestrator; do
+    for service in extraction embeddings scorer-matcher notification-worker orchestrator mailpit; do
         if docker compose "${compose_files[@]}" ps $service 2>/dev/null | grep -q "Up"; then
             start_log_capture "${service}" "${LOGS_DIR}/${service}.log" \
                 docker compose "${compose_files[@]}" logs -f "${service}"
@@ -583,7 +587,9 @@ print_summary() {
         printf "    - Extraction:     http://localhost:8081\n"
         printf "    - Embeddings:     http://localhost:8082\n"
         printf "    - Scorer-Matcher: http://localhost:8083\n"
+        printf "    - Notification Worker: background queue consumer\n"
         printf "    - Orchestrator:   http://localhost:8084\n"
+        printf "  ${GREEN}Mailpit${NC}:     http://localhost:${MAILPIT_UI_PORT:-8025}\n"
     fi
     echo ""
     printf "  ${GREEN}Log dir${NC}:     ${LOGS_DIR}\n"
@@ -603,7 +609,7 @@ print_summary() {
         printf "    ${BLUE}PostgreSQL${NC}:  ${LOGS_DIR}/postgres.log\n"
     fi
     if [[ "$MICROSERVICES" == true ]]; then
-        for _svc in extraction embeddings scorer-matcher orchestrator; do
+        for _svc in extraction embeddings scorer-matcher notification-worker orchestrator mailpit; do
             printf "    ${BLUE}${_svc}${NC}: ${LOGS_DIR}/${_svc}.log\n"
         done
     fi

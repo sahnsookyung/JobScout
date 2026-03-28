@@ -321,6 +321,8 @@ def run_matching_pipeline(
     stop_event: Optional[threading.Event] = None,
     status_callback: Optional[Callable[[str], None]] = None,
     resume_fingerprint: Optional[str] = None,
+    owner_id: Optional[str] = None,
+    task_id: Optional[str] = None,
 ) -> MatchingPipelineResult:
     """Run the matching pipeline as a self-contained operation.
 
@@ -335,6 +337,8 @@ def run_matching_pipeline(
             major pipeline stage (e.g. "loading_resume", "scoring", "notifying").
         resume_fingerprint: If provided, load the resume from the database using
             this fingerprint instead of reading from the configured file path.
+        owner_id: Optional authenticated owner identity for notification tracking.
+        task_id: Optional matching task id for notification correlation.
 
     Returns:
         MatchingPipelineResult with success status and counts.
@@ -396,7 +400,13 @@ def run_matching_pipeline(
             if status_callback:
                 status_callback("notifying")
             notified_count = _send_notifications(
-                ctx, match_dtos, saved_count, resume_fingerprint, stop_event,
+                ctx,
+                match_dtos,
+                saved_count,
+                resume_fingerprint,
+                stop_event,
+                owner_id=owner_id,
+                task_id=task_id,
             )
 
         return _finish_pipeline_result(
@@ -909,6 +919,8 @@ def _send_notifications(
     saved_count: int,
     resume_fingerprint: str,
     stop_event: threading.Event,
+    owner_id: Optional[str] = None,
+    task_id: Optional[str] = None,
 ) -> int:
     """Send notifications for scored matches."""
     notification_config = ctx.config.notifications
@@ -925,9 +937,11 @@ def _send_notifications(
     logger.info("=== MATCHING STEP 3: Sending Notifications ===")
 
     try:
-        user_id = notification_config.user_id
+        user_id = owner_id or notification_config.user_id
         if not user_id:
-            logger.warning("Skipping notifications because notification_config.user_id is not configured")
+            logger.warning(
+                "Skipping notifications because no notification user identity is available"
+            )
             return 0
 
         enabled_channels = [
@@ -986,6 +1000,7 @@ def _send_notifications(
                             match_id=str(match_id),
                             content=content,
                             channels=enabled_channels,
+                            task_id=task_id,
                         )
                         notified_count += 1
                         match_record.notified = True
@@ -1001,6 +1016,7 @@ def _send_notifications(
                     total_matches=saved_count,
                     high_score_matches=len(high_score_matches),
                     channels=enabled_channels,
+                    task_id=task_id,
                 )
             except Exception as e:
                 logger.error("Failed to send batch summary: %s", e)

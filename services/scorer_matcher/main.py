@@ -231,12 +231,19 @@ class MatcherConsumer(StreamConsumerWithCompletion):
 
         try:
             _update_task_state(last_step)
+            run_kwargs = {}
+            if owner_id is not None:
+                run_kwargs["owner_id"] = owner_id
+                if task_id is not None:
+                    run_kwargs["task_id"] = task_id
+
             result = await asyncio.to_thread(
                 _run_matching_pipeline_sync,
                 self.ctx,
                 task_stop_event,
                 resume_fingerprint,
                 _update_task_state,
+                **run_kwargs,
             )
 
             saved_count = result.saved_count if result else 0
@@ -452,13 +459,23 @@ def _run_matching_pipeline_sync(
     stop_event: threading.Event,
     resume_fingerprint: Optional[str] = None,
     status_callback: Optional[Callable[[str], None]] = None,
+    owner_id: Optional[str] = None,
+    task_id: Optional[str] = None,
 ):
     """Run the matching pipeline synchronously — safe to call via asyncio.to_thread."""
+    run_kwargs = {
+        "status_callback": status_callback,
+        "resume_fingerprint": resume_fingerprint,
+    }
+    if owner_id is not None:
+        run_kwargs["owner_id"] = owner_id
+    if task_id is not None:
+        run_kwargs["task_id"] = task_id
+
     return run_matching_pipeline(
         ctx,
         stop_event,
-        status_callback=status_callback,
-        resume_fingerprint=resume_fingerprint,
+        **run_kwargs,
     )
 
 

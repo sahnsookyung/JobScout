@@ -24,15 +24,13 @@ Usage:
     )
 """
 
-import os
 import logging
-import uuid
+import os
 import time
-from datetime import datetime
-from typing import Optional, Dict, Any, List
+import uuid
+from typing import Any, Dict, List, Optional
 
 from enum import Enum
-from urllib.parse import urljoin
 
 # RQ imports
 try:
@@ -137,8 +135,9 @@ class NotificationService:
         skip_dedup: bool = False,
         base_url: Optional[str] = None,
         use_async_queue: bool = True,
+        channel_configs: Optional[Dict[str, Any]] = None,
         priority_high: int = 80,
-        priority_normal: int = 60
+        priority_normal: int = 60,
     ):
         """
         Initialize notification service.
@@ -156,6 +155,10 @@ class NotificationService:
         self.skip_dedup = skip_dedup
         self._priority_high = priority_high
         self._priority_normal = priority_normal
+        self.channel_configs = {
+            name.lower(): config
+            for name, config in (channel_configs or {}).items()
+        }
 
         # Initialize deduplication tracker
         self.tracker = NotificationTrackerService(repo)
@@ -199,7 +202,7 @@ class NotificationService:
     def send_notification(
         self,
         channel_type: str,
-        recipient: str,
+        recipient: Optional[str],
         subject: str,
         body: str,
         user_id: str,
@@ -207,7 +210,8 @@ class NotificationService:
         event_type: str = "general",
         priority: NotificationPriority = NotificationPriority.NORMAL,
         metadata: Optional[Dict[str, Any]] = None,
-        allow_resend: bool = True
+        allow_resend: bool = True,
+        skip_dedup: bool = False,
     ) -> Optional[str]:
         """
         Send a notification with deduplication check.
@@ -227,8 +231,15 @@ class NotificationService:
         Returns:
             Notification ID if sent/queued, None if suppressed as duplicate
         """
+        resolved_recipient = self._get_recipient_for_channel(
+            channel_type,
+            explicit_recipient=recipient,
+        )
+        metadata_payload = dict(metadata or {})
+        metadata_payload.setdefault("user_id", user_id)
+
         # Check deduplication with fresh session (avoid stale long-lived session issues)
-        if not self.skip_dedup:
+        if not self.skip_dedup and not skip_dedup:
             with db_session_scope() as session:
                 fresh_repo = JobRepository(session)
                 fresh_tracker = NotificationTrackerService(fresh_repo)
@@ -239,7 +250,7 @@ class NotificationService:
                     channel_type=channel_type,
                     subject=subject,
                     body=body,
-                    metadata=metadata
+                    metadata=metadata_payload
                 )
 
             if not should_send:
@@ -249,10 +260,10 @@ class NotificationService:
         # Build notification data
         notification_data = {
             'channel_type': channel_type,
-            'recipient': recipient,
+            'recipient': resolved_recipient,
             'subject': subject,
             'body': body,
-            'metadata': metadata or {},
+            'metadata': metadata_payload,
             'user_id': user_id,
             'job_match_id': job_match_id,
             'event_type': event_type,
@@ -285,6 +296,7 @@ class NotificationService:
         match_id: str,
         content: JobNotificationContent,
         channels: Optional[list] = None,
+        task_id: Optional[str] = None,
     ) -> Dict[str, Optional[str]]:
         """
         Send notifications about a new job match to multiple channels.
@@ -316,8 +328,6 @@ class NotificationService:
 
         for channel in channels:
             try:
-                recipient = self._get_recipient_for_channel(channel)
-
                 metadata = {
                     'job_title': content.job.title,
                     'company': content.job.company,
@@ -326,11 +336,14 @@ class NotificationService:
                     'location': content.job.location,
                     'job_contents': [content.model_dump()],  # Serialize to plain dict for safe JSON/RQ serialization
                     'match_id': match_id,
+                    'user_id': user_id,
                 }
+                if task_id:
+                    metadata['task_id'] = task_id
 
                 notification_id = self.send_notification(
                     channel_type=channel,
-                    recipient=recipient,
+                    recipient=None,
                     subject=subject,
                     body="",  # Rich content is in metadata
                     user_id=user_id,
@@ -353,7 +366,8 @@ class NotificationService:
         user_id: str,
         total_matches: int,
         high_score_matches: int,
-        channels: Optional[list] = None
+        channels: Optional[list] = None,
+        task_id: Optional[str] = None,
     ) -> Dict[str, Optional[str]]:
         """Send batch completion notification."""
         if channels is None:
@@ -376,11 +390,9 @@ JobScout
         
         for channel in channels:
             try:
-                recipient = self._get_recipient_for_channel(channel)
-                
                 notification_id = self.send_notification(
                     channel_type=channel,
-                    recipient=recipient,
+                    recipient=None,
                     subject=subject,
                     body=body,
                     user_id=user_id,
@@ -389,7 +401,9 @@ JobScout
                     priority=NotificationPriority.NORMAL,
                     metadata={
                         'total_matches': total_matches,
-                        'high_score_matches': high_score_matches
+                        'high_score_matches': high_score_matches,
+                        'task_id': task_id,
+                        'user_id': user_id,
                     },
                     allow_resend=True  # Allow daily batch notifications
                 )
@@ -402,7 +416,11 @@ JobScout
         
         return results
     
-    def _get_recipient_for_channel(self, channel: str) -> str:
+    def _get_recipient_for_channel(
+        self,
+        channel: str,
+        explicit_recipient: Optional[str] = None,
+    ) -> str:
         """
         Get recipient address for a given notification channel.
         
@@ -415,14 +433,40 @@ JobScout
         Raises:
             ValueError: If the channel type is not supported
         """
+        if explicit_recipient:
+            return explicit_recipient
+
+        configured_recipient = self._configured_recipient_for_channel(channel)
+        if configured_recipient:
+            return configured_recipient
+
+        env_recipient = self._env_recipient_for_channel(channel)
+        if env_recipient:
+            return env_recipient
+
+        raise ValueError(f"No recipient configured for channel type: {channel}")
+
+    def _configured_recipient_for_channel(self, channel: str) -> Optional[str]:
+        config = self.channel_configs.get(channel.lower())
+        if config is None:
+            return None
+        if isinstance(config, dict):
+            return config.get("recipient")
+        return getattr(config, "recipient", None)
+
+    @staticmethod
+    def _env_recipient_for_channel(channel: str) -> Optional[str]:
         if channel == 'email':
-            return os.environ.get('NOTIFICATION_EMAIL', 'user@example.com')
-        elif channel == 'discord':
-            return os.environ.get('DISCORD_WEBHOOK_URL', '')
-        elif channel == 'telegram':
-            return os.environ.get('TELEGRAM_CHAT_ID', '')
-        else:
-            raise ValueError(f"Unsupported channel type: {channel}")
+            return os.environ.get('NOTIFICATION_EMAIL') or os.environ.get('EMAIL')
+        if channel == 'discord':
+            return os.environ.get('DISCORD_WEBHOOK_URL')
+        if channel == 'telegram':
+            return os.environ.get('TELEGRAM_CHAT_ID')
+        if channel == 'webhook':
+            return os.environ.get('NOTIFICATION_WEBHOOK_URL')
+        if channel == 'in_app':
+            return None
+        raise ValueError(f"Unsupported channel type: {channel}")
 
     def get_queue_status(self) -> Dict[str, Any]:
         """Get queue status."""

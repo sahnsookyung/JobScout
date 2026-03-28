@@ -60,7 +60,7 @@ WEB_DEV=true ./scripts/setup_local_env/start.sh --split --web-app --web-ui
 
 ### Topology
 
-Run `--split` to start extraction, embeddings, matching, and orchestration as separate microservices.
+Run `--split` to start extraction, embeddings, matching, notification delivery, and orchestration as separate services. The local split stack also starts Mailpit so SMTP notifications can be verified without a real inbox provider.
 
 ### View Logs
 
@@ -154,6 +154,8 @@ Edit `config.yaml` to customize:
 - **Schedule**: Change pipeline interval in `schedule.interval_seconds:`
 - **Matching**: Adjust weights in `matching.scorer:`
 - **Notifications**: Configure in `notifications:`
+
+For local email testing, point SMTP at Mailpit (`localhost:1025`, no TLS/auth by default in the local stack) and open [http://localhost:8025](http://localhost:8025). For real inbox delivery, use a proper email relay/provider and domain authentication (SPF/DKIM/DMARC); spam placement is not something the app can solve by itself.
 
 ## Project Structure
 

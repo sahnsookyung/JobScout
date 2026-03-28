@@ -690,6 +690,42 @@ class TestMatcherConsumer:
         assert result["status"] == "failed"
         mock_warning.assert_called()
 
+    @pytest.mark.asyncio
+    async def test_do_process_forwards_owner_context_when_present(self):
+        from services.scorer_matcher.main import MatcherConsumer
+
+        consumer = MatcherConsumer(Mock())
+        mock_result = Mock(
+            matches_count=1,
+            saved_count=1,
+            notified_count=1,
+            execution_time=0.1,
+            cancelled=False,
+            error=None,
+        )
+
+        def fake_run(_ctx, _stop_event, _resume_fingerprint, _status_callback, owner_id=None, task_id=None):
+            assert owner_id == "owner-123"
+            assert task_id == "task-123"
+            return mock_result
+
+        with patch("services.scorer_matcher.main._run_matching_pipeline_sync", side_effect=fake_run), \
+             patch("services.scorer_matcher.main.is_task_cancellation_requested", return_value=False), \
+             patch("services.scorer_matcher.main._compute_stale_result_metadata", return_value={}), \
+             patch("services.scorer_matcher.main.clear_task_cancellation_requested"), \
+             patch("services.scorer_matcher.main.set_task_state"):
+            success, result = await consumer._do_process(
+                "msg-1",
+                {
+                    "task_id": "task-123",
+                    "resume_fingerprint": "fp-123",
+                    "owner_id": "owner-123",
+                },
+            )
+
+        assert success is True
+        assert result["status"] == "completed"
+
 
 class TestMatcherAppLifespan:
     """Test matcher app lifespan."""
@@ -849,6 +885,36 @@ class TestRunMatchingPipelineSync:
                 resume_fingerprint=None,
             )
             assert result is None
+
+    def test_run_matching_pipeline_sync_includes_owner_context_when_provided(self):
+        """_run_matching_pipeline_sync forwards owner/task context only when provided."""
+        from services.scorer_matcher.main import _run_matching_pipeline_sync
+        import threading
+
+        mock_ctx = Mock()
+        stop_event = threading.Event()
+        status_callback = Mock()
+
+        with patch("services.scorer_matcher.main.run_matching_pipeline") as mock_runner:
+            mock_runner.return_value = Mock(saved_count=1)
+
+            _run_matching_pipeline_sync(
+                mock_ctx,
+                stop_event,
+                "fp-123",
+                status_callback,
+                owner_id="owner-123",
+                task_id="task-123",
+            )
+
+            mock_runner.assert_called_once_with(
+                mock_ctx,
+                stop_event,
+                status_callback=status_callback,
+                resume_fingerprint="fp-123",
+                owner_id="owner-123",
+                task_id="task-123",
+            )
 
 
 if __name__ == "__main__":

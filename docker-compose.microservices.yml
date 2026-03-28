@@ -77,6 +77,13 @@ services:
       retries: 3
       start_period: 10s
 
+  notification-worker:
+    <<: *service-common
+    profiles: ["split"]
+    build:
+      context: .
+      dockerfile: services/notification_worker/Dockerfile
+
   orchestrator:
     <<: *service-common
     profiles: ["split"]

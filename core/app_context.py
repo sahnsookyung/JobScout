@@ -163,7 +163,8 @@ class AppContext:
                 repo=repo,
                 redis_url=notification_config.redis_url,
                 base_url=notification_config.base_url,
-                use_async_queue=notification_config.use_async_queue
+                use_async_queue=notification_config.use_async_queue,
+                channel_configs=notification_config.channels,
             )
         except Exception:
             session.close()

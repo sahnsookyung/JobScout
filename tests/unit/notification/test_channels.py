@@ -870,6 +870,28 @@ class TestEmailChannelUncoveredPaths:
         assert result is True
         mock_smtp.send_message.assert_called_once()
 
+    @patch('notification.channels.smtplib.SMTP')
+    def test_email_local_smtp_sink_skips_tls_and_login(self, mock_smtp_class):
+        """EmailChannel works with local SMTP sinks that do not require auth."""
+        mock_smtp = MagicMock()
+        mock_smtp_class.return_value.__enter__ = Mock(return_value=mock_smtp)
+        mock_smtp_class.return_value.__exit__ = Mock(return_value=False)
+
+        os.environ.update({
+            'SMTP_SERVER': 'localhost',
+            'SMTP_PORT': '1025',
+            'SMTP_USE_TLS': 'false',
+        })
+        os.environ.pop('SMTP_USERNAME', None)
+        os.environ.pop('SMTP_PASSWORD', None)
+
+        channel = EmailChannel()
+        result = channel.send('user@example.com', 'Subject', 'Plain body', {})
+        assert result is True
+        mock_smtp.starttls.assert_not_called()
+        mock_smtp.login.assert_not_called()
+        mock_smtp.send_message.assert_called_once()
+
     @patch('notification.channels.smtplib.SMTP', side_effect=Exception("SMTP error"))
     def test_email_smtp_exception_returns_false(self, mock_smtp_class, caplog):
         """EmailChannel.send returns False on SMTP exception."""
@@ -926,6 +948,25 @@ class TestEmailChannelUncoveredPaths:
 
 class TestDiscordChannelUncoveredPaths:
     """Cover remaining Discord channel branches."""
+
+    @patch('notification.channels.requests.post')
+    def test_discord_prefers_explicit_recipient(self, mock_post):
+        """DiscordChannel prefers the explicit recipient over metadata/env fallback."""
+        mock_response = Mock()
+        mock_response.status_code = 204
+        mock_response.raise_for_status = Mock()
+        mock_post.return_value = mock_response
+
+        channel = DiscordChannel()
+        result = channel.send(
+            'https://discord.com/api/webhooks/explicit/test',
+            'Subject',
+            'Body',
+            {'discord_webhook_url': 'https://discord.com/api/webhooks/metadata/test'},
+        )
+
+        assert result is True
+        assert mock_post.call_args[0][0] == 'https://discord.com/api/webhooks/explicit/test'
 
     def test_discord_no_webhook_url_returns_false(self, caplog):
         """DiscordChannel.send returns False with no webhook URL."""

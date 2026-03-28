@@ -267,7 +267,12 @@ def ack_message(stream: str, group: str, msg_id: str) -> bool:
     return result > 0
 
 
-def publish_completion(channel: str, payload: dict) -> int:
+def publish_completion(
+    channel: str,
+    payload: dict,
+    *,
+    warn_on_no_subscribers: bool = True,
+) -> int:
     valid, error = validate_job_payload(payload, ["task_id", "status"])
     if not valid:
         raise ValueError(f"Invalid completion payload: {error}")
@@ -276,7 +281,14 @@ def publish_completion(channel: str, payload: dict) -> int:
     msg = json.dumps(payload)
     result = client.publish(channel, msg)
     if result == 0:
-        logger.warning(f"⚠️ No subscribers received completion event on {channel}: task_id={payload.get('task_id')}, status={payload.get('status')}")
+        log_message = (
+            f"⚠️ No subscribers received completion event on {channel}: "
+            f"task_id={payload.get('task_id')}, status={payload.get('status')}"
+        )
+        if warn_on_no_subscribers:
+            logger.warning(log_message)
+        else:
+            logger.info(log_message)
     else:
         logger.info(f"📢 Published to {channel}: task_id={payload.get('task_id')}, status={payload.get('status')} (subscribers: {result})")
     return result
