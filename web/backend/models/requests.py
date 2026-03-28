@@ -21,7 +21,10 @@ class PolicyUpdate(BaseModel):
 
 class NotificationRequest(BaseModel):
     """Request to send a notification."""
-    type: str = Field(..., description="Notification type: email, slack, webhook, push")
+    type: str = Field(
+        ...,
+        description="Notification type: email, discord, telegram, webhook, in_app",
+    )
     recipient: str = Field(..., description="Recipient (email, user ID, webhook URL)")
     subject: str = Field(..., description="Notification subject")
     body: str = Field(..., description="Notification body")

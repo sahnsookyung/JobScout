@@ -237,6 +237,8 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                 task_stop_event,
                 resume_fingerprint,
                 _update_task_state,
+                owner_id,
+                task_id,
             )
 
             saved_count = result.saved_count if result else 0
@@ -452,6 +454,8 @@ def _run_matching_pipeline_sync(
     stop_event: threading.Event,
     resume_fingerprint: Optional[str] = None,
     status_callback: Optional[Callable[[str], None]] = None,
+    owner_id: Optional[str] = None,
+    task_id: Optional[str] = None,
 ):
     """Run the matching pipeline synchronously — safe to call via asyncio.to_thread."""
     return run_matching_pipeline(
@@ -459,6 +463,8 @@ def _run_matching_pipeline_sync(
         stop_event,
         status_callback=status_callback,
         resume_fingerprint=resume_fingerprint,
+        owner_id=owner_id,
+        task_id=task_id,
     )
 
 

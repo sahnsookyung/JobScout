@@ -914,6 +914,7 @@ class TestSendNotifications:
             match_id="m-1",
             content="content",
             channels=["email"],
+            task_id=None,
         )
 
     @patch('pipeline.runner.NotificationMessageBuilder')
@@ -982,6 +983,35 @@ class TestSendNotifications:
             total_matches=1,
             high_score_matches=1,
             channels=["email"],
+            task_id=None,
+        )
+
+    @patch('pipeline.runner.NotificationMessageBuilder')
+    @patch('pipeline.runner.job_uow')
+    def test_owner_id_fallback_used_for_notifications(self, mock_uow, mock_builder):
+        mock_record = Mock(id="m-1", notified=False)
+        mock_record.job_post = Mock(company_url_direct="https://apply.example.com")
+        self._setup_uow(mock_uow, record=mock_record)
+        mock_builder.build_notification_content.return_value = "content"
+
+        ctx = self._ctx(user_id=None)
+
+        _send_notifications(
+            ctx,
+            [self._dto()],
+            1,
+            "fp-1",
+            threading.Event(),
+            owner_id="owner-123",
+            task_id="task-123",
+        )
+
+        ctx.notification_service.notify_new_match.assert_called_once_with(
+            user_id="owner-123",
+            match_id="m-1",
+            content="content",
+            channels=["email"],
+            task_id="task-123",
         )
 
     @patch('pipeline.runner.NotificationMessageBuilder')

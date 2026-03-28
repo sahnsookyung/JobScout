@@ -381,8 +381,13 @@ class EmailChannel(NotificationChannel):
         return 'email'
     
     def validate_config(self) -> bool:
-        required_vars = ['SMTP_SERVER', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD']
-        return all(os.environ.get(var) for var in required_vars)
+        required_vars = ['SMTP_SERVER', 'SMTP_PORT']
+        if not all(os.environ.get(var) for var in required_vars):
+            return False
+
+        username = os.environ.get('SMTP_USERNAME', '')
+        password = os.environ.get('SMTP_PASSWORD', '')
+        return bool(username) == bool(password)
     
     def send(self, recipient: str, subject: str, body: str, metadata: Dict[str, Any]) -> bool:
         if not self.validate_config():
@@ -394,7 +399,12 @@ class EmailChannel(NotificationChannel):
             smtp_port = int(os.environ.get('SMTP_PORT', '587'))
             username = os.environ.get('SMTP_USERNAME', '')
             password = os.environ.get('SMTP_PASSWORD', '')
-            from_email = os.environ.get('FROM_EMAIL', 'noreply@jobscout.app')
+            use_tls = os.environ.get('SMTP_USE_TLS', 'true').lower() in ('true', '1', 'yes')
+            from_email = os.environ.get('FROM_EMAIL') or username or 'noreply@jobscout.app'
+
+            if bool(username) != bool(password):
+                logger.error("Email not configured - SMTP_USERNAME and SMTP_PASSWORD must be set together")
+                return False
             
             # Check for rich job notification content
             job_contents = metadata.get('job_contents', [])
@@ -416,8 +426,10 @@ class EmailChannel(NotificationChannel):
                 msg.attach(MIMEText(body, 'plain'))
             
             with smtplib.SMTP(smtp_server, smtp_port) as server:
-                server.starttls()
-                server.login(username, password)
+                if use_tls:
+                    server.starttls()
+                if username and password:
+                    server.login(username, password)
                 server.send_message(msg)
             
             logger.info(f"Email sent to {_mask_email(recipient)}")
@@ -515,7 +527,11 @@ class DiscordChannel(NotificationChannel):
         return 60
     
     def send(self, recipient: str, subject: str, body: str, metadata: Dict[str, Any]) -> bool:
-        webhook_url = metadata.get('discord_webhook_url') or os.environ.get('DISCORD_WEBHOOK_URL', '')
+        webhook_url = (
+            recipient
+            or metadata.get('discord_webhook_url')
+            or os.environ.get('DISCORD_WEBHOOK_URL', '')
+        )
         
         if not webhook_url:
             logger.error("Discord webhook not configured - DISCORD_WEBHOOK_URL not set")

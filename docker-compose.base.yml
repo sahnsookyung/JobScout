@@ -44,6 +44,13 @@ services:
     healthcheck:
       <<: *redis-healthcheck
 
+  mailpit:
+    profiles: ["web", "split"]
+    image: axllent/mailpit:latest
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+
   jobspy:
     image: sahnsookyung/jobspy:1.0.1
     platform: linux/amd64

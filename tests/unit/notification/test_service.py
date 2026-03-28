@@ -125,6 +125,15 @@ class TestEmailChannel:
         })
         assert EmailChannel().validate_config()
 
+    def test_validation_passes_with_local_smtp_sink(self):
+        os.environ.update({
+            'SMTP_SERVER': 'localhost',
+            'SMTP_PORT': '1025',
+        })
+        os.environ.pop('SMTP_USERNAME', None)
+        os.environ.pop('SMTP_PASSWORD', None)
+        assert EmailChannel().validate_config()
+
     @patch('notification.channels.smtplib.SMTP')
     def test_send_success(self, mock_smtp_class):
         mock_smtp = Mock()
@@ -144,6 +153,29 @@ class TestEmailChannel:
         assert result is True
         mock_smtp.starttls.assert_called_once()
         mock_smtp.login.assert_called_once_with('test@example.com', 'password')
+        mock_smtp.send_message.assert_called_once()
+
+    @patch('notification.channels.smtplib.SMTP')
+    def test_send_without_auth_or_tls(self, mock_smtp_class):
+        mock_smtp = Mock()
+        mock_smtp_class.return_value.__enter__ = Mock(return_value=mock_smtp)
+        mock_smtp_class.return_value.__exit__ = Mock(return_value=False)
+        os.environ.update({
+            'SMTP_SERVER': 'localhost',
+            'SMTP_PORT': '1025',
+            'SMTP_USE_TLS': 'false',
+        })
+        os.environ.pop('SMTP_USERNAME', None)
+        os.environ.pop('SMTP_PASSWORD', None)
+
+        result = EmailChannel().send(
+            recipient='to@example.com', subject='Test Subject',
+            body='Test Body', metadata={},
+        )
+
+        assert result is True
+        mock_smtp.starttls.assert_not_called()
+        mock_smtp.login.assert_not_called()
         mock_smtp.send_message.assert_called_once()
 
     def test_send_without_config_returns_false(self):
@@ -169,11 +201,11 @@ class TestDiscordChannel:
         mock_post.return_value.status_code = 204
 
         result = DiscordChannel().send(
-            recipient='webhook-url',
+            recipient='https://discord.com/api/webhooks/test',
             subject='Test Notification',
             body='This is a test message',
             metadata={
-                'discord_webhook_url': 'https://discord.com/api/webhooks/test',
+                'discord_webhook_url': 'https://discord.com/api/webhooks/ignored',
                 'score': 85.5, 'company': 'TechCorp',
             },
         )
@@ -523,6 +555,69 @@ class TestNotificationService:
 
         assert mock_send.call_count == 3
         assert len(results) == 3
+
+    @patch('notification.service.process_notification_task', return_value='notif-123')
+    def test_send_notification_prefers_explicit_recipient(self, mock_process, mock_repo):
+        service = NotificationService(
+            mock_repo,
+            use_async_queue=False,
+            skip_dedup=True,
+            channel_configs={'discord': {'recipient': 'https://config.example/hook'}},
+        )
+
+        result = service.send_notification(
+            channel_type='discord',
+            recipient='https://explicit.example/hook',
+            subject='Test',
+            body='Body',
+            user_id='user1',
+        )
+
+        assert result == 'notif-123'
+        assert mock_process.call_args[0][0]['recipient'] == 'https://explicit.example/hook'
+
+    @patch('notification.service.process_notification_task', return_value='notif-123')
+    def test_send_notification_uses_configured_recipient(self, mock_process, mock_repo):
+        service = NotificationService(
+            mock_repo,
+            use_async_queue=False,
+            skip_dedup=True,
+            channel_configs={'discord': {'recipient': 'https://config.example/hook'}},
+        )
+
+        result = service.send_notification(
+            channel_type='discord',
+            recipient=None,
+            subject='Test',
+            body='Body',
+            user_id='user1',
+        )
+
+        assert result == 'notif-123'
+        assert mock_process.call_args[0][0]['recipient'] == 'https://config.example/hook'
+
+    @patch('notification.service.process_notification_task', return_value='notif-123')
+    def test_send_notification_skip_dedup_bypasses_suppression(self, mock_process, mock_repo):
+        service = NotificationService(mock_repo, use_async_queue=False)
+
+        with patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class:
+            make_db_scope_mock(mock_scope)
+            mock_tracker = Mock()
+            mock_tracker.should_send_notification.return_value = False
+            mock_tracker_class.return_value = mock_tracker
+
+            result = service.send_notification(
+                channel_type='email',
+                recipient='user@example.com',
+                subject='Test',
+                body='Body',
+                user_id='user1',
+                skip_dedup=True,
+            )
+
+        assert result == 'notif-123'
+        mock_process.assert_called_once()
 
     def test_priority_enum_values(self):
         assert NotificationPriority.LOW.value == 'low'

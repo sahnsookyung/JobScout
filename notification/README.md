@@ -101,12 +101,19 @@ open http://localhost:5000
 # Redis Configuration
 export REDIS_URL="redis://localhost:6379/0"
 
-# Email Configuration (SMTP)
-export SMTP_SERVER="smtp.gmail.com"
-export SMTP_PORT="587"
-export SMTP_USERNAME="your-email@gmail.com"
-export SMTP_PASSWORD="your-app-password"
-export FROM_EMAIL="notifications@jobscout.app"
+# Local SMTP capture (Mailpit / MailHog style)
+export SMTP_SERVER="localhost"
+export SMTP_PORT="1025"
+export SMTP_USE_TLS="false"
+export NOTIFICATION_EMAIL="user@example.com"
+
+# Production email relay/provider
+# export SMTP_SERVER="smtp.gmail.com"
+# export SMTP_PORT="587"
+# export SMTP_USE_TLS="true"
+# export SMTP_USERNAME="your-email@gmail.com"
+# export SMTP_PASSWORD="your-app-password"
+# export FROM_EMAIL="notifications@jobscout.app"
 
 # Discord Configuration
 export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/YOUR/WEBHOOK/TOKEN"
@@ -616,6 +623,7 @@ Solutions:
 4. **Handle failures** - Check failed queue regularly
 5. **Secure Redis** - Use authentication in production
 6. **Rate limiting** - Don't overwhelm recipients
+7. **Treat inbox delivery separately** - Production email deliverability depends on your relay/provider plus SPF/DKIM/DMARC. JobScout can queue and format mail, but it cannot guarantee inbox placement on its own.
 
 ## Integration with Dashboard
 

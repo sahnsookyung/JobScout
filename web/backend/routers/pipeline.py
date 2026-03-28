@@ -737,6 +737,7 @@ def _enqueue_matching_job_or_500(
             "resume_upload_id": upload_id,
             "owner_id": owner_id,
             "correlation_id": task_id,
+            "warn_on_no_completion_subscribers": False,
         })
     except Exception:
         logger.exception("Failed to enqueue matching job to stream")

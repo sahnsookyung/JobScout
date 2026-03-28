@@ -312,6 +312,7 @@ class TestStreamConsumerWithCompletion:
         assert result is True
         mock_pub.assert_called_once()
         assert mock_pub.call_args[0][1]["status"] == "completed"
+        assert mock_pub.call_args[1]["warn_on_no_subscribers"] is True
         mock_ack.assert_called_once()
 
     @pytest.mark.asyncio
@@ -338,6 +339,7 @@ class TestStreamConsumerWithCompletion:
         assert result is False
         mock_pub.assert_called_once()
         assert mock_pub.call_args[0][1]["status"] == "failed"
+        assert mock_pub.call_args[1]["warn_on_no_subscribers"] is True
         mock_ack.assert_called_once()
 
     @pytest.mark.asyncio
@@ -365,8 +367,38 @@ class TestStreamConsumerWithCompletion:
         mock_pub.assert_called_once()
         assert mock_pub.call_args[0][1]["status"] == "failed"
         assert "Unexpected error" in mock_pub.call_args[0][1]["error"]
+        assert mock_pub.call_args[1]["warn_on_no_subscribers"] is True
         mock_ack.assert_called_once()
         mock_logger.error.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_process_message_can_disable_no_subscriber_warning(self):
+        """Direct web-triggered matching jobs can downgrade no-subscriber logs."""
+        mock_logger = Mock()
+        consumer = StreamConsumerWithCompletion(
+            stream="test:stream",
+            group="test-group",
+            consumer_name="test-1",
+            completion_channel="test:completed",
+            logger=mock_logger,
+        )
+
+        async def mock_do_process(msg_id, msg):
+            return True, {"status": "completed"}
+
+        with patch.object(consumer, "_do_process", side_effect=mock_do_process), \
+             patch("core.stream_consumer.publish_completion") as mock_pub, \
+             patch("core.stream_consumer.ack_message"):
+
+            await consumer._process_message(
+                "msg-1",
+                {
+                    "task_id": "t-1",
+                    "warn_on_no_completion_subscribers": False,
+                },
+            )
+
+        assert mock_pub.call_args[1]["warn_on_no_subscribers"] is False
 
 
 if __name__ == "__main__":

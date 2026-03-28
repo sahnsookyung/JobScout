@@ -4,10 +4,11 @@ Notification endpoints - send and manage notifications.
 """
 
 from typing import Annotated
-from fastapi import APIRouter, Depends, Query
+
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from ..dependencies import get_db
+from ..dependencies import get_current_user, get_db
 from ..services.notification_service import NotificationServiceWrapper
 from ..models.requests import NotificationRequest
 from ..models.responses import (
@@ -31,12 +32,13 @@ def get_notification_service(db: Annotated[Session, Depends(get_db)]) -> Notific
 )
 def send_notification(
     request: NotificationRequest,
-    notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)]
+    notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)],
+    user: Annotated[object, Depends(get_current_user)],
 ):
     """
     Send a notification via the message queue.
     
-    Supports: email, slack, webhook, push
+    Supports: email, discord, telegram, webhook, in_app
     """
     try:
         priority = NotificationPriority(request.priority)
@@ -48,12 +50,13 @@ def send_notification(
                    f"Valid options: low, normal, high, urgent"
         )
     
-    notification_id = notification_service.queue_notification(
-        type=request.type,
+    notification_id = notification_service.send_notification(
+        channel_type=request.type,
         recipient=request.recipient,
         subject=request.subject,
         body=request.body,
-        priority=priority
+        user_id=str(user.id),
+        priority=priority,
     )
     
     return NotificationResponse(

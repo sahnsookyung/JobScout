@@ -279,6 +279,9 @@ class StreamConsumerWithCompletion(StreamConsumer):
             True if processing succeeded, False otherwise
         """
         task_id = msg.get("task_id", "unknown")
+        warn_on_no_subscribers = bool(
+            msg.get("warn_on_no_completion_subscribers", True)
+        )
 
         try:
             success, result_data = await self._do_process(msg_id, msg)
@@ -297,6 +300,7 @@ class StreamConsumerWithCompletion(StreamConsumer):
                 publish_completion,
                 self.completion_channel,
                 completion_payload,
+                warn_on_no_subscribers=warn_on_no_subscribers,
             )
 
             # Always ack the message (even on failure to avoid redelivery loop)
@@ -340,6 +344,7 @@ class StreamConsumerWithCompletion(StreamConsumer):
                     "status": "failed",
                     "error": str(e),
                 },
+                warn_on_no_subscribers=warn_on_no_subscribers,
             )
 
             await asyncio.to_thread(
