@@ -18,10 +18,12 @@ from sqlalchemy.orm import sessionmaker
 
 from database.models import (
     JobMatch,
+    NotificationTracker,
     ResumeEvidenceUnitEmbedding,
     ResumeSectionEmbedding,
     ResumeUpload,
     StructuredResume,
+    UserNotificationChannel,
 )
 from tests.integration.helpers.pipeline_polling import (
     wait_for_matching_terminal,
@@ -48,6 +50,7 @@ DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
 STARTUP_TIMEOUT_SECONDS = 180.0
 UPLOAD_TIMEOUT_SECONDS = 120.0
 MATCHING_TIMEOUT_SECONDS = 120.0
+NOTIFICATION_TIMEOUT_SECONDS = 60.0
 
 
 @dataclass(frozen=True)
@@ -231,6 +234,43 @@ def _assert_db_migrate_succeeded(compose_args: tuple[str, ...], compose_env: dic
     assert exit_code == "0", f"db-migrate did not exit cleanly: {db_migrate}"
 
 
+def _wait_for_compose_service_state(
+    compose_args: tuple[str, ...],
+    compose_env: dict[str, str],
+    service_name: str,
+    expected_state_prefix: str,
+    *,
+    timeout_s: float,
+) -> None:
+    deadline = time.time() + timeout_s
+    last_rows: list[dict] = []
+    expected = expected_state_prefix.lower()
+
+    while time.time() < deadline:
+        result = _run_compose(
+            compose_args,
+            compose_env,
+            "ps",
+            service_name,
+            "--format",
+            "json",
+            check=False,
+            timeout=120,
+        )
+        rows = _parse_ps_json(result.stdout)
+        last_rows = rows
+        if rows:
+            state = str(rows[0].get("State", "")).lower()
+            if state.startswith(expected):
+                return
+        time.sleep(1)
+
+    raise AssertionError(
+        f"Service {service_name} did not reach state '{expected_state_prefix}'. "
+        f"Last compose status: {last_rows}"
+    )
+
+
 def _assert_shared_upload_dir_writable(
     compose_args: tuple[str, ...], compose_env: dict[str, str]
 ) -> None:
@@ -269,6 +309,7 @@ def _stack_diagnostics(context: SplitStackContext) -> str:
         "logs",
         "--no-color",
         "db-migrate",
+        "notification-worker",
         "web-backend",
         "orchestrator",
         "extraction",
@@ -317,6 +358,7 @@ def split_stack() -> SplitStackContext:
         "db-migrate",
         "extraction",
         "embeddings",
+        "notification-worker",
         "scorer-matcher",
         "orchestrator",
         "web-backend",
@@ -338,6 +380,13 @@ def split_stack() -> SplitStackContext:
         _wait_for_http_health(f"{embeddings_url}/health", timeout_s=STARTUP_TIMEOUT_SECONDS)
         _wait_for_http_health(f"{scorer_matcher_url}/health", timeout_s=STARTUP_TIMEOUT_SECONDS)
         _wait_for_http_health(f"{orchestrator_url}/health", timeout_s=STARTUP_TIMEOUT_SECONDS)
+        _wait_for_compose_service_state(
+            compose_args,
+            compose_env,
+            "notification-worker",
+            "running",
+            timeout_s=STARTUP_TIMEOUT_SECONDS,
+        )
         _assert_db_migrate_succeeded(compose_args, compose_env)
         _assert_shared_upload_dir_writable(compose_args, compose_env)
 
@@ -391,6 +440,48 @@ def _upload_resume(base_url: str, resume_path: Path) -> dict:
     assert payload["task_id"], payload
     assert payload["upload_id"], payload
     return payload
+
+
+def _get_notification_settings(base_url: str) -> dict:
+    response = requests.get(f"{base_url}/api/v1/notification-settings", timeout=15)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _update_notification_settings(base_url: str, payload: dict) -> dict:
+    response = requests.put(
+        f"{base_url}/api/v1/notification-settings",
+        json=payload,
+        timeout=15,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _send_notification_settings_test(base_url: str, channel_type: str) -> dict:
+    response = requests.post(
+        f"{base_url}/api/v1/notification-settings/test",
+        json={"channel_type": channel_type},
+        timeout=15,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _wait_for_test_status(base_url: str, channel_type: str, expected_status: str) -> dict:
+    deadline = time.time() + NOTIFICATION_TIMEOUT_SECONDS
+    last_payload = None
+    while time.time() < deadline:
+        payload = _get_notification_settings(base_url)
+        channel = payload["channels"][channel_type]
+        last_payload = payload
+        if channel["last_test_status"] == expected_status:
+            return payload
+        time.sleep(1)
+    raise AssertionError(
+        f"Timed out waiting for notification test status '{expected_status}'. "
+        f"Last payload: {last_payload}"
+    )
 
 
 def test_resume_upload_completes_then_matching_completes(split_stack: SplitStackContext):
@@ -485,3 +576,64 @@ def test_resume_upload_failure_becomes_terminal_not_infinite_poll(split_stack: S
 
     assert resume_state["status"] == "failed", resume_state
     assert resume_state.get("error"), resume_state
+
+
+def test_notification_settings_round_trip_and_in_app_test_delivery(split_stack: SplitStackContext):
+    reset_split_stack_state(split_stack.database_url)
+
+    initial_settings = _get_notification_settings(split_stack.base_url)
+    assert initial_settings["notifications_enabled"] is True
+    assert initial_settings["channels"]["in_app"]["configured"] is True
+    assert initial_settings["channels"]["in_app"]["enabled"] is False
+
+    updated_settings = _update_notification_settings(
+        split_stack.base_url,
+        {
+            "notifications_enabled": True,
+            "min_score_threshold": 88,
+            "notify_on_new_match": False,
+            "notify_on_batch_complete": True,
+            "channels": {
+                "in_app": {
+                    "enabled": True,
+                }
+            },
+        },
+    )
+    assert updated_settings["min_score_threshold"] == 88
+    assert updated_settings["notify_on_new_match"] is False
+    assert updated_settings["channels"]["in_app"]["enabled"] is True
+    assert updated_settings["revision"] >= initial_settings["revision"] + 1
+
+    test_payload = _send_notification_settings_test(split_stack.base_url, "in_app")
+    assert test_payload["success"] is True
+    assert test_payload["notification_id"]
+
+    terminal_settings = _wait_for_test_status(split_stack.base_url, "in_app", "sent")
+    in_app_channel = terminal_settings["channels"]["in_app"]
+    assert in_app_channel["last_test_status"] == "sent"
+    assert in_app_channel["last_tested_at"] is not None
+    assert in_app_channel["last_test_error"] is None
+
+    engine, session = _session_for(split_stack.database_url)
+    try:
+        settings_channel = session.execute(
+            select(UserNotificationChannel).where(
+                UserNotificationChannel.owner_id == uuid.UUID(DEV_USER_ID),
+                UserNotificationChannel.channel_type == "in_app",
+            )
+        ).scalar_one()
+        assert settings_channel.enabled is True
+        assert settings_channel.last_test_status == "sent"
+
+        tracker_record = session.execute(
+            select(NotificationTracker).where(
+                NotificationTracker.owner_id == uuid.UUID(DEV_USER_ID),
+                NotificationTracker.channel_type == "in_app",
+                NotificationTracker.event_type == "settings_test",
+            )
+        ).scalar_one()
+        assert tracker_record.sent_successfully is True
+    finally:
+        session.close()
+        engine.dispose()

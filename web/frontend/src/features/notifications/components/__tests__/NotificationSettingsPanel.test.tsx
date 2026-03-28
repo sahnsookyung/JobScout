@@ -132,4 +132,112 @@ describe('NotificationSettingsPanel', () => {
         });
         expect(toast.success).toHaveBeenCalledWith('Queued test notification');
     });
+
+    it('clears a saved secret explicitly', async () => {
+        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+
+        await userEvent.click(screen.getByRole('button', { name: /clear/i }));
+        await userEvent.click(screen.getByRole('button', { name: /save settings/i }));
+
+        await waitFor(() => {
+            expect(saveSettings).toHaveBeenCalledWith({
+                notifications_enabled: true,
+                min_score_threshold: 70,
+                notify_on_new_match: true,
+                notify_on_batch_complete: false,
+                channels: {
+                    email: { enabled: true },
+                    discord: {
+                        enabled: false,
+                        secret_value: null,
+                    },
+                },
+            });
+        });
+    });
+
+    it('shows unavailable channel messaging and disables enabling it', () => {
+        mockUseNotificationSettings.mockReturnValue({
+            settings: {
+                notifications_enabled: true,
+                min_score_threshold: 70,
+                notify_on_new_match: true,
+                notify_on_batch_complete: false,
+                revision: 2,
+                channels: {
+                    email: {
+                        enabled: true,
+                        configured: true,
+                        available: true,
+                        masked_recipient: '***@example.com',
+                        availability_reason: null,
+                        last_test_status: null,
+                        last_tested_at: null,
+                        last_test_error: null,
+                    },
+                    telegram: {
+                        enabled: false,
+                        configured: false,
+                        available: false,
+                        masked_recipient: null,
+                        availability_reason: 'Telegram bot credentials are not configured',
+                        last_test_status: null,
+                        last_tested_at: null,
+                        last_test_error: null,
+                    },
+                },
+            },
+            isLoading: false,
+            isSaving: false,
+            isTesting: false,
+            saveSettings,
+            sendTest,
+        });
+
+        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+
+        expect(screen.getByText('Telegram bot credentials are not configured')).toBeInTheDocument();
+        const channelToggles = screen.getAllByRole('checkbox', { name: 'Enabled' });
+        expect(channelToggles[1]).toBeDisabled();
+        const testButtons = screen.getAllByRole('button', { name: /test/i });
+        expect(testButtons[1]).toBeDisabled();
+    });
+
+    it('shows a save error toast', async () => {
+        saveSettings.mockRejectedValueOnce(new Error('Save exploded'));
+        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+
+        await userEvent.click(screen.getByRole('button', { name: /save settings/i }));
+
+        await waitFor(() => {
+            expect(toast.error).toHaveBeenCalledWith('Save exploded');
+        });
+    });
+
+    it('shows a test error toast', async () => {
+        sendTest.mockRejectedValueOnce(new Error('Test exploded'));
+        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+
+        const testButtons = screen.getAllByRole('button', { name: /test/i });
+        await userEvent.click(testButtons[0]);
+
+        await waitFor(() => {
+            expect(toast.error).toHaveBeenCalledWith('Test exploded');
+        });
+    });
+
+    it('renders a loading skeleton while settings are loading', () => {
+        mockUseNotificationSettings.mockReturnValue({
+            settings: undefined,
+            isLoading: true,
+            isSaving: false,
+            isTesting: false,
+            saveSettings,
+            sendTest,
+        });
+
+        const { container } = render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+
+        expect(container.firstChild).toHaveClass('animate-pulse');
+    });
 });
