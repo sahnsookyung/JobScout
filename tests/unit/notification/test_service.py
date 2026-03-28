@@ -12,6 +12,7 @@ import json
 import pytest
 import inspect
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import Mock, patch, MagicMock
 
 from notification import (
@@ -134,6 +135,15 @@ class TestEmailChannel:
         os.environ.pop('SMTP_PASSWORD', None)
         assert EmailChannel().validate_config()
 
+    def test_validation_fails_with_partial_smtp_auth(self):
+        os.environ.update({
+            'SMTP_SERVER': 'smtp.gmail.com',
+            'SMTP_PORT': '587',
+            'SMTP_USERNAME': 'test@example.com',
+        })
+        os.environ.pop('SMTP_PASSWORD', None)
+        assert not EmailChannel().validate_config()
+
     @patch('notification.channels.smtplib.SMTP')
     def test_send_success(self, mock_smtp_class):
         mock_smtp = Mock()
@@ -187,6 +197,24 @@ class TestEmailChannel:
         )
 
         assert result is False
+
+    @patch('notification.channels.smtplib.SMTP')
+    @patch.object(EmailChannel, 'validate_config', return_value=True)
+    def test_send_with_partial_auth_returns_false(self, mock_validate, mock_smtp_class):
+        os.environ.update({
+            'SMTP_SERVER': 'smtp.gmail.com',
+            'SMTP_PORT': '587',
+            'SMTP_USERNAME': 'test@example.com',
+        })
+        os.environ.pop('SMTP_PASSWORD', None)
+
+        result = EmailChannel().send(
+            recipient='to@example.com', subject='Test Subject',
+            body='Test Body', metadata={},
+        )
+
+        assert result is False
+        mock_smtp_class.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -597,6 +625,65 @@ class TestNotificationService:
         assert mock_process.call_args[0][0]['recipient'] == 'https://config.example/hook'
 
     @patch('notification.service.process_notification_task', return_value='notif-123')
+    def test_send_notification_uses_object_configured_recipient(self, mock_process, mock_repo):
+        service = NotificationService(
+            mock_repo,
+            use_async_queue=False,
+            skip_dedup=True,
+            channel_configs={'webhook': SimpleNamespace(recipient='https://config.example/webhook')},
+        )
+
+        result = service.send_notification(
+            channel_type='webhook',
+            recipient=None,
+            subject='Test',
+            body='Body',
+            user_id='user1',
+        )
+
+        assert result == 'notif-123'
+        assert mock_process.call_args[0][0]['recipient'] == 'https://config.example/webhook'
+
+    @patch('notification.service.process_notification_task', return_value='notif-123')
+    def test_send_notification_uses_env_recipient_when_config_missing(self, mock_process, mock_repo):
+        os.environ['NOTIFICATION_WEBHOOK_URL'] = 'https://env.example/webhook'
+
+        service = NotificationService(
+            mock_repo,
+            use_async_queue=False,
+            skip_dedup=True,
+        )
+
+        result = service.send_notification(
+            channel_type='webhook',
+            recipient=None,
+            subject='Test',
+            body='Body',
+            user_id='user1',
+        )
+
+        assert result == 'notif-123'
+        payload = mock_process.call_args[0][0]
+        assert payload['recipient'] == 'https://env.example/webhook'
+        assert payload['metadata']['user_id'] == 'user1'
+
+    def test_send_notification_raises_when_no_recipient_exists(self, mock_repo):
+        service = NotificationService(
+            mock_repo,
+            use_async_queue=False,
+            skip_dedup=True,
+        )
+
+        with pytest.raises(ValueError, match='No recipient configured'):
+            service.send_notification(
+                channel_type='discord',
+                recipient=None,
+                subject='Test',
+                body='Body',
+                user_id='user1',
+            )
+
+    @patch('notification.service.process_notification_task', return_value='notif-123')
     def test_send_notification_skip_dedup_bypasses_suppression(self, mock_process, mock_repo):
         service = NotificationService(mock_repo, use_async_queue=False)
 
@@ -618,6 +705,42 @@ class TestNotificationService:
 
         assert result == 'notif-123'
         mock_process.assert_called_once()
+
+    @patch('notification.service.NotificationService.send_notification')
+    def test_notify_new_match_includes_task_id_metadata(self, mock_send, mock_repo, job_content):
+        mock_send.return_value = 'notif-123'
+        service = NotificationService(mock_repo)
+
+        service.notify_new_match(
+            user_id='user1',
+            match_id='match1',
+            content=job_content,
+            channels=['discord'],
+            task_id='task-123',
+        )
+
+        metadata = mock_send.call_args[1]['metadata']
+        assert metadata['task_id'] == 'task-123'
+        assert metadata['user_id'] == 'user1'
+
+    @patch('notification.service.NotificationService.send_notification')
+    def test_notify_batch_complete_includes_task_id_metadata(self, mock_send, mock_repo):
+        mock_send.return_value = 'notif-123'
+        service = NotificationService(mock_repo)
+
+        service.notify_batch_complete(
+            user_id='user1',
+            total_matches=4,
+            high_score_matches=2,
+            channels=['email'],
+            task_id='task-123',
+        )
+
+        kwargs = mock_send.call_args[1]
+        assert kwargs['recipient'] is None
+        assert kwargs['metadata']['task_id'] == 'task-123'
+        assert kwargs['metadata']['user_id'] == 'user1'
+        assert kwargs['allow_resend'] is True
 
     def test_priority_enum_values(self):
         assert NotificationPriority.LOW.value == 'low'
