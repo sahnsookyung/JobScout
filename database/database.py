@@ -1,9 +1,19 @@
-import os
 import contextlib
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://user:password@localhost:5432/jobscout")
+from core.config_loader import load_config_data
+
+DEFAULT_DATABASE_URL = "postgresql://user:password@localhost:5432/jobscout"
+
+
+def _resolve_database_url() -> str:
+    raw_config = load_config_data()
+    database_config = raw_config.get("database") or {}
+    return database_config.get("url") or DEFAULT_DATABASE_URL
+
+
+DATABASE_URL = _resolve_database_url()
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

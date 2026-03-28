@@ -687,6 +687,25 @@ class TestNotificationService:
         assert payload['recipient'] == 'https://env.example/webhook'
         assert payload['metadata']['user_id'] == 'user1'
 
+    def test_constructor_uses_runtime_config_defaults(self, mock_repo):
+        runtime_config = SimpleNamespace(
+            redis_url='redis://runtime:6379/9',
+            base_url='https://runtime.example',
+            rate_limit_max_wait_seconds=321,
+            channels={'discord': {'recipient': 'https://runtime.example/hook'}},
+        )
+
+        with patch('notification.service.get_notification_runtime_config', return_value=runtime_config):
+            service = NotificationService(
+                mock_repo,
+                use_async_queue=False,
+                skip_dedup=True,
+            )
+
+        assert service.redis_url == 'redis://runtime:6379/9'
+        assert service.base_url == 'https://runtime.example'
+        assert service.channel_configs['discord']['recipient'] == 'https://runtime.example/hook'
+
     def test_send_notification_raises_when_no_recipient_exists(self, mock_repo):
         os.environ.pop('DISCORD_WEBHOOK_URL', None)
         service = NotificationService(
@@ -1145,6 +1164,31 @@ class TestProcessNotificationTask:
 
         assert_valid_uuid(result)
         mock_sleep.assert_called_with(15)
+
+    def test_process_notification_task_uses_runtime_rate_limit_config(self):
+        from notification.service import process_notification_task
+
+        mock_channel = Mock()
+        mock_channel.send.return_value = True
+        runtime_config = SimpleNamespace(
+            redis_url='redis://runtime:6379/4',
+            base_url='https://runtime.example',
+            rate_limit_max_wait_seconds=123,
+            channels={},
+        )
+
+        with patch('notification.service.get_notification_runtime_config', return_value=runtime_config), \
+             patch('notification.service.NotificationChannelFactory.get_channel',
+                   return_value=mock_channel), \
+             patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class:
+
+            _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            result = process_notification_task(NOTIFICATION_DATA)
+
+        assert_valid_uuid(result)
+        mock_rl_class.assert_called_once_with('redis://runtime:6379/4', 123)
 
 
 # ---------------------------------------------------------------------------

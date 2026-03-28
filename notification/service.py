@@ -53,11 +53,14 @@ from notification.exceptions import (
 )
 from notification.tracker import NotificationTrackerService, NotificationEvent
 from notification.message_builder import NotificationMessageBuilder, JobNotificationContent
+from notification.runtime_config import (
+    REDIS_URL_DEFAULT,
+    get_notification_runtime_config,
+)
 from notification.user_settings import UserNotificationSettingsService
 
 logger = logging.getLogger(__name__)
 
-REDIS_URL_DEFAULT = 'redis://localhost:6379/0'
 TRANSIENT_RETRY_INTERVALS = (30, 60, 120)
 
 
@@ -262,9 +265,10 @@ class NotificationService:
         self.skip_dedup = skip_dedup
         self._priority_high = priority_high
         self._priority_normal = priority_normal
+        runtime_config = get_notification_runtime_config()
         self.channel_configs = {
             name.lower(): config
-            for name, config in (channel_configs or {}).items()
+            for name, config in (channel_configs or runtime_config.channels).items()
         }
         self.user_settings = UserNotificationSettingsService(self.repo.db)
 
@@ -272,14 +276,8 @@ class NotificationService:
         self.tracker = NotificationTrackerService(repo)
 
         # Initialize Redis Queue
-        self.redis_url = redis_url or os.environ.get(
-            'REDIS_URL',
-            REDIS_URL_DEFAULT
-        )
-
-        # Base URL injected from config (no direct config.yaml read)
-        # Falls back to environment variable or default
-        self.base_url = base_url or os.environ.get('BASE_URL', 'http://localhost:8080')
+        self.redis_url = redis_url or runtime_config.redis_url
+        self.base_url = base_url or runtime_config.base_url
 
         # Store the preferred mode from config
         self._use_async_queue = use_async_queue
@@ -635,9 +633,9 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
     notification_id = str(uuid.uuid4())
     channel_type = notification_data['channel_type']
     
-    # Read Redis URL from environment (not from notification data - keeps job payload clean)
-    redis_url = os.environ.get('REDIS_URL', REDIS_URL_DEFAULT)
-    max_wait_seconds = int(os.environ.get('NOTIFICATION_RATE_LIMIT_MAX_WAIT', '300'))
+    runtime_config = get_notification_runtime_config()
+    redis_url = runtime_config.redis_url
+    max_wait_seconds = runtime_config.rate_limit_max_wait_seconds
     
     logger.info(f"Processing notification {notification_id} via {channel_type}")
     
