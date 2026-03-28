@@ -245,12 +245,12 @@ class TestDiscordChannel:
         assert 'embeds' in payload
         assert payload['embeds'][0]['title'] == 'Test Notification'
 
-    def test_send_without_webhook_returns_false(self):
+    def test_send_without_webhook_raises_configuration_error(self):
         os.environ.pop('DISCORD_WEBHOOK_URL', None)
-        result = DiscordChannel().send(
-            recipient='', subject='Test', body='Body', metadata={}
-        )
-        assert result is False
+        with pytest.raises(NotificationConfigurationError):
+            DiscordChannel().send(
+                recipient='', subject='Test', body='Body', metadata={}
+            )
 
     @patch('notification.channels.requests.post')
     def test_send_network_failure_raises_transient_error(self, mock_post):

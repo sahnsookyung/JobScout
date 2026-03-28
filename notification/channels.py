@@ -554,8 +554,9 @@ class DiscordChannel(NotificationChannel):
         )
         
         if not webhook_url:
-            logger.error("Discord webhook not configured - DISCORD_WEBHOOK_URL not set")
-            return False
+            raise NotificationConfigurationError(
+                "Discord not configured — DISCORD_WEBHOOK_URL not set"
+            )
         
         try:
             embeds: List[Dict[str, Any]] = []

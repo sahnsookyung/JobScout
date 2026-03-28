@@ -968,13 +968,12 @@ class TestDiscordChannelUncoveredPaths:
         assert result is True
         assert mock_post.call_args[0][0] == 'https://discord.com/api/webhooks/explicit/test'
 
-    def test_discord_no_webhook_url_returns_false(self, caplog):
-        """DiscordChannel.send returns False with no webhook URL."""
+    def test_discord_no_webhook_url_raises_configuration_error(self):
+        """DiscordChannel.send raises NotificationConfigurationError with no webhook URL."""
         os.environ.pop('DISCORD_WEBHOOK_URL', None)
         channel = DiscordChannel()
-        result = channel.send('', 'Subject', 'Body', {})
-        assert result is False
-        assert "Discord webhook not configured" in caplog.text
+        with pytest.raises(NotificationConfigurationError, match="DISCORD_WEBHOOK_URL not set"):
+            channel.send('', 'Subject', 'Body', {})
 
     @patch('notification.channels.requests.post')
     def test_discord_simple_embed_fallback(self, mock_post):

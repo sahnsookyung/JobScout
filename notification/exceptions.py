@@ -34,7 +34,3 @@ class NotificationConfigurationError(TerminalNotificationError):
 
     def __init__(self, message: str, *, failure_class: str = "configuration"):
         super().__init__(message, failure_class=failure_class)
-
-
-# Backward-compatible alias
-NotificationError = NotificationProcessingError
