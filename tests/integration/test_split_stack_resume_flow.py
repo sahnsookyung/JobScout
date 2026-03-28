@@ -48,6 +48,7 @@ FAIL_EMBEDDING_RESUME_FIXTURE = (
     PROJECT_ROOT / "tests" / "fixtures" / "resumes" / "fail_embedding_resume.json"
 )
 DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
+E2E_COMPOSE_PROJECT_NAME = "jobscout-e2e"
 STARTUP_TIMEOUT_SECONDS = 180.0
 UPLOAD_TIMEOUT_SECONDS = 120.0
 MATCHING_TIMEOUT_SECONDS = 120.0
@@ -166,6 +167,15 @@ def _compose_up_with_retries(
     last_error = None
     for _ in range(attempts):
         compose_env = _next_compose_env()
+        _run_compose(
+            compose_args,
+            compose_env,
+            "down",
+            "-v",
+            "--remove-orphans",
+            check=False,
+            timeout=600,
+        )
         try:
             result = _run_compose(
                 compose_args,
@@ -351,7 +361,7 @@ def split_stack() -> SplitStackContext:
     if not _docker_available():
         pytest.skip("Docker is not available for split-stack E2E tests")
 
-    project_name = f"jobscout-e2e-{uuid.uuid4().hex[:8]}"
+    project_name = E2E_COMPOSE_PROJECT_NAME
     compose_args = _compose_args(project_name)
     services = (
         "postgres",

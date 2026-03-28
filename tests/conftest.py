@@ -48,6 +48,7 @@ def _block_production_db(clean_env):  # noqa: PT004  (runs after clean_env saves
 TEST_DB_USER = "testuser"
 TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD", "testpass")
 TEST_DB_NAME = "jobscout_test"
+TEST_DB_IMAGE = "pgvector/pgvector:pg17"
 
 
 def pytest_configure(config):
@@ -91,7 +92,7 @@ def test_database():
         
         # Start PostgreSQL with pgvector
         postgres = PostgresContainer(
-            image="ankane/pgvector:latest",
+            image=TEST_DB_IMAGE,
             username=TEST_DB_USER,
             password=TEST_DB_PASSWORD,
             dbname=TEST_DB_NAME,
