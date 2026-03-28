@@ -36,7 +36,7 @@ from uuid import UUID
 # RQ imports
 try:
     from redis import Redis
-    from rq import Queue, Retry
+    from rq import Queue
     from rq.job import Job
     RQ_AVAILABLE = True
 except ImportError:
@@ -105,14 +105,14 @@ def _handle_notification_processing_exception(
 ) -> tuple[str, int]:
     """Return the next action for notification processing failures."""
     if isinstance(error, TerminalNotificationError):
-        logger.error(f"Failed to process notification {notification_id}: {error}", exc_info=True)
+        logger.error(f"Terminal failure for notification {notification_id}: {error}", exc_info=True)
         _record_notification_failure(
             notification_id,
             notification_data,
             str(error),
             failure_class=error.failure_class,
         )
-        return "return", transient_retries
+        raise error  # Re-raise → RQ marks job failed (dead-letter registry)
 
     if isinstance(error, TransientNotificationError) and raise_transient:
         if transient_retries >= len(TRANSIENT_RETRY_INTERVALS):
@@ -388,15 +388,14 @@ class NotificationService:
         
         # Queue or process immediately
         if self.async_mode:
-            # Add retry policy for transient failures
-            retry_policy = Retry(max=3, interval=[30, 60, 120])  # Retry 3 times with increasing delays
+            # Transient failures are retried inline (see _handle_notification_processing_exception).
+            # Terminal failures re-raise so RQ marks the job failed (visible in the failed registry).
             try:
                 job = self.queue.enqueue(
                     process_notification_task,
                     notification_data,
                     job_timeout='5m',
                     result_ttl=86400,
-                    retry=retry_policy
                 )
                 notification_id = job.id
                 logger.info(f"Queued notification as job {job.id}")

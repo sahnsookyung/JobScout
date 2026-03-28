@@ -1169,8 +1169,8 @@ class TestProcessNotificationTask:
         assert_valid_uuid(result)
         mock_sleep.assert_called_with(15)
 
-    def test_terminal_error_records_failure_and_returns_id(self):
-        """Terminal failures are recorded and the notification ID is returned (no re-raise)."""
+    def test_terminal_error_records_failure_and_re_raises(self):
+        """Terminal failures are recorded in the DB and re-raised so RQ marks the job failed."""
         from notification.service import process_notification_task
 
         mock_channel = Mock()
@@ -1184,9 +1184,9 @@ class TestProcessNotificationTask:
              patch('notification.service._record_notification_failure') as mock_record_fail:
 
             _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
-            result = process_notification_task(NOTIFICATION_DATA)
+            with pytest.raises(TerminalNotificationError, match="SMTP not configured"):
+                process_notification_task(NOTIFICATION_DATA)
 
-        assert_valid_uuid(result)
         mock_record_fail.assert_called_once()
         _, _, error_msg = mock_record_fail.call_args[0]
         assert "SMTP not configured" in error_msg
@@ -1264,21 +1264,21 @@ class TestNotificationServiceHelpers:
 
         settings_service.mark_test_result.assert_called_once()
 
-    def test_handle_notification_processing_exception_records_terminal_failures(self):
+    def test_handle_notification_processing_exception_records_and_reraises_terminal_failures(self):
         from notification.service import _handle_notification_processing_exception
 
         error = TerminalNotificationError('boom', failure_class='terminal_failure')
         with patch('notification.service._record_notification_failure') as mock_record_failure:
-            action, retries = _handle_notification_processing_exception(
-                'notif-123',
-                NOTIFICATION_DATA,
-                'email',
-                error,
-                raise_transient=True,
-                transient_retries=1,
-            )
+            with pytest.raises(TerminalNotificationError, match='boom'):
+                _handle_notification_processing_exception(
+                    'notif-123',
+                    NOTIFICATION_DATA,
+                    'email',
+                    error,
+                    raise_transient=True,
+                    transient_retries=1,
+                )
 
-        assert (action, retries) == ('return', 1)
         mock_record_failure.assert_called_once_with(
             'notif-123',
             NOTIFICATION_DATA,
