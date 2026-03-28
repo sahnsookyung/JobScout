@@ -22,7 +22,11 @@ from notification import (
     AggressiveDeduplicationStrategy, NotificationEvent,
     NotificationService, NotificationPriority, RateLimitException,
 )
-from notification.exceptions import TransientNotificationError
+from notification.exceptions import (
+    NotificationConfigurationError,
+    TerminalNotificationError,
+    TransientNotificationError,
+)
 from notification.message_builder import (
     JobNotificationContent, JobInfo, MatchInfo, RequirementsInfo,
 )
@@ -760,6 +764,52 @@ class TestNotificationService:
         assert kwargs['allow_resend'] is True
         assert kwargs['resolve_user_settings'] is False
 
+    def test_get_user_notification_snapshot_delegates_to_settings_service(self, mock_repo):
+        service = NotificationService(mock_repo, use_async_queue=False)
+        service.user_settings = Mock()
+        expected_snapshot = Mock()
+        user = Mock()
+        service.user_settings.get_settings_snapshot.return_value = expected_snapshot
+
+        result = service.get_user_notification_snapshot(user)
+
+        assert result is expected_snapshot
+        service.user_settings.get_settings_snapshot.assert_called_once_with(user)
+
+    def test_get_enabled_channels_for_user_filters_undeliverable_channels(self, mock_repo):
+        service = NotificationService(mock_repo, use_async_queue=False)
+        service.user_settings = Mock()
+        user = Mock()
+        service.user_settings.get_settings_snapshot.return_value = SimpleNamespace(
+            notifications_enabled=True,
+            channels={
+                'email': SimpleNamespace(enabled=True, available=True, configured=True),
+                'discord': SimpleNamespace(enabled=True, available=False, configured=True),
+                'telegram': SimpleNamespace(enabled=False, available=True, configured=True),
+                'webhook': SimpleNamespace(enabled=True, available=True, configured=False),
+                'in_app': SimpleNamespace(enabled=True, available=True, configured=True),
+            },
+        )
+
+        result = service.get_enabled_channels_for_user(user)
+
+        assert result == ['email', 'in_app']
+
+    def test_get_enabled_channels_for_user_returns_empty_when_notifications_disabled(self, mock_repo):
+        service = NotificationService(mock_repo, use_async_queue=False)
+        service.user_settings = Mock()
+        service.user_settings.get_settings_snapshot.return_value = SimpleNamespace(
+            notifications_enabled=False,
+            channels={},
+        )
+
+        assert service.get_enabled_channels_for_user(Mock()) == []
+
+    def test_should_resolve_user_settings_requires_uuid_identity(self):
+        assert NotificationService._should_resolve_user_settings(str(uuid.uuid4())) is True
+        assert NotificationService._should_resolve_user_settings('legacy-user') is False
+        assert NotificationService._should_resolve_user_settings(None) is False
+
     def test_priority_enum_values(self):
         assert NotificationPriority.LOW.value == 'low'
         assert NotificationPriority.NORMAL.value == 'normal'
@@ -1098,6 +1148,100 @@ class TestProcessNotificationTask:
 
 
 # ---------------------------------------------------------------------------
+# Notification service helpers
+# ---------------------------------------------------------------------------
+
+class TestNotificationServiceHelpers:
+
+    def test_mark_settings_test_result_ignores_non_settings_events(self):
+        from notification.service import _mark_settings_test_result
+
+        with patch('notification.service.UserNotificationSettingsService') as mock_settings_service:
+            _mark_settings_test_result({'event_type': 'manual_send'}, status='sent')
+
+        mock_settings_service.assert_not_called()
+
+    def test_mark_settings_test_result_ignores_invalid_user_ids(self):
+        from notification.service import _mark_settings_test_result
+
+        with patch('notification.service.UserNotificationSettingsService') as mock_settings_service:
+            _mark_settings_test_result(
+                {
+                    'event_type': 'settings_test',
+                    'user_id': 'legacy-user',
+                    'channel_type': 'email',
+                },
+                status='failed',
+            )
+
+        mock_settings_service.assert_not_called()
+
+    def test_mark_settings_test_result_swallows_persistence_errors(self):
+        from notification.service import _mark_settings_test_result
+
+        settings_service = Mock()
+        settings_service.mark_test_result.side_effect = RuntimeError('db exploded')
+
+        with patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.UserNotificationSettingsService', return_value=settings_service):
+            make_db_scope_mock(mock_scope)
+
+            _mark_settings_test_result(
+                {
+                    'event_type': 'settings_test',
+                    'user_id': str(uuid.uuid4()),
+                    'channel_type': 'email',
+                },
+                status='failed',
+            )
+
+        settings_service.mark_test_result.assert_called_once()
+
+    def test_handle_notification_processing_exception_records_terminal_failures(self):
+        from notification.service import _handle_notification_processing_exception
+
+        error = TerminalNotificationError('boom', failure_class='terminal_failure')
+        with patch('notification.service._record_notification_failure') as mock_record_failure:
+            action, retries = _handle_notification_processing_exception(
+                'notif-123',
+                NOTIFICATION_DATA,
+                'email',
+                error,
+                raise_transient=True,
+                transient_retries=1,
+            )
+
+        assert (action, retries) == ('return', 1)
+        mock_record_failure.assert_called_once_with(
+            'notif-123',
+            NOTIFICATION_DATA,
+            'boom',
+            failure_class='terminal_failure',
+        )
+
+    def test_handle_notification_processing_exception_records_generic_failures(self):
+        from notification.service import _handle_notification_processing_exception
+
+        with patch('notification.service._record_notification_failure') as mock_record_failure:
+            action, retries = _handle_notification_processing_exception(
+                'notif-123',
+                NOTIFICATION_DATA,
+                'email',
+                RuntimeError('boom'),
+                raise_transient=False,
+                transient_retries=0,
+            )
+
+        assert (action, retries) == ('return', 0)
+        mock_record_failure.assert_called_once_with(
+            'notif-123',
+            NOTIFICATION_DATA,
+            'boom',
+            failure_class='unknown',
+        )
+
+
+# ---------------------------------------------------------------------------
 # _send_and_record_notification
 # ---------------------------------------------------------------------------
 
@@ -1174,6 +1318,82 @@ class TestSendAndRecordNotification:
             status='sent',
             error_message=None,
         )
+
+    def test_resolve_user_settings_requires_user_id(self):
+        from notification.service import _send_and_record_notification
+
+        notification_data = {
+            **NOTIFICATION_DATA,
+            'recipient': None,
+            'user_id': None,
+            'resolve_user_settings': True,
+        }
+
+        with pytest.raises(NotificationConfigurationError, match='user_id is required'):
+            _send_and_record_notification('notif-123', notification_data)
+
+    def test_resolve_user_settings_uses_resolved_target_and_metadata(self):
+        from notification.service import _send_and_record_notification
+
+        owner_id = str(uuid.uuid4())
+        notification_data = {
+            **NOTIFICATION_DATA,
+            'recipient': None,
+            'user_id': owner_id,
+            'event_type': 'settings_test',
+            'resolve_user_settings': True,
+            'require_enabled_delivery': False,
+            'metadata': {'existing': 'value'},
+        }
+        resolved_target = SimpleNamespace(
+            recipient='resolved@example.com',
+            settings_revision=9,
+            masked_recipient='***@example.com',
+        )
+        mock_channel = Mock()
+        mock_channel.send.return_value = True
+
+        with patch('notification.service.NotificationChannelFactory.get_channel', return_value=mock_channel), \
+             patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.UserNotificationSettingsService') as mock_settings_service_class, \
+             patch('notification.service._mark_settings_test_result') as mock_mark_result:
+
+            mock_tracker = self._make_patches(mock_scope, mock_tracker_class)
+            mock_settings_service_class.return_value.resolve_delivery_target.return_value = resolved_target
+            result = _send_and_record_notification('notif-123', notification_data)
+
+        assert result == 'notif-123'
+        mock_channel.send.assert_called_once_with(
+            'resolved@example.com',
+            'Test',
+            'Test body',
+            {
+                'existing': 'value',
+                'settings_revision': 9,
+                'resolved_recipient_masked': '***@example.com',
+            },
+        )
+        record_kwargs = mock_tracker.record_notification.call_args[1]
+        assert record_kwargs['recipient'] == 'resolved@example.com'
+        assert record_kwargs['metadata']['settings_revision'] == 9
+        mock_mark_result.assert_called_once_with(
+            notification_data,
+            status='sent',
+            error_message=None,
+        )
+
+    def test_missing_resolved_recipient_raises_configuration_error(self):
+        from notification.service import _send_and_record_notification
+
+        notification_data = {
+            **NOTIFICATION_DATA,
+            'recipient': None,
+            'channel_type': 'in_app',
+        }
+
+        with pytest.raises(NotificationConfigurationError, match='No recipient resolved'):
+            _send_and_record_notification('notif-123', notification_data)
 
 
 # ---------------------------------------------------------------------------

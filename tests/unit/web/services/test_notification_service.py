@@ -171,6 +171,60 @@ class TestNotificationServiceWrapper:
     @patch("web.backend.services.notification_service.NotificationService")
     @patch("web.backend.services.notification_service.JobRepository")
     @patch("web.backend.services.notification_service.get_config")
+    def test_update_settings_serializes_updated_snapshot(
+        self,
+        mock_get_config,
+        mock_repo_class,
+        mock_notification_service_class,
+        mock_settings_service_class,
+    ):
+        snapshot = SimpleNamespace(
+            notifications_enabled=False,
+            min_score_threshold=88,
+            notify_on_new_match=False,
+            notify_on_batch_complete=True,
+            revision=7,
+            channels={
+                "in_app": SimpleNamespace(
+                    enabled=True,
+                    configured=True,
+                    available=True,
+                    availability_reason=None,
+                    masked_recipient="In-app inbox",
+                    last_test_status="sent",
+                    last_tested_at=None,
+                    last_test_error=None,
+                )
+            },
+        )
+        mock_settings_service = Mock()
+        mock_settings_service.update_settings.return_value = snapshot
+        mock_settings_service_class.return_value = mock_settings_service
+        mock_notification_service_class.return_value = Mock()
+        mock_repo_class.return_value = Mock()
+        mock_get_config.return_value = SimpleNamespace(
+            notifications=SimpleNamespace(
+                redis_url="redis://example/0",
+                base_url="https://jobscout.app",
+                use_async_queue=True,
+                channels={},
+            )
+        )
+
+        wrapper = NotificationServiceWrapper(Mock())
+        user = SimpleNamespace(id="user-123")
+        payload = {"notifications_enabled": False}
+
+        result = wrapper.update_settings(user, payload)
+
+        mock_settings_service.update_settings.assert_called_once_with(user, payload)
+        assert result["revision"] == 7
+        assert result["channels"]["in_app"]["enabled"] is True
+
+    @patch("web.backend.services.notification_service.UserNotificationSettingsService")
+    @patch("web.backend.services.notification_service.NotificationService")
+    @patch("web.backend.services.notification_service.JobRepository")
+    @patch("web.backend.services.notification_service.get_config")
     def test_send_test_notification_queues_saved_config_delivery(
         self,
         mock_get_config,
