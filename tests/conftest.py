@@ -48,6 +48,7 @@ def _block_production_db(clean_env):  # noqa: PT004  (runs after clean_env saves
 TEST_DB_USER = "testuser"
 TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD", "testpass")
 TEST_DB_NAME = "jobscout_test"
+TEST_DB_IMAGE = "pgvector/pgvector:pg17"
 
 
 def pytest_configure(config):
@@ -86,12 +87,16 @@ def test_database():
             pytest.skip("External database not available")
     
     # Try to use testcontainers for automatic container management
+    postgres = None
+    engine = None
+    db_url = None
+
     try:
         from testcontainers.postgres import PostgresContainer
         
         # Start PostgreSQL with pgvector
         postgres = PostgresContainer(
-            image="ankane/pgvector:latest",
+            image=TEST_DB_IMAGE,
             username=TEST_DB_USER,
             password=TEST_DB_PASSWORD,
             dbname=TEST_DB_NAME,
@@ -115,10 +120,6 @@ def test_database():
         
         yield db_url
         
-        # Cleanup after all tests
-        postgres.stop()
-        print("\n✓ Test database stopped")
-        
     except Exception as e:
         import traceback
         print(f"\n⚠ Failed to start test database container:")
@@ -126,6 +127,14 @@ def test_database():
         print(f"\n   Full traceback:")
         traceback.print_exc()
         pytest.skip(f"Could not start test database container: {e}")
+    finally:
+        if engine is not None:
+            engine.dispose()
+        if postgres is not None:
+            postgres.stop()
+            print("\n✓ Test database stopped")
+        if db_url and os.environ.get("TEST_DATABASE_URL") == db_url:
+            os.environ.pop("TEST_DATABASE_URL", None)
 
 
 @pytest.fixture(scope="session")
@@ -155,6 +164,9 @@ def redis_container():
         return
 
     # Try to use testcontainers for automatic container management
+    redis = None
+    redis_url = None
+
     try:
         from testcontainers.redis import RedisContainer
 
@@ -172,10 +184,6 @@ def redis_container():
 
         yield {"container": redis, "url": redis_url, "port": port}
 
-        # Cleanup after all tests
-        redis.stop()
-        print("\n✓ Test Redis container stopped")
-
     except Exception as e:
         import traceback
         print(f"\n⚠ Failed to start test Redis container:")
@@ -183,6 +191,12 @@ def redis_container():
         print(f"\n   Full traceback:")
         traceback.print_exc()
         pytest.skip(f"Could not start test Redis container: {e}")
+    finally:
+        if redis is not None:
+            redis.stop()
+            print("\n✓ Test Redis container stopped")
+        if redis_url and os.environ.get("TEST_REDIS_URL") == redis_url:
+            os.environ.pop("TEST_REDIS_URL", None)
 
 
 @pytest.fixture

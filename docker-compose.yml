@@ -4,6 +4,8 @@
 # The base infrastructure (postgres, redis) is included automatically.
 # For microservices, use: docker-compose -f docker-compose.yml -f docker-compose.microservices.yml up -d
 
+name: ${COMPOSE_PROJECT_NAME:-jobscout}
+
 include:
   - docker-compose.base.yml
 

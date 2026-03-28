@@ -144,14 +144,16 @@ class TestURLValidation:
 
     def test_validate_webhook_url_private_ip_loopback(self):
         """Test private/loopback IPs are rejected (SSRF protection)."""
-        assert _validate_webhook_url('http://127.0.0.1/webhook') is False
-        assert _validate_webhook_url('http://localhost/webhook') is False
+        with patch('notification.channels._current_environment', return_value='production'):
+            assert _validate_webhook_url('http://127.0.0.1/webhook') is False
+            assert _validate_webhook_url('http://localhost/webhook') is False
 
     def test_validate_webhook_url_private_ip_range(self):
         """Test private IP ranges are rejected."""
-        assert _validate_webhook_url('http://192.168.1.1/webhook') is False
-        assert _validate_webhook_url('http://10.0.0.1/webhook') is False
-        assert _validate_webhook_url('http://172.16.0.1/webhook') is False
+        with patch('notification.channels._current_environment', return_value='production'):
+            assert _validate_webhook_url('http://192.168.1.1/webhook') is False
+            assert _validate_webhook_url('http://10.0.0.1/webhook') is False
+            assert _validate_webhook_url('http://172.16.0.1/webhook') is False
 
     def test_validate_webhook_url_invalid_hostname(self, caplog):
         """Test unresolvable hostnames are rejected."""
@@ -891,8 +893,8 @@ class TestEmailChannelUncoveredPaths:
         mock_smtp.send_message.assert_called_once()
 
     @patch('notification.channels.smtplib.SMTP', side_effect=Exception("SMTP error"))
-    def test_email_smtp_exception_returns_false(self, mock_smtp_class, caplog):
-        """EmailChannel.send returns False on SMTP exception."""
+    def test_email_smtp_exception_raises_transient_error(self, mock_smtp_class, caplog):
+        """EmailChannel.send raises transient error on SMTP exception."""
         os.environ.update({
             'SMTP_SERVER': 'smtp.test.com',
             'SMTP_PORT': '587',
@@ -901,8 +903,8 @@ class TestEmailChannelUncoveredPaths:
         })
 
         channel = EmailChannel()
-        result = channel.send('user@example.com', 'Subject', 'Body', {})
-        assert result is False
+        with pytest.raises(TransientNotificationError):
+            channel.send('user@example.com', 'Subject', 'Body', {})
 
     def test_email_build_html_body_optional_fields_absent(self):
         """_build_html_body handles jobs missing optional fields."""
@@ -991,13 +993,13 @@ class TestDiscordChannelUncoveredPaths:
         assert payload['embeds'][0]['title'] == 'Alert Subject'
 
     @patch('notification.channels.requests.post', side_effect=Exception("network error"))
-    def test_discord_exception_returns_false(self, mock_post, caplog):
-        """DiscordChannel.send returns False on exception."""
+    def test_discord_exception_raises_transient_error(self, mock_post, caplog):
+        """DiscordChannel.send raises transient error on exception."""
         channel = DiscordChannel()
-        result = channel.send('', 'Subject', 'Body', {
-            'discord_webhook_url': 'https://discord.com/api/webhooks/test/test'
-        })
-        assert result is False
+        with pytest.raises(TransientNotificationError):
+            channel.send('', 'Subject', 'Body', {
+                'discord_webhook_url': 'https://discord.com/api/webhooks/test/test'
+            })
 
 
 class TestTelegramChannelUncoveredPaths:
@@ -1024,12 +1026,12 @@ class TestTelegramChannelUncoveredPaths:
             channel.send('@channel', 'Subject', 'Body', {})
 
     @patch('notification.channels.requests.post', side_effect=Exception("connection error"))
-    def test_telegram_exception_returns_false(self, mock_post, caplog):
-        """TelegramChannel.send returns False on exception."""
+    def test_telegram_exception_raises_transient_error(self, mock_post, caplog):
+        """TelegramChannel.send raises transient error on exception."""
         os.environ['TELEGRAM_BOT_TOKEN'] = 'test-token'
         channel = TelegramChannel()
-        result = channel.send('@channel', 'Subject', 'Body', {})
-        assert result is False
+        with pytest.raises(TransientNotificationError):
+            channel.send('@channel', 'Subject', 'Body', {})
 
     def test_telegram_build_rich_message_optional_fields_absent(self):
         """_build_rich_message handles jobs missing optional fields."""
@@ -1092,12 +1094,12 @@ class TestWebhookChannelUncoveredPaths:
         assert payload['body'] == 'plain text body'
 
     @patch('notification.channels.requests.post', side_effect=Exception("timeout"))
-    def test_webhook_exception_returns_false(self, mock_post, caplog):
-        """WebhookChannel.send returns False on exception."""
+    def test_webhook_exception_raises_transient_error(self, mock_post, caplog):
+        """WebhookChannel.send raises transient error on exception."""
         channel = WebhookChannel()
         with patch('notification.channels._validate_webhook_url', return_value=True):
-            result = channel.send('https://example.com/webhook', 'S', 'B', {})
-        assert result is False
+            with pytest.raises(TransientNotificationError):
+                channel.send('https://example.com/webhook', 'S', 'B', {})
 
 
 class TestValidationExceptionPaths:

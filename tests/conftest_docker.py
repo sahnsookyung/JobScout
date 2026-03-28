@@ -26,6 +26,7 @@ from contextlib import contextmanager
 TEST_DB_USER = "test"
 TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD", "test")
 TEST_DB_NAME = "jobscout_test"
+TEST_DB_IMAGE = "pgvector/pgvector:pg17"
 
 
 class TestContainer:
@@ -115,7 +116,7 @@ class PostgresContainer(TestContainer):
     def __init__(self, host_port: int = 15432):
         super().__init__(
             name='jobscout-test-postgres',
-            image='ankane/pgvector:latest',
+            image=TEST_DB_IMAGE,
             ports={host_port: 5432},
             env={
                 'POSTGRES_USER': TEST_DB_USER,

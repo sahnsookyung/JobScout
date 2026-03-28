@@ -7,6 +7,7 @@ from database.repositories.job_post import JobPostRepository
 from database.repositories.resume import ResumeRepository
 from database.repositories.match import MatchRepository
 from database.repositories.embedding import EmbeddingRepository
+from database.repositories.notification_settings import NotificationSettingsRepository
 from database.repositories.user_wants import UserWantsRepository
 
 class JobRepository:
@@ -16,6 +17,7 @@ class JobRepository:
         self._resume_repo: Optional[ResumeRepository] = None
         self._match_repo: Optional[MatchRepository] = None
         self._embedding_repo: Optional[EmbeddingRepository] = None
+        self._notification_settings_repo: Optional[NotificationSettingsRepository] = None
         self._user_wants_repo: Optional[UserWantsRepository] = None
 
     @property
@@ -47,6 +49,12 @@ class JobRepository:
         if self._user_wants_repo is None:
             self._user_wants_repo = UserWantsRepository(self.db)
         return self._user_wants_repo
+
+    @property
+    def notification_settings(self) -> NotificationSettingsRepository:
+        if self._notification_settings_repo is None:
+            self._notification_settings_repo = NotificationSettingsRepository(self.db)
+        return self._notification_settings_repo
 
     def commit(self) -> None:
         self.db.commit()

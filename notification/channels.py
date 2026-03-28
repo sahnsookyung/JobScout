@@ -41,6 +41,7 @@ import urllib.parse
 import ipaddress
 import socket
 
+from core.auth import _current_environment
 from notification.exceptions import TerminalNotificationError, TransientNotificationError
 from notification.message_builder import NotificationMessageBuilder, JobNotificationContent
 
@@ -104,6 +105,9 @@ def _validate_webhook_url(url: str) -> bool:
             logger.error("URL missing hostname")
             return False
         
+        environment = _current_environment()
+        allow_private_hosts = environment in {"development", "dev", "test"}
+
         # Resolve hostname to IP
         try:
             addrinfo = socket.getaddrinfo(parsed.hostname, None)
@@ -111,7 +115,10 @@ def _validate_webhook_url(url: str) -> bool:
                 ip = ipaddress.ip_address(sockaddr[0])
                 
                 # Check for private/reserved IPs
-                if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local:
+                if (
+                    not allow_private_hosts
+                    and (ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local)
+                ):
                     logger.error(f"URL resolves to private/reserved IP: {ip}")
                     return False
         except socket.gaierror:
@@ -441,9 +448,16 @@ class EmailChannel(NotificationChannel):
         except (TerminalNotificationError, TransientNotificationError):
             raise
 
+        except (smtplib.SMTPException, OSError) as e:
+            raise TransientNotificationError(
+                f"Failed to send email to {_mask_email(recipient)}: {e}",
+                failure_class="email_transport",
+            ) from e
         except Exception as e:
-            logger.error(f"Failed to send email to {_mask_email(recipient)}: {e}")
-            return False
+            raise TransientNotificationError(
+                f"Failed to send email to {_mask_email(recipient)}: {e}",
+                failure_class="email_unknown",
+            ) from e
     
     def _build_html_body(self, subject: str, job_contents: List[Dict], metadata: Dict) -> str:
         """Build HTML email body for job notifications."""
@@ -590,9 +604,16 @@ class DiscordChannel(NotificationChannel):
             # Re-raise rate limit exceptions to be handled by the worker
             raise
         
+        except requests.RequestException as e:
+            raise TransientNotificationError(
+                f"Failed to send Discord message: {e}",
+                failure_class="discord_transport",
+            ) from e
         except Exception as e:
-            logger.error(f"Failed to send Discord message: {e}")
-            return False
+            raise TransientNotificationError(
+                f"Failed to send Discord message: {e}",
+                failure_class="discord_unknown",
+            ) from e
 
 
 class TelegramChannel(NotificationChannel):
@@ -695,9 +716,16 @@ class TelegramChannel(NotificationChannel):
         except (TerminalNotificationError, TransientNotificationError):
             raise
 
+        except requests.RequestException as e:
+            raise TransientNotificationError(
+                f"Failed to send Telegram message: {e}",
+                failure_class="telegram_transport",
+            ) from e
         except Exception as e:
-            logger.error(f"Failed to send Telegram message: {e}")
-            return False
+            raise TransientNotificationError(
+                f"Failed to send Telegram message: {e}",
+                failure_class="telegram_unknown",
+            ) from e
     
     def _build_rich_message(self, subject: str, job_contents: List[Dict], metadata: Dict) -> str:
         """Build rich HTML message for Telegram."""
@@ -785,9 +813,16 @@ class WebhookChannel(NotificationChannel):
         except (TerminalNotificationError, TransientNotificationError):
             raise
 
+        except requests.RequestException as e:
+            raise TransientNotificationError(
+                f"Failed to send webhook: {e}",
+                failure_class="webhook_transport",
+            ) from e
         except Exception as e:
-            logger.error(f"Failed to send webhook: {e}")
-            return False
+            raise TransientNotificationError(
+                f"Failed to send webhook: {e}",
+                failure_class="webhook_unknown",
+            ) from e
 
 
 class InAppChannel(NotificationChannel):
