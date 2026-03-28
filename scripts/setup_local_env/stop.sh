@@ -459,7 +459,7 @@ main() {
             # Include split so profile-bound pipeline services are visible to compose.
             docker compose "${COMPOSE_ARGS[@]}" \
                 --profile split \
-                stop extraction embeddings scorer-matcher orchestrator 2>/dev/null || true
+                stop extraction embeddings scorer-matcher notification-worker orchestrator 2>/dev/null || true
             log_success "Microservices stopped"
         fi
         echo ""
