@@ -11,6 +11,12 @@ def _load_compose(filename: str) -> dict:
         return yaml.safe_load(f)
 
 
+def test_root_compose_uses_standardized_project_name() -> None:
+    compose = _load_compose("docker-compose.yml")
+
+    assert compose["name"] == "${COMPOSE_PROJECT_NAME:-jobscout}"
+
+
 def test_microservices_have_split_profile() -> None:
     compose = _load_compose("docker-compose.microservices.yml")
     services = compose["services"]

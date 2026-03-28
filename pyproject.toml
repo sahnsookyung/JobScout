@@ -5,6 +5,7 @@ description = "Job scraping and analysis pipeline"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "cryptography>=46.0.3",
     "openai>=2.16.0",
     "pgvector>=0.4.2",
     "psycopg2-binary>=2.9.11",

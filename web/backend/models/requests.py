@@ -4,7 +4,7 @@ Request models for API endpoints.
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Dict, Optional
 
 
 class PolicyUpdate(BaseModel):
@@ -23,12 +23,44 @@ class NotificationRequest(BaseModel):
     """Request to send a notification."""
     type: str = Field(
         ...,
-        description="Notification type: email, discord, telegram, webhook, in_app",
+        description="Notification type: email, discord, telegram",
     )
-    recipient: str = Field(..., description="Recipient (email, user ID, webhook URL)")
+    recipient: str = Field(
+        ...,
+        description="Recipient (email address, Discord webhook URL, or Telegram chat ID)",
+    )
     subject: str = Field(..., description="Notification subject")
     body: str = Field(..., description="Notification body")
     priority: str = Field(default="normal", description="Priority: low, normal, high, urgent")
+
+
+class NotificationChannelSettingsUpdate(BaseModel):
+    """Per-channel notification settings update."""
+
+    enabled: bool = Field(default=False, description="Whether the channel is enabled")
+    secret_value: Optional[str] = Field(
+        default=None,
+        description="Optional secret value. Omit to keep existing, null to clear.",
+    )
+
+
+class NotificationSettingsUpdateRequest(BaseModel):
+    """Per-user notification settings update request."""
+
+    notifications_enabled: bool = Field(default=True)
+    min_score_threshold: int = Field(default=70, ge=0, le=100)
+    notify_on_new_match: bool = Field(default=True)
+    notify_on_batch_complete: bool = Field(default=True)
+    channels: Dict[str, NotificationChannelSettingsUpdate] = Field(default_factory=dict)
+
+
+class NotificationSettingsTestRequest(BaseModel):
+    """Request to send a saved-config test notification."""
+
+    channel_type: str = Field(
+        ...,
+        description="Channel to test: email, discord, telegram",
+    )
 
 
 class ResumeHashCheckRequest(BaseModel):

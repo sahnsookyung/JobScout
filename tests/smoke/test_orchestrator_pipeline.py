@@ -43,6 +43,7 @@ EXTRACTION_URL = f"http://localhost:{EXTRACTION_PORT}"
 EMBEDDINGS_URL = f"http://localhost:{EMBEDDINGS_PORT}"
 MATCHER_URL = f"http://localhost:{MATCHER_PORT}"
 ORCHESTRATOR_URL = f"http://localhost:{ORCHESTRATOR_PORT}"
+TEST_DB_IMAGE = "pgvector/pgvector:pg17"
 
 
 # Set environment for modules that import at load time
@@ -143,7 +144,7 @@ def start_test_infrastructure():
         "-e", "POSTGRES_PASSWORD=password",
         "-e", "POSTGRES_DB=jobscout_test",
         "--rm",
-        "pgvector/pgvector:pg16"
+        TEST_DB_IMAGE,
     ], check=True)
 
     # Wait for PostgreSQL

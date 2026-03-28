@@ -31,6 +31,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from enum import Enum
+from uuid import UUID
 
 # RQ imports
 try:
@@ -45,12 +46,111 @@ from database.database import db_session_scope
 from database.repository import JobRepository
 from notification.channels import NotificationChannelFactory
 from notification.channels import RateLimitException
+from notification.exceptions import (
+    NotificationConfigurationError,
+    TerminalNotificationError,
+    TransientNotificationError,
+)
 from notification.tracker import NotificationTrackerService, NotificationEvent
 from notification.message_builder import NotificationMessageBuilder, JobNotificationContent
+from notification.user_settings import UserNotificationSettingsService
 
 logger = logging.getLogger(__name__)
 
 REDIS_URL_DEFAULT = 'redis://localhost:6379/0'
+TRANSIENT_RETRY_INTERVALS = (30, 60, 120)
+
+
+def _parse_uuid(value: Any) -> Optional[UUID]:
+    """Return a UUID when the value is UUID-like, otherwise None."""
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _mark_settings_test_result(
+    notification_data: Dict[str, Any],
+    status: str,
+    error_message: Optional[str] = None,
+) -> None:
+    """Persist terminal status for settings test notifications."""
+    if notification_data.get('event_type') != 'settings_test':
+        return
+
+    owner_id = _parse_uuid(notification_data.get('user_id'))
+    channel_type = notification_data.get('channel_type')
+    if owner_id is None or not channel_type:
+        return
+
+    try:
+        with db_session_scope() as session:
+            UserNotificationSettingsService(session).mark_test_result(
+                owner_id=owner_id,
+                channel_type=channel_type,
+                status=status,
+                error_message=error_message,
+            )
+    except Exception:
+        logger.debug("Failed to persist settings test status", exc_info=True)
+
+
+def _handle_notification_processing_exception(
+    notification_id: str,
+    notification_data: Dict[str, Any],
+    channel_type: str,
+    error: Exception,
+    raise_transient: bool,
+    transient_retries: int,
+) -> tuple[str, int]:
+    """Return the next action for notification processing failures."""
+    if isinstance(error, TerminalNotificationError):
+        logger.error(f"Failed to process notification {notification_id}: {error}", exc_info=True)
+        _record_notification_failure(
+            notification_id,
+            notification_data,
+            str(error),
+            failure_class=error.failure_class,
+        )
+        return "return", transient_retries
+
+    if isinstance(error, TransientNotificationError) and raise_transient:
+        if transient_retries >= len(TRANSIENT_RETRY_INTERVALS):
+            logger.error(
+                "Max transient retries (%s) exceeded for notification %s",
+                len(TRANSIENT_RETRY_INTERVALS),
+                notification_id,
+            )
+            _record_notification_failure(
+                notification_id,
+                notification_data,
+                str(error),
+                failure_class=error.failure_class,
+            )
+            return "return", transient_retries
+
+        wait_seconds = TRANSIENT_RETRY_INTERVALS[transient_retries]
+        next_retry = transient_retries + 1
+        logger.warning(
+            "Transient notification failure for %s via %s: %s. Retrying in %ss (%s/%s)",
+            notification_id,
+            channel_type,
+            error,
+            wait_seconds,
+            next_retry,
+            len(TRANSIENT_RETRY_INTERVALS),
+        )
+        time.sleep(wait_seconds)
+        return "retry", next_retry
+
+    logger.error(f"Failed to process notification {notification_id}: {error}", exc_info=True)
+    _record_notification_failure(
+        notification_id,
+        notification_data,
+        str(error),
+        failure_class=getattr(error, "failure_class", "unknown"),
+    )
+    return "return", transient_retries
 
 
 class NotificationRateLimiter:
@@ -81,9 +181,12 @@ class NotificationRateLimiter:
         """Set rate limit wait time for a channel."""
         redis = self._get_redis()
         if redis:
-            key = f"{self.RATE_LIMIT_PREFIX}{channel_type}"
-            wait_until = time.time() + retry_after
-            redis.setex(key, retry_after + 5, str(wait_until))  # Store +5s buffer
+            try:
+                key = f"{self.RATE_LIMIT_PREFIX}{channel_type}"
+                wait_until = time.time() + retry_after
+                redis.setex(key, retry_after + 5, str(wait_until))  # Store +5s buffer
+            except Exception:
+                logger.debug("Failed to persist notification rate limit", exc_info=True)
     
     def get_wait_time(self, channel_type: str) -> float:
         """Get how long to wait before retrying (0 if no rate limit, capped at max_wait_seconds)."""
@@ -92,7 +195,11 @@ class NotificationRateLimiter:
             return 0
         
         key = f"{self.RATE_LIMIT_PREFIX}{channel_type}"
-        wait_until = redis.get(key)
+        try:
+            wait_until = redis.get(key)
+        except Exception:
+            logger.debug("Failed reading notification rate limit state", exc_info=True)
+            return 0
         
         if wait_until:
             try:
@@ -159,6 +266,7 @@ class NotificationService:
             name.lower(): config
             for name, config in (channel_configs or {}).items()
         }
+        self.user_settings = UserNotificationSettingsService(self.repo.db)
 
         # Initialize deduplication tracker
         self.tracker = NotificationTrackerService(repo)
@@ -212,6 +320,8 @@ class NotificationService:
         metadata: Optional[Dict[str, Any]] = None,
         allow_resend: bool = True,
         skip_dedup: bool = False,
+        resolve_user_settings: bool = False,
+        require_enabled_delivery: bool = True,
     ) -> Optional[str]:
         """
         Send a notification with deduplication check.
@@ -231,10 +341,12 @@ class NotificationService:
         Returns:
             Notification ID if sent/queued, None if suppressed as duplicate
         """
-        resolved_recipient = self._get_recipient_for_channel(
-            channel_type,
-            explicit_recipient=recipient,
-        )
+        resolved_recipient = None
+        if not resolve_user_settings:
+            resolved_recipient = self._get_recipient_for_channel(
+                channel_type,
+                explicit_recipient=recipient,
+            )
         metadata_payload = dict(metadata or {})
         metadata_payload.setdefault("user_id", user_id)
 
@@ -268,7 +380,10 @@ class NotificationService:
             'job_match_id': job_match_id,
             'event_type': event_type,
             'priority': priority.value,
-            'allow_resend': allow_resend
+            'allow_resend': allow_resend,
+            'resolve_user_settings': resolve_user_settings,
+            'raise_transient': self.async_mode,
+            'require_enabled_delivery': require_enabled_delivery,
         }
         
         # Queue or process immediately
@@ -289,6 +404,26 @@ class NotificationService:
             notification_id = process_notification_task(notification_data)
         
         return notification_id
+
+    def get_user_notification_snapshot(self, user) -> Any:
+        """Return the effective per-user notification settings snapshot."""
+        return self.user_settings.get_settings_snapshot(user)
+
+    def get_enabled_channels_for_user(self, user) -> list[str]:
+        """Return channels that are enabled and deliverable for a user."""
+        snapshot = self.user_settings.get_settings_snapshot(user)
+        if not snapshot.notifications_enabled:
+            return []
+        return [
+            name
+            for name, channel in snapshot.channels.items()
+            if channel.enabled and channel.available and channel.configured
+        ]
+
+    @staticmethod
+    def _should_resolve_user_settings(user_id: str) -> bool:
+        """Use per-user settings only for canonical UUID-backed users."""
+        return _parse_uuid(user_id) is not None
     
     def notify_new_match(
         self,
@@ -350,7 +485,8 @@ class NotificationService:
                     job_match_id=match_id,
                     event_type="new_high_score_match" if score >= self._priority_normal else "new_match",
                     priority=priority,
-                    metadata=metadata
+                    metadata=metadata,
+                    resolve_user_settings=self._should_resolve_user_settings(user_id),
                 )
 
                 results[channel] = notification_id
@@ -405,7 +541,8 @@ JobScout
                         'task_id': task_id,
                         'user_id': user_id,
                     },
-                    allow_resend=True  # Allow daily batch notifications
+                    allow_resend=True,  # Allow daily batch notifications
+                    resolve_user_settings=self._should_resolve_user_settings(user_id),
                 )
                 
                 results[channel] = notification_id
@@ -510,7 +647,10 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
     # Max retries for rate limiting
     max_rate_limit_retries = 3
     rate_limit_retries = 0
+    transient_retries = 0
     
+    raise_transient = bool(notification_data.get('raise_transient', False))
+
     while True:
         # Check global rate limit before sending
         wait_time = rate_limiter.get_wait_time(channel_type)
@@ -543,10 +683,16 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
             continue
         
         except Exception as e:
-            logger.error(f"Failed to process notification {notification_id}: {e}", exc_info=True)
-            _record_notification_failure(
-                notification_id, notification_data, str(e)
+            action, transient_retries = _handle_notification_processing_exception(
+                notification_id,
+                notification_data,
+                channel_type,
+                e,
+                raise_transient,
+                transient_retries,
             )
+            if action == "retry":
+                continue
             return notification_id
 
 
@@ -556,12 +702,38 @@ def _send_and_record_notification(
 ) -> str:
     """Send notification and record result in database."""
     channel_type = notification_data['channel_type']
+    metadata = dict(notification_data.get('metadata', {}))
+    recipient = notification_data.get('recipient')
+
+    if notification_data.get('resolve_user_settings'):
+        user_id = notification_data.get('user_id')
+        if not user_id:
+            raise NotificationConfigurationError(
+                "Notification user_id is required for per-user delivery",
+                failure_class="user_missing",
+            )
+        with db_session_scope() as session:
+            target = UserNotificationSettingsService(session).resolve_delivery_target(
+                owner_id=UUID(str(user_id)),
+                channel_type=channel_type,
+                require_enabled=bool(notification_data.get('require_enabled_delivery', True)),
+            )
+        recipient = target.recipient
+        metadata['settings_revision'] = target.settings_revision
+        metadata['resolved_recipient_masked'] = target.masked_recipient
+
+    if not recipient:
+        raise NotificationConfigurationError(
+            f"No recipient resolved for channel '{channel_type}'",
+            failure_class="recipient_missing",
+        )
+
     channel = NotificationChannelFactory.get_channel(channel_type)
     success = channel.send(
-        notification_data['recipient'],
+        recipient,
         notification_data['subject'],
         notification_data['body'],
-        notification_data.get('metadata', {})
+        metadata,
     )
     
     # Record in database
@@ -573,12 +745,12 @@ def _send_and_record_notification(
             job_match_id=notification_data.get('job_match_id'),
             event_type=notification_data['event_type'],
             channel_type=channel_type,
-            recipient=notification_data['recipient'],
+            recipient=recipient,
             subject=notification_data['subject'],
             body=notification_data['body'],
             success=success,
             error_message=None if success else "Send failed",
-            metadata=notification_data.get('metadata', {}),
+            metadata=metadata,
             allow_resend=notification_data.get('allow_resend', True)
         )
     
@@ -586,6 +758,13 @@ def _send_and_record_notification(
         logger.info(f"Notification {notification_id} sent successfully")
     else:
         logger.error(f"Notification {notification_id} failed to send")
+
+    if notification_data.get('event_type') == 'settings_test':
+        _mark_settings_test_result(
+            notification_data,
+            status='sent' if success else 'failed',
+            error_message=None if success else "Send failed",
+        )
     
     return notification_id
 
@@ -593,10 +772,13 @@ def _send_and_record_notification(
 def _record_notification_failure(
     notification_id: str,
     notification_data: Dict[str, Any],
-    error_message: str
-) -> None:
+    error_message: str,
+    failure_class: str = "delivery_failed",
+    ) -> None:
     """Record notification failure in database."""
     try:
+        metadata = dict(notification_data.get('metadata', {}))
+        metadata.setdefault("failure_class", failure_class)
         with db_session_scope() as session:
             repo = JobRepository(session)
             tracker = NotificationTrackerService(repo)
@@ -605,14 +787,15 @@ def _record_notification_failure(
                 job_match_id=notification_data.get('job_match_id'),
                 event_type=notification_data['event_type'],
                 channel_type=notification_data['channel_type'],
-                recipient=notification_data['recipient'],
+                recipient=notification_data.get('recipient') or notification_data['channel_type'],
                 subject=notification_data['subject'],
                 body=notification_data['body'],
                 success=False,
                 error_message=error_message,
-                metadata=notification_data.get('metadata', {}),
+                metadata=metadata,
                 allow_resend=notification_data.get('allow_resend', True)
             )
+        _mark_settings_test_result(notification_data, status='failed', error_message=error_message)
     except Exception as db_error:
         logger.error(
             f"Failed to record failure for notification {notification_id}: {db_error}"

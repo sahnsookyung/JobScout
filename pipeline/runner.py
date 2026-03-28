@@ -9,6 +9,7 @@ import time
 import logging
 import threading
 from typing import List, Optional, Dict, Any, Callable, Tuple
+from uuid import UUID
 
 from dataclasses import dataclass
 
@@ -944,17 +945,47 @@ def _send_notifications(
             )
             return 0
 
-        enabled_channels = [
-            name for name, cfg in notification_config.channels.items() if cfg.enabled
-        ]
-        if not enabled_channels:
-            logger.warning("No notification channels configured")
-            return 0
+        settings_snapshot = None
+        enabled_channels = None
+        try:
+            resolved_user_id = UUID(str(user_id))
+        except ValueError:
+            resolved_user_id = None
+
+        if resolved_user_id is not None:
+            with job_uow() as repo:
+                from database.models import User
+
+                user = repo.db.get(User, resolved_user_id)
+                if user is None:
+                    logger.warning("Skipping notifications because user %s was not found", user_id)
+                    return 0
+                settings_snapshot = ctx.notification_service.get_user_notification_snapshot(user)
+                enabled_channels = ctx.notification_service.get_enabled_channels_for_user(user)
+
+            if not settings_snapshot.notifications_enabled:
+                logger.info("Notifications disabled for user %s", user_id)
+                return 0
+
+            if not enabled_channels:
+                logger.info("No enabled notification channels available for user %s", user_id)
+                return 0
+        else:
+            enabled_channels = [
+                name for name, cfg in notification_config.channels.items() if cfg.enabled
+            ]
+            if not enabled_channels:
+                logger.warning("No notification channels configured")
+                return 0
 
         high_score_matches = [
             dto for dto in scored_match_dtos
             if dto.overall_score is not None
-            and dto.overall_score >= notification_config.min_score_threshold
+            and dto.overall_score >= (
+                settings_snapshot.min_score_threshold
+                if settings_snapshot is not None
+                else notification_config.min_score_threshold
+            )
         ]
 
         notified_count = 0
@@ -962,7 +993,11 @@ def _send_notifications(
             if stop_event.is_set():
                 break
 
-            if not notification_config.notify_on_new_match:
+            if not (
+                settings_snapshot.notify_on_new_match
+                if settings_snapshot is not None
+                else notification_config.notify_on_new_match
+            ):
                 continue
 
             content = None
@@ -1009,7 +1044,11 @@ def _send_notifications(
                 logger.exception("Failed to process notification for job_id=%s", dto.job.id)
                 continue
 
-        if notification_config.notify_on_batch_complete:
+        if (
+            settings_snapshot.notify_on_batch_complete
+            if settings_snapshot is not None
+            else notification_config.notify_on_batch_complete
+        ):
             try:
                 ctx.notification_service.notify_batch_complete(
                     user_id=user_id,

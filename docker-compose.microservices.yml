@@ -15,6 +15,10 @@ x-service-common: &service-common
   environment:
     - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-jobscout}
     - REDIS_URL=redis://:${REDIS_PASSWORD:-jobscoutredis}@redis:6379/0
+    - SMTP_SERVER=mailpit
+    - SMTP_PORT=1025
+    - SMTP_USE_TLS=false
+    - FROM_EMAIL=noreply@jobscout.local
     - PYTHONUNBUFFERED=1
   env_file:
     - .env

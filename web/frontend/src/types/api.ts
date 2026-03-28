@@ -153,6 +153,49 @@ export interface ResumeStatusResponse {
     error?: string;
 }
 
+export interface NotificationChannelSettings {
+    enabled: boolean;
+    configured: boolean;
+    available: boolean;
+    availability_reason?: string | null;
+    masked_recipient?: string | null;
+    last_test_status?: string | null;
+    last_tested_at?: string | null;
+    last_test_error?: string | null;
+}
+
+export interface NotificationSettings {
+    notifications_enabled: boolean;
+    min_score_threshold: number;
+    notify_on_new_match: boolean;
+    notify_on_batch_complete: boolean;
+    revision: number;
+    channels: Record<string, NotificationChannelSettings>;
+}
+
+export interface NotificationChannelSettingsUpdate {
+    enabled: boolean;
+    secret_value?: string | null;
+}
+
+export interface NotificationSettingsUpdateRequest {
+    notifications_enabled: boolean;
+    min_score_threshold: number;
+    notify_on_new_match: boolean;
+    notify_on_batch_complete: boolean;
+    channels: Record<string, NotificationChannelSettingsUpdate>;
+}
+
+export interface NotificationSettingsTestRequest {
+    channel_type: string;
+}
+
+export interface NotificationSettingsTestResponse {
+    success: boolean;
+    notification_id?: string | null;
+    message: string;
+}
+
 export interface ApiFieldError {
     path: string[];
     code: string;

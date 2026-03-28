@@ -18,10 +18,13 @@ from sqlalchemy.orm import sessionmaker
 
 from database.models import (
     JobMatch,
+    NotificationTracker,
     ResumeEvidenceUnitEmbedding,
     ResumeSectionEmbedding,
     ResumeUpload,
     StructuredResume,
+    UserNotificationChannel,
+    UserNotificationSettings,
 )
 from tests.integration.helpers.pipeline_polling import (
     wait_for_matching_terminal,
@@ -45,9 +48,11 @@ FAIL_EMBEDDING_RESUME_FIXTURE = (
     PROJECT_ROOT / "tests" / "fixtures" / "resumes" / "fail_embedding_resume.json"
 )
 DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
+E2E_COMPOSE_PROJECT_NAME = "jobscout-e2e"
 STARTUP_TIMEOUT_SECONDS = 180.0
 UPLOAD_TIMEOUT_SECONDS = 120.0
 MATCHING_TIMEOUT_SECONDS = 120.0
+NOTIFICATION_TIMEOUT_SECONDS = 60.0
 
 
 @dataclass(frozen=True)
@@ -162,6 +167,15 @@ def _compose_up_with_retries(
     last_error = None
     for _ in range(attempts):
         compose_env = _next_compose_env()
+        _run_compose(
+            compose_args,
+            compose_env,
+            "down",
+            "-v",
+            "--remove-orphans",
+            check=False,
+            timeout=600,
+        )
         try:
             result = _run_compose(
                 compose_args,
@@ -231,6 +245,43 @@ def _assert_db_migrate_succeeded(compose_args: tuple[str, ...], compose_env: dic
     assert exit_code == "0", f"db-migrate did not exit cleanly: {db_migrate}"
 
 
+def _wait_for_compose_service_state(
+    compose_args: tuple[str, ...],
+    compose_env: dict[str, str],
+    service_name: str,
+    expected_state_prefix: str,
+    *,
+    timeout_s: float,
+) -> None:
+    deadline = time.time() + timeout_s
+    last_rows: list[dict] = []
+    expected = expected_state_prefix.lower()
+
+    while time.time() < deadline:
+        result = _run_compose(
+            compose_args,
+            compose_env,
+            "ps",
+            service_name,
+            "--format",
+            "json",
+            check=False,
+            timeout=120,
+        )
+        rows = _parse_ps_json(result.stdout)
+        last_rows = rows
+        if rows:
+            state = str(rows[0].get("State", "")).lower()
+            if state.startswith(expected):
+                return
+        time.sleep(1)
+
+    raise AssertionError(
+        f"Service {service_name} did not reach state '{expected_state_prefix}'. "
+        f"Last compose status: {last_rows}"
+    )
+
+
 def _assert_shared_upload_dir_writable(
     compose_args: tuple[str, ...], compose_env: dict[str, str]
 ) -> None:
@@ -269,6 +320,7 @@ def _stack_diagnostics(context: SplitStackContext) -> str:
         "logs",
         "--no-color",
         "db-migrate",
+        "notification-worker",
         "web-backend",
         "orchestrator",
         "extraction",
@@ -309,14 +361,16 @@ def split_stack() -> SplitStackContext:
     if not _docker_available():
         pytest.skip("Docker is not available for split-stack E2E tests")
 
-    project_name = f"jobscout-e2e-{uuid.uuid4().hex[:8]}"
+    project_name = E2E_COMPOSE_PROJECT_NAME
     compose_args = _compose_args(project_name)
     services = (
         "postgres",
         "redis",
+        "mailpit",
         "db-migrate",
         "extraction",
         "embeddings",
+        "notification-worker",
         "scorer-matcher",
         "orchestrator",
         "web-backend",
@@ -338,6 +392,13 @@ def split_stack() -> SplitStackContext:
         _wait_for_http_health(f"{embeddings_url}/health", timeout_s=STARTUP_TIMEOUT_SECONDS)
         _wait_for_http_health(f"{scorer_matcher_url}/health", timeout_s=STARTUP_TIMEOUT_SECONDS)
         _wait_for_http_health(f"{orchestrator_url}/health", timeout_s=STARTUP_TIMEOUT_SECONDS)
+        _wait_for_compose_service_state(
+            compose_args,
+            compose_env,
+            "notification-worker",
+            "running",
+            timeout_s=STARTUP_TIMEOUT_SECONDS,
+        )
         _assert_db_migrate_succeeded(compose_args, compose_env)
         _assert_shared_upload_dir_writable(compose_args, compose_env)
 
@@ -391,6 +452,105 @@ def _upload_resume(base_url: str, resume_path: Path) -> dict:
     assert payload["task_id"], payload
     assert payload["upload_id"], payload
     return payload
+
+
+def _get_notification_settings(base_url: str) -> dict:
+    response = requests.get(f"{base_url}/api/v1/notification-settings", timeout=15)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _update_notification_settings(base_url: str, payload: dict) -> dict:
+    response = requests.put(
+        f"{base_url}/api/v1/notification-settings",
+        json=payload,
+        timeout=15,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _send_notification_settings_test(base_url: str, channel_type: str) -> dict:
+    response = requests.post(
+        f"{base_url}/api/v1/notification-settings/test",
+        json={"channel_type": channel_type},
+        timeout=15,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _wait_for_test_status(base_url: str, channel_type: str, expected_status: str) -> dict:
+    deadline = time.time() + NOTIFICATION_TIMEOUT_SECONDS
+    last_payload = None
+    while time.time() < deadline:
+        payload = _get_notification_settings(base_url)
+        channel = payload["channels"][channel_type]
+        last_payload = payload
+        if channel["last_test_status"] == expected_status:
+            return payload
+        time.sleep(1)
+    raise AssertionError(
+        f"Timed out waiting for notification test status '{expected_status}'. "
+        f"Last payload: {last_payload}"
+    )
+
+
+def _wait_for_automatic_notification_delivery(
+    database_url: str,
+    *,
+    owner_id: str,
+    channel_type: str,
+) -> list[NotificationTracker]:
+    deadline = time.time() + NOTIFICATION_TIMEOUT_SECONDS
+    owner_uuid = uuid.UUID(owner_id)
+    last_event_types: list[str] = []
+
+    while time.time() < deadline:
+        engine, session = _session_for(database_url)
+        try:
+            rows = session.execute(
+                select(NotificationTracker).where(
+                    NotificationTracker.owner_id == owner_uuid,
+                    NotificationTracker.channel_type == channel_type,
+                    NotificationTracker.sent_successfully.is_(True),
+                    NotificationTracker.event_type.in_(
+                        ["new_match", "new_high_score_match", "batch_complete"]
+                    ),
+                )
+            ).scalars().all()
+            last_event_types = [row.event_type for row in rows]
+            has_batch_complete = "batch_complete" in last_event_types
+            has_match_notification = any(
+                event_type in {"new_match", "new_high_score_match"}
+                for event_type in last_event_types
+            )
+            if has_batch_complete and has_match_notification:
+                return rows
+        finally:
+            session.close()
+            engine.dispose()
+        time.sleep(1)
+
+    raise AssertionError(
+        "Timed out waiting for automatic notification delivery. "
+        f"Last successful event types: {last_event_types}"
+    )
+
+
+def _reset_notification_state(database_url: str) -> None:
+    engine, session = _session_for(database_url)
+    try:
+        session.query(NotificationTracker).delete()
+        session.query(UserNotificationChannel).delete()
+        session.query(UserNotificationSettings).delete()
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+        engine.dispose()
 
 
 def test_resume_upload_completes_then_matching_completes(split_stack: SplitStackContext):
@@ -471,6 +631,74 @@ def test_resume_upload_completes_then_matching_completes(split_stack: SplitStack
         engine.dispose()
 
 
+def test_matching_flow_triggers_email_notifications(split_stack: SplitStackContext):
+    reset_split_stack_state(split_stack.database_url)
+    _reset_notification_state(split_stack.database_url)
+    seed_matcher_ready_jobs(split_stack.database_url)
+
+    updated_settings = _update_notification_settings(
+        split_stack.base_url,
+        {
+            "notifications_enabled": True,
+            "min_score_threshold": 0,
+            "notify_on_new_match": True,
+            "notify_on_batch_complete": True,
+            "channels": {
+                "email": {
+                    "enabled": True,
+                }
+            },
+        },
+    )
+    assert updated_settings["channels"]["email"]["enabled"] is True
+
+    upload_payload = _upload_resume(split_stack.base_url, VALID_RESUME_FIXTURE)
+    diagnostics = lambda: _stack_diagnostics(split_stack)
+    resume_state = wait_for_resume_terminal(
+        split_stack.base_url,
+        upload_payload["task_id"],
+        timeout_s=UPLOAD_TIMEOUT_SECONDS,
+        diagnostics=diagnostics,
+    )
+    assert resume_state["status"] == "completed", resume_state
+
+    run_response = requests.post(
+        f"{split_stack.base_url}/api/pipeline/run-matching",
+        timeout=30,
+    )
+    assert run_response.status_code == 200, run_response.text
+    run_payload = run_response.json()
+    assert run_payload["success"] is True, run_payload
+
+    matching_state = wait_for_matching_terminal(
+        split_stack.base_url,
+        run_payload["task_id"],
+        timeout_s=MATCHING_TIMEOUT_SECONDS,
+        diagnostics=diagnostics,
+    )
+    assert matching_state["status"] == "completed", matching_state
+    assert (matching_state.get("saved_count") or 0) >= 1, matching_state
+    assert (matching_state.get("notified_count") or 0) >= 1, matching_state
+
+    delivered_notifications = _wait_for_automatic_notification_delivery(
+        split_stack.database_url,
+        owner_id=DEV_USER_ID,
+        channel_type="email",
+    )
+    delivered_event_types = {row.event_type for row in delivered_notifications}
+    assert "batch_complete" in delivered_event_types
+    assert delivered_event_types & {"new_match", "new_high_score_match"}
+
+    engine, session = _session_for(split_stack.database_url)
+    try:
+        matches = session.execute(select(JobMatch)).scalars().all()
+        assert matches, "Expected persisted matches after matching completed"
+        assert any(match.notified for match in matches)
+    finally:
+        session.close()
+        engine.dispose()
+
+
 def test_resume_upload_failure_becomes_terminal_not_infinite_poll(split_stack: SplitStackContext):
     reset_split_stack_state(split_stack.database_url)
 
@@ -485,3 +713,65 @@ def test_resume_upload_failure_becomes_terminal_not_infinite_poll(split_stack: S
 
     assert resume_state["status"] == "failed", resume_state
     assert resume_state.get("error"), resume_state
+
+
+def test_notification_settings_round_trip_and_email_test_delivery(split_stack: SplitStackContext):
+    reset_split_stack_state(split_stack.database_url)
+    _reset_notification_state(split_stack.database_url)
+
+    initial_settings = _get_notification_settings(split_stack.base_url)
+    assert initial_settings["notifications_enabled"] is True
+    assert initial_settings["channels"]["email"]["configured"] is True
+    assert initial_settings["channels"]["email"]["enabled"] is False
+
+    updated_settings = _update_notification_settings(
+        split_stack.base_url,
+        {
+            "notifications_enabled": True,
+            "min_score_threshold": 88,
+            "notify_on_new_match": False,
+            "notify_on_batch_complete": True,
+            "channels": {
+                "email": {
+                    "enabled": True,
+                }
+            },
+        },
+    )
+    assert updated_settings["min_score_threshold"] == 88
+    assert updated_settings["notify_on_new_match"] is False
+    assert updated_settings["channels"]["email"]["enabled"] is True
+    assert updated_settings["revision"] >= initial_settings["revision"] + 1
+
+    test_payload = _send_notification_settings_test(split_stack.base_url, "email")
+    assert test_payload["success"] is True
+    assert test_payload["notification_id"]
+
+    terminal_settings = _wait_for_test_status(split_stack.base_url, "email", "sent")
+    email_channel = terminal_settings["channels"]["email"]
+    assert email_channel["last_test_status"] == "sent"
+    assert email_channel["last_tested_at"] is not None
+    assert email_channel["last_test_error"] is None
+
+    engine, session = _session_for(split_stack.database_url)
+    try:
+        settings_channel = session.execute(
+            select(UserNotificationChannel).where(
+                UserNotificationChannel.owner_id == uuid.UUID(DEV_USER_ID),
+                UserNotificationChannel.channel_type == "email",
+            )
+        ).scalar_one()
+        assert settings_channel.enabled is True
+        assert settings_channel.last_test_status == "sent"
+
+        tracker_record = session.execute(
+            select(NotificationTracker).where(
+                NotificationTracker.owner_id == uuid.UUID(DEV_USER_ID),
+                NotificationTracker.channel_type == "email",
+                NotificationTracker.event_type == "settings_test",
+            )
+        ).scalar_one()
+        assert tracker_record.sent_successfully is True
+    finally:
+        session.close()
+        engine.dispose()
