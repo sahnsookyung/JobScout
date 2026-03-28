@@ -96,6 +96,12 @@ def start_worker(burst: bool = False, queues: list = None):
 
         if not burst and queues:
             # Burst mode exits immediately after draining — no point polling DLQ.
+            if len(queues) > 1:
+                logger.warning(
+                    "DLQ monitor only watches the first queue (%s); "
+                    "failures on %s are not monitored",
+                    queues[0], queues[1:],
+                )
             monitor = threading.Thread(
                 target=_monitor_dlq,
                 args=(redis_conn, queues[0], stop_event),

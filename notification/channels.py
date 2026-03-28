@@ -706,9 +706,15 @@ class TelegramChannel(NotificationChannel):
             if response.status_code == 200:
                 logger.info(f"Telegram message sent to {recipient}")
                 return True
-            else:
+            elif response.status_code >= 500:
+                # 5xx — server-side error, worth retrying
                 raise TransientNotificationError(
                     f"Telegram API error: {response.status_code} — {response.text}"
+                )
+            else:
+                # 4xx (bad token, bad chat_id, etc.) — won't succeed on retry
+                raise NotificationConfigurationError(
+                    f"Telegram API rejected message ({response.status_code}): {response.text}"
                 )
         
         except RateLimitException:

@@ -281,7 +281,7 @@ class NotificationTrackerService:
             existing.event_data = metadata or {}
             existing.recipient = recipient
             existing.sent_successfully = success
-            existing.failure_class = failure_class
+            existing.failure_class = failure_class  # None on success — intentionally clears prior failure
             existing.error_message = error_message
 
             tracker = existing

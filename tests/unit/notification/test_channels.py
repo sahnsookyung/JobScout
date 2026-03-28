@@ -1012,11 +1012,24 @@ class TestTelegramChannelUncoveredPaths:
             channel.send('@channel', 'Subject', 'Body', {})
 
     @patch('notification.channels.requests.post')
-    def test_telegram_non_200_status_raises_transient_error(self, mock_post):
-        """TelegramChannel.send raises TransientNotificationError on non-200 status."""
+    def test_telegram_4xx_status_raises_configuration_error(self, mock_post):
+        """TelegramChannel.send raises NotificationConfigurationError on 4xx (bad token/chat_id)."""
         mock_response = Mock()
         mock_response.status_code = 400
         mock_response.text = 'Bad Request'
+        mock_post.return_value = mock_response
+
+        os.environ['TELEGRAM_BOT_TOKEN'] = 'test-token'
+        channel = TelegramChannel()
+        with pytest.raises(NotificationConfigurationError, match="Telegram API rejected"):
+            channel.send('@channel', 'Subject', 'Body', {})
+
+    @patch('notification.channels.requests.post')
+    def test_telegram_5xx_status_raises_transient_error(self, mock_post):
+        """TelegramChannel.send raises TransientNotificationError on 5xx (server-side error)."""
+        mock_response = Mock()
+        mock_response.status_code = 503
+        mock_response.text = 'Service Unavailable'
         mock_post.return_value = mock_response
 
         os.environ['TELEGRAM_BOT_TOKEN'] = 'test-token'

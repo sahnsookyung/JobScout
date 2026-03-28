@@ -315,8 +315,17 @@ class TestTelegramChannel:
             )
 
     @patch('notification.channels.requests.post')
-    def test_api_error_raises_transient_error(self, mock_post):
+    def test_api_4xx_raises_configuration_error(self, mock_post):
         mock_post.return_value = Mock(status_code=400, text='Bad Request')
+        os.environ['TELEGRAM_BOT_TOKEN'] = 'test-token'
+        with pytest.raises(NotificationConfigurationError):
+            TelegramChannel().send(
+                recipient='@channel', subject='Test', body='Body', metadata={}
+            )
+
+    @patch('notification.channels.requests.post')
+    def test_api_5xx_raises_transient_error(self, mock_post):
+        mock_post.return_value = Mock(status_code=503, text='Service Unavailable')
         os.environ['TELEGRAM_BOT_TOKEN'] = 'test-token'
         with pytest.raises(TransientNotificationError):
             TelegramChannel().send(

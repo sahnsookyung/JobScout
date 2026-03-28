@@ -115,6 +115,9 @@ def _handle_notification_processing_exception(
         )
         raise error  # Re-raise → RQ marks job failed (dead-letter registry)
 
+    # Transient retry: blocks the worker thread for up to 210 s (30+60+120).
+    # This is intentional — transient failures are rare I/O errors and the
+    # 5-minute job_timeout provides enough headroom.
     if isinstance(error, TransientNotificationError) and raise_transient:
         if transient_retries >= len(TRANSIENT_RETRY_INTERVALS):
             logger.error(

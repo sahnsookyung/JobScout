@@ -64,8 +64,9 @@ class TestWorkerStartup:
     @patch('notification.worker.FailedJobRegistry', autospec=True)
     @patch('notification.worker.Redis', autospec=True)
     @patch('notification.worker.Worker', autospec=True)
-    def test_start_worker_multiple_queues(self, mock_worker_class, mock_redis_class, mock_registry_class):
-        """Test worker startup with multiple queues."""
+    def test_start_worker_multiple_queues(self, mock_worker_class, mock_redis_class, mock_registry_class, caplog):
+        """Test worker startup with multiple queues warns that only first queue is DLQ-monitored."""
+        import logging
         mock_redis = Mock()
         mock_redis.ping.return_value = True
         mock_redis_class.from_url.return_value = mock_redis
@@ -73,10 +74,12 @@ class TestWorkerStartup:
         mock_worker = Mock()
         mock_worker_class.return_value = mock_worker
 
-        start_worker(burst=False, queues=['notifications', 'emails', 'alerts'])
+        with caplog.at_level(logging.WARNING, logger='notification.worker'):
+            start_worker(burst=False, queues=['notifications', 'emails', 'alerts'])
 
         call_args = mock_worker_class.call_args[0]
         assert call_args[0] == ['notifications', 'emails', 'alerts']
+        assert "DLQ monitor only watches the first queue" in caplog.text
 
     @patch('notification.worker.FailedJobRegistry', autospec=True)
     @patch('notification.worker.Redis', autospec=True)
