@@ -205,6 +205,38 @@ class NotificationResponse(BaseModel):
     message: str
 
 
+class NotificationChannelSettingsResponse(BaseModel):
+    """Per-channel notification settings response."""
+
+    enabled: bool
+    configured: bool
+    available: bool
+    availability_reason: Optional[str] = None
+    masked_recipient: Optional[str] = None
+    last_test_status: Optional[str] = None
+    last_tested_at: Optional[str] = None
+    last_test_error: Optional[str] = None
+
+
+class NotificationSettingsResponse(BaseModel):
+    """Per-user notification settings response."""
+
+    notifications_enabled: bool
+    min_score_threshold: int
+    notify_on_new_match: bool
+    notify_on_batch_complete: bool
+    revision: int
+    channels: Dict[str, NotificationChannelSettingsResponse]
+
+
+class NotificationSettingsTestResponse(BaseModel):
+    """Response after queueing a test notification."""
+
+    success: bool
+    notification_id: Optional[str] = None
+    message: str
+
+
 class QueueStatusResponse(BaseModel):
     """Response with queue status."""
     success: bool

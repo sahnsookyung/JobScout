@@ -277,6 +277,8 @@ class NotificationTrackerService:
             existing.last_sent_at = datetime.now(timezone.utc)
             existing.send_count += 1
             existing.content_hash = content_hash
+            existing.event_data = metadata or {}
+            existing.recipient = recipient
             existing.sent_successfully = success
             existing.error_message = error_message
             

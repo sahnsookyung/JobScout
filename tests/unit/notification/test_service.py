@@ -22,6 +22,7 @@ from notification import (
     AggressiveDeduplicationStrategy, NotificationEvent,
     NotificationService, NotificationPriority, RateLimitException,
 )
+from notification.exceptions import TransientNotificationError
 from notification.message_builder import (
     JobNotificationContent, JobInfo, MatchInfo, RequirementsInfo,
 )
@@ -253,13 +254,13 @@ class TestDiscordChannel:
         assert result is False
 
     @patch('notification.channels.requests.post')
-    def test_send_network_failure_returns_false(self, mock_post):
+    def test_send_network_failure_raises_transient_error(self, mock_post):
         mock_post.side_effect = Exception('Network error')
-        result = DiscordChannel().send(
-            recipient='', subject='Test', body='Body',
-            metadata={'discord_webhook_url': 'https://test.com/webhook'},
-        )
-        assert result is False
+        with pytest.raises(TransientNotificationError):
+            DiscordChannel().send(
+                recipient='', subject='Test', body='Body',
+                metadata={'discord_webhook_url': 'https://test.com/webhook'},
+            )
 
     @patch('notification.channels.requests.post')
     def test_rate_limit_429_raises_with_retry_after(self, mock_post):
@@ -568,6 +569,7 @@ class TestNotificationService:
         assert kwargs['channel_type'] == 'email'
         assert kwargs['event_type'] == 'new_high_score_match'
         assert 'Python Developer' in kwargs['subject']
+        assert kwargs['resolve_user_settings'] is False
 
     @patch('notification.service.NotificationService.send_notification')
     def test_notify_new_match_multiple_channels(self, mock_send, mock_repo, job_content):
@@ -583,6 +585,20 @@ class TestNotificationService:
 
         assert mock_send.call_count == 3
         assert len(results) == 3
+
+    @patch('notification.service.NotificationService.send_notification')
+    def test_notify_new_match_resolves_user_settings_for_uuid_users(self, mock_send, mock_repo, job_content):
+        mock_send.return_value = 'notif-123'
+        service = NotificationService(mock_repo)
+
+        service.notify_new_match(
+            user_id=str(uuid.uuid4()),
+            match_id='match1',
+            content=job_content,
+            channels=['email'],
+        )
+
+        assert mock_send.call_args[1]['resolve_user_settings'] is True
 
     @patch('notification.service.process_notification_task', return_value='notif-123')
     def test_send_notification_prefers_explicit_recipient(self, mock_process, mock_repo):
@@ -668,6 +684,7 @@ class TestNotificationService:
         assert payload['metadata']['user_id'] == 'user1'
 
     def test_send_notification_raises_when_no_recipient_exists(self, mock_repo):
+        os.environ.pop('DISCORD_WEBHOOK_URL', None)
         service = NotificationService(
             mock_repo,
             use_async_queue=False,
@@ -741,6 +758,7 @@ class TestNotificationService:
         assert kwargs['metadata']['task_id'] == 'task-123'
         assert kwargs['metadata']['user_id'] == 'user1'
         assert kwargs['allow_resend'] is True
+        assert kwargs['resolve_user_settings'] is False
 
     def test_priority_enum_values(self):
         assert NotificationPriority.LOW.value == 'low'
@@ -1029,6 +1047,33 @@ class TestProcessNotificationTask:
         _, _, error_msg = mock_record_fail.call_args[0]
         assert "Network error" in error_msg
 
+    def test_transient_exception_retries_then_records_failure(self):
+        from notification.service import process_notification_task
+
+        notification_data = {**DISCORD_DATA, 'raise_transient': True}
+        mock_channel = Mock()
+        mock_channel.send.side_effect = TransientNotificationError(
+            "Network error",
+            failure_class="discord_transport",
+        )
+
+        with patch('notification.service.NotificationChannelFactory.get_channel',
+                   return_value=mock_channel), \
+             patch('notification.service.time.sleep') as mock_sleep, \
+             patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
+
+            _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            result = process_notification_task(notification_data)
+
+        assert_valid_uuid(result)
+        assert mock_channel.send.call_count == 4
+        assert mock_sleep.call_args_list == [((30,),), ((60,),), ((120,),)]
+        mock_record_fail.assert_called_once()
+        assert mock_record_fail.call_args.kwargs['failure_class'] == 'discord_transport'
+
     def test_active_rate_limit_sleeps_before_send(self):
         from notification.service import process_notification_task
 
@@ -1102,6 +1147,34 @@ class TestSendAndRecordNotification:
         assert kwargs['success'] is False
         assert kwargs['error_message'] is not None
 
+    def test_settings_test_send_updates_terminal_status(self):
+        from notification.service import _send_and_record_notification
+
+        notification_data = {
+            **NOTIFICATION_DATA,
+            'event_type': 'settings_test',
+            'user_id': str(uuid.uuid4()),
+        }
+        mock_channel = Mock()
+        mock_channel.send.return_value = True
+
+        with patch('notification.service.NotificationChannelFactory.get_channel',
+                   return_value=mock_channel), \
+             patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service._mark_settings_test_result') as mock_mark_result:
+
+            mock_tracker = self._make_patches(mock_scope, mock_tracker_class)
+            result = _send_and_record_notification("notif-123", notification_data)
+
+        assert result == "notif-123"
+        assert mock_tracker.record_notification.called
+        mock_mark_result.assert_called_once_with(
+            notification_data,
+            status='sent',
+            error_message=None,
+        )
+
 
 # ---------------------------------------------------------------------------
 # _record_notification_failure
@@ -1124,6 +1197,32 @@ class TestRecordNotificationFailure:
         kwargs = mock_tracker.record_notification.call_args[1]
         assert kwargs['success'] is False
         assert kwargs['error_message'] == "Test error"
+
+    def test_settings_test_failure_updates_terminal_status(self):
+        from notification.service import _record_notification_failure
+
+        notification_data = {
+            **NOTIFICATION_DATA,
+            'event_type': 'settings_test',
+            'user_id': str(uuid.uuid4()),
+        }
+
+        with patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service._mark_settings_test_result') as mock_mark_result:
+
+            make_db_scope_mock(mock_scope)
+            mock_tracker = Mock()
+            mock_tracker_class.return_value = mock_tracker
+
+            _record_notification_failure("notif-123", notification_data, "Test error")
+
+        assert mock_tracker.record_notification.called
+        mock_mark_result.assert_called_once_with(
+            notification_data,
+            status='failed',
+            error_message='Test error',
+        )
 
     def test_db_error_during_failure_recording_does_not_raise(self):
         from notification.service import _record_notification_failure

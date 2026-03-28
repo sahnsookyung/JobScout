@@ -5,6 +5,7 @@ import type { ApiErrorResponse, ApiFieldError } from '@/types/api';
 export const apiClient = axios.create({
     baseURL: import.meta.env.VITE_API_URL || '/api',
     timeout: 30000,
+    withCredentials: true,
     headers: {
         'Content-Type': 'application/json',
     },
@@ -72,7 +73,7 @@ function normalizeApiError(error: AxiosError): NormalizedApiError {
     const fallbackCode = status ? `common.http.${status}` : 'common.network.request_failed';
 
     if (isRecord(data) && typeof data['code'] === 'string' && typeof data['message'] === 'string') {
-        const apiError = data as ApiErrorResponse;
+        const apiError = data as unknown as ApiErrorResponse;
         return new NormalizedApiError({
             message: apiError.message,
             code: apiError.code,

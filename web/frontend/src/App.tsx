@@ -5,6 +5,7 @@ import { MatchList } from '@/features/matches/components/MatchList';
 import { MatchDetailsModal } from '@/features/matches/components/MatchDetailsModal';
 import { PolicyPanel } from '@/features/config/components/PolicyPanel';
 import { DashboardControls } from '@/features/dashboard/components/DashboardControls';
+import { NotificationSettingsPanel } from '@/features/notifications/components/NotificationSettingsPanel';
 import { RefreshCw, Briefcase } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { ToastProvider } from '@/components/ui/Toast';
@@ -64,6 +65,7 @@ function AppContent() {
                     <aside className="order-first xl:order-last space-y-6">
                         {/* <StatsPanel /> */}
                         <PolicyPanel />
+                        <NotificationSettingsPanel />
                     </aside>
 
                     {/* Matches: show after panels on small screens, left column on xl+ */}

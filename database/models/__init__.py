@@ -25,6 +25,7 @@ from .resume import (
 from .user_wants import UserWants
 from .match import JobMatch, JobMatchRequirement
 from .notification import NotificationTracker
+from .notification_settings import UserNotificationSettings, UserNotificationChannel
 from .settings import AppSettings
 from .user import User, UserAuthIdentity, UserFile
 
@@ -60,6 +61,8 @@ __all__ = [
     'JobMatch',
     'JobMatchRequirement',
     'NotificationTracker',
+    'UserNotificationSettings',
+    'UserNotificationChannel',
     'AppSettings',
     'User',
     'UserAuthIdentity',
