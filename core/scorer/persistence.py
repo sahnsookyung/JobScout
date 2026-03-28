@@ -59,51 +59,54 @@ def _extract_job_data(scored_match: ScoredMatch):
         }
 
 
+def _extract_requirement_match_data(requirement_match, *, use_getattr: bool):
+    evidence = requirement_match.evidence
+    if use_getattr:
+        evidence_text = getattr(evidence, 'text', '') if evidence else ""
+        evidence_section = getattr(evidence, 'source_section', None) if evidence else None
+        evidence_tags = getattr(evidence, 'tags', {}) if evidence else {}
+    else:
+        evidence_text = evidence.text if evidence else ""
+        evidence_section = evidence.source_section if evidence else None
+        evidence_tags = evidence.tags if evidence else {}
+
+    return {
+        'requirement_id': str(requirement_match.requirement.id),
+        'req_type': requirement_match.requirement.req_type,
+        'evidence_text': evidence_text,
+        'evidence_section': evidence_section,
+        'evidence_tags': evidence_tags,
+        'similarity': requirement_match.similarity,
+        'is_covered': requirement_match.is_covered,
+    }
+
+
+def _extract_missing_requirement_data(requirement_match):
+    return {
+        'requirement_id': str(requirement_match.requirement.id),
+        'req_type': requirement_match.requirement.req_type,
+        'similarity': requirement_match.similarity,
+    }
+
+
 def _extract_requirement_matches(scored_match: ScoredMatch):
     """Extract requirement matches from either ORM object or DTO."""
     if isinstance(scored_match, MatchResultDTO):
-        # DTO case - requirements are RequirementMatchDTO
-        matched = []
-        missing = []
-        for req in scored_match.requirement_matches:
-            matched.append({
-                'requirement_id': str(req.requirement.id),
-                'req_type': req.requirement.req_type,
-                'evidence_text': req.evidence.text if req.evidence else "",
-                'evidence_section': req.evidence.source_section if req.evidence else None,
-                'evidence_tags': req.evidence.tags if req.evidence else {},
-                'similarity': req.similarity,
-                'is_covered': req.is_covered,
-            })
-        for req in scored_match.missing_requirements:
-            missing.append({
-                'requirement_id': str(req.requirement.id),
-                'req_type': req.requirement.req_type,
-                'similarity': req.similarity,
-            })
-        return matched, missing
+        requirement_matches = scored_match.requirement_matches
+        use_getattr = False
     else:
-        # ORM case - requirements are RequirementMatchResult objects
-        matched = []
-        missing = []
-        for req in scored_match.matched_requirements:
-            evidence = req.evidence
-            matched.append({
-                'requirement_id': str(req.requirement.id),
-                'req_type': req.requirement.req_type,
-                'evidence_text': getattr(evidence, 'text', '') if evidence else "",
-                'evidence_section': getattr(evidence, 'source_section', None) if evidence else None,
-                'evidence_tags': getattr(evidence, 'tags', {}) if evidence else {},
-                'similarity': req.similarity,
-                'is_covered': req.is_covered,
-            })
-        for req in scored_match.missing_requirements:
-            missing.append({
-                'requirement_id': str(req.requirement.id),
-                'req_type': req.requirement.req_type,
-                'similarity': req.similarity,
-            })
-        return matched, missing
+        requirement_matches = scored_match.matched_requirements
+        use_getattr = True
+
+    matched = [
+        _extract_requirement_match_data(req, use_getattr=use_getattr)
+        for req in requirement_matches
+    ]
+    missing = [
+        _extract_missing_requirement_data(req)
+        for req in scored_match.missing_requirements
+    ]
+    return matched, missing
 
 
 def _extract_scores(scored_match: ScoredMatch):

@@ -66,38 +66,37 @@ export const MatchCard: React.FC<MatchCardProps> = ({
 
     const isHighScore = match.overall_score >= 80;
     const isMediumScore = match.overall_score >= 60 && match.overall_score < 80;
-    const cardClasses = match.is_hidden
-        ? 'opacity-50 border-gray-200'
-        : isHighScore
-            ? 'border-transparent bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 hover:border-blue-300'
-            : 'border-gray-200 hover:border-blue-300';
-    const scoreBadgeGradient = isHighScore
-        ? 'from-blue-500 via-indigo-500 to-purple-500'
-        : isMediumScore
-            ? 'from-blue-400 to-indigo-400'
-            : 'from-gray-400 to-gray-500';
+    let cardClasses = 'border-gray-200 hover:border-blue-300';
+    if (match.is_hidden) {
+        cardClasses = 'opacity-50 border-gray-200';
+    } else if (isHighScore) {
+        cardClasses = 'border-transparent bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 hover:border-blue-300';
+    }
+
+    let scoreBadgeGradient = 'from-gray-400 to-gray-500';
+    if (isHighScore) {
+        scoreBadgeGradient = 'from-blue-500 via-indigo-500 to-purple-500';
+    } else if (isMediumScore) {
+        scoreBadgeGradient = 'from-blue-400 to-indigo-400';
+    }
+
     const hideButtonClasses = match.is_hidden
         ? 'bg-gray-200/80 text-gray-600 hover:bg-gray-300/80'
         : 'bg-white/80 text-gray-600 hover:bg-white hover:shadow-lg';
 
-    const handleCardKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            onSelect(match.match_id);
-        }
-    };
-
     return (
         <article
             className={`group relative bg-white rounded-3xl p-8 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl border-2 overflow-hidden ${cardClasses}`}
-            onClick={() => onSelect(match.match_id)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={handleCardKeyDown}
-            aria-label={`View details for ${match.title} at ${match.company}`}
         >
+            <button
+                type="button"
+                className="absolute inset-0 z-10 rounded-3xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                onClick={() => onSelect(match.match_id)}
+                aria-label={`View details for ${match.title} at ${match.company}`}
+            />
+
             {/* Score Badge Container */}
-            <div className="absolute top-6 right-6 flex flex-col items-end gap-2">
+            <div className="absolute top-6 right-6 z-20 flex flex-col items-end gap-2">
                 {/* Score Badge */}
                 <div className={`w-20 h-20 rounded-xl bg-gradient-to-br shadow-md flex flex-col items-center justify-center ${scoreBadgeGradient}`}>
                     <div className="text-2xl font-bold text-white leading-none">
@@ -118,6 +117,7 @@ export const MatchCard: React.FC<MatchCardProps> = ({
 
                 {/* Hide Button - positioned below the score badges */}
                 <button
+                    type="button"
                     onClick={handleToggleHidden}
                     disabled={toggleHiddenMutation.isPending}
                     className={`mt-0.5 p-2.5 rounded-xl transition-all duration-200 backdrop-blur-sm disabled:opacity-50 disabled:cursor-not-allowed ${hideButtonClasses}`}
@@ -136,7 +136,7 @@ export const MatchCard: React.FC<MatchCardProps> = ({
             </div>
 
             {/* Content */}
-            <div className="pr-28">
+            <div className="relative z-0 pr-28">
                 <h3 className="text-2xl font-black text-gray-900 mb-4 group-hover:text-blue-600 transition-colors leading-tight">
                     {match.title}
                 </h3>

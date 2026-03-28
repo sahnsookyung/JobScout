@@ -240,7 +240,7 @@ describe('MatchCard', () => {
     it('calls onSelect with match_id when card is clicked', () => {
         const onSelect = vi.fn();
         render(<MatchCard match={makeMatch()} onSelect={onSelect} />, { wrapper: makeQueryWrapper() });
-        fireEvent.click(screen.getByText('Senior Engineer'));
+        fireEvent.click(screen.getByRole('button', { name: /view details for senior engineer at techcorp/i }));
         expect(onSelect).toHaveBeenCalledWith('match-1');
     });
 
