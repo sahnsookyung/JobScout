@@ -25,7 +25,7 @@ from notification.channels import (
     _mask_email, _validate_channel_file_path,
     NotificationChannelFactory, InAppChannel
 )
-from notification.exceptions import TerminalNotificationError, TransientNotificationError
+from notification.exceptions import NotificationConfigurationError, TerminalNotificationError, TransientNotificationError
 from notification.service import NotificationRateLimiter
 from notification.message_builder import JobNotificationContent, JobInfo, MatchInfo, RequirementsInfo
 
@@ -424,12 +424,12 @@ class TestWebhookChannelRichContent:
         assert call_args['jobs'][0]['job']['title'] == 'Developer'
 
     @patch('notification.channels.requests.post')
-    def test_webhook_send_with_invalid_url(self, mock_post, caplog):
-        """Test webhook send with invalid URL raises TerminalNotificationError."""
+    def test_webhook_send_with_invalid_url(self, mock_post):
+        """Test webhook send with invalid URL raises NotificationConfigurationError."""
         # Mock URL validation to fail
         with patch('notification.channels._validate_webhook_url', return_value=False):
             channel = WebhookChannel()
-            with pytest.raises(TerminalNotificationError, match="Invalid or unsafe webhook URL"):
+            with pytest.raises(NotificationConfigurationError, match="Invalid or unsafe webhook URL"):
                 channel.send(
                     recipient='http://127.0.0.1/invalid',
                     subject='Test',
@@ -842,13 +842,13 @@ class TestNotificationChannelFactory:
 class TestEmailChannelUncoveredPaths:
     """Cover remaining email channel branches."""
 
-    def test_email_not_configured_raises_terminal_error(self, caplog):
-        """EmailChannel.send raises TerminalNotificationError when SMTP not configured."""
+    def test_email_not_configured_raises_terminal_error(self):
+        """EmailChannel.send raises NotificationConfigurationError when SMTP not configured."""
         channel = EmailChannel()
         for var in ['SMTP_SERVER', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD']:
             os.environ.pop(var, None)
 
-        with pytest.raises(TerminalNotificationError, match="Email not configured"):
+        with pytest.raises(NotificationConfigurationError, match="Email not configured"):
             channel.send('user@example.com', 'Subject', 'Body', {})
 
     @patch('notification.channels.smtplib.SMTP')
@@ -1005,15 +1005,15 @@ class TestDiscordChannelUncoveredPaths:
 class TestTelegramChannelUncoveredPaths:
     """Cover remaining Telegram channel branches."""
 
-    def test_telegram_no_bot_token_raises_terminal_error(self, caplog):
-        """TelegramChannel.send raises TerminalNotificationError with no bot token."""
+    def test_telegram_no_bot_token_raises_terminal_error(self):
+        """TelegramChannel.send raises NotificationConfigurationError with no bot token."""
         os.environ.pop('TELEGRAM_BOT_TOKEN', None)
         channel = TelegramChannel()
-        with pytest.raises(TerminalNotificationError, match="TELEGRAM_BOT_TOKEN not set"):
+        with pytest.raises(NotificationConfigurationError, match="TELEGRAM_BOT_TOKEN not set"):
             channel.send('@channel', 'Subject', 'Body', {})
 
     @patch('notification.channels.requests.post')
-    def test_telegram_non_200_status_raises_transient_error(self, mock_post, caplog):
+    def test_telegram_non_200_status_raises_transient_error(self, mock_post):
         """TelegramChannel.send raises TransientNotificationError on non-200 status."""
         mock_response = Mock()
         mock_response.status_code = 400

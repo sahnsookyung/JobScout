@@ -402,7 +402,8 @@ class NotificationService:
                 logger.info(f"Queued notification as job {job.id}")
             except Exception as e:
                 logger.error(
-                    f"Redis enqueue failed ({e}), falling back to synchronous send"
+                    f"Redis enqueue failed ({e}), falling back to synchronous send",
+                    exc_info=True,
                 )
                 notification_id = process_notification_task(notification_data)
         else:

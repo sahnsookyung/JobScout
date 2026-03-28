@@ -42,7 +42,7 @@ import ipaddress
 import socket
 
 from core.auth import _current_environment
-from notification.exceptions import TerminalNotificationError, TransientNotificationError
+from notification.exceptions import NotificationConfigurationError, TerminalNotificationError, TransientNotificationError
 from notification.message_builder import NotificationMessageBuilder, JobNotificationContent
 
 logger = logging.getLogger(__name__)
@@ -399,7 +399,7 @@ class EmailChannel(NotificationChannel):
     
     def send(self, recipient: str, subject: str, body: str, metadata: Dict[str, Any]) -> bool:
         if not self.validate_config():
-            raise TerminalNotificationError(
+            raise NotificationConfigurationError(
                 "Email not configured — SMTP environment variables not set"
             )
         
@@ -412,7 +412,7 @@ class EmailChannel(NotificationChannel):
             from_email = os.environ.get('FROM_EMAIL') or username or 'noreply@jobscout.app'
 
             if bool(username) != bool(password):
-                raise TerminalNotificationError(
+                raise NotificationConfigurationError(
                     "Email not configured — SMTP_USERNAME and SMTP_PASSWORD must both be set"
                 )
             
@@ -662,7 +662,7 @@ class TelegramChannel(NotificationChannel):
         bot_token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
         
         if not bot_token:
-            raise TerminalNotificationError(
+            raise NotificationConfigurationError(
                 "Telegram not configured — TELEGRAM_BOT_TOKEN not set"
             )
         
@@ -755,7 +755,7 @@ class WebhookChannel(NotificationChannel):
             webhook_url = recipient
             
             if not _validate_webhook_url(webhook_url):
-                raise TerminalNotificationError(
+                raise NotificationConfigurationError(
                     f"Invalid or unsafe webhook URL: {webhook_url}"
                 )
             

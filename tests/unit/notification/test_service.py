@@ -21,12 +21,7 @@ from notification import (
     NotificationTrackerService, DefaultDeduplicationStrategy,
     AggressiveDeduplicationStrategy, NotificationEvent,
     NotificationService, NotificationPriority, RateLimitException,
-    TerminalNotificationError, TransientNotificationError,
-)
-from notification.exceptions import (
-    NotificationConfigurationError,
-    TerminalNotificationError,
-    TransientNotificationError,
+    NotificationConfigurationError, TerminalNotificationError, TransientNotificationError,
 )
 from notification.message_builder import (
     JobNotificationContent, JobInfo, MatchInfo, RequirementsInfo,
@@ -198,7 +193,7 @@ class TestEmailChannel:
         for key in ['SMTP_SERVER', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD']:
             os.environ.pop(key, None)
 
-        with pytest.raises(TerminalNotificationError):
+        with pytest.raises(NotificationConfigurationError):
             EmailChannel().send(
                 recipient='to@example.com', subject='Test', body='Body', metadata={}
             )
@@ -213,7 +208,7 @@ class TestEmailChannel:
         })
         os.environ.pop('SMTP_PASSWORD', None)
 
-        with pytest.raises(TerminalNotificationError):
+        with pytest.raises(NotificationConfigurationError):
             EmailChannel().send(
                 recipient='to@example.com', subject='Test Subject',
                 body='Test Body', metadata={},
@@ -314,7 +309,7 @@ class TestTelegramChannel:
 
     def test_send_without_token_raises_terminal_error(self):
         os.environ.pop('TELEGRAM_BOT_TOKEN', None)
-        with pytest.raises(TerminalNotificationError):
+        with pytest.raises(NotificationConfigurationError):
             TelegramChannel().send(
                 recipient='@channel', subject='Test', body='Body', metadata={}
             )

@@ -204,7 +204,7 @@ anything it doesn't recognize, so when in doubt, prefix with rtk anyway.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **fix-notification-resilience** (5765 symbols, 15539 relationships, 256 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **JobScout** (5238 symbols, 14058 relationships, 192 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -220,7 +220,7 @@ This project is indexed by GitNexus as **fix-notification-resilience** (5765 sym
 
 1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
 2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/fix-notification-resilience/process/{processName}` — trace the full execution flow step by step
+3. `READ gitnexus://repo/JobScout/process/{processName}` — trace the full execution flow step by step
 4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
 
 ## When Refactoring
@@ -259,10 +259,10 @@ This project is indexed by GitNexus as **fix-notification-resilience** (5765 sym
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/fix-notification-resilience/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/fix-notification-resilience/clusters` | All functional areas |
-| `gitnexus://repo/fix-notification-resilience/processes` | All execution flows |
-| `gitnexus://repo/fix-notification-resilience/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/JobScout/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/JobScout/clusters` | All functional areas |
+| `gitnexus://repo/JobScout/processes` | All execution flows |
+| `gitnexus://repo/JobScout/process/{name}` | Step-by-step execution trace |
 
 ## Self-Check Before Finishing
 

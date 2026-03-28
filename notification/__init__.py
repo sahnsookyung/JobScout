@@ -35,6 +35,7 @@ from notification.channels import (
 
 from notification.exceptions import (
     NotificationError,
+    NotificationConfigurationError,
     TerminalNotificationError,
     TransientNotificationError,
 )
@@ -65,6 +66,7 @@ __all__ = [
     'RateLimitException',
     # Exceptions
     'NotificationError',
+    'NotificationConfigurationError',
     'TerminalNotificationError',
     'TransientNotificationError',
     # Tracker
