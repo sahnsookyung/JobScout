@@ -38,6 +38,7 @@ try:
     from redis import Redis
     from rq import Queue
     from rq.job import Job
+    from rq.registry import FailedJobRegistry
     RQ_AVAILABLE = True
 except ImportError:
     RQ_AVAILABLE = False
@@ -612,15 +613,17 @@ JobScout
         raise ValueError(f"Unsupported channel type: {channel}")
 
     def get_queue_status(self) -> Dict[str, Any]:
-        """Get queue status."""
+        """Get queue status including failed job count from the DLQ."""
         if not self.async_mode:
             return {'status': 'sync_mode', 'queue_length': 0}
-        
+
         try:
+            failed_registry = FailedJobRegistry(queue=self.queue)
             return {
                 'status': 'active',
                 'queue_length': len(self.queue),
-                'redis_connected': self.redis_conn.ping()
+                'failed_job_count': len(failed_registry),
+                'redis_connected': self.redis_conn.ping(),
             }
         except Exception as e:
             return {'status': 'error', 'error': str(e)}
@@ -784,7 +787,6 @@ def _record_notification_failure(
     """Record notification failure in database."""
     try:
         metadata = dict(notification_data.get('metadata', {}))
-        metadata.setdefault("failure_class", failure_class)
         with db_session_scope() as session:
             repo = JobRepository(session)
             tracker = NotificationTrackerService(repo)
@@ -797,6 +799,7 @@ def _record_notification_failure(
                 subject=notification_data['subject'],
                 body=notification_data['body'],
                 success=False,
+                failure_class=failure_class,
                 error_message=error_message,
                 metadata=metadata,
                 allow_resend=notification_data.get('allow_resend', True)

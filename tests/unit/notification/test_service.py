@@ -870,11 +870,14 @@ class TestNotificationServiceGetQueueStatus:
     def test_active_queue_returns_length_and_connected(self):
         with patch('notification.service.Redis') as mr, \
              patch('notification.service.Queue') as mq, \
-             patch('notification.service.NotificationTrackerService') as mt:
+             patch('notification.service.NotificationTrackerService') as mt, \
+             patch('notification.service.FailedJobRegistry') as mock_failed_reg:
+            mock_failed_reg.return_value.__len__ = Mock(return_value=3)
             service, _, _ = self._make_service(mr, mq, mt)
             result = service.get_queue_status()
             assert result['status'] == 'active'
             assert result['queue_length'] == 5
+            assert result['failed_job_count'] == 3
             assert result['redis_connected'] is True
 
     def test_redis_error_during_status_check_returns_error(self):
