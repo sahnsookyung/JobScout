@@ -57,14 +57,17 @@ def send_notification(
                    f"Valid options: low, normal, high, urgent"
         )
     
-    notification_id = notification_service.send_notification(
-        channel_type=request.type,
-        recipient=request.recipient,
-        subject=request.subject,
-        body=request.body,
-        user_id=str(user.id),
-        priority=priority,
-    )
+    try:
+        notification_id = notification_service.send_notification(
+            channel_type=request.type,
+            recipient=request.recipient,
+            subject=request.subject,
+            body=request.body,
+            user_id=str(user.id),
+            priority=priority,
+        )
+    except NotificationConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     
     return NotificationResponse(
         success=True,

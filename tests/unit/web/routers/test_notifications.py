@@ -68,8 +68,37 @@ class TestNotificationsRouter:
             priority=NotificationPriority.NORMAL,
         )
 
-    def test_send_notification_success_webhook(self, client, mock_notification_service):
+    def test_send_notification_success_discord(self, client, mock_notification_service):
         mock_notification_service.send_notification.return_value = "notif-789"
+
+        response = client.post(
+            "/api/notifications/send",
+            json={
+                "type": "discord",
+                "recipient": "https://discord.com/api/webhooks/notify",
+                "subject": "Alert",
+                "body": "{\"event\": \"match_complete\"}",
+                "priority": "urgent",
+            },
+        )
+
+        assert response.status_code == 200
+        mock_notification_service.send_notification.assert_called_once_with(
+            channel_type="discord",
+            recipient="https://discord.com/api/webhooks/notify",
+            subject="Alert",
+            body="{\"event\": \"match_complete\"}",
+            user_id="user-123",
+            priority=NotificationPriority.URGENT,
+        )
+
+    def test_send_notification_invalid_channel_returns_400(self, client, mock_notification_service):
+        from notification.exceptions import NotificationConfigurationError
+
+        mock_notification_service.send_notification.side_effect = NotificationConfigurationError(
+            "Unsupported notification channel 'webhook'",
+            failure_class="channel_unsupported",
+        )
 
         response = client.post(
             "/api/notifications/send",
@@ -82,15 +111,8 @@ class TestNotificationsRouter:
             },
         )
 
-        assert response.status_code == 200
-        mock_notification_service.send_notification.assert_called_once_with(
-            channel_type="webhook",
-            recipient="https://hooks.example.com/notify",
-            subject="Alert",
-            body="{\"event\": \"match_complete\"}",
-            user_id="user-123",
-            priority=NotificationPriority.URGENT,
-        )
+        assert response.status_code == 400
+        assert "Unsupported notification channel" in response.json()["detail"]
 
     def test_send_notification_all_priority_levels(self, client, mock_notification_service):
         mock_notification_service.send_notification.return_value = "notif-123"
@@ -292,7 +314,7 @@ class TestNotificationsRouter:
                 "notify_on_new_match": True,
                 "notify_on_batch_complete": True,
                 "channels": {
-                    "webhook": {
+                    "telegram": {
                         "enabled": False,
                     }
                 },
@@ -301,7 +323,33 @@ class TestNotificationsRouter:
 
         assert response.status_code == 200
         payload = mock_notification_service.update_settings.call_args[0][1]
-        assert "secret_value" not in payload["channels"]["webhook"]
+        assert "secret_value" not in payload["channels"]["telegram"]
+
+    def test_update_notification_settings_rejects_hidden_channel(self, client, mock_notification_service):
+        from notification.exceptions import NotificationConfigurationError
+
+        mock_notification_service.update_settings.side_effect = NotificationConfigurationError(
+            "Unsupported notification channel 'webhook'",
+            failure_class="channel_unsupported",
+        )
+
+        response = client.put(
+            "/api/v1/notification-settings",
+            json={
+                "notifications_enabled": True,
+                "min_score_threshold": 70,
+                "notify_on_new_match": True,
+                "notify_on_batch_complete": True,
+                "channels": {
+                    "webhook": {
+                        "enabled": False,
+                    }
+                },
+            },
+        )
+
+        assert response.status_code == 400
+        assert "Unsupported notification channel" in response.json()["detail"]
 
     def test_send_notification_settings_test_success(self, client, mock_notification_service):
         mock_notification_service.send_test_notification.return_value = "notif-test-123"

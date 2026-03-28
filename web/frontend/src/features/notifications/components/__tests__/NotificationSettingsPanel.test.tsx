@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { vi } from 'vitest';
@@ -9,10 +9,6 @@ import { useNotificationSettings } from '@/hooks/useNotificationSettings';
 
 vi.mock('@/hooks/useNotificationSettings');
 vi.mock('sonner');
-vi.mock('lucide-react', () => ({
-    BellRing: () => <svg data-testid="bell-icon" />,
-    Send: () => <svg data-testid="send-icon" />,
-}));
 
 const mockUseNotificationSettings = vi.mocked(useNotificationSettings);
 
@@ -74,27 +70,28 @@ describe('NotificationSettingsPanel', () => {
     it('renders saved channel state', () => {
         render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
 
-        expect(screen.getByText('Notifications')).toBeInTheDocument();
+        expect(screen.getByText('Alert rules')).toBeInTheDocument();
         expect(screen.getByText('***@example.com')).toBeInTheDocument();
         expect(screen.getByText('https://discord.com/api/webhooks/...')).toBeInTheDocument();
+        expect(screen.queryByText('In-App')).not.toBeInTheDocument();
+        expect(screen.queryByText('Webhook')).not.toBeInTheDocument();
     });
 
     it('saves edited settings explicitly', async () => {
         render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
 
-        const threshold = screen.getByDisplayValue('70');
-        await userEvent.clear(threshold);
-        await userEvent.type(threshold, '82');
+        const threshold = screen.getByLabelText('Minimum score threshold');
+        fireEvent.change(threshold, { target: { value: '75' } });
 
-        const passwordInputs = screen.getAllByPlaceholderText(/paste/i);
-        await userEvent.type(passwordInputs[0], 'https://discord.com/api/webhooks/test');
+        const passwordInput = screen.getByPlaceholderText(/paste discord destination/i);
+        await userEvent.type(passwordInput, 'https://discord.com/api/webhooks/test');
 
         await userEvent.click(screen.getByRole('button', { name: /save settings/i }));
 
         await waitFor(() => {
             expect(saveSettings).toHaveBeenCalledWith({
                 notifications_enabled: true,
-                min_score_threshold: 82,
+                min_score_threshold: 75,
                 notify_on_new_match: true,
                 notify_on_batch_complete: false,
                 channels: {
@@ -112,9 +109,8 @@ describe('NotificationSettingsPanel', () => {
     it('disables test actions while there are unsaved changes', async () => {
         render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
 
-        const threshold = screen.getByDisplayValue('70');
-        await userEvent.clear(threshold);
-        await userEvent.type(threshold, '81');
+        const threshold = screen.getByLabelText('Minimum score threshold');
+        fireEvent.change(threshold, { target: { value: '71' } });
 
         const testButtons = screen.getAllByRole('button', { name: /test/i });
         expect(testButtons[0]).toBeDisabled();
@@ -197,8 +193,7 @@ describe('NotificationSettingsPanel', () => {
         render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
 
         expect(screen.getByText('Telegram bot credentials are not configured')).toBeInTheDocument();
-        const channelToggles = screen.getAllByRole('checkbox', { name: 'Enabled' });
-        expect(channelToggles[1]).toBeDisabled();
+        expect(screen.getByRole('checkbox', { name: 'Enable Telegram' })).toBeDisabled();
         const testButtons = screen.getAllByRole('button', { name: /test/i });
         expect(testButtons[1]).toBeDisabled();
     });
@@ -238,6 +233,6 @@ describe('NotificationSettingsPanel', () => {
 
         const { container } = render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
 
-        expect(container.firstChild).toHaveClass('animate-pulse');
+        expect(container.querySelectorAll('.animate-pulse')).toHaveLength(3);
     });
 });

@@ -366,6 +366,7 @@ def split_stack() -> SplitStackContext:
     services = (
         "postgres",
         "redis",
+        "mailpit",
         "db-migrate",
         "extraction",
         "embeddings",
@@ -630,7 +631,7 @@ def test_resume_upload_completes_then_matching_completes(split_stack: SplitStack
         engine.dispose()
 
 
-def test_matching_flow_triggers_in_app_notifications(split_stack: SplitStackContext):
+def test_matching_flow_triggers_email_notifications(split_stack: SplitStackContext):
     reset_split_stack_state(split_stack.database_url)
     _reset_notification_state(split_stack.database_url)
     seed_matcher_ready_jobs(split_stack.database_url)
@@ -643,13 +644,13 @@ def test_matching_flow_triggers_in_app_notifications(split_stack: SplitStackCont
             "notify_on_new_match": True,
             "notify_on_batch_complete": True,
             "channels": {
-                "in_app": {
+                "email": {
                     "enabled": True,
                 }
             },
         },
     )
-    assert updated_settings["channels"]["in_app"]["enabled"] is True
+    assert updated_settings["channels"]["email"]["enabled"] is True
 
     upload_payload = _upload_resume(split_stack.base_url, VALID_RESUME_FIXTURE)
     diagnostics = lambda: _stack_diagnostics(split_stack)
@@ -682,7 +683,7 @@ def test_matching_flow_triggers_in_app_notifications(split_stack: SplitStackCont
     delivered_notifications = _wait_for_automatic_notification_delivery(
         split_stack.database_url,
         owner_id=DEV_USER_ID,
-        channel_type="in_app",
+        channel_type="email",
     )
     delivered_event_types = {row.event_type for row in delivered_notifications}
     assert "batch_complete" in delivered_event_types
@@ -714,14 +715,14 @@ def test_resume_upload_failure_becomes_terminal_not_infinite_poll(split_stack: S
     assert resume_state.get("error"), resume_state
 
 
-def test_notification_settings_round_trip_and_in_app_test_delivery(split_stack: SplitStackContext):
+def test_notification_settings_round_trip_and_email_test_delivery(split_stack: SplitStackContext):
     reset_split_stack_state(split_stack.database_url)
     _reset_notification_state(split_stack.database_url)
 
     initial_settings = _get_notification_settings(split_stack.base_url)
     assert initial_settings["notifications_enabled"] is True
-    assert initial_settings["channels"]["in_app"]["configured"] is True
-    assert initial_settings["channels"]["in_app"]["enabled"] is False
+    assert initial_settings["channels"]["email"]["configured"] is True
+    assert initial_settings["channels"]["email"]["enabled"] is False
 
     updated_settings = _update_notification_settings(
         split_stack.base_url,
@@ -731,7 +732,7 @@ def test_notification_settings_round_trip_and_in_app_test_delivery(split_stack: 
             "notify_on_new_match": False,
             "notify_on_batch_complete": True,
             "channels": {
-                "in_app": {
+                "email": {
                     "enabled": True,
                 }
             },
@@ -739,25 +740,25 @@ def test_notification_settings_round_trip_and_in_app_test_delivery(split_stack: 
     )
     assert updated_settings["min_score_threshold"] == 88
     assert updated_settings["notify_on_new_match"] is False
-    assert updated_settings["channels"]["in_app"]["enabled"] is True
+    assert updated_settings["channels"]["email"]["enabled"] is True
     assert updated_settings["revision"] >= initial_settings["revision"] + 1
 
-    test_payload = _send_notification_settings_test(split_stack.base_url, "in_app")
+    test_payload = _send_notification_settings_test(split_stack.base_url, "email")
     assert test_payload["success"] is True
     assert test_payload["notification_id"]
 
-    terminal_settings = _wait_for_test_status(split_stack.base_url, "in_app", "sent")
-    in_app_channel = terminal_settings["channels"]["in_app"]
-    assert in_app_channel["last_test_status"] == "sent"
-    assert in_app_channel["last_tested_at"] is not None
-    assert in_app_channel["last_test_error"] is None
+    terminal_settings = _wait_for_test_status(split_stack.base_url, "email", "sent")
+    email_channel = terminal_settings["channels"]["email"]
+    assert email_channel["last_test_status"] == "sent"
+    assert email_channel["last_tested_at"] is not None
+    assert email_channel["last_test_error"] is None
 
     engine, session = _session_for(split_stack.database_url)
     try:
         settings_channel = session.execute(
             select(UserNotificationChannel).where(
                 UserNotificationChannel.owner_id == uuid.UUID(DEV_USER_ID),
-                UserNotificationChannel.channel_type == "in_app",
+                UserNotificationChannel.channel_type == "email",
             )
         ).scalar_one()
         assert settings_channel.enabled is True
@@ -766,7 +767,7 @@ def test_notification_settings_round_trip_and_in_app_test_delivery(split_stack: 
         tracker_record = session.execute(
             select(NotificationTracker).where(
                 NotificationTracker.owner_id == uuid.UUID(DEV_USER_ID),
-                NotificationTracker.channel_type == "in_app",
+                NotificationTracker.channel_type == "email",
                 NotificationTracker.event_type == "settings_test",
             )
         ).scalar_one()

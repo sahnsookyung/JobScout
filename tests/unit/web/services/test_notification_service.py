@@ -185,12 +185,12 @@ class TestNotificationServiceWrapper:
             notify_on_batch_complete=True,
             revision=7,
             channels={
-                "in_app": SimpleNamespace(
+                "email": SimpleNamespace(
                     enabled=True,
                     configured=True,
                     available=True,
                     availability_reason=None,
-                    masked_recipient="In-app inbox",
+                    masked_recipient="***@example.com",
                     last_test_status="sent",
                     last_tested_at=None,
                     last_test_error=None,
@@ -217,9 +217,161 @@ class TestNotificationServiceWrapper:
 
         result = wrapper.update_settings(user, payload)
 
-        mock_settings_service.update_settings.assert_called_once_with(user, payload)
+        mock_settings_service.update_settings.assert_called_once_with(
+            user,
+            {"notifications_enabled": False, "channels": {}},
+        )
         assert result["revision"] == 7
-        assert result["channels"]["in_app"]["enabled"] is True
+        assert result["channels"]["email"]["enabled"] is True
+
+    @patch("web.backend.services.notification_service.UserNotificationSettingsService")
+    @patch("web.backend.services.notification_service.NotificationService")
+    @patch("web.backend.services.notification_service.JobRepository")
+    @patch("web.backend.services.notification_service.get_config")
+    def test_get_settings_filters_non_user_facing_channels(
+        self,
+        mock_get_config,
+        mock_repo_class,
+        mock_notification_service_class,
+        mock_settings_service_class,
+    ):
+        snapshot = SimpleNamespace(
+            notifications_enabled=True,
+            min_score_threshold=70,
+            notify_on_new_match=True,
+            notify_on_batch_complete=True,
+            revision=3,
+            channels={
+                "email": SimpleNamespace(
+                    enabled=True,
+                    configured=True,
+                    available=True,
+                    availability_reason=None,
+                    masked_recipient="***@example.com",
+                    last_test_status=None,
+                    last_tested_at=None,
+                    last_test_error=None,
+                ),
+                "webhook": SimpleNamespace(
+                    enabled=True,
+                    configured=True,
+                    available=True,
+                    availability_reason=None,
+                    masked_recipient="https://hooks.example.com/notify",
+                    last_test_status=None,
+                    last_tested_at=None,
+                    last_test_error=None,
+                ),
+                "in_app": SimpleNamespace(
+                    enabled=True,
+                    configured=True,
+                    available=True,
+                    availability_reason=None,
+                    masked_recipient="In-app inbox",
+                    last_test_status=None,
+                    last_tested_at=None,
+                    last_test_error=None,
+                ),
+            },
+        )
+        mock_settings_service = Mock()
+        mock_settings_service.get_settings_snapshot.return_value = snapshot
+        mock_settings_service_class.return_value = mock_settings_service
+        mock_notification_service_class.return_value = Mock()
+        mock_repo_class.return_value = Mock()
+        mock_get_config.return_value = SimpleNamespace(
+            notifications=SimpleNamespace(
+                redis_url="redis://example/0",
+                base_url="https://jobscout.app",
+                use_async_queue=True,
+                channels={},
+            )
+        )
+
+        wrapper = NotificationServiceWrapper(Mock())
+
+        result = wrapper.get_settings(SimpleNamespace(id="user-123"))
+
+        assert set(result["channels"]) == {"email"}
+
+    @patch("web.backend.services.notification_service.UserNotificationSettingsService")
+    @patch("web.backend.services.notification_service.NotificationService")
+    @patch("web.backend.services.notification_service.JobRepository")
+    @patch("web.backend.services.notification_service.get_config")
+    def test_send_notification_rejects_non_user_facing_channel(
+        self,
+        mock_get_config,
+        mock_repo_class,
+        mock_notification_service_class,
+        mock_settings_service_class,
+    ):
+        from notification.exceptions import NotificationConfigurationError
+
+        mock_settings_service_class.return_value = Mock()
+        mock_notification_service_class.return_value = Mock()
+        mock_repo_class.return_value = Mock()
+        mock_get_config.return_value = SimpleNamespace(
+            notifications=SimpleNamespace(
+                redis_url="redis://example/0",
+                base_url="https://jobscout.app",
+                use_async_queue=True,
+                channels={},
+            )
+        )
+
+        wrapper = NotificationServiceWrapper(Mock())
+
+        with pytest.raises(NotificationConfigurationError, match="Unsupported notification channel"):
+            wrapper.send_notification(
+                channel_type="webhook",
+                recipient="https://hooks.example.com/notify",
+                subject="Alert",
+                body="Body",
+                user_id="user-123",
+            )
+
+    @patch("web.backend.services.notification_service.UserNotificationSettingsService")
+    @patch("web.backend.services.notification_service.NotificationService")
+    @patch("web.backend.services.notification_service.JobRepository")
+    @patch("web.backend.services.notification_service.get_config")
+    def test_update_settings_rejects_non_user_facing_channel(
+        self,
+        mock_get_config,
+        mock_repo_class,
+        mock_notification_service_class,
+        mock_settings_service_class,
+    ):
+        from notification.exceptions import NotificationConfigurationError
+
+        mock_settings_service_class.return_value = Mock()
+        mock_notification_service_class.return_value = Mock()
+        mock_repo_class.return_value = Mock()
+        mock_get_config.return_value = SimpleNamespace(
+            notifications=SimpleNamespace(
+                redis_url="redis://example/0",
+                base_url="https://jobscout.app",
+                use_async_queue=True,
+                channels={},
+            )
+        )
+
+        wrapper = NotificationServiceWrapper(Mock())
+
+        with pytest.raises(NotificationConfigurationError, match="Unsupported notification channel"):
+            wrapper.update_settings(
+                SimpleNamespace(id="user-123"),
+                {
+                    "notifications_enabled": True,
+                    "min_score_threshold": 70,
+                    "notify_on_new_match": True,
+                    "notify_on_batch_complete": True,
+                    "channels": {
+                        "webhook": {
+                            "enabled": False,
+                        }
+                    },
+                },
+            )
 
     @patch("web.backend.services.notification_service.UserNotificationSettingsService")
     @patch("web.backend.services.notification_service.NotificationService")
@@ -306,4 +458,4 @@ class TestNotificationServiceWrapper:
         wrapper = NotificationServiceWrapper(Mock())
 
         with pytest.raises(NotificationConfigurationError, match="Unsupported notification channel"):
-            wrapper.send_test_notification(SimpleNamespace(id="user-123"), "sms")
+            wrapper.send_test_notification(SimpleNamespace(id="user-123"), "webhook")

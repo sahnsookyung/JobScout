@@ -5,9 +5,7 @@ import { MatchList } from '@/features/matches/components/MatchList';
 import { MatchDetailsModal } from '@/features/matches/components/MatchDetailsModal';
 import { PolicyPanel } from '@/features/config/components/PolicyPanel';
 import { DashboardControls } from '@/features/dashboard/components/DashboardControls';
-import { NotificationSettingsPanel } from '@/features/notifications/components/NotificationSettingsPanel';
-import { RefreshCw, Briefcase } from 'lucide-react';
-import { Button } from '@/components/ui/Button';
+import { DashboardHeader } from '@/features/dashboard/components/DashboardHeader';
 import { ToastProvider } from '@/components/ui/Toast';
 
 const queryClient = new QueryClient({
@@ -22,35 +20,9 @@ const queryClient = new QueryClient({
 function AppContent() {
     const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
 
-    const handleRefresh = () => {
-        queryClient.invalidateQueries({ queryKey: ['matches'] });
-        queryClient.invalidateQueries({ queryKey: ['stats'] });
-    };
-
     return (
         <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-gray-50">
-            {/* Header */}
-            <header className="bg-white shadow-md border-b border-gray-200 sticky top-0 z-50">
-                <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-4">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <div className="p-2 bg-blue-600 rounded-lg">
-                                <Briefcase className="w-6 h-6 text-white" />
-                            </div>
-                            <div>
-                                <h1 className="text-2xl font-bold text-gray-900">
-                                    JobScout Dashboard
-                                </h1>
-                                <p className="text-sm text-gray-600">AI-Powered Job Matching</p>
-                            </div>
-                        </div>
-                        <Button onClick={handleRefresh} variant="ghost" size="sm">
-                            <RefreshCw className="w-4 h-4 mr-2" />
-                            Refresh
-                        </Button>
-                    </div>
-                </div>
-            </header>
+            <DashboardHeader />
 
             {/* Main Content */}
             <main className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -63,9 +35,7 @@ function AppContent() {
                 <div className="grid grid-cols-1 xl:grid-cols-main-sidebar gap-6">
                     {/* Panels: show first on small screens, right column on xl+ */}
                     <aside className="order-first xl:order-last space-y-6">
-                        {/* <StatsPanel /> */}
                         <PolicyPanel />
-                        <NotificationSettingsPanel />
                     </aside>
 
                     {/* Matches: show after panels on small screens, left column on xl+ */}

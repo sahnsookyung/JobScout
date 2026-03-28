@@ -23,9 +23,12 @@ class NotificationRequest(BaseModel):
     """Request to send a notification."""
     type: str = Field(
         ...,
-        description="Notification type: email, discord, telegram, webhook, in_app",
+        description="Notification type: email, discord, telegram",
     )
-    recipient: str = Field(..., description="Recipient (email, user ID, webhook URL)")
+    recipient: str = Field(
+        ...,
+        description="Recipient (email address, Discord webhook URL, or Telegram chat ID)",
+    )
     subject: str = Field(..., description="Notification subject")
     body: str = Field(..., description="Notification body")
     priority: str = Field(default="normal", description="Priority: low, normal, high, urgent")
@@ -56,7 +59,7 @@ class NotificationSettingsTestRequest(BaseModel):
 
     channel_type: str = Field(
         ...,
-        description="Channel to test: email, discord, telegram, webhook, in_app",
+        description="Channel to test: email, discord, telegram",
     )
 
 

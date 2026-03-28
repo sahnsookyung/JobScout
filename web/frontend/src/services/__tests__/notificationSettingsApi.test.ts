@@ -35,7 +35,7 @@ describe('notificationSettingsApi', () => {
             notify_on_new_match: true,
             notify_on_batch_complete: false,
             channels: {
-                in_app: { enabled: true },
+                email: { enabled: true },
             },
         };
         const expected = { data: { revision: 2 } };
@@ -49,7 +49,7 @@ describe('notificationSettingsApi', () => {
     });
 
     it('sendTest calls POST /v1/notification-settings/test with payload', async () => {
-        const payload = { channel_type: 'in_app' };
+        const payload = { channel_type: 'email' };
         const expected = { data: { success: true, message: 'Queued', notification_id: 'notif-123' } };
         mockPost.mockResolvedValue(expected);
         const { notificationSettingsApi } = await import('../notificationSettingsApi');

@@ -9,7 +9,10 @@ from sqlalchemy.orm import Session
 
 from notification import NotificationService, NotificationPriority
 from notification.exceptions import NotificationConfigurationError
-from notification.user_settings import SUPPORTED_CHANNELS, UserNotificationSettingsService
+from notification.user_settings import (
+    USER_FACING_CHANNELS,
+    UserNotificationSettingsService,
+)
 from database.repository import JobRepository
 from web.backend.config import get_config
 
@@ -46,7 +49,7 @@ class NotificationServiceWrapper:
         Queue a notification for sending.
         
         Args:
-            channel_type: Notification type (email, discord, telegram, webhook, in_app).
+            channel_type: Notification type (email, discord, telegram).
             recipient: Recipient address/ID.
             subject: Notification subject.
             body: Notification body.
@@ -56,6 +59,12 @@ class NotificationServiceWrapper:
         Returns:
             Notification ID.
         """
+        channel_type = channel_type.lower()
+        if channel_type not in USER_FACING_CHANNELS:
+            raise NotificationConfigurationError(
+                f"Unsupported notification channel '{channel_type}'",
+                failure_class="channel_unsupported",
+            )
         return self.notification_service.send_notification(
             channel_type=channel_type,
             recipient=recipient,
@@ -75,13 +84,30 @@ class NotificationServiceWrapper:
 
     def update_settings(self, user, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Persist per-user notification settings and return the effective state."""
+        requested_channels = {
+            channel_type.lower(): channel_payload
+            for channel_type, channel_payload in payload.get("channels", {}).items()
+        }
+        unsupported_channels = [
+            channel_type for channel_type in requested_channels if channel_type not in USER_FACING_CHANNELS
+        ]
+        if unsupported_channels:
+            raise NotificationConfigurationError(
+                f"Unsupported notification channel '{unsupported_channels[0]}'",
+                failure_class="channel_unsupported",
+            )
+
+        payload = {
+            **payload,
+            "channels": requested_channels,
+        }
         snapshot = self.settings_service.update_settings(user, payload)
         return self._snapshot_to_response(snapshot)
 
     def send_test_notification(self, user, channel_type: str) -> str:
         """Queue a test notification using the saved per-user channel configuration."""
         channel_type = channel_type.lower()
-        if channel_type not in SUPPORTED_CHANNELS:
+        if channel_type not in USER_FACING_CHANNELS:
             raise NotificationConfigurationError(
                 f"Unsupported notification channel '{channel_type}'",
                 failure_class="channel_unsupported",
@@ -128,7 +154,10 @@ class NotificationServiceWrapper:
     @staticmethod
     def _snapshot_to_response(snapshot) -> Dict[str, Any]:
         channels = {}
-        for name, channel in snapshot.channels.items():
+        for name in USER_FACING_CHANNELS:
+            channel = snapshot.channels.get(name)
+            if channel is None:
+                continue
             channels[name] = {
                 "enabled": channel.enabled,
                 "configured": channel.configured,

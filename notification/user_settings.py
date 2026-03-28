@@ -24,6 +24,7 @@ from notification.exceptions import NotificationConfigurationError
 from notification.secrets import FernetSecretEncryptionProvider, SecretEncryptionProvider
 
 SUPPORTED_CHANNELS = ("email", "discord", "telegram", "webhook", "in_app")
+USER_FACING_CHANNELS = ("email", "discord", "telegram")
 SECRET_CHANNELS = {"discord", "telegram", "webhook"}
 IN_APP_INBOX_LABEL = "In-app inbox"
 

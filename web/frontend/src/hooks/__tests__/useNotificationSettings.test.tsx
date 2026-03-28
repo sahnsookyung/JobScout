@@ -34,12 +34,12 @@ describe('useNotificationSettings', () => {
         notify_on_batch_complete: false,
         revision: 1,
         channels: {
-            in_app: {
+            email: {
                 enabled: true,
                 configured: true,
                 available: true,
                 availability_reason: null,
-                masked_recipient: 'In-app inbox',
+                masked_recipient: '***@example.com',
                 last_test_status: null,
                 last_tested_at: null,
                 last_test_error: null,
@@ -75,7 +75,7 @@ describe('useNotificationSettings', () => {
             notify_on_new_match: false,
             notify_on_batch_complete: true,
             channels: {
-                in_app: { enabled: true },
+                email: { enabled: true },
             },
         });
 
@@ -85,7 +85,7 @@ describe('useNotificationSettings', () => {
             notify_on_new_match: false,
             notify_on_batch_complete: true,
             channels: {
-                in_app: { enabled: true },
+                email: { enabled: true },
             },
         });
     });
@@ -94,8 +94,8 @@ describe('useNotificationSettings', () => {
         const { result } = renderHook(() => useNotificationSettings(), { wrapper: createWrapper() });
         await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-        await result.current.sendTest({ channel_type: 'in_app' });
+        await result.current.sendTest({ channel_type: 'email' });
 
-        expect(notificationSettingsApi.sendTest).toHaveBeenCalledWith({ channel_type: 'in_app' });
+        expect(notificationSettingsApi.sendTest).toHaveBeenCalledWith({ channel_type: 'email' });
     });
 });
