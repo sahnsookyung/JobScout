@@ -25,7 +25,6 @@ Usage:
 """
 
 import logging
-import os
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -575,10 +574,6 @@ JobScout
         if configured_recipient:
             return configured_recipient
 
-        env_recipient = self._env_recipient_for_channel(channel)
-        if env_recipient:
-            return env_recipient
-
         raise ValueError(f"No recipient configured for channel type: {channel}")
 
     def _configured_recipient_for_channel(self, channel: str) -> Optional[str]:
@@ -588,20 +583,6 @@ JobScout
         if isinstance(config, dict):
             return config.get("recipient")
         return getattr(config, "recipient", None)
-
-    @staticmethod
-    def _env_recipient_for_channel(channel: str) -> Optional[str]:
-        if channel == 'email':
-            return os.environ.get('NOTIFICATION_EMAIL') or os.environ.get('EMAIL')
-        if channel == 'discord':
-            return os.environ.get('DISCORD_WEBHOOK_URL')
-        if channel == 'telegram':
-            return os.environ.get('TELEGRAM_CHAT_ID')
-        if channel == 'webhook':
-            return os.environ.get('NOTIFICATION_WEBHOOK_URL')
-        if channel == 'in_app':
-            return None
-        raise ValueError(f"Unsupported channel type: {channel}")
 
     def get_queue_status(self) -> Dict[str, Any]:
         """Get queue status."""

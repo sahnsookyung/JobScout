@@ -44,6 +44,7 @@ import socket
 from core.auth import _current_environment
 from notification.exceptions import TransientNotificationError
 from notification.message_builder import NotificationMessageBuilder, JobNotificationContent
+from notification.runtime_config import get_notification_runtime_config
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +157,15 @@ def _escape_html(text: str) -> str:
 
 def _is_dry_run_mode() -> bool:
     """Check if notification channels should run in dry-run (log-only) mode."""
-    return os.environ.get('NOTIFICATION_DRY_RUN', '').lower() in ('true', '1', 'yes')
+    return get_notification_runtime_config().dry_run
+
+
+def _configured_channel_recipient(channel_type: str) -> str:
+    """Resolve a configured channel recipient from the shared runtime config."""
+    config = get_notification_runtime_config().channels.get(channel_type, {})
+    if isinstance(config, dict):
+        return str(config.get("recipient") or "")
+    return str(getattr(config, "recipient", "") or "")
 
 
 def _mask_email(email: str) -> str:
@@ -389,26 +398,27 @@ class EmailChannel(NotificationChannel):
         return 'email'
     
     def validate_config(self) -> bool:
-        required_vars = ['SMTP_SERVER', 'SMTP_PORT']
-        if not all(os.environ.get(var) for var in required_vars):
+        smtp_config = get_notification_runtime_config().smtp
+        if not smtp_config.server or not smtp_config.port:
             return False
 
-        username = os.environ.get('SMTP_USERNAME', '')
-        password = os.environ.get('SMTP_PASSWORD', '')
+        username = smtp_config.username
+        password = smtp_config.password
         return bool(username) == bool(password)
     
     def send(self, recipient: str, subject: str, body: str, metadata: Dict[str, Any]) -> bool:
         if not self.validate_config():
-            logger.error("Email not configured - SMTP environment variables not set")
+            logger.error("Email not configured - SMTP runtime settings not set")
             return False
         
         try:
-            smtp_server = os.environ.get('SMTP_SERVER', 'smtp.gmail.com')
-            smtp_port = int(os.environ.get('SMTP_PORT', '587'))
-            username = os.environ.get('SMTP_USERNAME', '')
-            password = os.environ.get('SMTP_PASSWORD', '')
-            use_tls = os.environ.get('SMTP_USE_TLS', 'true').lower() in ('true', '1', 'yes')
-            from_email = os.environ.get('FROM_EMAIL') or username or 'noreply@jobscout.app'
+            smtp_config = get_notification_runtime_config().smtp
+            smtp_server = smtp_config.server or 'smtp.gmail.com'
+            smtp_port = smtp_config.port
+            username = smtp_config.username
+            password = smtp_config.password
+            use_tls = smtp_config.use_tls
+            from_email = smtp_config.from_email or username or 'noreply@jobscout.app'
 
             if bool(username) != bool(password):
                 logger.error("Email not configured - SMTP_USERNAME and SMTP_PASSWORD must be set together")
@@ -545,7 +555,7 @@ class DiscordChannel(NotificationChannel):
         webhook_url = (
             recipient
             or metadata.get('discord_webhook_url')
-            or os.environ.get('DISCORD_WEBHOOK_URL', '')
+            or _configured_channel_recipient('discord')
         )
         
         if not webhook_url:
@@ -619,7 +629,7 @@ class TelegramChannel(NotificationChannel):
         return 'telegram'
     
     def validate_config(self) -> bool:
-        return bool(os.environ.get('TELEGRAM_BOT_TOKEN'))
+        return bool(get_notification_runtime_config().telegram_bot_token)
     
     def _parse_rate_limit_response(self, response: requests.Response) -> int:
         """
@@ -654,7 +664,7 @@ class TelegramChannel(NotificationChannel):
         return 60
     
     def send(self, recipient: str, subject: str, body: str, metadata: Dict[str, Any]) -> bool:
-        bot_token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
+        bot_token = get_notification_runtime_config().telegram_bot_token
         
         if not bot_token:
             logger.error("Telegram bot token not configured - TELEGRAM_BOT_TOKEN not set")

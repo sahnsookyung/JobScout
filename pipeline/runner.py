@@ -14,6 +14,7 @@ from uuid import UUID
 from dataclasses import dataclass
 
 from core.app_context import AppContext
+from core.policy import get_result_policy_store
 from core.matcher import (
     MatcherService, MatchResultDTO, JobMatchDTO, JobEvidenceDTO,
     RequirementMatchDTO, JobRequirementDTO, penalty_details_from_orm,
@@ -605,10 +606,11 @@ def _run_vector_matching(matcher, repo, resume_data, stop_event, pre_extracted_r
 def _run_scorer_service(scorer, preliminary_matches, matching_config, user_want_embeddings, job_facet_embeddings_map, stop_event):
     """Run rule-based scoring."""
     logger.info("=== MATCHING STEP 2: Running ScorerService (Rule-based Scoring) ===")
+    result_policy = _resolve_result_policy(matching_config)
 
     common_kwargs = {
         "preliminary_matches": preliminary_matches,
-        "result_policy": matching_config.result_policy,
+        "result_policy": result_policy,
         "match_type": "requirements_only",
         "stop_event": stop_event,
     }
@@ -625,6 +627,16 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, user_want_
         scored_matches = scorer.score_matches(**common_kwargs)
 
     return scored_matches
+
+
+def _resolve_result_policy(matching_config):
+    """Resolve the active result policy from the shared store with config fallback."""
+    fallback_policy = getattr(matching_config, "result_policy", None)
+    try:
+        return get_result_policy_store().get_current_policy()
+    except Exception:
+        logger.warning("Falling back to configured result policy", exc_info=True)
+        return fallback_policy
 
 
 def _log_resume_preparation(structured_resume, resume_fingerprint: str) -> None:

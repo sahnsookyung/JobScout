@@ -27,6 +27,7 @@ from notification.exceptions import (
     TerminalNotificationError,
     TransientNotificationError,
 )
+from notification.runtime_config import clear_notification_runtime_config_cache
 from notification.message_builder import (
     JobNotificationContent, JobInfo, MatchInfo, RequirementsInfo,
 )
@@ -80,9 +81,11 @@ DISCORD_DATA = {**NOTIFICATION_DATA, 'channel_type': 'discord', 'recipient': 'we
 @pytest.fixture(autouse=True)
 def restore_env():
     original = dict(os.environ)
+    clear_notification_runtime_config_cache()
     yield
     os.environ.clear()
     os.environ.update(original)
+    clear_notification_runtime_config_cache()
 
 
 @pytest.fixture
@@ -665,14 +668,20 @@ class TestNotificationService:
         assert mock_process.call_args[0][0]['recipient'] == 'https://config.example/webhook'
 
     @patch('notification.service.process_notification_task', return_value='notif-123')
-    def test_send_notification_uses_env_recipient_when_config_missing(self, mock_process, mock_repo):
-        os.environ['NOTIFICATION_WEBHOOK_URL'] = 'https://env.example/webhook'
-
-        service = NotificationService(
-            mock_repo,
-            use_async_queue=False,
-            skip_dedup=True,
+    def test_send_notification_uses_runtime_config_recipient_when_explicit_missing(self, mock_process, mock_repo):
+        runtime_config = SimpleNamespace(
+            redis_url='redis://runtime:6379/9',
+            base_url='https://runtime.example',
+            rate_limit_max_wait_seconds=321,
+            channels={'webhook': {'recipient': 'https://runtime.example/webhook'}},
         )
+
+        with patch('notification.service.get_notification_runtime_config', return_value=runtime_config):
+            service = NotificationService(
+                mock_repo,
+                use_async_queue=False,
+                skip_dedup=True,
+            )
 
         result = service.send_notification(
             channel_type='webhook',
@@ -684,7 +693,7 @@ class TestNotificationService:
 
         assert result == 'notif-123'
         payload = mock_process.call_args[0][0]
-        assert payload['recipient'] == 'https://env.example/webhook'
+        assert payload['recipient'] == 'https://runtime.example/webhook'
         assert payload['metadata']['user_id'] == 'user1'
 
     def test_constructor_uses_runtime_config_defaults(self, mock_repo):
@@ -707,12 +716,19 @@ class TestNotificationService:
         assert service.channel_configs['discord']['recipient'] == 'https://runtime.example/hook'
 
     def test_send_notification_raises_when_no_recipient_exists(self, mock_repo):
-        os.environ.pop('DISCORD_WEBHOOK_URL', None)
-        service = NotificationService(
-            mock_repo,
-            use_async_queue=False,
-            skip_dedup=True,
+        runtime_config = SimpleNamespace(
+            redis_url='redis://runtime:6379/9',
+            base_url='https://runtime.example',
+            rate_limit_max_wait_seconds=321,
+            channels={},
         )
+
+        with patch('notification.service.get_notification_runtime_config', return_value=runtime_config):
+            service = NotificationService(
+                mock_repo,
+                use_async_queue=False,
+                skip_dedup=True,
+            )
 
         with pytest.raises(ValueError, match='No recipient configured'):
             service.send_notification(

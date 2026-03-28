@@ -139,6 +139,17 @@ class NotificationChannelConfig(BaseModel):
     recipient: Optional[str] = None
 
 
+class NotificationSmtpConfig(BaseModel):
+    """SMTP configuration for email notifications."""
+
+    server: Optional[str] = None
+    port: int = 587
+    username: Optional[str] = None
+    password: Optional[str] = None
+    use_tls: bool = True
+    from_email: Optional[str] = None
+
+
 class NotificationConfig(BaseModel):
     """Configuration for notifications."""
 
@@ -154,6 +165,9 @@ class NotificationConfig(BaseModel):
     use_async_queue: bool = True
     redis_url: Optional[str] = None
     rate_limit_max_wait_seconds: int = 300
+    dry_run: bool = False
+    telegram_bot_token: Optional[str] = None
+    smtp: NotificationSmtpConfig = Field(default_factory=NotificationSmtpConfig)
 
 
 class AppConfig(BaseModel):
@@ -185,6 +199,18 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["ETL_LLM_EXTRACTION_MODEL"], ["etl", "llm", "extraction_model"]),
     (["ETL_EMBEDDING_MODEL"], ["etl", "llm", "embedding_model"]),
     (["REDIS_URL"], ["notifications", "redis_url"]),
+    (["NOTIFICATION_EMAIL", "EMAIL"], ["notifications", "channels", "email", "recipient"]),
+    (["DISCORD_WEBHOOK_URL"], ["notifications", "channels", "discord", "recipient"]),
+    (["TELEGRAM_CHAT_ID"], ["notifications", "channels", "telegram", "recipient"]),
+    (["NOTIFICATION_WEBHOOK_URL"], ["notifications", "channels", "webhook", "recipient"]),
+    (["TELEGRAM_BOT_TOKEN"], ["notifications", "telegram_bot_token"]),
+    (["SMTP_SERVER"], ["notifications", "smtp", "server"]),
+    (["SMTP_PORT"], ["notifications", "smtp", "port"]),
+    (["SMTP_USERNAME"], ["notifications", "smtp", "username"]),
+    (["SMTP_PASSWORD"], ["notifications", "smtp", "password"]),
+    (["SMTP_USE_TLS"], ["notifications", "smtp", "use_tls"]),
+    (["FROM_EMAIL"], ["notifications", "smtp", "from_email"]),
+    (["NOTIFICATION_DRY_RUN"], ["notifications", "dry_run"]),
 )
 
 DEFAULT_HEADER_MAPPINGS: tuple[HeaderMapping, ...] = (

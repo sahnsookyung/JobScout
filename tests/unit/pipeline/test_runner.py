@@ -22,6 +22,7 @@ from pipeline.runner import (
     _prepare_matcher_service,
     _get_pre_extracted_resume,
     _run_vector_matching,
+    _resolve_result_policy,
     _run_scorer_service,
     _run_matching_and_scoring,
     _should_terminate_early,
@@ -1400,6 +1401,54 @@ class TestRunMatchingAndScoring:
         )
 
         assert "Will re-extract resume" in caplog.text
+
+
+class TestResolveResultPolicy:
+
+    def test_uses_shared_policy_store_when_available(self):
+        matching_config = Mock()
+        matching_config.result_policy = Mock(min_fit=10.0, top_k=5, min_jd_required_coverage=None)
+        resolved_policy = Mock(min_fit=70.0, top_k=25, min_jd_required_coverage=0.8)
+
+        with patch("pipeline.runner.get_result_policy_store") as mock_get_store:
+            mock_get_store.return_value.get_current_policy.return_value = resolved_policy
+
+            result = _resolve_result_policy(matching_config)
+
+        assert result is resolved_policy
+
+    def test_falls_back_to_configured_policy_when_store_fails(self):
+        fallback_policy = Mock(min_fit=55.0, top_k=50, min_jd_required_coverage=0.6)
+        matching_config = Mock(result_policy=fallback_policy)
+
+        with patch("pipeline.runner.get_result_policy_store") as mock_get_store:
+            mock_get_store.return_value.get_current_policy.side_effect = RuntimeError("db unavailable")
+
+            result = _resolve_result_policy(matching_config)
+
+        assert result is fallback_policy
+
+
+class TestRunScorerServicePolicyResolution:
+
+    def test_run_scorer_service_uses_resolved_policy(self):
+        scorer = Mock()
+        scorer.score_matches.return_value = []
+        resolved_policy = Mock(min_fit=80.0, top_k=20, min_jd_required_coverage=0.9)
+        matching_config = Mock(result_policy=Mock())
+
+        with patch("pipeline.runner._resolve_result_policy", return_value=resolved_policy):
+            _run_scorer_service(
+                scorer,
+                preliminary_matches=[],
+                matching_config=matching_config,
+                user_want_embeddings=[],
+                job_facet_embeddings_map={},
+                stop_event=threading.Event(),
+            )
+
+        scorer.score_matches.assert_called_once()
+        assert scorer.score_matches.call_args.kwargs["result_policy"] is resolved_policy
 
 
 if __name__ == "__main__":

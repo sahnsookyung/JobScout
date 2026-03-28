@@ -36,6 +36,19 @@ class TestConfigLoader(unittest.TestCase):
             "DATABASE_URL",
             "JOBSPY_URL",
             "REDIS_URL",
+            "NOTIFICATION_EMAIL",
+            "EMAIL",
+            "DISCORD_WEBHOOK_URL",
+            "TELEGRAM_CHAT_ID",
+            "NOTIFICATION_WEBHOOK_URL",
+            "TELEGRAM_BOT_TOKEN",
+            "SMTP_SERVER",
+            "SMTP_PORT",
+            "SMTP_USERNAME",
+            "SMTP_PASSWORD",
+            "SMTP_USE_TLS",
+            "FROM_EMAIL",
+            "NOTIFICATION_DRY_RUN",
         ]
         with patch("builtins.open", mock_open(read_data=self.config_yaml)):
             with patch("os.path.exists", return_value=True):
@@ -183,6 +196,58 @@ class TestConfigLoader(unittest.TestCase):
                 self.assertEqual(config.notifications.min_score_threshold, 70.0)  # Default
                 self.assertTrue(config.notifications.notify_on_new_match)  # Default
                 self.assertTrue(config.notifications.deduplication_enabled)  # Default
+
+    def test_notification_env_overrides_are_loaded_into_shared_config(self):
+        config_yaml = yaml.dump({
+            "database": {"url": "test"},
+            "schedule": {"interval_seconds": 60},
+            "notifications": {
+                "channels": {
+                    "email": {"enabled": True, "recipient": "yaml@example.com"},
+                    "discord": {"enabled": True, "recipient": "https://yaml.example/hook"},
+                }
+            },
+            "scrapers": []
+        })
+
+        env = {
+            "NOTIFICATION_EMAIL": "env@example.com",
+            "DISCORD_WEBHOOK_URL": "https://env.example/discord",
+            "TELEGRAM_CHAT_ID": "@env_channel",
+            "NOTIFICATION_WEBHOOK_URL": "https://env.example/webhook",
+            "TELEGRAM_BOT_TOKEN": "env-token",
+            "SMTP_SERVER": "smtp.env.example",
+            "SMTP_PORT": "2525",
+            "SMTP_USERNAME": "mailer",
+            "SMTP_PASSWORD": "secret",
+            "SMTP_USE_TLS": "false",
+            "FROM_EMAIL": "noreply@env.example",
+            "NOTIFICATION_DRY_RUN": "true",
+        }
+
+        with patch("builtins.open", mock_open(read_data=config_yaml)):
+            with patch("os.path.exists", return_value=True):
+                with patch.dict(os.environ, env, clear=False):
+                    config = load_config("dummy")
+
+        self.assertEqual(config.notifications.channels["email"].recipient, "env@example.com")
+        self.assertEqual(
+            config.notifications.channels["discord"].recipient,
+            "https://env.example/discord",
+        )
+        self.assertEqual(config.notifications.channels["telegram"].recipient, "@env_channel")
+        self.assertEqual(
+            config.notifications.channels["webhook"].recipient,
+            "https://env.example/webhook",
+        )
+        self.assertEqual(config.notifications.telegram_bot_token, "env-token")
+        self.assertEqual(config.notifications.smtp.server, "smtp.env.example")
+        self.assertEqual(config.notifications.smtp.port, 2525)
+        self.assertEqual(config.notifications.smtp.username, "mailer")
+        self.assertEqual(config.notifications.smtp.password, "secret")
+        self.assertFalse(config.notifications.smtp.use_tls)
+        self.assertEqual(config.notifications.smtp.from_email, "noreply@env.example")
+        self.assertTrue(config.notifications.dry_run)
 
 if __name__ == "__main__":
     unittest.main()
