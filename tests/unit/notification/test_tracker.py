@@ -23,6 +23,7 @@ from notification.tracker import (
     AggressiveDeduplicationStrategy,
     DeduplicationStrategy,
     RESEND_INTERVAL_NEVER,
+    _masked_recipient_for_storage,
     should_notify_user
 )
 from database.models import NotificationTracker
@@ -355,6 +356,15 @@ class TestNotificationTrackerService:
         assert result == mock_result
         self.mock_repo.db.execute.assert_called_once()
 
+    def test_masked_recipient_for_storage(self):
+        assert _masked_recipient_for_storage("email", "user@example.com") == "***@example.com"
+        assert _masked_recipient_for_storage(
+            "discord",
+            "https://discord.com/api/webhooks/test/token",
+        ) == "https://discord.com/api/webhooks/test/token"
+        assert _masked_recipient_for_storage("telegram", "12345678") == "chat-***5678"
+        assert _masked_recipient_for_storage("in_app", "ignored") == "In-app inbox"
+
     def test_record_notification_new(self):
         """Test record_notification creates new record."""
         self.tracker._get_existing_notification = Mock(return_value=None)
@@ -375,6 +385,7 @@ class TestNotificationTrackerService:
         assert tracker.user_id == 'user1'
         # send_count will be set by DB default (1), but not in Python object
         assert tracker.send_count is None or tracker.send_count == 1
+        assert tracker.recipient == '***@example.com'
         assert tracker.sent_successfully is True
         self.mock_repo.db.add.assert_called_once()
 
@@ -399,6 +410,7 @@ class TestNotificationTrackerService:
 
         assert tracker == existing
         assert tracker.send_count == 4  # Incremented
+        assert tracker.recipient == '***@example.com'
         assert tracker.sent_successfully is False
         assert tracker.error_message == 'Failed to send'
         self.mock_repo.db.add.assert_not_called()  # No new record
@@ -458,6 +470,7 @@ class TestNotificationTrackerService:
 
         assert tracker.event_type == 'score_improved'
         assert tracker.channel_type == 'discord'
+        assert tracker.recipient == '***'
         assert tracker.allow_resend is True
         assert tracker.event_data == {'old_score': 75, 'new_score': 85}
 
@@ -604,6 +617,7 @@ class TestEdgeCases:
 
         assert tracker.user_id == '用户'
         assert tracker.event_type == 'イベント'
+        assert tracker.recipient == 'user@example.com'
 
     def test_strategy_with_timezone_aware_datetime(self):
         """Test strategy with timezone-aware datetime."""
