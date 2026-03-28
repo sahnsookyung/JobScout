@@ -21,6 +21,7 @@ from notification import (
     NotificationTrackerService, DefaultDeduplicationStrategy,
     AggressiveDeduplicationStrategy, NotificationEvent,
     NotificationService, NotificationPriority, RateLimitException,
+    TerminalNotificationError, TransientNotificationError,
 )
 from notification.message_builder import (
     JobNotificationContent, JobInfo, MatchInfo, RequirementsInfo,
@@ -188,19 +189,18 @@ class TestEmailChannel:
         mock_smtp.login.assert_not_called()
         mock_smtp.send_message.assert_called_once()
 
-    def test_send_without_config_returns_false(self):
+    def test_send_without_config_raises_terminal_error(self):
         for key in ['SMTP_SERVER', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD']:
             os.environ.pop(key, None)
 
-        result = EmailChannel().send(
-            recipient='to@example.com', subject='Test', body='Body', metadata={}
-        )
-
-        assert result is False
+        with pytest.raises(TerminalNotificationError):
+            EmailChannel().send(
+                recipient='to@example.com', subject='Test', body='Body', metadata={}
+            )
 
     @patch('notification.channels.smtplib.SMTP')
     @patch.object(EmailChannel, 'validate_config', return_value=True)
-    def test_send_with_partial_auth_returns_false(self, mock_validate, mock_smtp_class):
+    def test_send_with_partial_auth_raises_terminal_error(self, mock_validate, mock_smtp_class):
         os.environ.update({
             'SMTP_SERVER': 'smtp.gmail.com',
             'SMTP_PORT': '587',
@@ -208,12 +208,12 @@ class TestEmailChannel:
         })
         os.environ.pop('SMTP_PASSWORD', None)
 
-        result = EmailChannel().send(
-            recipient='to@example.com', subject='Test Subject',
-            body='Test Body', metadata={},
-        )
+        with pytest.raises(TerminalNotificationError):
+            EmailChannel().send(
+                recipient='to@example.com', subject='Test Subject',
+                body='Test Body', metadata={},
+            )
 
-        assert result is False
         mock_smtp_class.assert_not_called()
 
 
@@ -307,21 +307,21 @@ class TestTelegramChannel:
         assert call_args[1]['json']['chat_id'] == '@testchannel'
         assert call_args[1]['json']['parse_mode'] == 'HTML'
 
-    def test_send_without_token_returns_false(self):
+    def test_send_without_token_raises_terminal_error(self):
         os.environ.pop('TELEGRAM_BOT_TOKEN', None)
-        result = TelegramChannel().send(
-            recipient='@channel', subject='Test', body='Body', metadata={}
-        )
-        assert result is False
+        with pytest.raises(TerminalNotificationError):
+            TelegramChannel().send(
+                recipient='@channel', subject='Test', body='Body', metadata={}
+            )
 
     @patch('notification.channels.requests.post')
-    def test_api_error_returns_false(self, mock_post):
+    def test_api_error_raises_transient_error(self, mock_post):
         mock_post.return_value = Mock(status_code=400, text='Bad Request')
         os.environ['TELEGRAM_BOT_TOKEN'] = 'test-token'
-        result = TelegramChannel().send(
-            recipient='@channel', subject='Test', body='Body', metadata={}
-        )
-        assert result is False
+        with pytest.raises(TransientNotificationError):
+            TelegramChannel().send(
+                recipient='@channel', subject='Test', body='Body', metadata={}
+            )
 
     @patch('notification.channels.requests.post')
     def test_rate_limit_429_raises(self, mock_post):
@@ -668,6 +668,10 @@ class TestNotificationService:
         assert payload['metadata']['user_id'] == 'user1'
 
     def test_send_notification_raises_when_no_recipient_exists(self, mock_repo):
+        # Web test module imports can set DISCORD_WEBHOOK_URL from app config at
+        # collection time; pop it here so the test is not order-dependent.
+        # The autouse restore_env fixture restores the value after the test.
+        os.environ.pop('DISCORD_WEBHOOK_URL', None)
         service = NotificationService(
             mock_repo,
             use_async_queue=False,
@@ -747,6 +751,31 @@ class TestNotificationService:
         assert NotificationPriority.NORMAL.value == 'normal'
         assert NotificationPriority.HIGH.value == 'high'
         assert NotificationPriority.URGENT.value == 'urgent'
+
+    @patch('notification.service.process_notification_task', return_value='sync-fallback-id')
+    @patch('notification.service.NotificationTrackerService')
+    @patch('notification.service.Queue')
+    @patch('notification.service.Redis')
+    def test_enqueue_failure_falls_back_to_sync(
+        self, mock_redis, mock_queue_class, mock_tracker_class, mock_process, mock_repo
+    ):
+        """If queue.enqueue() fails at runtime, send_notification falls back to sync."""
+        mock_redis.from_url.return_value.ping.return_value = True
+        mock_queue = Mock()
+        mock_queue.enqueue.side_effect = Exception("Redis connection lost")
+        mock_queue_class.return_value = mock_queue
+        mock_tracker_class.return_value = Mock()
+
+        service = NotificationService(mock_repo, skip_dedup=True)
+        assert service.async_mode is True  # started in async mode
+
+        result = service.send_notification(
+            channel_type='email', recipient='test@example.com',
+            subject='Test', body='Body', user_id='user1',
+        )
+
+        assert result == 'sync-fallback-id'
+        mock_process.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1050,6 +1079,50 @@ class TestProcessNotificationTask:
 
         assert_valid_uuid(result)
         mock_sleep.assert_called_with(15)
+
+    def test_terminal_error_records_failure_and_re_raises(self):
+        """Terminal failures must re-raise so RQ marks the job as failed (DLQ)."""
+        from notification.service import process_notification_task
+
+        mock_channel = Mock()
+        mock_channel.send.side_effect = TerminalNotificationError("SMTP not configured")
+
+        with patch('notification.service.NotificationChannelFactory.get_channel',
+                   return_value=mock_channel), \
+             patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
+
+            _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            with pytest.raises(TerminalNotificationError):
+                process_notification_task(NOTIFICATION_DATA)
+
+        mock_record_fail.assert_called_once()
+        _, _, error_msg, = mock_record_fail.call_args[0]
+        assert "SMTP not configured" in error_msg
+        assert mock_record_fail.call_args[1]['failure_class'] == 'terminal'
+
+    def test_transient_error_records_failure_and_re_raises(self):
+        """Transient failures must re-raise so RQ Retry policy can reattempt."""
+        from notification.service import process_notification_task
+
+        mock_channel = Mock()
+        mock_channel.send.side_effect = TransientNotificationError("Telegram API 503")
+
+        with patch('notification.service.NotificationChannelFactory.get_channel',
+                   return_value=mock_channel), \
+             patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
+
+            _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            with pytest.raises(TransientNotificationError):
+                process_notification_task(NOTIFICATION_DATA)
+
+        mock_record_fail.assert_called_once()
+        assert mock_record_fail.call_args[1]['failure_class'] == 'transient'
 
 
 # ---------------------------------------------------------------------------

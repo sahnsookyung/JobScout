@@ -45,6 +45,7 @@ from database.database import db_session_scope
 from database.repository import JobRepository
 from notification.channels import NotificationChannelFactory
 from notification.channels import RateLimitException
+from notification.exceptions import TerminalNotificationError, TransientNotificationError
 from notification.tracker import NotificationTrackerService, NotificationEvent
 from notification.message_builder import NotificationMessageBuilder, JobNotificationContent
 
@@ -275,15 +276,21 @@ class NotificationService:
         if self.async_mode:
             # Add retry policy for transient failures
             retry_policy = Retry(max=3, interval=[30, 60, 120])  # Retry 3 times with increasing delays
-            job = self.queue.enqueue(
-                process_notification_task,
-                notification_data,
-                job_timeout='5m',
-                result_ttl=86400,
-                retry=retry_policy
-            )
-            notification_id = job.id
-            logger.info(f"Queued notification as job {job.id}")
+            try:
+                job = self.queue.enqueue(
+                    process_notification_task,
+                    notification_data,
+                    job_timeout='5m',
+                    result_ttl=86400,
+                    retry=retry_policy
+                )
+                notification_id = job.id
+                logger.info(f"Queued notification as job {job.id}")
+            except Exception as e:
+                logger.error(
+                    f"Redis enqueue failed ({e}), falling back to synchronous send"
+                )
+                notification_id = process_notification_task(notification_data)
         else:
             # Process synchronously
             notification_id = process_notification_task(notification_data)
@@ -542,6 +549,24 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
             time.sleep(actual_wait)
             continue
         
+        except TerminalNotificationError as e:
+            logger.error(
+                f"Terminal failure for notification {notification_id}: {e}"
+            )
+            _record_notification_failure(
+                notification_id, notification_data, str(e), failure_class="terminal"
+            )
+            raise  # Re-raise so RQ marks this job as failed (dead-letter)
+
+        except TransientNotificationError as e:
+            logger.warning(
+                f"Transient failure for notification {notification_id}: {e}"
+            )
+            _record_notification_failure(
+                notification_id, notification_data, str(e), failure_class="transient"
+            )
+            raise  # Re-raise so RQ Retry policy can attempt again
+
         except Exception as e:
             logger.error(f"Failed to process notification {notification_id}: {e}", exc_info=True)
             _record_notification_failure(
@@ -593,13 +618,18 @@ def _send_and_record_notification(
 def _record_notification_failure(
     notification_id: str,
     notification_data: Dict[str, Any],
-    error_message: str
+    error_message: str,
+    failure_class: str = "unknown",
 ) -> None:
     """Record notification failure in database."""
     try:
         with db_session_scope() as session:
             repo = JobRepository(session)
             tracker = NotificationTrackerService(repo)
+            failure_metadata = {
+                **notification_data.get('metadata', {}),
+                'failure_class': failure_class,
+            }
             tracker.record_notification(
                 user_id=notification_data['user_id'],
                 job_match_id=notification_data.get('job_match_id'),
@@ -610,7 +640,7 @@ def _record_notification_failure(
                 body=notification_data['body'],
                 success=False,
                 error_message=error_message,
-                metadata=notification_data.get('metadata', {}),
+                metadata=failure_metadata,
                 allow_resend=notification_data.get('allow_resend', True)
             )
     except Exception as db_error:

@@ -41,6 +41,7 @@ import urllib.parse
 import ipaddress
 import socket
 
+from notification.exceptions import TerminalNotificationError, TransientNotificationError
 from notification.message_builder import NotificationMessageBuilder, JobNotificationContent
 
 logger = logging.getLogger(__name__)
@@ -391,8 +392,9 @@ class EmailChannel(NotificationChannel):
     
     def send(self, recipient: str, subject: str, body: str, metadata: Dict[str, Any]) -> bool:
         if not self.validate_config():
-            logger.error("Email not configured - SMTP environment variables not set")
-            return False
+            raise TerminalNotificationError(
+                "Email not configured — SMTP environment variables not set"
+            )
         
         try:
             smtp_server = os.environ.get('SMTP_SERVER', 'smtp.gmail.com')
@@ -403,8 +405,9 @@ class EmailChannel(NotificationChannel):
             from_email = os.environ.get('FROM_EMAIL') or username or 'noreply@jobscout.app'
 
             if bool(username) != bool(password):
-                logger.error("Email not configured - SMTP_USERNAME and SMTP_PASSWORD must be set together")
-                return False
+                raise TerminalNotificationError(
+                    "Email not configured — SMTP_USERNAME and SMTP_PASSWORD must both be set"
+                )
             
             # Check for rich job notification content
             job_contents = metadata.get('job_contents', [])
@@ -434,7 +437,10 @@ class EmailChannel(NotificationChannel):
             
             logger.info(f"Email sent to {_mask_email(recipient)}")
             return True
-            
+
+        except (TerminalNotificationError, TransientNotificationError):
+            raise
+
         except Exception as e:
             logger.error(f"Failed to send email to {_mask_email(recipient)}: {e}")
             return False
@@ -635,8 +641,9 @@ class TelegramChannel(NotificationChannel):
         bot_token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
         
         if not bot_token:
-            logger.error("Telegram bot token not configured - TELEGRAM_BOT_TOKEN not set")
-            return False
+            raise TerminalNotificationError(
+                "Telegram not configured — TELEGRAM_BOT_TOKEN not set"
+            )
         
         try:
             api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -678,12 +685,16 @@ class TelegramChannel(NotificationChannel):
                 logger.info(f"Telegram message sent to {recipient}")
                 return True
             else:
-                logger.error(f"Telegram API error: {response.status_code} - {response.text}")
-                return False
+                raise TransientNotificationError(
+                    f"Telegram API error: {response.status_code} — {response.text}"
+                )
         
         except RateLimitException:
             raise
-        
+
+        except (TerminalNotificationError, TransientNotificationError):
+            raise
+
         except Exception as e:
             logger.error(f"Failed to send Telegram message: {e}")
             return False
@@ -716,8 +727,9 @@ class WebhookChannel(NotificationChannel):
             webhook_url = recipient
             
             if not _validate_webhook_url(webhook_url):
-                logger.error(f"Invalid or unsafe webhook URL: {webhook_url}")
-                return False
+                raise TerminalNotificationError(
+                    f"Invalid or unsafe webhook URL: {webhook_url}"
+                )
             
             headers = {
                 'Content-Type': 'application/json',
@@ -769,7 +781,10 @@ class WebhookChannel(NotificationChannel):
             safe_url = f"{parsed.scheme}://{parsed.hostname}{parsed.path}"
             logger.info(f"Webhook sent to {safe_url}")
             return True
-            
+
+        except (TerminalNotificationError, TransientNotificationError):
+            raise
+
         except Exception as e:
             logger.error(f"Failed to send webhook: {e}")
             return False

@@ -33,6 +33,12 @@ from notification.channels import (
     RateLimitException,
 )
 
+from notification.exceptions import (
+    NotificationError,
+    TerminalNotificationError,
+    TransientNotificationError,
+)
+
 from notification.tracker import (
     NotificationTrackerService,
     NotificationEvent,
@@ -57,6 +63,10 @@ __all__ = [
     'InAppChannel',
     'NotificationChannelFactory',
     'RateLimitException',
+    # Exceptions
+    'NotificationError',
+    'TerminalNotificationError',
+    'TransientNotificationError',
     # Tracker
     'NotificationTrackerService',
     'NotificationEvent',
