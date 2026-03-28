@@ -199,6 +199,8 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["ETL_LLM_EXTRACTION_MODEL"], ["etl", "llm", "extraction_model"]),
     (["ETL_EMBEDDING_MODEL"], ["etl", "llm", "embedding_model"]),
     (["REDIS_URL"], ["notifications", "redis_url"]),
+    (["BASE_URL"], ["notifications", "base_url"]),
+    (["NOTIFICATION_RATE_LIMIT_MAX_WAIT"], ["notifications", "rate_limit_max_wait_seconds"]),
     (["NOTIFICATION_EMAIL", "EMAIL"], ["notifications", "channels", "email", "recipient"]),
     (["DISCORD_WEBHOOK_URL"], ["notifications", "channels", "discord", "recipient"]),
     (["TELEGRAM_CHAT_ID"], ["notifications", "channels", "telegram", "recipient"]),

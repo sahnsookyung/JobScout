@@ -216,6 +216,8 @@ class TestConfigLoader(unittest.TestCase):
             "TELEGRAM_CHAT_ID": "@env_channel",
             "NOTIFICATION_WEBHOOK_URL": "https://env.example/webhook",
             "TELEGRAM_BOT_TOKEN": "env-token",
+            "BASE_URL": "https://jobscout.example",
+            "NOTIFICATION_RATE_LIMIT_MAX_WAIT": "17",
             "SMTP_SERVER": "smtp.env.example",
             "SMTP_PORT": "2525",
             "SMTP_USERNAME": "mailer",
@@ -247,6 +249,8 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config.notifications.smtp.password, "secret")
         self.assertFalse(config.notifications.smtp.use_tls)
         self.assertEqual(config.notifications.smtp.from_email, "noreply@env.example")
+        self.assertEqual(config.notifications.base_url, "https://jobscout.example")
+        self.assertEqual(config.notifications.rate_limit_max_wait_seconds, 17)
         self.assertTrue(config.notifications.dry_run)
 
 if __name__ == "__main__":

@@ -361,7 +361,11 @@ class TestNotificationTrackerService:
         assert _masked_recipient_for_storage(
             "discord",
             "https://discord.com/api/webhooks/test/token",
-        ) == "https://discord.com/api/webhooks/test/token"
+        ) == "https://discord.com/***"
+        assert _masked_recipient_for_storage(
+            "webhook",
+            "https://hooks.example.com/services/secret-token",
+        ) == "https://hooks.example.com/***"
         assert _masked_recipient_for_storage("telegram", "12345678") == "chat-***5678"
         assert _masked_recipient_for_storage("in_app", "ignored") == "In-app inbox"
 

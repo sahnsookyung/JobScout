@@ -34,7 +34,10 @@ def _masked_recipient_for_storage(channel_type: str, recipient: str) -> str:
     if channel_type in {"discord", "webhook"}:
         parsed = urllib.parse.urlparse(recipient)
         if parsed.scheme and parsed.hostname:
-            return f"{parsed.scheme}://{parsed.hostname}{parsed.path}"
+            host = parsed.hostname
+            if parsed.port is not None:
+                host = f"{host}:{parsed.port}"
+            return f"{parsed.scheme}://{host}/***"
         return "***"
 
     if channel_type == "telegram":

@@ -32,3 +32,21 @@ def test_runtime_config_falls_back_to_email_env_alias(monkeypatch):
     runtime_config = get_notification_runtime_config()
 
     assert runtime_config.channels["email"]["recipient"] == "alias@example.com"
+
+
+def test_runtime_config_honors_base_url_env_override(monkeypatch):
+    monkeypatch.setenv("BASE_URL", "https://env.example")
+    clear_notification_runtime_config_cache()
+
+    runtime_config = get_notification_runtime_config()
+
+    assert runtime_config.base_url == "https://env.example"
+
+
+def test_runtime_config_honors_rate_limit_wait_env_override(monkeypatch):
+    monkeypatch.setenv("NOTIFICATION_RATE_LIMIT_MAX_WAIT", "17")
+    clear_notification_runtime_config_cache()
+
+    runtime_config = get_notification_runtime_config()
+
+    assert runtime_config.rate_limit_max_wait_seconds == 17
