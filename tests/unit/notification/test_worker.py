@@ -44,7 +44,7 @@ class TestWorkerStartup:
         call_args = mock_worker_class.call_args[0]
         assert call_args[0] == ['notifications']
 
-        mock_worker.work.assert_called_once_with()
+        mock_worker.work.assert_called_once_with(with_scheduler=True)
 
     @patch('notification.worker.Redis', autospec=True)
     @patch('notification.worker.Worker', autospec=True)

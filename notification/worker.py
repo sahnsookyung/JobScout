@@ -116,7 +116,7 @@ def start_worker(burst: bool = False, queues: list = None):
             worker.work(burst=True)
         else:
             logger.info("Worker started. Press Ctrl+C to stop.")
-            worker.work()
+            worker.work(with_scheduler=True)  # processes enqueue_in delayed jobs
 
     except KeyboardInterrupt:
         logger.info("\nWorker stopped")
