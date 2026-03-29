@@ -7,6 +7,7 @@ Implements deduplication for notifications to prevent notification fatigue.
 import hashlib
 import json
 import logging
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
@@ -20,6 +21,33 @@ from database.models import NotificationTracker
 RESEND_INTERVAL_NEVER = 999999  # Effectively never
 
 logger = logging.getLogger(__name__)
+
+
+def _masked_recipient_for_storage(channel_type: str, recipient: str) -> str:
+    """Persist a masked recipient so tracker rows do not retain raw secrets."""
+    if channel_type == "email":
+        if "@" not in recipient:
+            return "***"
+        _, domain = recipient.rsplit("@", 1)
+        return f"***@{domain}"
+
+    if channel_type in {"discord", "webhook"}:
+        parsed = urllib.parse.urlparse(recipient)
+        if parsed.scheme and parsed.hostname:
+            host = parsed.hostname
+            if parsed.port is not None:
+                host = f"{host}:{parsed.port}"
+            return f"{parsed.scheme}://{host}/***"
+        return "***"
+
+    if channel_type == "telegram":
+        suffix = recipient[-4:] if len(recipient) > 4 else recipient
+        return f"chat-***{suffix}"
+
+    if channel_type == "in_app":
+        return "In-app inbox"
+
+    return recipient
 
 
 @dataclass
@@ -271,6 +299,7 @@ class NotificationTrackerService:
     ) -> NotificationTracker:
         dedup_hash = self.generate_dedup_hash(user_id, job_match_id, event_type, channel_type)
         content_hash = self.generate_content_hash(subject, body, metadata)
+        stored_recipient = _masked_recipient_for_storage(channel_type, recipient)
         
         # Check if record exists
         existing = self._get_existing_notification(dedup_hash)
@@ -281,7 +310,7 @@ class NotificationTrackerService:
             existing.send_count += 1
             existing.content_hash = content_hash
             existing.event_data = metadata or {}
-            existing.recipient = recipient
+            existing.recipient = stored_recipient
             existing.sent_successfully = success
             existing.failure_class = failure_class  # None on success — intentionally clears prior failure
             existing.error_message = error_message
@@ -298,7 +327,7 @@ class NotificationTrackerService:
                 content_hash=content_hash,
                 event_type=event_type,
                 event_data=metadata or {},
-                recipient=recipient,
+                recipient=stored_recipient,
                 subject=subject,
                 body=body,
                 sent_successfully=success,

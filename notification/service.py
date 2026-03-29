@@ -26,7 +26,6 @@ Usage:
 
 import logging
 import math
-import os
 import time
 import uuid
 from datetime import timedelta
@@ -56,11 +55,14 @@ from notification.exceptions import (
 )
 from notification.tracker import NotificationTrackerService, NotificationEvent
 from notification.message_builder import NotificationMessageBuilder, JobNotificationContent
+from notification.runtime_config import (
+    REDIS_URL_DEFAULT,
+    get_notification_runtime_config,
+)
 from notification.user_settings import UserNotificationSettingsService
 
 logger = logging.getLogger(__name__)
 
-REDIS_URL_DEFAULT = 'redis://localhost:6379/0'
 TRANSIENT_RETRY_INTERVALS = (30, 60, 120)
 MAX_RATE_LIMIT_RETRIES = 3
 # Maximum seconds to block a sync-mode thread waiting out a rate limit.
@@ -244,9 +246,10 @@ class NotificationService:
         self.skip_dedup = skip_dedup
         self._priority_high = priority_high
         self._priority_normal = priority_normal
+        runtime_config = get_notification_runtime_config()
         self.channel_configs = {
             name.lower(): config
-            for name, config in (channel_configs or {}).items()
+            for name, config in (channel_configs or runtime_config.channels).items()
         }
         self.user_settings = UserNotificationSettingsService(self.repo.db)
 
@@ -254,14 +257,8 @@ class NotificationService:
         self.tracker = NotificationTrackerService(repo)
 
         # Initialize Redis Queue
-        self.redis_url = redis_url or os.environ.get(
-            'REDIS_URL',
-            REDIS_URL_DEFAULT
-        )
-
-        # Base URL injected from config (no direct config.yaml read)
-        # Falls back to environment variable or default
-        self.base_url = base_url or os.environ.get('BASE_URL', 'http://localhost:8080')
+        self.redis_url = redis_url or runtime_config.redis_url
+        self.base_url = base_url or runtime_config.base_url
 
         # Store the preferred mode from config
         self._use_async_queue = use_async_queue
@@ -568,10 +565,6 @@ JobScout
         if configured_recipient:
             return configured_recipient
 
-        env_recipient = self._env_recipient_for_channel(channel)
-        if env_recipient:
-            return env_recipient
-
         raise ValueError(f"No recipient configured for channel type: {channel}")
 
     def _configured_recipient_for_channel(self, channel: str) -> Optional[str]:
@@ -581,20 +574,6 @@ JobScout
         if isinstance(config, dict):
             return config.get("recipient")
         return getattr(config, "recipient", None)
-
-    @staticmethod
-    def _env_recipient_for_channel(channel: str) -> Optional[str]:
-        if channel == 'email':
-            return os.environ.get('NOTIFICATION_EMAIL') or os.environ.get('EMAIL')
-        if channel == 'discord':
-            return os.environ.get('DISCORD_WEBHOOK_URL')
-        if channel == 'telegram':
-            return os.environ.get('TELEGRAM_CHAT_ID')
-        if channel == 'webhook':
-            return os.environ.get('NOTIFICATION_WEBHOOK_URL')
-        if channel == 'in_app':
-            return None
-        raise ValueError(f"Unsupported channel type: {channel}")
 
     def get_queue_status(self) -> Dict[str, Any]:
         """Get queue status including failed job count from the DLQ."""
@@ -631,8 +610,9 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
     """
     notification_id = str(uuid.uuid4())
     channel_type = notification_data['channel_type']
-    redis_url = os.environ.get('REDIS_URL', REDIS_URL_DEFAULT)
-    max_wait_seconds = int(os.environ.get('NOTIFICATION_RATE_LIMIT_MAX_WAIT', '300'))
+    runtime_config = get_notification_runtime_config()
+    redis_url = runtime_config.redis_url
+    max_wait_seconds = runtime_config.rate_limit_max_wait_seconds
 
     # origin_id threads through all reschedules for log correlation. Must use `or` rather than
     # dict.get(key, default) because the key may be absent or present with value None.

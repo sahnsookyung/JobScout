@@ -26,8 +26,16 @@ from notification.channels import (
     NotificationChannelFactory, InAppChannel
 )
 from notification.exceptions import NotificationConfigurationError, TerminalNotificationError, TransientNotificationError
+from notification.runtime_config import clear_notification_runtime_config_cache
 from notification.service import NotificationRateLimiter
 from notification.message_builder import JobNotificationContent, JobInfo, MatchInfo, RequirementsInfo
+
+
+@pytest.fixture(autouse=True)
+def restore_runtime_config_cache():
+    clear_notification_runtime_config_cache()
+    yield
+    clear_notification_runtime_config_cache()
 
 
 class TestRateLimitParsing:

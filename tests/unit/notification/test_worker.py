@@ -1,22 +1,20 @@
-#!/usr/bin/env python3
 """
 Tests for notification worker module.
-
-Tests cover:
-1. Worker startup and configuration
-2. Queue subscription
-3. Argument parsing
-4. Redis connection handling
-5. Burst mode operation
 """
 
-import os
+import logging
 import sys
 import threading
-import pytest
-from unittest.mock import Mock, patch, MagicMock
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
-from notification.worker import start_worker, main, _monitor_dlq
+import pytest
+
+from notification.worker import main, start_worker, _monitor_dlq
+
+
+def _runtime_config(redis_url: str = "redis://runtime:6379/0") -> SimpleNamespace:
+    return SimpleNamespace(redis_url=redis_url)
 
 
 class TestWorkerStartup:
@@ -30,100 +28,79 @@ class TestWorkerStartup:
         mock_redis = Mock()
         mock_redis.ping.return_value = True
         mock_redis_class.from_url.return_value = mock_redis
-
         mock_worker = Mock()
         mock_worker_class.return_value = mock_worker
         mock_registry_class.return_value.__len__ = Mock(return_value=0)
 
-        start_worker(burst=False, queues=['notifications'])
+        with patch('notification.worker.get_notification_runtime_config',
+                   return_value=_runtime_config()):
+            start_worker(burst=False, queues=['notifications'])
 
-        mock_redis_class.from_url.assert_called_once()
+        mock_redis_class.from_url.assert_called_once_with('redis://runtime:6379/0')
         mock_redis.ping.assert_called_once()
-
         mock_worker_class.assert_called_once()
-        call_args = mock_worker_class.call_args[0]
-        assert call_args[0] == ['notifications']
-
+        assert mock_worker_class.call_args[0][0] == ['notifications']
         mock_worker.work.assert_called_once_with(with_scheduler=True)
 
     @patch('notification.worker.Redis', autospec=True)
     @patch('notification.worker.Worker', autospec=True)
     def test_start_worker_burst_mode(self, mock_worker_class, mock_redis_class):
-        """Test worker startup in burst mode."""
         mock_redis = Mock()
         mock_redis.ping.return_value = True
         mock_redis_class.from_url.return_value = mock_redis
-
         mock_worker = Mock()
         mock_worker_class.return_value = mock_worker
 
-        start_worker(burst=True, queues=['notifications'])
+        with patch('notification.worker.get_notification_runtime_config',
+                   return_value=_runtime_config()):
+            start_worker(burst=True, queues=['notifications'])
 
         mock_worker.work.assert_called_once_with(burst=True)
 
     @patch('notification.worker.FailedJobRegistry', autospec=True)
     @patch('notification.worker.Redis', autospec=True)
     @patch('notification.worker.Worker', autospec=True)
-    def test_start_worker_multiple_queues(self, mock_worker_class, mock_redis_class, mock_registry_class, caplog):
+    def test_start_worker_multiple_queues(self, mock_worker_class, mock_redis_class,
+                                          mock_registry_class, caplog):
         """Test worker startup with multiple queues warns that only first queue is DLQ-monitored."""
-        import logging
         mock_redis = Mock()
         mock_redis.ping.return_value = True
         mock_redis_class.from_url.return_value = mock_redis
-
         mock_worker = Mock()
         mock_worker_class.return_value = mock_worker
 
-        with caplog.at_level(logging.WARNING, logger='notification.worker'):
+        with patch('notification.worker.get_notification_runtime_config',
+                   return_value=_runtime_config()), \
+             caplog.at_level(logging.WARNING, logger='notification.worker'):
             start_worker(burst=False, queues=['notifications', 'emails', 'alerts'])
 
-        call_args = mock_worker_class.call_args[0]
-        assert call_args[0] == ['notifications', 'emails', 'alerts']
+        assert mock_worker_class.call_args[0][0] == ['notifications', 'emails', 'alerts']
         assert "DLQ monitor only watches the first queue" in caplog.text
 
     @patch('notification.worker.FailedJobRegistry', autospec=True)
     @patch('notification.worker.Redis', autospec=True)
     @patch('notification.worker.Worker', autospec=True)
-    def test_start_worker_custom_redis_url(self, mock_worker_class, mock_redis_class, mock_registry_class, monkeypatch):
-        """Test worker startup with custom Redis URL."""
-        monkeypatch.setenv('REDIS_URL', 'redis://custom-host:6379/1')
-
+    def test_start_worker_uses_runtime_config_redis_url(self, mock_worker_class, mock_redis_class,
+                                                         mock_registry_class):
         mock_redis = Mock()
         mock_redis.ping.return_value = True
         mock_redis_class.from_url.return_value = mock_redis
-
         mock_worker = Mock()
         mock_worker_class.return_value = mock_worker
 
-        start_worker(burst=False, queues=['notifications'])
+        with patch('notification.worker.get_notification_runtime_config',
+                   return_value=_runtime_config('redis://custom-host:6379/1')):
+            start_worker(burst=False, queues=['notifications'])
 
         mock_redis_class.from_url.assert_called_once_with('redis://custom-host:6379/1')
 
-    @patch('notification.worker.FailedJobRegistry', autospec=True)
-    @patch('notification.worker.Redis', autospec=True)
-    @patch('notification.worker.Worker', autospec=True)
-    def test_start_worker_default_redis_url(self, mock_worker_class, mock_redis_class, mock_registry_class, monkeypatch):
-        """Test worker startup with default Redis URL."""
-        monkeypatch.delenv('REDIS_URL', raising=False)
-
-        mock_redis = Mock()
-        mock_redis.ping.return_value = True
-        mock_redis_class.from_url.return_value = mock_redis
-
-        mock_worker = Mock()
-        mock_worker_class.return_value = mock_worker
-
-        start_worker(burst=False, queues=['notifications'])
-
-        mock_redis_class.from_url.assert_called_once_with('redis://localhost:6379/0')
-
     @patch('notification.worker.Redis', autospec=True)
     def test_start_worker_redis_connection_failure(self, mock_redis_class, caplog):
-        """Test worker handles Redis connection failure."""
         mock_redis_class.from_url.side_effect = Exception("Connection refused")
 
-        # Should raise SystemExit(1) on Redis connection failure
-        with pytest.raises(SystemExit) as exc_info:
+        with patch('notification.worker.get_notification_runtime_config',
+                   return_value=_runtime_config()), \
+             pytest.raises(SystemExit) as exc_info:
             start_worker(burst=False, queues=['notifications'])
 
         assert exc_info.value.code == 1
@@ -135,7 +112,6 @@ class TestWorkerMain:
 
     @patch('notification.worker.start_worker')
     def test_main_default_args(self, mock_start_worker):
-        """Test main with default arguments."""
         with patch.object(sys, 'argv', ['worker.py']):
             main()
 
@@ -146,7 +122,6 @@ class TestWorkerMain:
 
     @patch('notification.worker.start_worker')
     def test_main_burst_flag(self, mock_start_worker):
-        """Test main with --burst flag."""
         with patch.object(sys, 'argv', ['worker.py', '--burst']):
             main()
 
@@ -157,7 +132,6 @@ class TestWorkerMain:
 
     @patch('notification.worker.start_worker')
     def test_main_custom_queues(self, mock_start_worker):
-        """Test main with custom queues."""
         with patch.object(sys, 'argv', ['worker.py', '--queues', 'queue1', 'queue2']):
             main()
 
@@ -167,20 +141,16 @@ class TestWorkerMain:
         )
 
     @patch('notification.worker.start_worker')
-    def test_main_verbose_flag(self, mock_start_worker, caplog):
-        """Test main with --verbose flag."""
-        import logging
+    def test_main_verbose_flag(self, mock_start_worker):
         logging.getLogger().setLevel(logging.INFO)
 
         with patch.object(sys, 'argv', ['worker.py', '--verbose']):
             main()
 
-        # Log level should be set to DEBUG
         assert logging.getLogger().level == logging.DEBUG
 
     @patch('notification.worker.start_worker')
     def test_main_combined_args(self, mock_start_worker):
-        """Test main with combined arguments."""
         with patch.object(sys, 'argv', [
             'worker.py',
             '--burst',
@@ -201,19 +171,17 @@ class TestWorkerLogging:
     @patch('notification.worker.Redis', autospec=True)
     @patch('notification.worker.Worker', autospec=True)
     def test_worker_logs_startup_info(self, mock_worker_class, mock_redis_class, caplog):
-        """Test worker logs startup information."""
-        import logging
         logging.getLogger().setLevel(logging.INFO)
 
         mock_redis = Mock()
         mock_redis.ping.return_value = True
         mock_redis_class.from_url.return_value = mock_redis
-
-
         mock_worker = Mock()
         mock_worker_class.return_value = mock_worker
 
-        start_worker(burst=True, queues=['notifications'])
+        with patch('notification.worker.get_notification_runtime_config',
+                   return_value=_runtime_config()):
+            start_worker(burst=True, queues=['notifications'])
 
         assert "Starting RQ Worker" in caplog.text
         assert "Queues:" in caplog.text
@@ -222,19 +190,19 @@ class TestWorkerLogging:
     @patch('notification.worker.FailedJobRegistry', autospec=True)
     @patch('notification.worker.Redis', autospec=True)
     @patch('notification.worker.Worker', autospec=True)
-    def test_worker_logs_redis_connection(self, mock_worker_class, mock_redis_class, mock_registry_class, caplog):
-        """Test worker logs Redis connection status."""
-        import logging
+    def test_worker_logs_redis_connection(self, mock_worker_class, mock_redis_class,
+                                           mock_registry_class, caplog):
         logging.getLogger().setLevel(logging.INFO)
 
         mock_redis = Mock()
         mock_redis.ping.return_value = True
         mock_redis_class.from_url.return_value = mock_redis
-
         mock_worker = Mock()
         mock_worker_class.return_value = mock_worker
 
-        start_worker(burst=False, queues=['notifications'])
+        with patch('notification.worker.get_notification_runtime_config',
+                   return_value=_runtime_config()):
+            start_worker(burst=False, queues=['notifications'])
 
         assert "Connected to Redis" in caplog.text
 
@@ -245,20 +213,21 @@ class TestWorkerKeyboardInterrupt:
     @patch('notification.worker.FailedJobRegistry', autospec=True)
     @patch('notification.worker.Redis', autospec=True)
     @patch('notification.worker.Worker', autospec=True)
-    def test_worker_handles_keyboard_interrupt(self, mock_worker_class, mock_redis_class, mock_registry_class, caplog):
+    def test_worker_handles_keyboard_interrupt(self, mock_worker_class, mock_redis_class,
+                                                mock_registry_class, caplog):
         """Test worker gracefully handles Ctrl+C."""
-        import logging
         logging.getLogger().setLevel(logging.INFO)
 
         mock_redis = Mock()
         mock_redis.ping.return_value = True
         mock_redis_class.from_url.return_value = mock_redis
-
         mock_worker = Mock()
         mock_worker.work.side_effect = KeyboardInterrupt()
         mock_worker_class.return_value = mock_worker
 
-        start_worker(burst=False, queues=['notifications'])
+        with patch('notification.worker.get_notification_runtime_config',
+                   return_value=_runtime_config()):
+            start_worker(burst=False, queues=['notifications'])
 
         assert "Worker stopped" in caplog.text
 
@@ -269,29 +238,31 @@ class TestWorkerEdgeCases:
     @patch('notification.worker.FailedJobRegistry', autospec=True)
     @patch('notification.worker.Redis', autospec=True)
     @patch('notification.worker.Worker', autospec=True)
-    def test_worker_empty_queue_list(self, mock_worker_class, mock_redis_class, mock_registry_class):
+    def test_worker_empty_queue_list(self, mock_worker_class, mock_redis_class,
+                                      mock_registry_class):
         """Test worker with empty queue list."""
         mock_redis = Mock()
         mock_redis.ping.return_value = True
         mock_redis_class.from_url.return_value = mock_redis
-
         mock_worker = Mock()
         mock_worker_class.return_value = mock_worker
 
-        start_worker(burst=False, queues=[])
+        with patch('notification.worker.get_notification_runtime_config',
+                   return_value=_runtime_config()):
+            start_worker(burst=False, queues=[])
 
         mock_worker_class.assert_called_once()
 
     @patch('notification.worker.Redis', autospec=True)
     @patch('notification.worker.Worker', autospec=True)
     def test_worker_redis_ping_failure(self, mock_worker_class, mock_redis_class, caplog):
-        """Test worker handles Redis ping failure."""
         mock_redis = Mock()
         mock_redis.ping.side_effect = Exception("Ping failed")
         mock_redis_class.from_url.return_value = mock_redis
 
-        # Should raise SystemExit(1) on Redis ping failure
-        with pytest.raises(SystemExit) as exc_info:
+        with patch('notification.worker.get_notification_runtime_config',
+                   return_value=_runtime_config()), \
+             pytest.raises(SystemExit) as exc_info:
             start_worker(burst=False, queues=['notifications'])
 
         assert exc_info.value.code == 1
@@ -300,12 +271,11 @@ class TestWorkerEdgeCases:
     @patch('notification.worker.FailedJobRegistry', autospec=True)
     @patch('notification.worker.Redis', autospec=True)
     @patch('notification.worker.Worker', autospec=True)
-    def test_worker_with_special_queue_names(self, mock_worker_class, mock_redis_class, mock_registry_class):
-        """Test worker with special queue names."""
+    def test_worker_with_special_queue_names(self, mock_worker_class, mock_redis_class,
+                                              mock_registry_class):
         mock_redis = Mock()
         mock_redis.ping.return_value = True
         mock_redis_class.from_url.return_value = mock_redis
-
         mock_worker = Mock()
         mock_worker_class.return_value = mock_worker
 
@@ -316,24 +286,23 @@ class TestWorkerEdgeCases:
             'notifications:discord'
         ]
 
-        start_worker(burst=False, queues=special_queues)
+        with patch('notification.worker.get_notification_runtime_config',
+                   return_value=_runtime_config()):
+            start_worker(burst=False, queues=special_queues)
 
-        call_args = mock_worker_class.call_args[0]
-        assert call_args[0] == special_queues
+        assert mock_worker_class.call_args[0][0] == special_queues
 
 
 class TestWorkerImport:
     """Test worker module imports."""
 
     def test_worker_imports_process_notification_task(self):
-        """Test worker imports task function correctly."""
         from notification import process_notification_task
 
         assert process_notification_task is not None
         assert callable(process_notification_task)
 
     def test_worker_has_required_dependencies(self):
-        """Test worker has required dependencies available."""
         from redis import Redis
         from rq import Worker, Queue
 
@@ -355,7 +324,6 @@ class TestDLQMonitor:
 
         with patch('notification.worker.Queue') as mock_queue_class, \
              patch('notification.worker.FailedJobRegistry', return_value=mock_registry):
-            # Stop after first wait so only one cycle runs.
             real_wait = stop.wait
             call_count = 0
 
@@ -373,14 +341,12 @@ class TestDLQMonitor:
 
     def test_zero_failed_jobs_logs_nothing_initially(self, caplog):
         """No log output when DLQ is empty and was previously empty."""
-        import logging
         with caplog.at_level(logging.DEBUG, logger='notification.worker'):
             self._run_one_cycle(registry_len=0, last_count=0)
         assert "DLQ" not in caplog.text
 
     def test_new_failures_log_error(self, caplog):
         """ERROR logged when failed count increases."""
-        import logging
         with caplog.at_level(logging.ERROR, logger='notification.worker'):
             self._run_one_cycle(registry_len=3)
         assert "DLQ growing" in caplog.text
@@ -388,7 +354,6 @@ class TestDLQMonitor:
 
     def test_stable_failures_log_warning(self, caplog):
         """WARNING logged each poll when DLQ is non-zero but not growing."""
-        import logging
         stop = threading.Event()
         mock_redis = Mock()
         mock_registry = Mock()
@@ -415,7 +380,6 @@ class TestDLQMonitor:
 
     def test_dlq_cleared_logs_info(self, caplog):
         """INFO logged when DLQ drops from non-zero to zero."""
-        import logging
         stop = threading.Event()
         mock_redis = Mock()
         counts = [2, 0]
@@ -450,7 +414,6 @@ class TestDLQMonitor:
 
     def test_registry_exception_logs_warning_and_continues(self, caplog):
         """A Redis error during polling logs a warning but doesn't crash the thread."""
-        import logging
         stop = threading.Event()
         mock_redis = Mock()
         mock_registry = Mock()
@@ -477,6 +440,8 @@ class TestDLQMonitor:
         """Monitor thread is not started in burst mode."""
         with patch('notification.worker.Redis') as mock_redis_class, \
              patch('notification.worker.Worker') as mock_worker_class, \
+             patch('notification.worker.get_notification_runtime_config',
+                   return_value=_runtime_config()), \
              patch('notification.worker.threading') as mock_threading:
             mock_redis_class.from_url.return_value.ping.return_value = True
             mock_worker_class.return_value.work.return_value = None

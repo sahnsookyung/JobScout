@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 RQ Worker for JobScout Notification Service
 
@@ -10,10 +9,10 @@ Usage:
     uv run python -m notification.worker --verbose
 """
 
-import os
-import sys
 import argparse
 import logging
+import os
+import sys
 import threading
 from pathlib import Path
 
@@ -25,6 +24,7 @@ from rq import Worker, Queue
 from rq.registry import FailedJobRegistry
 
 from notification import process_notification_task
+from notification.runtime_config import get_notification_runtime_config
 
 logging.basicConfig(
     level=logging.INFO,
@@ -82,7 +82,7 @@ def _monitor_dlq(redis_conn: Redis, queue_name: str, stop: threading.Event) -> N
 
 def start_worker(burst: bool = False, queues: list = None):
     """Start the RQ worker with a background DLQ monitor thread."""
-    redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+    redis_url = get_notification_runtime_config().redis_url
 
     if queues is None:
         queues = ['notifications']
