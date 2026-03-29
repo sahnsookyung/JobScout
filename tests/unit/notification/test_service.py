@@ -21,11 +21,7 @@ from notification import (
     NotificationTrackerService, DefaultDeduplicationStrategy,
     AggressiveDeduplicationStrategy, NotificationEvent,
     NotificationService, NotificationPriority, RateLimitException,
-)
-from notification.exceptions import (
-    NotificationConfigurationError,
-    TerminalNotificationError,
-    TransientNotificationError,
+    NotificationConfigurationError, TerminalNotificationError, TransientNotificationError,
 )
 from notification.runtime_config import clear_notification_runtime_config_cache
 from notification.message_builder import (
@@ -196,19 +192,18 @@ class TestEmailChannel:
         mock_smtp.login.assert_not_called()
         mock_smtp.send_message.assert_called_once()
 
-    def test_send_without_config_returns_false(self):
+    def test_send_without_config_raises_terminal_error(self):
         for key in ['SMTP_SERVER', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD']:
             os.environ.pop(key, None)
 
-        result = EmailChannel().send(
-            recipient='to@example.com', subject='Test', body='Body', metadata={}
-        )
-
-        assert result is False
+        with pytest.raises(NotificationConfigurationError):
+            EmailChannel().send(
+                recipient='to@example.com', subject='Test', body='Body', metadata={}
+            )
 
     @patch('notification.channels.smtplib.SMTP')
     @patch.object(EmailChannel, 'validate_config', return_value=True)
-    def test_send_with_partial_auth_returns_false(self, mock_validate, mock_smtp_class):
+    def test_send_with_partial_auth_raises_terminal_error(self, mock_validate, mock_smtp_class):
         os.environ.update({
             'SMTP_SERVER': 'smtp.gmail.com',
             'SMTP_PORT': '587',
@@ -216,12 +211,12 @@ class TestEmailChannel:
         })
         os.environ.pop('SMTP_PASSWORD', None)
 
-        result = EmailChannel().send(
-            recipient='to@example.com', subject='Test Subject',
-            body='Test Body', metadata={},
-        )
+        with pytest.raises(NotificationConfigurationError):
+            EmailChannel().send(
+                recipient='to@example.com', subject='Test Subject',
+                body='Test Body', metadata={},
+            )
 
-        assert result is False
         mock_smtp_class.assert_not_called()
 
 
@@ -253,12 +248,12 @@ class TestDiscordChannel:
         assert 'embeds' in payload
         assert payload['embeds'][0]['title'] == 'Test Notification'
 
-    def test_send_without_webhook_returns_false(self):
+    def test_send_without_webhook_raises_configuration_error(self):
         os.environ.pop('DISCORD_WEBHOOK_URL', None)
-        result = DiscordChannel().send(
-            recipient='', subject='Test', body='Body', metadata={}
-        )
-        assert result is False
+        with pytest.raises(NotificationConfigurationError):
+            DiscordChannel().send(
+                recipient='', subject='Test', body='Body', metadata={}
+            )
 
     @patch('notification.channels.requests.post')
     def test_send_network_failure_raises_transient_error(self, mock_post):
@@ -315,21 +310,30 @@ class TestTelegramChannel:
         assert call_args[1]['json']['chat_id'] == '@testchannel'
         assert call_args[1]['json']['parse_mode'] == 'HTML'
 
-    def test_send_without_token_returns_false(self):
+    def test_send_without_token_raises_terminal_error(self):
         os.environ.pop('TELEGRAM_BOT_TOKEN', None)
-        result = TelegramChannel().send(
-            recipient='@channel', subject='Test', body='Body', metadata={}
-        )
-        assert result is False
+        with pytest.raises(NotificationConfigurationError):
+            TelegramChannel().send(
+                recipient='@channel', subject='Test', body='Body', metadata={}
+            )
 
     @patch('notification.channels.requests.post')
-    def test_api_error_returns_false(self, mock_post):
+    def test_api_4xx_raises_configuration_error(self, mock_post):
         mock_post.return_value = Mock(status_code=400, text='Bad Request')
         os.environ['TELEGRAM_BOT_TOKEN'] = 'test-token'
-        result = TelegramChannel().send(
-            recipient='@channel', subject='Test', body='Body', metadata={}
-        )
-        assert result is False
+        with pytest.raises(NotificationConfigurationError):
+            TelegramChannel().send(
+                recipient='@channel', subject='Test', body='Body', metadata={}
+            )
+
+    @patch('notification.channels.requests.post')
+    def test_api_5xx_raises_transient_error(self, mock_post):
+        mock_post.return_value = Mock(status_code=503, text='Service Unavailable')
+        os.environ['TELEGRAM_BOT_TOKEN'] = 'test-token'
+        with pytest.raises(TransientNotificationError):
+            TelegramChannel().send(
+                recipient='@channel', subject='Test', body='Body', metadata={}
+            )
 
     @patch('notification.channels.requests.post')
     def test_rate_limit_429_raises(self, mock_post):
@@ -851,6 +855,31 @@ class TestNotificationService:
         assert NotificationPriority.HIGH.value == 'high'
         assert NotificationPriority.URGENT.value == 'urgent'
 
+    @patch('notification.service.process_notification_task', return_value='sync-fallback-id')
+    @patch('notification.service.NotificationTrackerService')
+    @patch('notification.service.Queue')
+    @patch('notification.service.Redis')
+    def test_enqueue_failure_falls_back_to_sync(
+        self, mock_redis, mock_queue_class, mock_tracker_class, mock_process, mock_repo
+    ):
+        """If queue.enqueue() fails at runtime, send_notification falls back to sync."""
+        mock_redis.from_url.return_value.ping.return_value = True
+        mock_queue = Mock()
+        mock_queue.enqueue.side_effect = Exception("Redis connection lost")
+        mock_queue_class.return_value = mock_queue
+        mock_tracker_class.return_value = Mock()
+
+        service = NotificationService(mock_repo, skip_dedup=True)
+        assert service.async_mode is True  # started in async mode
+
+        result = service.send_notification(
+            channel_type='email', recipient='test@example.com',
+            subject='Test', body='Body', user_id='user1',
+        )
+
+        assert result == 'sync-fallback-id'
+        mock_process.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # NotificationService — queue status
@@ -882,11 +911,14 @@ class TestNotificationServiceGetQueueStatus:
     def test_active_queue_returns_length_and_connected(self):
         with patch('notification.service.Redis') as mr, \
              patch('notification.service.Queue') as mq, \
-             patch('notification.service.NotificationTrackerService') as mt:
+             patch('notification.service.NotificationTrackerService') as mt, \
+             patch('notification.service.FailedJobRegistry') as mock_failed_reg:
+            mock_failed_reg.return_value.__len__ = Mock(return_value=3)
             service, _, _ = self._make_service(mr, mq, mt)
             result = service.get_queue_status()
             assert result['status'] == 'active'
             assert result['queue_length'] == 5
+            assert result['failed_job_count'] == 3
             assert result['redis_connected'] is True
 
     def test_redis_error_during_status_check_returns_error(self):
@@ -1063,33 +1095,43 @@ class TestProcessNotificationTask:
         assert_valid_uuid(result)
         mock_channel.send.assert_called_once()
 
-    def test_rate_limit_retried_then_succeeds(self):
+    def test_rate_limit_reschedules_in_async_mode(self):
+        """Rate limit in async mode: re-enqueues with delay, releases worker, no failure recorded."""
         from notification.service import process_notification_task
 
         mock_channel = Mock()
-        mock_channel.send.side_effect = [
-            RateLimitException("Rate limited", retry_after=10),
-            RateLimitException("Rate limited", retry_after=10),
-            True,
-        ]
+        mock_channel.send.side_effect = RateLimitException("Rate limited", retry_after=10)
+
+        mock_job = Mock()
+        mock_job.origin = 'notifications'
+        mock_job.connection = Mock()
 
         with patch('notification.service.NotificationChannelFactory.get_channel',
                    return_value=mock_channel), \
-             patch('notification.service.time.sleep'), \
+             patch('notification.service.get_current_job', return_value=mock_job), \
+             patch('notification.service.Queue') as mock_queue_class, \
              patch('notification.service.db_session_scope') as mock_scope, \
              patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
-             patch('notification.service.NotificationRateLimiter') as mock_rl_class:
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
 
-            mock_tracker, mock_rl = _make_task_patches(
-                mock_scope, mock_tracker_class, mock_rl_class
-            )
+            mock_queue = Mock()
+            mock_queue_class.return_value = mock_queue
+            _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
             result = process_notification_task(DISCORD_DATA)
 
         assert_valid_uuid(result)
-        assert mock_channel.send.call_count == 3
-        assert mock_rl.set_rate_limit.call_count == 2
+        mock_queue.enqueue_in.assert_called_once()
+        mock_record_fail.assert_not_called()
+        assert mock_channel.send.call_count == 1  # no retry within this job
 
-    def test_rate_limit_max_retries_exceeded_records_failure(self):
+        # Retry counter and origin_id propagated in rescheduled payload
+        _, _, rescheduled_data = mock_queue.enqueue_in.call_args[0]
+        assert rescheduled_data['rate_limit_retries'] == 1
+        assert_valid_uuid(rescheduled_data['origin_notification_id'])
+
+    def test_rate_limit_sync_fallback_records_failure(self):
+        """Rate limit in sync mode (no current_job): records failure immediately."""
         from notification.service import process_notification_task
 
         mock_channel = Mock()
@@ -1097,14 +1139,37 @@ class TestProcessNotificationTask:
 
         with patch('notification.service.NotificationChannelFactory.get_channel',
                    return_value=mock_channel), \
-             patch('notification.service.time.sleep'), \
              patch('notification.service.db_session_scope') as mock_scope, \
              patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
              patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
              patch('notification.service._record_notification_failure') as mock_record_fail:
 
             _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
-            result = process_notification_task(DISCORD_DATA)
+            result = process_notification_task(DISCORD_DATA)  # no get_current_job mock → sync
+
+        assert_valid_uuid(result)
+        mock_record_fail.assert_called_once()
+
+    def test_rate_limit_max_retries_exceeded_records_failure(self):
+        """After max rate-limit reschedules, failure is recorded."""
+        from notification.service import process_notification_task
+        from notification.service import MAX_RATE_LIMIT_RETRIES
+
+        mock_channel = Mock()
+        mock_channel.send.side_effect = RateLimitException("Rate limited", retry_after=10)
+
+        # Simulate a job that has already been rescheduled MAX_RATE_LIMIT_RETRIES times
+        exhausted_data = {**DISCORD_DATA, 'rate_limit_retries': MAX_RATE_LIMIT_RETRIES}
+
+        with patch('notification.service.NotificationChannelFactory.get_channel',
+                   return_value=mock_channel), \
+             patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
+
+            _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            result = process_notification_task(exhausted_data)
 
         assert_valid_uuid(result)
         mock_record_fail.assert_called_once()
@@ -1132,10 +1197,48 @@ class TestProcessNotificationTask:
         _, _, error_msg = mock_record_fail.call_args[0]
         assert "Network error" in error_msg
 
-    def test_transient_exception_retries_then_records_failure(self):
+    def test_transient_exception_reschedules_in_async_mode(self):
+        """Transient failure in async mode: re-enqueues with delay, releases worker, no failure recorded."""
         from notification.service import process_notification_task
 
-        notification_data = {**DISCORD_DATA, 'raise_transient': True}
+        mock_channel = Mock()
+        mock_channel.send.side_effect = TransientNotificationError(
+            "Network error",
+            failure_class="discord_transport",
+        )
+
+        mock_job = Mock()
+        mock_job.origin = 'notifications'
+        mock_job.connection = Mock()
+
+        with patch('notification.service.NotificationChannelFactory.get_channel',
+                   return_value=mock_channel), \
+             patch('notification.service.get_current_job', return_value=mock_job), \
+             patch('notification.service.Queue') as mock_queue_class, \
+             patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
+
+            mock_queue = Mock()
+            mock_queue_class.return_value = mock_queue
+            _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            result = process_notification_task(DISCORD_DATA)
+
+        assert_valid_uuid(result)
+        mock_queue.enqueue_in.assert_called_once()
+        mock_record_fail.assert_not_called()
+        assert mock_channel.send.call_count == 1  # no retry within this job
+
+        # Retry counter and origin_id propagated in rescheduled payload
+        _, _, rescheduled_data = mock_queue.enqueue_in.call_args[0]
+        assert rescheduled_data['transient_retries'] == 1
+        assert_valid_uuid(rescheduled_data['origin_notification_id'])
+
+    def test_transient_exception_sync_fallback_records_failure(self):
+        """Transient failure in sync mode (no current_job): records failure immediately, no re-enqueue."""
+        from notification.service import process_notification_task
+
         mock_channel = Mock()
         mock_channel.send.side_effect = TransientNotificationError(
             "Network error",
@@ -1144,20 +1247,114 @@ class TestProcessNotificationTask:
 
         with patch('notification.service.NotificationChannelFactory.get_channel',
                    return_value=mock_channel), \
-             patch('notification.service.time.sleep') as mock_sleep, \
              patch('notification.service.db_session_scope') as mock_scope, \
              patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
              patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
              patch('notification.service._record_notification_failure') as mock_record_fail:
 
             _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
-            result = process_notification_task(notification_data)
+            result = process_notification_task(DISCORD_DATA)  # no get_current_job mock → sync mode
 
         assert_valid_uuid(result)
-        assert mock_channel.send.call_count == 4
-        assert mock_sleep.call_args_list == [((30,),), ((60,),), ((120,),)]
+        mock_record_fail.assert_called_once()
+        assert mock_record_fail.call_args[1]['failure_class'] == 'discord_transport'
+
+    def test_transient_exception_max_retries_records_failure(self):
+        """After max transient reschedules, failure is recorded."""
+        from notification.service import process_notification_task
+
+        mock_channel = Mock()
+        mock_channel.send.side_effect = TransientNotificationError(
+            "Network error",
+            failure_class="discord_transport",
+        )
+
+        # Simulate a job that has already been rescheduled 3 times (budget exhausted)
+        exhausted_data = {**DISCORD_DATA, 'transient_retries': 3}
+
+        with patch('notification.service.NotificationChannelFactory.get_channel',
+                   return_value=mock_channel), \
+             patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
+
+            _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            result = process_notification_task(exhausted_data)
+
+        assert_valid_uuid(result)
         mock_record_fail.assert_called_once()
         assert mock_record_fail.call_args.kwargs['failure_class'] == 'discord_transport'
+
+    def test_preflight_rate_limit_async_reschedules_when_retries_available(self):
+        """Async mode: pre-flight rate limit with budget remaining re-enqueues and returns."""
+        from notification.service import process_notification_task
+
+        mock_job = Mock()
+        mock_job.origin = 'notifications'
+        mock_job.connection = Mock()
+
+        with patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service.get_current_job', return_value=mock_job), \
+             patch('notification.service.Queue') as mock_queue_class, \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
+
+            mock_queue = Mock()
+            mock_queue_class.return_value = mock_queue
+            _, mock_rl = _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            mock_rl.get_wait_time.return_value = 45  # active rate limit
+            result = process_notification_task(DISCORD_DATA)  # rate_limit_retries=0 < MAX
+
+        assert_valid_uuid(result)
+        mock_queue.enqueue_in.assert_called_once()
+        mock_record_fail.assert_not_called()
+        _, _, rescheduled_data = mock_queue.enqueue_in.call_args[0]
+        assert rescheduled_data['rate_limit_retries'] == 1
+
+    def test_preflight_rate_limit_async_exhausted_records_failure(self):
+        """Async mode: pre-flight rate limit with retries exhausted records failure (no sleep, no enqueue)."""
+        from notification.service import process_notification_task, MAX_RATE_LIMIT_RETRIES
+
+        exhausted_data = {**DISCORD_DATA, 'rate_limit_retries': MAX_RATE_LIMIT_RETRIES}
+
+        mock_job = Mock()
+        mock_job.origin = 'notifications'
+        mock_job.connection = Mock()
+
+        with patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service.get_current_job', return_value=mock_job), \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
+
+            _, mock_rl = _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            mock_rl.get_wait_time.return_value = 45  # active rate limit
+            result = process_notification_task(exhausted_data)
+
+        assert_valid_uuid(result)
+        mock_record_fail.assert_called_once()
+        assert mock_record_fail.call_args[1]['failure_class'] == 'rate_limit_exhausted'
+
+    def test_preflight_rate_limit_sync_too_long_records_failure(self):
+        """Sync mode: pre-flight rate limit wait exceeding cap records failure immediately (no sleep)."""
+        from notification.service import process_notification_task, SYNC_MODE_MAX_WAIT_SECONDS
+
+        with patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service.time.sleep') as mock_sleep, \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
+
+            _, mock_rl = _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            mock_rl.get_wait_time.return_value = SYNC_MODE_MAX_WAIT_SECONDS + 1
+            result = process_notification_task(DISCORD_DATA)  # no current_job → sync mode
+
+        assert_valid_uuid(result)
+        mock_sleep.assert_not_called()
+        mock_record_fail.assert_called_once()
+        assert mock_record_fail.call_args[1]['failure_class'] == 'rate_limit_sync_too_long'
 
     def test_active_rate_limit_sleeps_before_send(self):
         from notification.service import process_notification_task
@@ -1180,6 +1377,29 @@ class TestProcessNotificationTask:
 
         assert_valid_uuid(result)
         mock_sleep.assert_called_with(15)
+
+    def test_terminal_error_records_failure_and_re_raises(self):
+        """Terminal failures are recorded in the DB and re-raised so RQ marks the job failed."""
+        from notification.service import process_notification_task
+
+        mock_channel = Mock()
+        mock_channel.send.side_effect = TerminalNotificationError("SMTP not configured")
+
+        with patch('notification.service.NotificationChannelFactory.get_channel',
+                   return_value=mock_channel), \
+             patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
+
+            _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            with pytest.raises(TerminalNotificationError, match="SMTP not configured"):
+                process_notification_task(NOTIFICATION_DATA)
+
+        mock_record_fail.assert_called_once()
+        _, _, error_msg = mock_record_fail.call_args[0]
+        assert "SMTP not configured" in error_msg
+        assert mock_record_fail.call_args[1]['failure_class'] == 'terminal'
 
     def test_process_notification_task_uses_runtime_rate_limit_config(self):
         from notification.service import process_notification_task
@@ -1257,48 +1477,18 @@ class TestNotificationServiceHelpers:
 
         settings_service.mark_test_result.assert_called_once()
 
-    def test_handle_notification_processing_exception_records_terminal_failures(self):
-        from notification.service import _handle_notification_processing_exception
+    def test_reschedule_notification_raises_on_enqueue_failure(self):
+        """_reschedule_notification wraps enqueue errors in RuntimeError so callers can record failure."""
+        from notification.service import _reschedule_notification
 
-        error = TerminalNotificationError('boom', failure_class='terminal_failure')
-        with patch('notification.service._record_notification_failure') as mock_record_failure:
-            action, retries = _handle_notification_processing_exception(
-                'notif-123',
-                NOTIFICATION_DATA,
-                'email',
-                error,
-                raise_transient=True,
-                transient_retries=1,
-            )
+        mock_job = Mock()
+        mock_job.origin = 'notifications'
+        mock_job.connection = Mock()
 
-        assert (action, retries) == ('return', 1)
-        mock_record_failure.assert_called_once_with(
-            'notif-123',
-            NOTIFICATION_DATA,
-            'boom',
-            failure_class='terminal_failure',
-        )
-
-    def test_handle_notification_processing_exception_records_generic_failures(self):
-        from notification.service import _handle_notification_processing_exception
-
-        with patch('notification.service._record_notification_failure') as mock_record_failure:
-            action, retries = _handle_notification_processing_exception(
-                'notif-123',
-                NOTIFICATION_DATA,
-                'email',
-                RuntimeError('boom'),
-                raise_transient=False,
-                transient_retries=0,
-            )
-
-        assert (action, retries) == ('return', 0)
-        mock_record_failure.assert_called_once_with(
-            'notif-123',
-            NOTIFICATION_DATA,
-            'boom',
-            failure_class='unknown',
-        )
+        with patch('notification.service.Queue') as mock_queue_class:
+            mock_queue_class.return_value.enqueue_in.side_effect = Exception("Redis gone")
+            with pytest.raises(RuntimeError, match="Reschedule failed"):
+                _reschedule_notification(NOTIFICATION_DATA, 30, mock_job, "transient_failure")
 
 
 # ---------------------------------------------------------------------------
@@ -1332,8 +1522,10 @@ class TestSendAndRecordNotification:
         assert kwargs['success'] is True
         assert kwargs['error_message'] is None
 
-    def test_failed_send_records_success_false_with_error(self):
+    def test_failed_send_raises_transient_error(self):
+        """channel.send() returning False enters the transient retry path, not a silent failure."""
         from notification.service import _send_and_record_notification
+        from notification.exceptions import TransientNotificationError
 
         mock_channel = Mock()
         mock_channel.send.return_value = False
@@ -1344,12 +1536,12 @@ class TestSendAndRecordNotification:
              patch('notification.service.NotificationTrackerService') as mock_tracker_class:
 
             mock_tracker = self._make_patches(mock_scope, mock_tracker_class)
-            result = _send_and_record_notification("notif-123", NOTIFICATION_DATA)
+            with pytest.raises(TransientNotificationError) as exc_info:
+                _send_and_record_notification("notif-123", NOTIFICATION_DATA)
 
-        assert result == "notif-123"
-        kwargs = mock_tracker.record_notification.call_args[1]
-        assert kwargs['success'] is False
-        assert kwargs['error_message'] is not None
+        assert exc_info.value.failure_class == "channel_send_failed"
+        # No DB record written — TransientNotificationError propagates to process_notification_task
+        mock_tracker.record_notification.assert_not_called()
 
     def test_settings_test_send_updates_terminal_status(self):
         from notification.service import _send_and_record_notification

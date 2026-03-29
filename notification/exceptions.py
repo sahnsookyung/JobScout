@@ -16,11 +16,17 @@ class TerminalNotificationError(NotificationProcessingError):
 
     retryable = False
 
+    def __init__(self, message: str, *, failure_class: str = "terminal"):
+        super().__init__(message, failure_class=failure_class)
+
 
 class TransientNotificationError(NotificationProcessingError):
     """A retryable notification failure."""
 
     retryable = True
+
+    def __init__(self, message: str, *, failure_class: str = "transient"):
+        super().__init__(message, failure_class=failure_class)
 
 
 class NotificationConfigurationError(TerminalNotificationError):

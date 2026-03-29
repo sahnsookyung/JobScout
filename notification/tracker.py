@@ -192,8 +192,10 @@ class NotificationTrackerService:
     ) -> str:
         """
         Generate deduplication hash for an event.
-        
+
         This hash uniquely identifies a notification event to prevent duplicates.
+        job_match_id=None produces the string "None" in the key — this is intentional
+        to maintain backward compatibility with existing stored records.
         """
         key = f"{user_id}:{job_match_id}:{event_type}:{channel_type}"
         return hashlib.sha256(key.encode('utf-8')).hexdigest()[:32]
@@ -290,6 +292,7 @@ class NotificationTrackerService:
         body: str, # Notification body
         success: bool, # Whether sending succeeded
         error_message: Optional[str] = None, # Error if failed
+        failure_class: Optional[str] = None, # Typed failure class for failed notifications
         metadata: Optional[Dict[str, Any]] = None, # Additional context
         allow_resend: bool = True, # Whether to allow future resends
         commit: bool = True
@@ -309,8 +312,9 @@ class NotificationTrackerService:
             existing.event_data = metadata or {}
             existing.recipient = stored_recipient
             existing.sent_successfully = success
+            existing.failure_class = failure_class  # None on success — intentionally clears prior failure
             existing.error_message = error_message
-            
+
             tracker = existing
             logger.info(f"Updated notification record (send count: {tracker.send_count})")
         else:
@@ -327,6 +331,7 @@ class NotificationTrackerService:
                 subject=subject,
                 body=body,
                 sent_successfully=success,
+                failure_class=failure_class,
                 error_message=error_message,
                 allow_resend=allow_resend,
                 resend_interval_hours=self.strategy.get_resend_interval()

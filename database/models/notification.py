@@ -25,6 +25,7 @@ class NotificationTracker(Base):
     subject = Column(Text)
     body = Column(Text, nullable=True)
     sent_successfully = Column(Boolean, default=False)
+    failure_class = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
     first_sent_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))
     last_sent_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text("timezone('UTC', now())"))

@@ -25,7 +25,7 @@ from notification.channels import (
     _mask_email, _validate_channel_file_path,
     NotificationChannelFactory, InAppChannel
 )
-from notification.exceptions import TransientNotificationError
+from notification.exceptions import NotificationConfigurationError, TerminalNotificationError, TransientNotificationError
 from notification.runtime_config import clear_notification_runtime_config_cache
 from notification.service import NotificationRateLimiter
 from notification.message_builder import JobNotificationContent, JobInfo, MatchInfo, RequirementsInfo
@@ -432,20 +432,18 @@ class TestWebhookChannelRichContent:
         assert call_args['jobs'][0]['job']['title'] == 'Developer'
 
     @patch('notification.channels.requests.post')
-    def test_webhook_send_with_invalid_url(self, mock_post, caplog):
-        """Test webhook send with invalid URL is rejected."""
+    def test_webhook_send_with_invalid_url(self, mock_post):
+        """Test webhook send with invalid URL raises NotificationConfigurationError."""
         # Mock URL validation to fail
         with patch('notification.channels._validate_webhook_url', return_value=False):
             channel = WebhookChannel()
-            result = channel.send(
-                recipient='http://127.0.0.1/invalid',
-                subject='Test',
-                body='Body',
-                metadata={}
-            )
-
-            assert result is False
-            assert "Invalid or unsafe webhook URL" in caplog.text
+            with pytest.raises(NotificationConfigurationError, match="Invalid or unsafe webhook URL"):
+                channel.send(
+                    recipient='http://127.0.0.1/invalid',
+                    subject='Test',
+                    body='Body',
+                    metadata={}
+                )
 
 
 class TestDiscordChannelRichContent:
@@ -852,15 +850,14 @@ class TestNotificationChannelFactory:
 class TestEmailChannelUncoveredPaths:
     """Cover remaining email channel branches."""
 
-    def test_email_not_configured_returns_false(self, caplog):
-        """EmailChannel.send returns False when SMTP not configured."""
+    def test_email_not_configured_raises_configuration_error(self):
+        """EmailChannel.send raises NotificationConfigurationError when SMTP not configured."""
         channel = EmailChannel()
         for var in ['SMTP_SERVER', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD']:
             os.environ.pop(var, None)
 
-        result = channel.send('user@example.com', 'Subject', 'Body', {})
-        assert result is False
-        assert "Email not configured" in caplog.text
+        with pytest.raises(NotificationConfigurationError, match="Email not configured"):
+            channel.send('user@example.com', 'Subject', 'Body', {})
 
     @patch('notification.channels.smtplib.SMTP')
     def test_email_plain_text_fallback(self, mock_smtp_class):
@@ -979,13 +976,12 @@ class TestDiscordChannelUncoveredPaths:
         assert result is True
         assert mock_post.call_args[0][0] == 'https://discord.com/api/webhooks/explicit/test'
 
-    def test_discord_no_webhook_url_returns_false(self, caplog):
-        """DiscordChannel.send returns False with no webhook URL."""
+    def test_discord_no_webhook_url_raises_configuration_error(self):
+        """DiscordChannel.send raises NotificationConfigurationError with no webhook URL."""
         os.environ.pop('DISCORD_WEBHOOK_URL', None)
         channel = DiscordChannel()
-        result = channel.send('', 'Subject', 'Body', {})
-        assert result is False
-        assert "Discord webhook not configured" in caplog.text
+        with pytest.raises(NotificationConfigurationError, match="DISCORD_WEBHOOK_URL not set"):
+            channel.send('', 'Subject', 'Body', {})
 
     @patch('notification.channels.requests.post')
     def test_discord_simple_embed_fallback(self, mock_post):
@@ -1016,17 +1012,16 @@ class TestDiscordChannelUncoveredPaths:
 class TestTelegramChannelUncoveredPaths:
     """Cover remaining Telegram channel branches."""
 
-    def test_telegram_no_bot_token_returns_false(self, caplog):
-        """TelegramChannel.send returns False with no bot token."""
+    def test_telegram_no_bot_token_raises_configuration_error(self):
+        """TelegramChannel.send raises NotificationConfigurationError with no bot token."""
         os.environ.pop('TELEGRAM_BOT_TOKEN', None)
         channel = TelegramChannel()
-        result = channel.send('@channel', 'Subject', 'Body', {})
-        assert result is False
-        assert "TELEGRAM_BOT_TOKEN not set" in caplog.text
+        with pytest.raises(NotificationConfigurationError, match="TELEGRAM_BOT_TOKEN not set"):
+            channel.send('@channel', 'Subject', 'Body', {})
 
     @patch('notification.channels.requests.post')
-    def test_telegram_non_200_status_returns_false(self, mock_post, caplog):
-        """TelegramChannel.send returns False on non-200 status."""
+    def test_telegram_4xx_status_raises_configuration_error(self, mock_post):
+        """TelegramChannel.send raises NotificationConfigurationError on 4xx (bad token/chat_id)."""
         mock_response = Mock()
         mock_response.status_code = 400
         mock_response.text = 'Bad Request'
@@ -1034,9 +1029,21 @@ class TestTelegramChannelUncoveredPaths:
 
         os.environ['TELEGRAM_BOT_TOKEN'] = 'test-token'
         channel = TelegramChannel()
-        result = channel.send('@channel', 'Subject', 'Body', {})
-        assert result is False
-        assert "Telegram API error" in caplog.text
+        with pytest.raises(NotificationConfigurationError, match="Telegram API rejected"):
+            channel.send('@channel', 'Subject', 'Body', {})
+
+    @patch('notification.channels.requests.post')
+    def test_telegram_5xx_status_raises_transient_error(self, mock_post):
+        """TelegramChannel.send raises TransientNotificationError on 5xx (server-side error)."""
+        mock_response = Mock()
+        mock_response.status_code = 503
+        mock_response.text = 'Service Unavailable'
+        mock_post.return_value = mock_response
+
+        os.environ['TELEGRAM_BOT_TOKEN'] = 'test-token'
+        channel = TelegramChannel()
+        with pytest.raises(TransientNotificationError, match="Telegram API error"):
+            channel.send('@channel', 'Subject', 'Body', {})
 
     @patch('notification.channels.requests.post', side_effect=Exception("connection error"))
     def test_telegram_exception_raises_transient_error(self, mock_post, caplog):

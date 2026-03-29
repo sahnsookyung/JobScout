@@ -25,8 +25,10 @@ Usage:
 """
 
 import logging
+import math
 import time
 import uuid
+from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 from enum import Enum
@@ -35,8 +37,9 @@ from uuid import UUID
 # RQ imports
 try:
     from redis import Redis
-    from rq import Queue, Retry
+    from rq import Queue, get_current_job
     from rq.job import Job
+    from rq.registry import FailedJobRegistry
     RQ_AVAILABLE = True
 except ImportError:
     RQ_AVAILABLE = False
@@ -61,6 +64,10 @@ from notification.user_settings import UserNotificationSettingsService
 logger = logging.getLogger(__name__)
 
 TRANSIENT_RETRY_INTERVALS = (30, 60, 120)
+MAX_RATE_LIMIT_RETRIES = 3
+# Maximum seconds to block a sync-mode thread waiting out a rate limit.
+# Beyond this threshold the notification is recorded as failed immediately.
+SYNC_MODE_MAX_WAIT_SECONDS = 30
 
 
 def _parse_uuid(value: Any) -> Optional[UUID]:
@@ -97,62 +104,37 @@ def _mark_settings_test_result(
         logger.debug("Failed to persist settings test status", exc_info=True)
 
 
-def _handle_notification_processing_exception(
-    notification_id: str,
+def _reschedule_notification(
     notification_data: Dict[str, Any],
-    channel_type: str,
-    error: Exception,
-    raise_transient: bool,
-    transient_retries: int,
-) -> tuple[str, int]:
-    """Return the next action for notification processing failures."""
-    if isinstance(error, TerminalNotificationError):
-        logger.error(f"Failed to process notification {notification_id}: {error}", exc_info=True)
-        _record_notification_failure(
-            notification_id,
+    delay_seconds: int,
+    current_job,
+    reason: str,
+) -> None:
+    """Re-enqueue a notification after a delay, releasing the current worker immediately.
+
+    Raises RuntimeError if the enqueue fails so callers can record a failure rather
+    than silently losing the notification.
+    """
+    try:
+        queue = Queue(current_job.origin, connection=current_job.connection)
+        queue.enqueue_in(
+            timedelta(seconds=delay_seconds),
+            process_notification_task,
             notification_data,
-            str(error),
-            failure_class=error.failure_class,
+            job_timeout='5m',
+            result_ttl=86400,
+            failure_ttl=604800,
         )
-        return "return", transient_retries
-
-    if isinstance(error, TransientNotificationError) and raise_transient:
-        if transient_retries >= len(TRANSIENT_RETRY_INTERVALS):
-            logger.error(
-                "Max transient retries (%s) exceeded for notification %s",
-                len(TRANSIENT_RETRY_INTERVALS),
-                notification_id,
-            )
-            _record_notification_failure(
-                notification_id,
-                notification_data,
-                str(error),
-                failure_class=error.failure_class,
-            )
-            return "return", transient_retries
-
-        wait_seconds = TRANSIENT_RETRY_INTERVALS[transient_retries]
-        next_retry = transient_retries + 1
-        logger.warning(
-            "Transient notification failure for %s via %s: %s. Retrying in %ss (%s/%s)",
-            notification_id,
-            channel_type,
-            error,
-            wait_seconds,
-            next_retry,
-            len(TRANSIENT_RETRY_INTERVALS),
+    except Exception as exc:
+        logger.error(
+            "Failed to reschedule notification via %s in %ds (%s): %s",
+            current_job.origin, delay_seconds, reason, exc, exc_info=True,
         )
-        time.sleep(wait_seconds)
-        return "retry", next_retry
-
-    logger.error(f"Failed to process notification {notification_id}: {error}", exc_info=True)
-    _record_notification_failure(
-        notification_id,
-        notification_data,
-        str(error),
-        failure_class=getattr(error, "failure_class", "unknown"),
+        raise RuntimeError(f"Reschedule failed: {exc}") from exc
+    logger.info(
+        "Rescheduled notification via %s in %ds (%s); worker released",
+        current_job.origin, delay_seconds, reason,
     )
-    return "return", transient_retries
 
 
 class NotificationRateLimiter:
@@ -379,23 +361,32 @@ class NotificationService:
             'priority': priority.value,
             'allow_resend': allow_resend,
             'resolve_user_settings': resolve_user_settings,
-            'raise_transient': self.async_mode,
             'require_enabled_delivery': require_enabled_delivery,
+            'transient_retries': 0,
+            'rate_limit_retries': 0,
+            # origin_notification_id is absent on first execution; process_notification_task
+            # sets it from the generated notification_id and threads it through all reschedules.
         }
-        
+
         # Queue or process immediately
         if self.async_mode:
-            # Add retry policy for transient failures
-            retry_policy = Retry(max=3, interval=[30, 60, 120])  # Retry 3 times with increasing delays
-            job = self.queue.enqueue(
-                process_notification_task,
-                notification_data,
-                job_timeout='5m',
-                result_ttl=86400,
-                retry=retry_policy
-            )
-            notification_id = job.id
-            logger.info(f"Queued notification as job {job.id}")
+            # Transient failures re-enqueue with a delay, releasing the worker immediately.
+            # Terminal failures re-raise so RQ marks the job failed (visible in the failed registry).
+            try:
+                job = self.queue.enqueue(
+                    process_notification_task,
+                    notification_data,
+                    job_timeout='5m',
+                    result_ttl=86400,
+                )
+                notification_id = job.id
+                logger.info(f"Queued notification as job {job.id}")
+            except Exception as e:
+                logger.error(
+                    f"Redis enqueue failed ({e}), falling back to synchronous send",
+                    exc_info=True,
+                )
+                notification_id = process_notification_task(notification_data)
         else:
             # Process synchronously
             notification_id = process_notification_task(notification_data)
@@ -585,94 +576,225 @@ JobScout
         return getattr(config, "recipient", None)
 
     def get_queue_status(self) -> Dict[str, Any]:
-        """Get queue status."""
+        """Get queue status including failed job count from the DLQ."""
         if not self.async_mode:
             return {'status': 'sync_mode', 'queue_length': 0}
-        
+
         try:
+            failed_registry = FailedJobRegistry(queue=self.queue)
             return {
                 'status': 'active',
                 'queue_length': len(self.queue),
-                'redis_connected': self.redis_conn.ping()
+                'failed_job_count': len(failed_registry),
+                'redis_connected': self.redis_conn.ping(),
             }
         except Exception as e:
             return {'status': 'error', 'error': str(e)}
 
 
+def _handle_preflight_rate_limit(
+    notification_id: str,
+    origin_id: str,
+    notification_data: Dict[str, Any],
+    channel_type: str,
+    wait_time: float,
+    current_job,
+    rate_limit_retries: int,
+) -> Optional[str]:
+    """Handle a pre-flight rate-limit signal before attempting to send.
+
+    Returns the notification_id if the caller should return early (reschedule or
+    failure recorded), or None if the caller should proceed with the send.
+    """
+    if current_job:
+        if rate_limit_retries < MAX_RATE_LIMIT_RETRIES:
+            _reschedule_notification(
+                {**notification_data, 'rate_limit_retries': rate_limit_retries + 1,
+                 'origin_notification_id': origin_id},
+                math.ceil(wait_time), current_job, "rate_limit_active",
+            )
+            return notification_id
+        # Async mode, retries exhausted — record failure rather than blocking the worker.
+        logger.error(
+            "Pre-flight rate limit: max retries (%d) exceeded for notification %s (origin: %s)",
+            MAX_RATE_LIMIT_RETRIES, notification_id, origin_id,
+        )
+        _record_notification_failure(
+            notification_id, notification_data,
+            f"Pre-flight rate limit: max retries ({MAX_RATE_LIMIT_RETRIES}) exceeded",
+            failure_class="rate_limit_exhausted",
+        )
+        return notification_id
+    # Sync mode: only sleep for short waits; a long sleep would block the calling thread.
+    if wait_time > SYNC_MODE_MAX_WAIT_SECONDS:
+        logger.warning(
+            "Rate limit wait %.1fs exceeds sync-mode cap (%ds) for %s; recording failure",
+            wait_time, SYNC_MODE_MAX_WAIT_SECONDS, channel_type,
+        )
+        _record_notification_failure(
+            notification_id, notification_data,
+            f"Rate limit wait ({wait_time:.0f}s) exceeds sync-mode cap",
+            failure_class="rate_limit_sync_too_long",
+        )
+        return notification_id
+    logger.info("Rate limit active for %s, waiting %.1fs (sync mode)", channel_type, wait_time)
+    time.sleep(wait_time)
+    return None
+
+
+def _handle_rate_limit_exception(
+    notification_id: str,
+    origin_id: str,
+    notification_data: Dict[str, Any],
+    channel_type: str,
+    exc: "RateLimitException",
+    current_job,
+    rate_limit_retries: int,
+    max_wait_seconds: int,
+    rate_limiter: "NotificationRateLimiter",
+) -> str:
+    """Handle a RateLimitException raised during send."""
+    retry_after = exc.retry_after or 60
+    actual_wait = min(retry_after, max_wait_seconds)
+    rate_limiter.set_rate_limit(channel_type, actual_wait)
+
+    if rate_limit_retries >= MAX_RATE_LIMIT_RETRIES:
+        logger.error(
+            "Max rate limit retries (%d) exceeded for notification %s (origin: %s)",
+            MAX_RATE_LIMIT_RETRIES, notification_id, origin_id,
+        )
+        _record_notification_failure(
+            notification_id, notification_data,
+            f"Rate limit exceeded after {MAX_RATE_LIMIT_RETRIES} retries",
+        )
+        return notification_id
+
+    logger.warning(
+        "Rate limited by %s. Rescheduling in %ds (attempt %d/%d)",
+        channel_type, actual_wait, rate_limit_retries + 1, MAX_RATE_LIMIT_RETRIES,
+    )
+    if current_job:
+        _reschedule_notification(
+            {**notification_data, 'rate_limit_retries': rate_limit_retries + 1,
+             'origin_notification_id': origin_id},
+            actual_wait, current_job, "rate_limited",
+        )
+    else:
+        # Sync fallback: no queue to reschedule into — record failure immediately
+        _record_notification_failure(
+            notification_id, notification_data,
+            f"Rate limited in sync mode after {rate_limit_retries + 1} attempt(s)",
+        )
+    return notification_id
+
+
+def _handle_transient_error(
+    notification_id: str,
+    origin_id: str,
+    notification_data: Dict[str, Any],
+    channel_type: str,
+    exc: "TransientNotificationError",
+    current_job,
+    transient_retries: int,
+) -> str:
+    """Handle a TransientNotificationError raised during send."""
+    if transient_retries >= len(TRANSIENT_RETRY_INTERVALS):
+        logger.error(
+            "Max transient retries (%d) exceeded for notification %s (origin: %s)",
+            len(TRANSIENT_RETRY_INTERVALS), notification_id, origin_id,
+        )
+        _record_notification_failure(notification_id, notification_data, str(exc), failure_class=exc.failure_class)
+        return notification_id
+
+    delay = TRANSIENT_RETRY_INTERVALS[transient_retries]
+    logger.warning(
+        "Transient failure for %s via %s (origin: %s): %s. Rescheduling in %ds (%d/%d)",
+        notification_id, channel_type, origin_id, exc, delay,
+        transient_retries + 1, len(TRANSIENT_RETRY_INTERVALS),
+    )
+    if current_job:
+        _reschedule_notification(
+            {**notification_data, 'transient_retries': transient_retries + 1,
+             'origin_notification_id': origin_id},
+            delay, current_job, "transient_failure",
+        )
+    else:
+        # Sync fallback: no queue to reschedule into — record failure immediately
+        _record_notification_failure(notification_id, notification_data, str(exc), failure_class=exc.failure_class)
+    return notification_id
+
+
 # Worker task - must be at module level for RQ
 def process_notification_task(notification_data: Dict[str, Any]) -> str:
     """
-    Process a notification (called by RQ worker).
+    Process a notification (called by RQ worker or synchronously as Redis fallback).
 
-    This function:
-    1. Checks global rate limiter (coordination across workers)
-    2. Gets the appropriate channel
-    3. Sends the notification
-    4. Records the result in the tracker (only after max retries)
-    5. Updates global rate limiter if rate limited
+    In async mode (running inside an RQ job):
+    - Transient failures and rate limits re-enqueue the job with a delay via
+      Queue.enqueue_in(), releasing the worker thread immediately.
+    - Terminal failures re-raise so RQ moves the job to the failed registry (DLQ).
+
+    In sync mode (Redis unavailable, direct call):
+    - Transient/rate-limit failures record immediately and return the id.
+    - No reschedule possible without a queue.
+    - Short pre-flight rate-limit waits (≤ SYNC_MODE_MAX_WAIT_SECONDS) are honored
+      with a brief sleep; longer waits record a failure immediately.
     """
     notification_id = str(uuid.uuid4())
     channel_type = notification_data['channel_type']
-    
     runtime_config = get_notification_runtime_config()
     redis_url = runtime_config.redis_url
     max_wait_seconds = runtime_config.rate_limit_max_wait_seconds
-    
-    logger.info(f"Processing notification {notification_id} via {channel_type}")
-    
-    # Create rate limiter (each worker gets its own instance, but they share Redis)
-    rate_limiter = NotificationRateLimiter(redis_url, max_wait_seconds)
-    
-    # Max retries for rate limiting
-    max_rate_limit_retries = 3
-    rate_limit_retries = 0
-    transient_retries = 0
-    
-    raise_transient = bool(notification_data.get('raise_transient', False))
 
-    while True:
-        # Check global rate limit before sending
-        wait_time = rate_limiter.get_wait_time(channel_type)
-        if wait_time > 0:
-            logger.info(f"Global rate limit active for {channel_type}. Waiting {wait_time:.1f}s...")
-            time.sleep(wait_time)
-        
-        try:
-            return _send_and_record_notification(
-                notification_id, notification_data
-            )
-        except RateLimitException as e:
-            rate_limit_retries += 1
-            retry_after = e.retry_after or 60
-            actual_wait = min(retry_after, max_wait_seconds)
-            
-            # Update global rate limiter so all workers know to wait (capped)
-            rate_limiter.set_rate_limit(channel_type, actual_wait)
-            
-            if rate_limit_retries > max_rate_limit_retries:
-                logger.error(f"Max rate limit retries ({max_rate_limit_retries}) exceeded for notification {notification_id}")
-                _record_notification_failure(
-                    notification_id, notification_data,
-                    f"Rate limit exceeded after {max_rate_limit_retries} retries"
-                )
-                return notification_id
-            
-            logger.warning(f"Rate limited by {channel_type}. Waiting {actual_wait}s before retry {rate_limit_retries}/{max_rate_limit_retries}")
-            time.sleep(actual_wait)
-            continue
-        
-        except Exception as e:
-            action, transient_retries = _handle_notification_processing_exception(
-                notification_id,
-                notification_data,
-                channel_type,
-                e,
-                raise_transient,
-                transient_retries,
-            )
-            if action == "retry":
-                continue
-            return notification_id
+    # origin_id threads through all reschedules for log correlation. Must use `or` rather than
+    # dict.get(key, default) because the key may be absent or present with value None.
+    origin_id = notification_data.get('origin_notification_id') or notification_id
+
+    logger.info("Processing notification %s (origin: %s) via %s", notification_id, origin_id, channel_type)
+
+    current_job = get_current_job()  # None when called synchronously
+    transient_retries = notification_data.get('transient_retries', 0)
+    rate_limit_retries = notification_data.get('rate_limit_retries', 0)
+
+    rate_limiter = NotificationRateLimiter(redis_url, max_wait_seconds)
+
+    # If a global rate limit is still active from a previous attempt, reschedule or fail fast.
+    wait_time = rate_limiter.get_wait_time(channel_type)
+    if wait_time > 0:
+        result = _handle_preflight_rate_limit(
+            notification_id, origin_id, notification_data, channel_type,
+            wait_time, current_job, rate_limit_retries,
+        )
+        if result is not None:
+            return result
+
+    try:
+        return _send_and_record_notification(notification_id, notification_data)
+
+    except RateLimitException as e:
+        return _handle_rate_limit_exception(
+            notification_id, origin_id, notification_data, channel_type,
+            e, current_job, rate_limit_retries, max_wait_seconds, rate_limiter,
+        )
+
+    except TerminalNotificationError as e:
+        logger.error("Terminal failure for %s: %s", notification_id, e, exc_info=True)
+        _record_notification_failure(notification_id, notification_data, str(e), failure_class=e.failure_class)
+        raise
+
+    except TransientNotificationError as e:
+        return _handle_transient_error(
+            notification_id, origin_id, notification_data, channel_type,
+            e, current_job, transient_retries,
+        )
+
+    except Exception as e:
+        logger.error("Unexpected failure for %s: %s", notification_id, e, exc_info=True)
+        _record_notification_failure(
+            notification_id, notification_data, str(e),
+            failure_class=getattr(e, 'failure_class', 'unknown'),
+        )
+        return notification_id
 
 
 def _send_and_record_notification(
@@ -714,8 +836,17 @@ def _send_and_record_notification(
         notification_data['body'],
         metadata,
     )
-    
-    # Record in database
+
+    if not success:
+        # channel.send() returning False is a retryable failure — treat it the same as a
+        # raised exception so the job enters the transient retry path rather than silently
+        # recording an undelivered notification as a completed job.
+        raise TransientNotificationError(
+            f"Channel {channel_type} reported send failure (returned False)",
+            failure_class="channel_send_failed",
+        )
+
+    # Record success in database
     with db_session_scope() as session:
         repo = JobRepository(session)
         tracker = NotificationTrackerService(repo)
@@ -727,16 +858,13 @@ def _send_and_record_notification(
             recipient=recipient,
             subject=notification_data['subject'],
             body=notification_data['body'],
-            success=success,
-            error_message=None if success else "Send failed",
+            success=True,
+            error_message=None,
             metadata=metadata,
             allow_resend=notification_data.get('allow_resend', True)
         )
-    
-    if success:
-        logger.info(f"Notification {notification_id} sent successfully")
-    else:
-        logger.error(f"Notification {notification_id} failed to send")
+
+    logger.info(f"Notification {notification_id} sent successfully")
 
     if notification_data.get('event_type') == 'settings_test':
         _mark_settings_test_result(
@@ -753,11 +881,10 @@ def _record_notification_failure(
     notification_data: Dict[str, Any],
     error_message: str,
     failure_class: str = "delivery_failed",
-    ) -> None:
+) -> None:
     """Record notification failure in database."""
     try:
         metadata = dict(notification_data.get('metadata', {}))
-        metadata.setdefault("failure_class", failure_class)
         with db_session_scope() as session:
             repo = JobRepository(session)
             tracker = NotificationTrackerService(repo)
@@ -770,9 +897,10 @@ def _record_notification_failure(
                 subject=notification_data['subject'],
                 body=notification_data['body'],
                 success=False,
+                failure_class=failure_class,
                 error_message=error_message,
                 metadata=metadata,
-                allow_resend=notification_data.get('allow_resend', True)
+                allow_resend=True,  # Always allow retry of undelivered notifications
             )
         _mark_settings_test_result(notification_data, status='failed', error_message=error_message)
     except Exception as db_error:

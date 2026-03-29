@@ -42,7 +42,7 @@ import ipaddress
 import socket
 
 from core.auth import _current_environment
-from notification.exceptions import TransientNotificationError
+from notification.exceptions import NotificationConfigurationError, TerminalNotificationError, TransientNotificationError
 from notification.message_builder import NotificationMessageBuilder, JobNotificationContent
 from notification.runtime_config import get_notification_runtime_config
 
@@ -408,8 +408,9 @@ class EmailChannel(NotificationChannel):
     
     def send(self, recipient: str, subject: str, body: str, metadata: Dict[str, Any]) -> bool:
         if not self.validate_config():
-            logger.error("Email not configured - SMTP runtime settings not set")
-            return False
+            raise NotificationConfigurationError(
+                "Email not configured — SMTP runtime settings not set"
+            )
         
         try:
             smtp_config = get_notification_runtime_config().smtp
@@ -421,8 +422,9 @@ class EmailChannel(NotificationChannel):
             from_email = smtp_config.from_email or username or 'noreply@jobscout.app'
 
             if bool(username) != bool(password):
-                logger.error("Email not configured - SMTP_USERNAME and SMTP_PASSWORD must be set together")
-                return False
+                raise NotificationConfigurationError(
+                    "Email not configured — SMTP_USERNAME and SMTP_PASSWORD must both be set"
+                )
             
             # Check for rich job notification content
             job_contents = metadata.get('job_contents', [])
@@ -452,7 +454,10 @@ class EmailChannel(NotificationChannel):
             
             logger.info(f"Email sent to {_mask_email(recipient)}")
             return True
-            
+
+        except (TerminalNotificationError, TransientNotificationError):
+            raise
+
         except (smtplib.SMTPException, OSError) as e:
             raise TransientNotificationError(
                 f"Failed to send email to {_mask_email(recipient)}: {e}",
@@ -559,8 +564,9 @@ class DiscordChannel(NotificationChannel):
         )
         
         if not webhook_url:
-            logger.error("Discord webhook not configured - DISCORD_WEBHOOK_URL not set")
-            return False
+            raise NotificationConfigurationError(
+                "Discord not configured — DISCORD_WEBHOOK_URL not set"
+            )
         
         try:
             embeds: List[Dict[str, Any]] = []
@@ -667,8 +673,9 @@ class TelegramChannel(NotificationChannel):
         bot_token = get_notification_runtime_config().telegram_bot_token
         
         if not bot_token:
-            logger.error("Telegram bot token not configured - TELEGRAM_BOT_TOKEN not set")
-            return False
+            raise NotificationConfigurationError(
+                "Telegram not configured — TELEGRAM_BOT_TOKEN not set"
+            )
         
         try:
             api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -709,13 +716,23 @@ class TelegramChannel(NotificationChannel):
             if response.status_code == 200:
                 logger.info(f"Telegram message sent to {recipient}")
                 return True
+            elif response.status_code >= 500:
+                # 5xx — server-side error, worth retrying
+                raise TransientNotificationError(
+                    f"Telegram API error: {response.status_code} — {response.text}"
+                )
             else:
-                logger.error(f"Telegram API error: {response.status_code} - {response.text}")
-                return False
+                # 4xx (bad token, bad chat_id, etc.) — won't succeed on retry
+                raise NotificationConfigurationError(
+                    f"Telegram API rejected message ({response.status_code}): {response.text}"
+                )
         
         except RateLimitException:
             raise
-        
+
+        except (TerminalNotificationError, TransientNotificationError):
+            raise
+
         except requests.RequestException as e:
             raise TransientNotificationError(
                 f"Failed to send Telegram message: {e}",
@@ -755,8 +772,9 @@ class WebhookChannel(NotificationChannel):
             webhook_url = recipient
             
             if not _validate_webhook_url(webhook_url):
-                logger.error(f"Invalid or unsafe webhook URL: {webhook_url}")
-                return False
+                raise NotificationConfigurationError(
+                    f"Invalid or unsafe webhook URL: {webhook_url}"
+                )
             
             headers = {
                 'Content-Type': 'application/json',
@@ -808,7 +826,10 @@ class WebhookChannel(NotificationChannel):
             safe_url = f"{parsed.scheme}://{parsed.hostname}{parsed.path}"
             logger.info(f"Webhook sent to {safe_url}")
             return True
-            
+
+        except (TerminalNotificationError, TransientNotificationError):
+            raise
+
         except requests.RequestException as e:
             raise TransientNotificationError(
                 f"Failed to send webhook: {e}",
