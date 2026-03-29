@@ -108,6 +108,7 @@ jobs:
       PYTHONPATH: ${{ github.workspace }}
       JOBSCOUT_ENV: test
       AUTH_MODE: dev-bypass
+      JOBSCOUT_E2E_SKIP_BUILD: "1"
 
     steps:
       - name: Checkout
@@ -126,8 +127,61 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-groups
 
+      - name: Ensure compose env file
+        run: uv run python -m tests.integration.helpers.compose_env
+
+      - name: Prebuild split-stack E2E images
+        run: |
+          compose_args=(
+            docker compose
+            -p jobscout-e2e
+            -f docker-compose.yml
+            -f docker-compose.microservices.yml
+            -f docker-compose.web.yml
+            -f docker-compose.e2e.yml
+            --profile split
+            --profile web
+          )
+          services=(
+            db-migrate
+            notification-worker
+            extraction
+            embeddings
+            scorer-matcher
+            orchestrator
+            web-backend
+          )
+          for service in "${services[@]}"; do
+            echo "::group::Build ${service}"
+            "${compose_args[@]}" --progress plain build --pull "${service}"
+            echo "::endgroup::"
+          done
+
       - name: Run split-stack resume flow E2E
         run: |
           uv run python -m pytest \
             tests/integration/test_split_stack_resume_flow.py \
             -q
+
+      - name: E2E compose diagnostics
+        if: failure()
+        run: |
+          compose_args=(
+            docker compose
+            -p jobscout-e2e
+            -f docker-compose.yml
+            -f docker-compose.microservices.yml
+            -f docker-compose.web.yml
+            -f docker-compose.e2e.yml
+            --profile split
+            --profile web
+          )
+          "${compose_args[@]}" ps --format json || true
+          "${compose_args[@]}" logs --no-color \
+            db-migrate \
+            notification-worker \
+            web-backend \
+            orchestrator \
+            extraction \
+            embeddings \
+            scorer-matcher || true
