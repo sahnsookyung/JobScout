@@ -1093,19 +1093,41 @@ class TestProcessNotificationTask:
         mock_record_fail.assert_not_called()
         assert mock_channel.send.call_count == 1  # no retry within this job
 
-        # Retry counter incremented in rescheduled payload
+        # Retry counter and origin_id propagated in rescheduled payload
         _, _, rescheduled_data = mock_queue.enqueue_in.call_args[0]
         assert rescheduled_data['rate_limit_retries'] == 1
+        assert_valid_uuid(rescheduled_data['origin_notification_id'])
 
-    def test_rate_limit_max_retries_exceeded_records_failure(self):
-        """After max rate-limit reschedules, failure is recorded."""
+    def test_rate_limit_sync_fallback_records_failure(self):
+        """Rate limit in sync mode (no current_job): records failure immediately."""
         from notification.service import process_notification_task
 
         mock_channel = Mock()
         mock_channel.send.side_effect = RateLimitException("Rate limited", retry_after=10)
 
-        # Simulate a job that has already been rescheduled 3 times
-        exhausted_data = {**DISCORD_DATA, 'rate_limit_retries': 3}
+        with patch('notification.service.NotificationChannelFactory.get_channel',
+                   return_value=mock_channel), \
+             patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
+
+            _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            result = process_notification_task(DISCORD_DATA)  # no get_current_job mock → sync
+
+        assert_valid_uuid(result)
+        mock_record_fail.assert_called_once()
+
+    def test_rate_limit_max_retries_exceeded_records_failure(self):
+        """After max rate-limit reschedules, failure is recorded."""
+        from notification.service import process_notification_task
+        from notification.service import MAX_RATE_LIMIT_RETRIES
+
+        mock_channel = Mock()
+        mock_channel.send.side_effect = RateLimitException("Rate limited", retry_after=10)
+
+        # Simulate a job that has already been rescheduled MAX_RATE_LIMIT_RETRIES times
+        exhausted_data = {**DISCORD_DATA, 'rate_limit_retries': MAX_RATE_LIMIT_RETRIES}
 
         with patch('notification.service.NotificationChannelFactory.get_channel',
                    return_value=mock_channel), \
@@ -1176,10 +1198,10 @@ class TestProcessNotificationTask:
         mock_record_fail.assert_not_called()
         assert mock_channel.send.call_count == 1  # no retry within this job
 
-        # Retry counter incremented in rescheduled payload
+        # Retry counter and origin_id propagated in rescheduled payload
         _, _, rescheduled_data = mock_queue.enqueue_in.call_args[0]
         assert rescheduled_data['transient_retries'] == 1
-        assert rescheduled_data['transient_retries'] <= len((30, 60, 120))  # within budget
+        assert_valid_uuid(rescheduled_data['origin_notification_id'])
 
     def test_transient_exception_max_retries_records_failure(self):
         """After max transient reschedules, failure is recorded."""

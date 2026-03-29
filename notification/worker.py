@@ -112,11 +112,14 @@ def start_worker(burst: bool = False, queues: list = None):
             logger.info("DLQ monitor started (interval: %ds)", _DLQ_POLL_INTERVAL)
 
         if burst:
+            # NOTE: burst mode drains the main queue only. Jobs rescheduled
+            # via enqueue_in() (transient/rate-limit retries) sit in
+            # ScheduledJobRegistry and are NOT processed in burst mode.
             logger.info("Running in burst mode...")
             worker.work(burst=True)
         else:
             logger.info("Worker started. Press Ctrl+C to stop.")
-            worker.work(with_scheduler=True)  # processes enqueue_in delayed jobs
+            worker.work(with_scheduler=True)  # embedded scheduler fires enqueue_in delayed jobs
 
     except KeyboardInterrupt:
         logger.info("\nWorker stopped")
