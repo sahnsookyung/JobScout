@@ -66,10 +66,6 @@ function NotificationSettingsModal({
         <dialog
             open
             aria-labelledby="notification-settings-title"
-            onCancel={(event) => {
-                event.preventDefault();
-                onClose();
-            }}
             className="fixed inset-0 z-50 m-0 h-full max-h-none w-full max-w-none overflow-y-auto border-0 bg-transparent p-0 backdrop:bg-slate-950/55 backdrop:backdrop-blur-sm"
         >
             <button
