@@ -1235,6 +1235,30 @@ class TestProcessNotificationTask:
         assert rescheduled_data['transient_retries'] == 1
         assert_valid_uuid(rescheduled_data['origin_notification_id'])
 
+    def test_transient_exception_sync_fallback_records_failure(self):
+        """Transient failure in sync mode (no current_job): records failure immediately, no re-enqueue."""
+        from notification.service import process_notification_task
+
+        mock_channel = Mock()
+        mock_channel.send.side_effect = TransientNotificationError(
+            "Network error",
+            failure_class="discord_transport",
+        )
+
+        with patch('notification.service.NotificationChannelFactory.get_channel',
+                   return_value=mock_channel), \
+             patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
+
+            _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            result = process_notification_task(DISCORD_DATA)  # no get_current_job mock → sync mode
+
+        assert_valid_uuid(result)
+        mock_record_fail.assert_called_once()
+        assert mock_record_fail.call_args[1]['failure_class'] == 'discord_transport'
+
     def test_transient_exception_max_retries_records_failure(self):
         """After max transient reschedules, failure is recorded."""
         from notification.service import process_notification_task
@@ -1261,6 +1285,76 @@ class TestProcessNotificationTask:
         assert_valid_uuid(result)
         mock_record_fail.assert_called_once()
         assert mock_record_fail.call_args.kwargs['failure_class'] == 'discord_transport'
+
+    def test_preflight_rate_limit_async_reschedules_when_retries_available(self):
+        """Async mode: pre-flight rate limit with budget remaining re-enqueues and returns."""
+        from notification.service import process_notification_task
+
+        mock_job = Mock()
+        mock_job.origin = 'notifications'
+        mock_job.connection = Mock()
+
+        with patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service.get_current_job', return_value=mock_job), \
+             patch('notification.service.Queue') as mock_queue_class, \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
+
+            mock_queue = Mock()
+            mock_queue_class.return_value = mock_queue
+            _, mock_rl = _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            mock_rl.get_wait_time.return_value = 45  # active rate limit
+            result = process_notification_task(DISCORD_DATA)  # rate_limit_retries=0 < MAX
+
+        assert_valid_uuid(result)
+        mock_queue.enqueue_in.assert_called_once()
+        mock_record_fail.assert_not_called()
+        _, _, rescheduled_data = mock_queue.enqueue_in.call_args[0]
+        assert rescheduled_data['rate_limit_retries'] == 1
+
+    def test_preflight_rate_limit_async_exhausted_records_failure(self):
+        """Async mode: pre-flight rate limit with retries exhausted records failure (no sleep, no enqueue)."""
+        from notification.service import process_notification_task, MAX_RATE_LIMIT_RETRIES
+
+        exhausted_data = {**DISCORD_DATA, 'rate_limit_retries': MAX_RATE_LIMIT_RETRIES}
+
+        mock_job = Mock()
+        mock_job.origin = 'notifications'
+        mock_job.connection = Mock()
+
+        with patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service.get_current_job', return_value=mock_job), \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
+
+            _, mock_rl = _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            mock_rl.get_wait_time.return_value = 45  # active rate limit
+            result = process_notification_task(exhausted_data)
+
+        assert_valid_uuid(result)
+        mock_record_fail.assert_called_once()
+        assert mock_record_fail.call_args[1]['failure_class'] == 'rate_limit_exhausted'
+
+    def test_preflight_rate_limit_sync_too_long_records_failure(self):
+        """Sync mode: pre-flight rate limit wait exceeding cap records failure immediately (no sleep)."""
+        from notification.service import process_notification_task, SYNC_MODE_MAX_WAIT_SECONDS
+
+        with patch('notification.service.db_session_scope') as mock_scope, \
+             patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
+             patch('notification.service.NotificationRateLimiter') as mock_rl_class, \
+             patch('notification.service.time.sleep') as mock_sleep, \
+             patch('notification.service._record_notification_failure') as mock_record_fail:
+
+            _, mock_rl = _make_task_patches(mock_scope, mock_tracker_class, mock_rl_class)
+            mock_rl.get_wait_time.return_value = SYNC_MODE_MAX_WAIT_SECONDS + 1
+            result = process_notification_task(DISCORD_DATA)  # no current_job → sync mode
+
+        assert_valid_uuid(result)
+        mock_sleep.assert_not_called()
+        mock_record_fail.assert_called_once()
+        assert mock_record_fail.call_args[1]['failure_class'] == 'rate_limit_sync_too_long'
 
     def test_active_rate_limit_sleeps_before_send(self):
         from notification.service import process_notification_task
@@ -1383,6 +1477,18 @@ class TestNotificationServiceHelpers:
 
         settings_service.mark_test_result.assert_called_once()
 
+    def test_reschedule_notification_raises_on_enqueue_failure(self):
+        """_reschedule_notification wraps enqueue errors in RuntimeError so callers can record failure."""
+        from notification.service import _reschedule_notification
+
+        mock_job = Mock()
+        mock_job.origin = 'notifications'
+        mock_job.connection = Mock()
+
+        with patch('notification.service.Queue') as mock_queue_class:
+            mock_queue_class.return_value.enqueue_in.side_effect = Exception("Redis gone")
+            with pytest.raises(RuntimeError, match="Reschedule failed"):
+                _reschedule_notification(NOTIFICATION_DATA, 30, mock_job, "transient_failure")
 
 
 # ---------------------------------------------------------------------------
