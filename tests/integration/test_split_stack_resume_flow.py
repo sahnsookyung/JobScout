@@ -26,6 +26,7 @@ from database.models import (
     UserNotificationChannel,
     UserNotificationSettings,
 )
+from tests.integration.helpers.compose_env import ensure_compose_env_file
 from tests.integration.helpers.pipeline_polling import (
     wait_for_matching_terminal,
     wait_for_resume_terminal,
@@ -42,7 +43,6 @@ pytestmark = [
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOTENV_PATH = PROJECT_ROOT / ".env"
-DOTENV_EXAMPLE_PATH = PROJECT_ROOT / ".env.example"
 VALID_RESUME_FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "resumes" / "valid_resume.json"
 FAIL_EMBEDDING_RESUME_FIXTURE = (
     PROJECT_ROOT / "tests" / "fixtures" / "resumes" / "fail_embedding_resume.json"
@@ -89,6 +89,8 @@ def _compose_env() -> dict[str, str]:
             "POSTGRES_PORT": reserve_port(),
             "REDIS_PORT": reserve_port(),
             "JOBSPY_PORT": reserve_port(),
+            "MAILPIT_SMTP_PORT": reserve_port(),
+            "MAILPIT_UI_PORT": reserve_port(),
             "WEB_BACKEND_PORT": reserve_port(),
             "EXTRACTION_PORT": reserve_port(),
             "EMBEDDINGS_PORT": reserve_port(),
@@ -122,24 +124,6 @@ def _compose_args(project_name: str) -> tuple[str, ...]:
     )
 
 
-def _ensure_compose_env_file() -> bool:
-    """Ensure docker compose env_file=.env resolves in CI.
-
-    Returns True when the helper created the file and teardown should remove it.
-    """
-    if DOTENV_PATH.exists():
-        return False
-
-    if DOTENV_EXAMPLE_PATH.exists():
-        DOTENV_PATH.write_text(
-            DOTENV_EXAMPLE_PATH.read_text(encoding="utf-8"),
-            encoding="utf-8",
-        )
-    else:
-        DOTENV_PATH.write_text("", encoding="utf-8")
-    return True
-
-
 def _run_compose(
     compose_args: tuple[str, ...],
     compose_env: dict[str, str],
@@ -158,10 +142,25 @@ def _run_compose(
     )
 
 
+def _compose_up_args(services: tuple[str, ...], *, build_images: bool) -> tuple[str, ...]:
+    build_flag = "--build" if build_images else "--no-build"
+    return (
+        "--profile",
+        "split",
+        "--profile",
+        "web",
+        "up",
+        "-d",
+        build_flag,
+        *services,
+    )
+
+
 def _compose_up_with_retries(
     compose_args: tuple[str, ...],
     services: tuple[str, ...],
     *,
+    build_images: bool = True,
     attempts: int = 3,
 ) -> tuple[dict[str, str], subprocess.CompletedProcess[str]]:
     last_error = None
@@ -180,14 +179,7 @@ def _compose_up_with_retries(
             result = _run_compose(
                 compose_args,
                 compose_env,
-                "--profile",
-                "split",
-                "--profile",
-                "web",
-                "up",
-                "-d",
-                "--build",
-                *services,
+                *_compose_up_args(services, build_images=build_images),
             )
             return compose_env, result
         except subprocess.CalledProcessError as exc:
@@ -377,9 +369,14 @@ def split_stack() -> SplitStackContext:
     )
 
     compose_env: dict[str, str] | None = None
-    created_dotenv = _ensure_compose_env_file()
+    created_dotenv = ensure_compose_env_file(PROJECT_ROOT)
+    build_images = os.getenv("JOBSCOUT_E2E_SKIP_BUILD") != "1"
     try:
-        compose_env, _ = _compose_up_with_retries(compose_args, services)
+        compose_env, _ = _compose_up_with_retries(
+            compose_args,
+            services,
+            build_images=build_images,
+        )
 
         web_backend_url = f"http://localhost:{compose_env['WEB_BACKEND_PORT']}"
         extraction_url = f"http://localhost:{compose_env['EXTRACTION_PORT']}"
