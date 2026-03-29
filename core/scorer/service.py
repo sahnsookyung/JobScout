@@ -83,6 +83,7 @@ class ScoringService:
         user_want_embeddings: Optional[List[np.ndarray]] = None,
         job_facet_embeddings: Optional[Dict[str, np.ndarray]] = None,
     ) -> ScoredJobMatch:
+        del candidate_total_years  # Deprecated no-op retained for backwards compatibility.
 
         job = preliminary.job
 

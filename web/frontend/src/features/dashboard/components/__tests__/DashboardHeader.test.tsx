@@ -29,6 +29,17 @@ describe('DashboardHeader', () => {
         expect(screen.getByText('Notification settings content')).toBeInTheDocument();
     });
 
+    it('closes notification settings from the backdrop control', async () => {
+        render(<DashboardHeader />);
+
+        await userEvent.click(screen.getByRole('button', { name: /open notification settings/i }));
+        await userEvent.click(screen.getAllByRole('button', { name: /close notification settings/i })[0]);
+
+        expect(
+            screen.queryByRole('dialog', { name: /notification preferences/i }),
+        ).not.toBeInTheDocument();
+    });
+
     it('shows the profile panel from the top bar', async () => {
         render(<DashboardHeader />);
 

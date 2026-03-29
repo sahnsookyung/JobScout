@@ -7,6 +7,7 @@ Covers: pipeline/runner.py
 import pytest
 import threading
 import logging
+import uuid
 from unittest.mock import Mock, patch, MagicMock, call
 
 from etl.resume.loader import load_resume_with_parser as _load_resume_with_parser
@@ -848,6 +849,20 @@ class TestSendNotifications:
         mock_uow.return_value.__exit__.return_value = False
         return mock_repo
 
+    def _uuid_settings_snapshot(
+        self,
+        **overrides,
+    ):
+        snapshot = Mock(
+            notifications_enabled=True,
+            min_score_threshold=70.0,
+            notify_on_new_match=True,
+            notify_on_batch_complete=False,
+        )
+        for key, value in overrides.items():
+            setattr(snapshot, key, value)
+        return snapshot
+
     def test_disabled_returns_zero(self, caplog):
         caplog.set_level(logging.INFO)
         ctx = Mock()
@@ -1030,6 +1045,96 @@ class TestSendNotifications:
 
         assert result == 1  # individual notification still succeeded
         assert "Failed to send batch summary" in caplog.text
+
+    @patch('pipeline.runner.job_uow')
+    def test_uuid_user_missing_from_database_skips_notifications(self, mock_uow):
+        owner_id = str(uuid.uuid4())
+        mock_repo = self._setup_uow(mock_uow, record=self._dto())
+        mock_repo.db.get.return_value = None
+
+        ctx = self._ctx(user_id=owner_id)
+
+        result = _send_notifications(ctx, [self._dto()], 1, "fp-1", threading.Event())
+
+        assert result == 0
+        ctx.notification_service.get_user_notification_snapshot.assert_not_called()
+
+    @patch('pipeline.runner.job_uow')
+    def test_uuid_user_with_notifications_disabled_skips_notifications(self, mock_uow):
+        owner_id = str(uuid.uuid4())
+        mock_repo = self._setup_uow(mock_uow, record=self._dto())
+        mock_repo.db.get.return_value = Mock()
+
+        ctx = self._ctx(user_id=owner_id)
+        ctx.notification_service.get_user_notification_snapshot.return_value = (
+            self._uuid_settings_snapshot(notifications_enabled=False)
+        )
+        ctx.notification_service.get_enabled_channels_for_user.return_value = ["email"]
+
+        result = _send_notifications(ctx, [self._dto()], 1, "fp-1", threading.Event())
+
+        assert result == 0
+        ctx.notification_service.notify_new_match.assert_not_called()
+
+    @patch('pipeline.runner.job_uow')
+    def test_uuid_user_without_enabled_channels_skips_notifications(self, mock_uow):
+        owner_id = str(uuid.uuid4())
+        mock_repo = self._setup_uow(mock_uow, record=self._dto())
+        mock_repo.db.get.return_value = Mock()
+
+        ctx = self._ctx(user_id=owner_id)
+        ctx.notification_service.get_user_notification_snapshot.return_value = (
+            self._uuid_settings_snapshot()
+        )
+        ctx.notification_service.get_enabled_channels_for_user.return_value = []
+
+        result = _send_notifications(ctx, [self._dto()], 1, "fp-1", threading.Event())
+
+        assert result == 0
+        ctx.notification_service.notify_new_match.assert_not_called()
+
+    @patch('pipeline.runner.NotificationMessageBuilder')
+    @patch('pipeline.runner.job_uow')
+    def test_uuid_user_settings_drive_thresholds_and_channels(self, mock_uow, mock_builder):
+        owner_id = str(uuid.uuid4())
+        mock_record = Mock(id="m-1", notified=False)
+        mock_record.job_post = Mock(company_url_direct="https://apply.example.com")
+        mock_repo = self._setup_uow(mock_uow, record=mock_record)
+        mock_repo.db.get.return_value = Mock()
+        mock_builder.build_notification_content.return_value = "content"
+
+        ctx = self._ctx(user_id=owner_id, min_score_threshold=90.0)
+        ctx.notification_service.get_user_notification_snapshot.return_value = (
+            self._uuid_settings_snapshot(
+                min_score_threshold=60.0,
+                notify_on_batch_complete=True,
+            )
+        )
+        ctx.notification_service.get_enabled_channels_for_user.return_value = ["discord"]
+
+        result = _send_notifications(
+            ctx,
+            [self._dto(score=65.0)],
+            1,
+            "fp-1",
+            threading.Event(),
+        )
+
+        assert result == 1
+        ctx.notification_service.notify_new_match.assert_called_once_with(
+            user_id=owner_id,
+            match_id="m-1",
+            content="content",
+            channels=["discord"],
+            task_id=None,
+        )
+        ctx.notification_service.notify_batch_complete.assert_called_once_with(
+            user_id=owner_id,
+            total_matches=1,
+            high_score_matches=1,
+            channels=["discord"],
+            task_id=None,
+        )
 
     @patch('pipeline.runner.job_uow')
     def test_uow_exception_logs_and_continues(self, mock_uow, caplog):

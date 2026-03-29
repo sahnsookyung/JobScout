@@ -63,21 +63,19 @@ function NotificationSettingsModal({
     }
 
     return (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
+        <dialog
+            open
+            aria-labelledby="notification-settings-title"
+            className="fixed inset-0 z-50 m-0 h-full max-h-none w-full max-w-none overflow-y-auto border-0 bg-transparent p-0 backdrop:bg-slate-950/55 backdrop:backdrop-blur-sm"
+        >
             <button
                 type="button"
-                className="fixed inset-0 bg-slate-950/55 backdrop-blur-sm"
-                onClick={onClose}
+                className="fixed inset-0"
                 aria-label="Close notification settings"
+                onClick={onClose}
             />
-
-            <div className="flex min-h-full items-center justify-center p-4 sm:p-6">
-                <section
-                    role="dialog"
-                    aria-modal="true"
-                    aria-labelledby="notification-settings-title"
-                    className="relative w-full max-w-4xl overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-2xl"
-                >
+            <div className="pointer-events-none flex min-h-full items-center justify-center p-4 sm:p-6">
+                <div className="pointer-events-auto relative w-full max-w-4xl overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-2xl">
                     <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-r from-slate-950 via-blue-950 to-slate-900 px-6 py-6 sm:px-8">
                         <div className="absolute inset-y-0 right-0 w-56 bg-[radial-gradient(circle_at_top_right,_rgba(96,165,250,0.32),_transparent_70%)]" />
                         <div className="relative flex items-start justify-between gap-4">
@@ -110,9 +108,9 @@ function NotificationSettingsModal({
                     <div className="max-h-[78vh] overflow-y-auto bg-gradient-to-b from-slate-50 via-white to-sky-50 px-6 py-6 sm:px-8">
                         <NotificationSettingsPanel />
                     </div>
-                </section>
+                </div>
             </div>
-        </div>
+        </dialog>
     );
 }
 

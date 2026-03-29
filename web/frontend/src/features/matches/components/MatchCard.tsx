@@ -12,6 +12,14 @@ interface MatchCardProps {
     showWantScore?: boolean;
 }
 
+function renderVisibilityToggleIcon(isPending: boolean, isHidden: boolean) {
+    if (isPending) {
+        return <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />;
+    }
+
+    return isHidden ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />;
+}
+
 export const MatchCard: React.FC<MatchCardProps> = ({
     match,
     onSelect,
@@ -125,13 +133,7 @@ export const MatchCard: React.FC<MatchCardProps> = ({
                     aria-label={match.is_hidden ? 'Unhide this job' : 'Hide this job'}
                     aria-pressed={match.is_hidden}
                 >
-                    {toggleHiddenMutation.isPending ? (
-                        <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                    ) : match.is_hidden ? (
-                        <EyeOff className="w-4 h-4" />
-                    ) : (
-                        <Eye className="w-4 h-4" />
-                    )}
+                    {renderVisibilityToggleIcon(toggleHiddenMutation.isPending, match.is_hidden)}
                 </button>
             </div>
 
