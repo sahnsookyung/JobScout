@@ -164,8 +164,10 @@ class NotificationTrackerService:
     ) -> str:
         """
         Generate deduplication hash for an event.
-        
+
         This hash uniquely identifies a notification event to prevent duplicates.
+        job_match_id=None produces the string "None" in the key — this is intentional
+        to maintain backward compatibility with existing stored records.
         """
         key = f"{user_id}:{job_match_id}:{event_type}:{channel_type}"
         return hashlib.sha256(key.encode('utf-8')).hexdigest()[:32]

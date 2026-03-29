@@ -33,7 +33,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # How often (seconds) to poll the DLQ. Override via env for testing.
-_DLQ_POLL_INTERVAL = int(os.environ.get('NOTIFICATION_DLQ_POLL_INTERVAL', '60'))
+try:
+    _DLQ_POLL_INTERVAL = int(os.environ.get('NOTIFICATION_DLQ_POLL_INTERVAL', '60'))
+except ValueError:
+    logger.warning(
+        "Invalid NOTIFICATION_DLQ_POLL_INTERVAL value %r — defaulting to 60s",
+        os.environ.get('NOTIFICATION_DLQ_POLL_INTERVAL'),
+    )
+    _DLQ_POLL_INTERVAL = 60
 
 
 def _monitor_dlq(redis_conn: Redis, queue_name: str, stop: threading.Event) -> None:

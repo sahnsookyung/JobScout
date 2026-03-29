@@ -1380,8 +1380,10 @@ class TestSendAndRecordNotification:
         assert kwargs['success'] is True
         assert kwargs['error_message'] is None
 
-    def test_failed_send_records_success_false_with_error(self):
+    def test_failed_send_raises_transient_error(self):
+        """channel.send() returning False enters the transient retry path, not a silent failure."""
         from notification.service import _send_and_record_notification
+        from notification.exceptions import TransientNotificationError
 
         mock_channel = Mock()
         mock_channel.send.return_value = False
@@ -1392,12 +1394,12 @@ class TestSendAndRecordNotification:
              patch('notification.service.NotificationTrackerService') as mock_tracker_class:
 
             mock_tracker = self._make_patches(mock_scope, mock_tracker_class)
-            result = _send_and_record_notification("notif-123", NOTIFICATION_DATA)
+            with pytest.raises(TransientNotificationError) as exc_info:
+                _send_and_record_notification("notif-123", NOTIFICATION_DATA)
 
-        assert result == "notif-123"
-        kwargs = mock_tracker.record_notification.call_args[1]
-        assert kwargs['success'] is False
-        assert kwargs['error_message'] is not None
+        assert exc_info.value.failure_class == "channel_send_failed"
+        # No DB record written — TransientNotificationError propagates to process_notification_task
+        mock_tracker.record_notification.assert_not_called()
 
     def test_settings_test_send_updates_terminal_status(self):
         from notification.service import _send_and_record_notification

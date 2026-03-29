@@ -842,7 +842,7 @@ class TestNotificationChannelFactory:
 class TestEmailChannelUncoveredPaths:
     """Cover remaining email channel branches."""
 
-    def test_email_not_configured_raises_terminal_error(self):
+    def test_email_not_configured_raises_configuration_error(self):
         """EmailChannel.send raises NotificationConfigurationError when SMTP not configured."""
         channel = EmailChannel()
         for var in ['SMTP_SERVER', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD']:
@@ -1004,7 +1004,7 @@ class TestDiscordChannelUncoveredPaths:
 class TestTelegramChannelUncoveredPaths:
     """Cover remaining Telegram channel branches."""
 
-    def test_telegram_no_bot_token_raises_terminal_error(self):
+    def test_telegram_no_bot_token_raises_configuration_error(self):
         """TelegramChannel.send raises NotificationConfigurationError with no bot token."""
         os.environ.pop('TELEGRAM_BOT_TOKEN', None)
         channel = TelegramChannel()
