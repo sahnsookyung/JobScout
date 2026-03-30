@@ -9,6 +9,9 @@ from notification.models import NotificationDeliveryPlan
 from notification.orchestrator import (
     _notification_setting_value,
     _high_score_matches_for_plan,
+    _resolve_notification_plan,
+    _send_match_notification,
+    _send_batch_complete_notification,
     send_notifications,
 )
 
@@ -227,3 +230,225 @@ class TestSendNotifications:
         count = send_notifications(ctx, [_dto(90.0)], 1, "fp", threading.Event())
         assert count == 0
         mock_send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _resolve_notification_plan
+# ---------------------------------------------------------------------------
+
+def _uow(repo):
+    m = MagicMock()
+    m.__enter__.return_value = repo
+    m.__exit__.return_value = False
+    return m
+
+
+class TestResolveNotificationPlan:
+    def test_no_user_id_returns_none(self):
+        ctx = _ctx(_notif_config(user_id=None))
+        result = _resolve_notification_plan(ctx, owner_id=None)
+        assert result is None
+
+    def test_non_uuid_user_id_no_channels_returns_none(self):
+        config = _notif_config(
+            user_id="legacy-user",
+            channels={"email": SimpleNamespace(enabled=False)},
+        )
+        ctx = _ctx(config)
+        result = _resolve_notification_plan(ctx, owner_id=None)
+        assert result is None
+
+    def test_non_uuid_user_id_with_enabled_channel(self):
+        config = _notif_config(
+            user_id="legacy-user",
+            channels={
+                "email": SimpleNamespace(enabled=True),
+                "slack": SimpleNamespace(enabled=False),
+            },
+        )
+        ctx = _ctx(config)
+        result = _resolve_notification_plan(ctx, owner_id=None)
+        assert result is not None
+        assert result.user_id == "legacy-user"
+        assert result.enabled_channels == ["email"]
+
+    def test_owner_id_overrides_config_user_id(self):
+        config = _notif_config(
+            user_id="config-user",
+            channels={"email": SimpleNamespace(enabled=True)},
+        )
+        ctx = _ctx(config)
+        result = _resolve_notification_plan(ctx, owner_id="owner-user")
+        assert result is not None
+        assert result.user_id == "owner-user"
+
+    @patch("notification.orchestrator.job_uow")
+    def test_uuid_user_not_found_returns_none(self, mock_uow):
+        repo = MagicMock()
+        repo.db.get.return_value = None
+        mock_uow.return_value = _uow(repo)
+
+        config = _notif_config(user_id=None)
+        ctx = _ctx(config)
+        uuid_id = "00000000-0000-0000-0000-000000000001"
+        result = _resolve_notification_plan(ctx, owner_id=uuid_id)
+        assert result is None
+
+    @patch("notification.orchestrator.job_uow")
+    def test_uuid_notifications_disabled_returns_none(self, mock_uow):
+        repo = MagicMock()
+        user = MagicMock()
+        repo.db.get.return_value = user
+        snap = SimpleNamespace(notifications_enabled=False)
+        ctx = _ctx(_notif_config(user_id=None))
+        ctx.notification_service.get_user_notification_snapshot.return_value = snap
+        ctx.notification_service.get_enabled_channels_for_user.return_value = ["email"]
+        mock_uow.return_value = _uow(repo)
+
+        uuid_id = "00000000-0000-0000-0000-000000000002"
+        result = _resolve_notification_plan(ctx, owner_id=uuid_id)
+        assert result is None
+
+    @patch("notification.orchestrator.job_uow")
+    def test_uuid_no_enabled_channels_returns_none(self, mock_uow):
+        repo = MagicMock()
+        user = MagicMock()
+        repo.db.get.return_value = user
+        snap = SimpleNamespace(notifications_enabled=True)
+        ctx = _ctx(_notif_config(user_id=None))
+        ctx.notification_service.get_user_notification_snapshot.return_value = snap
+        ctx.notification_service.get_enabled_channels_for_user.return_value = []
+        mock_uow.return_value = _uow(repo)
+
+        uuid_id = "00000000-0000-0000-0000-000000000003"
+        result = _resolve_notification_plan(ctx, owner_id=uuid_id)
+        assert result is None
+
+    @patch("notification.orchestrator.job_uow")
+    def test_uuid_valid_returns_plan(self, mock_uow):
+        repo = MagicMock()
+        user = MagicMock()
+        repo.db.get.return_value = user
+        snap = SimpleNamespace(notifications_enabled=True)
+        ctx = _ctx(_notif_config(user_id=None))
+        ctx.notification_service.get_user_notification_snapshot.return_value = snap
+        ctx.notification_service.get_enabled_channels_for_user.return_value = ["email", "discord"]
+        mock_uow.return_value = _uow(repo)
+
+        uuid_id = "00000000-0000-0000-0000-000000000004"
+        result = _resolve_notification_plan(ctx, owner_id=uuid_id)
+        assert result is not None
+        assert result.user_id == uuid_id
+        assert result.enabled_channels == ["email", "discord"]
+        assert result.settings_snapshot is snap
+
+
+# ---------------------------------------------------------------------------
+# _send_match_notification
+# ---------------------------------------------------------------------------
+
+class TestSendMatchNotification:
+    def _dto_for_job(self, job_id="job-1"):
+        return SimpleNamespace(
+            job=SimpleNamespace(id=job_id),
+            overall_score=85.0,
+            fit_score=80.0,
+            want_score=75.0,
+            jd_required_coverage=0.9,
+        )
+
+    @patch("notification.orchestrator.job_uow")
+    def test_no_match_record_returns_false(self, mock_uow):
+        repo = MagicMock()
+        repo.get_existing_match.return_value = None
+        mock_uow.return_value = _uow(repo)
+
+        ctx = _ctx()
+        plan = _delivery_plan()
+        result = _send_match_notification(
+            ctx, self._dto_for_job(), resume_fingerprint="fp", delivery_plan=plan, task_id=None
+        )
+        assert result is False
+
+    @patch("notification.orchestrator.job_uow")
+    def test_already_notified_returns_false(self, mock_uow):
+        repo = MagicMock()
+        match = MagicMock()
+        match.id = "m-1"
+        match.notified = True
+        repo.get_existing_match.return_value = match
+        mock_uow.return_value = _uow(repo)
+
+        ctx = _ctx()
+        plan = _delivery_plan()
+        result = _send_match_notification(
+            ctx, self._dto_for_job(), resume_fingerprint="fp", delivery_plan=plan, task_id=None
+        )
+        assert result is False
+
+    @patch("notification.orchestrator.job_uow")
+    def test_no_job_post_returns_false(self, mock_uow):
+        repo = MagicMock()
+        match = MagicMock()
+        match.id = "m-1"
+        match.notified = False
+        match.job_post = None
+        repo.get_existing_match.return_value = match
+        mock_uow.return_value = _uow(repo)
+
+        ctx = _ctx()
+        plan = _delivery_plan()
+        result = _send_match_notification(
+            ctx, self._dto_for_job(), resume_fingerprint="fp", delivery_plan=plan, task_id=None
+        )
+        assert result is False
+
+    @patch("notification.orchestrator.NotificationMessageBuilder")
+    @patch("notification.orchestrator.job_uow")
+    def test_success_returns_true(self, mock_uow, mock_builder):
+        repo = MagicMock()
+        match = MagicMock()
+        match.id = "m-1"
+        match.notified = False
+        job_post = MagicMock()
+        job_post.company_url_direct = "https://example.com/apply"
+        match.job_post = job_post
+        repo.get_existing_match.return_value = match
+        mock_uow.return_value = _uow(repo)
+        mock_builder.build_notification_content.return_value = MagicMock()
+
+        ctx = _ctx()
+        plan = _delivery_plan()
+        result = _send_match_notification(
+            ctx, self._dto_for_job(), resume_fingerprint="fp", delivery_plan=plan, task_id="t-1"
+        )
+        assert result is True
+        ctx.notification_service.notify_new_match.assert_called_once()
+        assert match.notified is True
+
+
+# ---------------------------------------------------------------------------
+# _send_batch_complete_notification
+# ---------------------------------------------------------------------------
+
+class TestSendBatchCompleteNotification:
+    def test_calls_notify_batch_complete(self):
+        ctx = _ctx()
+        plan = _delivery_plan(user_id="u-1", enabled_channels=["email"])
+        matches = [_dto(80.0), _dto(90.0)]
+
+        _send_batch_complete_notification(
+            ctx,
+            delivery_plan=plan,
+            saved_count=5,
+            high_score_matches=matches,
+            task_id="task-abc",
+        )
+
+        ctx.notification_service.notify_batch_complete.assert_called_once_with(
+            user_id="u-1",
+            total_matches=5,
+            high_score_matches=2,
+            channels=["email"],
+            task_id="task-abc",
+        )
