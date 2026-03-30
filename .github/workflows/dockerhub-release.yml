@@ -7,6 +7,17 @@
 # id-token: write is granted at job level only, not workflow level (policy §9.12).
 # Release evidence: artifacts are NOT produced here; Docker Hub provenance and
 #   SBOM attestations serve as the release evidence (policy §24.5).
+#
+# docker/* action exception note (policy §7.1, §7.4, §29):
+#   Four Docker-maintained actions are used for Docker Hub publishing:
+#     docker/setup-buildx-action, docker/login-action,
+#     docker/metadata-action, docker/build-push-action.
+#   No direct-CLI path provides equivalent multi-platform build support,
+#   SBOM generation, and provenance attestation within GitHub Actions.
+#   Compensating controls: all four actions pinned to immutable commit SHAs;
+#   provenance (mode=max) and SBOM attestations generated on every release.
+#   Exception must be reviewed quarterly (policy §31.3).
+#   SHAs verified 2026-03-30 — see per-step comments for individual SHAs.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Publish Docker image to Docker Hub

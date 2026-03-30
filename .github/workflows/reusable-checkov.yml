@@ -65,15 +65,7 @@ jobs:
 
           echo "### Checkov — Dockerfile" >> "$GITHUB_STEP_SUMMARY"
           if [ -f checkov-dockerfile.sarif ]; then
-            FINDINGS=$(python3 -c "
-import json, sys
-try:
-    d = json.load(open('checkov-dockerfile.sarif'))
-    total = sum(len(r.get('results', [])) for r in d.get('runs', []))
-    print(total)
-except Exception:
-    print('?')
-" 2>/dev/null || echo "?")
+            FINDINGS=$(python3 -c "import json; d=json.load(open('checkov-dockerfile.sarif')); print(sum(len(r.get('results',[]))for r in d.get('runs',[])))" 2>/dev/null || echo "?")
             echo "- Dockerfile findings: ${FINDINGS} (informational — soft-fail)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -89,15 +81,7 @@ except Exception:
 
           echo "### Checkov — Docker Compose" >> "$GITHUB_STEP_SUMMARY"
           if [ -f checkov-compose.sarif ]; then
-            FINDINGS=$(python3 -c "
-import json, sys
-try:
-    d = json.load(open('checkov-compose.sarif'))
-    total = sum(len(r.get('results', [])) for r in d.get('runs', []))
-    print(total)
-except Exception:
-    print('?')
-" 2>/dev/null || echo "?")
+            FINDINGS=$(python3 -c "import json; d=json.load(open('checkov-compose.sarif')); print(sum(len(r.get('results',[]))for r in d.get('runs',[])))" 2>/dev/null || echo "?")
             echo "- Docker Compose findings: ${FINDINGS} (informational — soft-fail)" >> "$GITHUB_STEP_SUMMARY"
           fi
 

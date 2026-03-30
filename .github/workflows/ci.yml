@@ -5,6 +5,15 @@
 # Repository settings required:
 #   - Register "CI Gate" as the required check in branch protection (policy §19.3).
 #   - Default GITHUB_TOKEN permissions: read-only (policy §9.1).
+#
+# astral-sh/setup-uv exception note (policy §7.1, §7.4, §29):
+#   This action is published by Astral (third party, not GitHub-maintained).
+#   It installs the uv CLI; no GitHub-maintained or direct-CLI equivalent
+#   exists for this setup step within GitHub Actions.
+#   Compensating controls: action pinned to immutable commit SHA; uv binary
+#   version also explicitly pinned via the `version:` input.
+#   Exception must be reviewed quarterly (policy §31.3).
+#   Action SHA: 22695119d769bdb6f7032ad67b9bca0ef8c4a174 — verified 2026-03-30
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: CI
@@ -15,6 +24,9 @@ on:
   push:
     branches: [main, develop]
   workflow_dispatch:
+  schedule:
+    # Weekly Monday 04:00 UTC — catch regressions in dependencies (policy §8.2)
+    - cron: "0 4 * * 1"
   merge_group:
 
 # Workflow-level default: deny all (policy §9.2).
@@ -83,7 +95,11 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "20"
-          cache: "npm"
+          # Disable built-in npm cache on fork PRs to prevent cache poisoning
+          # (policy §15.8/15.9). Trusted runs (same-repo PRs, push, schedule) get caching.
+          # The outer gate is the "require approval for outside collaborators" UI setting
+          # (policy §25.6); this condition adds defence-in-depth at the workflow level.
+          cache: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'npm' || '' }}
           cache-dependency-path: web/frontend/package-lock.json
 
       - name: Install frontend dependencies

@@ -70,15 +70,7 @@ jobs:
           # Safe structured summary (policy §15.3, §15.4).
           echo "### Grype Vulnerability Scan" >> "$GITHUB_STEP_SUMMARY"
           if [ -f grype.sarif ]; then
-            FINDINGS=$(python3 -c "
-import json, sys
-try:
-    d = json.load(open('grype.sarif'))
-    total = sum(len(r.get('results', [])) for r in d.get('runs', []))
-    print(total)
-except Exception:
-    print('?')
-" 2>/dev/null || echo "?")
+            FINDINGS=$(python3 -c "import json; d=json.load(open('grype.sarif')); print(sum(len(r.get('results',[]))for r in d.get('runs',[])))" 2>/dev/null || echo "?")
             echo "- Findings (\`${{ inputs.fail-on-severity }}\`+ severity): ${FINDINGS}" >> "$GITHUB_STEP_SUMMARY"
           fi
           if [ "${GRYPE_EXIT:-0}" -ne 0 ]; then

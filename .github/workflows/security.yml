@@ -46,9 +46,13 @@ jobs:
     steps:
       - name: Compute artifact retention
         id: retention
+        # PR runs: 7 days. Protected-branch push and scheduled runs: 14 days (policy §23 table).
+        # Scheduled scans catch regressions independently of branch activity and are
+        # treated at the protected-branch retention level (not the short PR level).
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "push" ]] && \
-             [[ "$GITHUB_REF" == "refs/heads/main" || "$GITHUB_REF" == "refs/heads/develop" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "push" && \
+               ("$GITHUB_REF" == "refs/heads/main" || "$GITHUB_REF" == "refs/heads/develop") ]] || \
+             [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
             echo "days=14" >> "$GITHUB_OUTPUT"
           else
             echo "days=7" >> "$GITHUB_OUTPUT"

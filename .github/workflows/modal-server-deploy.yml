@@ -6,6 +6,15 @@
 # modal is installed from a pinned version (policy §18.8 / §12.3 — no unpinned installs).
 # Secrets (MODAL_TOKEN_ID, MODAL_TOKEN_SECRET) are scoped to the deploy job only.
 # This workflow deploys only when modal/** changes on main (trusted source, policy §24.2).
+#
+# astral-sh/setup-uv exception note (policy §7.1, §7.4, §29):
+#   This action is published by Astral (third party, not GitHub-maintained).
+#   It installs the uv CLI; no GitHub-maintained or direct-CLI equivalent
+#   exists for this setup step within GitHub Actions.
+#   Compensating controls: action pinned to immutable commit SHA; uv binary
+#   version also explicitly pinned via the `version:` input.
+#   Exception must be reviewed quarterly (policy §31.3).
+#   Action SHA: 22695119d769bdb6f7032ad67b9bca0ef8c4a174 — verified 2026-03-30
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Deploy Modal Embedding Server

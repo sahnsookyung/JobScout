@@ -62,14 +62,7 @@ jobs:
           # Safe structured summary — no raw tool output, no stack traces (policy §15.4).
           echo "### Gitleaks Secret Scan" >> "$GITHUB_STEP_SUMMARY"
           if [ "${GITLEAKS_EXIT:-0}" -ne 0 ] && [ -f gitleaks-results.json ]; then
-            COUNT=$(python3 -c "
-import json, sys
-try:
-    d = json.load(open('gitleaks-results.json'))
-    print(len(d) if isinstance(d, list) else '?')
-except Exception:
-    print('?')
-" 2>/dev/null || echo "?")
+            COUNT=$(python3 -c "import json; d=json.load(open('gitleaks-results.json')); print(len(d) if isinstance(d,list) else '?')" 2>/dev/null || echo "?")
             echo "- **Result: FAIL** — ${COUNT} finding(s) detected" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "- **Result: PASS** — no secrets detected" >> "$GITHUB_STEP_SUMMARY"

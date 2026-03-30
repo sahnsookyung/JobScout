@@ -11,3 +11,9 @@
 
 # Security policy and governance documents
 /CLAUDE.md              @sahnsookyung
+
+# Release/deploy scripts (policy §6.1 — scripts selecting deployment targets)
+/modal/                 @sahnsookyung
+
+# CI helper scripts used by the test harness (policy §6.1 — helpers used by CI)
+/tests/integration/helpers/ @sahnsookyung

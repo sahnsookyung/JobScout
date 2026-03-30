@@ -93,15 +93,7 @@ jobs:
           # Safe structured summary — no raw finding content (policy §15.4).
           echo "### Semgrep SAST" >> "$GITHUB_STEP_SUMMARY"
           if [ -f semgrep.sarif ]; then
-            FINDINGS=$(python3 -c "
-import json, sys
-try:
-    d = json.load(open('semgrep.sarif'))
-    total = sum(len(r.get('results', [])) for r in d.get('runs', []))
-    print(total)
-except Exception:
-    print('?')
-" 2>/dev/null || echo "?")
+            FINDINGS=$(python3 -c "import json; d=json.load(open('semgrep.sarif')); print(sum(len(r.get('results',[]))for r in d.get('runs',[])))" 2>/dev/null || echo "?")
             echo "- Total findings: ${FINDINGS}" >> "$GITHUB_STEP_SUMMARY"
           fi
           if [ "${SEMGREP_EXIT:-0}" -ne 0 ]; then
