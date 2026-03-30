@@ -19,7 +19,6 @@ COPY database/ ./database/
 COPY migrations/ ./migrations/
 COPY etl/ ./etl/
 COPY notification/ ./notification/
-COPY pipeline/ ./pipeline/
 COPY web/backend/models/ ./web/backend/models/
 COPY services/base/ ./services/base/
 COPY services/extraction/ ./services/extraction/
