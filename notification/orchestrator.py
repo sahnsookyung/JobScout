@@ -10,6 +10,7 @@ import threading
 from typing import Any, List, Optional
 from uuid import UUID
 
+from database.models import User
 from database.uow import job_uow
 from notification.message_builder import NotificationMessageBuilder
 from notification.models import NotificationDeliveryPlan
@@ -55,8 +56,6 @@ def _resolve_notification_plan(
         return NotificationDeliveryPlan(user_id=str(user_id), enabled_channels=enabled_channels)
 
     with job_uow() as repo:
-        from database.models import User
-
         user = repo.db.get(User, resolved_user_id)
         if user is None:
             logger.warning("Skipping notifications because user %s was not found", user_id)
@@ -168,19 +167,20 @@ def _notify_per_match(
     ctx,
     high_score_matches: List,
     notification_config,
-    delivery_plan: "NotificationDeliveryPlan",
+    delivery_plan: NotificationDeliveryPlan,
     resume_fingerprint: str,
     task_id: Optional[str],
     stop_event: threading.Event,
 ) -> int:
     """Send one notification per high-score match. Returns count sent."""
+    notify_on_new_match = _notification_setting_value(
+        notification_config, delivery_plan.settings_snapshot, "notify_on_new_match",
+    )
     notified_count = 0
     for dto in high_score_matches:
         if stop_event.is_set():
             break
-        if not _notification_setting_value(
-            notification_config, delivery_plan.settings_snapshot, "notify_on_new_match",
-        ):
+        if not notify_on_new_match:
             continue
         try:
             if _send_match_notification(
