@@ -70,7 +70,6 @@ jobs:
             --cov=core \
             --cov=database \
             --cov=etl \
-            --cov=pipeline \
             --cov=notification \
             --cov=web \
             --cov=modal \
