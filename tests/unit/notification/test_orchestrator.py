@@ -215,6 +215,34 @@ class TestSendNotifications:
         count = send_notifications(ctx, [_dto(90.0)], 1, "fp", threading.Event())
         assert count == 0
 
+    @patch("notification.orchestrator._send_batch_complete_notification")
+    @patch("notification.orchestrator._send_match_notification")
+    @patch("notification.orchestrator._resolve_notification_plan")
+    def test_batch_complete_exception_is_caught(self, mock_plan, mock_send, mock_batch):
+        ctx = _ctx(_notif_config(
+            enabled=True,
+            min_score_threshold=0.0,
+            notify_on_new_match=True,
+            notify_on_batch_complete=True,
+        ))
+        plan = _delivery_plan()
+        mock_plan.return_value = plan
+        mock_send.return_value = True
+        mock_batch.side_effect = RuntimeError("batch error")
+
+        # Should not raise; exception is caught and logged
+        count = send_notifications(ctx, [_dto(80.0)], 1, "fp", threading.Event())
+        assert count == 1  # match notification succeeded; batch error was swallowed
+        mock_batch.assert_called_once()
+
+    @patch("notification.orchestrator._resolve_notification_plan")
+    def test_top_level_exception_returns_zero(self, mock_plan):
+        ctx = _ctx(_notif_config(enabled=True, min_score_threshold=0.0, notify_on_new_match=True))
+        mock_plan.side_effect = RuntimeError("unexpected")
+
+        count = send_notifications(ctx, [_dto(90.0)], 1, "fp", threading.Event())
+        assert count == 0
+
     @patch("notification.orchestrator._send_match_notification")
     @patch("notification.orchestrator._resolve_notification_plan")
     def test_notify_on_new_match_false_skips_all(self, mock_plan, mock_send):
