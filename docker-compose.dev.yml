@@ -27,7 +27,7 @@ services:
     volumes:
       - ./core:/app/core
       - ./database:/app/database
-      - ./pipeline:/app/pipeline
+      - ./notification:/app/notification
       - ./services/scorer_matcher:/app/services/scorer_matcher
 
   orchestrator:

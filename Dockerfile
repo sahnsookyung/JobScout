@@ -18,7 +18,6 @@ COPY core/ ./core/
 COPY database/ ./database/
 COPY migrations/ ./migrations/
 COPY etl/ ./etl/
-COPY pipeline/ ./pipeline/
 COPY notification/ ./notification/
 COPY services/base/ ./services/base/
 COPY services/extraction/ ./services/extraction/
