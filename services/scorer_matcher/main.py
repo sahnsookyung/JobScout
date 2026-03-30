@@ -33,7 +33,7 @@ from core.redis_streams import (
     set_task_state,
 )
 from database.uow import job_uow
-from pipeline.runner import run_matching_pipeline
+from services.scorer_matcher.pipeline import run_matching_pipeline
 from database.init_db import init_db
 
 logger = logging.getLogger(__name__)

@@ -31,7 +31,7 @@ from database.models import (
     UserAuthIdentity,
 )
 from database.repository import JobRepository
-from pipeline.runner import MatchingPipelineResult
+from services.scorer_matcher.pipeline import MatchingPipelineResult
 
 pytestmark = [
     pytest.mark.integration,

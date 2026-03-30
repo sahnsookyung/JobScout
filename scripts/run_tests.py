@@ -141,7 +141,6 @@ def run_tests(coverage=False, watch=False, test_path="tests/", redis_port="6379"
             "--cov=core",
             "--cov=database",
             "--cov=etl",
-            "--cov=pipeline",
             "--cov=notification",
             "--cov=web",
             "--cov=modal",

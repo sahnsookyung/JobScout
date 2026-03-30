@@ -20,7 +20,6 @@ COPY migrations/ ./migrations/
 COPY etl/ ./etl/
 COPY notification/ ./notification/
 COPY web/backend/models/ ./web/backend/models/
-COPY pipeline/ ./pipeline/
 COPY services/scorer_matcher/ ./services/scorer_matcher/
 COPY config.yaml ./
 

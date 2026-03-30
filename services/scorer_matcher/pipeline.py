@@ -1,14 +1,15 @@
-"""Shared matching pipeline runner module.
+"""Matching pipeline for the scorer-matcher service.
 
-This module contains the core matching pipeline logic used by the
-scorer-matcher service and the web-triggered matching flow.
+This module contains the core matching pipeline logic: loading a resume,
+running vector matching and scoring, saving results, and dispatching
+notifications.
 """
 
 import os
 import time
 import logging
 import threading
-from typing import List, Optional, Dict, Any, Callable, Tuple
+from typing import List, Optional, Dict, Any, Callable
 from uuid import UUID
 
 from dataclasses import dataclass
@@ -22,10 +23,10 @@ from core.matcher import (
 from core.scorer import ScoringService
 from core.scorer.persistence import save_match_to_db
 from core.llm.schema_models import ResumeSchema
-from etl.resume import ResumeProfiler, ResumeParser, load_resume_with_parser
+from etl.resume import ResumeProfiler
 from etl.resume.embedding_store import JobRepositoryAdapter
 from database.uow import job_uow
-from notification.message_builder import NotificationMessageBuilder
+from notification.orchestrator import send_notifications
 
 
 logger = logging.getLogger(__name__)
@@ -41,16 +42,6 @@ class MatchingPipelineResult:
     error: Optional[str] = None
     execution_time: float = 0.0
     cancelled: bool = False
-
-
-@dataclass
-class NotificationDeliveryPlan:
-    """Resolved notification settings for a matching run."""
-
-    user_id: str
-    enabled_channels: List[str]
-    settings_snapshot: Any = None
-
 
 
 def load_user_wants_data(wants_file_path: str) -> List[str]:
@@ -71,7 +62,6 @@ def _load_resume_from_db(resume_fingerprint: str) -> Optional[dict]:
     """Load resume extracted_data from database using fingerprint."""
     logger.info("Loading resume from database: %s...", resume_fingerprint[:16])
     try:
-        # FIX: removed redundant local re-import; module-level job_uow is used
         with job_uow() as repo:
             structured_resume = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
             if not structured_resume:
@@ -84,30 +74,6 @@ def _load_resume_from_db(resume_fingerprint: str) -> Optional[dict]:
     except Exception as e:
         logger.error("Error loading resume from DB: %s", e)
         return None
-
-
-def _get_configured_resume_file(ctx: AppContext) -> Optional[str]:
-    """Resolve the configured resume file path, if one exists."""
-    etl_config = getattr(ctx.config, "etl", None)
-    resume_file = None
-    if etl_config and getattr(etl_config, "resume", None):
-        resume_file = etl_config.resume.resume_file
-    elif etl_config and getattr(etl_config, "resume_file", None):
-        resume_file = etl_config.resume_file
-
-    if not resume_file:
-        return None
-    if not os.path.isabs(resume_file):
-        return os.path.join(os.getcwd(), resume_file)
-    return resume_file
-
-
-def _load_configured_resume_fallback(
-    ctx: AppContext,
-) -> tuple[Optional[str], Optional[Dict[str, Any]], Optional[str]]:
-    """Configured resume fallback is no longer supported."""
-    del ctx
-    return None, None, "No ready resume found. Upload and process a resume first."
 
 
 def _error_result(
@@ -166,45 +132,18 @@ def _cancelled_result(
     )
 
 
-def _requested_resume_not_found_result(resume_fingerprint: str) -> MatchingPipelineResult:
-    """Build the explicit-fingerprint not found result."""
-    return _error_result(
-        "Resume not found in DB for fingerprint: %s..." % resume_fingerprint[:16],
-    )
-
-
 def _load_requested_resume(
     resume_fingerprint: str,
 ) -> tuple[Optional[Dict[str, Any]], bool, Optional[MatchingPipelineResult]]:
     """Load resume data for an explicitly requested fingerprint."""
     resume_data = _load_resume_from_db(resume_fingerprint)
     if not resume_data:
-        return None, False, _requested_resume_not_found_result(resume_fingerprint)
+        return None, False, _error_result(
+            "Resume not found in DB for fingerprint: %s..." % resume_fingerprint[:16],
+        )
 
     logger.info("Loaded resume from database (fingerprint: %s...)", resume_fingerprint[:16])
     return resume_data, False, None
-
-
-def _missing_structured_resume_result(resume_fingerprint: str) -> MatchingPipelineResult:
-    """Build the missing structured resume result."""
-    return _error_result(
-        f"Ready resume {resume_fingerprint[:16]}... is missing structured data",
-    )
-
-
-def _processing_resume_result(processing_status: str) -> MatchingPipelineResult:
-    """Build the processing-in-progress result."""
-    return _error_result(
-        "Latest resume upload is still processing "
-        f"({processing_status}).",
-    )
-
-
-def _no_ready_resume_result(fallback_error: Optional[str]) -> MatchingPipelineResult:
-    """Build the no-ready-resume result."""
-    return _error_result(
-        fallback_error or "No ready resume found. Upload and process a resume first.",
-    )
 
 
 def _load_latest_ready_resume(
@@ -223,7 +162,9 @@ def _load_latest_ready_resume(
                 resume_fingerprint
             )
             if not structured_resume or not structured_resume.extracted_data:
-                return None, None, False, _missing_structured_resume_result(resume_fingerprint)
+                return None, None, False, _error_result(
+                    f"Ready resume {resume_fingerprint[:16]}... is missing structured data",
+                )
             resume_data = structured_resume.extracted_data
 
     if resume_fingerprint:
@@ -238,14 +179,15 @@ def _load_latest_ready_resume(
             None,
             None,
             False,
-            _processing_resume_result(latest_processing_state.processing_status),
+            _error_result(
+                "Latest resume upload is still processing "
+                f"({latest_processing_state.processing_status}).",
+            ),
         )
 
-    resume_fingerprint, resume_data, fallback_error = _load_configured_resume_fallback(ctx)
-    if not resume_fingerprint:
-        return None, None, False, _no_ready_resume_result(fallback_error)
-
-    return resume_fingerprint, resume_data, False, None
+    return None, None, False, _error_result(
+        "No ready resume found. Upload and process a resume first.",
+    )
 
 
 def _load_pipeline_resume(
@@ -347,7 +289,7 @@ def run_matching_pipeline(
         status_callback: Optional callable invoked with a status string at each
             major pipeline stage (e.g. "loading_resume", "scoring", "notifying").
         resume_fingerprint: If provided, load the resume from the database using
-            this fingerprint instead of reading from the configured file path.
+            this fingerprint instead of the latest ready resume.
         owner_id: Optional authenticated owner identity for notification tracking.
         task_id: Optional matching task id for notification correlation.
 
@@ -410,7 +352,7 @@ def run_matching_pipeline(
         if ctx.notification_service and not stop_event.is_set():
             if status_callback:
                 status_callback("notifying")
-            notified_count = _send_notifications(
+            notified_count = send_notifications(
                 ctx,
                 match_dtos,
                 saved_count,
@@ -435,82 +377,6 @@ def run_matching_pipeline(
             success=False, matches_count=0, saved_count=0, notified_count=0,
             error=str(e), execution_time=execution_time,
         )
-
-
-# ---------------------------------------------------------------------------
-# File / fingerprint helpers
-# ---------------------------------------------------------------------------
-
-def _load_resume_file(etl_config) -> Tuple[Optional[str], Optional[dict]]:
-    """Load resume file from the configured path. Returns (filepath, data)."""
-    if etl_config and getattr(etl_config, 'resume', None):
-        resume_file = etl_config.resume.resume_file
-    elif etl_config and getattr(etl_config, 'resume_file', None):
-        resume_file = etl_config.resume_file
-    else:
-        resume_file = None
-
-    if not resume_file:
-        logger.info("No resume file configured in ETL config — skipping file-based matching")
-        return None, None
-
-    if not os.path.isabs(resume_file):
-        resume_file = os.path.join(os.getcwd(), resume_file)
-
-    if not os.path.exists(resume_file):
-        logger.error("Resume file not found: %s", resume_file)
-        return None, None
-
-    resume_data = load_resume_with_parser(resume_file)
-    if not resume_data:
-        logger.error("Failed to load resume data")
-        return None, None
-
-    return resume_file, resume_data
-
-
-def _determine_resume_extraction(
-    resume_file: str,
-    etl_config,
-) -> Tuple[str, bool]:
-    """Determine if resume should be re-extracted based on fingerprint comparison.
-
-    Returns:
-        Tuple of (resume_fingerprint, should_re_extract).
-    """
-    from database.models import generate_file_fingerprint
-
-    with open(resume_file, 'rb') as f:
-        current_fingerprint = generate_file_fingerprint(f.read())
-    logger.info("Current resume fingerprint: %s", current_fingerprint)
-
-    with job_uow() as repo:
-        stored_fingerprint = repo.resume.get_latest_stored_resume_fingerprint()
-
-    force_re_extraction = (
-        etl_config.resume.force_re_extraction
-        if etl_config and etl_config.resume and etl_config.resume.force_re_extraction
-        else False
-    )
-
-    if force_re_extraction or not stored_fingerprint or current_fingerprint != stored_fingerprint:
-        should_re_extract = True
-        resume_fingerprint = current_fingerprint
-        if not stored_fingerprint:
-            logger.info("No stored resume found — will extract")
-        elif current_fingerprint != stored_fingerprint:
-            logger.info(
-                "Resume file changed (stored: %s, current: %s) — will re-extract",
-                stored_fingerprint, current_fingerprint,
-            )
-        else:
-            logger.info("Force re-extraction enabled in config — will re-extract")
-    else:
-        should_re_extract = False
-        resume_fingerprint = stored_fingerprint
-        logger.info("Resume unchanged (fingerprint: %s) — using stored data", current_fingerprint)
-
-    return resume_fingerprint, should_re_extract
 
 
 # ---------------------------------------------------------------------------
@@ -539,7 +405,6 @@ def _load_user_wants_embeddings(matching_config, ai_service) -> List[List[float]
 
     logger.info("Loaded %d user wants from %s", len(user_wants), matching_config.user_wants_file)
 
-    # FIX: prefer a single batched call; fall back to per-item with error isolation
     if hasattr(ai_service, 'generate_embeddings'):
         try:
             return ai_service.generate_embeddings(user_wants)
@@ -548,7 +413,6 @@ def _load_user_wants_embeddings(matching_config, ai_service) -> List[List[float]
 
     embeddings = []
     for want_text in user_wants:
-        # FIX: isolate failures so one bad entry doesn't abort the whole pipeline
         try:
             embeddings.append(ai_service.generate_embedding(want_text))
         except Exception as e:
@@ -608,7 +472,6 @@ def _run_vector_matching(matcher, repo, resume_data, stop_event, pre_extracted_r
         pre_extracted_resume=pre_extracted_resume,
         resume_fingerprint=resume_fingerprint,
     )
-    # FIX: removed duplicate "Step 1 completed" log (caller logs with timing)
     return preliminary_matches
 
 
@@ -762,7 +625,7 @@ def _run_matching_and_scoring(
         step_elapsed = time.time() - preparation_start
         logger.info("RESUME ETL Step 1 completed: Resume prepared in %.2fs", step_elapsed)
 
-        if _should_terminate_early(stop_event, status_callback):
+        if stop_event.is_set():
             return []
 
         preliminary_matches = _run_preliminary_matching(
@@ -776,7 +639,7 @@ def _run_matching_and_scoring(
             resume_fingerprint,
         )
 
-        if _should_terminate_early(stop_event, status_callback):
+        if stop_event.is_set():
             return []
 
         scoring_start = time.time()
@@ -796,20 +659,6 @@ def _run_matching_and_scoring(
     logger.info("MATCHING Step 2 completed: Scored %d matches in %.2fs", len(match_dtos), step_elapsed)
     _log_match_results(match_dtos)
     return match_dtos
-
-
-def _should_terminate_early(
-    stop_event: threading.Event,
-    status_callback: Optional[Callable[[str], None]],
-) -> bool:
-    """Check if we should terminate early based on stop event or status callback needs."""
-    if stop_event.is_set():
-        return True
-    if status_callback:
-        # This allows the callback to be called even if we're going to return early
-        # The actual callback invocation happens in the calling function
-        return False
-    return False
 
 
 # ---------------------------------------------------------------------------
@@ -910,8 +759,6 @@ def _save_matches_batch(
 
                 if existing and existing.status == 'active':
                     if existing.job_content_hash != dto.job.content_hash:
-                        # FIX: clarified intent — mark existing stale, then insert
-                        # a new record (is_stale_replacement=True signals insertion)
                         existing.status = 'stale'
                         existing.invalidated_reason = "Job content updated"
                         logger.info("Invalidated match for job %s due to content change", dto.job.id)
@@ -929,241 +776,3 @@ def _save_matches_batch(
             logger.exception("Failed saving match job_id=%s", dto.job.id)
 
     return saved_count
-
-
-# ---------------------------------------------------------------------------
-# Notifications
-# ---------------------------------------------------------------------------
-
-def _notification_setting_value(
-    notification_config,
-    settings_snapshot: Any,
-    attribute: str,
-):
-    """Read a notification setting from user settings when present, else config."""
-    if settings_snapshot is not None:
-        return getattr(settings_snapshot, attribute)
-    return getattr(notification_config, attribute)
-
-
-def _resolve_notification_plan(
-    ctx: AppContext,
-    owner_id: Optional[str],
-) -> Optional[NotificationDeliveryPlan]:
-    """Resolve the notification recipient identity and enabled channels."""
-    notification_config = ctx.config.notifications
-    user_id = owner_id or notification_config.user_id
-    if not user_id:
-        logger.warning("Skipping notifications because no notification user identity is available")
-        return None
-
-    resolved_user_id: Optional[UUID]
-    try:
-        resolved_user_id = UUID(str(user_id))
-    except ValueError:
-        resolved_user_id = None
-
-    if resolved_user_id is None:
-        enabled_channels = [
-            name for name, cfg in notification_config.channels.items() if cfg.enabled
-        ]
-        if not enabled_channels:
-            logger.warning("No notification channels configured")
-            return None
-        return NotificationDeliveryPlan(user_id=str(user_id), enabled_channels=enabled_channels)
-
-    with job_uow() as repo:
-        from database.models import User
-
-        user = repo.db.get(User, resolved_user_id)
-        if user is None:
-            logger.warning("Skipping notifications because user %s was not found", user_id)
-            return None
-
-        settings_snapshot = ctx.notification_service.get_user_notification_snapshot(user)
-        enabled_channels = ctx.notification_service.get_enabled_channels_for_user(user)
-
-    if not settings_snapshot.notifications_enabled:
-        logger.info("Notifications disabled for user %s", user_id)
-        return None
-
-    if not enabled_channels:
-        logger.info("No enabled notification channels available for user %s", user_id)
-        return None
-
-    return NotificationDeliveryPlan(
-        user_id=str(user_id),
-        enabled_channels=enabled_channels,
-        settings_snapshot=settings_snapshot,
-    )
-
-
-def _high_score_matches_for_plan(
-    scored_match_dtos: List[MatchResultDTO],
-    notification_config,
-    delivery_plan: NotificationDeliveryPlan,
-) -> List[MatchResultDTO]:
-    """Filter matches down to those that should trigger delivery."""
-    threshold = _notification_setting_value(
-        notification_config,
-        delivery_plan.settings_snapshot,
-        "min_score_threshold",
-    )
-    return [
-        dto for dto in scored_match_dtos
-        if dto.overall_score is not None and dto.overall_score >= threshold
-    ]
-
-
-def _send_match_notification(
-    ctx: AppContext,
-    dto: MatchResultDTO,
-    *,
-    resume_fingerprint: str,
-    delivery_plan: NotificationDeliveryPlan,
-    task_id: Optional[str],
-) -> bool:
-    """Send a single match notification when a saved match record is available."""
-    content = None
-    match_id = None
-
-    with job_uow() as repo:
-        match_record = repo.get_existing_match(
-            dto.job.id, resume_fingerprint, load_job_post=True,
-        )
-        if not match_record or not match_record.id:
-            logger.warning("No match record found for job %s, skipping", dto.job.id)
-            return False
-        if match_record.notified:
-            logger.debug("Match already notified for job %s, skipping", dto.job.id)
-            return False
-
-        match_id = match_record.id
-        job_post = match_record.job_post
-        if job_post:
-            content = NotificationMessageBuilder.build_notification_content(
-                job_post=job_post,
-                overall_score=float(dto.overall_score),
-                fit_score=dto.fit_score,
-                want_score=dto.want_score,
-                required_coverage=dto.jd_required_coverage,
-                apply_url=job_post.company_url_direct,
-            )
-
-        if not content:
-            return False
-
-        ctx.notification_service.notify_new_match(
-            user_id=delivery_plan.user_id,
-            match_id=str(match_id),
-            content=content,
-            channels=delivery_plan.enabled_channels,
-            task_id=task_id,
-        )
-        match_record.notified = True
-        return True
-
-
-def _send_batch_complete_notification(
-    ctx: AppContext,
-    *,
-    delivery_plan: NotificationDeliveryPlan,
-    saved_count: int,
-    high_score_matches: List[MatchResultDTO],
-    task_id: Optional[str],
-) -> None:
-    """Send the batch summary notification."""
-    ctx.notification_service.notify_batch_complete(
-        user_id=delivery_plan.user_id,
-        total_matches=saved_count,
-        high_score_matches=len(high_score_matches),
-        channels=delivery_plan.enabled_channels,
-        task_id=task_id,
-    )
-
-
-def _send_notifications(
-    ctx: AppContext,
-    scored_match_dtos: List[MatchResultDTO],
-    saved_count: int,
-    resume_fingerprint: str,
-    stop_event: threading.Event,
-    owner_id: Optional[str] = None,
-    task_id: Optional[str] = None,
-) -> int:
-    """Send notifications for scored matches."""
-    notification_config = ctx.config.notifications
-
-    if not notification_config or not notification_config.enabled:
-        logger.info("=== NOTIFICATION STEP: Skipped (disabled in config) ===")
-        return 0
-
-    if saved_count == 0:
-        logger.info("=== NOTIFICATION STEP: Skipped (no matches to notify) ===")
-        return 0
-
-    step_start = time.time()
-    logger.info("=== MATCHING STEP 3: Sending Notifications ===")
-
-    try:
-        delivery_plan = _resolve_notification_plan(ctx, owner_id)
-        if delivery_plan is None:
-            return 0
-
-        high_score_matches = _high_score_matches_for_plan(
-            scored_match_dtos,
-            notification_config,
-            delivery_plan,
-        )
-
-        notified_count = 0
-        for dto in high_score_matches:
-            if stop_event.is_set():
-                break
-
-            if not _notification_setting_value(
-                notification_config,
-                delivery_plan.settings_snapshot,
-                "notify_on_new_match",
-            ):
-                continue
-
-            try:
-                if _send_match_notification(
-                    ctx,
-                    dto,
-                    resume_fingerprint=resume_fingerprint,
-                    delivery_plan=delivery_plan,
-                    task_id=task_id,
-                ):
-                    notified_count += 1
-            except Exception:
-                logger.exception("Failed to process notification for job_id=%s", dto.job.id)
-                continue
-
-        if _notification_setting_value(
-            notification_config,
-            delivery_plan.settings_snapshot,
-            "notify_on_batch_complete",
-        ):
-            try:
-                _send_batch_complete_notification(
-                    ctx,
-                    delivery_plan=delivery_plan,
-                    saved_count=saved_count,
-                    high_score_matches=high_score_matches,
-                    task_id=task_id,
-                )
-            except Exception as e:
-                logger.error("Failed to send batch summary: %s", e)
-
-        step_elapsed = time.time() - step_start
-        logger.info(
-            "MATCHING Step 3 completed: Sent %d notifications in %.2fs",
-            notified_count, step_elapsed,
-        )
-        return notified_count
-
-    except Exception as e:
-        logger.error("Error in notification step: %s", e, exc_info=True)
-        return 0

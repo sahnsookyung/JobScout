@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from pipeline.runner import load_user_wants_data
+from services.scorer_matcher.pipeline import load_user_wants_data
 
 
 class TestLoadUserWantsData(unittest.TestCase):
@@ -107,7 +107,7 @@ class TestLoadUserWantsData(unittest.TestCase):
         """Missing file should return empty list and log warning."""
         nonexistent_path = "/nonexistent/path/wants.txt"
         
-        with self.assertLogs('pipeline.runner', level='WARNING') as log_context:
+        with self.assertLogs('services.scorer_matcher.pipeline', level='WARNING') as log_context:
             result = load_user_wants_data(nonexistent_path)
         
         self.assertEqual(result, [])
@@ -180,7 +180,7 @@ class TestLoadUserWantsData(unittest.TestCase):
         """Permission error should return empty list and log error."""
         mock_open.side_effect = PermissionError("Permission denied")
         
-        with self.assertLogs('pipeline.runner', level='ERROR') as log_context:
+        with self.assertLogs('services.scorer_matcher.pipeline', level='ERROR') as log_context:
             result = load_user_wants_data("/some/path/wants.txt")
         
         self.assertEqual(result, [])
