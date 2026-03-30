@@ -66,13 +66,7 @@ jobs:
           # Run ALL tests with coverage - no test left behind!
           # Redis available on localhost:6379 (service) and localhost:6380 (test container)
           uv run pytest tests/ \
-            --cov=services \
-            --cov=core \
-            --cov=database \
-            --cov=etl \
-            --cov=notification \
-            --cov=web \
-            --cov=modal \
+            --cov=. \
             --cov-report=xml:coverage.xml \
             --cov-report=html:htmlcov \
             --cov-report=term \

@@ -137,13 +137,7 @@ def run_tests(coverage=False, watch=False, test_path="tests/", redis_port="6379"
     if coverage:
         print("📊 Coverage enabled")
         cmd.extend([
-            "--cov=services",
-            "--cov=core",
-            "--cov=database",
-            "--cov=etl",
-            "--cov=notification",
-            "--cov=web",
-            "--cov=modal",
+            "--cov=.",
             "--cov-report=term",
         ])
 
