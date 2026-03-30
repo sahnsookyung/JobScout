@@ -1,0 +1,183 @@
+# ── Security — jobscout caller workflow ──────────────────────────────────────
+# Invokes shared reusable security workflows and CodeQL (public-repo only).
+# Policy references: §8.2 (required triggers), §9.2 (permissions: {}),
+#   §19.5 (gate job), §25 (jobscout implementation), §27.3 (caller responsibility).
+#
+# Repository settings required (cannot be set via workflow files):
+#   - Default GITHUB_TOKEN permissions: read-only (policy §9.1)
+#   - Branch protection: main, develop — require this workflow's gate check (policy §19)
+#   - Fork PR approval: require approval for all outside collaborators (policy §25.6)
+#   - Actions policy: restrict to approved sources (policy §6.4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Security
+
+on:
+  # Required triggers for required-check workflows (policy §8.2).
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+  schedule:
+    # Weekly Monday 03:00 UTC — catch regressions in dependencies (policy §8.2)
+    - cron: "0 3 * * 1"
+  merge_group:
+
+# Workflow-level default: deny all (policy §9.2).
+permissions: {}
+
+# Cancel superseded runs on the same ref (policy §21).
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Compute context ───────────────────────────────────────────────────────
+  # Derives retention days based on trigger so callers pass the correct value.
+  # PR runs: 7 days. Protected-branch pushes: 14 days (policy §23 table).
+  setup:
+    name: Compute context
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    outputs:
+      retention-days: ${{ steps.retention.outputs.days }}
+    steps:
+      - name: Compute artifact retention
+        id: retention
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]] && \
+             [[ "$GITHUB_REF" == "refs/heads/main" || "$GITHUB_REF" == "refs/heads/develop" ]]; then
+            echo "days=14" >> "$GITHUB_OUTPUT"
+          else
+            echo "days=7" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Gitleaks — secret scanning ────────────────────────────────────────────
+  gitleaks:
+    name: Gitleaks
+    needs: setup
+    uses: ./.github/workflows/reusable-gitleaks.yml
+    # Caller MUST declare explicit permissions (policy §9.4).
+    permissions:
+      contents: read
+    with:
+      artifact-retention-days: ${{ fromJSON(needs.setup.outputs.retention-days) }}
+
+  # ── Semgrep — SAST ────────────────────────────────────────────────────────
+  semgrep:
+    name: Semgrep
+    needs: setup
+    uses: ./.github/workflows/reusable-semgrep.yml
+    permissions:
+      contents: read
+    with:
+      artifact-retention-days: ${{ fromJSON(needs.setup.outputs.retention-days) }}
+      blocking-severity: "ERROR"
+
+  # ── Grype — dependency vulnerability scan ─────────────────────────────────
+  grype:
+    name: Grype
+    needs: setup
+    uses: ./.github/workflows/reusable-grype.yml
+    permissions:
+      contents: read
+    with:
+      artifact-retention-days: ${{ fromJSON(needs.setup.outputs.retention-days) }}
+      fail-on-severity: "high"
+
+  # ── Checkov — IaC scan (deprivileged) ─────────────────────────────────────
+  checkov:
+    name: Checkov
+    needs: setup
+    uses: ./.github/workflows/reusable-checkov.yml
+    # Deprivileged: read-only, no secrets (policy §18.5).
+    permissions:
+      contents: read
+    with:
+      artifact-retention-days: ${{ fromJSON(needs.setup.outputs.retention-days) }}
+
+  # ── CodeQL — GitHub-native code scanning (jobscout public repo only) ──────
+  # Approved for jobscout per policy §17.2, §25.3.
+  # github/codeql-action is an approved GitHub-native exception (policy §7.5).
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Required for uploading SARIF to GitHub Security tab (public repo only).
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+
+    steps:
+      - name: Checkout
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        # github/codeql-action v3.28.13 — verified 2026-03-30
+        uses: github/codeql-action/init@1b549b9259bda1cb5ddde3b41741a82a2d15a841
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Autobuild
+        # github/codeql-action v3.28.13 — verified 2026-03-30
+        uses: github/codeql-action/autobuild@1b549b9259bda1cb5ddde3b41741a82a2d15a841
+
+      - name: Perform CodeQL Analysis
+        # github/codeql-action v3.28.13 — verified 2026-03-30
+        # Unique category per language prevents ambiguous SARIF overwrite (policy §16).
+        uses: github/codeql-action/analyze@1b549b9259bda1cb5ddde3b41741a82a2d15a841
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  # ── Security Gate ─────────────────────────────────────────────────────────
+  # Stable-name gate job required for required checks (policy §19.5).
+  # Fails if any security job failed, was skipped, or was not triggered.
+  # Register "Security Gate" as the required check name in branch protection.
+  security-gate:
+    name: Security Gate
+    runs-on: ubuntu-latest
+    needs: [gitleaks, semgrep, grype, checkov, codeql]
+    if: always()
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Evaluate security job results
+        env:
+          GITLEAKS_RESULT: ${{ needs.gitleaks.result }}
+          SEMGREP_RESULT:  ${{ needs.semgrep.result }}
+          GRYPE_RESULT:    ${{ needs.grype.result }}
+          CHECKOV_RESULT:  ${{ needs.checkov.result }}
+          CODEQL_RESULT:   ${{ needs.codeql.result }}
+        run: |
+          FAILED=0
+          declare -A RESULTS=(
+            [gitleaks]="$GITLEAKS_RESULT"
+            [semgrep]="$SEMGREP_RESULT"
+            [grype]="$GRYPE_RESULT"
+            [checkov]="$CHECKOV_RESULT"
+            [codeql]="$CODEQL_RESULT"
+          )
+          for job in gitleaks semgrep grype checkov codeql; do
+            result="${RESULTS[$job]}"
+            if [[ "$result" != "success" ]]; then
+              echo "::error::${job}: ${result} (expected: success)"
+              FAILED=1
+            fi
+          done
+          if [ "$FAILED" -ne 0 ]; then
+            echo "One or more security jobs failed or were not triggered as expected."
+            echo "All security jobs must succeed for this gate to pass (policy §19.5)."
+            exit 1
+          fi
+          echo "All security jobs passed."

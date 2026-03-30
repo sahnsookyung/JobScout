@@ -1,23 +1,55 @@
+# ── SonarQube Code Quality ─────────────────────────────────────────────────
+# Policy references: §9.2 (permissions: {}), §9.8 (persist-credentials: false),
+#   §11.1 (SHA-pinned actions), §11.4-11.5 (digest-pinned service containers),
+#   §21 (concurrency + timeout).
+#
+# SonarSource/sonarqube-scan-action exception note (policy §7.1, §7.4):
+#   This workflow uses the SHA-pinned SonarSource action wrapper instead of the
+#   sonar-scanner CLI directly. This is an approved exception pending CLI
+#   migration. Action is pinned to an immutable commit SHA (not a mutable tag).
+#   Exception must be reviewed quarterly (policy §31.3).
+#   Action SHA: a31c9398be7ace6bbfaf30c0bd5d415f843d45e9 — verified 2026-03-30
+#
+# Service container (Redis) uses an immutable digest pin (policy §11.4).
+#   redis@sha256:8b81dd37ff027bec4e516d41acfbe9fe2460070dc6d4a4570a2ac5b9d59df065
+#   Update digest via Dependabot or quarterly review (policy §31.2, §31.3).
+# ─────────────────────────────────────────────────────────────────────────────
+
 name: SonarQube Code Quality
 
 on:
   push:
-    branches: [ main, develop, refactor-microservices ]
+    branches: [main, develop, refactor-microservices]
   pull_request:
-    branches: [ main, develop, refactor-microservices ]
+    branches: [main, develop, refactor-microservices]
   schedule:
-    # Run daily at 2 AM UTC to catch regressions
-    - cron: '0 2 * * *'
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+  merge_group:
+
+# Workflow-level default: deny all (policy §9.2).
+permissions: {}
+
+concurrency:
+  group: sonarqube-${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   sonarqube:
     name: SonarQube Analysis
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      # pull-requests: read is sufficient for SonarCloud PR decoration context.
+      pull-requests: read
 
     services:
       redis:
-        image: redis:7-alpine
+        # redis:7-alpine — immutable digest pin (policy §11.4-11.5).
+        # Digest verified 2026-03-30. Update via quarterly review (policy §31.3).
+        # Equivalent human-readable tag: redis:7-alpine
+        image: redis@sha256:8b81dd37ff027bec4e516d41acfbe9fe2460070dc6d4a4570a2ac5b9d59df065
         ports:
           - 6379:6379
         options: >-
@@ -28,17 +60,22 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        # fetch-depth: 0 required for accurate SonarCloud blame analysis.
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          fetch-depth: 0  # Shallow clones should be disabled for better analysis
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098
+        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
+        uses: astral-sh/setup-uv@22695119d769bdb6f7032ad67b9bca0ef8c4a174
         with:
-          version: "latest"
+          version: "5.4.0"
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        # actions/setup-python v6.2.0 — verified 2026-03-30
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.14"
 
@@ -46,25 +83,23 @@ jobs:
         run: |
           uv sync --all-extras
           uv pip install pytest pytest-asyncio pytest-cov
-          
+
           # Install frontend dependencies
           cd web/frontend && npm ci
 
       - name: Start integration test containers
         run: |
-          # Build Docker image for microservices
-          docker build -t jobscout-orchestrator:latest .
+          # Build Docker image for microservices (local build, not a registry pull)
+          docker build -t jobscout-orchestrator:ci-local .
 
-          # Start Redis test container on port 6380
-          docker run -d --name redis-test -p 6380:6379 redis:7-alpine
-          # Wait for Redis to be ready
+          # Start Redis test container on port 6380 using digest-pinned image (policy §11.4).
+          docker run -d --name redis-test -p 6380:6379 \
+            redis@sha256:8b81dd37ff027bec4e516d41acfbe9fe2460070dc6d4a4570a2ac5b9d59df065
           sleep 2
           docker exec redis-test redis-cli ping
 
       - name: Run backend tests with coverage
         run: |
-          # Run ALL tests with coverage - no test left behind!
-          # Redis available on localhost:6379 (service) and localhost:6380 (test container)
           uv run pytest tests/ \
             --cov=. \
             --cov-report=xml:coverage.xml \
@@ -98,9 +133,12 @@ jobs:
         run: |
           docker stop redis-test || true
           docker rm redis-test || true
-          docker rmi jobscout-orchestrator:latest || true
+          docker rmi jobscout-orchestrator:ci-local || true
 
       - name: SonarQube Scan
+        # SonarSource/sonarqube-scan-action — SHA-pinned (policy §11.1).
+        # Exception: wrapper action used in place of sonar-scanner CLI (policy §7.4).
+        # See exception note at top of this file. Reviewed 2026-03-30.
         uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -109,7 +147,8 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        # actions/upload-artifact v4.6.2 — verified 2026-03-30
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: test-results
           path: |

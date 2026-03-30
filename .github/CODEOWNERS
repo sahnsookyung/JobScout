@@ -1,0 +1,13 @@
+# ── Security governance ─────────────────────────────────────────────────────
+# All paths below are declared protected workflow paths (policy §6.1).
+# Changes require review by a repository administrator or designated security
+# reviewer before merge (policy §6.2).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# CI/CD workflow configuration
+/.github/workflows/     @sahnsookyung
+/.github/actions/       @sahnsookyung
+/.github/dependabot.yml @sahnsookyung
+
+# Security policy and governance documents
+/CLAUDE.md              @sahnsookyung

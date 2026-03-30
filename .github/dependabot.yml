@@ -1,0 +1,47 @@
+version: 2
+
+# Dependabot update hygiene (policy §6.5).
+# Quarterly-only review is insufficient — weekly schedule is mandatory.
+# NOTE: Dependabot security alerts do NOT fully cover SHA-pinned GitHub Actions
+# (policy §6.6). Release-note review and direct action-code review remain
+# required for every version bump.
+
+updates:
+  # GitHub Actions — covers both direct actions and reusable workflow refs
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "sahnsookyung"
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  # Python (pip / uv) — covers scanner version pins in CI
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "sahnsookyung"
+    labels:
+      - "dependencies"
+      - "python"
+
+  # Frontend npm
+  - package-ecosystem: "npm"
+    directory: "/web/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "sahnsookyung"
+    labels:
+      - "dependencies"
+      - "npm"

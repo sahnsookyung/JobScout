@@ -1,20 +1,57 @@
+# ── Deploy Modal Embedding Server ─────────────────────────────────────────────
+# Policy references: §9.2 (permissions: {}), §9.8 (persist-credentials: false),
+#   §11.1 (SHA-pinned actions), §21 (concurrency + timeout),
+#   §18.8 (pinned runtime package acquisition).
+#
+# modal is installed from a pinned version (policy §18.8 / §12.3 — no unpinned installs).
+# Secrets (MODAL_TOKEN_ID, MODAL_TOKEN_SECRET) are scoped to the deploy job only.
+# This workflow deploys only when modal/** changes on main (trusted source, policy §24.2).
+# ─────────────────────────────────────────────────────────────────────────────
+
 name: Deploy Modal Embedding Server
+
 on:
   push:
     branches: [main]
     paths:
-      - 'modal/**'  # only trigger when modal code changes
+      - "modal/**"
+  workflow_dispatch:
+
+# Workflow-level default: deny all (policy §9.2).
+permissions: {}
+
+concurrency:
+  group: modal-deploy-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   deploy:
+    name: Deploy
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - name: Checkout
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        # actions/setup-python v6.2.0 — verified 2026-03-30
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.14"
-      - run: pip install modal
-      - run: modal deploy modal/modal_server.py
+
+      - name: Install modal (pinned version)
+        # Pinned to exact version — no floating installs (policy §12.3, §18.8).
+        # Update via Dependabot or when a new modal release is needed.
+        run: pip install "modal==1.4.0"
+
+      - name: Deploy to Modal
         env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_ID:     ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal deploy modal/modal_server.py

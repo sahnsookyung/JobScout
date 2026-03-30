@@ -1,8 +1,26 @@
+# ── CI — jobscout ─────────────────────────────────────────────────────────────
+# Policy references: §9.2 (permissions: {}), §9.8 (persist-credentials: false),
+#   §11.1 (SHA-pinned actions), §19.5 (gate job), §21 (concurrency + timeout).
+#
+# Repository settings required:
+#   - Register "CI Gate" as the required check in branch protection (policy §19.3).
+#   - Default GITHUB_TOKEN permissions: read-only (policy §9.1).
+# ─────────────────────────────────────────────────────────────────────────────
+
 name: CI
 
 on:
+  pull_request:
+    branches: [main, develop]
   push:
+    branches: [main, develop]
+  workflow_dispatch:
+  merge_group:
 
+# Workflow-level default: deny all (policy §9.2).
+permissions: {}
+
+# Cancel superseded runs on the same ref (policy §21).
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref_name }}
   cancel-in-progress: true
@@ -12,6 +30,8 @@ jobs:
     name: Python Unit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     env:
       PYTHONPATH: ${{ github.workspace }}
       JOBSCOUT_ENV: test
@@ -19,15 +39,20 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098
+        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
+        uses: astral-sh/setup-uv@22695119d769bdb6f7032ad67b9bca0ef8c4a174
         with:
-          version: "latest"
+          version: "5.4.0"
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        # actions/setup-python v6.2.0 — verified 2026-03-30
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.14.3"
 
@@ -43,13 +68,19 @@ jobs:
     name: Frontend Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        # actions/setup-node v4.4.0 — verified 2026-03-30
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "20"
           cache: "npm"
@@ -69,6 +100,8 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    permissions:
+      contents: read
     env:
       PYTHONPATH: ${{ github.workspace }}
       JOBSCOUT_ENV: test
@@ -76,15 +109,20 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098
+        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
+        uses: astral-sh/setup-uv@22695119d769bdb6f7032ad67b9bca0ef8c4a174
         with:
-          version: "latest"
+          version: "5.4.0"
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        # actions/setup-python v6.2.0 — verified 2026-03-30
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.14.3"
 
@@ -104,6 +142,8 @@ jobs:
     name: E2E Resume Flow
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
     env:
       PYTHONPATH: ${{ github.workspace }}
       JOBSCOUT_ENV: test
@@ -112,15 +152,20 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098
+        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
+        uses: astral-sh/setup-uv@22695119d769bdb6f7032ad67b9bca0ef8c4a174
         with:
-          version: "latest"
+          version: "5.4.0"
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        # actions/setup-python v6.2.0 — verified 2026-03-30
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.14.3"
 
@@ -185,3 +230,41 @@ jobs:
             extraction \
             embeddings \
             scorer-matcher || true
+
+  # ── CI Gate ───────────────────────────────────────────────────────────────
+  # Stable-name gate job for required checks (policy §19.5).
+  # Register "CI Gate" as the required check in branch protection.
+  ci-gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    needs: [python-unit, frontend-unit, integration, e2e-resume-flow]
+    if: always()
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Evaluate CI job results
+        env:
+          PYTHON_UNIT:   ${{ needs.python-unit.result }}
+          FRONTEND_UNIT: ${{ needs.frontend-unit.result }}
+          INTEGRATION:   ${{ needs.integration.result }}
+          E2E:           ${{ needs.e2e-resume-flow.result }}
+        run: |
+          FAILED=0
+          declare -A RESULTS=(
+            [python-unit]="$PYTHON_UNIT"
+            [frontend-unit]="$FRONTEND_UNIT"
+            [integration]="$INTEGRATION"
+            [e2e-resume-flow]="$E2E"
+          )
+          for job in python-unit frontend-unit integration e2e-resume-flow; do
+            result="${RESULTS[$job]}"
+            if [[ "$result" != "success" ]]; then
+              echo "::error::${job}: ${result} (expected: success)"
+              FAILED=1
+            fi
+          done
+          if [ "$FAILED" -ne 0 ]; then
+            echo "One or more CI jobs failed or were not triggered as expected."
+            exit 1
+          fi
+          echo "All CI jobs passed."

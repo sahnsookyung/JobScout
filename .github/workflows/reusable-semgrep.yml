@@ -1,0 +1,115 @@
+# ── Reusable — Semgrep SAST ───────────────────────────────────────────────────
+# Shared core component (policy §27). Replaces opengrep as CLI-first SAST tool.
+# Callers MUST declare explicit permissions in the calling job (policy §9.4).
+# No secrets: inherit (policy §9.7). No environment binding (policy §27.6).
+# Policy references: §7 (CLI-first), §12.1, §15.5, §16, §18.3.
+#
+# Binary integrity: semgrep wheel verified by SHA256 (policy §12.1).
+# Rules: pinned to semgrep/semgrep-rules commit SHA (policy §18.3).
+#   Rules SHA: b3409178ba39fe6a45801bb59f3e99ff7bd281ca (2026-03-30)
+#   Update rules SHA quarterly or when security-relevant rule updates land.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "Reusable — Semgrep"
+
+on:
+  workflow_call:
+    inputs:
+      artifact-retention-days:
+        description: "Days to retain the SARIF evidence artifact"
+        required: true
+        type: number
+      blocking-severity:
+        description: "Minimum severity that causes a non-zero exit: INFO, WARNING, ERROR"
+        required: false
+        type: string
+        default: "ERROR"
+
+permissions: {}
+
+jobs:
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Install semgrep from pinned wheel
+        # Wheel SHA256 verified before install (policy §12.1).
+        # Version: semgrep 1.156.0. PyPI wheel for manylinux2014 x86_64.
+        # NOTE: transitive dependencies are resolved by pip at install time and
+        # are not individually hash-verified. Full hash verification requires a
+        # pip-compile lockfile (generate with: pip-compile --generate-hashes).
+        run: |
+          SEMGREP_WHEEL="semgrep-1.156.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-manylinux2014_x86_64.whl"
+          SEMGREP_WHEEL_URL="https://files.pythonhosted.org/packages/92/0c/b00156bee40cf9e594c2bd10672232e33d9a7d1bc8b5a6dd697097c8d6be/${SEMGREP_WHEEL}"
+          SEMGREP_EXPECTED_SHA256="a7f68544bcd33fac9bc519e6a6c4759d612836422ce87bc08dd014481c3e8fd0"
+          curl -sSLo "${SEMGREP_WHEEL}" "${SEMGREP_WHEEL_URL}"
+          echo "${SEMGREP_EXPECTED_SHA256}  ${SEMGREP_WHEEL}" | sha256sum -c
+          pip install --quiet "${SEMGREP_WHEEL}"
+          semgrep --version
+
+      - name: Fetch semgrep rules at pinned commit
+        # Rules pinned to a specific commit SHA (policy §18.3).
+        # Fetched as GitHub source archive — commit SHA is the integrity pin.
+        run: |
+          RULES_SHA="b3409178ba39fe6a45801bb59f3e99ff7bd281ca"
+          curl -sSLo rules.tar.gz \
+            "https://github.com/semgrep/semgrep-rules/archive/${RULES_SHA}.tar.gz"
+          mkdir -p semgrep-rules-src
+          tar -xzf rules.tar.gz --strip-components=1 -C semgrep-rules-src
+          rm rules.tar.gz
+
+      - name: Run semgrep
+        # Blocking threshold controlled by caller via blocking-severity input (policy §18.3).
+        # --metrics=off: no data sent to semgrep.dev (policy §13.1 — trust boundary).
+        run: |
+          semgrep \
+            --config semgrep-rules-src/python \
+            --config semgrep-rules-src/generic \
+            --sarif \
+            --output semgrep.sarif \
+            --no-autofix \
+            --metrics=off \
+            --timeout 60 \
+            --severity "${{ inputs.blocking-severity }}" \
+            . || SEMGREP_EXIT=$?
+
+          # Safe structured summary — no raw finding content (policy §15.4).
+          echo "### Semgrep SAST" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f semgrep.sarif ]; then
+            FINDINGS=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('semgrep.sarif'))
+    total = sum(len(r.get('results', [])) for r in d.get('runs', []))
+    print(total)
+except Exception:
+    print('?')
+" 2>/dev/null || echo "?")
+            echo "- Findings (severity \`${{ inputs.blocking-severity }}\`+): ${FINDINGS}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "${SEMGREP_EXIT:-0}" -ne 0 ]; then
+            echo "- **Result: FAIL**" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- **Result: PASS**" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "${SEMGREP_EXIT:-0}"
+
+      - name: Upload semgrep SARIF
+        if: always()
+        # actions/upload-artifact v4.6.2 — verified 2026-03-30
+        # Explicit retention required (policy §15.5). Caller controls the value.
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: semgrep-sarif
+          path: semgrep.sarif
+          retention-days: ${{ inputs.artifact-retention-days }}

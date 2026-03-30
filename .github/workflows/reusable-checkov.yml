@@ -1,0 +1,119 @@
+# ── Reusable — Checkov IaC scan ───────────────────────────────────────────────
+# Shared core component (policy §27). Deprivileged context ONLY (policy §18.5).
+# Callers MUST declare explicit permissions in the calling job (policy §9.4).
+# No secrets: inherit (policy §9.7). No environment binding (policy §27.6).
+# Policy references: §7 (CLI-first), §12.1, §15.5, §16, §18.5.
+#
+# MUST NOT receive secrets, deployment credentials, or write-scoped tokens
+# when scanning untrusted IaC (policy §18.5). This workflow is deprivileged:
+# permissions are read-only and no secrets are declared.
+#
+# Version: checkov 3.2.513 — verified 2026-03-30.
+# NOTE: checkov has many transitive dependencies. Full hash verification
+# requires a pip-compile lockfile. Version pinning is the zero-cost baseline.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "Reusable — Checkov"
+
+on:
+  workflow_call:
+    inputs:
+      artifact-retention-days:
+        description: "Days to retain the SARIF evidence artifact"
+        required: true
+        type: number
+
+permissions: {}
+
+jobs:
+  checkov:
+    name: Checkov IaC Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Deprivileged: read-only access only (policy §18.5).
+    # MUST NOT add secrets, write tokens, or deployment credentials to this job.
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Install checkov
+        # Pinned to exact version (policy §18.5: MUST run from pinned dependency definition).
+        run: |
+          pip install --quiet "checkov==3.2.513"
+          checkov --version
+
+      - name: Run checkov — Dockerfile
+        run: |
+          checkov \
+            --framework dockerfile \
+            --directory . \
+            --output sarif \
+            --output-file-path checkov-dockerfile.sarif \
+            --soft-fail || CHECKOV_DOCKERFILE_EXIT=$?
+
+          echo "### Checkov — Dockerfile" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f checkov-dockerfile.sarif ]; then
+            FINDINGS=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('checkov-dockerfile.sarif'))
+    total = sum(len(r.get('results', [])) for r in d.get('runs', []))
+    print(total)
+except Exception:
+    print('?')
+" 2>/dev/null || echo "?")
+            echo "- Dockerfile findings: ${FINDINGS}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Store exit for later; --soft-fail means checkov exits 0 even with findings.
+          # Report findings in summary; do not fail the build on IaC findings by default.
+          # Adjust --soft-fail behavior per repository policy exception if needed.
+
+      - name: Run checkov — Docker Compose
+        run: |
+          checkov \
+            --framework docker_compose \
+            --directory . \
+            --output sarif \
+            --output-file-path checkov-compose.sarif \
+            --soft-fail || true
+
+          echo "### Checkov — Docker Compose" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f checkov-compose.sarif ]; then
+            FINDINGS=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('checkov-compose.sarif'))
+    total = sum(len(r.get('results', [])) for r in d.get('runs', []))
+    print(total)
+except Exception:
+    print('?')
+" 2>/dev/null || echo "?")
+            echo "- Docker Compose findings: ${FINDINGS}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload checkov SARIF — Dockerfile
+        if: always()
+        # actions/upload-artifact v4.6.2 — verified 2026-03-30
+        # Explicit retention required (policy §15.5). Caller controls the value.
+        # Separate artifact per framework (policy §23 table: "Checkov SARIF per framework").
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: checkov-dockerfile-sarif
+          path: checkov-dockerfile.sarif
+          retention-days: ${{ inputs.artifact-retention-days }}
+
+      - name: Upload checkov SARIF — Docker Compose
+        if: always()
+        # actions/upload-artifact v4.6.2 — verified 2026-03-30
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: checkov-compose-sarif
+          path: checkov-compose.sarif
+          retention-days: ${{ inputs.artifact-retention-days }}
