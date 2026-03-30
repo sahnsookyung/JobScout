@@ -71,7 +71,7 @@ jobs:
         # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
         uses: astral-sh/setup-uv@22695119d769bdb6f7032ad67b9bca0ef8c4a174
         with:
-          version: "5.4.0"
+          version: "0.11.2"
 
       - name: Set up Python
         # actions/setup-python v6.2.0 — verified 2026-03-30
