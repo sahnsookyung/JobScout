@@ -44,6 +44,9 @@ jobs:
       - name: Install and verify grype
         # Binary integrity verified via SHA256 before execution (policy §18.4, §12.1).
         # Grype also provides cosign-verifiable checksums; SHA256 is the zero-cost baseline.
+        # NOTE: version not covered by Dependabot (inline shell variable).
+        #   Update manually: bump GRYPE_VERSION + re-fetch SHA256 from the release
+        #   checksums file, then verify. Review quarterly (policy §31.3).
         run: |
           GRYPE_VERSION="0.110.0"
           GRYPE_EXPECTED_SHA256="aaa98d27d2d7efd9317c6a1ad6d9b15f3e65bab320e7d03bde41e251387bb71c"

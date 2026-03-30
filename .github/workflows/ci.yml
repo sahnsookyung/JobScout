@@ -142,6 +142,14 @@ jobs:
     name: E2E Resume Flow
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Skip on fork PRs — Docker compose builds are expensive and secrets are
+    # unavailable on untrusted fork runs. The "require approval for outside
+    # collaborators" repository setting (policy §25.6) is the outer gate;
+    # this condition handles the internal case explicitly.
+    # The CI Gate accepts "skipped" for this job only (see gate job below).
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: read
     env:
@@ -250,19 +258,30 @@ jobs:
           E2E:           ${{ needs.e2e-resume-flow.result }}
         run: |
           FAILED=0
+
+          # python-unit, frontend-unit, integration must always succeed.
           declare -A RESULTS=(
             [python-unit]="$PYTHON_UNIT"
             [frontend-unit]="$FRONTEND_UNIT"
             [integration]="$INTEGRATION"
-            [e2e-resume-flow]="$E2E"
           )
-          for job in python-unit frontend-unit integration e2e-resume-flow; do
+          for job in python-unit frontend-unit integration; do
             result="${RESULTS[$job]}"
             if [[ "$result" != "success" ]]; then
               echo "::error::${job}: ${result} (expected: success)"
               FAILED=1
             fi
           done
+
+          # e2e-resume-flow is intentionally skipped on fork PRs (resource + secret
+          # constraint). "skipped" is the only acceptable non-success result here.
+          if [[ "$E2E" == "skipped" ]]; then
+            echo "e2e-resume-flow: skipped (expected on fork PRs)"
+          elif [[ "$E2E" != "success" ]]; then
+            echo "::error::e2e-resume-flow: ${E2E} (expected: success or skipped)"
+            FAILED=1
+          fi
+
           if [ "$FAILED" -ne 0 ]; then
             echo "One or more CI jobs failed or were not triggered as expected."
             exit 1

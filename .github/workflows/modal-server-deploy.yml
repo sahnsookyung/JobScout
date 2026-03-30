@@ -47,7 +47,8 @@ jobs:
 
       - name: Install modal (pinned version)
         # Pinned to exact version — no floating installs (policy §12.3, §18.8).
-        # Update via Dependabot or when a new modal release is needed.
+        # NOTE: version not covered by Dependabot (inline pip install in run: block).
+        #   Update manually when a new modal release is needed; review quarterly (policy §31.3).
         run: pip install "modal==1.4.0"
 
       - name: Deploy to Modal

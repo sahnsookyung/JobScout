@@ -44,18 +44,24 @@ jobs:
 
       - name: Install checkov
         # Pinned to exact version (policy §18.5: MUST run from pinned dependency definition).
+        # NOTE: version not covered by Dependabot (inline shell variable).
+        #   Update manually and re-verify quarterly (policy §31.3).
         run: |
           pip install --quiet "checkov==3.2.513"
           checkov --version
 
       - name: Run checkov — Dockerfile
+        # --soft-fail is intentional: IaC findings are reported in the summary and
+        # retained as SARIF evidence but do NOT fail the build by default.
+        # To enforce hard failures, remove --soft-fail and document the exception
+        # per policy §29 (define compensating controls and review date).
         run: |
           checkov \
             --framework dockerfile \
             --directory . \
             --output sarif \
             --output-file-path checkov-dockerfile.sarif \
-            --soft-fail || CHECKOV_DOCKERFILE_EXIT=$?
+            --soft-fail
 
           echo "### Checkov — Dockerfile" >> "$GITHUB_STEP_SUMMARY"
           if [ -f checkov-dockerfile.sarif ]; then
@@ -68,21 +74,18 @@ try:
 except Exception:
     print('?')
 " 2>/dev/null || echo "?")
-            echo "- Dockerfile findings: ${FINDINGS}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Dockerfile findings: ${FINDINGS} (informational — soft-fail)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          # Store exit for later; --soft-fail means checkov exits 0 even with findings.
-          # Report findings in summary; do not fail the build on IaC findings by default.
-          # Adjust --soft-fail behavior per repository policy exception if needed.
-
       - name: Run checkov — Docker Compose
+        # --soft-fail is intentional (same rationale as Dockerfile step above).
         run: |
           checkov \
             --framework docker_compose \
             --directory . \
             --output sarif \
             --output-file-path checkov-compose.sarif \
-            --soft-fail || true
+            --soft-fail
 
           echo "### Checkov — Docker Compose" >> "$GITHUB_STEP_SUMMARY"
           if [ -f checkov-compose.sarif ]; then
@@ -95,7 +98,7 @@ try:
 except Exception:
     print('?')
 " 2>/dev/null || echo "?")
-            echo "- Docker Compose findings: ${FINDINGS}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Docker Compose findings: ${FINDINGS} (informational — soft-fail)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload checkov SARIF — Dockerfile

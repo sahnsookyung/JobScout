@@ -73,8 +73,9 @@ jobs:
     permissions:
       contents: read
     with:
+      # fromJSON converts the string output "7"/"14" to an integer, required by
+      # the reusable workflow's number-typed input (policy §27.3).
       artifact-retention-days: ${{ fromJSON(needs.setup.outputs.retention-days) }}
-      blocking-severity: "ERROR"
 
   # ── Grype — dependency vulnerability scan ─────────────────────────────────
   grype:
@@ -101,6 +102,11 @@ jobs:
   # ── CodeQL — GitHub-native code scanning (jobscout public repo only) ──────
   # Approved for jobscout per policy §17.2, §25.3.
   # github/codeql-action is an approved GitHub-native exception (policy §7.5).
+  #
+  # Matrix note: this job runs once per language. GitHub collapses all matrix
+  # instances into a single needs.<job>.result — "failure" if any instance
+  # fails, "success" only if all pass. The Security Gate checks this single
+  # value and correctly gates on all languages without special-casing.
   codeql:
     name: CodeQL (${{ matrix.language }})
     needs: setup
