@@ -386,7 +386,7 @@ class TestLoadPipelineResume:
         mock_latest.return_value = ("fp-latest", {"profile": {}}, False, None)
         ctx = MagicMock()
         data, fp, re_extract, err = _load_pipeline_resume(ctx, None)
-        mock_latest.assert_called_once_with(ctx)
+        mock_latest.assert_called_once_with()
         assert fp == "fp-latest"
 
 
@@ -652,7 +652,7 @@ class TestLoadLatestReadyResume:
         mock_uow.return_value = _uow(repo)
 
         ctx = MagicMock()
-        fp, data, re_extract, err = _load_latest_ready_resume(ctx)
+        fp, data, re_extract, err = _load_latest_ready_resume()
         assert fp is None
         assert err is not None
         assert err.success is False
@@ -667,7 +667,7 @@ class TestLoadLatestReadyResume:
         mock_uow.return_value = _uow(repo)
 
         ctx = MagicMock()
-        fp, data, re_extract, err = _load_latest_ready_resume(ctx)
+        fp, data, re_extract, err = _load_latest_ready_resume()
         assert fp == "fp-abc123456789ab"
         assert data == {"profile": {}}
         assert err is None
@@ -682,7 +682,7 @@ class TestLoadLatestReadyResume:
         mock_uow.return_value = _uow(repo)
 
         ctx = MagicMock()
-        fp, data, re_extract, err = _load_latest_ready_resume(ctx)
+        fp, data, re_extract, err = _load_latest_ready_resume()
         assert err is not None
         assert err.success is False
 
@@ -695,7 +695,7 @@ class TestLoadLatestReadyResume:
         mock_uow.return_value = _uow(repo)
 
         ctx = MagicMock()
-        fp, data, re_extract, err = _load_latest_ready_resume(ctx)
+        fp, data, re_extract, err = _load_latest_ready_resume()
         assert err is not None
         assert "processing" in (err.error or "").lower()
 

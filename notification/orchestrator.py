@@ -164,6 +164,37 @@ def _send_batch_complete_notification(
     )
 
 
+def _notify_per_match(
+    ctx,
+    high_score_matches: List,
+    notification_config,
+    delivery_plan: "NotificationDeliveryPlan",
+    resume_fingerprint: str,
+    task_id: Optional[str],
+    stop_event: threading.Event,
+) -> int:
+    """Send one notification per high-score match. Returns count sent."""
+    notified_count = 0
+    for dto in high_score_matches:
+        if stop_event.is_set():
+            break
+        if not _notification_setting_value(
+            notification_config, delivery_plan.settings_snapshot, "notify_on_new_match",
+        ):
+            continue
+        try:
+            if _send_match_notification(
+                ctx, dto,
+                resume_fingerprint=resume_fingerprint,
+                delivery_plan=delivery_plan,
+                task_id=task_id,
+            ):
+                notified_count += 1
+        except Exception:
+            logger.exception("Failed to process notification for job_id=%s", dto.job.id)
+    return notified_count
+
+
 def send_notifications(
     ctx,
     scored_match_dtos: List,
@@ -193,40 +224,16 @@ def send_notifications(
             return 0
 
         high_score_matches = _high_score_matches_for_plan(
-            scored_match_dtos,
-            notification_config,
-            delivery_plan,
+            scored_match_dtos, notification_config, delivery_plan,
         )
 
-        notified_count = 0
-        for dto in high_score_matches:
-            if stop_event.is_set():
-                break
-
-            if not _notification_setting_value(
-                notification_config,
-                delivery_plan.settings_snapshot,
-                "notify_on_new_match",
-            ):
-                continue
-
-            try:
-                if _send_match_notification(
-                    ctx,
-                    dto,
-                    resume_fingerprint=resume_fingerprint,
-                    delivery_plan=delivery_plan,
-                    task_id=task_id,
-                ):
-                    notified_count += 1
-            except Exception:
-                logger.exception("Failed to process notification for job_id=%s", dto.job.id)
-                continue
+        notified_count = _notify_per_match(
+            ctx, high_score_matches, notification_config, delivery_plan,
+            resume_fingerprint, task_id, stop_event,
+        )
 
         if _notification_setting_value(
-            notification_config,
-            delivery_plan.settings_snapshot,
-            "notify_on_batch_complete",
+            notification_config, delivery_plan.settings_snapshot, "notify_on_batch_complete",
         ):
             try:
                 _send_batch_complete_notification(

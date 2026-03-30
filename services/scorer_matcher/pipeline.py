@@ -147,7 +147,6 @@ def _load_requested_resume(
 
 
 def _load_latest_ready_resume(
-    ctx: AppContext,
 ) -> tuple[Optional[str], Optional[Dict[str, Any]], bool, Optional[MatchingPipelineResult]]:
     """Load the latest ready resume data from storage."""
     latest_processing_state = None
@@ -199,7 +198,7 @@ def _load_pipeline_resume(
         resume_data, should_re_extract, error_result = _load_requested_resume(resume_fingerprint)
         return resume_data, resume_fingerprint, should_re_extract, error_result
 
-    latest_fingerprint, resume_data, should_re_extract, error_result = _load_latest_ready_resume(ctx)
+    latest_fingerprint, resume_data, should_re_extract, error_result = _load_latest_ready_resume()
     return resume_data, latest_fingerprint, should_re_extract, error_result
 
 
