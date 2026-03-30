@@ -190,7 +190,6 @@ def _load_latest_ready_resume(
 
 
 def _load_pipeline_resume(
-    ctx: AppContext,
     resume_fingerprint: Optional[str],
 ) -> tuple[Optional[Dict[str, Any]], Optional[str], bool, Optional[MatchingPipelineResult]]:
     """Load the resume data used by the matching pipeline."""
@@ -314,7 +313,6 @@ def run_matching_pipeline(
 
     try:
         resume_data, resume_fingerprint, should_re_extract, error_result = _load_pipeline_resume(
-            ctx,
             resume_fingerprint,
         )
         if error_result:

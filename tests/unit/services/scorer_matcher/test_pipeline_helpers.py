@@ -375,7 +375,7 @@ class TestLoadPipelineResume:
     def test_explicit_fingerprint_calls_load_requested(self, mock_load):
         mock_load.return_value = ({"profile": {}}, False, None)
         ctx = MagicMock()
-        data, fp, re_extract, err = _load_pipeline_resume(ctx, "fp-explicit")
+        data, fp, re_extract, err = _load_pipeline_resume("fp-explicit")
         mock_load.assert_called_once_with("fp-explicit")
         assert fp == "fp-explicit"
         assert data == {"profile": {}}
@@ -385,7 +385,7 @@ class TestLoadPipelineResume:
     def test_no_fingerprint_calls_load_latest(self, mock_latest):
         mock_latest.return_value = ("fp-latest", {"profile": {}}, False, None)
         ctx = MagicMock()
-        data, fp, re_extract, err = _load_pipeline_resume(ctx, None)
+        data, fp, re_extract, err = _load_pipeline_resume(None)
         mock_latest.assert_called_once_with()
         assert fp == "fp-latest"
 
