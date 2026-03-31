@@ -202,7 +202,7 @@ jobs:
         if: always()
         run: |
           echo "::group::Write findings to step summary"
-          python3 - <<REPORT
+          python3 - <<'REPORT'
           import json, sys, os
 
           try:
