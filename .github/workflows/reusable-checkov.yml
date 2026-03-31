@@ -34,6 +34,8 @@ jobs:
     # MUST NOT add secrets, write tokens, or deployment credentials to this job.
     permissions:
       contents: read
+      security-events: write  # upload SARIF to GitHub Security tab
+      actions: read           # required by codeql-action/upload-sarif on private repos
 
     steps:
       - name: Checkout
@@ -106,3 +108,21 @@ jobs:
           name: checkov-yaml-sarif
           path: checkov-yaml.sarif
           retention-days: ${{ inputs.artifact-retention-days }}
+
+      - name: Upload SARIF to GitHub Security tab — Dockerfile
+        # github/codeql-action v3.28.13 — verified 2026-03-30 (same SHA as CodeQL steps).
+        # Skipped on fork PRs: the GITHUB_TOKEN in that context lacks security-events:write.
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@1b549b9259bda1cb5ddde3b41741a82a2d15a841
+        with:
+          sarif_file: checkov-dockerfile.sarif
+          category: checkov-dockerfile
+
+      - name: Upload SARIF to GitHub Security tab — YAML
+        # github/codeql-action v3.28.13 — verified 2026-03-30 (same SHA as CodeQL steps).
+        # Skipped on fork PRs: the GITHUB_TOKEN in that context lacks security-events:write.
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@1b549b9259bda1cb5ddde3b41741a82a2d15a841
+        with:
+          sarif_file: checkov-yaml.sarif
+          category: checkov-yaml

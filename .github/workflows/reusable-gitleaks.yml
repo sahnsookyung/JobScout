@@ -24,6 +24,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      security-events: write  # upload SARIF to GitHub Security tab
+      actions: read           # required by codeql-action/upload-sarif on private repos
 
     steps:
       - name: Checkout
@@ -51,18 +53,18 @@ jobs:
 
       - name: Run gitleaks
         # Any finding is a hard failure (policy §18.2).
-        # Output is retained as JSON evidence per the retention schedule (policy §18.2).
+        # Output is retained as SARIF evidence per the retention schedule (policy §18.2).
         run: |
           ./gitleaks detect \
             --source . \
-            --report-format json \
-            --report-path gitleaks-results.json \
+            --report-format sarif \
+            --report-path gitleaks.sarif \
             --exit-code 1 || GITLEAKS_EXIT=$?
 
           # Safe structured summary — no raw tool output, no stack traces (policy §15.4).
           echo "### Gitleaks Secret Scan" >> "$GITHUB_STEP_SUMMARY"
-          if [ "${GITLEAKS_EXIT:-0}" -ne 0 ] && [ -f gitleaks-results.json ]; then
-            COUNT=$(python3 -c "import json; d=json.load(open('gitleaks-results.json')); print(len(d) if isinstance(d,list) else '?')" 2>/dev/null || echo "?")
+          if [ "${GITLEAKS_EXIT:-0}" -ne 0 ] && [ -f gitleaks.sarif ]; then
+            COUNT=$(python3 -c "import json; d=json.load(open('gitleaks.sarif')); print(sum(len(r.get('results',[]))for r in d.get('runs',[])))" 2>/dev/null || echo "?")
             echo "- **Result: FAIL** — ${COUNT} finding(s) detected" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "- **Result: PASS** — no secrets detected" >> "$GITHUB_STEP_SUMMARY"
@@ -71,12 +73,21 @@ jobs:
 
       - name: Upload gitleaks evidence
         # Upload only when the job fails (i.e. secrets were found).
-        # An empty JSON array on a clean scan has no forensic value.
+        # An empty SARIF on a clean scan has no forensic value.
         if: failure()
         # actions/upload-artifact v4.6.2 — verified 2026-03-30
         # Explicit retention required (policy §15.5). Caller controls the value.
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: gitleaks-evidence
-          path: gitleaks-results.json
+          path: gitleaks.sarif
           retention-days: ${{ inputs.artifact-retention-days }}
+
+      - name: Upload SARIF to GitHub Security tab
+        # github/codeql-action v3.28.13 — verified 2026-03-30 (same SHA as CodeQL steps).
+        # Skipped on fork PRs: the GITHUB_TOKEN in that context lacks security-events:write.
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@1b549b9259bda1cb5ddde3b41741a82a2d15a841
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
