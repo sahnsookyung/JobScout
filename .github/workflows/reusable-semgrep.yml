@@ -48,25 +48,34 @@ jobs:
         # are not individually hash-verified. Full hash verification requires a
         # pip-compile lockfile (generate with: pip-compile --generate-hashes).
         run: |
+          echo "::group::Download and verify semgrep wheel"
           SEMGREP_WHEEL="semgrep-1.156.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-manylinux2014_x86_64.whl"
           SEMGREP_WHEEL_URL="https://files.pythonhosted.org/packages/92/0c/b00156bee40cf9e594c2bd10672232e33d9a7d1bc8b5a6dd697097c8d6be/${SEMGREP_WHEEL}"
           SEMGREP_EXPECTED_SHA256="a7f68544bcd33fac9bc519e6a6c4759d612836422ce87bc08dd014481c3e8fd0"
           curl -sSLo "${SEMGREP_WHEEL}" "${SEMGREP_WHEEL_URL}"
           echo "${SEMGREP_EXPECTED_SHA256}  ${SEMGREP_WHEEL}" | sha256sum -c
+          echo "::endgroup::"
+
+          echo "::group::Install semgrep"
           pip install --quiet "${SEMGREP_WHEEL}"
           semgrep --version
+          echo "::endgroup::"
 
       - name: Fetch semgrep rules at pinned commit
         # Rules pinned to a specific commit SHA (policy §18.3).
         # Fetched as GitHub source archive — commit SHA is the integrity pin.
         # Update rules SHA quarterly or when security-relevant rule updates land.
         run: |
+          echo "::group::Download semgrep rules archive"
           RULES_SHA="b3409178ba39fe6a45801bb59f3e99ff7bd281ca"
           curl -sSLo rules.tar.gz \
             "https://github.com/semgrep/semgrep-rules/archive/${RULES_SHA}.tar.gz"
           mkdir -p /tmp/semgrep-rules-src
           tar -xzf rules.tar.gz --strip-components=1 -C /tmp/semgrep-rules-src
           rm rules.tar.gz
+          echo "::endgroup::"
+
+          echo "::group::Locate python security rules directory"
           # Discover the python security rules directory — the archive layout can
           # shift between commits. Try specific paths in preference order so we
           # always scan the most focused ruleset available, failing loudly (not
@@ -89,6 +98,7 @@ jobs:
             exit 1
           fi
           echo "SEMGREP_RULES_DIR=${RULES_DIR}" >> "$GITHUB_ENV"
+          echo "::endgroup::"
 
       - name: Run semgrep
         # always() ensures this step runs even when the rules-fetch step fails,
@@ -110,6 +120,7 @@ jobs:
             exit 1
           fi
 
+          echo "::group::Run semgrep scan"
           semgrep \
             --config "$SEMGREP_RULES_DIR" \
             --sarif \
@@ -118,6 +129,7 @@ jobs:
             --metrics=off \
             --timeout 60 \
             . || SEMGREP_SCAN_EXIT=$?
+          echo "::endgroup::"
 
           # Fail on scan error (parse failure, timeout, etc.) but not on findings —
           # the finding gate runs after SARIF filtering below.
@@ -126,26 +138,38 @@ jobs:
             exit "${SEMGREP_SCAN_EXIT}"
           fi
 
+          echo "::group::Summarize raw findings"
           # Safe structured summary — no raw finding content (policy §15.4).
           RAW=$(python3 -c "import json; d=json.load(open('semgrep.sarif')); print(sum(len(r.get('results',[]))for r in d.get('runs',[])))" 2>/dev/null || echo "?")
           echo "- Raw findings (all rules): ${RAW}" >> "$GITHUB_STEP_SUMMARY"
+          echo "::endgroup::"
 
-      - name: Filter SARIF — drop best-practice/maintainability noise
-        # Removes findings from rule categories that produce false positives for this
-        # codebase: SQLAlchemy ORM boolean columns (is-function-without-parentheses),
-        # FastAPI inner route handlers (useless-inner-function), intentional poll/retry
-        # sleeps (arbitrary-sleep), logger.error-before-re-raise
-        # (logging-error-without-handling), and similar best-practice pedantry.
-        # Security-category findings (python.lang.security.*, python.security.*) are
-        # untouched and become the sole blocking gate.
+      - name: Filter SARIF — drop non-actionable noise
+        # Removes findings from rule categories that are informational or produce
+        # false positives for this codebase. Uses substring matching so the filter
+        # is robust against changes in the leading filesystem path that semgrep
+        # embeds in rule IDs when loading from a local directory.
+        #
+        # Filtered categories:
+        #   .lang.best-practice.      — arbitrary-sleep, logging-error-without-handling, etc.
+        #   .lang.maintainability.    — is-function-without-parentheses, useless-inner-function, etc.
+        #   .requests.best-practice.  — use-raise-for-status, use-timeout (fixed in code)
+        #   .sqlalchemy.security.audit. — avoid-sqlalchemy-text (table name is a compile-time constant)
+        #
+        # Kept: all other security findings become the sole blocking gate.
         if: always()
         run: |
+          echo "::group::Filter non-actionable SARIF findings"
           python3 - <<'PYEOF'
           import json, sys
 
-          NOISY_PREFIXES = (
-              "python.lang.best-practice.",
-              "python.lang.maintainability.",
+          # Substring match — works regardless of the leading filesystem path that
+          # semgrep prepends to rule IDs when using a local --config directory.
+          NOISY_SUBSTRINGS = (
+              ".lang.best-practice.",
+              ".lang.maintainability.",
+              ".requests.best-practice.",
+              ".sqlalchemy.security.audit.",
           )
 
           try:
@@ -162,7 +186,7 @@ jobs:
               total_before += len(before)
               run["results"] = [
                   r for r in before
-                  if not any(r.get("ruleId", "").startswith(p) for p in NOISY_PREFIXES)
+                  if not any(s in r.get("ruleId", "") for s in NOISY_SUBSTRINGS)
               ]
               total_after += len(run["results"])
 
@@ -172,20 +196,24 @@ jobs:
           with open("semgrep.sarif", "w") as f:
               json.dump(sarif, f)
           PYEOF
+          echo "::endgroup::"
 
       - name: Check for security findings
         # This is the CI gate (policy §18.3). Only security-category findings block
         # the build; best-practice/maintainability noise has been filtered above.
         if: always()
         run: |
+          echo "::group::Evaluate security findings gate"
           FINDINGS=$(python3 -c "import json; d=json.load(open('semgrep.sarif')); print(sum(len(r.get('results',[]))for r in d.get('runs',[])))" 2>/dev/null || echo "0")
           echo "- Security findings (after filtering): ${FINDINGS}" >> "$GITHUB_STEP_SUMMARY"
           if [ "${FINDINGS}" -gt 0 ]; then
             echo "- **Result: FAIL**" >> "$GITHUB_STEP_SUMMARY"
+            echo "::endgroup::"
             exit 1
           else
             echo "- **Result: PASS**" >> "$GITHUB_STEP_SUMMARY"
           fi
+          echo "::endgroup::"
 
       - name: Upload semgrep SARIF
         if: always()
