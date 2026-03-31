@@ -961,7 +961,7 @@ class NotificationChannelFactory:
                 raise ValueError(f"Invalid module name: {module_name!r}")
 
             # Import the module
-            module = importlib.import_module(module_name)
+            module = importlib.import_module(module_name)  # nosemgrep: python.lang.security.audit.non-literal-import
             
             if class_name:
                 # Get specific class
