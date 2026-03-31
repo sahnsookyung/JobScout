@@ -70,7 +70,9 @@ jobs:
           exit "${GITLEAKS_EXIT:-0}"
 
       - name: Upload gitleaks evidence
-        if: always()
+        # Upload only when the job fails (i.e. secrets were found).
+        # An empty JSON array on a clean scan has no forensic value.
+        if: failure()
         # actions/upload-artifact v4.6.2 — verified 2026-03-30
         # Explicit retention required (policy §15.5). Caller controls the value.
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

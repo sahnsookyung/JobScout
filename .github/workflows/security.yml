@@ -76,6 +76,8 @@ jobs:
     uses: ./.github/workflows/reusable-semgrep.yml
     permissions:
       contents: read
+      security-events: write  # propagated to reusable: upload SARIF to Security tab
+      actions: read           # propagated to reusable: required by upload-sarif on private repos
     with:
       # fromJSON converts the string output "7"/"14" to an integer, required by
       # the reusable workflow's number-typed input (policy §27.3).
@@ -120,10 +122,16 @@ jobs:
       contents: read
       # Required for uploading SARIF to GitHub Security tab (public repo only).
       security-events: write
+      # Required to fetch internal or private CodeQL packs.
+      packages: read
+      # Required by upload-sarif on private repositories.
+      actions: read
     strategy:
       fail-fast: false
       matrix:
-        language: [python, javascript-typescript]
+        # 'actions' scans workflow files for expression injection and unsafe
+        # pull_request_target patterns — valuable given this repo's CI surface.
+        language: [actions, python, javascript-typescript]
 
     steps:
       - name: Checkout
@@ -134,14 +142,12 @@ jobs:
 
       - name: Initialize CodeQL
         # github/codeql-action v3.28.13 — verified 2026-03-30
+        # build-mode: none — all languages here are interpreted; no build step needed.
         uses: github/codeql-action/init@1b549b9259bda1cb5ddde3b41741a82a2d15a841
         with:
           languages: ${{ matrix.language }}
+          build-mode: none
           queries: security-and-quality
-
-      - name: Autobuild
-        # github/codeql-action v3.28.13 — verified 2026-03-30
-        uses: github/codeql-action/autobuild@1b549b9259bda1cb5ddde3b41741a82a2d15a841
 
       - name: Perform CodeQL Analysis
         # github/codeql-action v3.28.13 — verified 2026-03-30

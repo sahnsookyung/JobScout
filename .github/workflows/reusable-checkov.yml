@@ -69,24 +69,22 @@ jobs:
             echo "- Dockerfile findings: ${FINDINGS} (informational — soft-fail)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Run checkov — Docker Compose
+      - name: Run checkov — YAML (Docker Compose + other YAML)
         # --soft-fail is intentional (same rationale as Dockerfile step above).
-        # continue-on-error: true because --framework docker_compose is not a
-        # supported framework name in checkov v3; the step is informational only
-        # and must not block the job while the correct invocation is determined.
-        continue-on-error: true
+        # NOTE: --framework docker_compose was removed in checkov v3; the yaml
+        # framework covers docker-compose.yml and all other YAML in the tree.
         run: |
           checkov \
-            --framework docker_compose \
+            --framework yaml \
             --directory . \
             --output sarif \
-            --output-file-path checkov-compose.sarif \
+            --output-file-path checkov-yaml.sarif \
             --soft-fail
 
-          echo "### Checkov — Docker Compose" >> "$GITHUB_STEP_SUMMARY"
-          if [ -f checkov-compose.sarif ]; then
-            FINDINGS=$(python3 -c "import json; d=json.load(open('checkov-compose.sarif')); print(sum(len(r.get('results',[]))for r in d.get('runs',[])))" 2>/dev/null || echo "?")
-            echo "- Docker Compose findings: ${FINDINGS} (informational — soft-fail)" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Checkov — YAML (Docker Compose + other YAML)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f checkov-yaml.sarif ]; then
+            FINDINGS=$(python3 -c "import json; d=json.load(open('checkov-yaml.sarif')); print(sum(len(r.get('results',[]))for r in d.get('runs',[])))" 2>/dev/null || echo "?")
+            echo "- YAML findings: ${FINDINGS} (informational — soft-fail)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload checkov SARIF — Dockerfile
@@ -100,11 +98,11 @@ jobs:
           path: checkov-dockerfile.sarif
           retention-days: ${{ inputs.artifact-retention-days }}
 
-      - name: Upload checkov SARIF — Docker Compose
+      - name: Upload checkov SARIF — YAML
         if: always()
         # actions/upload-artifact v4.6.2 — verified 2026-03-30
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: checkov-compose-sarif
-          path: checkov-compose.sarif
+          name: checkov-yaml-sarif
+          path: checkov-yaml.sarif
           retention-days: ${{ inputs.artifact-retention-days }}

@@ -29,6 +29,8 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      security-events: write  # upload SARIF to GitHub Security tab
+      actions: read           # required by codeql-action/upload-sarif on private repos
 
     steps:
       - name: Checkout
@@ -65,13 +67,28 @@ jobs:
           mkdir -p /tmp/semgrep-rules-src
           tar -xzf rules.tar.gz --strip-components=1 -C /tmp/semgrep-rules-src
           rm rules.tar.gz
-          # Sanity-check that the expected rule directories exist after extraction.
-          # If the archive structure ever changes this will fail loudly rather than
-          # silently scanning with zero rules.
-          ls /tmp/semgrep-rules-src/python/security >/dev/null || {
-            echo "::error::/tmp/semgrep-rules-src/python/security missing — archive structure may have changed"
+          # Discover the python security rules directory — the archive layout can
+          # shift between commits. Try specific paths in preference order so we
+          # always scan the most focused ruleset available, failing loudly (not
+          # silently with zero rules) if none match.
+          RULES_DIR=""
+          for candidate in \
+            /tmp/semgrep-rules-src/python/security \
+            /tmp/semgrep-rules-src/python \
+            /tmp/semgrep-rules-src/rules/python/security \
+            /tmp/semgrep-rules-src/rules/python; do
+            if [ -d "$candidate" ]; then
+              RULES_DIR="$candidate"
+              echo "Semgrep rules directory: $RULES_DIR"
+              break
+            fi
+          done
+          if [ -z "$RULES_DIR" ]; then
+            echo "::error::Could not locate semgrep python rules — top-level layout:"
+            find /tmp/semgrep-rules-src -maxdepth 3 -type d | head -30
             exit 1
-          }
+          fi
+          echo "SEMGREP_RULES_DIR=${RULES_DIR}" >> "$GITHUB_ENV"
 
       - name: Run semgrep
         # --error: exit non-zero if any finding is reported (policy §18.3 blocking threshold).
@@ -80,7 +97,7 @@ jobs:
         # --metrics=off: no data sent to semgrep.dev (policy §13.1 — trust boundary).
         run: |
           semgrep \
-            --config /tmp/semgrep-rules-src/python/security \
+            --config "$SEMGREP_RULES_DIR" \
             --sarif \
             --output semgrep.sarif \
             --no-autofix \
@@ -111,3 +128,12 @@ jobs:
           name: semgrep-sarif
           path: semgrep.sarif
           retention-days: ${{ inputs.artifact-retention-days }}
+
+      - name: Upload SARIF to GitHub Security tab
+        # github/codeql-action v3.28.13 — verified 2026-03-30 (same SHA as CodeQL steps).
+        # Skipped on fork PRs: the GITHUB_TOKEN in that context lacks security-events:write.
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@1b549b9259bda1cb5ddde3b41741a82a2d15a841
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
