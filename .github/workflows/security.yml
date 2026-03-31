@@ -66,6 +66,8 @@ jobs:
     # Caller MUST declare explicit permissions (policy §9.4).
     permissions:
       contents: read
+      security-events: write  # propagated to reusable: upload SARIF to Security tab
+      actions: read           # propagated to reusable: required by upload-sarif on private repos
     with:
       artifact-retention-days: ${{ fromJSON(needs.setup.outputs.retention-days) }}
 
@@ -90,6 +92,8 @@ jobs:
     uses: ./.github/workflows/reusable-grype.yml
     permissions:
       contents: read
+      security-events: write  # propagated to reusable: upload SARIF to Security tab
+      actions: read           # propagated to reusable: required by upload-sarif on private repos
     with:
       artifact-retention-days: ${{ fromJSON(needs.setup.outputs.retention-days) }}
       fail-on-severity: "high"
@@ -99,9 +103,11 @@ jobs:
     name: Checkov
     needs: setup
     uses: ./.github/workflows/reusable-checkov.yml
-    # Deprivileged: read-only, no secrets (policy §18.5).
+    # Deprivileged: read-only for code, write for Security tab upload (policy §18.5).
     permissions:
       contents: read
+      security-events: write  # propagated to reusable: upload SARIF to Security tab
+      actions: read           # propagated to reusable: required by upload-sarif on private repos
     with:
       artifact-retention-days: ${{ fromJSON(needs.setup.outputs.retention-days) }}
 
