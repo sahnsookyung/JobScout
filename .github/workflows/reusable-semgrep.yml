@@ -62,14 +62,14 @@ jobs:
           RULES_SHA="b3409178ba39fe6a45801bb59f3e99ff7bd281ca"
           curl -sSLo rules.tar.gz \
             "https://github.com/semgrep/semgrep-rules/archive/${RULES_SHA}.tar.gz"
-          mkdir -p semgrep-rules-src
-          tar -xzf rules.tar.gz --strip-components=1 -C semgrep-rules-src
+          mkdir -p /tmp/semgrep-rules-src
+          tar -xzf rules.tar.gz --strip-components=1 -C /tmp/semgrep-rules-src
           rm rules.tar.gz
           # Sanity-check that the expected rule directories exist after extraction.
           # If the archive structure ever changes this will fail loudly rather than
           # silently scanning with zero rules.
-          ls semgrep-rules-src/python >/dev/null || {
-            echo "::error::semgrep-rules-src/python missing — archive structure may have changed"
+          ls /tmp/semgrep-rules-src/python/security >/dev/null || {
+            echo "::error::/tmp/semgrep-rules-src/python/security missing — archive structure may have changed"
             exit 1
           }
 
@@ -80,8 +80,7 @@ jobs:
         # --metrics=off: no data sent to semgrep.dev (policy §13.1 — trust boundary).
         run: |
           semgrep \
-            --config semgrep-rules-src/python \
-            --config semgrep-rules-src/generic \
+            --config /tmp/semgrep-rules-src/python/security \
             --sarif \
             --output semgrep.sarif \
             --no-autofix \

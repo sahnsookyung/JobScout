@@ -54,15 +54,15 @@ jobs:
             "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
           echo "${GRYPE_EXPECTED_SHA256}  grype.tar.gz" | sha256sum -c
           tar -xzf grype.tar.gz grype
-          rm grype.tar.gz
-          chmod +x grype
+          install -m 0755 grype /usr/local/bin/grype
+          rm grype.tar.gz grype
 
       - name: Run grype filesystem scan
         # Scans the checked-out source tree as a filesystem target.
         # Container-image scanning (release gate path) uses a separate caller workflow.
         # Thresholds are explicitly defined (policy §18.4).
         run: |
-          ./grype dir:. \
+          grype dir:. \
             --fail-on "${{ inputs.fail-on-severity }}" \
             --output sarif \
             --file grype.sarif || GRYPE_EXIT=$?
