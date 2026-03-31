@@ -92,7 +92,7 @@ jobs:
 
       - name: Set up Node
         # actions/setup-node v4.4.0 — verified 2026-03-30
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
         with:
           node-version: "20"
           # Disable built-in npm cache on fork PRs to prevent cache poisoning
