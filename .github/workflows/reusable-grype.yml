@@ -1,0 +1,102 @@
+# ── Reusable — Grype vulnerability scan ──────────────────────────────────────
+# Shared core component (policy §27). Filesystem scan only (no registry pull).
+# Callers MUST declare explicit permissions in the calling job (policy §9.4).
+# No secrets: inherit (policy §9.7). No environment binding (policy §27.6).
+# Policy references: §7 (CLI-first), §12.1, §15.5, §16, §18.4.
+#
+# anchore/scan-action wrapper is NOT used (policy §18.4: MUST NOT rely on it).
+# Binary integrity verified by SHA256 before execution (policy §12.1, §18.4).
+# Version: grype 0.110.0 — verified 2026-03-30.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "Reusable — Grype"
+
+on:
+  workflow_call:
+    inputs:
+      artifact-retention-days:
+        description: "Days to retain the SARIF evidence artifact"
+        required: true
+        type: number
+      fail-on-severity:
+        description: "Minimum severity that causes a non-zero exit: negligible, low, medium, high, critical"
+        required: false
+        type: string
+        default: "high"
+
+permissions: {}
+
+jobs:
+  grype:
+    name: Grype Vulnerability Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write  # upload SARIF to GitHub Security tab
+      actions: read           # required by codeql-action/upload-sarif on private repos
+
+    steps:
+      - name: Checkout
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Install and verify grype
+        # Binary integrity verified via SHA256 before execution (policy §18.4, §12.1).
+        # Grype also provides cosign-verifiable checksums; SHA256 is the zero-cost baseline.
+        # NOTE: version not covered by Dependabot (inline shell variable).
+        #   Update manually: bump GRYPE_VERSION + re-fetch SHA256 from the release
+        #   checksums file, then verify. Review quarterly (policy §31.3).
+        run: |
+          GRYPE_VERSION="0.110.0"
+          GRYPE_EXPECTED_SHA256="aaa98d27d2d7efd9317c6a1ad6d9b15f3e65bab320e7d03bde41e251387bb71c"
+          curl -sSLo grype.tar.gz \
+            "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
+          echo "${GRYPE_EXPECTED_SHA256}  grype.tar.gz" | sha256sum -c
+          tar -xzf grype.tar.gz grype
+          install -m 0755 grype /usr/local/bin/grype
+          rm grype.tar.gz grype
+
+      - name: Run grype filesystem scan
+        # Scans the checked-out source tree as a filesystem target.
+        # Container-image scanning (release gate path) uses a separate caller workflow.
+        # Thresholds are explicitly defined (policy §18.4).
+        run: |
+          grype dir:. \
+            --fail-on "${{ inputs.fail-on-severity }}" \
+            --output sarif \
+            --file grype.sarif || GRYPE_EXIT=$?
+
+          # Safe structured summary (policy §15.3, §15.4).
+          echo "### Grype Vulnerability Scan" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f grype.sarif ]; then
+            FINDINGS=$(python3 -c "import json; d=json.load(open('grype.sarif')); print(sum(len(r.get('results',[]))for r in d.get('runs',[])))" 2>/dev/null || echo "?")
+            echo "- Findings (\`${{ inputs.fail-on-severity }}\`+ severity): ${FINDINGS}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "${GRYPE_EXIT:-0}" -ne 0 ]; then
+            echo "- **Result: FAIL**" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- **Result: PASS**" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "${GRYPE_EXIT:-0}"
+
+      - name: Upload grype SARIF
+        if: always()
+        # actions/upload-artifact v4.6.2 — verified 2026-03-30
+        # Explicit retention required (policy §15.5). Caller controls the value.
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: grype-sarif
+          path: grype.sarif
+          retention-days: ${{ inputs.artifact-retention-days }}
+
+      - name: Upload SARIF to GitHub Security tab
+        # github/codeql-action v3.28.13 — verified 2026-03-30 (same SHA as CodeQL steps).
+        # Skipped on fork PRs: the GITHUB_TOKEN in that context lacks security-events:write.
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@1b549b9259bda1cb5ddde3b41741a82a2d15a841
+        with:
+          sarif_file: grype.sarif
+          category: grype

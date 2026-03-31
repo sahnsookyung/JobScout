@@ -1,3 +1,25 @@
+# ── Publish Docker image to Docker Hub ───────────────────────────────────────
+# Policy references: §9.2 (permissions: {}), §9.8 (persist-credentials: false),
+#   §11.1 (SHA-pinned actions), §21 (concurrency + timeout),
+#   §24 (release/publish boundary), §24.6 (release authority).
+#
+# Trigger: protected tags matching v* only (policy §24.2).
+# id-token: write is granted at job level only, not workflow level (policy §9.12).
+# Release evidence: artifacts are NOT produced here; Docker Hub provenance and
+#   SBOM attestations serve as the release evidence (policy §24.5).
+#
+# docker/* action exception note (policy §7.1, §7.4, §29):
+#   Four Docker-maintained actions are used for Docker Hub publishing:
+#     docker/setup-buildx-action, docker/login-action,
+#     docker/metadata-action, docker/build-push-action.
+#   No direct-CLI path provides equivalent multi-platform build support,
+#   SBOM generation, and provenance attestation within GitHub Actions.
+#   Compensating controls: all four actions pinned to immutable commit SHAs;
+#   provenance (mode=max) and SBOM attestations generated on every release.
+#   Exception must be reviewed quarterly (policy §31.3).
+#   SHAs verified 2026-03-30 — see per-step comments for individual SHAs.
+# ─────────────────────────────────────────────────────────────────────────────
+
 name: Publish Docker image to Docker Hub
 
 on:
@@ -5,26 +27,42 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: read
-  id-token: write
+# Workflow-level default: deny all (policy §9.2).
+permissions: {}
+
+concurrency:
+  group: dockerhub-release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 env:
   IMAGE_NAME: ${{ vars.DOCKERHUB_USERNAME }}/jobscout
 
 jobs:
   build-and-push:
+    name: Build and push
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Permissions granted at job level only (policy §9.3, §9.12).
+    permissions:
+      contents: read
+      # id-token: write required for provenance attestations (policy §24.5).
+      # Granted only here — not at workflow level (policy §9.12).
+      id-token: write
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        # docker/setup-buildx-action v3.10.0 — verified 2026-03-30
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v4
+        # docker/login-action v4.0.0 — verified 2026-03-30
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -35,7 +73,8 @@ jobs:
 
       - name: Docker metadata (tags, labels)
         id: meta
-        uses: docker/metadata-action@v5
+        # docker/metadata-action v5.7.0 — verified 2026-03-30
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804
         with:
           images: ${{ env.IMAGE_NAME }}
           # Only tag "latest" for stable tags (no hyphen like -rc1)
@@ -47,18 +86,17 @@ jobs:
             type=semver,pattern={{major}}
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        # docker/build-push-action v6.17.0 — verified 2026-03-30
+        uses: docker/build-push-action@1dc73863535b631f98b2378be8619f83b136f4a0
         with:
           context: .
           push: true
-          # Your Dockerfile forces amd64 already; this makes it explicit in CI.
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Optional, but good for public images:
+          # provenance and sbom generate attestations (policy §24.5).
           provenance: mode=max
           sbom: true
-          # Your Dockerfile consumes these ARGs:
           build-args: |
             VERSION=${{ github.ref_name }}
             GIT_COMMIT=${{ github.sha }}

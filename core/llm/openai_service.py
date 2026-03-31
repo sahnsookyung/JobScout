@@ -421,6 +421,7 @@ class OpenAIService(LLMProvider):
                 url = f"{base}/api/generate"
                 payload = {"model": model_name, "keep_alive": 0}
                 logger.info(f"Unloading model: {model_name} via {url}")
-                requests.post(url, json=payload)
+                response = requests.post(url, json=payload, timeout=10)
+                response.raise_for_status()
             except Exception as e:
                 logger.warning(f"Failed to unload model {model_name}: {e}")

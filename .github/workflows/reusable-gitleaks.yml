@@ -1,0 +1,93 @@
+# ── Reusable — Gitleaks secret scanning ──────────────────────────────────────
+# Shared core component (policy §27).
+# Callers MUST declare explicit permissions in the calling job (policy §9.4).
+# No secrets: inherit (policy §9.7). No environment binding (policy §27.6).
+# Policy references: §18.2, §12.1, §15.5, §16.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "Reusable — Gitleaks"
+
+on:
+  workflow_call:
+    inputs:
+      artifact-retention-days:
+        description: "Days to retain the scan evidence artifact"
+        required: true
+        type: number
+
+permissions: {}
+
+jobs:
+  gitleaks:
+    name: Gitleaks Secret Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write  # upload SARIF to GitHub Security tab
+      actions: read           # required by codeql-action/upload-sarif on private repos
+
+    steps:
+      - name: Checkout
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install and verify gitleaks
+        # Binary integrity verified via SHA256 before execution (policy §18.2, §12.1).
+        # Version: gitleaks 8.30.1.
+        # NOTE: version not covered by Dependabot (inline shell variable).
+        #   Update manually: bump GITLEAKS_VERSION + re-fetch SHA256 from the release
+        #   checksums.txt, then verify. Review quarterly (policy §31.3).
+        run: |
+          GITLEAKS_VERSION="8.30.1"
+          GITLEAKS_EXPECTED_SHA256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+          curl -sSLo gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_EXPECTED_SHA256}  gitleaks.tar.gz" | sha256sum -c
+          tar -xzf gitleaks.tar.gz gitleaks
+          rm gitleaks.tar.gz
+          chmod +x gitleaks
+
+      - name: Run gitleaks
+        # Any finding is a hard failure (policy §18.2).
+        # Output is retained as SARIF evidence per the retention schedule (policy §18.2).
+        run: |
+          ./gitleaks detect \
+            --source . \
+            --report-format sarif \
+            --report-path gitleaks.sarif \
+            --exit-code 1 || GITLEAKS_EXIT=$?
+
+          # Safe structured summary — no raw tool output, no stack traces (policy §15.4).
+          echo "### Gitleaks Secret Scan" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${GITLEAKS_EXIT:-0}" -ne 0 ] && [ -f gitleaks.sarif ]; then
+            COUNT=$(python3 -c "import json; d=json.load(open('gitleaks.sarif')); print(sum(len(r.get('results',[]))for r in d.get('runs',[])))" 2>/dev/null || echo "?")
+            echo "- **Result: FAIL** — ${COUNT} finding(s) detected" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- **Result: PASS** — no secrets detected" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "${GITLEAKS_EXIT:-0}"
+
+      - name: Upload gitleaks evidence
+        # Upload only when the job fails (i.e. secrets were found).
+        # An empty SARIF on a clean scan has no forensic value.
+        if: failure()
+        # actions/upload-artifact v4.6.2 — verified 2026-03-30
+        # Explicit retention required (policy §15.5). Caller controls the value.
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gitleaks-evidence
+          path: gitleaks.sarif
+          retention-days: ${{ inputs.artifact-retention-days }}
+
+      - name: Upload SARIF to GitHub Security tab
+        # github/codeql-action v3.28.13 — verified 2026-03-30 (same SHA as CodeQL steps).
+        # Skipped on fork PRs: the GITHUB_TOKEN in that context lacks security-events:write.
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@1b549b9259bda1cb5ddde3b41741a82a2d15a841
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks

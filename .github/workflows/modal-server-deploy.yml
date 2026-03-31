@@ -1,20 +1,67 @@
+# ── Deploy Modal Embedding Server ─────────────────────────────────────────────
+# Policy references: §9.2 (permissions: {}), §9.8 (persist-credentials: false),
+#   §11.1 (SHA-pinned actions), §21 (concurrency + timeout),
+#   §18.8 (pinned runtime package acquisition).
+#
+# modal is installed from a pinned version (policy §18.8 / §12.3 — no unpinned installs).
+# Secrets (MODAL_TOKEN_ID, MODAL_TOKEN_SECRET) are scoped to the deploy job only.
+# This workflow deploys only when modal/** changes on main (trusted source, policy §24.2).
+#
+# astral-sh/setup-uv exception note (policy §7.1, §7.4, §29):
+#   This action is published by Astral (third party, not GitHub-maintained).
+#   It installs the uv CLI; no GitHub-maintained or direct-CLI equivalent
+#   exists for this setup step within GitHub Actions.
+#   Compensating controls: action pinned to immutable commit SHA; uv binary
+#   version also explicitly pinned via the `version:` input.
+#   Exception must be reviewed quarterly (policy §31.3).
+#   Action SHA: 22695119d769bdb6f7032ad67b9bca0ef8c4a174 — verified 2026-03-30
+# ─────────────────────────────────────────────────────────────────────────────
+
 name: Deploy Modal Embedding Server
+
 on:
   push:
     branches: [main]
     paths:
-      - 'modal/**'  # only trigger when modal code changes
+      - "modal/**"
+  workflow_dispatch:
+
+# Workflow-level default: deny all (policy §9.2).
+permissions: {}
+
+concurrency:
+  group: modal-deploy-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   deploy:
+    name: Deploy
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - name: Checkout
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        # actions/setup-python v6.2.0 — verified 2026-03-30
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.14"
-      - run: pip install modal
-      - run: modal deploy modal/modal_server.py
+
+      - name: Install modal (pinned version)
+        # Pinned to exact version — no floating installs (policy §12.3, §18.8).
+        # NOTE: version not covered by Dependabot (inline pip install in run: block).
+        #   Update manually when a new modal release is needed; review quarterly (policy §31.3).
+        run: pip install "modal==1.4.0"
+
+      - name: Deploy to Modal
         env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_ID:     ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal deploy modal/modal_server.py

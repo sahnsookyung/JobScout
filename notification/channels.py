@@ -955,6 +955,11 @@ class NotificationChannelFactory:
                 module_name = module_path
                 class_name = None
             
+            # Validate module name: only allow dotted Python identifiers (no shell chars)
+            import re as _re
+            if not _re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.]*', module_name):
+                raise ValueError(f"Invalid module name: {module_name!r}")
+
             # Import the module
             module = importlib.import_module(module_name)
             

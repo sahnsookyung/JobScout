@@ -1,8 +1,38 @@
+# ── CI — jobscout ─────────────────────────────────────────────────────────────
+# Policy references: §9.2 (permissions: {}), §9.8 (persist-credentials: false),
+#   §11.1 (SHA-pinned actions), §19.5 (gate job), §21 (concurrency + timeout).
+#
+# Repository settings required:
+#   - Register "CI Gate" as the required check in branch protection (policy §19.3).
+#   - Default GITHUB_TOKEN permissions: read-only (policy §9.1).
+#
+# astral-sh/setup-uv exception note (policy §7.1, §7.4, §29):
+#   This action is published by Astral (third party, not GitHub-maintained).
+#   It installs the uv CLI; no GitHub-maintained or direct-CLI equivalent
+#   exists for this setup step within GitHub Actions.
+#   Compensating controls: action pinned to immutable commit SHA; uv binary
+#   version also explicitly pinned via the `version:` input.
+#   Exception must be reviewed quarterly (policy §31.3).
+#   Action SHA: 22695119d769bdb6f7032ad67b9bca0ef8c4a174 — verified 2026-03-30
+# ─────────────────────────────────────────────────────────────────────────────
+
 name: CI
 
 on:
+  pull_request:
+    branches: [main, develop]
   push:
+    branches: [main, develop]
+  workflow_dispatch:
+  schedule:
+    # Weekly Monday 04:00 UTC — catch regressions in dependencies (policy §8.2)
+    - cron: "0 4 * * 1"
+  merge_group:
 
+# Workflow-level default: deny all (policy §9.2).
+permissions: {}
+
+# Cancel superseded runs on the same ref (policy §21).
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref_name }}
   cancel-in-progress: true
@@ -12,6 +42,8 @@ jobs:
     name: Python Unit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     env:
       PYTHONPATH: ${{ github.workspace }}
       JOBSCOUT_ENV: test
@@ -19,15 +51,20 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098
+        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
+        uses: astral-sh/setup-uv@22695119d769bdb6f7032ad67b9bca0ef8c4a174
         with:
-          version: "latest"
+          version: "0.11.2"
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        # actions/setup-python v6.2.0 — verified 2026-03-30
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.14.3"
 
@@ -43,16 +80,26 @@ jobs:
     name: Frontend Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        # actions/setup-node v4.4.0 — verified 2026-03-30
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "20"
-          cache: "npm"
+          # Disable built-in npm cache on fork PRs to prevent cache poisoning
+          # (policy §15.8/15.9). Trusted runs (same-repo PRs, push, schedule) get caching.
+          # The outer gate is the "require approval for outside collaborators" UI setting
+          # (policy §25.6); this condition adds defence-in-depth at the workflow level.
+          cache: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'npm' || '' }}
           cache-dependency-path: web/frontend/package-lock.json
 
       - name: Install frontend dependencies
@@ -69,6 +116,8 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    permissions:
+      contents: read
     env:
       PYTHONPATH: ${{ github.workspace }}
       JOBSCOUT_ENV: test
@@ -76,15 +125,20 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098
+        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
+        uses: astral-sh/setup-uv@22695119d769bdb6f7032ad67b9bca0ef8c4a174
         with:
-          version: "latest"
+          version: "0.11.2"
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        # actions/setup-python v6.2.0 — verified 2026-03-30
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.14.3"
 
@@ -104,6 +158,16 @@ jobs:
     name: E2E Resume Flow
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Skip on fork PRs — Docker compose builds are expensive and secrets are
+    # unavailable on untrusted fork runs. The "require approval for outside
+    # collaborators" repository setting (policy §25.6) is the outer gate;
+    # this condition handles the internal case explicitly.
+    # The CI Gate accepts "skipped" for this job only (see gate job below).
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
     env:
       PYTHONPATH: ${{ github.workspace }}
       JOBSCOUT_ENV: test
@@ -112,15 +176,20 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098
+        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
+        uses: astral-sh/setup-uv@22695119d769bdb6f7032ad67b9bca0ef8c4a174
         with:
-          version: "latest"
+          version: "0.11.2"
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        # actions/setup-python v6.2.0 — verified 2026-03-30
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.14.3"
 
@@ -185,3 +254,52 @@ jobs:
             extraction \
             embeddings \
             scorer-matcher || true
+
+  # ── CI Gate ───────────────────────────────────────────────────────────────
+  # Stable-name gate job for required checks (policy §19.5).
+  # Register "CI Gate" as the required check in branch protection.
+  ci-gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    needs: [python-unit, frontend-unit, integration, e2e-resume-flow]
+    if: always()
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Evaluate CI job results
+        env:
+          PYTHON_UNIT:   ${{ needs.python-unit.result }}
+          FRONTEND_UNIT: ${{ needs.frontend-unit.result }}
+          INTEGRATION:   ${{ needs.integration.result }}
+          E2E:           ${{ needs.e2e-resume-flow.result }}
+        run: |
+          FAILED=0
+
+          # python-unit, frontend-unit, integration must always succeed.
+          declare -A RESULTS=(
+            [python-unit]="$PYTHON_UNIT"
+            [frontend-unit]="$FRONTEND_UNIT"
+            [integration]="$INTEGRATION"
+          )
+          for job in python-unit frontend-unit integration; do
+            result="${RESULTS[$job]}"
+            if [[ "$result" != "success" ]]; then
+              echo "::error::${job}: ${result} (expected: success)"
+              FAILED=1
+            fi
+          done
+
+          # e2e-resume-flow is intentionally skipped on fork PRs (resource + secret
+          # constraint). "skipped" is the only acceptable non-success result here.
+          if [[ "$E2E" == "skipped" ]]; then
+            echo "e2e-resume-flow: skipped (expected on fork PRs)"
+          elif [[ "$E2E" != "success" ]]; then
+            echo "::error::e2e-resume-flow: ${E2E} (expected: success or skipped)"
+            FAILED=1
+          fi
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "One or more CI jobs failed or were not triggered as expected."
+            exit 1
+          fi
+          echo "All CI jobs passed."
