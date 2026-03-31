@@ -122,7 +122,7 @@ jobs:
       - name: Initialize CodeQL
         # github/codeql-action v3.28.13 — verified 2026-03-30
         # build-mode: none — all languages here are interpreted; no build step needed.
-        uses: github/codeql-action/init@1b549b9259bda1cb5ddde3b41741a82a2d15a841
+        uses: github/codeql-action/init@c10b8064de6f491fea524254123dbe5e09572f13
         with:
           languages: ${{ matrix.language }}
           build-mode: none
@@ -131,7 +131,7 @@ jobs:
       - name: Perform CodeQL Analysis
         # github/codeql-action v3.28.13 — verified 2026-03-30
         # Unique category per language prevents ambiguous SARIF overwrite (policy §16).
-        uses: github/codeql-action/analyze@1b549b9259bda1cb5ddde3b41741a82a2d15a841
+        uses: github/codeql-action/analyze@c10b8064de6f491fea524254123dbe5e09572f13
         with:
           category: "/language:${{ matrix.language }}"
 
