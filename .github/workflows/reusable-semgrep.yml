@@ -91,11 +91,24 @@ jobs:
           echo "SEMGREP_RULES_DIR=${RULES_DIR}" >> "$GITHUB_ENV"
 
       - name: Run semgrep
+        # always() ensures this step runs even when the rules-fetch step fails,
+        # so semgrep.sarif always exists for the upload steps below.
+        if: always()
         # --error: exit non-zero if any finding is reported (policy §18.3 blocking threshold).
         # NOTE: --severity filters WHICH RULES RUN, not which findings block — do not use it
         # for blocking control. All rules are run; --error controls the exit code.
         # --metrics=off: no data sent to semgrep.dev (policy §13.1 — trust boundary).
         run: |
+          echo "### Semgrep SAST" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -z "$SEMGREP_RULES_DIR" ]; then
+            echo "::error::SEMGREP_RULES_DIR not set — rules fetch failed; scan skipped"
+            echo "- **Result: ERROR** — rules fetch failed, no scan performed" >> "$GITHUB_STEP_SUMMARY"
+            # Write a minimal valid SARIF so upload steps have a file to work with.
+            printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"semgrep"}},"results":[]}]}' > semgrep.sarif
+            exit 1
+          fi
+
           semgrep \
             --config "$SEMGREP_RULES_DIR" \
             --sarif \
@@ -107,7 +120,6 @@ jobs:
             . || SEMGREP_EXIT=$?
 
           # Safe structured summary — no raw finding content (policy §15.4).
-          echo "### Semgrep SAST" >> "$GITHUB_STEP_SUMMARY"
           if [ -f semgrep.sarif ]; then
             FINDINGS=$(python3 -c "import json; d=json.load(open('semgrep.sarif')); print(sum(len(r.get('results',[]))for r in d.get('runs',[])))" 2>/dev/null || echo "?")
             echo "- Total findings: ${FINDINGS}" >> "$GITHUB_STEP_SUMMARY"
