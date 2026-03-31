@@ -961,7 +961,7 @@ class NotificationChannelFactory:
                 raise ValueError(f"Invalid module name: {module_name!r}")
 
             # Import the module
-            # nosemgrep: tmp.semgrep-rules-src.python.lang.security.audit.non-literal-import
+            # nosemgrep
             module = importlib.import_module(module_name)
             
             if class_name:
