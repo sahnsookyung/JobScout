@@ -86,7 +86,7 @@ jobs:
         if: always()
         # actions/upload-artifact v4.6.2 — verified 2026-03-30
         # Explicit retention required (policy §15.5). Caller controls the value.
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
           name: grype-sarif
           path: grype.sarif
