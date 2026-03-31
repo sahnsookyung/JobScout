@@ -154,7 +154,6 @@ jobs:
         #   .lang.best-practice.      — arbitrary-sleep, logging-error-without-handling, etc.
         #   .lang.maintainability.    — is-function-without-parentheses, useless-inner-function, etc.
         #   .requests.best-practice.  — use-raise-for-status, use-timeout (fixed in code)
-        #   .sqlalchemy.security.audit. — avoid-sqlalchemy-text (table name is a compile-time constant)
         #
         # Kept: all other security findings become the sole blocking gate.
         if: always()
@@ -169,7 +168,6 @@ jobs:
               ".lang.best-practice.",
               ".lang.maintainability.",
               ".requests.best-practice.",
-              ".sqlalchemy.security.audit.",
           )
 
           try:
