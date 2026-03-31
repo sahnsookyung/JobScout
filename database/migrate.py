@@ -53,7 +53,7 @@ def _ensure_extension(conn: Connection) -> None:
 
 def _ensure_schema_migrations_table(conn: Connection) -> None:
     conn.execute(
-        text(  # nosemgrep
+        text(
             f"""
             CREATE TABLE IF NOT EXISTS {SCHEMA_MIGRATIONS_TABLE} (
                 version TEXT PRIMARY KEY,
@@ -70,7 +70,7 @@ def _applied_migrations(conn: Connection) -> dict[str, str]:
         return {}
 
     rows = conn.execute(
-        text(  # nosemgrep
+        text(
             f"SELECT version, checksum FROM {SCHEMA_MIGRATIONS_TABLE} ORDER BY version"
         )
     ).fetchall()
@@ -237,7 +237,7 @@ def migrate_database(
                     module = _load_migration_module(path)
                     _run_migration_callable(module, conn)
                     conn.execute(
-                        text(  # nosemgrep
+                        text(
                             f"""
                             INSERT INTO {SCHEMA_MIGRATIONS_TABLE} (version, checksum)
                             VALUES (:version, :checksum)

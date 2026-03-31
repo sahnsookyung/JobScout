@@ -1,5 +1,0 @@
-# Scripts are development utilities (test runners, Docker helpers) — not
-# production code. Exclude from SAST scans to avoid subprocess/shell audit
-# findings that are intentional in this context.
-scripts/
-tests/

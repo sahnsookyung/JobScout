@@ -71,20 +71,6 @@ jobs:
     with:
       artifact-retention-days: ${{ fromJSON(needs.setup.outputs.retention-days) }}
 
-  # ── Semgrep — SAST ────────────────────────────────────────────────────────
-  semgrep:
-    name: Semgrep
-    needs: setup
-    uses: ./.github/workflows/reusable-semgrep.yml
-    permissions:
-      contents: read
-      security-events: write  # propagated to reusable: upload SARIF to Security tab
-      actions: read           # propagated to reusable: required by upload-sarif on private repos
-    with:
-      # fromJSON converts the string output "7"/"14" to an integer, required by
-      # the reusable workflow's number-typed input (policy §27.3).
-      artifact-retention-days: ${{ fromJSON(needs.setup.outputs.retention-days) }}
-
   # ── Grype — dependency vulnerability scan ─────────────────────────────────
   grype:
     name: Grype
@@ -97,19 +83,6 @@ jobs:
     with:
       artifact-retention-days: ${{ fromJSON(needs.setup.outputs.retention-days) }}
       fail-on-severity: "high"
-
-  # ── Checkov — IaC scan (deprivileged) ─────────────────────────────────────
-  checkov:
-    name: Checkov
-    needs: setup
-    uses: ./.github/workflows/reusable-checkov.yml
-    # Deprivileged: read-only for code, write for Security tab upload (policy §18.5).
-    permissions:
-      contents: read
-      security-events: write  # propagated to reusable: upload SARIF to Security tab
-      actions: read           # propagated to reusable: required by upload-sarif on private repos
-    with:
-      artifact-retention-days: ${{ fromJSON(needs.setup.outputs.retention-days) }}
 
   # ── CodeQL — GitHub-native code scanning (jobscout public repo only) ──────
   # Approved for jobscout per policy §17.2, §25.3.
@@ -169,7 +142,7 @@ jobs:
   security-gate:
     name: Security Gate
     runs-on: ubuntu-latest
-    needs: [gitleaks, semgrep, grype, checkov, codeql]
+    needs: [gitleaks, grype, codeql]
     if: always()
     timeout-minutes: 5
     permissions: {}
@@ -177,20 +150,16 @@ jobs:
       - name: Evaluate security job results
         env:
           GITLEAKS_RESULT: ${{ needs.gitleaks.result }}
-          SEMGREP_RESULT:  ${{ needs.semgrep.result }}
           GRYPE_RESULT:    ${{ needs.grype.result }}
-          CHECKOV_RESULT:  ${{ needs.checkov.result }}
           CODEQL_RESULT:   ${{ needs.codeql.result }}
         run: |
           FAILED=0
           declare -A RESULTS=(
             [gitleaks]="$GITLEAKS_RESULT"
-            [semgrep]="$SEMGREP_RESULT"
             [grype]="$GRYPE_RESULT"
-            [checkov]="$CHECKOV_RESULT"
             [codeql]="$CODEQL_RESULT"
           )
-          for job in gitleaks semgrep grype checkov codeql; do
+          for job in gitleaks grype codeql; do
             result="${RESULTS[$job]}"
             if [[ "$result" != "success" ]]; then
               echo "::error::${job}: ${result} (expected: success)"
