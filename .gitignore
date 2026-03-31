@@ -29,3 +29,6 @@ web/frontend/coverage/
 
 # Editor temp files
 *.swp
+
+# Do not upload any .sarif files by mistake
+*.sarif
