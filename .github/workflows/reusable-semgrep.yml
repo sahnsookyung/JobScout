@@ -185,11 +185,12 @@ jobs:
               run["results"] = [
                   r for r in before
                   if not any(s in r.get("ruleId", "") for s in NOISY_SUBSTRINGS)
+                  and not r.get("suppressions")  # honour in-source nosemgrep comments
               ]
               total_after += len(run["results"])
 
           filtered = total_before - total_after
-          print(f"Filtered {filtered} noisy findings; {total_after} security findings remain")
+          print(f"Filtered {filtered} noisy/suppressed findings; {total_after} security findings remain")
 
           with open("semgrep.sarif", "w") as f:
               json.dump(sarif, f)
