@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol
 
@@ -167,6 +168,43 @@ def _verdicts_to_summary(verdicts: List[Dict[str, Any]]) -> str:
     )
 
 
+def _build_retrieval_diagnostics(preliminary: JobMatchPreliminary) -> Dict[str, Any]:
+    lexical_score = preliminary.lexical_score
+    retrieval_mode = "hybrid" if lexical_score is not None else "dense"
+    retrieval_sources = ["dense", "lexical"] if lexical_score is not None else ["dense"]
+    diagnostics = {
+        "mode": retrieval_mode,
+        "sources": retrieval_sources,
+        "retrieval_score": float(preliminary.retrieval_score or 0.0),
+        "job_similarity": float(preliminary.job_similarity or 0.0),
+    }
+    if lexical_score is not None:
+        diagnostics["lexical_score"] = float(lexical_score)
+    return diagnostics
+
+
+def _build_scorer_diagnostics(
+    *,
+    scorer_name: str,
+    scorer_version: str,
+    latency_ms: float,
+    fallback_used: bool = False,
+    fallback_reason: str | None = None,
+    judged_requirements: int | None = None,
+) -> Dict[str, Any]:
+    diagnostics = {
+        "name": scorer_name,
+        "version": scorer_version,
+        "latency_ms": latency_ms,
+        "fallback_used": fallback_used,
+    }
+    if fallback_reason:
+        diagnostics["fallback_reason"] = fallback_reason
+    if judged_requirements is not None:
+        diagnostics["judged_requirements"] = judged_requirements
+    return diagnostics
+
+
 def _top_strengths(verdicts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     strengths = [verdict for verdict in verdicts if verdict["verdict"] == "covered"]
     strengths.sort(
@@ -271,6 +309,8 @@ def _build_fit_explanation(
     job_similarity: float,
     scorer_name: str,
     scorer_version: str,
+    retrieval_diagnostics: Dict[str, Any],
+    scorer_diagnostics: Dict[str, Any],
 ) -> Dict[str, Any]:
     return {
         "summary": _verdicts_to_summary(verdicts),
@@ -285,6 +325,8 @@ def _build_fit_explanation(
             "name": scorer_name,
             "version": scorer_version,
         },
+        "retrieval": retrieval_diagnostics,
+        "diagnostics": scorer_diagnostics,
     }
 
 
@@ -301,6 +343,7 @@ class ThresholdSemanticFitScorer:
         fit_penalties: float,
         config: ScorerConfig,
     ) -> SemanticFitScoreResult:
+        started_at = time.perf_counter()
         fit_value, fit_components = fit_score.calculate_fit_score(
             job_similarity=preliminary.job_similarity,
             matched_requirements=preliminary.requirement_matches,
@@ -319,6 +362,12 @@ class ThresholdSemanticFitScorer:
         required_coverage = float(fit_components.get("required_coverage", 0.0))
         preferred_coverage = float(fit_components.get("preferred_coverage", 0.0))
         fit_confidence = _fit_confidence(required_coverage, preliminary.job_similarity)
+        retrieval_diagnostics = _build_retrieval_diagnostics(preliminary)
+        scorer_diagnostics = _build_scorer_diagnostics(
+            scorer_name=self.scorer_name,
+            scorer_version=self.scorer_version,
+            latency_ms=round((time.perf_counter() - started_at) * 1000.0, 3),
+        )
         fit_explanation = _build_fit_explanation(
             verdicts,
             required_coverage=required_coverage,
@@ -327,6 +376,8 @@ class ThresholdSemanticFitScorer:
             job_similarity=preliminary.job_similarity,
             scorer_name=self.scorer_name,
             scorer_version=self.scorer_version,
+            retrieval_diagnostics=retrieval_diagnostics,
+            scorer_diagnostics=scorer_diagnostics,
         )
 
         enriched_components = dict(fit_components)
@@ -335,6 +386,8 @@ class ThresholdSemanticFitScorer:
             "name": self.scorer_name,
             "version": self.scorer_version,
         }
+        enriched_components["retrieval"] = retrieval_diagnostics
+        enriched_components["semantic_fit_diagnostics"] = scorer_diagnostics
         enriched_components["fit_explanation"] = fit_explanation
 
         return SemanticFitScoreResult(
@@ -371,6 +424,7 @@ class LLMSemanticFitScorer:
         fit_penalties: float,
         config: ScorerConfig,
     ) -> SemanticFitScoreResult:
+        started_at = time.perf_counter()
         if not getattr(config, "semantic_fit_enabled", True):
             return self.fallback_scorer.score(
                 preliminary,
@@ -394,9 +448,19 @@ class LLMSemanticFitScorer:
                 config=config,
             )
             enriched_components = dict(fallback.fit_components)
-            enriched_components["semantic_fit_fallback_reason"] = str(exc)
             fallback_explanation = dict(fallback.fit_explanation)
             fallback_explanation["message"] = "Semantic fit scorer unavailable; using threshold fallback."
+            fallback_reason = str(exc)
+            scorer_diagnostics = _build_scorer_diagnostics(
+                scorer_name=fallback.scorer_name,
+                scorer_version=fallback.scorer_version,
+                latency_ms=round((time.perf_counter() - started_at) * 1000.0, 3),
+                fallback_used=True,
+                fallback_reason=fallback_reason,
+            )
+            enriched_components["semantic_fit_fallback_reason"] = fallback_reason
+            enriched_components["semantic_fit_diagnostics"] = scorer_diagnostics
+            fallback_explanation["diagnostics"] = scorer_diagnostics
             enriched_components["fit_explanation"] = fallback_explanation
             return SemanticFitScoreResult(
                 fit_score=fallback.fit_score,
@@ -416,6 +480,7 @@ class LLMSemanticFitScorer:
         fit_penalties: float,
         config: ScorerConfig,
     ) -> SemanticFitScoreResult:
+        started_at = time.perf_counter()
         payload = self._build_payload(preliminary)
         assessment = self.ai_service.extract_structured_data(
             text=json.dumps(payload),
@@ -481,6 +546,13 @@ class LLMSemanticFitScorer:
         confidence_values = [verdict["confidence"] for verdict in verdicts if verdict["confidence"] > 0]
         base_confidence = (sum(confidence_values) / len(confidence_values)) if confidence_values else 0.0
         fit_confidence = round(max(base_confidence, _fit_confidence(required_coverage, preliminary.job_similarity)), 4)
+        retrieval_diagnostics = _build_retrieval_diagnostics(preliminary)
+        scorer_diagnostics = _build_scorer_diagnostics(
+            scorer_name=self.scorer_name,
+            scorer_version=self.scorer_version,
+            latency_ms=round((time.perf_counter() - started_at) * 1000.0, 3),
+            judged_requirements=len(verdicts),
+        )
         fit_explanation = _build_fit_explanation(
             verdicts,
             required_coverage=required_coverage,
@@ -489,6 +561,8 @@ class LLMSemanticFitScorer:
             job_similarity=preliminary.job_similarity,
             scorer_name=self.scorer_name,
             scorer_version=self.scorer_version,
+            retrieval_diagnostics=retrieval_diagnostics,
+            scorer_diagnostics=scorer_diagnostics,
         )
 
         enriched_components = dict(fit_components)
@@ -497,6 +571,8 @@ class LLMSemanticFitScorer:
             "name": self.scorer_name,
             "version": self.scorer_version,
         }
+        enriched_components["retrieval"] = retrieval_diagnostics
+        enriched_components["semantic_fit_diagnostics"] = scorer_diagnostics
         enriched_components["fit_explanation"] = fit_explanation
         enriched_components["semantic_fit_judged_requirements"] = len(verdicts)
         enriched_components["semantic_fit_summary"] = parsed.summary

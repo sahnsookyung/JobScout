@@ -114,6 +114,10 @@ class MatcherConfig(BaseModel):
     enabled: bool = True
     similarity_threshold: float = 0.5
     batch_size: Optional[int] = None
+    hybrid_retrieval_enabled: bool = False
+    lexical_limit: Optional[int] = None
+    fusion_rank_constant: int = 60
+    lexical_query_token_limit: int = 24
 
 
 class ScorerConfig(BaseModel):

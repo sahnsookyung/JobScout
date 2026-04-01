@@ -72,6 +72,10 @@ matching:
     enabled: true
     similarity_threshold: 0.5
     batch_size: 100
+    hybrid_retrieval_enabled: false
+    lexical_limit: 100
+    fusion_rank_constant: 60
+    lexical_query_token_limit: 24
   
   # Stage 2: Scorer Service (Rule-based Scoring)
   scorer:

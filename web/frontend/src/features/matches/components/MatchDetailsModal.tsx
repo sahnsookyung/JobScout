@@ -19,6 +19,11 @@ type SemanticVerdict = Readonly<{
     evidence_section?: string | null;
 }>;
 
+type RetrievalExplanation = Readonly<{
+    mode?: 'dense' | 'hybrid';
+    sources?: string[];
+}>;
+
 function useEscapeKey(onClose: () => void, enabled: boolean) {
     useEffect(() => {
         if (!enabled) return;
@@ -188,6 +193,9 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
     const semanticSummary = typeof fitExplanation?.summary === 'string' ? fitExplanation.summary : null;
     const fitConfidence = typeof match.fit_confidence === 'number' ? match.fit_confidence : null;
     const scorerName = typeof match.fit_scorer?.name === 'string' ? match.fit_scorer.name : null;
+    const retrieval = fitExplanation?.retrieval as RetrievalExplanation | undefined;
+    const retrievalMode = retrieval?.mode === 'hybrid' ? 'Hybrid retrieval' : retrieval?.mode === 'dense' ? 'Dense retrieval' : null;
+    const retrievalSources = Array.isArray(retrieval?.sources) ? retrieval.sources.join(' + ') : null;
 
     return (
         <section>
@@ -242,8 +250,18 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
                                 {scorerName.replaceAll('_', ' ')}
                             </span>
                         )}
+                        {retrievalMode && (
+                            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                                {retrievalMode}
+                            </span>
+                        )}
                     </div>
                     <p className="text-base font-medium text-gray-800 leading-relaxed">{semanticSummary}</p>
+                    {retrievalSources && (
+                        <p className="mt-3 text-sm font-medium text-blue-700">
+                            Candidate generation used {retrievalSources}.
+                        </p>
+                    )}
                 </div>
             )}
         </section>

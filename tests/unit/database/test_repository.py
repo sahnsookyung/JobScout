@@ -272,6 +272,25 @@ class TestJobPostDelegation:
         result = repo.get_top_jobs_by_summary_embedding([0.1, 0.2], 10, None, True)
         assert result == [("job", 0.9)]
 
+    def test_get_top_jobs_by_lexical_query(self):
+        repo, _ = make_repo()
+        repo.job_post.get_top_jobs_by_lexical_query = MagicMock(return_value=[("job", 0.5, 0.8)])
+        result = repo.get_top_jobs_by_lexical_query(
+            "python | aws",
+            resume_embedding=[0.1, 0.2],
+            limit=10,
+            tenant_id="tenant-x",
+            require_remote=True,
+        )
+        repo.job_post.get_top_jobs_by_lexical_query.assert_called_once_with(
+            "python | aws",
+            resume_embedding=[0.1, 0.2],
+            limit=10,
+            tenant_id="tenant-x",
+            require_remote=True,
+        )
+        assert result == [("job", 0.5, 0.8)]
+
     def test_save_job_facet_embedding(self):
         repo, _ = make_repo()
         repo.job_post.save_job_facet_embedding = MagicMock(return_value="facet")

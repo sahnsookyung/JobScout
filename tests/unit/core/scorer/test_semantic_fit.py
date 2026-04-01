@@ -66,10 +66,19 @@ def test_threshold_semantic_fit_adds_structured_explanation():
     assert result.fit_score > 0
     assert result.fit_confidence == 0.86
     assert result.fit_components["fit_scorer"]["name"] == "threshold_semantic_fit"
+    assert result.fit_components["retrieval"] == {
+        "mode": "dense",
+        "sources": ["dense"],
+        "retrieval_score": 0.0,
+        "job_similarity": 0.8,
+    }
+    assert result.fit_components["semantic_fit_diagnostics"]["fallback_used"] is False
     assert "fit_explanation" in result.fit_components
     assert result.fit_explanation["summary"] == (
         "Covered 1 of 2 required requirements (50%) and 0 of 0 preferred requirements (0%)."
     )
+    assert result.fit_explanation["retrieval"]["mode"] == "dense"
+    assert result.fit_explanation["diagnostics"]["name"] == "threshold_semantic_fit"
     assert result.fit_explanation["strengths"][0]["requirement_id"] == "req-1"
     assert result.fit_explanation["gaps"][0]["requirement_id"] == "req-2"
     assert result.fit_explanation["requirement_verdicts"][0]["evidence_section"] == "experience"
@@ -168,6 +177,8 @@ def test_llm_semantic_fit_promotes_related_missing_requirement():
         requirement_matches=[],
         missing_requirements=[python_requirement],
         resume_fingerprint="fp-python",
+        retrieval_score=0.92,
+        lexical_score=0.61,
     )
 
     result = LLMSemanticFitScorer(FakeLLMService()).score(
@@ -184,6 +195,15 @@ def test_llm_semantic_fit_promotes_related_missing_requirement():
     assert result.fit_explanation["summary"] == (
         "Covered 1 of 1 required requirements (100%) and 0 of 0 preferred requirements (0%)."
     )
+    assert result.fit_components["retrieval"] == {
+        "mode": "hybrid",
+        "sources": ["dense", "lexical"],
+        "retrieval_score": 0.92,
+        "job_similarity": 0.7,
+        "lexical_score": 0.61,
+    }
+    assert result.fit_explanation["retrieval"]["mode"] == "hybrid"
+    assert result.fit_explanation["diagnostics"]["judged_requirements"] == 1
     assert "model_summary" not in result.fit_explanation
     assert result.fit_components["semantic_fit_summary"] == "Covered 1 of 1 required requirements."
 
@@ -219,3 +239,44 @@ def test_llm_semantic_fit_respects_fallback_disable_flag():
             fit_penalties=0.0,
             config=ScorerConfig(semantic_fit_fallback_to_threshold=False),
         )
+
+
+def test_llm_semantic_fit_fallback_records_diagnostics():
+    job = MagicMock()
+    job.id = "job-fallback"
+    job.title = "Python Engineer FAIL_EXTRACTION"
+    job.company = "Acme"
+    job.description = "Backend Python role"
+
+    requirement = RequirementMatchResult(
+        requirement=_make_requirement(
+            req_id="req-fallback",
+            req_type="required",
+            text="Python backend API development",
+        ),
+        evidence=_make_evidence("Built Python backend APIs for internal services", "experience"),
+        similarity=0.61,
+        is_covered=True,
+    )
+    preliminary = JobMatchPreliminary(
+        job=job,
+        job_similarity=0.7,
+        requirement_matches=[requirement],
+        missing_requirements=[],
+        resume_fingerprint="fp-fallback",
+        retrieval_score=0.81,
+        lexical_score=0.52,
+    )
+
+    result = LLMSemanticFitScorer(FakeLLMService()).score(
+        preliminary,
+        fit_penalties=0.0,
+        config=ScorerConfig(),
+    )
+
+    assert result.fit_components["semantic_fit_fallback_reason"] == "Fake extraction failure"
+    assert result.fit_components["semantic_fit_diagnostics"]["fallback_used"] is True
+    assert result.fit_components["semantic_fit_diagnostics"]["fallback_reason"] == "Fake extraction failure"
+    assert result.fit_explanation["message"] == "Semantic fit scorer unavailable; using threshold fallback."
+    assert result.fit_explanation["diagnostics"]["fallback_used"] is True
+    assert result.fit_explanation["retrieval"]["mode"] == "hybrid"

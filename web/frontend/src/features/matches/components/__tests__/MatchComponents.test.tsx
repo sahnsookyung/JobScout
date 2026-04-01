@@ -467,6 +467,10 @@ describe('MatchDetailsModal', () => {
                     fit_scorer: { name: 'llm_semantic_fit', version: '1' },
                     fit_explanation: {
                         summary: 'Covered 2 of 3 required requirements (67%) and 1 of 1 preferred requirements (100%).',
+                        retrieval: {
+                            mode: 'hybrid',
+                            sources: ['dense', 'lexical'],
+                        },
                     },
                 },
             }),
@@ -476,6 +480,8 @@ describe('MatchDetailsModal', () => {
         expect(screen.getByText('Semantic Fit')).toBeInTheDocument();
         expect(screen.getByText(/Confidence 84%/i)).toBeInTheDocument();
         expect(screen.getByText(/llm semantic fit/i)).toBeInTheDocument();
+        expect(screen.getByText(/Hybrid retrieval/i)).toBeInTheDocument();
+        expect(screen.getByText(/Candidate generation used dense \+ lexical\./i)).toBeInTheDocument();
         expect(screen.getByText(/Covered 2 of 3 required requirements/i)).toBeInTheDocument();
     });
 

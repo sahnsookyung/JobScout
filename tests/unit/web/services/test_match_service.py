@@ -187,7 +187,11 @@ class TestMatchServiceGetMatchDetail:
         mock_match.fit_components = {
             "fit_confidence": 0.78,
             "fit_scorer": {"name": "threshold_semantic_fit", "version": "1"},
-            "fit_explanation": {"summary": "Covered 8 of 10 required requirements."},
+            "fit_explanation": {
+                "summary": "Covered 8 of 10 required requirements.",
+                "retrieval": {"mode": "hybrid", "sources": ["dense", "lexical"]},
+            },
+            "retrieval": {"mode": "hybrid", "sources": ["dense", "lexical"]},
         }
 
         mock_job = Mock()
@@ -222,7 +226,11 @@ class TestMatchServiceGetMatchDetail:
         assert result.success is True
         assert result.match.match_id == "match-1"
         assert result.match.fit_confidence == 0.78
-        assert result.match.fit_explanation == {"summary": "Covered 8 of 10 required requirements."}
+        assert result.match.fit_explanation == {
+            "summary": "Covered 8 of 10 required requirements.",
+            "retrieval": {"mode": "hybrid", "sources": ["dense", "lexical"]},
+        }
+        assert result.match.fit_components["retrieval"]["mode"] == "hybrid"
         assert result.job.title == "Developer"
         assert len(result.requirements) == 1
 
@@ -487,7 +495,11 @@ class TestMatchServiceHelpers:
             "skill": 0.9,
             "fit_confidence": 0.73,
             "fit_scorer": {"name": "threshold_semantic_fit", "version": "1"},
-            "fit_explanation": {"summary": "Covered 8 of 10 required requirements."},
+            "fit_explanation": {
+                "summary": "Covered 8 of 10 required requirements.",
+                "retrieval": {"mode": "dense", "sources": ["dense"]},
+            },
+            "retrieval": {"mode": "dense", "sources": ["dense"]},
         }
         mock_match.base_score = 0.70
         mock_match.penalties = 0.05
@@ -506,7 +518,11 @@ class TestMatchServiceHelpers:
         assert result.match_id == "match-1"
         assert result.fit_score == 0.85
         assert result.fit_confidence == 0.73
-        assert result.fit_explanation == {"summary": "Covered 8 of 10 required requirements."}
+        assert result.fit_explanation == {
+            "summary": "Covered 8 of 10 required requirements.",
+            "retrieval": {"mode": "dense", "sources": ["dense"]},
+        }
+        assert result.fit_components["retrieval"]["mode"] == "dense"
         assert result.penalty_details == {}
 
     def test_to_job_details_success(self, service):

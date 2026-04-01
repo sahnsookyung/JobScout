@@ -1,8 +1,9 @@
-"""Unit tests for core/matcher/service.py — MatcherService"""
+"""Unit tests for core/matcher/service.py — MatcherService."""
 
 import threading
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from core.matcher.models import JobMatchPreliminary
 
@@ -13,8 +14,13 @@ def make_service():
     mock_config = MagicMock()
     mock_config.similarity_threshold = 0.5
     mock_config.batch_size = 100
+    mock_config.hybrid_retrieval_enabled = False
+    mock_config.lexical_limit = 100
+    mock_config.fusion_rank_constant = 60
+    mock_config.lexical_query_token_limit = 24
     with patch("core.matcher.service.RequirementMatcher"):
         from core.matcher.service import MatcherService
+
         service = MatcherService(mock_profiler, mock_config)
     return service, mock_profiler, mock_config
 
@@ -22,12 +28,9 @@ def make_service():
 def make_repo():
     repo = MagicMock()
     repo.is_resume_ready.return_value = False
+    repo.get_top_jobs_by_lexical_query.return_value = []
     return repo
 
-
-# ---------------------------------------------------------------------------
-# match_resume_two_stage
-# ---------------------------------------------------------------------------
 
 class TestMatchResumeTwoStage:
     def test_raises_value_error_when_no_fingerprint(self):
@@ -97,6 +100,7 @@ class TestMatchResumeTwoStage:
         assert len(result) == 2
         assert result[0].job_similarity >= result[1].job_similarity
         assert result[0].job_similarity == pytest.approx(0.95)
+        assert result[0].retrieval_score == pytest.approx(0.95)
         assert result[1].job_similarity == pytest.approx(0.7)
 
     def test_pre_extracted_resume_passed_to_profiler(self):
@@ -187,10 +191,6 @@ class TestMatchResumeTwoStage:
         assert result[0].resume_fingerprint == "fp-abc"
 
 
-# ---------------------------------------------------------------------------
-# _get_resume_embedding_or_raise
-# ---------------------------------------------------------------------------
-
 class TestGetResumeEmbeddingOrRaise:
     def test_returns_embedding_when_found(self):
         service, _, _ = make_service()
@@ -210,26 +210,25 @@ class TestGetResumeEmbeddingOrRaise:
             service._get_resume_embedding_or_raise(repo, "fp-1")
 
 
-# ---------------------------------------------------------------------------
-# _retrieve_candidates
-# ---------------------------------------------------------------------------
-
 class TestRetrieveCandidates:
-    def test_returns_job_similarity_pairs(self):
+    def test_returns_dense_candidates_when_hybrid_retrieval_disabled(self):
         service, _, _ = make_service()
         repo = make_repo()
         pairs = [(MagicMock(), 0.9), (MagicMock(), 0.7)]
         repo.get_top_jobs_by_summary_embedding.return_value = pairs
 
-        result = service._retrieve_candidates(repo, [0.1, 0.2], tenant_id=None)
-        assert result == pairs
+        result = service._retrieve_candidates(repo, {}, [0.1, 0.2], tenant_id=None)
+
+        assert [candidate.job_similarity for candidate in result] == [0.9, 0.7]
+        assert [candidate.retrieval_score for candidate in result] == [0.9, 0.7]
+        repo.get_top_jobs_by_lexical_query.assert_not_called()
 
     def test_returns_empty_when_no_candidates(self):
         service, _, _ = make_service()
         repo = make_repo()
         repo.get_top_jobs_by_summary_embedding.return_value = []
 
-        result = service._retrieve_candidates(repo, [0.1], tenant_id=None)
+        result = service._retrieve_candidates(repo, {}, [0.1], tenant_id=None)
         assert result == []
 
     def test_passes_tenant_id_to_query(self):
@@ -237,7 +236,7 @@ class TestRetrieveCandidates:
         repo = make_repo()
         repo.get_top_jobs_by_summary_embedding.return_value = []
 
-        service._retrieve_candidates(repo, [0.1], tenant_id="t-1")
+        service._retrieve_candidates(repo, {}, [0.1], tenant_id="t-1")
 
         call_kwargs = repo.get_top_jobs_by_summary_embedding.call_args[1]
         assert call_kwargs.get("tenant_id") == "t-1"
@@ -248,15 +247,63 @@ class TestRetrieveCandidates:
         repo = make_repo()
         repo.get_top_jobs_by_summary_embedding.return_value = []
 
-        service._retrieve_candidates(repo, [0.1], tenant_id=None)
+        service._retrieve_candidates(repo, {}, [0.1], tenant_id=None)
 
         call_kwargs = repo.get_top_jobs_by_summary_embedding.call_args[1]
         assert call_kwargs.get("limit") == 50
 
+    def test_hybrid_retrieval_fuses_dense_and_lexical_results(self):
+        service, _, mock_config = make_service()
+        mock_config.hybrid_retrieval_enabled = True
+        mock_config.batch_size = 3
+        repo = make_repo()
+        dense_job = MagicMock()
+        dense_job.id = "dense"
+        shared_job = MagicMock()
+        shared_job.id = "shared"
+        lexical_job = MagicMock()
+        lexical_job.id = "lexical"
+        repo.get_top_jobs_by_summary_embedding.return_value = [(dense_job, 0.91), (shared_job, 0.6)]
+        repo.get_top_jobs_by_lexical_query.return_value = [(shared_job, 0.7, 0.6), (lexical_job, 0.5, 0.55)]
 
-# ---------------------------------------------------------------------------
-# _build_preliminary
-# ---------------------------------------------------------------------------
+        result = service._retrieve_candidates(
+            repo,
+            {"sections": [{"items": [{"description": "Python FastAPI AWS"}]}]},
+            [0.1],
+            tenant_id=None,
+        )
+
+        assert [candidate.job.id for candidate in result] == ["shared", "dense", "lexical"]
+        assert result[0].job_similarity == pytest.approx(0.6)
+        assert result[0].lexical_score == pytest.approx(0.7)
+        repo.get_top_jobs_by_lexical_query.assert_called_once()
+
+    def test_hybrid_retrieval_skips_lexical_query_when_no_tokens(self):
+        service, _, mock_config = make_service()
+        mock_config.hybrid_retrieval_enabled = True
+        repo = make_repo()
+        repo.get_top_jobs_by_summary_embedding.return_value = [(MagicMock(), 0.9)]
+
+        result = service._retrieve_candidates(repo, {"sections": [None]}, [0.1], tenant_id=None)
+
+        assert len(result) == 1
+        repo.get_top_jobs_by_lexical_query.assert_not_called()
+
+    def test_build_lexical_query_text_deduplicates_and_limits_tokens(self):
+        service, _, mock_config = make_service()
+        mock_config.lexical_query_token_limit = 4
+
+        result = service._build_lexical_query_text(
+            {
+                "title": "Senior Python Engineer",
+                "sections": [
+                    {"items": [{"description": "Python AWS FastAPI Kubernetes Python"}]},
+                ],
+            }
+        )
+
+        assert result == "senior | python | engineer | aws"
+
 
 class TestBuildPreliminary:
     def test_returns_job_match_preliminary(self):
@@ -268,7 +315,14 @@ class TestBuildPreliminary:
         missing = [MagicMock()]
         service.requirement_matcher.match_requirements.return_value = (matched, missing)
 
-        result = service._build_preliminary(repo, mock_job, 0.85, "fp-1")
+        result = service._build_preliminary(
+            repo,
+            mock_job,
+            0.85,
+            "fp-1",
+            retrieval_score=0.9,
+            lexical_score=0.4,
+        )
 
         assert isinstance(result, JobMatchPreliminary)
         assert result.job is mock_job
@@ -276,6 +330,8 @@ class TestBuildPreliminary:
         assert result.requirement_matches == matched
         assert result.missing_requirements == missing
         assert result.resume_fingerprint == "fp-1"
+        assert result.retrieval_score == pytest.approx(0.9)
+        assert result.lexical_score == pytest.approx(0.4)
 
     def test_calls_requirement_matcher(self):
         service, _, _ = make_service()
@@ -298,3 +354,4 @@ class TestBuildPreliminary:
 
         result = service._build_preliminary(repo, mock_job, 0.0, "fp-1")
         assert result.job_similarity == pytest.approx(0.0)
+        assert result.retrieval_score == pytest.approx(0.0)

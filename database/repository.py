@@ -160,6 +160,23 @@ class JobRepository:
             resume_embedding, limit, tenant_id, require_remote
         )
 
+    def get_top_jobs_by_lexical_query(
+        self,
+        lexical_query: str,
+        *,
+        resume_embedding: List[float],
+        limit: Optional[int] = None,
+        tenant_id: Optional[Any] = None,
+        require_remote: Optional[bool] = None,
+    ) -> List[Tuple[JobPost, float, float]]:
+        return self.job_post.get_top_jobs_by_lexical_query(
+            lexical_query,
+            resume_embedding=resume_embedding,
+            limit=limit,
+            tenant_id=tenant_id,
+            require_remote=require_remote,
+        )
+
     def save_job_facet_embedding(
         self,
         job_post_id: Any,

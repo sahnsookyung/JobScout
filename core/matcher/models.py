@@ -26,3 +26,5 @@ class JobMatchPreliminary:
     requirement_matches: List[RequirementMatchResult]
     missing_requirements: List[RequirementMatchResult]
     resume_fingerprint: str
+    retrieval_score: float = 0.0
+    lexical_score: Optional[float] = None

@@ -1,7 +1,7 @@
 # Semantic Architecture Handover
 
 - Date: 2026-04-01
-- Status: Ready for follow-on PRs
+- Status: Foundation merged; fit semantic scoring implemented on PR 2 branch; preference semantics still pending
 
 ## Recommended PR Split
 
@@ -23,7 +23,7 @@ Why separate:
 
 ### PR 2: Fit Semantic Scoring
 
-Target scope:
+Scope now implemented on this branch:
 
 - introduce `SemanticFitScorer`
 - keep pgvector similarity as retrieval/evidence recall only
@@ -31,11 +31,26 @@ Target scope:
 - move user-facing explainability to semantic fit outputs
 - keep cosine-based explanation internal/admin-only if still needed
 
-Why separate:
+What landed:
 
-- highest correctness risk
-- requires offline evaluation and likely prompt/model iteration
-- changes fit semantics independently from preference personalization
+- [core/scorer/semantic_fit.py](/Users/sookyungahn/repos/JobScout-fit-semantics/core/scorer/semantic_fit.py)
+- [core/scorer/service.py](/Users/sookyungahn/repos/JobScout-fit-semantics/core/scorer/service.py)
+- [services/scorer_matcher/pipeline.py](/Users/sookyungahn/repos/JobScout-fit-semantics/services/scorer_matcher/pipeline.py)
+- [core/llm/fake_service.py](/Users/sookyungahn/repos/JobScout-fit-semantics/core/llm/fake_service.py)
+- [web/backend/services/match_service.py](/Users/sookyungahn/repos/JobScout-fit-semantics/web/backend/services/match_service.py)
+- [web/backend/routers/matches.py](/Users/sookyungahn/repos/JobScout-fit-semantics/web/backend/routers/matches.py)
+- [web/frontend/src/features/matches/components/MatchDetailsModal.tsx](/Users/sookyungahn/repos/JobScout-fit-semantics/web/frontend/src/features/matches/components/MatchDetailsModal.tsx)
+
+Behavior:
+
+- `ScoringService` now routes fit evaluation through a dedicated `SemanticFitScorer` contract
+- the default semantic implementation on this branch is LLM-backed, with structured requirement/evidence judgments
+- threshold scoring remains available as the explicit fallback path
+- `semantic_fit_enabled` and `semantic_fit_fallback_to_threshold` are now live config controls
+- fit explanations are persisted during scoring and returned by the match explanation endpoint
+- normal user-facing match details now use semantic verdicts and summaries instead of raw `% similarity` badges
+- public explanation summaries are deterministic from verdicts; model free-text is kept internal/debug only
+- fake AI service support was extended so tests can exercise semantic-fit behavior deterministically
 
 ### PR 3: Preference Semantic Reranking
 
@@ -122,23 +137,30 @@ Observed results at handoff:
   - active match refresh now happens after a clean save batch, not before saving
   - rerun refresh is skipped when any per-match save fails, preserving the last good active set
   - `recalculate_existing=False` semantics are preserved for unchanged active matches
+- fit semantic scoring was implemented on the follow-on worktree branch:
+  - LLM-backed semantic requirement/evidence judgments feed fit aggregation
+  - threshold scoring is retained as a guarded fallback, not the only fit path
+  - persisted semantic explanations now back the explanation endpoint and match details modal
+  - follow-up Sonar cleanup removed nested ternaries from the semantic explanation UI
+ - hybrid retrieval groundwork is in progress on the fit-semantics branch:
+  - dense retrieval still uses `canonical_job_summary` embeddings
+  - lexical retrieval is being added as PostgreSQL full-text candidate generation over existing job text fields
+  - reciprocal-rank fusion is used to merge dense and lexical candidate sets without overwriting dense `job_similarity`
+  - retrieval diagnostics are now persisted with fit outputs so match details can show whether a candidate was generated through dense-only or hybrid retrieval
+  - semantic scorer diagnostics now capture scorer identity, latency, judged-requirement counts, and fallback reasons in the saved fit payload
 
 ## Important Boundaries
 
-- No real `SemanticFitScorer` exists yet.
 - No real `PreferenceSemanticReranker` exists yet.
 - Current lexical soft-preference overlap still exists in the matcher pipeline and should be treated as an interim path, not the target architecture.
 - No admin entitlement/capability store exists yet beyond config-driven allowed modes.
 - Persisted reruns are authoritative only after a clean save batch completes; this safety behavior is now intentional and should be preserved when implementing later semantic stages.
+- The current fit semantic scorer is LLM-backed; there is not yet a dedicated cross-encoder scorer.
+- ANN/pgvector is still the retrieval and evidence-recall layer; hybrid retrieval and lexical fusion are still future work.
+- hybrid retrieval is being added behind a matcher config flag and is not yet the default production path.
+- Offline evaluation and acceptance thresholds for semantic fit quality have not been formalized yet.
 
 ## Next PR Starting Point
-
-If picking up fit semantics next:
-
-1. introduce a fit-scoring interface and default implementation
-2. thread semantic fit outputs into persistence/explanations
-3. gate UI explainability away from cosine internals
-4. add offline fixtures and acceptance criteria
 
 If picking up preference semantics next:
 
@@ -147,10 +169,21 @@ If picking up preference semantics next:
 3. log mode used, fallback reason, and latency
 4. evaluate whether `llm_judge` should remain disabled by default
 
+If continuing fit semantics after PR 2:
+
+1. add offline fixtures and acceptance criteria for semantic fit quality
+2. decide whether to keep the LLM scorer as default or add a cheaper cross-encoder scorer
+3. expand observability from the persisted diagnostics into aggregate reporting for latency, fallback frequency, and verdict distributions
+4. plan hybrid retrieval and lexical fusion separately from shortlist fit scoring
+
 ## Suggested Merge Order
 
 1. PR 1 foundation
 2. PR 2 fit semantic scoring
 3. PR 3 preference semantic reranking
 
-This keeps the highest-risk semantic behavior changes out of the schema/docs/config groundwork review.
+Current state:
+
+- PR 1 is merged
+- PR 2 is the active fit-semantics PR branch
+- PR 3 remains the next major architecture slice after PR 2 lands

@@ -120,10 +120,11 @@ scrapers: []
         preliminary = JobMatchPreliminary(
             job=job,
             job_similarity=0.75,
-            
             requirement_matches=[req_match],
             missing_requirements=[],
-            resume_fingerprint="test_fp"
+            resume_fingerprint="test_fp",
+            retrieval_score=0.88,
+            lexical_score=0.44,
         )
 
         scored = self.scorer.score_preliminary_match(preliminary)
@@ -134,6 +135,9 @@ scrapers: []
         self.assertIn("fit_explanation", scored.fit_components)
         self.assertGreater(scored.fit_confidence, 0)
         self.assertEqual(scored.fit_scorer["name"], "threshold_semantic_fit")
+        self.assertEqual(scored.fit_components["retrieval"]["mode"], "hybrid")
+        self.assertEqual(scored.fit_components["retrieval"]["retrieval_score"], 0.88)
+        self.assertEqual(scored.fit_explanation["retrieval"]["lexical_score"], 0.44)
 
         print(f"  ✓ Overall score: {scored.overall_score:.1f}")
         print(f"  ✓ Base score: {scored.base_score:.1f}")
