@@ -17,6 +17,9 @@ class ScoredJobMatch:
     overall_score: float = 0.0
 
     fit_components: Dict[str, Any] = field(default_factory=dict)
+    fit_confidence: float = 0.0
+    fit_explanation: Dict[str, Any] = field(default_factory=dict)
+    fit_scorer: Dict[str, Any] = field(default_factory=dict)
 
     base_score: float = 0.0
     penalties: float = 0.0

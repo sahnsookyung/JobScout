@@ -9,7 +9,7 @@ from core.config_loader import ScorerConfig, ResultPolicy
 from core.matcher import JobMatchPreliminary
 from core.scorer.models import ScoredJobMatch
 from core.scorer import penalties as penalty_calculations
-from core.scorer import fit_score
+from core.scorer.semantic_fit import SemanticFitScorer, ThresholdSemanticFitScorer
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +31,15 @@ def _blend_overall(fit: float) -> float:
 
 
 class ScoringService:
-    def __init__(self, repo: JobRepository, config: ScorerConfig):
+    def __init__(
+        self,
+        repo: JobRepository,
+        config: ScorerConfig,
+        semantic_fit_scorer: Optional[SemanticFitScorer] = None,
+    ):
         self.repo = repo
         self.config = config
+        self.semantic_fit_scorer = semantic_fit_scorer or ThresholdSemanticFitScorer()
 
     def score_matches(
         self,
@@ -85,25 +91,29 @@ class ScoringService:
             experience_sections=None,  # make this opt-in if needed
         )
 
-        fit_value, fit_components = fit_score.calculate_fit_score(
-            job_similarity=preliminary.job_similarity,
-            matched_requirements=preliminary.requirement_matches,
-            missing_requirements=preliminary.missing_requirements,
+        semantic_fit = self.semantic_fit_scorer.score(
+            preliminary=preliminary,
             fit_penalties=fit_penalties,
             config=self.config,
         )
 
-        overall = _blend_overall(fit_value)
+        overall = _blend_overall(semantic_fit.fit_score)
 
         return ScoredJobMatch(
             job=job,
-            fit_score=fit_value,
+            fit_score=semantic_fit.fit_score,
             overall_score=overall,
-            fit_components=fit_components,
-            base_score=fit_components.get("core", 0.0) * 100.0,
+            fit_components=semantic_fit.fit_components,
+            fit_confidence=semantic_fit.fit_confidence,
+            fit_explanation=semantic_fit.fit_explanation,
+            fit_scorer={
+                "name": semantic_fit.scorer_name,
+                "version": semantic_fit.scorer_version,
+            },
+            base_score=semantic_fit.fit_components.get("core", 0.0) * 100.0,
             penalties=fit_penalties,
-            jd_required_coverage=fit_components["required_coverage"],
-            jd_preferences_coverage=fit_components["preferred_coverage"],
+            jd_required_coverage=semantic_fit.fit_components["required_coverage"],
+            jd_preferences_coverage=semantic_fit.fit_components["preferred_coverage"],
             job_similarity=preliminary.job_similarity,
             penalty_details=penalty_details,
             matched_requirements=preliminary.requirement_matches,

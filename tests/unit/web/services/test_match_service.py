@@ -184,7 +184,11 @@ class TestMatchServiceGetMatchDetail:
         mock_match.status = "active"
         mock_match.created_at = datetime.now(timezone.utc)
         mock_match.calculated_at = datetime.now(timezone.utc)
-        mock_match.fit_components = {}
+        mock_match.fit_components = {
+            "fit_confidence": 0.78,
+            "fit_scorer": {"name": "threshold_semantic_fit", "version": "1"},
+            "fit_explanation": {"summary": "Covered 8 of 10 required requirements."},
+        }
 
         mock_job = Mock()
         mock_job.id = "job-1"
@@ -217,6 +221,8 @@ class TestMatchServiceGetMatchDetail:
 
         assert result.success is True
         assert result.match.match_id == "match-1"
+        assert result.match.fit_confidence == 0.78
+        assert result.match.fit_explanation == {"summary": "Covered 8 of 10 required requirements."}
         assert result.job.title == "Developer"
         assert len(result.requirements) == 1
 
@@ -250,7 +256,9 @@ class TestMatchServiceGetMatchDetail:
         mock_match.status = "active"
         mock_match.created_at = datetime.now(timezone.utc)
         mock_match.calculated_at = datetime.now(timezone.utc)
-        mock_match.fit_components = {}
+        mock_match.fit_components = {
+            "fit_explanation": {"summary": "Covered 8 of 10 required requirements."}
+        }
 
         mock_db.query.return_value.get.side_effect = [mock_match, None]
         mock_db.query.return_value.options.return_value.filter.return_value.all.return_value = []
@@ -338,23 +346,17 @@ class TestMatchServiceGetMatchExplanation:
         """Test successful match explanation."""
         mock_match = Mock()
         mock_match.id = "match-1"
-        mock_match.resume_fingerprint = "fp-123"
-        mock_match.job_post_id = "job-1"
+        mock_match.fit_components = {
+            "fit_explanation": {"summary": "Covered 3 of 4 required requirements."}
+        }
 
-        mock_job = Mock()
-        mock_job.id = "job-1"
-        mock_job.requirements = ["Python", "SQL"]
+        mock_db.query.return_value.get.return_value = mock_match
 
-        mock_db.query.return_value.get.side_effect = [mock_match, mock_job]
+        result = service.get_match_explanation("match-1")
 
-        with patch('core.matcher.explainability.explain_match') as mock_explain:
-            mock_explain.return_value = {"explanation": "test"}
-
-            result = service.get_match_explanation("match-1")
-
-            assert result['success'] is True
-            assert result['match_id'] == "match-1"
-            assert 'explanation' in result
+        assert result['success'] is True
+        assert result['match_id'] == "match-1"
+        assert result['explanation'] == {"summary": "Covered 3 of 4 required requirements."}
 
     def test_get_match_explanation_not_found(self, service, mock_db):
         """Test get_match_explanation when match not found."""
@@ -366,48 +368,43 @@ class TestMatchServiceGetMatchExplanation:
             service.get_match_explanation("nonexistent")
 
     def test_get_match_explanation_no_fingerprint(self, service, mock_db):
-        """Test get_match_explanation when no fingerprint."""
+        """Test get_match_explanation when semantic explanation is unavailable."""
         mock_match = Mock()
         mock_match.id = "match-1"
-        mock_match.resume_fingerprint = None
+        mock_match.fit_components = {}
 
         mock_db.query.return_value.get.return_value = mock_match
 
         result = service.get_match_explanation("match-1")
 
         assert result['success'] is True
+        assert result['match_id'] == "match-1"
         assert result['explanation'] is None
 
     def test_get_match_explanation_job_not_found(self, service, mock_db):
-        """Test get_match_explanation when job not found."""
-        from web.backend.exceptions import JobNotFoundException
-
+        """Test get_match_explanation no longer requires loading the job."""
         mock_match = Mock()
         mock_match.id = "match-1"
-        mock_match.resume_fingerprint = "fp-123"
-        mock_match.job_post_id = "job-1"
+        mock_match.fit_components = {"fit_explanation": {"summary": "ok"}}
 
-        mock_db.query.return_value.get.side_effect = [mock_match, None]
+        mock_db.query.return_value.get.return_value = mock_match
 
-        with pytest.raises(JobNotFoundException):
-            service.get_match_explanation("match-1")
+        result = service.get_match_explanation("match-1")
+
+        assert result["explanation"] == {"summary": "ok"}
 
     def test_get_match_explanation_no_requirements(self, service, mock_db):
-        """Test get_match_explanation when job has no requirements."""
+        """Test get_match_explanation returns no explanation when payload is missing."""
         mock_match = Mock()
         mock_match.id = "match-1"
-        mock_match.resume_fingerprint = "fp-123"
-        mock_match.job_post_id = "job-1"
+        mock_match.fit_components = None
 
-        mock_job = Mock()
-        mock_job.id = "job-1"
-        mock_job.requirements = None
-
-        mock_db.query.return_value.get.side_effect = [mock_match, mock_job]
+        mock_db.query.return_value.get.return_value = mock_match
 
         result = service.get_match_explanation("match-1")
 
         assert result['success'] is True
+        assert result['match_id'] == "match-1"
         assert result['explanation'] is None
 
 
@@ -486,7 +483,12 @@ class TestMatchServiceHelpers:
         mock_match.resume_fingerprint = "fp-123"
         mock_match.fit_score = 0.85
         mock_match.overall_score = 0.80
-        mock_match.fit_components = {"skill": 0.9}
+        mock_match.fit_components = {
+            "skill": 0.9,
+            "fit_confidence": 0.73,
+            "fit_scorer": {"name": "threshold_semantic_fit", "version": "1"},
+            "fit_explanation": {"summary": "Covered 8 of 10 required requirements."},
+        }
         mock_match.base_score = 0.70
         mock_match.penalties = 0.05
         mock_match.required_coverage = 0.90
@@ -503,6 +505,8 @@ class TestMatchServiceHelpers:
 
         assert result.match_id == "match-1"
         assert result.fit_score == 0.85
+        assert result.fit_confidence == 0.73
+        assert result.fit_explanation == {"summary": "Covered 8 of 10 required requirements."}
         assert result.penalty_details == {}
 
     def test_to_job_details_success(self, service):

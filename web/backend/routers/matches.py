@@ -137,9 +137,8 @@ def toggle_match_hidden(match_id: str, db: DbSession):
 def get_match_explanation(match_id: str, db: DbSession):
     """
     Get explainability details for a specific match.
-    
-    Shows which resume sections matched which job requirements,
-    enabling explainable match scores and actionable feedback.
+
+    Returns the persisted semantic fit explanation generated during scoring.
     """
     validate_uuid(match_id)
     service = MatchService(db)

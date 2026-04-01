@@ -18,7 +18,7 @@ from ..models.responses import (
     RequirementDetail
 )
 from ..utils import safe_float, safe_int, safe_str, safe_datetime_iso
-from ..exceptions import MatchNotFoundException, JobNotFoundException
+from ..exceptions import MatchNotFoundException
 
 logger = logging.getLogger(__name__)
 
@@ -163,41 +163,21 @@ class MatchService:
         
         Raises:
             MatchNotFoundException: If match is not found.
-            JobNotFoundException: If associated job is not found.
         """
         match = self.db.query(JobMatch).get(match_id)
         if not match:
             raise MatchNotFoundException(f"Match {match_id} not found")
-        
-        resume_fp = match.resume_fingerprint
-        if not resume_fp:
+
+        fit_components = match.fit_components if isinstance(match.fit_components, dict) else {}
+        explanation = fit_components.get("fit_explanation")
+        if not explanation:
             return {
                 "success": True,
+                "match_id": match_id,
                 "explanation": None,
-                "message": "Match has no resume fingerprint"
+                "message": "Semantic fit explanation is not available for this match."
             }
-        
-        job = self.db.query(JobPost).get(match.job_post_id)
-        if not job:
-            raise JobNotFoundException(f"Job {match.job_post_id} not found")
-        
-        if not hasattr(job, 'requirements') or not job.requirements:
-            return {
-                "success": True,
-                "explanation": None,
-                "message": "Job has no requirements"
-            }
-        
-        from core.matcher.explainability import explain_match
-        from database.repository import JobRepository
-        
-        repo = JobRepository(self.db)
-        explanation = explain_match(
-            job_requirements=job.requirements,
-            resume_fingerprint=resume_fp,
-            repo=repo
-        )
-        
+
         return {
             "success": True,
             "match_id": match_id,
@@ -266,6 +246,9 @@ class MatchService:
             fit_score=safe_float(match.fit_score) if match.fit_score is not None else None,
             overall_score=safe_float(match.overall_score),
             fit_components=match.fit_components,
+            fit_confidence=self._fit_confidence(match.fit_components),
+            fit_explanation=self._fit_explanation(match.fit_components),
+            fit_scorer=self._fit_scorer(match.fit_components),
             base_score=safe_float(match.base_score),
             penalties=safe_float(match.penalties),
             required_coverage=safe_float(match.required_coverage),
@@ -278,6 +261,30 @@ class MatchService:
             calculated_at=safe_datetime_iso(match.calculated_at),
             penalty_details=penalty_details,
         )
+
+    @staticmethod
+    def _fit_confidence(fit_components: Any) -> Optional[float]:
+        if not isinstance(fit_components, dict):
+            return None
+
+        value = fit_components.get("fit_confidence")
+        return safe_float(value) if value is not None else None
+
+    @staticmethod
+    def _fit_explanation(fit_components: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(fit_components, dict):
+            return None
+
+        explanation = fit_components.get("fit_explanation")
+        return explanation if isinstance(explanation, dict) else None
+
+    @staticmethod
+    def _fit_scorer(fit_components: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(fit_components, dict):
+            return None
+
+        scorer = fit_components.get("fit_scorer")
+        return scorer if isinstance(scorer, dict) else None
     
     def _to_job_details(self, job: Optional[JobPost]) -> JobDetails:
         """Convert ORM model to JobDetails response model."""
