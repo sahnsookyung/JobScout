@@ -5,6 +5,9 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from .base import Base
 
 
+UTC_NOW_SQL = "timezone('UTC', now())"
+
+
 class CandidatePreferences(Base):
     """Per-user matching preferences and hard constraints."""
 
@@ -24,13 +27,13 @@ class CandidatePreferences(Base):
     created_at = Column(
         TIMESTAMP(timezone=True),
         nullable=False,
-        server_default=sql_text("timezone('UTC', now())"),
+        server_default=sql_text(UTC_NOW_SQL),
     )
     updated_at = Column(
         TIMESTAMP(timezone=True),
         nullable=False,
-        server_default=sql_text("timezone('UTC', now())"),
-        onupdate=sql_text("timezone('UTC', now())"),
+        server_default=sql_text(UTC_NOW_SQL),
+        onupdate=sql_text(UTC_NOW_SQL),
     )
 
     def __init__(self, **kwargs):

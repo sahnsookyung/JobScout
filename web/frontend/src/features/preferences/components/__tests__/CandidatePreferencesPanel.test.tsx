@@ -167,4 +167,10 @@ describe('CandidatePreferencesPanel', () => {
 
         expect(container.querySelectorAll('.animate-pulse')).toHaveLength(3);
     });
+
+    it('exposes an accessible label for the visa sponsorship checkbox', () => {
+        render(<CandidatePreferencesPanel />);
+
+        expect(screen.getByLabelText(/visa sponsorship required/i)).toBeInTheDocument();
+    });
 });

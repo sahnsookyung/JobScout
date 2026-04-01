@@ -41,6 +41,9 @@ const PREFERENCE_MODE_OPTIONS = {
     },
 } as const;
 
+const VISA_SPONSORSHIP_FIELD_ID = 'candidate-visa-sponsorship-required';
+const VISA_SPONSORSHIP_HELP_ID = 'candidate-visa-sponsorship-required-help';
+
 export function CandidatePreferencesPanel() {
     const { preferences, isLoading, isSaving, savePreferences } = useCandidatePreferences();
     const [draft, setDraft] = useState<DraftPreferences | null>(null);
@@ -178,20 +181,25 @@ export function CandidatePreferencesPanel() {
                             />
                         </label>
 
-                        <label className="flex items-start justify-between gap-4 rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 shadow-sm">
-                            <div>
+                        <div className="flex items-start justify-between gap-4 rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 shadow-sm">
+                            <label htmlFor={VISA_SPONSORSHIP_FIELD_ID} className="block">
                                 <div className="text-sm font-bold text-slate-900">Visa sponsorship required</div>
-                                <div className="mt-1 text-sm text-slate-500">
+                                <div
+                                    id={VISA_SPONSORSHIP_HELP_ID}
+                                    className="mt-1 text-sm text-slate-500"
+                                >
                                     Only surface roles that explicitly satisfy sponsorship needs.
                                 </div>
-                            </div>
+                            </label>
                             <input
+                                id={VISA_SPONSORSHIP_FIELD_ID}
                                 type="checkbox"
                                 checked={draft.visa_sponsorship_required}
                                 onChange={(event) => updateDraft('visa_sponsorship_required', event.target.checked)}
+                                aria-describedby={VISA_SPONSORSHIP_HELP_ID}
                                 className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                             />
-                        </label>
+                        </div>
                     </div>
                 </div>
 
