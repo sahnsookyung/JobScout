@@ -65,7 +65,9 @@ class TestJobRepositoryProperties:
 
     def test_candidate_preferences_cached(self):
         repo, _ = make_repo()
-        assert repo.candidate_preferences is repo.candidate_preferences
+        first = repo.candidate_preferences
+        second = repo.candidate_preferences
+        assert first is second
 
     def test_all_sub_repos_use_same_db(self):
         mock_db = MagicMock()

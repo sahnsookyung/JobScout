@@ -1,5 +1,3 @@
-import uuid
-
 from sqlalchemy import Column, Integer, Text, TIMESTAMP, ForeignKey, Boolean
 from sqlalchemy.sql import text as sql_text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
