@@ -7,7 +7,6 @@ from typing import Any, Dict, Iterable, List
 from sqlalchemy.orm import Session
 
 from database.repository import JobRepository
-from services.scorer_matcher.preference_semantics import summarize_preference_profile
 from web.backend.config import get_config
 
 VALID_REMOTE_MODES = {"any", "remote", "hybrid", "onsite"}
@@ -27,6 +26,13 @@ def _normalize_string_list(values: Iterable[str]) -> List[str]:
         seen.add(lowered)
         normalized.append(item)
     return normalized
+
+
+def _summarize_soft_preferences(raw_text: str, *, max_length: int = 160) -> str:
+    trimmed = " ".join(raw_text.split())
+    if len(trimmed) <= max_length:
+        return trimmed
+    return f"{trimmed[: max_length - 1].rstrip()}…"
 
 
 class CandidatePreferencesService:
@@ -60,7 +66,7 @@ class CandidatePreferencesService:
         # an optional model call during the request lifecycle.
         preferences.preference_profile = None
         preferences.soft_preference_summary = (
-            summarize_preference_profile(None, preferences.soft_preferences)
+            _summarize_soft_preferences(preferences.soft_preferences)
             if preferences.soft_preferences
             else None
         )
