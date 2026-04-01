@@ -107,7 +107,21 @@ Observed results at handoff:
 
 - focused Python unit suite: passing
 - focused frontend preference-panel tests: passing
-- split-stack integration rerun for candidate preferences was attempted but did not yield usable output in this environment before handoff; rerun in the next PR before merge
+- split-stack integration rerun for candidate preferences: passing
+
+## Post-Handoff Updates Landed On This Branch
+
+- split-stack and integration coverage for candidate preferences were completed and verified
+- frontend/unit/integration CI cleanup landed after the initial handoff snapshot
+- Sonar / CodeQL follow-up cleanup landed:
+  - accessible label fix for the visa sponsorship checkbox
+  - duplicate SQL literal cleanup for candidate-preferences timestamps
+  - dedicated unit coverage for `preference_semantics.py`
+- web backend preference saving was decoupled from scorer-package imports so split-stack startup stays healthy
+- rerun persistence semantics were hardened in [services/scorer_matcher/pipeline.py](/Users/sookyungahn/repos/JobScout/services/scorer_matcher/pipeline.py):
+  - active match refresh now happens after a clean save batch, not before saving
+  - rerun refresh is skipped when any per-match save fails, preserving the last good active set
+  - `recalculate_existing=False` semantics are preserved for unchanged active matches
 
 ## Important Boundaries
 
@@ -115,6 +129,7 @@ Observed results at handoff:
 - No real `PreferenceSemanticReranker` exists yet.
 - Current lexical soft-preference overlap still exists in the matcher pipeline and should be treated as an interim path, not the target architecture.
 - No admin entitlement/capability store exists yet beyond config-driven allowed modes.
+- Persisted reruns are authoritative only after a clean save batch completes; this safety behavior is now intentional and should be preserved when implementing later semantic stages.
 
 ## Next PR Starting Point
 
