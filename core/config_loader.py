@@ -131,12 +131,14 @@ class SemanticFitSerializationConfig(BaseModel):
 
 class SemanticFitCrossEncoderLocalConfig(BaseModel):
     enabled: bool = True
-    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    runtime: Literal["auto", "flag_embedding", "sentence_transformers", "heuristic"] = "auto"
+    model_name: str = "BAAI/bge-reranker-v2-m3"
     model_cache_path: Optional[str] = None
     device_policy: Literal["cpu"] = "cpu"
     max_batch_size: int = 32
     max_concurrency: int = 1
     timeout_ms: int = 2000
+    trust_remote_code: bool = False
 
 
 class SemanticFitCrossEncoderRemoteConfig(BaseModel):
@@ -190,6 +192,29 @@ class SemanticFitConfig(BaseModel):
     serialization: SemanticFitSerializationConfig = Field(
         default_factory=SemanticFitSerializationConfig
     )
+
+    def model_post_init(self, __context: Any) -> None:
+        del __context
+        deploy_allowed = list(dict.fromkeys(mode for mode in self.deploy_allowed_modes if mode in {"cross_encoder", "llm"}))
+        if not deploy_allowed:
+            deploy_allowed = [self.default_mode]
+        self.deploy_allowed_modes = deploy_allowed
+
+        baseline_allowed = list(
+            dict.fromkeys(mode for mode in self.baseline_allowed_modes if mode in self.deploy_allowed_modes)
+        )
+        if not baseline_allowed:
+            baseline_allowed = [self.default_mode] if self.default_mode in self.deploy_allowed_modes else [self.deploy_allowed_modes[0]]
+        self.baseline_allowed_modes = baseline_allowed
+
+        if self.default_mode not in self.deploy_allowed_modes:
+            self.default_mode = self.deploy_allowed_modes[0]
+
+        self.recall_top_k = max(1, int(self.recall_top_k))
+        self.cross_encoder.remote_promote_pair_count = max(
+            1,
+            int(self.cross_encoder.remote_promote_pair_count),
+        )
 
 
 class ScorerConfig(BaseModel):
@@ -319,6 +344,10 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["FIT_SEMANTIC_DEFAULT_MODE"], ["matching", "scorer", "semantic_fit", "default_mode"]),
     (["FIT_SEMANTIC_RECALL_TOP_K"], ["matching", "scorer", "semantic_fit", "recall_top_k"]),
     (["FIT_CROSS_ENCODER_ROUTE_POLICY"], ["matching", "scorer", "semantic_fit", "cross_encoder", "route_policy"]),
+    (["FIT_CROSS_ENCODER_LOCAL_RUNTIME"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "runtime"]),
+    (["FIT_CROSS_ENCODER_LOCAL_MODEL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "model_name"]),
+    (["FIT_CROSS_ENCODER_LOCAL_MODEL_CACHE_PATH"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "model_cache_path"]),
+    (["FIT_CROSS_ENCODER_LOCAL_TIMEOUT_MS"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "timeout_ms"]),
     (["FIT_CROSS_ENCODER_REMOTE_BASE_URL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "base_url"]),
     (["FIT_CROSS_ENCODER_REMOTE_API_KEY"], ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "api_key"]),
     (["FIT_CROSS_ENCODER_REMOTE_MODEL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "model"]),

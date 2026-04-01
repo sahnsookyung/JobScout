@@ -39,6 +39,10 @@ web = [
     "slowapi>=0.1.9",
     "python-dotenv>=1.0.0",
 ]
+fit-models = [
+    "FlagEmbedding>=1.3.5",
+    "sentence-transformers>=4.1.0",
+]
 
 [build-system]
 requires = ["hatchling"]

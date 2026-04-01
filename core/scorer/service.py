@@ -84,6 +84,9 @@ class ScoringService:
         local_provider = LocalCrossEncoderProvider(
             model_name=semantic_fit_config.cross_encoder.local.model_name,
             cache_path=semantic_fit_config.cross_encoder.local.model_cache_path,
+            runtime=semantic_fit_config.cross_encoder.local.runtime,
+            max_batch_size=semantic_fit_config.cross_encoder.local.max_batch_size,
+            trust_remote_code=semantic_fit_config.cross_encoder.local.trust_remote_code,
         )
         remote_provider = None
         if semantic_fit_config.cross_encoder.remote.enabled and semantic_fit_config.cross_encoder.remote.base_url:

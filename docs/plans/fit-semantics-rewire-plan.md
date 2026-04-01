@@ -2,7 +2,7 @@
 
 - Date: 2026-04-02
 - Related ADR: [ADR 0002](../adr/0002-fit-semantics-and-explainability.md)
-- Status: Proposed follow-on architecture for the active fit-semantics branch
+- Status: Implemented direction on the active fit-semantics branch; remaining work is tuning, offline evaluation, and operationalization
 
 ## Summary
 
@@ -49,9 +49,15 @@ The fit pipeline becomes:
   - `RemoteCrossEncoderProvider`
   - `LLMFitProvider`
   - `ThresholdFallbackProvider`
-- `LocalCrossEncoderProvider` must be real in this slice, not a placeholder.
+- `LocalCrossEncoderProvider` is real in this slice, with runtime selection behind an interface.
 - Add optional dependency group `fit-models`.
-- Default local model: `cross-encoder/ms-marco-MiniLM-L-6-v2`.
+- Default local model: `BAAI/bge-reranker-v2-m3`.
+- Local runtime selection:
+  - `auto`: prefer FlagEmbedding, then SentenceTransformers, then heuristic fallback
+  - `flag_embedding`
+  - `sentence_transformers`
+  - `heuristic`
+- The code is written to the provider interface, not to hardcoded model names; multilingual BGE rerankers are examples, not protocol requirements.
 - Shared provider output contract:
   - `PairAssessment { pair_id, requirement_id, semantic_score, confidence, reason }`
 - Coverage is derived from `semantic_score`:
@@ -369,6 +375,10 @@ matching:
   - related-but-incomplete evidence
   - exact-skill lexical retrieval
   - title/acronym/product-name retrieval
+- Evaluation harness implementation:
+  - keep this harness in Python only
+  - do not split it across Python and TypeScript, because the retrieval fusion, semantic fit scorer, and entitlement resolution all live in the backend Python code
+  - frontend TypeScript remains for UI rendering and end-to-end verification only, not offline fit benchmarking
 
 ## Assumptions and Defaults
 
@@ -380,3 +390,6 @@ matching:
 - This slice includes a real local cross-encoder runtime.
 - Operating budgets are configurable and instrumented.
 - Emergency ceilings remain as internal safety rails only.
+- Entitlement administration is intentionally internal-first:
+  - current path: DB-backed rows plus an internal CLI
+  - later options: internal admin API or admin UI on top of the same table/service

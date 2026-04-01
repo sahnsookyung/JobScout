@@ -46,11 +46,13 @@ Behavior:
 - `ScoringService` now routes fit evaluation through a dedicated `SemanticFitScorer` contract
 - hybrid retrieval is now enabled by default, with reciprocal-rank fusion over dense and lexical candidates
 - the default semantic implementation on this branch is cross-encoder mode with local/remote routing support
+- local cross-encoder routing now prefers FlagEmbedding-compatible runtimes in `auto` for multilingual-friendly local scoring, with SentenceTransformers and heuristic fallback still supported through the same provider interface
 - LLM semantic fit remains available as an advanced gated mode
 - threshold scoring remains available as the explicit fallback path
 - nested `matching.scorer.semantic_fit.*` config now controls fit-mode routing, recall depth, and serialization budgets
 - per-user feature entitlements now gate advanced fit modes
 - fit explanations are persisted during scoring and returned by the match explanation endpoint
+- split-stack E2E now exercises `/api/matches` and `/api/matches/{id}/explanation` so the persisted fit diagnostics are verified through real API calls
 - normal user-facing match details now use semantic verdicts and summaries instead of raw `% similarity` badges, and display fit mode/provider route/fallback state
 - public explanation summaries are deterministic from verdicts; model free-text is kept internal/debug only
 - fake AI service support was extended so tests can exercise semantic-fit behavior deterministically
@@ -165,11 +167,17 @@ Observed results at handoff:
 - No real `PreferenceSemanticReranker` exists yet.
 - Current lexical soft-preference overlap still exists in the matcher pipeline and should be treated as an interim path, not the target architecture.
 - No admin entitlement/capability store exists yet beyond config-driven allowed modes.
+- A DB-backed entitlement control mechanism exists now, plus an internal CLI for dev/staging administration:
+  - [scripts/manage_feature_entitlement.py](/Users/sookyungahn/repos/JobScout-fit-semantics/scripts/manage_feature_entitlement.py)
+  - later options remain an internal admin API or admin UI on top of the same table/service
 - Persisted reruns are authoritative only after a clean save batch completes; this safety behavior is now intentional and should be preserved when implementing later semantic stages.
-- The current fit semantic scorer is LLM-backed; there is not yet a dedicated cross-encoder scorer.
+- The current fit semantic scorer supports both a dedicated cross-encoder path and a gated LLM path.
 - ANN/pgvector is still the retrieval and evidence-recall layer; the rewire plan keeps it as retrieval infrastructure rather than final semantic authority.
-- hybrid retrieval is still behind a matcher config flag in current code; the rewire plan moves it to default-on.
-- Offline evaluation and acceptance thresholds are now specified in the rewire plan, but not yet implemented.
+- hybrid retrieval is now default-on in config.
+- A Python-only offline evaluation harness now exists for fit pair judgments and retrieval fusion:
+  - [scripts/evaluate_fit_semantics.py](/Users/sookyungahn/repos/JobScout-fit-semantics/scripts/evaluate_fit_semantics.py)
+  - [tests/fixtures/evaluations/fit_semantics_cases.json](/Users/sookyungahn/repos/JobScout-fit-semantics/tests/fixtures/evaluations/fit_semantics_cases.json)
+- The offline harness intentionally lives in Python only; TypeScript remains for UI and end-to-end verification, not backend fit benchmarking.
 
 ## Next PR Starting Point
 
@@ -183,8 +191,8 @@ If picking up preference semantics next:
 If continuing fit semantics after PR 2:
 
 1. follow [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md) as the source of truth
-2. add offline fixtures and acceptance criteria for semantic fit quality
-3. implement cross-encoder default scoring and gated LLM scoring
+2. tune and expand the offline fixture set and acceptance criteria for semantic fit quality
+3. harden the local FlagEmbedding runtime path in deployment environments where model provisioning differs
 4. add aggregate observability from the persisted diagnostics into reporting for latency, fallback frequency, truncation, and verdict distributions
 
 ## Suggested Merge Order

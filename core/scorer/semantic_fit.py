@@ -10,6 +10,8 @@ This module provides:
 from __future__ import annotations
 
 import hashlib
+import importlib
+import inspect
 import json
 import logging
 import math
@@ -213,6 +215,13 @@ def _build_retrieval_diagnostics(preliminary: JobMatchPreliminary) -> Dict[str, 
 
 def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
+
+
+def _normalize_semantic_score(raw_score: float) -> float:
+    value = float(raw_score)
+    if 0.0 <= value <= 1.0:
+        return _clamp01(value)
+    return 1.0 / (1.0 + math.exp(-value))
 
 
 def _count_percent(count: int, total: int) -> float:
@@ -607,31 +616,167 @@ def _pair_assessment_from_heuristic(pair: SerializedPair) -> PairAssessment:
 class LocalCrossEncoderProvider:
     route_name = "local"
 
-    def __init__(self, model_name: str, cache_path: Optional[str] = None):
+    def __init__(
+        self,
+        model_name: str,
+        *,
+        cache_path: Optional[str] = None,
+        runtime: str = "auto",
+        max_batch_size: int = 32,
+        trust_remote_code: bool = False,
+    ):
         self.model_name = model_name
         self.cache_path = cache_path
-        self._model = None
+        self.runtime = runtime
+        self.max_batch_size = max(1, int(max_batch_size))
+        self.trust_remote_code = trust_remote_code
+        self._model: Any = None
         self._provider_id = "heuristic-local"
 
     @property
     def provider_id(self) -> str:
         return self._provider_id
 
-    def _load_model(self):
-        if self._model is not None:
-            return self._model
+    def _candidate_runtimes(self) -> List[str]:
+        if self.runtime == "auto":
+            return ["flag_embedding", "sentence_transformers", "heuristic"]
+        if self.runtime == "heuristic":
+            return ["heuristic"]
+        return [self.runtime, "heuristic"]
+
+    @staticmethod
+    def _filter_supported_kwargs(factory: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            from sentence_transformers import CrossEncoder  # type: ignore
-        except Exception:
-            self._provider_id = "heuristic-local"
-            self._model = False
-            return self._model
+            signature = inspect.signature(factory)
+        except (TypeError, ValueError):
+            return kwargs
+
+        accepts_var_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+        if accepts_var_kwargs:
+            return kwargs
+        supported = set(signature.parameters.keys())
+        return {
+            key: value
+            for key, value in kwargs.items()
+            if key in supported
+        }
+
+    @staticmethod
+    def _normalize_runtime_scores(result: Any) -> List[float]:
+        if result is None:
+            return []
+        if isinstance(result, (int, float)):
+            return [float(result)]
+        if isinstance(result, dict):
+            if "scores" in result:
+                return LocalCrossEncoderProvider._normalize_runtime_scores(result["scores"])
+            if "score" in result:
+                return [float(result["score"])]
+            raise TypeError(f"Unsupported local reranker result payload: {type(result)!r}")
+
+        normalized: List[float] = []
+        for item in list(result):
+            if isinstance(item, dict):
+                if "score" not in item:
+                    raise TypeError(f"Unsupported local reranker item payload: {item!r}")
+                normalized.append(float(item["score"]))
+            elif isinstance(item, (list, tuple)) and item:
+                normalized.append(float(item[0]))
+            else:
+                normalized.append(float(item))
+        return normalized
+
+    def _load_flag_embedding_runtime(self) -> Any:
+        module = importlib.import_module("FlagEmbedding")
+        class_names = (
+            "FlagAutoReranker",
+            "FlagReranker",
+            "LayerWiseFlagLLMReranker",
+            "FlagLLMReranker",
+        )
+        last_error: Optional[Exception] = None
+        for class_name in class_names:
+            cls = getattr(module, class_name, None)
+            if cls is None:
+                continue
+            try:
+                return self._instantiate_flag_embedding_runtime(cls)
+            except Exception as exc:  # noqa: BLE001 - keep trying supported runtime adapters
+                last_error = exc
+                logger.debug(
+                    "FlagEmbedding runtime class %s was unavailable for model %s: %s",
+                    class_name,
+                    self.model_name,
+                    exc,
+                )
+        raise RuntimeError(
+            f"No compatible FlagEmbedding runtime could be initialized for {self.model_name}"
+        ) from last_error
+
+    def _instantiate_flag_embedding_runtime(self, cls: Any) -> Any:
+        common_kwargs: Dict[str, Any] = {
+            "use_fp16": False,
+            "trust_remote_code": self.trust_remote_code,
+        }
+        if self.cache_path:
+            common_kwargs["cache_dir"] = self.cache_path
+
+        factory = getattr(cls, "from_finetuned", None)
+        if callable(factory):
+            filtered_kwargs = self._filter_supported_kwargs(factory, common_kwargs)
+            model = factory(self.model_name, **filtered_kwargs)
+        else:
+            filtered_kwargs = self._filter_supported_kwargs(cls, common_kwargs)
+            model = cls(self.model_name, **filtered_kwargs)
+
+        self._provider_id = f"flag_embedding:{self.model_name}"
+        return model
+
+    def _load_sentence_transformers_runtime(self) -> Any:
+        from sentence_transformers import CrossEncoder  # type: ignore
 
         model_kwargs: Dict[str, Any] = {}
         if self.cache_path:
             model_kwargs["cache_folder"] = self.cache_path
-        self._model = CrossEncoder(self.model_name, **model_kwargs)
-        self._provider_id = self.model_name
+        model = CrossEncoder(self.model_name, **model_kwargs)
+        self._provider_id = f"sentence_transformers:{self.model_name}"
+        return model
+
+    def _load_model(self):
+        if self._model is not None:
+            return self._model
+        last_error: Optional[Exception] = None
+        for runtime_name in self._candidate_runtimes():
+            if runtime_name == "heuristic":
+                self._provider_id = "heuristic-local"
+                self._model = False
+                return self._model
+            try:
+                loader = getattr(self, f"_load_{runtime_name}_runtime")
+            except AttributeError:
+                logger.warning("Unknown local cross-encoder runtime '%s'; falling back.", runtime_name)
+                continue
+            try:
+                self._model = loader()
+                return self._model
+            except Exception as exc:  # noqa: BLE001 - try the next supported local runtime
+                last_error = exc
+                logger.warning(
+                    "Local semantic fit runtime %s unavailable for model %s; trying next runtime: %s",
+                    runtime_name,
+                    self.model_name,
+                    exc,
+                )
+        self._provider_id = "heuristic-local"
+        self._model = False
+        if last_error is not None:
+            logger.warning(
+                "Falling back to heuristic local semantic scoring after runtime initialization failures: %s",
+                last_error,
+            )
         return self._model
 
     def score_pairs(self, pairs: List[SerializedPair]) -> tuple[List[PairAssessment], Dict[str, Any]]:
@@ -661,9 +806,34 @@ class LocalCrossEncoderProvider:
                 )
                 for pair in pairs
             ]
-            raw_scores = model.predict(left_right)
+            if hasattr(model, "compute_score"):
+                compute_score = getattr(model, "compute_score")
+                raw_scores = compute_score(
+                    left_right,
+                    **self._filter_supported_kwargs(
+                        compute_score,
+                        {"batch_size": self.max_batch_size},
+                    ),
+                )
+            elif hasattr(model, "predict"):
+                predict = getattr(model, "predict")
+                raw_scores = predict(
+                    left_right,
+                    **self._filter_supported_kwargs(
+                        predict,
+                        {
+                            "batch_size": self.max_batch_size,
+                            "show_progress_bar": False,
+                        },
+                    ),
+                )
+            else:
+                raise TypeError(
+                    f"Unsupported local cross-encoder runtime for {self.model_name}: {type(model)!r}"
+                )
+            raw_scores = self._normalize_runtime_scores(raw_scores)
             for pair, raw_score in zip(pairs, raw_scores):
-                semantic_score = 1.0 / (1.0 + math.exp(-float(raw_score)))
+                semantic_score = _normalize_semantic_score(raw_score)
                 if semantic_score >= 0.80:
                     coverage_level = "covered"
                     reason = "Evidence strongly matches the requirement."
@@ -742,7 +912,7 @@ class RemoteCrossEncoderProvider:
             if pair.pair_id not in scores_by_pair:
                 assessments.append(_pair_assessment_from_heuristic(pair))
                 continue
-            semantic_score = 1.0 / (1.0 + math.exp(-scores_by_pair[pair.pair_id]))
+            semantic_score = _normalize_semantic_score(scores_by_pair[pair.pair_id])
             if semantic_score >= 0.80:
                 coverage_level = "covered"
                 reason = "Evidence strongly matches the requirement."

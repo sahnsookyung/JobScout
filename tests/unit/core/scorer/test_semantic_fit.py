@@ -10,6 +10,7 @@ from core.scorer.semantic_fit import (
     FEATURE_ALLOWED_MODES,
     FEATURE_PREFERRED_MODE,
     LLMSemanticFitScorer,
+    LocalCrossEncoderProvider,
     ThresholdSemanticFitScorer,
     resolve_effective_fit_mode,
 )
@@ -303,3 +304,67 @@ def test_resolve_effective_fit_mode_uses_entitlement_preference_when_allowed():
     assert allowed == ["cross_encoder", "llm"]
     repo.get_entitlement.assert_any_call("user-1", FEATURE_ALLOWED_MODES)
     repo.get_entitlement.assert_any_call("user-1", FEATURE_PREFERRED_MODE)
+
+
+def test_resolve_effective_fit_mode_ignores_invalid_entitlement_payloads():
+    repo = MagicMock()
+    repo.get_entitlement.side_effect = [
+        MagicMock(enabled=True, value_json="invalid"),
+        MagicMock(enabled=True, value_json={"mode": "llm"}),
+    ]
+    config = ScorerConfig()
+    config.semantic_fit.deploy_allowed_modes = ["cross_encoder", "llm"]
+
+    resolved_mode, allowed = resolve_effective_fit_mode(repo, config, owner_id="user-1")
+
+    assert resolved_mode == "cross_encoder"
+    assert allowed == ["cross_encoder"]
+
+
+def test_local_cross_encoder_provider_auto_prefers_flag_embedding_runtime():
+    provider = LocalCrossEncoderProvider(
+        model_name="BAAI/bge-reranker-v2-m3",
+        runtime="auto",
+    )
+    fake_runtime = MagicMock()
+
+    provider._load_flag_embedding_runtime = MagicMock(return_value=fake_runtime)
+    provider._load_sentence_transformers_runtime = MagicMock()
+
+    result = provider._load_model()
+
+    assert result is fake_runtime
+    provider._load_flag_embedding_runtime.assert_called_once()
+    provider._load_sentence_transformers_runtime.assert_not_called()
+
+
+def test_local_cross_encoder_provider_auto_falls_back_to_sentence_transformers():
+    provider = LocalCrossEncoderProvider(
+        model_name="BAAI/bge-reranker-v2-m3",
+        runtime="auto",
+    )
+    fake_runtime = MagicMock()
+
+    provider._load_flag_embedding_runtime = MagicMock(side_effect=ImportError("no flag embedding"))
+    provider._load_sentence_transformers_runtime = MagicMock(return_value=fake_runtime)
+
+    result = provider._load_model()
+
+    assert result is fake_runtime
+    provider._load_flag_embedding_runtime.assert_called_once()
+    provider._load_sentence_transformers_runtime.assert_called_once()
+
+
+def test_local_cross_encoder_provider_heuristic_fallback_when_no_runtime_available():
+    provider = LocalCrossEncoderProvider(
+        model_name="BAAI/bge-reranker-v2-m3",
+        runtime="auto",
+    )
+
+    provider._load_flag_embedding_runtime = MagicMock(side_effect=ImportError("no flag embedding"))
+    provider._load_sentence_transformers_runtime = MagicMock(side_effect=ImportError("no sentence transformers"))
+
+    result = provider._load_model()
+
+    assert result is False
+    assert provider.provider_id == "heuristic-local"

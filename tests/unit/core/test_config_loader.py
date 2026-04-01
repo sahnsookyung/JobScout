@@ -293,6 +293,14 @@ class TestConfigLoader(unittest.TestCase):
         config_yaml = yaml.dump({
             "database": {"url": "test"},
             "schedule": {"interval_seconds": 60},
+            "matching": {
+                "scorer": {
+                    "semantic_fit": {
+                        "deploy_allowed_modes": ["cross_encoder", "llm"],
+                        "baseline_allowed_modes": ["cross_encoder", "llm"],
+                    }
+                }
+            },
             "scrapers": []
         })
 
@@ -304,6 +312,14 @@ class TestConfigLoader(unittest.TestCase):
         self.assertTrue(config.matching.scorer.semantic_fit.enabled)
         self.assertEqual(config.matching.scorer.semantic_fit.default_mode, "cross_encoder")
         self.assertEqual(config.matching.scorer.semantic_fit.recall_top_k, 5)
+        self.assertEqual(
+            config.matching.scorer.semantic_fit.cross_encoder.local.runtime,
+            "auto",
+        )
+        self.assertEqual(
+            config.matching.scorer.semantic_fit.cross_encoder.local.model_name,
+            "BAAI/bge-reranker-v2-m3",
+        )
 
     def test_legacy_semantic_fit_flags_sync_into_nested_config(self):
         scorer_config = ScorerConfig(
@@ -319,6 +335,15 @@ class TestConfigLoader(unittest.TestCase):
     def test_semantic_fit_env_overrides_use_fit_namespace(self):
         config_yaml = yaml.dump({
             "database": {"url": "test"},
+            "matching": {
+                "scorer": {
+                    "semantic_fit": {
+                        "deploy_allowed_modes": ["cross_encoder", "llm"],
+                        "baseline_allowed_modes": ["cross_encoder", "llm"],
+                        "llm": {"enabled": True},
+                    }
+                }
+            },
             "schedule": {"interval_seconds": 60},
             "scrapers": []
         })
@@ -326,6 +351,8 @@ class TestConfigLoader(unittest.TestCase):
         env = {
             "FIT_SEMANTIC_DEFAULT_MODE": "llm",
             "FIT_SEMANTIC_RECALL_TOP_K": "7",
+            "FIT_CROSS_ENCODER_LOCAL_RUNTIME": "flag_embedding",
+            "FIT_CROSS_ENCODER_LOCAL_MODEL": "BAAI/bge-reranker-v2-gemma",
             "FIT_LLM_BASE_URL": "https://fit-llm.example/v1",
             "FIT_LLM_API_KEY": "fit-key",
             "FIT_LLM_MODEL": "fit-gpt",
@@ -338,6 +365,14 @@ class TestConfigLoader(unittest.TestCase):
 
         self.assertEqual(config.matching.scorer.semantic_fit.default_mode, "llm")
         self.assertEqual(config.matching.scorer.semantic_fit.recall_top_k, 7)
+        self.assertEqual(
+            config.matching.scorer.semantic_fit.cross_encoder.local.runtime,
+            "flag_embedding",
+        )
+        self.assertEqual(
+            config.matching.scorer.semantic_fit.cross_encoder.local.model_name,
+            "BAAI/bge-reranker-v2-gemma",
+        )
         self.assertEqual(config.matching.scorer.semantic_fit.llm.base_url, "https://fit-llm.example/v1")
         self.assertEqual(config.matching.scorer.semantic_fit.llm.api_key, "fit-key")
         self.assertEqual(config.matching.scorer.semantic_fit.llm.model, "fit-gpt")

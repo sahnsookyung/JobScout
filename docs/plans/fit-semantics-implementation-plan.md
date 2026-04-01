@@ -20,6 +20,9 @@
 - Milestone 1 foundation is merged.
 - Milestone 2 fit semantic scoring is implemented on the active fit branch.
 - Hybrid retrieval groundwork and retrieval diagnostics are implemented on the branch.
+- Local cross-encoder routing now prefers FlagEmbedding-compatible runtimes in `auto`, with SentenceTransformers and heuristic fallback still supported behind the same provider interface.
+- Offline fit evaluation is now intended to stay Python-only so it can directly exercise backend retrieval fusion and semantic scoring code.
+- Entitlement administration remains internal-first; the branch provides DB-backed control plus an internal CLI rather than a public admin API/UI.
 - The next canonical planning document for fit work is [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md).
 
 ## Milestone 1
