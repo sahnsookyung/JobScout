@@ -478,7 +478,6 @@ class TestDiscordChannelRichContent:
                         'match': {
                             'overall_score': 92,
                             'fit_score': 88,
-                            'want_score': 85,
                             'required_coverage': 0.9
                         },
                         'requirements': {
@@ -556,7 +555,6 @@ class TestTelegramChannelRichContent:
                         'match': {
                             'overall_score': 88,
                             'fit_score': 85,
-                            'want_score': 80,
                             'required_coverage': 0.85
                         },
                         'requirements': {
@@ -664,7 +662,6 @@ class TestEmailChannelRichContent:
                         'match': {
                             'overall_score': 90,
                             'fit_score': 88,
-                            'want_score': 85,
                             'required_coverage': 0.9
                         },
                         'requirements': {
@@ -920,7 +917,7 @@ class TestEmailChannelUncoveredPaths:
         job_contents = [
             {
                 'job': {'title': 'Dev', 'company': 'Corp'},  # no location/salary/type
-                'match': {'overall_score': 80, 'fit_score': 75},  # no want_score
+                'match': {'overall_score': 80, 'fit_score': 75},
                 'requirements': {'total': 5, 'matched': 4},
                 # no apply_url, no match_id
             }
@@ -1058,7 +1055,7 @@ class TestTelegramChannelUncoveredPaths:
         channel = TelegramChannel()
         job_contents = [{
             'job': {'title': 'Dev', 'company': 'Corp'},  # no location/salary/type/level
-            'match': {'overall_score': 80, 'fit_score': 75},  # no want_score
+            'match': {'overall_score': 80, 'fit_score': 75},
             'requirements': {'total': 5, 'matched': 4},
             # no apply_url, no match_id
         }]

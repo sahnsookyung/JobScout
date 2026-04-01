@@ -49,15 +49,14 @@ describe('MATCH_STATUSES', () => {
 });
 
 describe('SORT_OPTIONS', () => {
-    it('has 3 sort options', () => {
-        expect(SORT_OPTIONS).toHaveLength(3);
+    it('has 2 sort options', () => {
+        expect(SORT_OPTIONS).toHaveLength(2);
     });
 
-    it('includes overall, fit, and want sort options', () => {
+    it('includes overall and fit sort options', () => {
         const values = SORT_OPTIONS.map(s => s.value);
         expect(values).toContain('overall');
         expect(values).toContain('fit');
-        expect(values).toContain('want');
     });
 
     it('each option has a label', () => {

@@ -61,7 +61,6 @@ def make_dto(
         job=job,
         overall_score=75.0,
         fit_score=70.0,
-        want_score=80.0,
         job_similarity=0.8,
         jd_required_coverage=0.7,
         jd_preferences_coverage=0.5,
@@ -69,12 +68,9 @@ def make_dto(
         missing_requirements=missing_reqs,
         resume_fingerprint=fingerprint,
         fit_components={"required": 0.7},
-        want_components={"remote": 1.0},
         penalty_details={"details": [], "total": 0.0},
         base_score=72.0,
         penalties=2.0,
-        fit_weight=0.7,
-        want_weight=0.3,
         match_type="requirements_only",
     )
 
@@ -194,12 +190,9 @@ class TestExtractScores:
         scores = _extract_scores(dto)
         assert scores["overall_score"] == 75.0
         assert scores["fit_score"] == 70.0
-        assert scores["want_score"] == 80.0
         assert scores["job_similarity"] == 0.8
         assert scores["jd_required_coverage"] == 0.7
         assert scores["jd_preferences_coverage"] == 0.5
-        assert scores["fit_weight"] == 0.7
-        assert scores["want_weight"] == 0.3
         assert scores["base_score"] == 72.0
         assert scores["penalties"] == 2.0
         assert scores["match_type"] == "requirements_only"
@@ -213,17 +206,13 @@ class TestExtractScores:
             job=job,
             overall_score=60.0,
             fit_score=55.0,
-            want_score=65.0,
             job_similarity=0.6,
             jd_required_coverage=0.5,
             jd_preferences_coverage=0.4,
-            fit_weight=0.6,
-            want_weight=0.4,
             base_score=58.0,
             penalties=3.0,
             penalty_details=[{"reason": "remote"}],
             fit_components={"a": 1},
-            want_components={"b": 2},
             match_type="hybrid",
         )
         scores = _extract_scores(scored)
@@ -407,7 +396,6 @@ class TestSaveMatchToDb:
         assert existing.status == "active"
         assert existing.overall_score == pytest.approx(75.0)
         assert existing.fit_score == pytest.approx(70.0)
-        assert existing.want_score == pytest.approx(80.0)
         repo.db.commit.assert_called_once()
 
     def test_update_does_not_add_match_to_session(self):

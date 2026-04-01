@@ -43,7 +43,8 @@ from .routers import (
     stats_router,
     policy_router,
     pipeline_router,
-    notifications_router
+    notifications_router,
+    candidate_preferences_router,
 )
 
 # Configure logging
@@ -93,6 +94,7 @@ def create_app() -> FastAPI:
     _app.include_router(policy_router)
     _app.include_router(pipeline_router)
     _app.include_router(notifications_router)
+    _app.include_router(candidate_preferences_router)
 
     # Mount static files if they exist
     static_dir = get_project_root() / 'web' / 'static'

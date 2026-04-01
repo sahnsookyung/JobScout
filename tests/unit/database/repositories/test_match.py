@@ -170,6 +170,44 @@ class TestInvalidateMatchesForResume:
         assert match.invalidated_reason == "Resume changed"
 
 
+class TestInvalidateMatchesForResumeExcept:
+    def test_invalidates_only_jobs_not_in_keep_set(self):
+        repo, mock_db = make_repo()
+        keep_match = make_match("job-1", "fp-1", status="active")
+        stale_match = make_match("job-2", "fp-1", status="active")
+        keep_match.invalidated_reason = None
+        stale_match.invalidated_reason = None
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [
+            keep_match,
+            stale_match,
+        ]
+
+        count = repo.invalidate_matches_for_resume_except(
+            "fp-1",
+            active_job_ids={"job-1"},
+            reason="Refresh latest set",
+        )
+
+        assert count == 1
+        assert keep_match.status == "active"
+        assert keep_match.invalidated_reason is None
+        assert stale_match.status == "stale"
+        assert stale_match.invalidated_reason == "Refresh latest set"
+
+    def test_returns_zero_when_every_match_is_retained(self):
+        repo, mock_db = make_repo()
+        keep_match = make_match("job-1", "fp-1", status="active")
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [keep_match]
+
+        count = repo.invalidate_matches_for_resume_except(
+            "fp-1",
+            active_job_ids={"job-1"},
+        )
+
+        assert count == 0
+        assert keep_match.status == "active"
+
+
 # ---------------------------------------------------------------------------
 # get_stale_matches
 # ---------------------------------------------------------------------------

@@ -238,43 +238,16 @@ class TestPolicyRouter:
 
     def test_get_scoring_weights_success(self, client):
         """Test successful get scoring weights."""
-        mock_config = Mock()
-        mock_config.matching.scorer.fit_weight = 0.7
-        mock_config.matching.scorer.want_weight = 0.3
-        mock_config.matching.scorer.facet_weights = {
-            'skills': 0.4,
-            'experience': 0.4,
-            'education': 0.2
-        }
-
-        with patch('web.backend.routers.policy.get_config', return_value=mock_config):
-            response = client.get('/api/config/scoring-weights')
+        response = client.get('/api/config/scoring-weights')
 
         assert response.status_code == 200
-        data = response.json()
-        assert data['fit_weight'] == 0.7
-        assert data['want_weight'] == 0.3
-        assert data['facet_weights'] == {
-            'skills': 0.4,
-            'experience': 0.4,
-            'education': 0.2
-        }
+        assert response.json() == {'fit_score_source': 'fit-only'}
 
     def test_get_scoring_weights_default_values(self, client):
         """Test get scoring weights with default values."""
-        mock_config = Mock()
-        mock_config.matching.scorer.fit_weight = 0.5
-        mock_config.matching.scorer.want_weight = 0.5
-        mock_config.matching.scorer.facet_weights = {}
-
-        with patch('web.backend.routers.policy.get_config', return_value=mock_config):
-            response = client.get('/api/config/scoring-weights')
-
+        response = client.get('/api/config/scoring-weights')
         assert response.status_code == 200
-        data = response.json()
-        assert data['fit_weight'] == 0.5
-        assert data['want_weight'] == 0.5
-        assert data['facet_weights'] == {}
+        assert response.json() == {'fit_score_source': 'fit-only'}
 
 
 class TestPolicyRouterIntegration:
@@ -295,70 +268,61 @@ class TestPolicyRouterIntegration:
     def test_full_policy_lifecycle(self, client):
         """Test complete policy lifecycle: get, update, apply preset."""
         with patch('web.backend.routers.policy.get_policy_service') as MockPolicyService:
-            with patch('web.backend.routers.policy.get_config') as mock_get_config:
-                # Setup mock policy service
-                mock_policy_service = Mock()
+            # Setup mock policy service
+            mock_policy_service = Mock()
 
-                # Initial policy
-                initial_policy = Mock()
-                initial_policy.min_fit = 50.0
-                initial_policy.top_k = 100
-                initial_policy.min_jd_required_coverage = None
-                mock_policy_service.get_current_policy.return_value = initial_policy
+            # Initial policy
+            initial_policy = Mock()
+            initial_policy.min_fit = 50.0
+            initial_policy.top_k = 100
+            initial_policy.min_jd_required_coverage = None
+            mock_policy_service.get_current_policy.return_value = initial_policy
 
-                # Updated policy
-                updated_policy = Mock()
-                updated_policy.min_fit = 65.0
-                updated_policy.top_k = 75
-                updated_policy.min_jd_required_coverage = 0.7
+            # Updated policy
+            updated_policy = Mock()
+            updated_policy.min_fit = 65.0
+            updated_policy.top_k = 75
+            updated_policy.min_jd_required_coverage = 0.7
 
-                def update_side_effect(**kwargs):
-                    updated_policy.min_fit = kwargs.get('min_fit', updated_policy.min_fit)
-                    updated_policy.top_k = kwargs.get('top_k', updated_policy.top_k)
-                    updated_policy.min_jd_required_coverage = kwargs.get(
-                        'min_jd_required_coverage', updated_policy.min_jd_required_coverage
-                    )
-                    return updated_policy
-
-                mock_policy_service.update_policy.side_effect = update_side_effect
-                mock_policy_service.apply_preset.return_value = Mock(
-                    min_fit=70.0, top_k=25, min_jd_required_coverage=0.80
+            def update_side_effect(**kwargs):
+                updated_policy.min_fit = kwargs.get('min_fit', updated_policy.min_fit)
+                updated_policy.top_k = kwargs.get('top_k', updated_policy.top_k)
+                updated_policy.min_jd_required_coverage = kwargs.get(
+                    'min_jd_required_coverage', updated_policy.min_jd_required_coverage
                 )
+                return updated_policy
 
-                MockPolicyService.return_value = mock_policy_service
+            mock_policy_service.update_policy.side_effect = update_side_effect
+            mock_policy_service.apply_preset.return_value = Mock(
+                min_fit=70.0, top_k=25, min_jd_required_coverage=0.80
+            )
 
-                # Setup config
-                mock_config = Mock()
-                mock_config.matching.scorer.fit_weight = 0.7
-                mock_config.matching.scorer.want_weight = 0.3
-                mock_config.matching.scorer.facet_weights = {'skills': 0.5, 'experience': 0.5}
-                mock_get_config.return_value = mock_config
+            MockPolicyService.return_value = mock_policy_service
 
-                # 1. Get initial policy
-                response1 = client.get('/api/v1/policy')
-                assert response1.status_code == 200
-                assert response1.json()['min_fit'] == 50.0
+            # 1. Get initial policy
+            response1 = client.get('/api/v1/policy')
+            assert response1.status_code == 200
+            assert response1.json()['min_fit'] == 50.0
 
-                # 2. Update policy
-                response2 = client.put(
-                    '/api/v1/policy',
-                    json={'min_fit': 65.0, 'top_k': 75, 'min_jd_required_coverage': 0.7}
-                )
-                assert response2.status_code == 200
-                assert response2.json()['min_fit'] == 65.0
-                assert response2.json()['top_k'] == 75
+            # 2. Update policy
+            response2 = client.put(
+                '/api/v1/policy',
+                json={'min_fit': 65.0, 'top_k': 75, 'min_jd_required_coverage': 0.7}
+            )
+            assert response2.status_code == 200
+            assert response2.json()['min_fit'] == 65.0
+            assert response2.json()['top_k'] == 75
 
-                # 3. Apply strict preset
-                response3 = client.post('/api/v1/policy/preset/strict')
-                assert response3.status_code == 200
-                assert response3.json()['min_fit'] == 70.0
-                assert response3.json()['top_k'] == 25
+            # 3. Apply strict preset
+            response3 = client.post('/api/v1/policy/preset/strict')
+            assert response3.status_code == 200
+            assert response3.json()['min_fit'] == 70.0
+            assert response3.json()['top_k'] == 25
 
-                # 4. Get scoring weights
-                response4 = client.get('/api/config/scoring-weights')
-                assert response4.status_code == 200
-                assert response4.json()['fit_weight'] == 0.7
-                assert response4.json()['want_weight'] == 0.3
+            # 4. Get scoring weights
+            response4 = client.get('/api/config/scoring-weights')
+            assert response4.status_code == 200
+            assert response4.json() == {'fit_score_source': 'fit-only'}
 
     def test_preset_workflow(self, client):
         """Test applying different presets in sequence."""

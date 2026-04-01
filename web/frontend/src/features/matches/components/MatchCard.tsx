@@ -9,7 +9,6 @@ import { toast } from '@/components/ui/Toast';
 interface MatchCardProps {
     match: MatchSummary;
     onSelect: (matchId: string) => void;
-    showWantScore?: boolean;
 }
 
 function renderVisibilityToggleIcon(isPending: boolean, isHidden: boolean) {
@@ -23,7 +22,6 @@ function renderVisibilityToggleIcon(isPending: boolean, isHidden: boolean) {
 export const MatchCard: React.FC<MatchCardProps> = ({
     match,
     onSelect,
-    showWantScore = false,
 }) => {
     const queryClient = useQueryClient();
 
@@ -170,9 +168,6 @@ export const MatchCard: React.FC<MatchCardProps> = ({
                 {/* Visual Score Bars */}
                 <div className="space-y-3 mb-6">
                     <ScoreBar label="Fit Match" value={match.fit_score || 0} gradient="from-blue-500 to-blue-600" />
-                    {showWantScore && match.want_score !== null && match.want_score !== undefined && (
-                        <ScoreBar label="Want Match" value={match.want_score} gradient="from-indigo-500 to-purple-500" />
-                    )}
                     <ScoreBar label="Requirements" value={match.required_coverage * 100} gradient="from-blue-400 to-indigo-400" />
                 </div>
 

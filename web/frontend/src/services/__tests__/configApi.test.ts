@@ -24,7 +24,7 @@ describe('configApi', () => {
     });
 
     it('getScoringWeights calls GET /config/scoring-weights', async () => {
-        mockGet.mockResolvedValue({ data: { fit: 0.6, want: 0.4 } });
+        mockGet.mockResolvedValue({ data: { fit_score_source: 'fit-only' } });
         const { configApi } = await import('../configApi');
 
         await configApi.getScoringWeights();
@@ -70,7 +70,7 @@ describe('configApi', () => {
     });
 
     it('getScoringWeights returns the API response', async () => {
-        const expected = { fit: 0.5, want: 0.5 };
+        const expected = { fit_score_source: 'fit-only' };
         mockGet.mockResolvedValue(expected);
         const { configApi } = await import('../configApi');
 

@@ -25,7 +25,6 @@ class JobInfo(BaseModel):
 class MatchInfo(BaseModel):
     overall_score: float
     fit_score: float
-    want_score: Optional[float] = None
     required_coverage: float
 
 
@@ -91,7 +90,6 @@ class NotificationMessageBuilder:
         job_post: JobPost,
         overall_score: float,
         fit_score: float,
-        want_score: Optional[float] = None,
         required_coverage: float = 0,
         apply_url: Optional[str] = None
     ) -> JobNotificationContent:
@@ -111,7 +109,6 @@ class NotificationMessageBuilder:
         match_info = MatchInfo(
             overall_score=float(overall_score),
             fit_score=float(fit_score),
-            want_score=float(want_score) if want_score else None,
             required_coverage=float(required_coverage),
         )
         
@@ -143,7 +140,6 @@ class NotificationMessageBuilder:
         match_info = MatchInfo(
             overall_score=match_data.get('overall_score', 0),
             fit_score=match_data.get('fit_score', 0),
-            want_score=match_data.get('want_score'),
             required_coverage=match_data.get('required_coverage', 0),
         )
         
@@ -185,7 +181,6 @@ class NotificationMessageBuilder:
         match_info = MatchInfo(
             overall_score=float(getattr(job_match, 'overall_score', 0) or 0),
             fit_score=float(getattr(job_match, 'fit_score', 0) or 0),
-            want_score=float(getattr(job_match, 'want_score', None)) if getattr(job_match, 'want_score', None) else None,
             required_coverage=float(getattr(job_match, 'required_coverage', 0) or 0),
         )
         
@@ -227,8 +222,6 @@ class NotificationMessageBuilder:
         coverage = content.match.required_coverage * 100
         score_lines = [f"📊 **{content.match.overall_score:.0f}%** Match"]
         score_lines.append(f"   Fit: {content.match.fit_score:.0f}% | Coverage: {coverage:.0f}%")
-        if content.match.want_score:
-            score_lines.append(f"   Want: {content.match.want_score:.0f}%")
         lines.append("\n".join(score_lines))
         
         lines.append("")

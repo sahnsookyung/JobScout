@@ -232,16 +232,19 @@ DDL_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_structured_resume_owner_resume ON structured_resume (owner_id, resume_fingerprint)",
     "CREATE UNIQUE INDEX IF NOT EXISTS ix_structured_resume_resume_fingerprint ON structured_resume (resume_fingerprint)",
     """
-    CREATE TABLE IF NOT EXISTS user_wants (
-        id UUID PRIMARY KEY,
-        owner_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-        wants_text TEXT NOT NULL,
-        embedding VECTOR(1024) NOT NULL,
-        facet_key TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('UTC', now())
+    CREATE TABLE IF NOT EXISTS candidate_preferences (
+        owner_id UUID PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+        remote_mode TEXT NOT NULL DEFAULT 'any',
+        target_locations JSONB NOT NULL DEFAULT '[]',
+        visa_sponsorship_required BOOLEAN NOT NULL DEFAULT FALSE,
+        salary_min INTEGER,
+        employment_types JSONB NOT NULL DEFAULT '[]',
+        soft_preferences TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('UTC', now()),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('UTC', now())
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_user_wants_owner ON user_wants (owner_id)",
     """
     CREATE TABLE IF NOT EXISTS job_post (
         id UUID PRIMARY KEY,
@@ -373,12 +376,8 @@ DDL_STATEMENTS = [
         job_content_hash TEXT,
         job_similarity NUMERIC(3, 2),
         fit_score NUMERIC(5, 2),
-        want_score NUMERIC(5, 2),
         overall_score NUMERIC(5, 2),
         fit_components JSONB,
-        want_components JSONB,
-        fit_weight NUMERIC(3, 2),
-        want_weight NUMERIC(3, 2),
         base_score NUMERIC(5, 2),
         penalties NUMERIC(5, 2),
         penalty_details JSONB,
@@ -402,7 +401,6 @@ DDL_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_job_match_fit ON job_match (fit_score)",
     "CREATE INDEX IF NOT EXISTS idx_job_match_created ON job_match (created_at)",
     "CREATE INDEX IF NOT EXISTS idx_job_match_hidden ON job_match (is_hidden)",
-    "CREATE INDEX IF NOT EXISTS idx_job_match_want ON job_match (want_score)",
     "CREATE INDEX IF NOT EXISTS idx_job_match_resume ON job_match (resume_fingerprint)",
     "CREATE INDEX IF NOT EXISTS idx_job_match_calculated ON job_match (calculated_at)",
     "CREATE INDEX IF NOT EXISTS idx_job_match_status ON job_match (status)",
@@ -521,7 +519,7 @@ def rollback(conn: Connection) -> None:
     conn.execute(text("DROP TABLE IF EXISTS user_auth_identity CASCADE"))
     conn.execute(text("DROP TABLE IF EXISTS job_post CASCADE"))
     conn.execute(text("DROP TABLE IF EXISTS users CASCADE"))
-    conn.execute(text("DROP TABLE IF EXISTS user_wants CASCADE"))
+    conn.execute(text("DROP TABLE IF EXISTS candidate_preferences CASCADE"))
     conn.execute(text("DROP TABLE IF EXISTS tenant CASCADE"))
     conn.execute(text("DROP TABLE IF EXISTS structured_resume CASCADE"))
     conn.execute(text("DROP TABLE IF EXISTS resume_section_embedding CASCADE"))

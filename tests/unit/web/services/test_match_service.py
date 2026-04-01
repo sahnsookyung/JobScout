@@ -44,7 +44,6 @@ class TestMatchServiceGetMatches:
             is_remote=True
         )
         mock_match.fit_score = 0.85
-        mock_match.want_score = 0.75
         mock_match.overall_score = 0.80
         mock_match.base_score = 0.70
         mock_match.penalties = 0.05
@@ -173,7 +172,6 @@ class TestMatchServiceGetMatchDetail:
         mock_match.job_post_id = "job-1"
         mock_match.resume_fingerprint = "fp-123"
         mock_match.fit_score = 0.85
-        mock_match.want_score = 0.75
         mock_match.overall_score = 0.80
         mock_match.penalty_details = None
         mock_match.base_score = 0.70
@@ -187,9 +185,6 @@ class TestMatchServiceGetMatchDetail:
         mock_match.created_at = datetime.now(timezone.utc)
         mock_match.calculated_at = datetime.now(timezone.utc)
         mock_match.fit_components = {}
-        mock_match.want_components = {}
-        mock_match.fit_weight = 0.7
-        mock_match.want_weight = 0.3
 
         mock_job = Mock()
         mock_job.id = "job-1"
@@ -243,7 +238,6 @@ class TestMatchServiceGetMatchDetail:
         mock_match.job_post_id = "job-1"
         mock_match.resume_fingerprint = "fp-123"
         mock_match.fit_score = 0.85
-        mock_match.want_score = 0.75
         mock_match.overall_score = 0.80
         mock_match.penalty_details = None
         mock_match.base_score = 0.70
@@ -257,9 +251,6 @@ class TestMatchServiceGetMatchDetail:
         mock_match.created_at = datetime.now(timezone.utc)
         mock_match.calculated_at = datetime.now(timezone.utc)
         mock_match.fit_components = {}
-        mock_match.want_components = {}
-        mock_match.fit_weight = 0.7
-        mock_match.want_weight = 0.3
 
         mock_db.query.return_value.get.side_effect = [mock_match, None]
         mock_db.query.return_value.options.return_value.filter.return_value.all.return_value = []
@@ -439,7 +430,6 @@ class TestMatchServiceHelpers:
         mock_match = Mock()
         mock_match.id = "match-1"
         mock_match.fit_score = 0.85
-        mock_match.want_score = 0.75
         mock_match.overall_score = 0.80
         mock_match.base_score = 0.70
         mock_match.penalties = 0.05
@@ -473,7 +463,6 @@ class TestMatchServiceHelpers:
         mock_match.id = "match-1"
         mock_match.job_post = None
         mock_match.fit_score = None
-        mock_match.want_score = None
         mock_match.overall_score = None
         mock_match.base_score = None
         mock_match.penalties = None
@@ -496,12 +485,8 @@ class TestMatchServiceHelpers:
         mock_match.id = "match-1"
         mock_match.resume_fingerprint = "fp-123"
         mock_match.fit_score = 0.85
-        mock_match.want_score = 0.75
         mock_match.overall_score = 0.80
         mock_match.fit_components = {"skill": 0.9}
-        mock_match.want_components = {"culture": 0.8}
-        mock_match.fit_weight = 0.7
-        mock_match.want_weight = 0.3
         mock_match.base_score = 0.70
         mock_match.penalties = 0.05
         mock_match.required_coverage = 0.90
@@ -603,7 +588,6 @@ class TestMatchServiceHelpers:
         mock_match = Mock()
         mock_match.id = "match-1"
         mock_match.fit_score = None
-        mock_match.want_score = None
         mock_match.overall_score = None
         mock_match.base_score = None
         mock_match.penalties = None

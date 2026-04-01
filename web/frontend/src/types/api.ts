@@ -7,7 +7,6 @@ export interface MatchSummary {
     location: string | null;
     is_remote: boolean | null;
     fit_score: number | null;
-    want_score: number | null;
     overall_score: number;
     base_score: number;
     penalties: number;
@@ -49,12 +48,8 @@ export interface MatchDetail {
     match_id: string;
     resume_fingerprint: string;
     fit_score: number | null;
-    want_score: number | null;
     overall_score: number;
     fit_components: Record<string, any> | null;
-    want_components: Record<string, any> | null;
-    fit_weight: number | null;
-    want_weight: number | null;
     base_score: number;
     penalties: number;
     required_coverage: number;
@@ -99,9 +94,7 @@ export interface StatsResponse {
 }
 
 export interface ScoringWeights {
-    fit_weight: number;
-    want_weight: number;
-    facet_weights: Record<string, number>;
+    fit_score_source: string;
 }
 
 export interface PolicyConfig {
@@ -196,6 +189,30 @@ export interface NotificationSettingsTestResponse {
     message: string;
 }
 
+export interface CandidatePreferences {
+    remote_mode: 'any' | 'remote' | 'hybrid' | 'onsite';
+    target_locations: string[];
+    visa_sponsorship_required: boolean;
+    salary_min: number | null;
+    employment_types: string[];
+    soft_preferences: string;
+    soft_preference_summary?: string | null;
+    preference_mode: 'semantic_rerank' | 'llm_judge';
+    allowed_preference_modes: Array<'semantic_rerank' | 'llm_judge'>;
+    effective_preference_mode: 'semantic_rerank' | 'llm_judge';
+    revision: number;
+}
+
+export interface CandidatePreferencesUpdateRequest {
+    remote_mode: 'any' | 'remote' | 'hybrid' | 'onsite';
+    target_locations: string[];
+    visa_sponsorship_required: boolean;
+    salary_min: number | null;
+    employment_types: string[];
+    soft_preferences: string;
+    preference_mode: 'semantic_rerank' | 'llm_judge';
+}
+
 export interface ApiFieldError {
     path: string[];
     code: string;
@@ -234,5 +251,5 @@ export interface PipelineStatusResponse {
 }
 
 export type MatchStatus = 'active' | 'stale' | 'all';
-export type SortBy = 'overall' | 'fit' | 'want';
+export type SortBy = 'overall' | 'fit';
 export type PolicyPreset = 'strict' | 'balanced' | 'discovery';

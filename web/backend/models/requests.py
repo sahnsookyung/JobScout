@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""
-Request models for API endpoints.
-"""
+"""Request models for API endpoints."""
+
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
-from typing import Dict, Optional
 
 
 class PolicyUpdate(BaseModel):
@@ -61,6 +60,18 @@ class NotificationSettingsTestRequest(BaseModel):
         ...,
         description="Channel to test: email, discord, telegram",
     )
+
+
+class CandidatePreferencesUpdateRequest(BaseModel):
+    """Per-user candidate preference update request."""
+
+    remote_mode: Literal["any", "remote", "hybrid", "onsite"] = Field(default="any")
+    target_locations: List[str] = Field(default_factory=list)
+    visa_sponsorship_required: bool = Field(default=False)
+    salary_min: Optional[int] = Field(default=None, ge=0)
+    employment_types: List[str] = Field(default_factory=list)
+    soft_preferences: str = Field(default="")
+    preference_mode: Literal["semantic_rerank", "llm_judge"] = Field(default="semantic_rerank")
 
 
 class ResumeHashCheckRequest(BaseModel):

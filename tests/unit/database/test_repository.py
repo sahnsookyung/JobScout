@@ -12,7 +12,7 @@ from database.repositories.job_post import JobPostRepository
 from database.repositories.resume import ResumeRepository
 from database.repositories.match import MatchRepository
 from database.repositories.embedding import EmbeddingRepository
-from database.repositories.user_wants import UserWantsRepository
+from database.repositories.candidate_preferences import CandidatePreferencesRepository
 
 
 def make_repo():
@@ -59,13 +59,15 @@ class TestJobRepositoryProperties:
         repo, _ = make_repo()
         assert repo.embedding is repo.embedding
 
-    def test_user_wants_returns_user_wants_repository(self):
+    def test_candidate_preferences_returns_candidate_preferences_repository(self):
         repo, _ = make_repo()
-        assert isinstance(repo.user_wants, UserWantsRepository)
+        assert isinstance(repo.candidate_preferences, CandidatePreferencesRepository)
 
-    def test_user_wants_cached(self):
+    def test_candidate_preferences_cached(self):
         repo, _ = make_repo()
-        assert repo.user_wants is repo.user_wants
+        first = repo.candidate_preferences
+        second = repo.candidate_preferences
+        assert first is second
 
     def test_all_sub_repos_use_same_db(self):
         mock_db = MagicMock()
@@ -439,6 +441,17 @@ class TestMatchDelegation:
         result = repo.invalidate_matches_for_resume("fp-1")
         assert result == 1
 
+    def test_invalidate_matches_for_resume_except(self):
+        repo, _ = make_repo()
+        repo.match.invalidate_matches_for_resume_except = MagicMock(return_value=2)
+        result = repo.invalidate_matches_for_resume_except("fp-1", ["job-1"])
+        repo.match.invalidate_matches_for_resume_except.assert_called_once_with(
+            "fp-1",
+            ["job-1"],
+            "Resume changed",
+        )
+        assert result == 2
+
     def test_get_stale_matches(self):
         repo, _ = make_repo()
         repo.match.get_stale_matches = MagicMock(return_value=["s1"])
@@ -454,23 +467,16 @@ class TestMatchDelegation:
 
 
 # ---------------------------------------------------------------------------
-# user_wants delegation
+# candidate preferences repository property
 # ---------------------------------------------------------------------------
 
-class TestUserWantsDelegation:
-    def test_save_user_wants(self):
+class TestCandidatePreferencesRepositoryProperty:
+    def test_get_preferences(self):
         repo, _ = make_repo()
-        repo.user_wants.save_user_wants = MagicMock(return_value="wants-rec")
-        result = repo.save_user_wants("user-1", "remote work", [0.1, 0.2])
-        repo.user_wants.save_user_wants.assert_called_once_with("user-1", "remote work", [0.1, 0.2], None)
-        assert result == "wants-rec"
-
-    def test_get_user_wants_embeddings(self):
-        repo, _ = make_repo()
-        repo.user_wants.get_user_wants_embeddings = MagicMock(return_value=[[0.1]])
-        result = repo.get_user_wants_embeddings("user-1")
-        repo.user_wants.get_user_wants_embeddings.assert_called_once_with("user-1")
-        assert result == [[0.1]]
+        repo.candidate_preferences.get_preferences = MagicMock(return_value="prefs")
+        result = repo.candidate_preferences.get_preferences("user-1")
+        repo.candidate_preferences.get_preferences.assert_called_once_with("user-1")
+        assert result == "prefs"
 
 
 # ---------------------------------------------------------------------------

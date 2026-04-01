@@ -41,14 +41,9 @@ class JobMatch(Base):
     job_similarity = Column(Numeric(3, 2))
 
     fit_score = Column(Numeric(5, 2))
-    want_score = Column(Numeric(5, 2))
     overall_score = Column(Numeric(5, 2))
 
     fit_components = Column(JSONB, default={})
-    want_components = Column(JSONB, default={})
-
-    fit_weight = Column(Numeric(3, 2))
-    want_weight = Column(Numeric(3, 2))
 
     base_score = Column(Numeric(5, 2))
     penalties = Column(Numeric(5, 2), default=0)
@@ -78,7 +73,6 @@ class JobMatch(Base):
         Index('idx_job_match_resume', 'resume_fingerprint'),
         Index('idx_job_match_score', 'overall_score'),
         Index('idx_job_match_fit', 'fit_score'),
-        Index('idx_job_match_want', 'want_score'),
         Index('idx_job_match_status', 'status'),
         Index('idx_job_match_notified', 'notified'),
         Index('idx_job_match_hidden', 'is_hidden'),

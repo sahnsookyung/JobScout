@@ -61,12 +61,7 @@ matching:
   enabled: true
   # Mode: requirements_only (default).
   mode: "requirements_only"
-   
-  # User wants file (optional): Add your job preferences in natural language
-  # One want per line, e.g., "I want remote work", "Looking for Python roles"
-  # Enables semantic matching between your wants and job facets (remote_flexibility, compensation, etc.)
-  # user_wants_file: "wants.txt"
-  
+
   # Invalidation settings
   invalidate_on_job_change: true
   invalidate_on_resume_change: true
@@ -82,21 +77,6 @@ matching:
   scorer:
     enabled: true
 
-    # Scoring weights (Fit: "can do the job", Want: "matches what I want")
-    # overall_score = fit_weight * fit_score + want_weight * want_score
-    fit_weight: 0.80
-    want_weight: 0.20
-
-    # Facet weights for Want score calculation
-    facet_weights:
-      remote_flexibility: 0.15
-      compensation: 0.20
-      learning_growth: 0.15
-      company_culture: 0.15
-      work_life_balance: 0.15
-      tech_stack: 0.10
-      visa_sponsorship: 0.10
-
     # Coverage weights (used in Fit score calculation)
     weight_required: 0.7
     weight_preferred: 0.3
@@ -110,6 +90,35 @@ matching:
     wants_remote: true
     min_salary: null
     target_seniority: null
+
+preferences:
+  default_mode: "semantic_rerank"
+  allowed_modes:
+    - "semantic_rerank"
+  parser:
+    enabled: true
+    provider: "ollama"
+    base_url: "http://localhost:11434/v1"
+    api_key: "ollama"
+    model: "qwen3:14b"
+    temperature: 0.0
+    max_input_tokens: 1200
+  semantic_reranker:
+    enabled: true
+    provider: "ollama"
+    base_url: "http://localhost:11434/v1"
+    api_key: "ollama"
+    model: "qwen3:14b"
+    temperature: 0.0
+    max_input_tokens: 1200
+  llm_judge:
+    enabled: false
+    provider: "ollama"
+    base_url: "http://localhost:11434/v1"
+    api_key: "ollama"
+    model: "qwen3:14b"
+    temperature: 0.0
+    max_input_tokens: 1800
 
 
 notifications:

@@ -17,6 +17,14 @@ class TestConfigLoader(unittest.TestCase):
                     "extraction_model": "qwen3:14b"
                 }
             },
+            "preferences": {
+                "default_mode": "semantic_rerank",
+                "allowed_modes": ["semantic_rerank", "llm_judge"],
+                "parser": {
+                    "base_url": "http://preferences-llm:11434/v1",
+                    "model": "qwen3:14b"
+                }
+            },
             "schedule": {"interval_seconds": 3600},
             "scrapers": []
         }
@@ -59,6 +67,8 @@ class TestConfigLoader(unittest.TestCase):
                     self.assertIsInstance(config, AppConfig)
                     self.assertEqual(config.database.url, "postgresql://user:pass@localhost:5432/db")
                     self.assertEqual(config.etl.llm.extraction_model, "qwen3:14b")
+                    self.assertEqual(config.preferences.default_mode, "semantic_rerank")
+                    self.assertEqual(config.preferences.parser.model, "qwen3:14b")
                 finally:
                     # Restore env vars
                     for k, v in saved_env.items():
@@ -252,6 +262,32 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config.notifications.base_url, "https://jobscout.example")
         self.assertEqual(config.notifications.rate_limit_max_wait_seconds, 17)
         self.assertTrue(config.notifications.dry_run)
+
+    def test_preference_env_overrides_use_independent_namespace(self):
+        config_yaml = yaml.dump({
+            "database": {"url": "test"},
+            "schedule": {"interval_seconds": 60},
+            "preferences": {
+                "default_mode": "semantic_rerank",
+                "parser": {"model": "yaml-parser"},
+            },
+            "scrapers": []
+        })
+
+        env = {
+            "PREFERENCES_DEFAULT_MODE": "llm_judge",
+            "PREFERENCES_PARSER_MODEL": "env-parser",
+            "ETL_LLM_EXTRACTION_MODEL": "etl-model",
+        }
+
+        with patch("builtins.open", mock_open(read_data=config_yaml)):
+            with patch("os.path.exists", return_value=True):
+                with patch.dict(os.environ, env, clear=False):
+                    config = load_config("dummy")
+
+        self.assertEqual(config.preferences.default_mode, "llm_judge")
+        self.assertEqual(config.preferences.parser.model, "env-parser")
+        self.assertEqual(config.etl.llm.extraction_model, "etl-model")
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,7 +11,6 @@ interface MatchListProps {
 export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
     const [status, setStatus] = useState<MatchStatus>('active');
     const [remoteOnly, setRemoteOnly] = useState(false);
-    const [showWantScore, setShowWantScore] = useState(false);
     const [sortBy, setSortBy] = useState<SortBy>('overall');
     const [showHidden, setShowHidden] = useState(() => {
         const saved = localStorage.getItem('jobscout_show_hidden');
@@ -37,8 +36,6 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
 
         if (sortBy === 'fit') {
             return matches.sort((a, b) => (b.fit_score || 0) - (a.fit_score || 0));
-        } else if (sortBy === 'want') {
-            return matches.sort((a, b) => (b.want_score || 0) - (a.want_score || 0));
         } else {
             return matches.sort((a, b) => b.overall_score - a.overall_score);
         }
@@ -73,8 +70,6 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                 onStatusChange={setStatus}
                 remoteOnly={remoteOnly}
                 onRemoteOnlyChange={setRemoteOnly}
-                showWantScore={showWantScore}
-                onShowWantScoreChange={setShowWantScore}
                 sortBy={sortBy}
                 onSortByChange={setSortBy}
                 showHidden={showHidden}
@@ -91,7 +86,6 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                         key={match.match_id}
                         match={match}
                         onSelect={onMatchSelect}
-                        showWantScore={showWantScore}
                     />
                 ))}
             </div>

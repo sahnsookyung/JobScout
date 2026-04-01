@@ -36,8 +36,7 @@ class MatchSummary(BaseModel):
                 "location": "Remote",
                 "is_remote": True,
                 "fit_score": 82.5,
-                "want_score": 78.0,
-                "overall_score": 81.0,
+                "overall_score": 82.5,
                 "base_score": 95.0,
                 "penalties": 9.5,
                 "required_coverage": 0.9,
@@ -56,9 +55,8 @@ class MatchSummary(BaseModel):
     location: Optional[str] = None
     is_remote: Optional[bool] = None
 
-    # Explicit Fit/Want/Overall scores
+    # Explicit fit and final overall scores
     fit_score: Optional[float] = Field(default=None, ge=0, le=100)
-    want_score: Optional[float] = Field(default=None, ge=0, le=100)
     overall_score: float = Field(ge=0, le=100)
 
     # Legacy fields for backward compatibility
@@ -105,16 +103,12 @@ class MatchDetail(BaseModel):
     match_id: str
     resume_fingerprint: str
 
-    # Explicit Fit/Want/Overall scores
+    # Explicit fit and final overall scores
     fit_score: Optional[float] = None
-    want_score: Optional[float] = None
     overall_score: float
 
     # Score breakdowns
     fit_components: Optional[Dict[str, Any]] = None
-    want_components: Optional[Dict[str, Any]] = None
-    fit_weight: Optional[float] = None
-    want_weight: Optional[float] = None
 
     # Legacy fields
     base_score: float
@@ -160,10 +154,9 @@ class StatsResponse(BaseModel):
 
 
 class ScoringWeightsResponse(BaseModel):
-    """Response containing scoring weights configuration."""
-    fit_weight: float
-    want_weight: float
-    facet_weights: Dict[str, float]
+    """Response containing the active final-score source."""
+
+    fit_score_source: str
 
 
 class PolicyResponse(BaseModel):
@@ -235,6 +228,22 @@ class NotificationSettingsTestResponse(BaseModel):
     success: bool
     notification_id: Optional[str] = None
     message: str
+
+
+class CandidatePreferencesResponse(BaseModel):
+    """Per-user candidate preferences response."""
+
+    remote_mode: str
+    target_locations: List[str]
+    visa_sponsorship_required: bool
+    salary_min: Optional[int] = None
+    employment_types: List[str]
+    soft_preferences: str
+    soft_preference_summary: Optional[str] = None
+    preference_mode: str
+    allowed_preference_modes: List[str] = Field(default_factory=list)
+    effective_preference_mode: str
+    revision: int
 
 
 class QueueStatusResponse(BaseModel):

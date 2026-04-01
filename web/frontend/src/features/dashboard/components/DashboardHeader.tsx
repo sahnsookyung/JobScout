@@ -3,12 +3,14 @@ import {
     Bell,
     Briefcase,
     LogOut,
+    SlidersHorizontal,
     UserCircle2,
     X,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/features/auth/useAuth';
+import { CandidatePreferencesPanel } from '@/features/preferences/components/CandidatePreferencesPanel';
 import { NotificationSettingsPanel } from '@/features/notifications/components/NotificationSettingsPanel';
 
 function useDismissOnOutsideClick(
@@ -114,6 +116,71 @@ function NotificationSettingsModal({
     );
 }
 
+function CandidatePreferencesModal({
+    isOpen,
+    onClose,
+}: Readonly<{
+    isOpen: boolean;
+    onClose: () => void;
+}>) {
+    useEscapeDismiss(isOpen, onClose);
+
+    if (!isOpen) {
+        return null;
+    }
+
+    return (
+        <dialog
+            open
+            aria-labelledby="candidate-preferences-title"
+            className="fixed inset-0 z-50 m-0 h-full max-h-none w-full max-w-none overflow-y-auto border-0 bg-transparent p-0 backdrop:bg-slate-950/55 backdrop:backdrop-blur-sm"
+        >
+            <button
+                type="button"
+                className="fixed inset-0"
+                aria-label="Close candidate preferences"
+                onClick={onClose}
+            />
+            <div className="pointer-events-none flex min-h-full items-center justify-center p-4 sm:p-6">
+                <div className="pointer-events-auto relative w-full max-w-5xl overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-2xl">
+                    <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-r from-slate-950 via-sky-950 to-blue-900 px-6 py-6 sm:px-8">
+                        <div className="absolute inset-y-0 right-0 w-56 bg-[radial-gradient(circle_at_top_right,_rgba(56,189,248,0.28),_transparent_70%)]" />
+                        <div className="relative flex items-start justify-between gap-4">
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.32em] text-sky-200">
+                                    Match Inputs
+                                </p>
+                                <h2
+                                    id="candidate-preferences-title"
+                                    className="mt-2 text-2xl font-black text-white sm:text-3xl"
+                                >
+                                    Candidate preferences
+                                </h2>
+                                <p className="mt-2 max-w-2xl text-sm text-slate-200">
+                                    Define your hard constraints and what matters in your next role.
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                className="rounded-2xl border border-white/20 bg-white/10 p-2 text-white transition hover:bg-white/20"
+                                aria-label="Close candidate preferences"
+                            >
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="max-h-[78vh] overflow-y-auto bg-gradient-to-b from-slate-50 via-white to-sky-50 px-6 py-6 sm:px-8">
+                        <CandidatePreferencesPanel />
+                    </div>
+                </div>
+            </div>
+        </dialog>
+    );
+}
+
 function initialsFor(name: string, email: string) {
     const source = name.trim() || email.trim();
     const letters = source
@@ -129,6 +196,7 @@ function initialsFor(name: string, email: string) {
 export function DashboardHeader() {
     const { user, logout } = useAuth();
     const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
+    const [isPreferencesModalOpen, setIsPreferencesModalOpen] = useState(false);
     const [isProfileOpen, setIsProfileOpen] = useState(false);
     const profilePanelRef = useRef<HTMLDivElement>(null);
 
@@ -157,11 +225,19 @@ export function DashboardHeader() {
 
     const openNotifications = () => {
         setIsProfileOpen(false);
+        setIsPreferencesModalOpen(false);
         setIsNotificationModalOpen(true);
+    };
+
+    const openPreferences = () => {
+        setIsProfileOpen(false);
+        setIsNotificationModalOpen(false);
+        setIsPreferencesModalOpen(true);
     };
 
     const toggleProfile = () => {
         setIsNotificationModalOpen(false);
+        setIsPreferencesModalOpen(false);
         setIsProfileOpen((current) => !current);
     };
 
@@ -184,6 +260,14 @@ export function DashboardHeader() {
                     </div>
 
                     <div className="flex items-center justify-end gap-3">
+                        <button
+                            type="button"
+                            onClick={openPreferences}
+                            className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-sky-200 hover:text-sky-600 hover:shadow-md"
+                            aria-label="Open candidate preferences"
+                        >
+                            <SlidersHorizontal className="h-5 w-5" />
+                        </button>
                         <button
                             type="button"
                             onClick={openNotifications}
@@ -293,6 +377,10 @@ export function DashboardHeader() {
             <NotificationSettingsModal
                 isOpen={isNotificationModalOpen}
                 onClose={() => setIsNotificationModalOpen(false)}
+            />
+            <CandidatePreferencesModal
+                isOpen={isPreferencesModalOpen}
+                onClose={() => setIsPreferencesModalOpen(false)}
             />
         </>
     );

@@ -5,7 +5,10 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from services.scorer_matcher.pipeline import MatchingPipelineResult, run_matching_pipeline
+from services.scorer_matcher.pipeline import (
+    SaveMatchesBatchResult,
+    run_matching_pipeline,
+)
 
 
 def _uow(repo, on_exit=None):
@@ -25,7 +28,6 @@ def _uow(repo, on_exit=None):
 def _matching_config():
     return SimpleNamespace(
         enabled=True,
-        user_wants_file=None,
         matcher=SimpleNamespace(),
         scorer=SimpleNamespace(),
         result_policy=SimpleNamespace(),
@@ -177,13 +179,20 @@ def test_run_matching_pipeline_uses_latest_ready_resume_and_reaches_save_boundar
 
     with patch(
         "services.scorer_matcher.pipeline.job_uow",
-        side_effect=[_uow(first_repo), _uow(second_repo)],
+        side_effect=[_uow(first_repo), _uow(second_repo), _uow(second_repo)],
     ), patch("services.scorer_matcher.pipeline.MatcherService", return_value=matcher), patch(
         "services.scorer_matcher.pipeline.ScoringService", return_value=scorer
     ), patch(
         "services.scorer_matcher.pipeline.ResumeSchema.model_validate",
         return_value=SimpleNamespace(profile=SimpleNamespace()),
-    ), patch("services.scorer_matcher.pipeline._save_matches_batch", return_value=0):
+    ), patch(
+        "services.scorer_matcher.pipeline._save_matches_batch",
+        return_value=SaveMatchesBatchResult(
+            saved_count=0,
+            failed_count=0,
+            active_job_ids=frozenset(),
+        ),
+    ):
         result = run_matching_pipeline(ctx, status_callback=steps.append)
 
     assert result.success is True
@@ -221,13 +230,21 @@ def test_run_matching_pipeline_materializes_ready_resume_before_uow_closes():
         side_effect=[
             _uow(first_repo, on_exit=lambda: setattr(expiring_resume, "expired", True)),
             _uow(second_repo),
+            _uow(second_repo),
         ],
     ), patch("services.scorer_matcher.pipeline.MatcherService", return_value=matcher), patch(
         "services.scorer_matcher.pipeline.ScoringService", return_value=scorer
     ), patch(
         "services.scorer_matcher.pipeline.ResumeSchema.model_validate",
         return_value=SimpleNamespace(profile=SimpleNamespace()),
-    ), patch("services.scorer_matcher.pipeline._save_matches_batch", return_value=0):
+    ), patch(
+        "services.scorer_matcher.pipeline._save_matches_batch",
+        return_value=SaveMatchesBatchResult(
+            saved_count=0,
+            failed_count=0,
+            active_job_ids=frozenset(),
+        ),
+    ):
         result = run_matching_pipeline(ctx)
 
     assert result.success is True
@@ -251,7 +268,7 @@ def test_run_matching_pipeline_does_not_fall_back_to_configured_resume_file_when
     select_repo.get_latest_ready_resume_fingerprint.return_value = None
     select_repo.get_latest_resume_processing_state.return_value = None
 
-    with patch("services.scorer_matcher.pipeline.os.path.exists", return_value=True), patch(
+    with patch(
         "services.scorer_matcher.pipeline.job_uow",
         side_effect=[_uow(select_repo)],
     ):

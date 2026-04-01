@@ -157,6 +157,11 @@ class TestExtractOne:
         mock_repo.save_benefits.assert_called_once()
         mock_repo.mark_as_extracted.assert_called_once()
 
+        update_payload = mock_repo.update_content_metadata.call_args[0][1]
+        assert 'canonical_job_summary' in update_payload
+        assert 'canonical_job_summary_version' in update_payload
+        assert 'canonical_job_summary_hash' in update_payload
+
     def test_extract_empty_requirements(self):
         """Test extraction with empty requirements raises error."""
         from etl.orchestrator import JobETLService
@@ -230,7 +235,7 @@ class TestExtractFacetsOne:
         from etl.orchestrator import JobETLService
 
         mock_ai = Mock()
-        # Use actual FACET_KEYS from core.scorer.want_score
+        # Use the orchestrator facet keys directly
         mock_ai.extract_facet_data.return_value = {
             'remote_flexibility': 'Remote work available',
             'compensation': 'Competitive salary',
@@ -409,6 +414,8 @@ class TestEmbedJobOne:
         mock_repo = Mock()
         mock_job = Mock()
         mock_job.id = "job-123"
+        mock_job.canonical_job_summary = None
+        mock_job.raw_payload = {}
 
         mock_req1 = Mock()
         mock_req1.text = "Requirement 1"
@@ -434,6 +441,8 @@ class TestEmbedJobOne:
         mock_repo = Mock()
         mock_job = Mock()
         mock_job.id = "job-123"
+        mock_job.canonical_job_summary = None
+        mock_job.raw_payload = {}
         mock_job.requirements = []
 
         mock_benefit = Mock()
@@ -456,6 +465,8 @@ class TestEmbedJobOne:
         mock_repo = Mock()
         mock_job = Mock()
         mock_job.id = "job-123"
+        mock_job.canonical_job_summary = None
+        mock_job.raw_payload = {}
         mock_job.requirements = []
         mock_job.benefits = []
         mock_job.description = "Job description text" * 100
@@ -477,6 +488,8 @@ class TestEmbedJobOne:
         mock_repo = Mock()
         mock_job = Mock()
         mock_job.id = "job-123"
+        mock_job.canonical_job_summary = None
+        mock_job.raw_payload = {}
         mock_job.requirements = []
         mock_job.benefits = []
         mock_job.description = ""
@@ -497,6 +510,8 @@ class TestEmbedJobOne:
         mock_repo = Mock()
         mock_job = Mock()
         mock_job.id = "job-123"
+        mock_job.canonical_job_summary = None
+        mock_job.raw_payload = {}
         mock_job.requirements = []
         mock_job.benefits = []
         mock_job.description = "description"
@@ -505,6 +520,27 @@ class TestEmbedJobOne:
             service.embed_job_one(mock_repo, mock_job)
 
         mock_repo.save_job_embedding.assert_not_called()
+
+    def test_embed_job_prefers_canonical_summary(self):
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        mock_ai.generate_embedding.return_value = [0.1, 0.2, 0.3]
+
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+        mock_job = Mock()
+        mock_job.id = "job-123"
+        mock_job.canonical_job_summary = "Role: Senior backend engineer"
+        mock_job.raw_payload = {"ai_job_summary": "legacy"}
+        mock_job.requirements = []
+        mock_job.benefits = []
+        mock_job.description = "fallback"
+
+        service.embed_job_one(mock_repo, mock_job)
+
+        mock_ai.generate_embedding.assert_called_once_with("Role: Senior backend engineer")
 
 
 class TestEmbedRequirementOne:

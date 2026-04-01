@@ -220,6 +220,26 @@ class TestSaveJobContent:
         })
         assert mock_job.company_url == "http://corp.com"
 
+    def test_content_change_resets_extraction_embedding_and_canonical_summary(self):
+        repo, mock_db = make_repo()
+        mock_job = MagicMock(spec=JobPost)
+        mock_job.description = "Old desc"
+        mock_job.content_hash = "old-hash"
+        mock_job.extraction_status = "succeeded"
+        mock_job.embedding_status = "succeeded"
+        mock_job.summary_embedding = [0.1, 0.2]
+        mock_job.canonical_job_summary = "old summary"
+        mock_job.canonical_job_summary_hash = "old-summary-hash"
+        mock_db.execute.return_value.scalar_one.return_value = mock_job
+
+        repo.save_job_content("job-id", {"description": "New desc", "title": "Dev", "company_name": "X"})
+
+        assert mock_job.extraction_status == "pending"
+        assert mock_job.embedding_status == "pending"
+        assert mock_job.summary_embedding is None
+        assert mock_job.canonical_job_summary is None
+        assert mock_job.canonical_job_summary_hash is None
+
 
 # ---------------------------------------------------------------------------
 # update_timestamp
@@ -549,6 +569,25 @@ class TestUpdateContentMetadata:
 
         repo.update_content_metadata("job-id", {'job_summary': 'Senior engineer role'})
         assert mock_job.raw_payload['ai_job_summary'] == 'Senior engineer role'
+
+    def test_sets_canonical_job_summary_fields(self):
+        repo, mock_db = make_repo()
+        mock_job = MagicMock(spec=JobPost)
+        mock_job.raw_payload = {}
+        mock_db.execute.return_value.scalar_one.return_value = mock_job
+
+        repo.update_content_metadata(
+            "job-id",
+            {
+                'canonical_job_summary': 'Role: Senior backend engineer',
+                'canonical_job_summary_version': 2,
+                'canonical_job_summary_hash': 'abc123',
+            },
+        )
+
+        assert mock_job.canonical_job_summary == 'Role: Senior backend engineer'
+        assert mock_job.canonical_job_summary_version == 2
+        assert mock_job.canonical_job_summary_hash == 'abc123'
 
     def test_sets_visa_sponsorship(self):
         repo, mock_db = make_repo()

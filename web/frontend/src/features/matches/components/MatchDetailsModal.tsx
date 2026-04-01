@@ -188,12 +188,9 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
 
             <h4 className="text-xl font-black text-gray-900 mb-6">Match Scores</h4>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
                 <ScoreDisplay label="Overall" value={match.overall_score} gradient="from-blue-500 to-indigo-600" />
                 <ScoreDisplay label="Fit" value={match.fit_score ?? 0} gradient="from-blue-400 to-blue-600" />
-                {match.want_score !== null && match.want_score !== undefined && (
-                    <ScoreDisplay label="Want" value={match.want_score} gradient="from-indigo-500 to-purple-600" />
-                )}
             </div>
 
             {/* Coverage details */}

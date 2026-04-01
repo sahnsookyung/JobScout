@@ -7,8 +7,8 @@ from database.repositories.job_post import JobPostRepository
 from database.repositories.resume import ResumeRepository
 from database.repositories.match import MatchRepository
 from database.repositories.embedding import EmbeddingRepository
+from database.repositories.candidate_preferences import CandidatePreferencesRepository
 from database.repositories.notification_settings import NotificationSettingsRepository
-from database.repositories.user_wants import UserWantsRepository
 
 class JobRepository:
     def __init__(self, db: Session):
@@ -17,8 +17,8 @@ class JobRepository:
         self._resume_repo: Optional[ResumeRepository] = None
         self._match_repo: Optional[MatchRepository] = None
         self._embedding_repo: Optional[EmbeddingRepository] = None
+        self._candidate_preferences_repo: Optional[CandidatePreferencesRepository] = None
         self._notification_settings_repo: Optional[NotificationSettingsRepository] = None
-        self._user_wants_repo: Optional[UserWantsRepository] = None
 
     @property
     def job_post(self) -> JobPostRepository:
@@ -45,10 +45,10 @@ class JobRepository:
         return self._embedding_repo
 
     @property
-    def user_wants(self) -> UserWantsRepository:
-        if self._user_wants_repo is None:
-            self._user_wants_repo = UserWantsRepository(self.db)
-        return self._user_wants_repo
+    def candidate_preferences(self) -> CandidatePreferencesRepository:
+        if self._candidate_preferences_repo is None:
+            self._candidate_preferences_repo = CandidatePreferencesRepository(self.db)
+        return self._candidate_preferences_repo
 
     @property
     def notification_settings(self) -> NotificationSettingsRepository:
@@ -408,6 +408,18 @@ class JobRepository:
     ) -> int:
         return self.match.invalidate_matches_for_resume(resume_fingerprint, reason)
 
+    def invalidate_matches_for_resume_except(
+        self,
+        resume_fingerprint: str,
+        active_job_ids: List[Any],
+        reason: str = "Resume changed",
+    ) -> int:
+        return self.match.invalidate_matches_for_resume_except(
+            resume_fingerprint,
+            active_job_ids,
+            reason,
+        )
+
     def get_stale_matches(self, limit: int = 100) -> List[JobMatch]:
         return self.match.get_stale_matches(limit)
 
@@ -417,23 +429,6 @@ class JobRepository:
         reason: str = "Job content changed"
     ) -> int:
         return self.match.batch_invalidate_matches_for_jobs(job_ids, reason)
-
-    def save_user_wants(
-        self,
-        user_id: Any,
-        wants_text: str,
-        embedding: List[float],
-        facet_key: Optional[str] = None
-    ) -> Any:
-        return self.user_wants.save_user_wants(
-            user_id, wants_text, embedding, facet_key
-        )
-
-    def get_user_wants_embeddings(
-        self,
-        user_id: Any
-    ) -> List[List[float]]:
-        return self.user_wants.get_user_wants_embeddings(user_id)
 
     def save_evidence_unit_embeddings(
         self,

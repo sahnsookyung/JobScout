@@ -126,7 +126,6 @@ def _send_match_notification(
                 job_post=job_post,
                 overall_score=float(dto.overall_score),
                 fit_score=dto.fit_score,
-                want_score=dto.want_score,
                 required_coverage=dto.jd_required_coverage,
                 apply_url=job_post.company_url_direct,
             )
