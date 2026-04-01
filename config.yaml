@@ -76,6 +76,8 @@ matching:
   # Stage 2: Scorer Service (Rule-based Scoring)
   scorer:
     enabled: true
+    semantic_fit_enabled: true
+    semantic_fit_fallback_to_threshold: true
 
     # Coverage weights (used in Fit score calculation)
     weight_required: 0.7

@@ -38,6 +38,12 @@ _KEYWORD_DIMENSIONS = {
     "api": 14,
 }
 
+_GENERIC_TOKENS = {
+    "experience", "years", "year", "developer", "development", "building", "build",
+    "engineer", "engineering", "services", "service", "knowledge", "skill", "skills",
+    "required", "preferred", "with", "using", "plus", "have", "hands", "on",
+}
+
 
 def _tokenize(text: str) -> List[str]:
     return re.findall(r"[a-z0-9_+-]+", text.lower())
@@ -50,6 +56,78 @@ def _unit_normalize(vector: List[float]) -> List[float]:
             vector[-1] = 1.0
         return vector
     return [value / norm for value in vector]
+
+
+def _meaningful_overlap(requirement_text: str, evidence_text: str) -> set[str]:
+    req_tokens = {token for token in _tokenize(requirement_text) if token not in _GENERIC_TOKENS}
+    evidence_tokens = {token for token in _tokenize(evidence_text) if token not in _GENERIC_TOKENS}
+    return req_tokens & evidence_tokens
+
+
+def _fake_semantic_fit_response(payload: Dict[str, Any]) -> Dict[str, Any]:
+    judgments: List[Dict[str, Any]] = []
+    for requirement in payload.get("requirements", []):
+        requirement_text = requirement.get("requirement_text", "")
+        evidence_text = requirement.get("evidence_text", "")
+        original_similarity = float(requirement.get("original_similarity", 0.0) or 0.0)
+        overlap = _meaningful_overlap(requirement_text, evidence_text)
+        req_keywords = set(_tokenize(requirement_text)) & set(_KEYWORD_DIMENSIONS.keys())
+        evidence_keywords = set(_tokenize(evidence_text)) & set(_KEYWORD_DIMENSIONS.keys())
+        explicit_keyword_mismatch = bool(req_keywords and evidence_keywords and not (req_keywords & evidence_keywords))
+
+        if not evidence_text:
+            coverage = "missing"
+            semantic_score = 0.0
+            confidence = 0.4
+            reason = "No matching resume evidence was available for this requirement."
+        elif explicit_keyword_mismatch:
+            coverage = "missing"
+            semantic_score = 0.0
+            confidence = 0.85
+            reason = "Evidence references different technologies than the requirement."
+        elif overlap:
+            coverage = "covered"
+            semantic_score = min(0.95, 0.72 + 0.12 * len(overlap))
+            confidence = min(0.95, 0.7 + 0.1 * len(overlap))
+            reason = "Evidence mentions the core requirement directly."
+        elif original_similarity >= 0.45:
+            coverage = "partial"
+            semantic_score = 0.35
+            confidence = 0.55
+            reason = "Evidence is related but does not clearly satisfy the requirement."
+        else:
+            coverage = "missing"
+            semantic_score = 0.0
+            confidence = 0.65
+            reason = "Evidence does not support the specific requirement."
+
+        judgments.append(
+            {
+                "requirement_id": requirement.get("requirement_id", ""),
+                "coverage_level": coverage,
+                "semantic_score": semantic_score,
+                "confidence": confidence,
+                "reason": reason,
+            }
+        )
+
+    required_total = sum(1 for judgment in judgments if any(
+        req.get("requirement_id") == judgment["requirement_id"] and req.get("req_type") == "required"
+        for req in payload.get("requirements", [])
+    ))
+    required_covered = sum(
+        1
+        for judgment in judgments
+        if judgment["coverage_level"] == "covered" and any(
+            req.get("requirement_id") == judgment["requirement_id"] and req.get("req_type") == "required"
+            for req in payload.get("requirements", [])
+        )
+    )
+    summary = f"Covered {required_covered} of {required_total} required requirements."
+    return {
+        "summary": summary,
+        "requirement_judgments": judgments,
+    }
 
 
 class FakeLLMService(LLMProvider):
@@ -81,8 +159,13 @@ class FakeLLMService(LLMProvider):
         system_prompt: Optional[str] = None,
         user_message: Optional[str] = None,
     ) -> Dict[str, Any]:
-        del schema_spec, system_prompt, user_message
+        del system_prompt, user_message
         self._maybe_fail_extraction(text)
+        if isinstance(schema_spec, dict) and schema_spec.get("name") == "semantic_fit_score_v1":
+            parsed_payload = json.loads(text)
+            if not isinstance(parsed_payload, dict):
+                raise ValueError("Fake semantic fit extraction expected a JSON payload object")
+            return _fake_semantic_fit_response(parsed_payload)
         try:
             parsed = json.loads(text)
             if isinstance(parsed, dict):

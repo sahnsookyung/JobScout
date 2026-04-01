@@ -2,6 +2,7 @@ import { apiClient } from './api';
 import type {
     MatchesResponse,
     MatchDetailResponse,
+    MatchExplanationResponse,
     MatchStatus,
     StatsResponse,
 } from '@/types/api';
@@ -22,7 +23,7 @@ export const matchesApi = {
         apiClient.get<MatchDetailResponse>(`/matches/${matchId}`),
 
     getMatchExplanation: (matchId: string) =>
-        apiClient.get(`/matches/${matchId}/explanation`),
+        apiClient.get<MatchExplanationResponse>(`/matches/${matchId}/explanation`),
 
     getStats: () => apiClient.get<StatsResponse>('/stats'),
 

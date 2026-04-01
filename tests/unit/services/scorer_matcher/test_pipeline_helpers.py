@@ -5,6 +5,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from core.llm.fake_service import FakeLLMService
 from services.scorer_matcher.candidate_preferences import (
     apply_candidate_preference_filters,
     apply_soft_preference_reranking,
@@ -295,8 +296,48 @@ class TestRunMatchingAndScoring:
         )
 
         assert result == [_dto()]
-        mock_scorer_cls.assert_called_once_with(repo=repo, config=scorer_config)
+        mock_scorer_cls.assert_called_once_with(repo=repo, config=scorer_config, ai_service=None)
         mock_run_scorer.assert_called_once()
+
+    @patch("services.scorer_matcher.pipeline._convert_matches_to_dtos", return_value=[_dto()])
+    @patch("services.scorer_matcher.pipeline._run_scorer_service", return_value=["scored"])
+    @patch("services.scorer_matcher.pipeline.ScoringService")
+    @patch("services.scorer_matcher.pipeline._run_preliminary_matching", return_value=["prelim"])
+    @patch("services.scorer_matcher.pipeline._prepare_matching_run")
+    @patch("services.scorer_matcher.pipeline.job_uow")
+    def test_passes_ai_service_into_scoring_when_available(
+        self,
+        mock_uow,
+        mock_prepare,
+        _mock_preliminary,
+        mock_scorer_cls,
+        _mock_run_scorer,
+        _mock_convert,
+    ):
+        repo = MagicMock()
+        mock_uow.return_value = _uow(repo)
+        scorer_config = MagicMock()
+        fake_ai = FakeLLMService()
+        mock_prepare.return_value = (
+            SimpleNamespace(extracted_data={}, total_experience_years=3),
+            MagicMock(),
+        )
+
+        _run_matching_and_scoring(
+            ctx=SimpleNamespace(ai_service=fake_ai),
+            resume_data={"profile": {}},
+            resume_fingerprint="fp-123",
+            should_re_extract=False,
+            matching_config=SimpleNamespace(scorer=scorer_config),
+            stop_event=threading.Event(),
+            status_callback=None,
+        )
+
+        mock_scorer_cls.assert_called_once_with(
+            repo=repo,
+            config=scorer_config,
+            ai_service=fake_ai,
+        )
 
     @patch("services.scorer_matcher.pipeline._convert_matches_to_dtos", return_value=[_dto()])
     @patch("services.scorer_matcher.pipeline._run_scorer_service", return_value=["scored"])

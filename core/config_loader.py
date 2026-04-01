@@ -122,6 +122,8 @@ class ScorerConfig(BaseModel):
     enabled: bool = True
     weight_required: float = 0.7
     weight_preferred: float = 0.3
+    semantic_fit_enabled: bool = True
+    semantic_fit_fallback_to_threshold: bool = True
 
     penalty_missing_required: float = 15.0
     penalty_seniority_mismatch: float = 10.0

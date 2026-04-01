@@ -21,6 +21,7 @@ from core.matcher import (
 )
 from core.scorer import ScoringService
 from core.scorer.persistence import save_match_to_db
+from core.llm.interfaces import LLMProvider
 from core.llm.schema_models import ResumeSchema
 from etl.resume import ResumeProfiler
 from etl.resume.embedding_store import JobRepositoryAdapter
@@ -449,6 +450,11 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event
     )
 
 
+def _resolve_pipeline_ai_service(ctx: AppContext) -> Optional[LLMProvider]:
+    ai_service = getattr(ctx, "ai_service", None)
+    return ai_service if isinstance(ai_service, LLMProvider) else None
+
+
 def _resolve_result_policy(matching_config):
     """Resolve the active result policy from the shared store with config fallback."""
     fallback_policy = getattr(matching_config, "result_policy", None)
@@ -588,7 +594,11 @@ def _run_matching_and_scoring(
 
         if status_callback:
             status_callback("scoring")
-        scorer = ScoringService(repo=repo, config=matching_config.scorer)
+        scorer = ScoringService(
+            repo=repo,
+            config=matching_config.scorer,
+            ai_service=_resolve_pipeline_ai_service(ctx),
+        )
         scored_matches = _run_scorer_service(
             scorer, preliminary_matches, matching_config, stop_event,
         )

@@ -6,10 +6,15 @@ from sqlalchemy import select
 from database.repository import JobRepository
 from database.models import StructuredResume  # keep ResumeSectionEmbedding only if you truly need it
 from core.config_loader import ScorerConfig, ResultPolicy
+from core.llm.interfaces import LLMProvider
 from core.matcher import JobMatchPreliminary
 from core.scorer.models import ScoredJobMatch
 from core.scorer import penalties as penalty_calculations
-from core.scorer.semantic_fit import SemanticFitScorer, ThresholdSemanticFitScorer
+from core.scorer.semantic_fit import (
+    LLMSemanticFitScorer,
+    SemanticFitScorer,
+    ThresholdSemanticFitScorer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +40,24 @@ class ScoringService:
         self,
         repo: JobRepository,
         config: ScorerConfig,
+        ai_service: Optional[LLMProvider] = None,
         semantic_fit_scorer: Optional[SemanticFitScorer] = None,
     ):
         self.repo = repo
         self.config = config
-        self.semantic_fit_scorer = semantic_fit_scorer or ThresholdSemanticFitScorer()
+        self.semantic_fit_scorer = semantic_fit_scorer or self._build_semantic_fit_scorer(ai_service)
+
+    def _build_semantic_fit_scorer(
+        self,
+        ai_service: Optional[LLMProvider],
+    ) -> SemanticFitScorer:
+        threshold_scorer = ThresholdSemanticFitScorer()
+        if ai_service and getattr(self.config, "semantic_fit_enabled", True):
+            return LLMSemanticFitScorer(
+                ai_service=ai_service,
+                fallback_scorer=threshold_scorer,
+            )
+        return threshold_scorer
 
     def score_matches(
         self,
@@ -116,8 +134,8 @@ class ScoringService:
             jd_preferences_coverage=semantic_fit.fit_components["preferred_coverage"],
             job_similarity=preliminary.job_similarity,
             penalty_details=penalty_details,
-            matched_requirements=preliminary.requirement_matches,
-            missing_requirements=preliminary.missing_requirements,
+            matched_requirements=semantic_fit.matched_requirements,
+            missing_requirements=semantic_fit.missing_requirements,
             resume_fingerprint=preliminary.resume_fingerprint,
             match_type=match_type,
             policy_applied=None,
