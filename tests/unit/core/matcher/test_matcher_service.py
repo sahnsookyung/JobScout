@@ -343,7 +343,7 @@ class TestBuildPreliminary:
         service._build_preliminary(repo, mock_job, 0.7, "fp-abc")
 
         service.requirement_matcher.match_requirements.assert_called_once_with(
-            repo, ["req-1", "req-2"], "fp-abc"
+            repo, ["req-1", "req-2"], "fp-abc", top_k=5
         )
 
     def test_zero_similarity(self):

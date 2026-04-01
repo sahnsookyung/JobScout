@@ -66,10 +66,10 @@ def _meaningful_overlap(requirement_text: str, evidence_text: str) -> set[str]:
 
 def _fake_semantic_fit_response(payload: Dict[str, Any]) -> Dict[str, Any]:
     judgments: List[Dict[str, Any]] = []
-    for requirement in payload.get("requirements", []):
-        requirement_text = requirement.get("requirement_text", "")
-        evidence_text = requirement.get("evidence_text", "")
-        original_similarity = float(requirement.get("original_similarity", 0.0) or 0.0)
+    for pair in payload.get("pairs", []):
+        requirement_text = pair.get("requirement_text", "")
+        evidence_text = pair.get("evidence_text", "")
+        original_similarity = float(pair.get("original_similarity", 0.0) or 0.0)
         overlap = _meaningful_overlap(requirement_text, evidence_text)
         req_keywords = set(_tokenize(requirement_text)) & set(_KEYWORD_DIMENSIONS.keys())
         evidence_keywords = set(_tokenize(evidence_text)) & set(_KEYWORD_DIMENSIONS.keys())
@@ -103,7 +103,8 @@ def _fake_semantic_fit_response(payload: Dict[str, Any]) -> Dict[str, Any]:
 
         judgments.append(
             {
-                "requirement_id": requirement.get("requirement_id", ""),
+                "pair_id": pair.get("pair_id", ""),
+                "requirement_id": pair.get("requirement_id", ""),
                 "coverage_level": coverage,
                 "semantic_score": semantic_score,
                 "confidence": confidence,
@@ -113,20 +114,20 @@ def _fake_semantic_fit_response(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     required_total = sum(1 for judgment in judgments if any(
         req.get("requirement_id") == judgment["requirement_id"] and req.get("req_type") == "required"
-        for req in payload.get("requirements", [])
+        for req in payload.get("pairs", [])
     ))
     required_covered = sum(
         1
         for judgment in judgments
         if judgment["coverage_level"] == "covered" and any(
             req.get("requirement_id") == judgment["requirement_id"] and req.get("req_type") == "required"
-            for req in payload.get("requirements", [])
+            for req in payload.get("pairs", [])
         )
     )
     summary = f"Covered {required_covered} of {required_total} required requirements."
     return {
         "summary": summary,
-        "requirement_judgments": judgments,
+        "pair_judgments": judgments,
     }
 
 
@@ -161,7 +162,7 @@ class FakeLLMService(LLMProvider):
     ) -> Dict[str, Any]:
         del system_prompt, user_message
         self._maybe_fail_extraction(text)
-        if isinstance(schema_spec, dict) and schema_spec.get("name") == "semantic_fit_score_v1":
+        if isinstance(schema_spec, dict) and schema_spec.get("name") == "semantic_fit_pairs_v1":
             parsed_payload = json.loads(text)
             if not isinstance(parsed_payload, dict):
                 raise ValueError("Fake semantic fit extraction expected a JSON payload object")

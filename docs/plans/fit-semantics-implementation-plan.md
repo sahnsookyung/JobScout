@@ -56,3 +56,10 @@ See [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md) for the repla
 - DB-backed entitlements for fit mode access
 - configurable recall depth and configurable truncation budgets with metrics
 - commented config examples for user-tunable fit settings
+
+Status update:
+
+- the active fit branch now implements the rewire direction above
+- hybrid retrieval defaults on
+- semantic fit routing supports `cross_encoder`, `llm`, and threshold fallback
+- match details surface effective fit mode, provider route, retrieval mode, and fallback messaging

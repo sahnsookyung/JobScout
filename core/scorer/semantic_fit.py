@@ -2,33 +2,60 @@
 Semantic fit scoring contracts and implementations.
 
 This module provides:
-- a default threshold-based scorer used as a safe fallback
-- an LLM-backed semantic scorer that judges requirement/evidence pairs
-  and then aggregates fit from those semantic verdicts
+- threshold fallback scoring
+- routed semantic fit scoring across cross-encoder and LLM providers
+- per-pair truncation diagnostics for later observability
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import math
+import os
+import re
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, Iterable, List, Optional, Protocol
 
+import requests
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.config_loader import ScorerConfig
+from core.config_loader import ScorerConfig, SemanticFitConfig
 from core.llm.interfaces import LLMProvider
-from core.matcher import JobMatchPreliminary, RequirementMatchResult
+from core.matcher import (
+    JobMatchPreliminary,
+    RequirementEvidenceCandidate,
+    RequirementMatchResult,
+)
 from core.scorer import fit_score
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SCORER_NAME = "threshold_semantic_fit"
-DEFAULT_SCORER_VERSION = "1"
+THRESHOLD_SCORER_NAME = "threshold_semantic_fit"
+THRESHOLD_SCORER_VERSION = "2"
+CROSS_ENCODER_SCORER_NAME = "cross_encoder_semantic_fit"
+CROSS_ENCODER_SCORER_VERSION = "1"
 LLM_SCORER_NAME = "llm_semantic_fit"
-LLM_SCORER_VERSION = "1"
-SEMANTIC_FIT_SCHEMA_NAME = "semantic_fit_score_v1"
+LLM_SCORER_VERSION = "2"
+SEMANTIC_PAIR_SCHEMA_NAME = "semantic_fit_pairs_v1"
+
+FEATURE_ALLOWED_MODES = "fit.semantic.allowed_modes"
+FEATURE_PREFERRED_MODE = "fit.semantic.preferred_mode"
+
+_GENERIC_TOKENS = {
+    "a", "an", "and", "api", "apis", "as", "at", "be", "build", "building",
+    "developer", "development", "engineer", "engineering", "experience", "for",
+    "from", "hands", "in", "into", "is", "it", "knowledge", "of", "on", "or",
+    "plus", "required", "service", "services", "skill", "skills", "that", "the",
+    "to", "using", "with", "year", "years",
+}
+_TECH_MISMATCH_GROUPS = [
+    {"java", "python"},
+    {"react", "angular", "vue"},
+    {"aws", "gcp", "azure"},
+]
 
 SEMANTIC_FIT_SYSTEM_PROMPT = """
 You are a resume-to-job fit evaluator.
@@ -49,12 +76,13 @@ Rules
 - Do not infer additional resume evidence that is not present.
 - For missing evidence, return `missing` with low semantic score.
 - Keep reasons short and user-safe.
-"""
+""".strip()
 
 
-class SemanticRequirementJudgment(BaseModel):
+class SemanticPairJudgment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    pair_id: str
     requirement_id: str
     coverage_level: str = Field(pattern="^(covered|partial|missing)$")
     semantic_score: float = Field(ge=0.0, le=1.0)
@@ -62,24 +90,22 @@ class SemanticRequirementJudgment(BaseModel):
     reason: str
 
 
-class SemanticJobFitAssessment(BaseModel):
+class SemanticPairAssessmentResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     summary: str
-    requirement_judgments: List[SemanticRequirementJudgment]
+    pair_judgments: List[SemanticPairJudgment]
 
 
 SEMANTIC_FIT_SCHEMA_SPEC = {
-    "name": SEMANTIC_FIT_SCHEMA_NAME,
+    "name": SEMANTIC_PAIR_SCHEMA_NAME,
     "strict": True,
-    "schema": SemanticJobFitAssessment.model_json_schema(),
+    "schema": SemanticPairAssessmentResponse.model_json_schema(),
 }
 
 
 @dataclass(frozen=True)
 class SemanticFitScoreResult:
-    """Structured fit score output from a semantic fit scorer."""
-
     fit_score: float
     fit_components: Dict[str, Any]
     fit_confidence: float
@@ -91,25 +117,67 @@ class SemanticFitScoreResult:
 
 
 class SemanticFitScorer(Protocol):
-    """Contract for shortlist-level semantic fit scorers."""
-
     def score(
         self,
         preliminary: JobMatchPreliminary,
         *,
         fit_penalties: float,
         config: ScorerConfig,
+        owner_id: Any | None = None,
     ) -> SemanticFitScoreResult:
         """Score a preliminary match and return structured semantic outputs."""
 
 
-def _requirement_text(requirement_match: RequirementMatchResult) -> str:
-    return getattr(requirement_match.requirement, "text", "") or ""
+@dataclass(frozen=True)
+class SerializedPair:
+    pair_id: str
+    requirement_id: str
+    requirement_match: RequirementMatchResult
+    candidate: RequirementEvidenceCandidate
+    fields: Dict[str, str]
+    truncation: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class PairAssessment:
+    pair_id: str
+    requirement_id: str
+    coverage_level: str
+    semantic_score: float
+    confidence: float
+    reason: str
+
+
+def _tokenize(text: str) -> List[str]:
+    return re.findall(r"[a-z0-9_+#.-]+", (text or "").lower())
+
+
+def _meaningful_overlap(left: str, right: str) -> set[str]:
+    left_tokens = {token for token in _tokenize(left) if token not in _GENERIC_TOKENS}
+    right_tokens = {token for token in _tokenize(right) if token not in _GENERIC_TOKENS}
+    return left_tokens & right_tokens
+
+
+def _explicit_tech_mismatch(left: str, right: str) -> bool:
+    left_tokens = set(_tokenize(left))
+    right_tokens = set(_tokenize(right))
+    for group in _TECH_MISMATCH_GROUPS:
+        if left_tokens & group and right_tokens & group and not ((left_tokens & group) & (right_tokens & group)):
+            return True
+    return False
+
+
+def _string_or_empty(value: Any) -> str:
+    return value if isinstance(value, str) else ""
 
 
 def _requirement_id(requirement_match: RequirementMatchResult) -> str:
-    requirement_id = getattr(requirement_match.requirement, "id", "")
-    return str(requirement_id) if requirement_id is not None else ""
+    value = getattr(requirement_match.requirement, "id", "")
+    return str(value) if value is not None else ""
+
+
+def _requirement_text(requirement_match: RequirementMatchResult) -> str:
+    return _string_or_empty(getattr(requirement_match.requirement, "text", ""))
 
 
 def _requirement_weight(requirement_match: RequirementMatchResult) -> float:
@@ -120,52 +188,12 @@ def _requirement_weight(requirement_match: RequirementMatchResult) -> float:
         return 1.0
 
 
-def _evidence_text(requirement_match: RequirementMatchResult) -> str:
-    evidence = requirement_match.evidence
-    return getattr(evidence, "text", "") if evidence else ""
-
-
-def _evidence_section(requirement_match: RequirementMatchResult) -> str | None:
-    evidence = requirement_match.evidence
-    return getattr(evidence, "source_section", None) if evidence else None
-
-
-def _string_or_empty(value: Any) -> str:
-    return value if isinstance(value, str) else ""
+def _requirement_type(requirement_match: RequirementMatchResult) -> str:
+    return _string_or_empty(getattr(requirement_match.requirement, "req_type", "required")) or "required"
 
 
 def _fit_confidence(required_coverage: float, job_similarity: float) -> float:
     return round(max(0.0, min(1.0, (float(required_coverage) + float(job_similarity)) / 2.0)), 4)
-
-
-def _count_percent(count: int, total: int) -> float:
-    return (count / total) if total else 0.0
-
-
-def _verdicts_to_summary(verdicts: List[Dict[str, Any]]) -> str:
-    required_total = len([verdict for verdict in verdicts if verdict["req_type"] == "required"])
-    required_covered = len(
-        [
-            verdict
-            for verdict in verdicts
-            if verdict["req_type"] == "required" and verdict["verdict"] == "covered"
-        ]
-    )
-    preferred_total = len([verdict for verdict in verdicts if verdict["req_type"] == "preferred"])
-    preferred_covered = len(
-        [
-            verdict
-            for verdict in verdicts
-            if verdict["req_type"] == "preferred" and verdict["verdict"] == "covered"
-        ]
-    )
-    required_percent = _count_percent(required_covered, required_total)
-    preferred_percent = _count_percent(preferred_covered, preferred_total)
-    return (
-        f"Covered {required_covered} of {required_total} required requirements "
-        f"({required_percent:.0%}) and {preferred_covered} of {preferred_total} preferred "
-        f"requirements ({preferred_percent:.0%})."
-    )
 
 
 def _build_retrieval_diagnostics(preliminary: JobMatchPreliminary) -> Dict[str, Any]:
@@ -183,34 +211,30 @@ def _build_retrieval_diagnostics(preliminary: JobMatchPreliminary) -> Dict[str, 
     return diagnostics
 
 
-def _build_scorer_diagnostics(
-    *,
-    scorer_name: str,
-    scorer_version: str,
-    latency_ms: float,
-    fallback_used: bool = False,
-    fallback_reason: str | None = None,
-    judged_requirements: int | None = None,
-) -> Dict[str, Any]:
-    diagnostics = {
-        "name": scorer_name,
-        "version": scorer_version,
-        "latency_ms": latency_ms,
-        "fallback_used": fallback_used,
-    }
-    if fallback_reason:
-        diagnostics["fallback_reason"] = fallback_reason
-    if judged_requirements is not None:
-        diagnostics["judged_requirements"] = judged_requirements
-    return diagnostics
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _count_percent(count: int, total: int) -> float:
+    return (count / total) if total else 0.0
+
+
+def _verdicts_to_summary(verdicts: List[Dict[str, Any]]) -> str:
+    required_total = len([v for v in verdicts if v["req_type"] == "required"])
+    required_covered = len([v for v in verdicts if v["req_type"] == "required" and v["verdict"] == "covered"])
+    preferred_total = len([v for v in verdicts if v["req_type"] == "preferred"])
+    preferred_covered = len([v for v in verdicts if v["req_type"] == "preferred" and v["verdict"] == "covered"])
+    return (
+        f"Covered {required_covered} of {required_total} required requirements "
+        f"({_count_percent(required_covered, required_total):.0%}) and "
+        f"{preferred_covered} of {preferred_total} preferred requirements "
+        f"({_count_percent(preferred_covered, preferred_total):.0%})."
+    )
 
 
 def _top_strengths(verdicts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     strengths = [verdict for verdict in verdicts if verdict["verdict"] == "covered"]
-    strengths.sort(
-        key=lambda verdict: (verdict.get("semantic_score", 0.0), verdict.get("similarity", 0.0)),
-        reverse=True,
-    )
+    strengths.sort(key=lambda verdict: (verdict.get("semantic_score", 0.0), verdict.get("similarity", 0.0)), reverse=True)
     return strengths[:3]
 
 
@@ -220,25 +244,54 @@ def _top_gaps(verdicts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return gaps[:3]
 
 
+def _build_fit_explanation(
+    verdicts: List[Dict[str, Any]],
+    *,
+    required_coverage: float,
+    preferred_coverage: float,
+    fit_confidence: float,
+    job_similarity: float,
+    scorer_name: str,
+    scorer_version: str,
+    retrieval_diagnostics: Dict[str, Any],
+    scorer_diagnostics: Dict[str, Any],
+    fallback_message: str | None = None,
+) -> Dict[str, Any]:
+    explanation = {
+        "summary": _verdicts_to_summary(verdicts),
+        "strengths": _top_strengths(verdicts),
+        "gaps": _top_gaps(verdicts),
+        "requirement_verdicts": verdicts,
+        "required_coverage": required_coverage,
+        "preferred_coverage": preferred_coverage,
+        "fit_confidence": fit_confidence,
+        "job_similarity": float(job_similarity or 0.0),
+        "fit_scorer": {"name": scorer_name, "version": scorer_version},
+        "retrieval": retrieval_diagnostics,
+        "diagnostics": scorer_diagnostics,
+    }
+    if fallback_message:
+        explanation["message"] = fallback_message
+    return explanation
+
+
 def _clone_match(
     requirement_match: RequirementMatchResult,
     *,
+    evidence: Optional[Any],
     similarity: float,
     is_covered: bool,
 ) -> RequirementMatchResult:
     return RequirementMatchResult(
         requirement=requirement_match.requirement,
-        evidence=requirement_match.evidence,
+        evidence=evidence,
         similarity=similarity,
         is_covered=is_covered,
+        evidence_candidates=list(requirement_match.evidence_candidates),
     )
 
 
-def _semantic_similarity(
-    semantic_score: float,
-    coverage_level: str,
-    threshold: float,
-) -> float:
+def _semantic_similarity(semantic_score: float, coverage_level: str, threshold: float) -> float:
     if coverage_level == "covered":
         return max(threshold, semantic_score)
     if coverage_level == "partial":
@@ -257,34 +310,40 @@ def _fallback_coverage_level(requirement_match: RequirementMatchResult) -> str:
 def _base_verdict(
     requirement_match: RequirementMatchResult,
     *,
+    evidence: Optional[Any],
     coverage_level: str,
     semantic_score: float,
     confidence: float,
     reason: str,
+    provider_route: Optional[str] = None,
+    truncation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    return {
+    evidence_text = getattr(evidence, "text", "") if evidence else ""
+    evidence_section = getattr(evidence, "source_section", None) if evidence else None
+    verdict = {
         "requirement_id": _requirement_id(requirement_match),
         "requirement_text": _requirement_text(requirement_match),
-        "req_type": getattr(requirement_match.requirement, "req_type", "required"),
+        "req_type": _requirement_type(requirement_match),
         "weight": _requirement_weight(requirement_match),
-        "similarity": float(requirement_match.similarity or 0.0),
+        "similarity": float(getattr(requirement_match, "similarity", 0.0) or 0.0),
         "semantic_score": semantic_score,
         "confidence": confidence,
         "is_covered": coverage_level == "covered",
         "verdict": coverage_level,
         "reason": reason,
-        "evidence_text": _evidence_text(requirement_match),
-        "evidence_section": _evidence_section(requirement_match),
+        "evidence_text": evidence_text,
+        "evidence_section": evidence_section,
     }
+    if provider_route:
+        verdict["provider_route"] = provider_route
+    if truncation:
+        verdict["truncation"] = truncation
+    return verdict
 
 
 def _threshold_verdict(requirement_match: RequirementMatchResult, *, threshold: float) -> Dict[str, Any]:
     coverage_level = _fallback_coverage_level(requirement_match)
-    semantic_score = _semantic_similarity(
-        float(requirement_match.similarity or 0.0),
-        coverage_level,
-        threshold,
-    )
+    semantic_score = _semantic_similarity(float(requirement_match.similarity or 0.0), coverage_level, threshold)
     if coverage_level == "covered":
         reason = "Resume evidence cleared the fit threshold for this requirement."
     elif coverage_level == "partial":
@@ -293,6 +352,7 @@ def _threshold_verdict(requirement_match: RequirementMatchResult, *, threshold: 
         reason = "No supporting resume evidence was found for this requirement."
     return _base_verdict(
         requirement_match,
+        evidence=requirement_match.evidence,
         coverage_level=coverage_level,
         semantic_score=semantic_score,
         confidence=_fit_confidence(float(requirement_match.similarity or 0.0), float(requirement_match.similarity or 0.0)),
@@ -300,41 +360,89 @@ def _threshold_verdict(requirement_match: RequirementMatchResult, *, threshold: 
     )
 
 
-def _build_fit_explanation(
-    verdicts: List[Dict[str, Any]],
+def _build_threshold_result(
+    preliminary: JobMatchPreliminary,
     *,
-    required_coverage: float,
-    preferred_coverage: float,
-    fit_confidence: float,
-    job_similarity: float,
+    fit_penalties: float,
+    config: ScorerConfig,
     scorer_name: str,
     scorer_version: str,
-    retrieval_diagnostics: Dict[str, Any],
-    scorer_diagnostics: Dict[str, Any],
-) -> Dict[str, Any]:
-    return {
-        "summary": _verdicts_to_summary(verdicts),
-        "strengths": _top_strengths(verdicts),
-        "gaps": _top_gaps(verdicts),
-        "requirement_verdicts": verdicts,
-        "required_coverage": required_coverage,
-        "preferred_coverage": preferred_coverage,
-        "fit_confidence": fit_confidence,
-        "job_similarity": float(job_similarity or 0.0),
-        "fit_scorer": {
-            "name": scorer_name,
-            "version": scorer_version,
+    fallback_used: bool = False,
+    fallback_reason: str | None = None,
+    fallback_message: str | None = None,
+) -> SemanticFitScoreResult:
+    started_at = time.perf_counter()
+    fit_value, fit_components = fit_score.calculate_fit_score(
+        job_similarity=preliminary.job_similarity,
+        matched_requirements=preliminary.requirement_matches,
+        missing_requirements=preliminary.missing_requirements,
+        fit_penalties=fit_penalties,
+        config=config,
+    )
+    threshold = float(fit_components.get("threshold", 0.0))
+    verdicts = [
+        _threshold_verdict(requirement_match, threshold=threshold)
+        for requirement_match in preliminary.requirement_matches + preliminary.missing_requirements
+    ]
+    required_coverage = float(fit_components.get("required_coverage", 0.0))
+    preferred_coverage = float(fit_components.get("preferred_coverage", 0.0))
+    fit_confidence = _fit_confidence(required_coverage, preliminary.job_similarity)
+    retrieval_diagnostics = _build_retrieval_diagnostics(preliminary)
+    scorer_diagnostics = {
+        "name": scorer_name,
+        "version": scorer_version,
+        "effective_fit_mode": "threshold",
+        "provider_route": "threshold",
+        "latency_ms": round((time.perf_counter() - started_at) * 1000.0, 3),
+        "fallback_used": fallback_used,
+        "judged_requirements": len(verdicts),
+        "truncation": {
+            "any_truncated": False,
+            "pair_count": 0,
+            "truncated_pair_count": 0,
+            "total_truncated_chars": 0,
+            "emergency_ceiling_hits": 0,
         },
-        "retrieval": retrieval_diagnostics,
-        "diagnostics": scorer_diagnostics,
     }
+    if fallback_reason:
+        scorer_diagnostics["fallback_reason"] = fallback_reason
+    fit_explanation = _build_fit_explanation(
+        verdicts,
+        required_coverage=required_coverage,
+        preferred_coverage=preferred_coverage,
+        fit_confidence=fit_confidence,
+        job_similarity=preliminary.job_similarity,
+        scorer_name=scorer_name,
+        scorer_version=scorer_version,
+        retrieval_diagnostics=retrieval_diagnostics,
+        scorer_diagnostics=scorer_diagnostics,
+        fallback_message=fallback_message,
+    )
+    enriched_components = dict(fit_components)
+    enriched_components["fit_confidence"] = fit_confidence
+    enriched_components["fit_scorer"] = {"name": scorer_name, "version": scorer_version}
+    enriched_components["effective_fit_mode"] = "threshold"
+    enriched_components["provider_route"] = "threshold"
+    enriched_components["retrieval"] = retrieval_diagnostics
+    enriched_components["semantic_fit_diagnostics"] = scorer_diagnostics
+    if fallback_reason:
+        enriched_components["semantic_fit_fallback_reason"] = fallback_reason
+    enriched_components["fit_explanation"] = fit_explanation
+    return SemanticFitScoreResult(
+        fit_score=fit_value,
+        fit_components=enriched_components,
+        fit_confidence=fit_confidence,
+        fit_explanation=fit_explanation,
+        scorer_name=scorer_name,
+        scorer_version=scorer_version,
+        matched_requirements=list(preliminary.requirement_matches),
+        missing_requirements=list(preliminary.missing_requirements),
+    )
 
 
 class ThresholdSemanticFitScorer:
-    """Default semantic fit scorer backed by thresholded requirement evidence."""
-
-    scorer_name = DEFAULT_SCORER_NAME
-    scorer_version = DEFAULT_SCORER_VERSION
+    scorer_name = THRESHOLD_SCORER_NAME
+    scorer_version = THRESHOLD_SCORER_VERSION
 
     def score(
         self,
@@ -342,78 +450,331 @@ class ThresholdSemanticFitScorer:
         *,
         fit_penalties: float,
         config: ScorerConfig,
+        owner_id: Any | None = None,
     ) -> SemanticFitScoreResult:
-        started_at = time.perf_counter()
-        fit_value, fit_components = fit_score.calculate_fit_score(
-            job_similarity=preliminary.job_similarity,
-            matched_requirements=preliminary.requirement_matches,
-            missing_requirements=preliminary.missing_requirements,
+        del owner_id
+        return _build_threshold_result(
+            preliminary,
             fit_penalties=fit_penalties,
             config=config,
-        )
-
-        threshold = float(fit_components.get("threshold", 0.0))
-        matched_requirements = list(preliminary.requirement_matches)
-        missing_requirements = list(preliminary.missing_requirements)
-        verdicts = [
-            _threshold_verdict(requirement_match, threshold=threshold)
-            for requirement_match in matched_requirements + missing_requirements
-        ]
-        required_coverage = float(fit_components.get("required_coverage", 0.0))
-        preferred_coverage = float(fit_components.get("preferred_coverage", 0.0))
-        fit_confidence = _fit_confidence(required_coverage, preliminary.job_similarity)
-        retrieval_diagnostics = _build_retrieval_diagnostics(preliminary)
-        scorer_diagnostics = _build_scorer_diagnostics(
             scorer_name=self.scorer_name,
             scorer_version=self.scorer_version,
-            latency_ms=round((time.perf_counter() - started_at) * 1000.0, 3),
-        )
-        fit_explanation = _build_fit_explanation(
-            verdicts,
-            required_coverage=required_coverage,
-            preferred_coverage=preferred_coverage,
-            fit_confidence=fit_confidence,
-            job_similarity=preliminary.job_similarity,
-            scorer_name=self.scorer_name,
-            scorer_version=self.scorer_version,
-            retrieval_diagnostics=retrieval_diagnostics,
-            scorer_diagnostics=scorer_diagnostics,
         )
 
-        enriched_components = dict(fit_components)
-        enriched_components["fit_confidence"] = fit_confidence
-        enriched_components["fit_scorer"] = {
-            "name": self.scorer_name,
-            "version": self.scorer_version,
+
+def _serialization_config(config: ScorerConfig):
+    return getattr(getattr(config, "semantic_fit", None), "serialization", None)
+
+
+def _truncate_field(value: str, max_chars: int, ceiling_chars: int) -> tuple[str, Dict[str, Any]]:
+    original = len(value)
+    submitted = value
+    truncated = False
+    if original > max_chars:
+        submitted = value[:max_chars]
+        truncated = True
+    emergency_ceiling_hit = False
+    if len(submitted) > ceiling_chars:
+        submitted = submitted[:ceiling_chars]
+        truncated = True
+        emergency_ceiling_hit = True
+    return submitted, {
+        "original_length": original,
+        "submitted_length": len(submitted),
+        "truncated": truncated,
+        "discarded_chars": max(0, original - len(submitted)),
+        "emergency_ceiling_hit": emergency_ceiling_hit,
+    }
+
+
+def _serialize_pair(
+    preliminary: JobMatchPreliminary,
+    requirement_match: RequirementMatchResult,
+    candidate: RequirementEvidenceCandidate,
+    *,
+    config: ScorerConfig,
+) -> SerializedPair:
+    serialization = _serialization_config(config)
+    budgets = {
+        "requirement_text": getattr(serialization, "requirement_text_max_chars", 500),
+        "evidence_text": getattr(serialization, "evidence_text_max_chars", 2500),
+        "evidence_section": getattr(serialization, "evidence_section_max_chars", 64),
+        "job_title": getattr(serialization, "job_title_max_chars", 200),
+        "job_company": getattr(serialization, "job_company_max_chars", 200),
+        "job_summary": getattr(serialization, "job_summary_max_chars", 1800),
+        "req_type": 32,
+    }
+    emergency_ceiling = 8000
+    raw_fields = {
+        "requirement_text": _requirement_text(requirement_match),
+        "req_type": _requirement_type(requirement_match),
+        "evidence_text": getattr(candidate.evidence, "text", "") or "",
+        "evidence_section": getattr(candidate.evidence, "source_section", "") or "",
+        "job_title": _string_or_empty(getattr(preliminary.job, "title", "")),
+        "job_company": _string_or_empty(getattr(preliminary.job, "company", "")),
+        "job_summary": _string_or_empty(getattr(preliminary.job, "canonical_job_summary", ""))
+        or _string_or_empty(getattr(preliminary.job, "description", "")),
+    }
+    fields: Dict[str, str] = {}
+    per_field: Dict[str, Dict[str, Any]] = {}
+    truncated_fields: List[str] = []
+    total_truncated_chars = 0
+    emergency_hits = 0
+    for key, raw_value in raw_fields.items():
+        truncated, diagnostics = _truncate_field(raw_value, budgets[key], emergency_ceiling)
+        fields[key] = truncated
+        per_field[key] = diagnostics
+        total_truncated_chars += int(diagnostics["discarded_chars"])
+        if diagnostics["truncated"]:
+            truncated_fields.append(key)
+        if diagnostics["emergency_ceiling_hit"]:
+            emergency_hits += 1
+
+    pair_id_source = (
+        f"{getattr(preliminary.job, 'id', '')}|{_requirement_id(requirement_match)}|"
+        f"{candidate.rank}|{fields['evidence_section']}|{fields['evidence_text']}"
+    )
+    pair_id = hashlib.sha256(pair_id_source.encode("utf-8")).hexdigest()[:32]
+    truncation = {
+        "truncated": bool(truncated_fields),
+        "truncated_fields": truncated_fields,
+        "total_truncated_chars": total_truncated_chars,
+        "emergency_ceiling_hit": emergency_hits > 0,
+        "field_lengths": per_field,
+    }
+    return SerializedPair(
+        pair_id=pair_id,
+        requirement_id=_requirement_id(requirement_match),
+        requirement_match=requirement_match,
+        candidate=candidate,
+        fields=fields,
+        truncation=truncation,
+    )
+
+
+def _pair_assessment_from_heuristic(pair: SerializedPair) -> PairAssessment:
+    requirement_text = pair.fields["requirement_text"]
+    evidence_text = pair.fields["evidence_text"]
+    original_similarity = float(pair.candidate.similarity or 0.0)
+    overlap = _meaningful_overlap(requirement_text, evidence_text)
+    if not evidence_text:
+        return PairAssessment(
+            pair_id=pair.pair_id,
+            requirement_id=pair.requirement_id,
+            coverage_level="missing",
+            semantic_score=0.0,
+            confidence=1.0,
+            reason="No supporting resume evidence was recalled for this requirement.",
+        )
+    if _explicit_tech_mismatch(requirement_text, evidence_text):
+        return PairAssessment(
+            pair_id=pair.pair_id,
+            requirement_id=pair.requirement_id,
+            coverage_level="missing",
+            semantic_score=0.0,
+            confidence=0.92,
+            reason="Evidence references different technologies than the requirement.",
+        )
+    if overlap:
+        score = min(0.97, 0.75 + 0.05 * len(overlap) + 0.1 * original_similarity)
+        return PairAssessment(
+            pair_id=pair.pair_id,
+            requirement_id=pair.requirement_id,
+            coverage_level="covered",
+            semantic_score=round(score, 4),
+            confidence=min(0.98, 0.72 + 0.06 * len(overlap)),
+            reason="Evidence strongly matches the requirement.",
+        )
+    if original_similarity >= 0.45:
+        return PairAssessment(
+            pair_id=pair.pair_id,
+            requirement_id=pair.requirement_id,
+            coverage_level="partial",
+            semantic_score=min(0.79, max(0.55, original_similarity)),
+            confidence=0.6,
+            reason="Evidence is related but does not fully satisfy the requirement.",
+        )
+    return PairAssessment(
+        pair_id=pair.pair_id,
+        requirement_id=pair.requirement_id,
+        coverage_level="missing",
+        semantic_score=0.0,
+        confidence=0.72,
+        reason="Evidence does not support the requirement.",
+    )
+
+
+class LocalCrossEncoderProvider:
+    route_name = "local"
+
+    def __init__(self, model_name: str, cache_path: Optional[str] = None):
+        self.model_name = model_name
+        self.cache_path = cache_path
+        self._model = None
+        self._provider_id = "heuristic-local"
+
+    @property
+    def provider_id(self) -> str:
+        return self._provider_id
+
+    def _load_model(self):
+        if self._model is not None:
+            return self._model
+        try:
+            from sentence_transformers import CrossEncoder  # type: ignore
+        except Exception:
+            self._provider_id = "heuristic-local"
+            self._model = False
+            return self._model
+
+        model_kwargs: Dict[str, Any] = {}
+        if self.cache_path:
+            model_kwargs["cache_folder"] = self.cache_path
+        self._model = CrossEncoder(self.model_name, **model_kwargs)
+        self._provider_id = self.model_name
+        return self._model
+
+    def score_pairs(self, pairs: List[SerializedPair]) -> tuple[List[PairAssessment], Dict[str, Any]]:
+        started_at = time.perf_counter()
+        model = self._load_model()
+        assessments: List[PairAssessment] = []
+        if model is False:
+            assessments = [_pair_assessment_from_heuristic(pair) for pair in pairs]
+        else:
+            left_right = [
+                (
+                    "\n".join(
+                        [
+                            f"Requirement: {pair.fields['requirement_text']}",
+                            f"Requirement Type: {pair.fields['req_type']}",
+                            f"Job Title: {pair.fields['job_title']}",
+                            f"Company: {pair.fields['job_company']}",
+                            f"Job Summary: {pair.fields['job_summary']}",
+                        ]
+                    ),
+                    "\n".join(
+                        [
+                            f"Evidence: {pair.fields['evidence_text']}",
+                            f"Evidence Section: {pair.fields['evidence_section']}",
+                        ]
+                    ),
+                )
+                for pair in pairs
+            ]
+            raw_scores = model.predict(left_right)
+            for pair, raw_score in zip(pairs, raw_scores):
+                semantic_score = 1.0 / (1.0 + math.exp(-float(raw_score)))
+                if semantic_score >= 0.80:
+                    coverage_level = "covered"
+                    reason = "Evidence strongly matches the requirement."
+                elif semantic_score >= 0.55:
+                    coverage_level = "partial"
+                    reason = "Evidence is related but does not fully satisfy the requirement."
+                else:
+                    coverage_level = "missing"
+                    reason = "Evidence does not support the requirement."
+                confidence = _clamp01(abs(semantic_score - 0.55) / 0.45)
+                assessments.append(
+                    PairAssessment(
+                        pair_id=pair.pair_id,
+                        requirement_id=pair.requirement_id,
+                        coverage_level=coverage_level,
+                        semantic_score=round(semantic_score, 4),
+                        confidence=round(confidence, 4),
+                        reason=reason,
+                    )
+                )
+        diagnostics = {
+            "provider_id": self.provider_id,
+            "provider_route": self.route_name,
+            "latency_ms": round((time.perf_counter() - started_at) * 1000.0, 3),
         }
-        enriched_components["retrieval"] = retrieval_diagnostics
-        enriched_components["semantic_fit_diagnostics"] = scorer_diagnostics
-        enriched_components["fit_explanation"] = fit_explanation
+        return assessments, diagnostics
 
-        return SemanticFitScoreResult(
-            fit_score=fit_value,
-            fit_components=enriched_components,
-            fit_confidence=fit_confidence,
-            fit_explanation=fit_explanation,
-            scorer_name=self.scorer_name,
-            scorer_version=self.scorer_version,
-            matched_requirements=matched_requirements,
-            missing_requirements=missing_requirements,
+
+class RemoteCrossEncoderProvider:
+    route_name = "remote"
+
+    def __init__(self, *, base_url: str, api_key: Optional[str], model: str, timeout_ms: int):
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.model = model
+        self.timeout_ms = timeout_ms
+
+    @property
+    def provider_id(self) -> str:
+        return self.model
+
+    def score_pairs(self, pairs: List[SerializedPair]) -> tuple[List[PairAssessment], Dict[str, Any]]:
+        started_at = time.perf_counter()
+        response = requests.post(
+            f"{self.base_url}/v1/fit/score",
+            headers={
+                **({"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}),
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.model,
+                "pairs": [
+                    {
+                        "pair_id": pair.pair_id,
+                        "requirement_id": pair.requirement_id,
+                        "requirement_text": pair.fields["requirement_text"],
+                        "req_type": pair.fields["req_type"],
+                        "evidence_text": pair.fields["evidence_text"],
+                        "evidence_section": pair.fields["evidence_section"],
+                        "original_similarity": float(pair.candidate.similarity or 0.0),
+                        "job_title": pair.fields["job_title"],
+                        "job_company": pair.fields["job_company"],
+                        "job_summary": pair.fields["job_summary"],
+                    }
+                    for pair in pairs
+                ],
+                "timeout_ms": self.timeout_ms,
+            },
+            timeout=max(1, self.timeout_ms / 1000.0),
         )
+        response.raise_for_status()
+        payload = response.json()
+        scores_by_pair = {item["pair_id"]: float(item["raw_logit"]) for item in payload.get("scores", [])}
+        assessments: List[PairAssessment] = []
+        for pair in pairs:
+            if pair.pair_id not in scores_by_pair:
+                assessments.append(_pair_assessment_from_heuristic(pair))
+                continue
+            semantic_score = 1.0 / (1.0 + math.exp(-scores_by_pair[pair.pair_id]))
+            if semantic_score >= 0.80:
+                coverage_level = "covered"
+                reason = "Evidence strongly matches the requirement."
+            elif semantic_score >= 0.55:
+                coverage_level = "partial"
+                reason = "Evidence is related but does not fully satisfy the requirement."
+            else:
+                coverage_level = "missing"
+                reason = "Evidence does not support the requirement."
+            assessments.append(
+                PairAssessment(
+                    pair_id=pair.pair_id,
+                    requirement_id=pair.requirement_id,
+                    coverage_level=coverage_level,
+                    semantic_score=round(semantic_score, 4),
+                    confidence=round(_clamp01(abs(semantic_score - 0.55) / 0.45), 4),
+                    reason=reason,
+                )
+            )
+        diagnostics = {
+            "provider_id": self.provider_id,
+            "provider_route": self.route_name,
+            "latency_ms": round((time.perf_counter() - started_at) * 1000.0, 3),
+        }
+        return assessments, diagnostics
 
 
 class LLMSemanticFitScorer:
-    """LLM-backed semantic fit scorer with threshold fallback."""
-
     scorer_name = LLM_SCORER_NAME
     scorer_version = LLM_SCORER_VERSION
 
-    def __init__(
-        self,
-        ai_service: LLMProvider,
-        *,
-        fallback_scorer: Optional[ThresholdSemanticFitScorer] = None,
-    ):
+    def __init__(self, ai_service: LLMProvider, *, fallback_scorer: Optional[ThresholdSemanticFitScorer] = None):
         self.ai_service = ai_service
         self.fallback_scorer = fallback_scorer or ThresholdSemanticFitScorer()
 
@@ -423,54 +784,28 @@ class LLMSemanticFitScorer:
         *,
         fit_penalties: float,
         config: ScorerConfig,
+        owner_id: Any | None = None,
     ) -> SemanticFitScoreResult:
-        started_at = time.perf_counter()
-        if not getattr(config, "semantic_fit_enabled", True):
-            return self.fallback_scorer.score(
-                preliminary,
-                fit_penalties=fit_penalties,
-                config=config,
-            )
+        del owner_id
+        if not getattr(config.semantic_fit, "enabled", True):
+            return self.fallback_scorer.score(preliminary, fit_penalties=fit_penalties, config=config)
 
+        started_at = time.perf_counter()
         try:
-            return self._score_with_llm(
-                preliminary,
-                fit_penalties=fit_penalties,
-                config=config,
-            )
+            return self._score_with_llm(preliminary, fit_penalties=fit_penalties, config=config)
         except Exception as exc:
-            if not getattr(config, "semantic_fit_fallback_to_threshold", True):
+            if not getattr(config.semantic_fit, "threshold_fallback_enabled", True):
                 raise
             logger.warning("Semantic fit scoring failed; falling back to threshold scorer: %s", exc, exc_info=True)
-            fallback = self.fallback_scorer.score(
+            return _build_threshold_result(
                 preliminary,
                 fit_penalties=fit_penalties,
                 config=config,
-            )
-            enriched_components = dict(fallback.fit_components)
-            fallback_explanation = dict(fallback.fit_explanation)
-            fallback_explanation["message"] = "Semantic fit scorer unavailable; using threshold fallback."
-            fallback_reason = str(exc)
-            scorer_diagnostics = _build_scorer_diagnostics(
-                scorer_name=fallback.scorer_name,
-                scorer_version=fallback.scorer_version,
-                latency_ms=round((time.perf_counter() - started_at) * 1000.0, 3),
+                scorer_name=THRESHOLD_SCORER_NAME,
+                scorer_version=THRESHOLD_SCORER_VERSION,
                 fallback_used=True,
-                fallback_reason=fallback_reason,
-            )
-            enriched_components["semantic_fit_fallback_reason"] = fallback_reason
-            enriched_components["semantic_fit_diagnostics"] = scorer_diagnostics
-            fallback_explanation["diagnostics"] = scorer_diagnostics
-            enriched_components["fit_explanation"] = fallback_explanation
-            return SemanticFitScoreResult(
-                fit_score=fallback.fit_score,
-                fit_components=enriched_components,
-                fit_confidence=fallback.fit_confidence,
-                fit_explanation=fallback_explanation,
-                scorer_name=fallback.scorer_name,
-                scorer_version=fallback.scorer_version,
-                matched_requirements=fallback.matched_requirements,
-                missing_requirements=fallback.missing_requirements,
+                fallback_reason=str(exc),
+                fallback_message="Semantic fit scorer unavailable; using threshold fallback.",
             )
 
     def _score_with_llm(
@@ -481,130 +816,465 @@ class LLMSemanticFitScorer:
         config: ScorerConfig,
     ) -> SemanticFitScoreResult:
         started_at = time.perf_counter()
-        payload = self._build_payload(preliminary)
-        assessment = self.ai_service.extract_structured_data(
-            text=json.dumps(payload),
-            schema_spec=SEMANTIC_FIT_SCHEMA_SPEC,
-            system_prompt=SEMANTIC_FIT_SYSTEM_PROMPT,
-            user_message=(
-                "Evaluate the semantic fit between each job requirement and the paired resume evidence.\n\n"
-                f"{json.dumps(payload)}"
-            ),
+        threshold = float(
+            getattr(config, "req_similarity_threshold", fit_score.DEFAULT_REQ_SIMILARITY_THRESHOLD)
         )
-        parsed = SemanticJobFitAssessment.model_validate(assessment)
-        threshold = float(getattr(config, "req_similarity_threshold", fit_score.DEFAULT_REQ_SIMILARITY_THRESHOLD))
-        judgments = {judgment.requirement_id: judgment for judgment in parsed.requirement_judgments}
-
-        adjusted_matched: List[RequirementMatchResult] = []
-        adjusted_missing: List[RequirementMatchResult] = []
-        verdicts: List[Dict[str, Any]] = []
-
-        for requirement_match in preliminary.requirement_matches + preliminary.missing_requirements:
-            requirement_id = _requirement_id(requirement_match)
-            judgment = judgments.get(requirement_id)
-            if judgment is None:
-                coverage_level = _fallback_coverage_level(requirement_match)
-                semantic_score = _semantic_similarity(float(requirement_match.similarity or 0.0), coverage_level, threshold)
-                confidence = 0.0
-                reason = "Requirement was not judged by the semantic scorer; preserved fallback classification."
-            else:
-                coverage_level = judgment.coverage_level
-                semantic_score = max(0.0, min(1.0, float(judgment.semantic_score)))
-                confidence = max(0.0, min(1.0, float(judgment.confidence)))
-                reason = judgment.reason
-
-            similarity = _semantic_similarity(semantic_score, coverage_level, threshold)
-            adjusted = _clone_match(
-                requirement_match,
-                similarity=similarity,
-                is_covered=coverage_level == "covered",
-            )
-            if adjusted.is_covered:
-                adjusted_matched.append(adjusted)
-            else:
-                adjusted_missing.append(adjusted)
-
-            verdicts.append(
-                _base_verdict(
-                    requirement_match,
-                    coverage_level=coverage_level,
-                    semantic_score=semantic_score,
-                    confidence=confidence,
-                    reason=reason,
-                )
-            )
-
-        fit_value, fit_components = fit_score.calculate_fit_score(
-            job_similarity=preliminary.job_similarity,
-            matched_requirements=adjusted_matched,
-            missing_requirements=adjusted_missing,
-            fit_penalties=fit_penalties,
-            config=config,
-        )
-        required_coverage = float(fit_components.get("required_coverage", 0.0))
-        preferred_coverage = float(fit_components.get("preferred_coverage", 0.0))
-        confidence_values = [verdict["confidence"] for verdict in verdicts if verdict["confidence"] > 0]
-        base_confidence = (sum(confidence_values) / len(confidence_values)) if confidence_values else 0.0
-        fit_confidence = round(max(base_confidence, _fit_confidence(required_coverage, preliminary.job_similarity)), 4)
-        retrieval_diagnostics = _build_retrieval_diagnostics(preliminary)
-        scorer_diagnostics = _build_scorer_diagnostics(
-            scorer_name=self.scorer_name,
-            scorer_version=self.scorer_version,
-            latency_ms=round((time.perf_counter() - started_at) * 1000.0, 3),
-            judged_requirements=len(verdicts),
-        )
-        fit_explanation = _build_fit_explanation(
-            verdicts,
-            required_coverage=required_coverage,
-            preferred_coverage=preferred_coverage,
-            fit_confidence=fit_confidence,
-            job_similarity=preliminary.job_similarity,
-            scorer_name=self.scorer_name,
-            scorer_version=self.scorer_version,
-            retrieval_diagnostics=retrieval_diagnostics,
-            scorer_diagnostics=scorer_diagnostics,
-        )
-
-        enriched_components = dict(fit_components)
-        enriched_components["fit_confidence"] = fit_confidence
-        enriched_components["fit_scorer"] = {
-            "name": self.scorer_name,
-            "version": self.scorer_version,
-        }
-        enriched_components["retrieval"] = retrieval_diagnostics
-        enriched_components["semantic_fit_diagnostics"] = scorer_diagnostics
-        enriched_components["fit_explanation"] = fit_explanation
-        enriched_components["semantic_fit_judged_requirements"] = len(verdicts)
-        enriched_components["semantic_fit_summary"] = parsed.summary
-
-        return SemanticFitScoreResult(
-            fit_score=fit_value,
-            fit_components=enriched_components,
-            fit_confidence=fit_confidence,
-            fit_explanation=fit_explanation,
-            scorer_name=self.scorer_name,
-            scorer_version=self.scorer_version,
-            matched_requirements=adjusted_matched,
-            missing_requirements=adjusted_missing,
-        )
-
-    @staticmethod
-    def _build_payload(preliminary: JobMatchPreliminary) -> Dict[str, Any]:
-        return {
+        serialized_pairs, zero_evidence_verdicts, truncation_aggregate = _build_serialized_pairs(preliminary, config=config)
+        payload = {
             "job_id": str(getattr(preliminary.job, "id", "")),
             "job_title": _string_or_empty(getattr(preliminary.job, "title", "")),
             "job_company": _string_or_empty(getattr(preliminary.job, "company", "")),
             "job_summary": _string_or_empty(getattr(preliminary.job, "canonical_job_summary", ""))
             or _string_or_empty(getattr(preliminary.job, "description", "")),
-            "requirements": [
+            "pairs": [
                 {
-                    "requirement_id": _requirement_id(requirement_match),
-                    "requirement_text": _requirement_text(requirement_match),
-                    "req_type": getattr(requirement_match.requirement, "req_type", "required"),
-                    "evidence_text": _evidence_text(requirement_match),
-                    "evidence_section": _evidence_section(requirement_match),
-                    "original_similarity": float(requirement_match.similarity or 0.0),
+                    "pair_id": pair.pair_id,
+                    "requirement_id": pair.requirement_id,
+                    **pair.fields,
+                    "original_similarity": float(pair.candidate.similarity or 0.0),
                 }
-                for requirement_match in preliminary.requirement_matches + preliminary.missing_requirements
+                for pair in serialized_pairs
             ],
         }
+        if serialized_pairs:
+            assessment = self.ai_service.extract_structured_data(
+                text=json.dumps(payload),
+                schema_spec=SEMANTIC_FIT_SCHEMA_SPEC,
+                system_prompt=SEMANTIC_FIT_SYSTEM_PROMPT,
+                user_message=(
+                    "Evaluate the semantic fit between each job requirement and the paired resume evidence.\n\n"
+                    f"{json.dumps(payload)}"
+                ),
+            )
+            parsed = SemanticPairAssessmentResponse.model_validate(assessment)
+            assessments = [
+                PairAssessment(
+                    pair_id=item.pair_id,
+                    requirement_id=item.requirement_id,
+                    coverage_level=item.coverage_level,
+                    semantic_score=item.semantic_score,
+                    confidence=item.confidence,
+                    reason=item.reason,
+                )
+                for item in parsed.pair_judgments
+            ]
+            summary = parsed.summary
+        else:
+            assessments = []
+            summary = "No recalled resume evidence supported the evaluated requirements."
+        return _score_with_assessments(
+            preliminary,
+            assessments=assessments,
+            serialized_pairs=serialized_pairs,
+            zero_evidence_verdicts=zero_evidence_verdicts,
+            fit_penalties=fit_penalties,
+            config=config,
+            scorer_name=self.scorer_name,
+            scorer_version=self.scorer_version,
+            provider_route="llm",
+            provider_id="llm",
+            threshold=threshold,
+            latency_ms=round((time.perf_counter() - started_at) * 1000.0, 3),
+            model_summary=summary,
+            truncation_aggregate=truncation_aggregate,
+        )
+
+
+def _build_serialized_pairs(
+    preliminary: JobMatchPreliminary,
+    *,
+    config: ScorerConfig,
+) -> tuple[List[SerializedPair], List[Dict[str, Any]], Dict[str, Any]]:
+    pairs: List[SerializedPair] = []
+    zero_evidence_verdicts: List[Dict[str, Any]] = []
+    truncated_pair_count = 0
+    total_truncated_chars = 0
+    emergency_ceiling_hits = 0
+    for requirement_match in preliminary.requirement_matches + preliminary.missing_requirements:
+        candidates = list(requirement_match.evidence_candidates)
+        if not candidates and requirement_match.evidence is not None:
+            candidates = [
+                RequirementEvidenceCandidate(
+                    evidence=requirement_match.evidence,
+                    similarity=float(requirement_match.similarity or 0.0),
+                    rank=1,
+                )
+            ]
+        if not candidates:
+            preserved_coverage = _fallback_coverage_level(requirement_match)
+            preserved_score = _semantic_similarity(
+                float(requirement_match.similarity or 0.0),
+                preserved_coverage,
+                float(getattr(config, "req_similarity_threshold", fit_score.DEFAULT_REQ_SIMILARITY_THRESHOLD)),
+            )
+            zero_evidence_verdicts.append(
+                _base_verdict(
+                    requirement_match,
+                    evidence=None,
+                    coverage_level=preserved_coverage,
+                    semantic_score=preserved_score,
+                    confidence=1.0 if preserved_coverage == "missing" else 0.0,
+                    reason=(
+                        "No supporting resume evidence was recalled for this requirement."
+                        if preserved_coverage == "missing"
+                        else "No supporting resume evidence payload was available; preserved matcher classification."
+                    ),
+                )
+            )
+            continue
+        for candidate in candidates:
+            pair = _serialize_pair(preliminary, requirement_match, candidate, config=config)
+            pairs.append(pair)
+            if pair.truncation["truncated"]:
+                truncated_pair_count += 1
+            total_truncated_chars += int(pair.truncation["total_truncated_chars"])
+            if pair.truncation["emergency_ceiling_hit"]:
+                emergency_ceiling_hits += 1
+    aggregate = {
+        "any_truncated": truncated_pair_count > 0,
+        "pair_count": len(pairs),
+        "truncated_pair_count": truncated_pair_count,
+        "total_truncated_chars": total_truncated_chars,
+        "emergency_ceiling_hits": emergency_ceiling_hits,
+    }
+    if aggregate["any_truncated"]:
+        logger.warning(
+            "Semantic fit serialization truncated %d/%d pairs (%d chars discarded, emergency ceiling hits=%d)",
+            truncated_pair_count,
+            len(pairs),
+            total_truncated_chars,
+            emergency_ceiling_hits,
+        )
+    return pairs, zero_evidence_verdicts, aggregate
+
+
+def _select_best_assessment(
+    requirement_match: RequirementMatchResult,
+    candidate_pairs: List[SerializedPair],
+    assessments_by_pair: Dict[str, PairAssessment],
+) -> tuple[Optional[SerializedPair], Optional[PairAssessment]]:
+    best_pair: Optional[SerializedPair] = None
+    best_assessment: Optional[PairAssessment] = None
+    for pair in candidate_pairs:
+        assessment = assessments_by_pair.get(pair.pair_id)
+        if assessment is None:
+            continue
+        if best_assessment is None:
+            best_pair = pair
+            best_assessment = assessment
+            continue
+        candidate_key = (
+            assessment.semantic_score,
+            assessment.confidence,
+            float(pair.candidate.similarity or 0.0),
+        )
+        best_key = (
+            best_assessment.semantic_score,
+            best_assessment.confidence,
+            float(best_pair.candidate.similarity or 0.0),
+        )
+        if candidate_key > best_key:
+            best_pair = pair
+            best_assessment = assessment
+    return best_pair, best_assessment
+
+
+def _score_with_assessments(
+    preliminary: JobMatchPreliminary,
+    *,
+    assessments: List[PairAssessment],
+    serialized_pairs: List[SerializedPair],
+    zero_evidence_verdicts: List[Dict[str, Any]],
+    fit_penalties: float,
+    config: ScorerConfig,
+    scorer_name: str,
+    scorer_version: str,
+    provider_route: str,
+    provider_id: str,
+    threshold: float,
+    latency_ms: float,
+    model_summary: Optional[str],
+    truncation_aggregate: Dict[str, Any],
+    fallback_used: bool = False,
+    fallback_reason: Optional[str] = None,
+) -> SemanticFitScoreResult:
+    assessments_by_pair = {assessment.pair_id: assessment for assessment in assessments}
+    pairs_by_requirement: Dict[str, List[SerializedPair]] = {}
+    for pair in serialized_pairs:
+        pairs_by_requirement.setdefault(pair.requirement_id, []).append(pair)
+
+    adjusted_matched: List[RequirementMatchResult] = []
+    adjusted_missing: List[RequirementMatchResult] = []
+    verdicts: List[Dict[str, Any]] = list(zero_evidence_verdicts)
+
+    for requirement_match in preliminary.requirement_matches + preliminary.missing_requirements:
+        requirement_id = _requirement_id(requirement_match)
+        candidate_pairs = pairs_by_requirement.get(requirement_id, [])
+        if not candidate_pairs:
+            preserved_coverage = _fallback_coverage_level(requirement_match)
+            adjusted = _clone_match(
+                requirement_match,
+                evidence=requirement_match.evidence,
+                similarity=_semantic_similarity(
+                    float(requirement_match.similarity or 0.0),
+                    preserved_coverage,
+                    threshold,
+                ),
+                is_covered=preserved_coverage == "covered",
+            )
+            if adjusted.is_covered:
+                adjusted_matched.append(adjusted)
+            else:
+                adjusted_missing.append(adjusted)
+            continue
+        best_pair, best_assessment = _select_best_assessment(requirement_match, candidate_pairs, assessments_by_pair)
+        if best_pair is None or best_assessment is None:
+            adjusted_missing.append(
+                _clone_match(
+                    requirement_match,
+                    evidence=requirement_match.evidence,
+                    similarity=0.0,
+                    is_covered=False,
+                )
+            )
+            verdicts.append(
+                _base_verdict(
+                    requirement_match,
+                    evidence=requirement_match.evidence,
+                    coverage_level="missing",
+                    semantic_score=0.0,
+                    confidence=0.0,
+                    reason="Requirement was not judged by the semantic scorer; preserved fallback classification.",
+                    provider_route=provider_route,
+                )
+            )
+            continue
+        similarity = _semantic_similarity(best_assessment.semantic_score, best_assessment.coverage_level, threshold)
+        adjusted = _clone_match(
+            requirement_match,
+            evidence=best_pair.candidate.evidence,
+            similarity=similarity,
+            is_covered=best_assessment.coverage_level == "covered",
+        )
+        if adjusted.is_covered:
+            adjusted_matched.append(adjusted)
+        else:
+            adjusted_missing.append(adjusted)
+        verdicts.append(
+            _base_verdict(
+                requirement_match,
+                evidence=best_pair.candidate.evidence,
+                coverage_level=best_assessment.coverage_level,
+                semantic_score=round(_clamp01(best_assessment.semantic_score), 4),
+                confidence=round(_clamp01(best_assessment.confidence), 4),
+                reason=best_assessment.reason,
+                provider_route=provider_route,
+                truncation=best_pair.truncation,
+            )
+        )
+
+    fit_value, fit_components = fit_score.calculate_fit_score(
+        job_similarity=preliminary.job_similarity,
+        matched_requirements=adjusted_matched,
+        missing_requirements=adjusted_missing,
+        fit_penalties=fit_penalties,
+        config=config,
+    )
+    required_coverage = float(fit_components.get("required_coverage", 0.0))
+    preferred_coverage = float(fit_components.get("preferred_coverage", 0.0))
+    confidence_values = [verdict["confidence"] for verdict in verdicts if verdict["confidence"] > 0]
+    base_confidence = (sum(confidence_values) / len(confidence_values)) if confidence_values else 0.0
+    fit_confidence = round(max(base_confidence, _fit_confidence(required_coverage, preliminary.job_similarity)), 4)
+    retrieval_diagnostics = _build_retrieval_diagnostics(preliminary)
+    scorer_diagnostics = {
+        "name": scorer_name,
+        "version": scorer_version,
+        "effective_fit_mode": "llm" if provider_route == "llm" else "cross_encoder",
+        "provider_route": provider_route,
+        "provider_id": provider_id,
+        "latency_ms": latency_ms,
+        "fallback_used": fallback_used,
+        "judged_requirements": len(verdicts),
+        "truncation": truncation_aggregate,
+    }
+    if fallback_reason:
+        scorer_diagnostics["fallback_reason"] = fallback_reason
+    fit_explanation = _build_fit_explanation(
+        verdicts,
+        required_coverage=required_coverage,
+        preferred_coverage=preferred_coverage,
+        fit_confidence=fit_confidence,
+        job_similarity=preliminary.job_similarity,
+        scorer_name=scorer_name,
+        scorer_version=scorer_version,
+        retrieval_diagnostics=retrieval_diagnostics,
+        scorer_diagnostics=scorer_diagnostics,
+        fallback_message="Semantic fit scorer unavailable; using threshold fallback." if fallback_used else None,
+    )
+    enriched_components = dict(fit_components)
+    enriched_components["fit_confidence"] = fit_confidence
+    enriched_components["fit_scorer"] = {"name": scorer_name, "version": scorer_version}
+    enriched_components["effective_fit_mode"] = scorer_diagnostics["effective_fit_mode"]
+    enriched_components["provider_route"] = provider_route
+    enriched_components["retrieval"] = retrieval_diagnostics
+    enriched_components["semantic_fit_diagnostics"] = scorer_diagnostics
+    enriched_components["semantic_fit_truncation"] = truncation_aggregate
+    if fallback_reason:
+        enriched_components["semantic_fit_fallback_reason"] = fallback_reason
+    if model_summary:
+        enriched_components["semantic_fit_summary"] = model_summary
+    enriched_components["fit_explanation"] = fit_explanation
+    return SemanticFitScoreResult(
+        fit_score=fit_value,
+        fit_components=enriched_components,
+        fit_confidence=fit_confidence,
+        fit_explanation=fit_explanation,
+        scorer_name=scorer_name,
+        scorer_version=scorer_version,
+        matched_requirements=adjusted_matched,
+        missing_requirements=adjusted_missing,
+    )
+
+
+class CrossEncoderSemanticFitScorer:
+    scorer_name = CROSS_ENCODER_SCORER_NAME
+    scorer_version = CROSS_ENCODER_SCORER_VERSION
+
+    def __init__(
+        self,
+        *,
+        local_provider: LocalCrossEncoderProvider,
+        remote_provider: Optional[RemoteCrossEncoderProvider],
+        fallback_scorer: Optional[ThresholdSemanticFitScorer] = None,
+    ):
+        self.local_provider = local_provider
+        self.remote_provider = remote_provider
+        self.fallback_scorer = fallback_scorer or ThresholdSemanticFitScorer()
+
+    def score(
+        self,
+        preliminary: JobMatchPreliminary,
+        *,
+        fit_penalties: float,
+        config: ScorerConfig,
+        owner_id: Any | None = None,
+    ) -> SemanticFitScoreResult:
+        del owner_id
+        if not getattr(config.semantic_fit, "enabled", True):
+            return self.fallback_scorer.score(preliminary, fit_penalties=fit_penalties, config=config)
+
+        threshold = float(
+            getattr(config, "req_similarity_threshold", fit_score.DEFAULT_REQ_SIMILARITY_THRESHOLD)
+        )
+        serialized_pairs, zero_evidence_verdicts, truncation_aggregate = _build_serialized_pairs(preliminary, config=config)
+        pair_count = len(serialized_pairs)
+        route_policy = getattr(config.semantic_fit.cross_encoder, "route_policy", "local")
+        providers: List[Any] = []
+        if route_policy == "remote":
+            if self.remote_provider is None:
+                raise RuntimeError("Remote cross-encoder route requested but no remote provider is configured")
+            providers = [self.remote_provider]
+        elif route_policy == "auto":
+            promote_threshold = int(getattr(config.semantic_fit.cross_encoder, "remote_promote_pair_count", 40))
+            in_production = (
+                os.getenv("JOBSCOUT_ENV")
+                or os.getenv("APP_ENV")
+                or os.getenv("ENVIRONMENT")
+                or "development"
+            ).strip().lower() == "production"
+            if self.remote_provider is not None and in_production and pair_count > promote_threshold:
+                providers = [self.remote_provider, self.local_provider]
+            else:
+                providers = [self.local_provider] + ([self.remote_provider] if self.remote_provider else [])
+        else:
+            providers = [self.local_provider] + ([self.remote_provider] if self.remote_provider else [])
+
+        last_error: Optional[Exception] = None
+        for provider in [provider for provider in providers if provider is not None]:
+            try:
+                assessments, provider_diagnostics = provider.score_pairs(serialized_pairs)
+                return _score_with_assessments(
+                    preliminary,
+                    assessments=assessments,
+                    serialized_pairs=serialized_pairs,
+                    zero_evidence_verdicts=zero_evidence_verdicts,
+                    fit_penalties=fit_penalties,
+                    config=config,
+                    scorer_name=self.scorer_name,
+                    scorer_version=self.scorer_version,
+                    provider_route=provider.route_name,
+                    provider_id=provider_diagnostics["provider_id"],
+                    threshold=threshold,
+                    latency_ms=provider_diagnostics["latency_ms"],
+                    model_summary=None,
+                    truncation_aggregate=truncation_aggregate,
+                )
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Cross-encoder provider route %s failed; trying next route if available: %s",
+                    getattr(provider, "route_name", "unknown"),
+                    exc,
+                    exc_info=True,
+                )
+
+        if not getattr(config.semantic_fit, "threshold_fallback_enabled", True):
+            if last_error:
+                raise last_error
+            raise RuntimeError("No cross-encoder provider was available")
+
+        return _build_threshold_result(
+            preliminary,
+            fit_penalties=fit_penalties,
+            config=config,
+            scorer_name=THRESHOLD_SCORER_NAME,
+            scorer_version=THRESHOLD_SCORER_VERSION,
+            fallback_used=True,
+            fallback_reason=str(last_error) if last_error else "no_provider_available",
+            fallback_message="Semantic fit scorer unavailable; using threshold fallback.",
+        )
+
+
+def _normalize_modes(raw_modes: Iterable[str]) -> List[str]:
+    normalized: List[str] = []
+    for mode in raw_modes:
+        if mode in {"cross_encoder", "llm"} and mode not in normalized:
+            normalized.append(mode)
+    return normalized
+
+
+def resolve_effective_fit_mode(repo, config: ScorerConfig, owner_id: Any) -> tuple[str, List[str]]:
+    semantic_fit = config.semantic_fit
+    deploy_allowed = _normalize_modes(getattr(semantic_fit, "deploy_allowed_modes", []))
+    baseline_allowed = _normalize_modes(getattr(semantic_fit, "baseline_allowed_modes", []))
+    if not baseline_allowed:
+        baseline_allowed = [semantic_fit.default_mode]
+    effective_allowed = [mode for mode in baseline_allowed if mode in deploy_allowed]
+
+    if owner_id:
+        allowed_row = repo.get_entitlement(owner_id, FEATURE_ALLOWED_MODES)
+        if allowed_row and getattr(allowed_row, "enabled", True):
+            value_json = getattr(allowed_row, "value_json", None) or {}
+            if isinstance(value_json, dict):
+                entitled_modes = _normalize_modes(value_json.get("modes", []))
+                filtered = [mode for mode in entitled_modes if mode in deploy_allowed]
+                if filtered:
+                    effective_allowed = filtered
+            else:
+                logger.warning("Ignoring invalid entitlement payload for %s", FEATURE_ALLOWED_MODES)
+
+    if not effective_allowed:
+        effective_allowed = [mode for mode in ["cross_encoder", "llm"] if mode in deploy_allowed] or ["cross_encoder"]
+
+    resolved_mode = semantic_fit.default_mode if semantic_fit.default_mode in effective_allowed else effective_allowed[0]
+    if owner_id:
+        preferred_row = repo.get_entitlement(owner_id, FEATURE_PREFERRED_MODE)
+        if preferred_row and getattr(preferred_row, "enabled", True):
+            value_json = getattr(preferred_row, "value_json", None) or {}
+            if isinstance(value_json, dict):
+                preferred_mode = value_json.get("mode")
+                if preferred_mode in effective_allowed:
+                    resolved_mode = preferred_mode
+            else:
+                logger.warning("Ignoring invalid entitlement payload for %s", FEATURE_PREFERRED_MODE)
+    return resolved_mode, effective_allowed

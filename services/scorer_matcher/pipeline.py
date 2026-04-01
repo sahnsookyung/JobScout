@@ -401,6 +401,7 @@ def _prepare_matcher_service(ctx, repo, matching_config):
             store=JobRepositoryAdapter(repo),
         ),
         config=matching_config.matcher,
+        requirement_recall_top_k=matching_config.scorer.semantic_fit.recall_top_k,
     )
 
 
@@ -424,7 +425,15 @@ def _get_pre_extracted_resume(structured_resume, should_re_extract: bool):
         raise ValueError(f"Failed to parse stored ready resume: {e}") from e
 
 
-def _run_vector_matching(matcher, repo, resume_data, stop_event, pre_extracted_resume, resume_fingerprint):
+def _run_vector_matching(
+    matcher,
+    repo,
+    resume_data,
+    stop_event,
+    pre_extracted_resume,
+    resume_fingerprint,
+    owner_id=None,
+):
     """Run vector-based job matching."""
     logger.info("=== MATCHING STEP 1: Running MatcherService (Vector Retrieval) ===")
     preliminary_matches = matcher.match_resume_two_stage(
@@ -433,6 +442,7 @@ def _run_vector_matching(matcher, repo, resume_data, stop_event, pre_extracted_r
         stop_event=stop_event,
         pre_extracted_resume=pre_extracted_resume,
         resume_fingerprint=resume_fingerprint,
+        owner_id=owner_id,
     )
     return preliminary_matches
 
@@ -503,6 +513,7 @@ def _run_preliminary_matching(
     structured_resume,
     should_re_extract: bool,
     resume_fingerprint: str,
+    owner_id=None,
 ):
     """Run vector matching and log its completion timing."""
     step_start = time.time()
@@ -511,7 +522,13 @@ def _run_preliminary_matching(
 
     pre_extracted_resume = _get_pre_extracted_resume(structured_resume, should_re_extract)
     preliminary_matches = _run_vector_matching(
-        matcher, repo, resume_data, stop_event, pre_extracted_resume, resume_fingerprint,
+        matcher,
+        repo,
+        resume_data,
+        stop_event,
+        pre_extracted_resume,
+        resume_fingerprint,
+        owner_id=owner_id,
     )
 
     step_elapsed = time.time() - step_start
@@ -581,6 +598,7 @@ def _run_matching_and_scoring(
             structured_resume,
             should_re_extract,
             resume_fingerprint,
+            owner_id=getattr(structured_resume, "owner_id", None) or owner_id,
         )
         preliminary_matches = apply_candidate_preference_filters(
             preliminary_matches,

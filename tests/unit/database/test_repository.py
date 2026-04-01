@@ -13,6 +13,7 @@ from database.repositories.resume import ResumeRepository
 from database.repositories.match import MatchRepository
 from database.repositories.embedding import EmbeddingRepository
 from database.repositories.candidate_preferences import CandidatePreferencesRepository
+from database.repositories.user_feature_entitlement import UserFeatureEntitlementRepository
 
 
 def make_repo():
@@ -68,6 +69,10 @@ class TestJobRepositoryProperties:
         first = repo.candidate_preferences
         second = repo.candidate_preferences
         assert first is second
+
+    def test_user_feature_entitlement_returns_repository(self):
+        repo, _ = make_repo()
+        assert isinstance(repo.user_feature_entitlement, UserFeatureEntitlementRepository)
 
     def test_all_sub_repos_use_same_db(self):
         mock_db = MagicMock()
@@ -496,6 +501,37 @@ class TestCandidatePreferencesRepositoryProperty:
         result = repo.candidate_preferences.get_preferences("user-1")
         repo.candidate_preferences.get_preferences.assert_called_once_with("user-1")
         assert result == "prefs"
+
+
+class TestFeatureEntitlementDelegation:
+    def test_get_entitlement(self):
+        repo, _ = make_repo()
+        repo.user_feature_entitlement.get_entitlement = MagicMock(return_value="entitlement")
+        result = repo.get_entitlement("user-1", "fit.semantic.allowed_modes")
+        repo.user_feature_entitlement.get_entitlement.assert_called_once_with(
+            "user-1",
+            "fit.semantic.allowed_modes",
+        )
+        assert result == "entitlement"
+
+    def test_upsert_entitlement(self):
+        repo, _ = make_repo()
+        repo.user_feature_entitlement.upsert_entitlement = MagicMock(return_value="updated")
+        result = repo.upsert_entitlement(
+            "user-1",
+            "fit.semantic.preferred_mode",
+            enabled=True,
+            value_json={"mode": "llm"},
+            source="admin",
+        )
+        repo.user_feature_entitlement.upsert_entitlement.assert_called_once_with(
+            "user-1",
+            "fit.semantic.preferred_mode",
+            enabled=True,
+            value_json={"mode": "llm"},
+            source="admin",
+        )
+        assert result == "updated"
 
 
 # ---------------------------------------------------------------------------

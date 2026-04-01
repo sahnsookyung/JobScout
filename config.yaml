@@ -72,7 +72,7 @@ matching:
     enabled: true
     similarity_threshold: 0.5
     batch_size: 100
-    hybrid_retrieval_enabled: false
+    hybrid_retrieval_enabled: true
     lexical_limit: 100
     fusion_rank_constant: 60
     lexical_query_token_limit: 24
@@ -80,39 +80,71 @@ matching:
   # Stage 2: Scorer Service (Rule-based Scoring)
   scorer:
     enabled: true
-    semantic_fit_enabled: true
-    semantic_fit_fallback_to_threshold: true
+    semantic_fit:
+      enabled: true
+      deploy_allowed_modes: ["cross_encoder"]
+      baseline_allowed_modes: ["cross_encoder"]
+      default_mode: "cross_encoder"
+      threshold_fallback_enabled: true
+      recall_top_k: 5
 
-    # Planned fit-semantics tuning surface (not active until the rewire lands)
-    # semantic_fit:
-    #   enabled: true
-    #   deploy_allowed_modes: ["cross_encoder"]
-    #   baseline_allowed_modes: ["cross_encoder"]
-    #   default_mode: "cross_encoder"
-    #   recall_top_k: 5             # Increase for better evidence recall, lower for lower latency/cost
-    #
-    #   cross_encoder:
-    #     route_policy: "local"     # local | remote | auto
-    #     remote_promote_pair_count: 40  # In auto mode, use remote when pair volume exceeds this count
-    #
-    #     local:
-    #       enabled: true
-    #       model_name: "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    #       model_cache_path: "/models/cross-encoders"
-    #       device_policy: "cpu"    # Planned v1 default is cpu only
-    #       max_batch_size: 32      # Raise if CPU/memory allow larger batches
-    #       max_concurrency: 1      # Raise carefully; increases CPU pressure
-    #       timeout_ms: 2000        # Raise if long evidence/job contexts are common
-    #
-    #     remote:
-    #       enabled: false
-    #       base_url: null
-    #       api_key: null
-    #       model: "fit-cross-encoder-v1"
-    #       timeout_ms: 1500
-    #       max_batch_size: 64
-    #       # enabled: true
-    #       # base_url: "https://fit.example.com"
+      cross_encoder:
+        route_policy: "local"
+        remote_promote_pair_count: 40
+
+        local:
+          enabled: true
+          model_name: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+          model_cache_path: null
+          device_policy: "cpu"
+          max_batch_size: 32
+          max_concurrency: 1
+          timeout_ms: 2000
+
+        remote:
+          enabled: false
+          base_url: null
+          api_key: null
+          model: "fit-cross-encoder-v1"
+          timeout_ms: 1500
+          max_batch_size: 64
+
+      llm:
+        enabled: false
+        provider: "openai_compatible"
+        base_url: null
+        api_key: null
+        api_secret: null
+        headers: null
+        model: "gpt-4o-mini"
+        temperature: 0.0
+        timeout_seconds: 20
+        max_input_tokens: 4000
+
+      serialization:
+        requirement_text_max_chars: 500
+        evidence_text_max_chars: 2500
+        evidence_section_max_chars: 64
+        job_title_max_chars: 200
+        job_company_max_chars: 200
+        job_summary_max_chars: 1800
+
+      # lexical_limit: 200          # Raise if dense-only retrieval misses exact skill/title matches
+      # fusion_rank_constant: 40    # Lower values make top-ranked retrieval hits weigh more in fusion
+      # recall_top_k: 8             # Raise for better recall, lower for lower latency/cost
+      # cross_encoder:
+      #   route_policy: "auto"      # Prefer remote in production when pair volume is high
+      #   local:
+      #     max_batch_size: 64      # Raise if CPU/memory allow larger batches
+      #     timeout_ms: 4000        # Raise if long evidence/job contexts are common
+      #   remote:
+      #     enabled: true           # Turn on remote scoring for production or larger pair volumes
+      #     base_url: "https://fit.example.com"
+      #     api_key: "..."
+      # llm:
+      #   enabled: true             # Advanced mode, intended for entitled users only
+      # serialization:
+      #   evidence_text_max_chars: 4000  # Raise if evidence is being truncated too aggressively
     #       # api_key: "..."
     #
     #   llm:

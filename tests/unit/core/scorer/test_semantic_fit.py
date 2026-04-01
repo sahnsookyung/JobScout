@@ -6,7 +6,13 @@ from unittest.mock import MagicMock
 from core.config_loader import ScorerConfig
 from core.llm.fake_service import FakeLLMService
 from core.matcher import JobMatchPreliminary, RequirementMatchResult
-from core.scorer.semantic_fit import LLMSemanticFitScorer, ThresholdSemanticFitScorer
+from core.scorer.semantic_fit import (
+    FEATURE_ALLOWED_MODES,
+    FEATURE_PREFERRED_MODE,
+    LLMSemanticFitScorer,
+    ThresholdSemanticFitScorer,
+    resolve_effective_fit_mode,
+)
 
 
 def _make_requirement(*, req_id: str, req_type: str, text: str, weight: float = 1.0):
@@ -280,3 +286,20 @@ def test_llm_semantic_fit_fallback_records_diagnostics():
     assert result.fit_explanation["message"] == "Semantic fit scorer unavailable; using threshold fallback."
     assert result.fit_explanation["diagnostics"]["fallback_used"] is True
     assert result.fit_explanation["retrieval"]["mode"] == "hybrid"
+
+
+def test_resolve_effective_fit_mode_uses_entitlement_preference_when_allowed():
+    repo = MagicMock()
+    repo.get_entitlement.side_effect = [
+        MagicMock(enabled=True, value_json={"modes": ["cross_encoder", "llm"]}),
+        MagicMock(enabled=True, value_json={"mode": "llm"}),
+    ]
+    config = ScorerConfig()
+    config.semantic_fit.deploy_allowed_modes = ["cross_encoder", "llm"]
+
+    resolved_mode, allowed = resolve_effective_fit_mode(repo, config, owner_id="user-1")
+
+    assert resolved_mode == "llm"
+    assert allowed == ["cross_encoder", "llm"]
+    repo.get_entitlement.assert_any_call("user-1", FEATURE_ALLOWED_MODES)
+    repo.get_entitlement.assert_any_call("user-1", FEATURE_PREFERRED_MODE)

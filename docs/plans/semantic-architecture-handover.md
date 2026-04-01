@@ -1,7 +1,7 @@
 # Semantic Architecture Handover
 
 - Date: 2026-04-02
-- Status: Foundation merged; fit semantic scoring implemented on PR 2 branch; fit rewire plan recorded; preference semantics still pending
+- Status: Foundation merged; fit semantic scoring and fit rewire implementation active on PR 2 branch; preference semantics still pending
 
 ## Recommended PR Split
 
@@ -44,11 +44,14 @@ What landed:
 Behavior:
 
 - `ScoringService` now routes fit evaluation through a dedicated `SemanticFitScorer` contract
-- the default semantic implementation on this branch is LLM-backed, with structured requirement/evidence judgments
+- hybrid retrieval is now enabled by default, with reciprocal-rank fusion over dense and lexical candidates
+- the default semantic implementation on this branch is cross-encoder mode with local/remote routing support
+- LLM semantic fit remains available as an advanced gated mode
 - threshold scoring remains available as the explicit fallback path
-- `semantic_fit_enabled` and `semantic_fit_fallback_to_threshold` are now live config controls
+- nested `matching.scorer.semantic_fit.*` config now controls fit-mode routing, recall depth, and serialization budgets
+- per-user feature entitlements now gate advanced fit modes
 - fit explanations are persisted during scoring and returned by the match explanation endpoint
-- normal user-facing match details now use semantic verdicts and summaries instead of raw `% similarity` badges
+- normal user-facing match details now use semantic verdicts and summaries instead of raw `% similarity` badges, and display fit mode/provider route/fallback state
 - public explanation summaries are deterministic from verdicts; model free-text is kept internal/debug only
 - fake AI service support was extended so tests can exercise semantic-fit behavior deterministically
 - the next canonical fit plan is now [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md)

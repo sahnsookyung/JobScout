@@ -28,11 +28,19 @@ class RetrievedCandidate:
 
 
 class MatcherService:
-    def __init__(self, resume_profiler: ResumeProfiler, config: MatcherConfig):
+    def __init__(
+        self,
+        resume_profiler: ResumeProfiler,
+        config: MatcherConfig,
+        *,
+        requirement_recall_top_k: int = 5,
+    ):
         self.resume_profiler = resume_profiler
         self.config = config
+        self.requirement_recall_top_k = max(1, int(requirement_recall_top_k))
         self.requirement_matcher = RequirementMatcher(
-            similarity_threshold=config.similarity_threshold
+            similarity_threshold=config.similarity_threshold,
+            default_top_k=self.requirement_recall_top_k,
         )
 
     def match_resume_two_stage(
@@ -43,6 +51,7 @@ class MatcherService:
         stop_event: Optional[threading.Event] = None,
         pre_extracted_resume: Optional[Any] = None,
         resume_fingerprint: Optional[str] = None,
+        owner_id: Optional[Any] = None,
     ) -> List[JobMatchPreliminary]:
         if not resume_fingerprint:
             raise ValueError("resume_fingerprint is required for matching")
@@ -94,6 +103,7 @@ class MatcherService:
                     candidate.job,
                     candidate.job_similarity,
                     resume_fingerprint,
+                    owner_id=owner_id,
                     retrieval_score=candidate.retrieval_score,
                     lexical_score=candidate.lexical_score,
                 )
@@ -258,11 +268,15 @@ class MatcherService:
         job_similarity: float,
         resume_fingerprint: str,
         *,
+        owner_id: Optional[Any] = None,
         retrieval_score: Optional[float] = None,
         lexical_score: Optional[float] = None,
     ) -> JobMatchPreliminary:
         matched, missing = self.requirement_matcher.match_requirements(
-            repo, job.requirements, resume_fingerprint
+            repo,
+            job.requirements,
+            resume_fingerprint,
+            top_k=self.requirement_recall_top_k,
         )
         return JobMatchPreliminary(
             job=job,
@@ -270,6 +284,7 @@ class MatcherService:
             requirement_matches=matched,
             missing_requirements=missing,
             resume_fingerprint=resume_fingerprint,
+            owner_id=owner_id,
             retrieval_score=float(retrieval_score if retrieval_score is not None else job_similarity or 0.0),
             lexical_score=lexical_score,
         )

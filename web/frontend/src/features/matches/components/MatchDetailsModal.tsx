@@ -24,6 +24,13 @@ type RetrievalExplanation = Readonly<{
     sources?: string[];
 }>;
 
+type FitDiagnosticsExplanation = Readonly<{
+    effective_fit_mode?: string;
+    provider_route?: string;
+    fallback_used?: boolean;
+    fallback_reason?: string;
+}>;
+
 function useEscapeKey(onClose: () => void, enabled: boolean) {
     useEffect(() => {
         if (!enabled) return;
@@ -194,8 +201,20 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
     const fitConfidence = typeof match.fit_confidence === 'number' ? match.fit_confidence : null;
     const scorerName = typeof match.fit_scorer?.name === 'string' ? match.fit_scorer.name : null;
     const retrieval = fitExplanation?.retrieval as RetrievalExplanation | undefined;
+    const diagnostics = fitExplanation?.diagnostics as FitDiagnosticsExplanation | undefined;
     const retrievalMode = retrieval?.mode === 'hybrid' ? 'Hybrid retrieval' : retrieval?.mode === 'dense' ? 'Dense retrieval' : null;
     const retrievalSources = Array.isArray(retrieval?.sources) ? retrieval.sources.join(' + ') : null;
+    const fitMode = typeof diagnostics?.effective_fit_mode === 'string'
+        ? diagnostics.effective_fit_mode.replaceAll('_', ' ')
+        : null;
+    const providerRoute = typeof diagnostics?.provider_route === 'string'
+        ? diagnostics.provider_route.replaceAll('_', ' ')
+        : null;
+    const fallbackMessage = typeof fitExplanation?.message === 'string'
+        ? fitExplanation.message
+        : diagnostics?.fallback_used
+            ? 'Semantic fit fallback was used for this match.'
+            : null;
 
     return (
         <section>
@@ -255,11 +274,26 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
                                 {retrievalMode}
                             </span>
                         )}
+                        {fitMode && (
+                            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                                {fitMode}
+                            </span>
+                        )}
+                        {providerRoute && (
+                            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                                {providerRoute}
+                            </span>
+                        )}
                     </div>
                     <p className="text-base font-medium text-gray-800 leading-relaxed">{semanticSummary}</p>
                     {retrievalSources && (
                         <p className="mt-3 text-sm font-medium text-blue-700">
                             Candidate generation used {retrievalSources}.
+                        </p>
+                    )}
+                    {fallbackMessage && (
+                        <p className="mt-3 text-sm font-medium text-amber-700">
+                            {fallbackMessage}
                         </p>
                     )}
                 </div>

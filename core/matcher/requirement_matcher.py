@@ -3,7 +3,7 @@ import logging
 
 from database.models import JobRequirementUnit
 from database.repository import JobRepository
-from core.matcher.models import RequirementMatchResult
+from core.matcher.models import RequirementEvidenceCandidate, RequirementMatchResult
 from etl.resume import ResumeEvidenceUnit
 
 logger = logging.getLogger(__name__)
@@ -12,18 +12,20 @@ logger = logging.getLogger(__name__)
 class RequirementMatcher:
     """Match resume evidence to job requirements using pgvector."""
 
-    def __init__(self, similarity_threshold: float):
+    def __init__(self, similarity_threshold: float, default_top_k: int = 1):
         self.similarity_threshold = similarity_threshold
+        self.default_top_k = max(1, int(default_top_k))
 
     def match_requirements(
         self,
         repo: JobRepository,
         job_requirements: List[JobRequirementUnit],
         resume_fingerprint: str,
-        top_k: int = 1,
+        top_k: Optional[int] = None,
     ) -> Tuple[List[RequirementMatchResult], List[RequirementMatchResult]]:
         matched: List[RequirementMatchResult] = []
         missing: List[RequirementMatchResult] = []
+        resolved_top_k = self.default_top_k if top_k is None else max(1, int(top_k))
 
         for req in job_requirements:
             req_id = getattr(req, "id", str(req))
@@ -34,14 +36,26 @@ class RequirementMatcher:
                 missing.append(self._missing(req))
                 continue
 
-            best = self._best_match(repo, embedding, resume_fingerprint, top_k)
-            if best is None:
+            matches = repo.find_best_evidence_for_requirement(
+                requirement_embedding=embedding,
+                resume_fingerprint=resume_fingerprint,
+                top_k=resolved_top_k,
+            )
+            if not matches:
                 logger.debug("Requirement %s: no evidence found, marking as missing", req_id)
                 missing.append(self._missing(req))
                 continue
 
-            best_row, similarity = best
+            best_row, similarity = matches[0]
             is_covered = similarity >= self.similarity_threshold
+            evidence_candidates = [
+                RequirementEvidenceCandidate(
+                    evidence=self._to_evidence(row),
+                    similarity=float(candidate_similarity or 0.0),
+                    rank=rank,
+                )
+                for rank, (row, candidate_similarity) in enumerate(matches, start=1)
+            ]
 
             logger.debug(
                 "Requirement %s: similarity=%.3f, threshold=%.3f, covered=%s",
@@ -56,6 +70,7 @@ class RequirementMatcher:
                 evidence=self._to_evidence(best_row),
                 similarity=similarity,
                 is_covered=is_covered,
+                evidence_candidates=evidence_candidates,
             )
             (matched if is_covered else missing).append(result)
 
@@ -73,20 +88,13 @@ class RequirementMatcher:
             return None
         return getattr(row, "embedding", None)
 
-    def _best_match(self, repo: JobRepository, requirement_embedding, resume_fingerprint: str, top_k: int):
-        matches = repo.find_best_evidence_for_requirement(
-            requirement_embedding=requirement_embedding,
-            resume_fingerprint=resume_fingerprint,
-            top_k=top_k,
-        )
-        return matches[0] if matches else None
-
     def _missing(self, req: JobRequirementUnit) -> RequirementMatchResult:
         return RequirementMatchResult(
             requirement=req,
             evidence=None,
             similarity=0.0,
             is_covered=False,
+            evidence_candidates=[],
         )
 
     def _to_evidence(self, best_row) -> ResumeEvidenceUnit:

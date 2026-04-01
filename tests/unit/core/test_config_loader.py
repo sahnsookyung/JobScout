@@ -2,7 +2,7 @@ import unittest
 import os
 import yaml
 from unittest.mock import patch, mock_open
-from core.config_loader import load_config, AppConfig, LlmConfig
+from core.config_loader import AppConfig, LlmConfig, ScorerConfig, load_config
 
 class TestConfigLoader(unittest.TestCase):
 
@@ -288,6 +288,59 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config.preferences.default_mode, "llm_judge")
         self.assertEqual(config.preferences.parser.model, "env-parser")
         self.assertEqual(config.etl.llm.extraction_model, "etl-model")
+
+    def test_semantic_fit_defaults_are_loaded(self):
+        config_yaml = yaml.dump({
+            "database": {"url": "test"},
+            "schedule": {"interval_seconds": 60},
+            "scrapers": []
+        })
+
+        with patch("builtins.open", mock_open(read_data=config_yaml)):
+            with patch("os.path.exists", return_value=True):
+                config = load_config("dummy")
+
+        self.assertTrue(config.matching.matcher.hybrid_retrieval_enabled)
+        self.assertTrue(config.matching.scorer.semantic_fit.enabled)
+        self.assertEqual(config.matching.scorer.semantic_fit.default_mode, "cross_encoder")
+        self.assertEqual(config.matching.scorer.semantic_fit.recall_top_k, 5)
+
+    def test_legacy_semantic_fit_flags_sync_into_nested_config(self):
+        scorer_config = ScorerConfig(
+            semantic_fit_enabled=False,
+            semantic_fit_fallback_to_threshold=False,
+        )
+
+        self.assertFalse(scorer_config.semantic_fit.enabled)
+        self.assertFalse(scorer_config.semantic_fit.threshold_fallback_enabled)
+        self.assertFalse(scorer_config.semantic_fit_enabled)
+        self.assertFalse(scorer_config.semantic_fit_fallback_to_threshold)
+
+    def test_semantic_fit_env_overrides_use_fit_namespace(self):
+        config_yaml = yaml.dump({
+            "database": {"url": "test"},
+            "schedule": {"interval_seconds": 60},
+            "scrapers": []
+        })
+
+        env = {
+            "FIT_SEMANTIC_DEFAULT_MODE": "llm",
+            "FIT_SEMANTIC_RECALL_TOP_K": "7",
+            "FIT_LLM_BASE_URL": "https://fit-llm.example/v1",
+            "FIT_LLM_API_KEY": "fit-key",
+            "FIT_LLM_MODEL": "fit-gpt",
+        }
+
+        with patch("builtins.open", mock_open(read_data=config_yaml)):
+            with patch("os.path.exists", return_value=True):
+                with patch.dict(os.environ, env, clear=False):
+                    config = load_config("dummy")
+
+        self.assertEqual(config.matching.scorer.semantic_fit.default_mode, "llm")
+        self.assertEqual(config.matching.scorer.semantic_fit.recall_top_k, 7)
+        self.assertEqual(config.matching.scorer.semantic_fit.llm.base_url, "https://fit-llm.example/v1")
+        self.assertEqual(config.matching.scorer.semantic_fit.llm.api_key, "fit-key")
+        self.assertEqual(config.matching.scorer.semantic_fit.llm.model, "fit-gpt")
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ from database.repositories.match import MatchRepository
 from database.repositories.embedding import EmbeddingRepository
 from database.repositories.candidate_preferences import CandidatePreferencesRepository
 from database.repositories.notification_settings import NotificationSettingsRepository
+from database.repositories.user_feature_entitlement import UserFeatureEntitlementRepository
 
 class JobRepository:
     def __init__(self, db: Session):
@@ -19,6 +20,7 @@ class JobRepository:
         self._embedding_repo: Optional[EmbeddingRepository] = None
         self._candidate_preferences_repo: Optional[CandidatePreferencesRepository] = None
         self._notification_settings_repo: Optional[NotificationSettingsRepository] = None
+        self._user_feature_entitlement_repo: Optional[UserFeatureEntitlementRepository] = None
 
     @property
     def job_post(self) -> JobPostRepository:
@@ -55,6 +57,12 @@ class JobRepository:
         if self._notification_settings_repo is None:
             self._notification_settings_repo = NotificationSettingsRepository(self.db)
         return self._notification_settings_repo
+
+    @property
+    def user_feature_entitlement(self) -> UserFeatureEntitlementRepository:
+        if self._user_feature_entitlement_repo is None:
+            self._user_feature_entitlement_repo = UserFeatureEntitlementRepository(self.db)
+        return self._user_feature_entitlement_repo
 
     def commit(self) -> None:
         self.db.commit()
@@ -386,6 +394,26 @@ class JobRepository:
 
     def get_structured_resume_by_fingerprint(self, resume_fingerprint: str) -> Any:
         return self.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
+
+    def get_entitlement(self, owner_id: Any, feature_key: str) -> Any:
+        return self.user_feature_entitlement.get_entitlement(owner_id, feature_key)
+
+    def upsert_entitlement(
+        self,
+        owner_id: Any,
+        feature_key: str,
+        *,
+        enabled: bool = True,
+        value_json: Optional[dict] = None,
+        source: Optional[str] = None,
+    ) -> Any:
+        return self.user_feature_entitlement.upsert_entitlement(
+            owner_id,
+            feature_key,
+            enabled=enabled,
+            value_json=value_json,
+            source=source,
+        )
 
     def find_similar_resume_sections(
         self,

@@ -114,10 +114,82 @@ class MatcherConfig(BaseModel):
     enabled: bool = True
     similarity_threshold: float = 0.5
     batch_size: Optional[int] = None
-    hybrid_retrieval_enabled: bool = False
+    hybrid_retrieval_enabled: bool = True
     lexical_limit: Optional[int] = None
     fusion_rank_constant: int = 60
     lexical_query_token_limit: int = 24
+
+
+class SemanticFitSerializationConfig(BaseModel):
+    requirement_text_max_chars: int = 500
+    evidence_text_max_chars: int = 2500
+    evidence_section_max_chars: int = 64
+    job_title_max_chars: int = 200
+    job_company_max_chars: int = 200
+    job_summary_max_chars: int = 1800
+
+
+class SemanticFitCrossEncoderLocalConfig(BaseModel):
+    enabled: bool = True
+    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    model_cache_path: Optional[str] = None
+    device_policy: Literal["cpu"] = "cpu"
+    max_batch_size: int = 32
+    max_concurrency: int = 1
+    timeout_ms: int = 2000
+
+
+class SemanticFitCrossEncoderRemoteConfig(BaseModel):
+    enabled: bool = False
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: str = "fit-cross-encoder-v1"
+    timeout_ms: int = 1500
+    max_batch_size: int = 64
+
+
+class SemanticFitCrossEncoderConfig(BaseModel):
+    route_policy: Literal["local", "remote", "auto"] = "local"
+    remote_promote_pair_count: int = 40
+    local: SemanticFitCrossEncoderLocalConfig = Field(
+        default_factory=SemanticFitCrossEncoderLocalConfig
+    )
+    remote: SemanticFitCrossEncoderRemoteConfig = Field(
+        default_factory=SemanticFitCrossEncoderRemoteConfig
+    )
+
+
+class SemanticFitLlmConfig(BaseModel):
+    enabled: bool = False
+    provider: Literal["openai_compatible"] = "openai_compatible"
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    api_secret: Optional[str] = None
+    headers: Optional[Dict[str, str]] = None
+    model: str = "gpt-4o-mini"
+    temperature: float = 0.0
+    timeout_seconds: int = 20
+    max_input_tokens: int = 4000
+
+
+class SemanticFitConfig(BaseModel):
+    enabled: bool = True
+    deploy_allowed_modes: List[Literal["cross_encoder", "llm"]] = Field(
+        default_factory=lambda: ["cross_encoder"]
+    )
+    baseline_allowed_modes: List[Literal["cross_encoder", "llm"]] = Field(
+        default_factory=lambda: ["cross_encoder"]
+    )
+    default_mode: Literal["cross_encoder", "llm"] = "cross_encoder"
+    threshold_fallback_enabled: bool = True
+    recall_top_k: int = 5
+    cross_encoder: SemanticFitCrossEncoderConfig = Field(
+        default_factory=SemanticFitCrossEncoderConfig
+    )
+    llm: SemanticFitLlmConfig = Field(default_factory=SemanticFitLlmConfig)
+    serialization: SemanticFitSerializationConfig = Field(
+        default_factory=SemanticFitSerializationConfig
+    )
 
 
 class ScorerConfig(BaseModel):
@@ -126,8 +198,9 @@ class ScorerConfig(BaseModel):
     enabled: bool = True
     weight_required: float = 0.7
     weight_preferred: float = 0.3
-    semantic_fit_enabled: bool = True
-    semantic_fit_fallback_to_threshold: bool = True
+    semantic_fit: SemanticFitConfig = Field(default_factory=SemanticFitConfig)
+    semantic_fit_enabled: Optional[bool] = None
+    semantic_fit_fallback_to_threshold: Optional[bool] = None
 
     penalty_missing_required: float = 15.0
     penalty_seniority_mismatch: float = 10.0
@@ -137,6 +210,17 @@ class ScorerConfig(BaseModel):
     wants_remote: bool = True
     min_salary: Optional[int] = None
     target_seniority: Optional[str] = None
+
+    def model_post_init(self, __context: Any) -> None:
+        del __context
+        if self.semantic_fit_enabled is not None:
+            self.semantic_fit.enabled = bool(self.semantic_fit_enabled)
+        if self.semantic_fit_fallback_to_threshold is not None:
+            self.semantic_fit.threshold_fallback_enabled = bool(
+                self.semantic_fit_fallback_to_threshold
+            )
+        self.semantic_fit_enabled = self.semantic_fit.enabled
+        self.semantic_fit_fallback_to_threshold = self.semantic_fit.threshold_fallback_enabled
 
 
 class MatchingConfig(BaseModel):
@@ -231,6 +315,17 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["PREFERENCES_LLM_JUDGE_API_KEY"], ["preferences", "llm_judge", "api_key"]),
     (["PREFERENCES_LLM_JUDGE_API_SECRET"], ["preferences", "llm_judge", "api_secret"]),
     (["PREFERENCES_LLM_JUDGE_MODEL"], ["preferences", "llm_judge", "model"]),
+    (["FIT_SEMANTIC_ENABLED"], ["matching", "scorer", "semantic_fit", "enabled"]),
+    (["FIT_SEMANTIC_DEFAULT_MODE"], ["matching", "scorer", "semantic_fit", "default_mode"]),
+    (["FIT_SEMANTIC_RECALL_TOP_K"], ["matching", "scorer", "semantic_fit", "recall_top_k"]),
+    (["FIT_CROSS_ENCODER_ROUTE_POLICY"], ["matching", "scorer", "semantic_fit", "cross_encoder", "route_policy"]),
+    (["FIT_CROSS_ENCODER_REMOTE_BASE_URL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "base_url"]),
+    (["FIT_CROSS_ENCODER_REMOTE_API_KEY"], ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "api_key"]),
+    (["FIT_CROSS_ENCODER_REMOTE_MODEL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "model"]),
+    (["FIT_LLM_BASE_URL"], ["matching", "scorer", "semantic_fit", "llm", "base_url"]),
+    (["FIT_LLM_API_KEY"], ["matching", "scorer", "semantic_fit", "llm", "api_key"]),
+    (["FIT_LLM_API_SECRET"], ["matching", "scorer", "semantic_fit", "llm", "api_secret"]),
+    (["FIT_LLM_MODEL"], ["matching", "scorer", "semantic_fit", "llm", "model"]),
     (["REDIS_URL"], ["notifications", "redis_url"]),
     (["BASE_URL"], ["notifications", "base_url"]),
     (["NOTIFICATION_RATE_LIMIT_MAX_WAIT"], ["notifications", "rate_limit_max_wait_seconds"]),
@@ -254,6 +349,7 @@ DEFAULT_HEADER_MAPPINGS: tuple[HeaderMapping, ...] = (
     ("PREFERENCES_PARSER_HEADER_ENV_VARS", ["preferences", "parser", "headers"]),
     ("PREFERENCES_SEMANTIC_RERANKER_HEADER_ENV_VARS", ["preferences", "semantic_reranker", "headers"]),
     ("PREFERENCES_LLM_JUDGE_HEADER_ENV_VARS", ["preferences", "llm_judge", "headers"]),
+    ("FIT_LLM_HEADER_ENV_VARS", ["matching", "scorer", "semantic_fit", "llm", "headers"]),
 )
 
 

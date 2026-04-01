@@ -467,6 +467,10 @@ describe('MatchDetailsModal', () => {
                     fit_scorer: { name: 'llm_semantic_fit', version: '1' },
                     fit_explanation: {
                         summary: 'Covered 2 of 3 required requirements (67%) and 1 of 1 preferred requirements (100%).',
+                        diagnostics: {
+                            effective_fit_mode: 'llm',
+                            provider_route: 'remote',
+                        },
                         retrieval: {
                             mode: 'hybrid',
                             sources: ['dense', 'lexical'],
@@ -481,8 +485,37 @@ describe('MatchDetailsModal', () => {
         expect(screen.getByText(/Confidence 84%/i)).toBeInTheDocument();
         expect(screen.getByText(/llm semantic fit/i)).toBeInTheDocument();
         expect(screen.getByText(/Hybrid retrieval/i)).toBeInTheDocument();
+        expect(screen.getByText(/^llm$/i)).toBeInTheDocument();
+        expect(screen.getAllByText(/^remote$/i)).toHaveLength(2);
         expect(screen.getByText(/Candidate generation used dense \+ lexical\./i)).toBeInTheDocument();
         expect(screen.getByText(/Covered 2 of 3 required requirements/i)).toBeInTheDocument();
+    });
+
+    it('shows fallback messaging when semantic fit falls back', () => {
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({
+                match: {
+                    fit_scorer: { name: 'threshold_semantic_fit', version: '2' },
+                    fit_explanation: {
+                        summary: 'Covered 1 of 2 required requirements (50%) and 0 of 0 preferred requirements (0%).',
+                        message: 'Semantic fit scorer unavailable; using threshold fallback.',
+                        diagnostics: {
+                            effective_fit_mode: 'threshold',
+                            provider_route: 'threshold',
+                            fallback_used: true,
+                        },
+                        retrieval: {
+                            mode: 'dense',
+                            sources: ['dense'],
+                        },
+                    },
+                },
+            }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText(/Semantic fit scorer unavailable; using threshold fallback\./i)).toBeInTheDocument();
+        expect(screen.getAllByText(/^threshold$/i)).toHaveLength(2);
     });
 
     it('shows job description when present', () => {
