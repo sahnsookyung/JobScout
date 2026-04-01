@@ -10,6 +10,14 @@ logger = logging.getLogger(__name__)
 
 
 class MatchRepository(BaseRepository):
+    def _invalidate_matches(self, matches: List[JobMatch], reason: str) -> int:
+        count = 0
+        for match in matches:
+            match.status = 'stale'
+            match.invalidated_reason = reason
+            count += 1
+        return count
+
     def get_existing_match(
         self,
         job_post_id: Any,
@@ -51,12 +59,7 @@ class MatchRepository(BaseRepository):
             JobMatch.status == 'active'
         )
         matches = self.db.execute(stmt).scalars().all()
-
-        count = 0
-        for match in matches:
-            match.status = 'stale'
-            match.invalidated_reason = reason
-            count += 1
+        count = self._invalidate_matches(matches, reason)
 
         if count > 0:
             logger.info(f"Invalidated {count} matches for job {job_post_id}: {reason}")
@@ -73,15 +76,36 @@ class MatchRepository(BaseRepository):
             JobMatch.status == 'active'
         )
         matches = self.db.execute(stmt).scalars().all()
-
-        count = 0
-        for match in matches:
-            match.status = 'stale'
-            match.invalidated_reason = reason
-            count += 1
+        count = self._invalidate_matches(matches, reason)
 
         if count > 0:
             logger.info(f"Invalidated {count} matches for resume fingerprint: {reason}")
+
+        return count
+
+    def invalidate_matches_for_resume_except(
+        self,
+        resume_fingerprint: str,
+        active_job_ids: List[Any] | set[Any] | frozenset[Any],
+        reason: str = "Resume changed",
+    ) -> int:
+        stmt = select(JobMatch).where(
+            JobMatch.resume_fingerprint == resume_fingerprint,
+            JobMatch.status == 'active',
+        )
+        matches = self.db.execute(stmt).scalars().all()
+        keep_ids = {str(job_id) for job_id in active_job_ids}
+        matches_to_invalidate = [
+            match for match in matches if str(match.job_post_id) not in keep_ids
+        ]
+        count = self._invalidate_matches(matches_to_invalidate, reason)
+
+        if count > 0:
+            logger.info(
+                "Invalidated %d stale active matches for resume fingerprint: %s",
+                count,
+                reason,
+            )
 
         return count
 
@@ -104,12 +128,7 @@ class MatchRepository(BaseRepository):
             JobMatch.status == 'active'
         )
         matches = self.db.execute(stmt).scalars().all()
-
-        count = 0
-        for match in matches:
-            match.status = 'stale'
-            match.invalidated_reason = reason
-            count += 1
+        count = self._invalidate_matches(matches, reason)
 
         if count > 0:
             logger.info(f"Batch invalidated {count} matches for {len(job_ids)} jobs: {reason}")

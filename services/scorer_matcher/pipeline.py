@@ -36,6 +36,13 @@ from services.scorer_matcher.candidate_preferences import (
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class SaveMatchesBatchResult:
+    saved_count: int
+    failed_count: int
+    active_job_ids: frozenset[str]
+
+
 @dataclass
 class MatchingPipelineResult:
     """Result of running the matching pipeline."""
@@ -320,8 +327,19 @@ def run_matching_pipeline(
         # Step 4: Save matches
         if status_callback:
             status_callback("saving_results")
-        _refresh_resume_match_set(resume_fingerprint)
-        saved_count = _save_matches_batch(match_dtos, resume_fingerprint, matching_config)
+        save_batch_result = _save_matches_batch(match_dtos, resume_fingerprint, matching_config)
+        saved_count = save_batch_result.saved_count
+        if save_batch_result.failed_count == 0:
+            _refresh_resume_match_set(
+                resume_fingerprint,
+                active_job_ids=save_batch_result.active_job_ids,
+            )
+        else:
+            logger.warning(
+                "Skipping active-match refresh for %s because %d match saves failed",
+                resume_fingerprint[:16],
+                save_batch_result.failed_count,
+            )
 
         save_result = _result_after_saving(
             match_dtos,
@@ -671,9 +689,11 @@ def _save_matches_batch(
     scored_match_dtos: List[MatchResultDTO],
     resume_fingerprint: str,
     matching_config,
-) -> int:
+) -> SaveMatchesBatchResult:
     """Save matches to database with per-match transactions."""
     saved_count = 0
+    failed_count = 0
+    active_job_ids: set[str] = set()
     for dto in scored_match_dtos:
         try:
             with job_uow() as repo:
@@ -686,31 +706,44 @@ def _save_matches_batch(
                         logger.info("Invalidated match for job %s due to content change", dto.job.id)
                         save_match_to_db(scored_match=dto, repo=repo, is_stale_replacement=True)
                         saved_count += 1
+                        active_job_ids.add(str(dto.job.id))
                         continue
 
                     if not matching_config.recalculate_existing:
                         logger.debug("Skipping existing match for job %s", dto.job.id)
+                        active_job_ids.add(str(dto.job.id))
                         continue
 
                 save_match_to_db(scored_match=dto, repo=repo, is_stale_replacement=False)
                 saved_count += 1
+                active_job_ids.add(str(dto.job.id))
         except Exception:
             logger.exception("Failed saving match job_id=%s", dto.job.id)
+            failed_count += 1
 
-    return saved_count
+    return SaveMatchesBatchResult(
+        saved_count=saved_count,
+        failed_count=failed_count,
+        active_job_ids=frozenset(active_job_ids),
+    )
 
 
-def _refresh_resume_match_set(resume_fingerprint: str) -> int:
-    """Mark current active matches stale so the latest run becomes authoritative."""
+def _refresh_resume_match_set(
+    resume_fingerprint: str,
+    *,
+    active_job_ids: frozenset[str] = frozenset(),
+) -> int:
+    """Mark prior active matches stale after a successful refreshed save batch."""
     with job_uow() as repo:
-        invalidated_count = repo.invalidate_matches_for_resume(
+        invalidated_count = repo.invalidate_matches_for_resume_except(
             resume_fingerprint,
+            active_job_ids=active_job_ids,
             reason="Matching pipeline rerun refreshed active match set",
         )
 
     if invalidated_count:
         logger.info(
-            "Marked %d existing matches stale before saving refreshed results for %s",
+            "Marked %d prior matches stale after refreshing active results for %s",
             invalidated_count,
             resume_fingerprint[:16],
         )

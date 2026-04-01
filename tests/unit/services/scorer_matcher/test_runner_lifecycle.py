@@ -5,7 +5,11 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from services.scorer_matcher.pipeline import MatchingPipelineResult, run_matching_pipeline
+from services.scorer_matcher.pipeline import (
+    MatchingPipelineResult,
+    SaveMatchesBatchResult,
+    run_matching_pipeline,
+)
 
 
 def _uow(repo, on_exit=None):
@@ -182,7 +186,14 @@ def test_run_matching_pipeline_uses_latest_ready_resume_and_reaches_save_boundar
     ), patch(
         "services.scorer_matcher.pipeline.ResumeSchema.model_validate",
         return_value=SimpleNamespace(profile=SimpleNamespace()),
-    ), patch("services.scorer_matcher.pipeline._save_matches_batch", return_value=0):
+    ), patch(
+        "services.scorer_matcher.pipeline._save_matches_batch",
+        return_value=SaveMatchesBatchResult(
+            saved_count=0,
+            failed_count=0,
+            active_job_ids=frozenset(),
+        ),
+    ):
         result = run_matching_pipeline(ctx, status_callback=steps.append)
 
     assert result.success is True
@@ -227,7 +238,14 @@ def test_run_matching_pipeline_materializes_ready_resume_before_uow_closes():
     ), patch(
         "services.scorer_matcher.pipeline.ResumeSchema.model_validate",
         return_value=SimpleNamespace(profile=SimpleNamespace()),
-    ), patch("services.scorer_matcher.pipeline._save_matches_batch", return_value=0):
+    ), patch(
+        "services.scorer_matcher.pipeline._save_matches_batch",
+        return_value=SaveMatchesBatchResult(
+            saved_count=0,
+            failed_count=0,
+            active_job_ids=frozenset(),
+        ),
+    ):
         result = run_matching_pipeline(ctx)
 
     assert result.success is True

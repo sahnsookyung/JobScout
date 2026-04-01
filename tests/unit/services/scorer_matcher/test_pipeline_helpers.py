@@ -17,6 +17,7 @@ from services.scorer_matcher.pipeline import (
     _result_after_saving,
     _run_matching_and_scoring,
     _run_scorer_service,
+    SaveMatchesBatchResult,
     run_matching_pipeline,
 )
 
@@ -360,7 +361,14 @@ class TestRunMatchingPipeline:
 
     @patch("services.scorer_matcher.pipeline.send_notifications", return_value=1)
     @patch("services.scorer_matcher.pipeline._refresh_resume_match_set", return_value=0)
-    @patch("services.scorer_matcher.pipeline._save_matches_batch", return_value=1)
+    @patch(
+        "services.scorer_matcher.pipeline._save_matches_batch",
+        return_value=SaveMatchesBatchResult(
+            saved_count=1,
+            failed_count=0,
+            active_job_ids=frozenset({"job-1"}),
+        ),
+    )
     @patch("services.scorer_matcher.pipeline._run_matching_and_scoring", return_value=[_dto()])
     @patch(
         "services.scorer_matcher.pipeline._load_pipeline_resume",
@@ -382,11 +390,18 @@ class TestRunMatchingPipeline:
 
         assert result.success is True
         assert result.notified_count == 1
-        mock_refresh.assert_called_once_with("fp-123")
+        mock_refresh.assert_called_once_with("fp-123", active_job_ids=frozenset({"job-1"}))
         mock_notify.assert_called_once()
 
     @patch("services.scorer_matcher.pipeline._refresh_resume_match_set", return_value=2)
-    @patch("services.scorer_matcher.pipeline._save_matches_batch", return_value=0)
+    @patch(
+        "services.scorer_matcher.pipeline._save_matches_batch",
+        return_value=SaveMatchesBatchResult(
+            saved_count=0,
+            failed_count=0,
+            active_job_ids=frozenset(),
+        ),
+    )
     @patch("services.scorer_matcher.pipeline._run_matching_and_scoring", return_value=[])
     @patch(
         "services.scorer_matcher.pipeline._load_pipeline_resume",
@@ -408,5 +423,40 @@ class TestRunMatchingPipeline:
         assert result.success is True
         assert result.matches_count == 0
         assert result.saved_count == 0
-        mock_refresh.assert_called_once_with("fp-123")
+        mock_refresh.assert_called_once_with("fp-123", active_job_ids=frozenset())
         mock_save.assert_called_once_with([], "fp-123", ctx.config.matching)
+
+    @patch("services.scorer_matcher.pipeline._refresh_resume_match_set")
+    @patch(
+        "services.scorer_matcher.pipeline._save_matches_batch",
+        return_value=SaveMatchesBatchResult(
+            saved_count=1,
+            failed_count=1,
+            active_job_ids=frozenset({"job-1"}),
+        ),
+    )
+    @patch("services.scorer_matcher.pipeline._run_matching_and_scoring", return_value=[_dto()])
+    @patch(
+        "services.scorer_matcher.pipeline._load_pipeline_resume",
+        return_value=({"profile": {}}, "fp-123", False, None),
+    )
+    def test_skips_refresh_when_any_match_save_fails(
+        self,
+        _mock_resume,
+        _mock_matching,
+        mock_save,
+        mock_refresh,
+    ):
+        ctx = MagicMock()
+        ctx.config.matching = SimpleNamespace(enabled=True, recalculate_existing=True)
+        ctx.notification_service = None
+
+        result = run_matching_pipeline(ctx)
+
+        assert result.success is True
+        assert result.saved_count == 1
+        save_args = mock_save.call_args.args
+        assert len(save_args[0]) == 1
+        assert save_args[0][0].job.id == "job-1"
+        assert save_args[1:] == ("fp-123", ctx.config.matching)
+        mock_refresh.assert_not_called()

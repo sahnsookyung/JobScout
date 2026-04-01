@@ -408,6 +408,18 @@ class JobRepository:
     ) -> int:
         return self.match.invalidate_matches_for_resume(resume_fingerprint, reason)
 
+    def invalidate_matches_for_resume_except(
+        self,
+        resume_fingerprint: str,
+        active_job_ids: List[Any],
+        reason: str = "Resume changed",
+    ) -> int:
+        return self.match.invalidate_matches_for_resume_except(
+            resume_fingerprint,
+            active_job_ids,
+            reason,
+        )
+
     def get_stale_matches(self, limit: int = 100) -> List[JobMatch]:
         return self.match.get_stale_matches(limit)
 

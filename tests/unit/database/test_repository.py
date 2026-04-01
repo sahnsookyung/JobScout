@@ -441,6 +441,17 @@ class TestMatchDelegation:
         result = repo.invalidate_matches_for_resume("fp-1")
         assert result == 1
 
+    def test_invalidate_matches_for_resume_except(self):
+        repo, _ = make_repo()
+        repo.match.invalidate_matches_for_resume_except = MagicMock(return_value=2)
+        result = repo.invalidate_matches_for_resume_except("fp-1", ["job-1"])
+        repo.match.invalidate_matches_for_resume_except.assert_called_once_with(
+            "fp-1",
+            ["job-1"],
+            "Resume changed",
+        )
+        assert result == 2
+
     def test_get_stale_matches(self):
         repo, _ = make_repo()
         repo.match.get_stale_matches = MagicMock(return_value=["s1"])
