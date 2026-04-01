@@ -14,7 +14,7 @@ import os
 import json
 import threading
 import traceback
-from typing import Optional, List
+from typing import Optional
 
 from core.config_loader import load_config
 from core.app_context import AppContext
@@ -100,25 +100,6 @@ def load_resume_data(resume_file_path: str) -> Optional[dict]:
     except Exception as e:
         logger.error(f"Unexpected error loading resume: {e}")
         return None
-
-
-def load_user_wants_data(wants_file_path: str) -> List[str]:
-    """Load user wants from a file.
-    Each line is a separate want.
-    """
-    logger.info(f"Loading user wants from {wants_file_path}")
-    try:
-        with open(wants_file_path, 'r') as f:
-            wants = [line.strip() for line in f if line.strip()]
-            return wants
-    except FileNotFoundError:
-        logger.warning(f"User wants file not found: {wants_file_path}")
-        logger.warning("→ Create one: cp wants.example.txt " + wants_file_path)
-        logger.warning("→ Add one preference per line in natural language")
-        return []
-    except Exception as e:
-        logger.error(f"Error reading user wants file: {e}")
-        return []
 
 
 def run_job_etl(ctx: AppContext, stop_event: threading.Event) -> None:

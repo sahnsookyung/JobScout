@@ -17,6 +17,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from database.models import (
+    CandidatePreferences,
     JobMatch,
     NotificationTracker,
     ResumeEvidenceUnitEmbedding,
@@ -467,6 +468,22 @@ def _update_notification_settings(base_url: str, payload: dict) -> dict:
     return response.json()
 
 
+def _get_candidate_preferences(base_url: str) -> dict:
+    response = requests.get(f"{base_url}/api/v1/candidate-preferences", timeout=15)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _update_candidate_preferences(base_url: str, payload: dict) -> dict:
+    response = requests.put(
+        f"{base_url}/api/v1/candidate-preferences",
+        json=payload,
+        timeout=15,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def _send_notification_settings_test(base_url: str, channel_type: str) -> dict:
     response = requests.post(
         f"{base_url}/api/v1/notification-settings/test",
@@ -691,6 +708,144 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
         matches = session.execute(select(JobMatch)).scalars().all()
         assert matches, "Expected persisted matches after matching completed"
         assert any(match.notified for match in matches)
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def test_candidate_preferences_round_trip_updates_matching_behavior(
+    split_stack: SplitStackContext,
+):
+    reset_split_stack_state(split_stack.database_url)
+    seeded_jobs = seed_matcher_ready_jobs(split_stack.database_url)
+
+    initial_preferences = _get_candidate_preferences(split_stack.base_url)
+    assert initial_preferences["remote_mode"] == "any"
+    assert initial_preferences["revision"] >= 0
+
+    onsite_preferences = _update_candidate_preferences(
+        split_stack.base_url,
+        {
+            "remote_mode": "onsite",
+            "target_locations": ["On-site"],
+            "visa_sponsorship_required": False,
+            "salary_min": None,
+            "employment_types": [],
+            "soft_preferences": "",
+        },
+    )
+    assert onsite_preferences["remote_mode"] == "onsite"
+    assert onsite_preferences["target_locations"] == ["On-site"]
+    assert onsite_preferences["revision"] >= initial_preferences["revision"] + 1
+
+    diagnostics = lambda: _stack_diagnostics(split_stack)
+    upload_payload = _upload_resume(split_stack.base_url, VALID_RESUME_FIXTURE)
+    resume_state = wait_for_resume_terminal(
+        split_stack.base_url,
+        upload_payload["task_id"],
+        timeout_s=UPLOAD_TIMEOUT_SECONDS,
+        diagnostics=diagnostics,
+    )
+    assert resume_state["status"] == "completed", resume_state
+
+    run_response = requests.post(
+        f"{split_stack.base_url}/api/pipeline/run-matching",
+        timeout=30,
+    )
+    assert run_response.status_code == 200, run_response.text
+    run_payload = run_response.json()
+    assert run_payload["success"] is True, run_payload
+
+    matching_state = wait_for_matching_terminal(
+        split_stack.base_url,
+        run_payload["task_id"],
+        timeout_s=MATCHING_TIMEOUT_SECONDS,
+        diagnostics=diagnostics,
+    )
+    assert matching_state["status"] == "completed", matching_state
+
+    engine, session = _session_for(split_stack.database_url)
+    try:
+        upload = session.execute(
+            select(ResumeUpload).where(ResumeUpload.id == upload_payload["upload_id"])
+        ).scalar_one()
+        fingerprint = upload.resume_fingerprint
+
+        blocked_matches = session.execute(
+            select(JobMatch).where(
+                JobMatch.resume_fingerprint == fingerprint,
+                JobMatch.status == "active",
+            )
+        ).scalars().all()
+        blocked_job_ids = {str(match.job_post_id) for match in blocked_matches}
+        assert seeded_jobs.positive_job_id not in blocked_job_ids
+
+        stored_preferences = session.execute(
+            select(CandidatePreferences).where(
+                CandidatePreferences.owner_id == uuid.UUID(DEV_USER_ID)
+            )
+        ).scalar_one()
+        assert stored_preferences.remote_mode == "onsite"
+        assert list(stored_preferences.target_locations or []) == ["On-site"]
+    finally:
+        session.close()
+        engine.dispose()
+
+    remote_preferences = _update_candidate_preferences(
+        split_stack.base_url,
+        {
+            "remote_mode": "remote",
+            "target_locations": ["Remote"],
+            "visa_sponsorship_required": False,
+            "salary_min": None,
+            "employment_types": [],
+            "soft_preferences": "Python backend FastAPI microservices mentorship",
+        },
+    )
+    assert remote_preferences["remote_mode"] == "remote"
+    assert remote_preferences["target_locations"] == ["Remote"]
+    assert remote_preferences["soft_preferences"] == (
+        "Python backend FastAPI microservices mentorship"
+    )
+    assert remote_preferences["revision"] >= onsite_preferences["revision"] + 1
+
+    rerun_response = requests.post(
+        f"{split_stack.base_url}/api/pipeline/run-matching",
+        timeout=30,
+    )
+    assert rerun_response.status_code == 200, rerun_response.text
+    rerun_payload = rerun_response.json()
+    assert rerun_payload["success"] is True, rerun_payload
+
+    rerun_state = wait_for_matching_terminal(
+        split_stack.base_url,
+        rerun_payload["task_id"],
+        timeout_s=MATCHING_TIMEOUT_SECONDS,
+        diagnostics=diagnostics,
+    )
+    assert rerun_state["status"] == "completed", rerun_state
+    assert (rerun_state.get("saved_count") or 0) >= 1, rerun_state
+
+    engine, session = _session_for(split_stack.database_url)
+    try:
+        matches = session.execute(
+            select(JobMatch).where(
+                JobMatch.resume_fingerprint == fingerprint,
+                JobMatch.status == "active",
+            )
+        ).scalars().all()
+        assert matches, "Expected a persisted match after enabling remote preferences"
+
+        matched_job_ids = {str(match.job_post_id) for match in matches}
+        assert seeded_jobs.positive_job_id in matched_job_ids
+        assert seeded_jobs.negative_job_id not in matched_job_ids
+
+        positive_match = next(
+            match for match in matches if str(match.job_post_id) == seeded_jobs.positive_job_id
+        )
+        fit_components = positive_match.fit_components or {}
+        assert fit_components.get("soft_preference_bonus", 0) > 0
+        assert "python" in (fit_components.get("soft_preference_overlap") or [])
     finally:
         session.close()
         engine.dispose()

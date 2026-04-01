@@ -550,7 +550,6 @@ class TestFullPipelineIntegration(unittest.TestCase):
                                 job_post=job_post,
                                 overall_score=float(scored_match.overall_score),
                                 fit_score=float(scored_match.fit_score),
-                                want_score=float(scored_match.want_score) if scored_match.want_score else None,
                                 required_coverage=float(scored_match.jd_required_coverage),
                                 apply_url=job_post.company_url_direct
                             )

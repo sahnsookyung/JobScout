@@ -25,7 +25,6 @@ def _uow(repo, on_exit=None):
 def _matching_config():
     return SimpleNamespace(
         enabled=True,
-        user_wants_file=None,
         matcher=SimpleNamespace(),
         scorer=SimpleNamespace(),
         result_policy=SimpleNamespace(),
@@ -251,7 +250,7 @@ def test_run_matching_pipeline_does_not_fall_back_to_configured_resume_file_when
     select_repo.get_latest_ready_resume_fingerprint.return_value = None
     select_repo.get_latest_resume_processing_state.return_value = None
 
-    with patch("services.scorer_matcher.pipeline.os.path.exists", return_value=True), patch(
+    with patch(
         "services.scorer_matcher.pipeline.job_uow",
         side_effect=[_uow(select_repo)],
     ):

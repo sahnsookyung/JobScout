@@ -45,7 +45,6 @@ vi.mock('@/utils/constants', () => ({
     SORT_OPTIONS: [
         { value: 'overall', label: 'Overall Score' },
         { value: 'fit', label: 'Fit Score' },
-        { value: 'want', label: 'Want Score' },
     ],
 }));
 
@@ -92,7 +91,6 @@ function makeMatch(overrides: Record<string, any> = {}) {
         is_hidden: false,
         overall_score: 85,
         fit_score: 80,
-        want_score: 75,
         required_coverage: 0.9,
         match_type: 'vector_match',
         ...overrides,
@@ -107,8 +105,6 @@ describe('MatchFilters', () => {
         onStatusChange: vi.fn(),
         remoteOnly: false,
         onRemoteOnlyChange: vi.fn(),
-        showWantScore: false,
-        onShowWantScoreChange: vi.fn(),
         sortBy: 'overall' as const,
         onSortByChange: vi.fn(),
         showHidden: false,
@@ -128,7 +124,6 @@ describe('MatchFilters', () => {
         render(<MatchFilters {...defaultProps} />);
         expect(screen.getByText('Overall Score')).toBeInTheDocument();
         expect(screen.getByText('Fit Score')).toBeInTheDocument();
-        expect(screen.getByText('Want Score')).toBeInTheDocument();
     });
 
     it('calls onStatusChange when status select changes', () => {
@@ -150,11 +145,6 @@ describe('MatchFilters', () => {
         expect(screen.getByText('Remote Only')).toBeInTheDocument();
     });
 
-    it('renders Show Want Score toggle', () => {
-        render(<MatchFilters {...defaultProps} />);
-        expect(screen.getByText('Show Want Score')).toBeInTheDocument();
-    });
-
     it('renders Show Hidden toggle', () => {
         render(<MatchFilters {...defaultProps} />);
         expect(screen.getByText('Show Hidden')).toBeInTheDocument();
@@ -168,19 +158,11 @@ describe('MatchFilters', () => {
         expect(onRemoteOnlyChange).toHaveBeenCalledWith(true);
     });
 
-    it('calls onShowWantScoreChange when Show Want Score toggled', () => {
-        const onShowWantScoreChange = vi.fn();
-        render(<MatchFilters {...defaultProps} onShowWantScoreChange={onShowWantScoreChange} />);
-        const checkboxes = screen.getAllByRole('checkbox');
-        fireEvent.click(checkboxes[1]);
-        expect(onShowWantScoreChange).toHaveBeenCalledWith(true);
-    });
-
     it('calls onShowHiddenChange when Show Hidden toggled', () => {
         const onShowHiddenChange = vi.fn();
         render(<MatchFilters {...defaultProps} onShowHiddenChange={onShowHiddenChange} />);
         const checkboxes = screen.getAllByRole('checkbox');
-        fireEvent.click(checkboxes[2]);
+        fireEvent.click(checkboxes[1]);
         expect(onShowHiddenChange).toHaveBeenCalledWith(true);
     });
 
@@ -252,22 +234,6 @@ describe('MatchCard', () => {
     it('shows Eye icon when match is visible', () => {
         render(<MatchCard match={makeMatch({ is_hidden: false })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
         expect(screen.getByTestId('eye')).toBeInTheDocument();
-    });
-
-    it('shows want score bar when showWantScore=true and want_score present', () => {
-        render(
-            <MatchCard match={makeMatch({ want_score: 75 })} onSelect={vi.fn()} showWantScore />,
-            { wrapper: makeQueryWrapper() }
-        );
-        expect(screen.getByText('Want Match')).toBeInTheDocument();
-    });
-
-    it('hides want score bar when showWantScore=false', () => {
-        render(
-            <MatchCard match={makeMatch({ want_score: 75 })} onSelect={vi.fn()} showWantScore={false} />,
-            { wrapper: makeQueryWrapper() }
-        );
-        expect(screen.queryByText('Want Match')).not.toBeInTheDocument();
     });
 
     it('renders formatted score value', () => {
@@ -368,7 +334,7 @@ describe('MatchList', () => {
         mockUseMatches.mockReturnValue({ data: { matches: [] }, isLoading: false, error: null, refetch: vi.fn() });
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
         const checkboxes = screen.getAllByRole('checkbox');
-        fireEvent.click(checkboxes[2]); // Show Hidden toggle
+        fireEvent.click(checkboxes[1]); // Show Hidden toggle
         await waitFor(() => {
             expect(localStorage.getItem('jobscout_show_hidden')).toBe('true');
         });
@@ -379,7 +345,7 @@ describe('MatchList', () => {
         mockUseMatches.mockReturnValue({ data: { matches: [] }, isLoading: false, error: null, refetch: vi.fn() });
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
         const checkboxes = screen.getAllByRole('checkbox');
-        expect(checkboxes[2]).toBeChecked();
+        expect(checkboxes[1]).toBeChecked();
     });
 });
 
@@ -404,7 +370,6 @@ function makeModalData(overrides: Record<string, any> = {}) {
         match: {
             overall_score: 90,
             fit_score: 88,
-            want_score: 82,
             required_coverage: 0.95,
             preferred_coverage: 0.85,
             matched_requirements_count: 9,
@@ -552,15 +517,6 @@ describe('MatchDetailsModal', () => {
         });
         render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
         expect(screen.queryByText('Exceptional Match!')).not.toBeInTheDocument();
-    });
-
-    it('does not show Want score when want_score is null', () => {
-        mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ match: { overall_score: 85, fit_score: 80, want_score: null } }),
-            isLoading: false,
-        });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.queryByText('Want')).not.toBeInTheDocument();
     });
 
     it('renders required requirements section', () => {

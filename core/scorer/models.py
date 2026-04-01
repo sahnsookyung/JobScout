@@ -10,18 +10,13 @@ from database.models import JobPost
 
 @dataclass
 class ScoredJobMatch:
-    """Complete scored match result with Fit/Want/Overall scores."""
+    """Complete scored match result with fit and final overall scores."""
     job: JobPost
 
     fit_score: float = 0.0
-    want_score: float = 0.0
     overall_score: float = 0.0
 
     fit_components: Dict[str, Any] = field(default_factory=dict)
-    want_components: Dict[str, Any] = field(default_factory=dict)
-
-    fit_weight: float = 0.0
-    want_weight: float = 0.0
 
     base_score: float = 0.0
     penalties: float = 0.0

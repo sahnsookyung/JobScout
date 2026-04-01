@@ -96,15 +96,10 @@ def apply_preset(preset_name: str):
 @router.get("/config/scoring-weights", response_model=ScoringWeightsResponse)
 def get_scoring_weights():
     """
-    Get current scoring weights configuration.
-    
-    Returns Fit/Want weights and facet weights for Want score calculation.
+    Get the current final-score source.
     """
-    config = get_config()
-    scorer_config = config.matching.scorer
+    get_config()
     
     return ScoringWeightsResponse(
-        fit_weight=scorer_config.fit_weight,
-        want_weight=scorer_config.want_weight,
-        facet_weights=scorer_config.facet_weights
+        fit_score_source="fit-only"
     )

@@ -105,7 +105,7 @@ def job_content():
         ),
         match=MatchInfo(
             overall_score=85.5, fit_score=80.0,
-            want_score=75.0, required_coverage=0.85,
+            required_coverage=0.85,
         ),
         requirements=RequirementsInfo(total=10, matched=8, key_matches=[]),
         apply_url='https://example.com/apply',

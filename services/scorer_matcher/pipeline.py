@@ -5,7 +5,6 @@ running vector matching and scoring, saving results, and dispatching
 notifications.
 """
 
-import os
 import time
 import logging
 import threading
@@ -27,6 +26,11 @@ from etl.resume import ResumeProfiler
 from etl.resume.embedding_store import JobRepositoryAdapter
 from database.uow import job_uow
 from notification.orchestrator import send_notifications
+from services.scorer_matcher.candidate_preferences import (
+    apply_candidate_preference_filters,
+    apply_soft_preference_reranking,
+    load_candidate_preferences,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -42,20 +46,6 @@ class MatchingPipelineResult:
     error: Optional[str] = None
     execution_time: float = 0.0
     cancelled: bool = False
-
-
-def load_user_wants_data(wants_file_path: str) -> List[str]:
-    """Load user wants from a file. Each line is a separate want."""
-    logger.info("Loading user wants from %s", wants_file_path)
-    try:
-        with open(wants_file_path, 'r') as f:
-            return [line.strip() for line in f if line.strip()]
-    except FileNotFoundError:
-        logger.warning("User wants file not found: %s", wants_file_path)
-        return []
-    except Exception as e:
-        logger.error("Error reading user wants file: %s", e)
-        return []
 
 
 def _load_resume_from_db(resume_fingerprint: str) -> Optional[dict]:
@@ -318,13 +308,10 @@ def run_matching_pipeline(
         if error_result:
             return error_result
 
-        # Step 2: Load user wants embeddings
-        user_want_embeddings = _load_user_wants_embeddings(matching_config, ctx.ai_service)
-
-        # Step 3: Run matching and scoring
+        # Step 2: Run matching and scoring
         match_dtos = _run_matching_and_scoring(
             ctx, resume_data, resume_fingerprint, should_re_extract,
-            matching_config, user_want_embeddings, stop_event, status_callback,
+            matching_config, stop_event, status_callback, owner_id=owner_id,
         )
         matching_result = _result_after_matching(match_dtos, stop_event)
         if matching_result:
@@ -333,6 +320,7 @@ def run_matching_pipeline(
         # Step 4: Save matches
         if status_callback:
             status_callback("saving_results")
+        _refresh_resume_match_set(resume_fingerprint)
         saved_count = _save_matches_batch(match_dtos, resume_fingerprint, matching_config)
 
         save_result = _result_after_saving(
@@ -374,48 +362,6 @@ def run_matching_pipeline(
             success=False, matches_count=0, saved_count=0, notified_count=0,
             error=str(e), execution_time=execution_time,
         )
-
-
-# ---------------------------------------------------------------------------
-# Embeddings
-# ---------------------------------------------------------------------------
-
-def _load_user_wants_embeddings(matching_config, ai_service) -> List[List[float]]:
-    """Load user wants from file and generate embeddings.
-
-    Embeddings are generated in a single batched call when possible,
-    falling back to individual calls with per-item error isolation.
-    """
-    if not matching_config.user_wants_file:
-        return []
-
-    wants_file = matching_config.user_wants_file
-    if not os.path.isabs(wants_file):
-        wants_file = os.path.join(os.getcwd(), wants_file)
-    if not os.path.exists(wants_file):
-        logger.warning("User wants file not found: %s", wants_file)
-        return []
-
-    user_wants = load_user_wants_data(wants_file)
-    if not user_wants:
-        return []
-
-    logger.info("Loaded %d user wants from %s", len(user_wants), matching_config.user_wants_file)
-
-    if hasattr(ai_service, 'generate_embeddings'):
-        try:
-            return ai_service.generate_embeddings(user_wants)
-        except Exception as e:
-            logger.warning("Batch embedding failed (%s), falling back to per-item", e)
-
-    embeddings = []
-    for want_text in user_wants:
-        try:
-            embeddings.append(ai_service.generate_embedding(want_text))
-        except Exception as e:
-            logger.warning("Failed to embed want '%s': %s — skipping", want_text[:60], e)
-    return embeddings
-
 
 # ---------------------------------------------------------------------------
 # Matching & scoring internals
@@ -472,30 +418,17 @@ def _run_vector_matching(matcher, repo, resume_data, stop_event, pre_extracted_r
     return preliminary_matches
 
 
-def _run_scorer_service(scorer, preliminary_matches, matching_config, user_want_embeddings, job_facet_embeddings_map, stop_event):
+def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event):
     """Run rule-based scoring."""
-    logger.info("=== MATCHING STEP 2: Running ScorerService (Rule-based Scoring) ===")
+    logger.info("=== MATCHING STEP 2: Running ScorerService (Fit-first scoring) ===")
     result_policy = _resolve_result_policy(matching_config)
 
-    common_kwargs = {
-        "preliminary_matches": preliminary_matches,
-        "result_policy": result_policy,
-        "match_type": "requirements_only",
-        "stop_event": stop_event,
-    }
-
-    if user_want_embeddings:
-        logger.info("Using Fit/Want scoring with 'user wants' embeddings")
-        scored_matches = scorer.score_matches(
-            **common_kwargs,
-            user_want_embeddings=user_want_embeddings,
-            job_facet_embeddings_map=job_facet_embeddings_map,
-        )
-    else:
-        logger.info("Using Fit-only scoring")
-        scored_matches = scorer.score_matches(**common_kwargs)
-
-    return scored_matches
+    return scorer.score_matches(
+        preliminary_matches=preliminary_matches,
+        result_policy=result_policy,
+        match_type="requirements_only",
+        stop_event=stop_event,
+    )
 
 
 def _resolve_result_policy(matching_config):
@@ -565,17 +498,6 @@ def _run_preliminary_matching(
     return preliminary_matches
 
 
-def _build_job_facet_embeddings_map(repo, preliminary_matches) -> Dict[str, Any]:
-    """Load facet embeddings once per unique job id."""
-    job_facet_embeddings_map: Dict[str, Any] = {}
-    for preliminary in preliminary_matches:
-        job_id = str(preliminary.job.id)
-        if job_id in job_facet_embeddings_map:
-            continue
-        job_facet_embeddings_map[job_id] = repo.get_job_facet_embeddings(preliminary.job.id)
-    return job_facet_embeddings_map
-
-
 def _log_match_results(match_dtos: List[MatchResultDTO]) -> None:
     """Log the top match summary for observability."""
     if not match_dtos:
@@ -584,9 +506,9 @@ def _log_match_results(match_dtos: List[MatchResultDTO]) -> None:
     logger.info("Top 5 Matches:")
     for i, dto in enumerate(match_dtos[:5], 1):
         logger.info(
-            "  %d. %s @ %s: overall=%.1f/100 (fit=%.1f, want=%.1f)",
+            "  %d. %s @ %s: overall=%.1f/100 (fit=%.1f)",
             i, dto.job.title, dto.job.company,
-            dto.overall_score, dto.fit_score, dto.want_score,
+            dto.overall_score, dto.fit_score,
         )
 
 
@@ -597,9 +519,9 @@ def _run_matching_and_scoring(
     resume_fingerprint: str,
     should_re_extract: bool,
     matching_config,
-    user_want_embeddings: List[List[float]],
     stop_event: threading.Event,
     status_callback: Optional[Callable[[str], None]],
+    owner_id: Optional[str] = None,
 ) -> List[MatchResultDTO]:
     """Run the matching and scoring pipeline within a UOW context."""
     if status_callback:
@@ -618,6 +540,7 @@ def _run_matching_and_scoring(
             resume_fingerprint,
             should_re_extract,
         )
+        candidate_preferences = load_candidate_preferences(repo, owner_id)
 
         step_elapsed = time.time() - preparation_start
         logger.info("RESUME ETL Step 1 completed: Resume prepared in %.2fs", step_elapsed)
@@ -635,19 +558,25 @@ def _run_matching_and_scoring(
             should_re_extract,
             resume_fingerprint,
         )
+        preliminary_matches = apply_candidate_preference_filters(
+            preliminary_matches,
+            candidate_preferences,
+        )
 
         if stop_event.is_set():
             return []
 
         scoring_start = time.time()
-        job_facet_embeddings_map = _build_job_facet_embeddings_map(repo, preliminary_matches)
 
         if status_callback:
             status_callback("scoring")
         scorer = ScoringService(repo=repo, config=matching_config.scorer)
         scored_matches = _run_scorer_service(
-            scorer, preliminary_matches, matching_config,
-            user_want_embeddings, job_facet_embeddings_map, stop_event,
+            scorer, preliminary_matches, matching_config, stop_event,
+        )
+        scored_matches = apply_soft_preference_reranking(
+            scored_matches,
+            candidate_preferences,
         )
 
         match_dtos = _convert_matches_to_dtos(scored_matches)
@@ -715,7 +644,6 @@ def _convert_matches_to_dtos(scored_matches) -> List[MatchResultDTO]:
             ),
             overall_score=match.overall_score or 0.0,
             fit_score=match.fit_score or 0.0,
-            want_score=match.want_score or 0.0,
             job_similarity=match.job_similarity or 0.0,
             jd_required_coverage=match.jd_required_coverage,
             jd_preferences_coverage=match.jd_preferences_coverage,
@@ -723,15 +651,12 @@ def _convert_matches_to_dtos(scored_matches) -> List[MatchResultDTO]:
             missing_requirements=[_missing_req_to_dto(r) for r in match.missing_requirements],
             resume_fingerprint=match.resume_fingerprint,
             fit_components=match.fit_components,
-            want_components=match.want_components,
             base_score=match.base_score,
             penalties=match.penalties,
             penalty_details=penalty_details_from_orm(
                 match.penalty_details,
                 total_penalties=match.penalties,
             ),
-            fit_weight=match.fit_weight,
-            want_weight=match.want_weight,
             match_type=match.match_type,
         )
         match_dtos.append(dto)
@@ -773,3 +698,20 @@ def _save_matches_batch(
             logger.exception("Failed saving match job_id=%s", dto.job.id)
 
     return saved_count
+
+
+def _refresh_resume_match_set(resume_fingerprint: str) -> int:
+    """Mark current active matches stale so the latest run becomes authoritative."""
+    with job_uow() as repo:
+        invalidated_count = repo.invalidate_matches_for_resume(
+            resume_fingerprint,
+            reason="Matching pipeline rerun refreshed active match set",
+        )
+
+    if invalidated_count:
+        logger.info(
+            "Marked %d existing matches stale before saving refreshed results for %s",
+            invalidated_count,
+            resume_fingerprint[:16],
+        )
+    return invalidated_count

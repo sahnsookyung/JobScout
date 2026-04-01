@@ -256,7 +256,6 @@ def _build_email_job_card(job: Dict[str, Any], metadata: Dict[str, Any]) -> str:
     company = html.escape(job_info.get('company', 'Unknown'))
     overall_score = match_info.get('overall_score', 0)
     fit_score = match_info.get('fit_score', 0)
-    want_score = match_info.get('want_score')
     total = req_info.get('total', 0)
     matched = req_info.get('matched', 0)
 
@@ -271,11 +270,6 @@ def _build_email_job_card(job: Dict[str, Any], metadata: Dict[str, Any]) -> str:
             <div class="job-detail"><strong>🎯 Fit:</strong> {fit_score:.0f}%</div>
 """,
     ]
-
-    if want_score:
-        html_parts.append(
-            f'            <div class="job-detail"><strong>💡 Want:</strong> {want_score:.0f}%</div>\n'
-        )
 
     html_parts.append(
         f'            <div class="job-detail"><strong>✅ Requirements:</strong> {matched}/{total} matched</div>\n'
@@ -331,7 +325,6 @@ def _build_telegram_job_lines(job: Dict[str, Any], metadata: Dict[str, Any]) -> 
     job_info, match_info, req_info = _notification_job_parts(job)
     total = req_info.get('total', 0)
     matched = req_info.get('matched', 0)
-    want_score = match_info.get('want_score')
 
     lines = [
         f"🎯 <b>{_escape_html(job_info.get('title', 'Unknown Position'))}</b>",
@@ -341,9 +334,6 @@ def _build_telegram_job_lines(job: Dict[str, Any], metadata: Dict[str, Any]) -> 
         f"📊 <b>{match_info.get('overall_score', 0):.0f}%</b> Match",
         f"   Fit: {match_info.get('fit_score', 0):.0f}%",
     ]
-
-    if want_score:
-        lines.append(f"   Want: {want_score:.0f}%")
 
     lines.append(f"✅ {matched}/{total} requirements matched")
     lines.extend(_build_telegram_job_links(job, metadata))

@@ -19,7 +19,6 @@ uv run python -m pytest tests/ -v -m "not db and not redis and not integration a
 uv run python -m pytest \
   tests/integration/test_full_pipeline.py \
   tests/integration/test_resume_pipeline_lifecycle.py \
-  tests/integration/test_user_wants_pipeline.py \
   tests/integration/services/test_services_lifespan.py \
   -v
 
@@ -55,7 +54,6 @@ uv run python -m pytest tests/integration/test_resume_pipeline_lifecycle.py -v
 
 - `tests/integration/test_full_pipeline.py`: repository-backed end-to-end pipeline coverage
 - `tests/integration/test_resume_pipeline_lifecycle.py`: latest-upload eligibility and stale-result lifecycle rules
-- `tests/integration/test_user_wants_pipeline.py`: preference-aware matching pipeline coverage
 - `tests/integration/services/test_services_lifespan.py`: microservice startup/shutdown behavior
 - `tests/integration/test_split_stack_resume_flow.py`: real Dockerized upload -> extract/embed -> matching happy/failure flow with deterministic fake AI
 

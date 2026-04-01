@@ -115,12 +115,8 @@ def _extract_scores(scored_match: ScoredMatch):
         return {
             'job_similarity': scored_match.job_similarity,
             'fit_score': scored_match.fit_score,
-            'want_score': scored_match.want_score,
             'overall_score': scored_match.overall_score,
             'fit_components': scored_match.fit_components,
-            'want_components': scored_match.want_components,
-            'fit_weight': scored_match.fit_weight,
-            'want_weight': scored_match.want_weight,
             'base_score': scored_match.base_score,
             'penalties': scored_match.penalties,
             'penalty_details': scored_match.penalty_details,
@@ -132,12 +128,8 @@ def _extract_scores(scored_match: ScoredMatch):
         return {
             'job_similarity': scored_match.job_similarity,
             'fit_score': scored_match.fit_score,
-            'want_score': scored_match.want_score,
             'overall_score': scored_match.overall_score,
             'fit_components': _to_native_types(getattr(scored_match, 'fit_components', {})),
-            'want_components': _to_native_types(getattr(scored_match, 'want_components', {})),
-            'fit_weight': getattr(scored_match, 'fit_weight', 0.7),
-            'want_weight': getattr(scored_match, 'want_weight', 0.3),
             'base_score': scored_match.base_score,
             'penalties': scored_match.penalties,
             'penalty_details': {
@@ -155,12 +147,8 @@ def _build_match_values(scores, matched_reqs, missing_reqs, job_content_hash):
     return {
         'job_similarity': _to_float(scores['job_similarity']),
         'fit_score': _to_float(scores['fit_score']),
-        'want_score': _to_float(scores['want_score']),
         'overall_score': _to_float(scores['overall_score']),
         'fit_components': _to_native_types(scores['fit_components']),
-        'want_components': _to_native_types(scores['want_components']),
-        'fit_weight': scores['fit_weight'],
-        'want_weight': scores['want_weight'],
         'base_score': _to_float(scores['base_score']),
         'penalties': _to_float(scores['penalties']),
         'penalty_details': scores['penalty_details'],
@@ -177,12 +165,8 @@ def _build_match_values(scores, matched_reqs, missing_reqs, job_content_hash):
 def _apply_match_values(match_record: JobMatch, values) -> None:
     match_record.job_similarity = values['job_similarity']
     match_record.fit_score = values['fit_score']
-    match_record.want_score = values['want_score']
     match_record.overall_score = values['overall_score']
     match_record.fit_components = values['fit_components']
-    match_record.want_components = values['want_components']
-    match_record.fit_weight = values['fit_weight']
-    match_record.want_weight = values['want_weight']
     match_record.base_score = values['base_score']
     match_record.penalties = values['penalties']
     match_record.penalty_details = values['penalty_details']
@@ -222,12 +206,8 @@ def _create_match_record(scored_match: ScoredMatch, values, is_hidden: bool) -> 
         resume_fingerprint=scored_match.resume_fingerprint,
         job_similarity=values['job_similarity'],
         fit_score=values['fit_score'],
-        want_score=values['want_score'],
         overall_score=values['overall_score'],
         fit_components=values['fit_components'],
-        want_components=values['want_components'],
-        fit_weight=values['fit_weight'],
-        want_weight=values['want_weight'],
         base_score=values['base_score'],
         penalties=values['penalties'],
         penalty_details=values['penalty_details'],
@@ -367,6 +347,11 @@ def save_match_to_db(
 
     repo.db.commit()
 
-    logger.info(f"Saved match for job {job_id}: fit={scores['fit_score']:.1f}, want={scores['want_score']:.1f}, overall={scores['overall_score']:.1f}")
+    logger.info(
+        "Saved match for job %s: fit=%.1f, overall=%.1f",
+        job_id,
+        scores['fit_score'],
+        scores['overall_score'],
+    )
 
     return match_record

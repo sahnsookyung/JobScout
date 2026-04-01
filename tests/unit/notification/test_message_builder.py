@@ -52,7 +52,6 @@ def _make_mock_job_match(**kwargs):
     defaults = {
         'overall_score': 80.0,
         'fit_score': 75.0,
-        'want_score': None,
         'required_coverage': 0.8,
         'total_requirements': 5,
         'matched_requirements_count': 4,
@@ -79,7 +78,6 @@ class TestJobNotificationContent:
             match=MatchInfo(
                 overall_score=85.0,
                 fit_score=80.0,
-                want_score=75.0,
                 required_coverage=0.85
             ),
             requirements=RequirementsInfo(
@@ -115,7 +113,6 @@ class TestJobNotificationContent:
 
         assert content.job.location is None
         assert content.job.salary is None
-        assert content.match.want_score is None
         assert content.apply_url is None
 
     def test_job_notification_content_validation(self):
@@ -147,7 +144,6 @@ class TestNotificationMessageBuilderMarkdown:
             match=MatchInfo(
                 overall_score=85.0,
                 fit_score=80.0,
-                want_score=75.0,
                 required_coverage=0.85
             ),
             requirements=RequirementsInfo(
@@ -166,31 +162,8 @@ class TestNotificationMessageBuilderMarkdown:
         assert '💰 $120k - $150k' in markdown
         assert '📊 **85%** Match' in markdown
         assert 'Fit: 80%' in markdown
-        assert 'Want: 75%' in markdown
         assert '✅ **8/10** requirements matched' in markdown
         assert '[Apply Here]' in markdown
-
-    def test_to_markdown_no_want_score(self):
-        """Test markdown without want score."""
-        content = JobNotificationContent(
-            job=JobInfo(
-                title='Developer',
-                company='Company',
-                location='New York, NY',
-                is_remote=False
-            ),
-            match=MatchInfo(
-                overall_score=75.0,
-                fit_score=70.0,
-                want_score=None,
-                required_coverage=0.75
-            ),
-            requirements=RequirementsInfo(total=5, matched=4)
-        )
-
-        markdown = NotificationMessageBuilder.to_markdown(content)
-
-        assert 'Want:' not in markdown
 
     def test_to_markdown_truncates_long_description(self):
         """Test markdown truncates long descriptions."""
@@ -604,7 +577,6 @@ class TestBuildFromDict:
             'match': {
                 'overall_score': 90.0,
                 'fit_score': 88.0,
-                'want_score': 85.0,
                 'required_coverage': 0.9
             },
             'requirements': {
@@ -644,7 +616,6 @@ class TestBuildFromDict:
         content = NotificationMessageBuilder.build_from_dict(data)
 
         assert content.job.title == 'Developer'
-        assert content.match.want_score is None
         assert content.apply_url is None
 
 
@@ -669,7 +640,6 @@ class TestBuildFromORM:
         job_match = _make_mock_job_match(
             overall_score=88.0,
             fit_score=85.0,
-            want_score=82.0,
             required_coverage=0.88,
             total_requirements=10,
             matched_requirements_count=9
@@ -683,7 +653,6 @@ class TestBuildFromORM:
         assert content.job.title == 'Python Engineer'
         assert content.job.company == 'StartupXYZ'
         assert content.match.overall_score == 88.0
-        assert content.match.want_score == 82.0
         assert content.apply_url == 'https://example.com/apply'
 
     def test_build_from_orm_null_scores(self):
@@ -693,7 +662,6 @@ class TestBuildFromORM:
         job_match = _make_mock_job_match(
             overall_score=None,
             fit_score=None,
-            want_score=None,
             required_coverage=None,
             total_requirements=None,
             matched_requirements_count=None
@@ -703,7 +671,6 @@ class TestBuildFromORM:
 
         assert content.match.overall_score == 0.0
         assert content.match.fit_score == 0.0
-        assert content.match.want_score is None
 
     def test_build_from_orm_missing_fields(self):
         """Test building from ORM with missing fields."""
@@ -712,7 +679,6 @@ class TestBuildFromORM:
         job_match = _make_mock_job_match(
             overall_score=75.0,
             fit_score=70.0,
-            want_score=None,
             required_coverage=0.75,
             total_requirements=5,
             matched_requirements_count=4
@@ -746,14 +712,12 @@ class TestBuildNotificationContent:
             job_post=job_post,
             overall_score=92.0,
             fit_score=90.0,
-            want_score=88.0,
             required_coverage=0.92,
             apply_url='https://example.com/apply'
         )
 
         assert content.job.title == 'Software Engineer'
         assert content.match.overall_score == 92.0
-        assert content.match.want_score == 88.0
         assert content.apply_url == 'https://example.com/apply'
 
 

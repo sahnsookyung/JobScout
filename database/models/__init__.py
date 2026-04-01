@@ -1,6 +1,7 @@
 from .base import Base
 from .tenant import Tenant
 from .job import JobPost, JobPostSource, JobRequirementUnit, JobRequirementUnitEmbedding, JobBenefit, JobFacetEmbedding
+from .candidate_preferences import CandidatePreferences
 from .resume import (
     ResumeSectionEmbedding,
     ResumeEvidenceUnitEmbedding,
@@ -22,7 +23,6 @@ from .resume import (
     generate_file_fingerprint,
     generate_resume_fingerprint,
 )
-from .user_wants import UserWants
 from .match import JobMatch, JobMatchRequirement
 from .notification import NotificationTracker
 from .notification_settings import UserNotificationSettings, UserNotificationChannel
@@ -38,6 +38,7 @@ __all__ = [
     'JobRequirementUnitEmbedding',
     'JobBenefit',
     'JobFacetEmbedding',
+    'CandidatePreferences',
     'ResumeSectionEmbedding',
     'ResumeEvidenceUnitEmbedding',
     'StructuredResume',
@@ -57,7 +58,6 @@ __all__ = [
     'DEFAULT_LEGACY_OWNER_ID',
     'generate_file_fingerprint',
     'generate_resume_fingerprint',
-    'UserWants',
     'JobMatch',
     'JobMatchRequirement',
     'NotificationTracker',

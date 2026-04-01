@@ -10,7 +10,6 @@ from core.llm.interfaces import LLMProvider
 from core.utils import JobFingerprinter
 from pydantic import ValidationError
 from core.llm.schema_models import JobExtraction, ResumeSchema
-from core.scorer.want_score import FACET_KEYS
 from database.models import (
     RESUME_PROCESSING_EMBEDDING,
     RESUME_PROCESSING_EXTRACTED,
@@ -19,11 +18,21 @@ from database.models import (
     RESUME_PROCESSING_READY,
     generate_file_fingerprint,
 )
+from etl.canonical_summary import CanonicalJobSummaryGenerator
 from etl.resume import ResumeProfiler, ResumeParser
 from etl.resume.embedding_store import JobRepositoryAdapter
 
 logger = logging.getLogger(__name__)
 DEFAULT_LEGACY_OWNER_ID = "00000000-0000-0000-0000-000000000001"
+FACET_KEYS = [
+    "remote_flexibility",
+    "compensation",
+    "learning_growth",
+    "company_culture",
+    "work_life_balance",
+    "tech_stack",
+    "visa_sponsorship",
+]
 
 
 def _effective_owner_id(owner_id: Optional[Any]) -> Any:
@@ -60,6 +69,7 @@ class JobETLService:
 
     def __init__(self, ai_service: LLMProvider):
         self.ai = ai_service
+        self.canonical_summary_generator = CanonicalJobSummaryGenerator()
 
     def ingest_one(self, repo: JobRepository, job_data: Dict[str, Any], site_name: str) -> None:
         """Ingest a single raw job from scrapers.
@@ -118,6 +128,11 @@ class JobETLService:
                 data = extraction_result
         else:
             data = {}
+
+        canonical_summary = self.canonical_summary_generator.generate(job, data)
+        data["canonical_job_summary"] = canonical_summary.text
+        data["canonical_job_summary_version"] = canonical_summary.version
+        data["canonical_job_summary_hash"] = canonical_summary.content_hash
 
         repo.update_job_metadata(job, data)
         repo.update_content_metadata(job.id, data)
@@ -220,16 +235,20 @@ class JobETLService:
             job: JobPost ORM instance (loaded within this UoW session)
         """
         parts = []
+        text = getattr(job, "canonical_job_summary", None) or ""
 
-        if job.requirements:
+        if not text and isinstance(getattr(job, "raw_payload", None), dict):
+            text = job.raw_payload.get("ai_job_summary", "")
+
+        if not text and job.requirements:
             parts.extend([r.text for r in job.requirements[:20]])
 
-        if job.benefits:
+        if not text and job.benefits:
             parts.extend([b.text for b in job.benefits[:10]])
 
-        if parts:
+        if not text and parts:
             text = " | ".join(parts)
-        else:
+        elif not text:
             logger.warning(f"Job {job.id} has no requirements/benefits, using description for summary_embedding")
             text = job.description[:5000] if job.description else ""
 

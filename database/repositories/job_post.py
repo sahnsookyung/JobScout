@@ -111,6 +111,18 @@ class JobPostRepository(BaseRepository):
 
             if content_changed:
                 job_post.content_hash = new_content_hash
+                if job_post.description:
+                    job_post.is_extracted = False
+                    job_post.extraction_status = 'pending'
+                    job_post.extraction_last_error = None
+                    job_post.extraction_next_retry_at = None
+                    job_post.is_embedded = False
+                    job_post.embedding_status = 'pending'
+                    job_post.embedding_last_error = None
+                    job_post.embedding_next_retry_at = None
+                    job_post.summary_embedding = None
+                    job_post.canonical_job_summary = None
+                    job_post.canonical_job_summary_hash = None
                 logger.debug(f"Updated content hash for job {job_post_id}: {new_content_hash[:16]}...")
 
     def update_timestamp(self, job_post: JobPost) -> None:
@@ -222,6 +234,10 @@ class JobPostRepository(BaseRepository):
         return None, None
 
     def save_requirements(self, job_post: JobPost, requirements: List[Dict[str, Any]]) -> None:
+        self.db.execute(
+            delete(JobRequirementUnit).where(JobRequirementUnit.job_post_id == job_post.id)
+        )
+
         req_type_mapping = {
             'must_have': 'required',
             'nice_to_have': 'preferred',
@@ -256,6 +272,10 @@ class JobPostRepository(BaseRepository):
         self.db.flush()
 
     def save_benefits(self, job_post: JobPost, benefits: List[Dict[str, Any]]) -> None:
+        self.db.execute(
+            delete(JobBenefit).where(JobBenefit.job_post_id == job_post.id)
+        )
+
         category_mapping = {
             'health_insurance': 'health_insurance',
             'pension': 'pension',
@@ -310,6 +330,12 @@ class JobPostRepository(BaseRepository):
 
         if metadata.get('job_summary'):
             new_payload['ai_job_summary'] = metadata['job_summary']
+        if metadata.get('canonical_job_summary'):
+            job_post.canonical_job_summary = metadata['canonical_job_summary']
+        if metadata.get('canonical_job_summary_version') is not None:
+            job_post.canonical_job_summary_version = metadata['canonical_job_summary_version']
+        if metadata.get('canonical_job_summary_hash'):
+            job_post.canonical_job_summary_hash = metadata['canonical_job_summary_hash']
         if metadata.get('thought_process'):
             new_payload['ai_thought_process'] = metadata['thought_process']
         if metadata.get('visa_sponsorship_available') is not None:

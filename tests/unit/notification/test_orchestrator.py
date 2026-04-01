@@ -45,7 +45,6 @@ def _dto(score):
     return SimpleNamespace(
         overall_score=score,
         fit_score=score,
-        want_score=0.0,
         jd_required_coverage=1.0,
         job=job,
     )
@@ -381,7 +380,6 @@ class TestSendMatchNotification:
             job=SimpleNamespace(id=job_id),
             overall_score=85.0,
             fit_score=80.0,
-            want_score=75.0,
             jd_required_coverage=0.9,
         )
 

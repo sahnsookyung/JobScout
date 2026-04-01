@@ -60,7 +60,6 @@ class MatchResultDTO:
     job: JobMatchDTO
     overall_score: float
     fit_score: float
-    want_score: float
     job_similarity: float
     jd_required_coverage: float
     jd_preferences_coverage: float
@@ -68,12 +67,9 @@ class MatchResultDTO:
     missing_requirements: List[RequirementMatchDTO]
     resume_fingerprint: str
     fit_components: dict = field(default_factory=dict)
-    want_components: dict = field(default_factory=dict)
     base_score: float = 0.0
     penalties: float = 0.0
     penalty_details: dict = field(default_factory=dict)
-    fit_weight: float = 0.7
-    want_weight: float = 0.3
     match_type: str = "requirements_only"
 
 

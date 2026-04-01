@@ -1,7 +1,6 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict
 import logging
 import threading
-import numpy as np
 from sqlalchemy import select
 
 from database.repository import JobRepository
@@ -10,7 +9,7 @@ from core.config_loader import ScorerConfig, ResultPolicy
 from core.matcher import JobMatchPreliminary
 from core.scorer.models import ScoredJobMatch
 from core.scorer import penalties as penalty_calculations
-from core.scorer import fit_score, want_score
+from core.scorer import fit_score
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +26,8 @@ def _prefetch_total_years(preliminary_matches: List[JobMatchPreliminary], db) ->
     return {fp: (float(years) if years is not None else None) for fp, years in rows}
 
 
-def _blend_overall(config: ScorerConfig, fit: float, want: Optional[float]) -> float:
-    if want is None:
-        return min(100.0, fit)
-    return min(100.0, config.fit_weight * fit + config.want_weight * want)
+def _blend_overall(fit: float) -> float:
+    return min(100.0, fit)
 
 
 class ScoringService:
@@ -42,8 +39,6 @@ class ScoringService:
         self,
         preliminary_matches: List[JobMatchPreliminary],
         result_policy: Optional[ResultPolicy] = None,
-        user_want_embeddings: Optional[List[np.ndarray]] = None,
-        job_facet_embeddings_map: Optional[Dict[str, Dict[str, np.ndarray]]] = None,
         match_type: str = "requirements_only",
         stop_event: Optional[threading.Event] = None,
     ) -> List[ScoredJobMatch]:
@@ -60,8 +55,6 @@ class ScoringService:
                 preliminary=pm,
                 match_type=match_type,
                 candidate_total_years=years_by_fp.get(pm.resume_fingerprint),
-                user_want_embeddings=user_want_embeddings,
-                job_facet_embeddings=(job_facet_embeddings_map or {}).get(str(pm.job.id)),
             ))
 
         scored.sort(key=lambda x: x.overall_score, reverse=True)
@@ -80,8 +73,6 @@ class ScoringService:
         preliminary: JobMatchPreliminary,
         match_type: str = "requirements_only",
         candidate_total_years: Optional[float] = None,
-        user_want_embeddings: Optional[List[np.ndarray]] = None,
-        job_facet_embeddings: Optional[Dict[str, np.ndarray]] = None,
     ) -> ScoredJobMatch:
         del candidate_total_years  # Deprecated no-op retained for backwards compatibility.
 
@@ -102,28 +93,14 @@ class ScoringService:
             config=self.config,
         )
 
-        want_value = None
-        want_components = {}
-        if user_want_embeddings and job_facet_embeddings:
-            want_value, want_components = want_score.calculate_want_score(
-                user_want_embeddings=user_want_embeddings,
-                job_facet_embeddings=job_facet_embeddings,
-                facet_weights=self.config.facet_weights,
-                job_id=str(job.id),
-            )
-
-        overall = _blend_overall(self.config, fit_value, want_value)
+        overall = _blend_overall(fit_value)
 
         return ScoredJobMatch(
             job=job,
             fit_score=fit_value,
-            want_score=want_value or 0.0,
             overall_score=overall,
             fit_components=fit_components,
-            want_components=want_components or {},
-            fit_weight=self.config.fit_weight,
-            want_weight=self.config.want_weight,
-            base_score=fit_components.get("blended", 0.0) * 100.0,
+            base_score=fit_components.get("core", 0.0) * 100.0,
             penalties=fit_penalties,
             jd_required_coverage=fit_components["required_coverage"],
             jd_preferences_coverage=fit_components["preferred_coverage"],

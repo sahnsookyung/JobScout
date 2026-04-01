@@ -12,7 +12,7 @@ from database.repositories.job_post import JobPostRepository
 from database.repositories.resume import ResumeRepository
 from database.repositories.match import MatchRepository
 from database.repositories.embedding import EmbeddingRepository
-from database.repositories.user_wants import UserWantsRepository
+from database.repositories.candidate_preferences import CandidatePreferencesRepository
 
 
 def make_repo():
@@ -59,13 +59,13 @@ class TestJobRepositoryProperties:
         repo, _ = make_repo()
         assert repo.embedding is repo.embedding
 
-    def test_user_wants_returns_user_wants_repository(self):
+    def test_candidate_preferences_returns_candidate_preferences_repository(self):
         repo, _ = make_repo()
-        assert isinstance(repo.user_wants, UserWantsRepository)
+        assert isinstance(repo.candidate_preferences, CandidatePreferencesRepository)
 
-    def test_user_wants_cached(self):
+    def test_candidate_preferences_cached(self):
         repo, _ = make_repo()
-        assert repo.user_wants is repo.user_wants
+        assert repo.candidate_preferences is repo.candidate_preferences
 
     def test_all_sub_repos_use_same_db(self):
         mock_db = MagicMock()
@@ -454,23 +454,16 @@ class TestMatchDelegation:
 
 
 # ---------------------------------------------------------------------------
-# user_wants delegation
+# candidate preferences repository property
 # ---------------------------------------------------------------------------
 
-class TestUserWantsDelegation:
-    def test_save_user_wants(self):
+class TestCandidatePreferencesRepositoryProperty:
+    def test_get_preferences(self):
         repo, _ = make_repo()
-        repo.user_wants.save_user_wants = MagicMock(return_value="wants-rec")
-        result = repo.save_user_wants("user-1", "remote work", [0.1, 0.2])
-        repo.user_wants.save_user_wants.assert_called_once_with("user-1", "remote work", [0.1, 0.2], None)
-        assert result == "wants-rec"
-
-    def test_get_user_wants_embeddings(self):
-        repo, _ = make_repo()
-        repo.user_wants.get_user_wants_embeddings = MagicMock(return_value=[[0.1]])
-        result = repo.get_user_wants_embeddings("user-1")
-        repo.user_wants.get_user_wants_embeddings.assert_called_once_with("user-1")
-        assert result == [[0.1]]
+        repo.candidate_preferences.get_preferences = MagicMock(return_value="prefs")
+        result = repo.candidate_preferences.get_preferences("user-1")
+        repo.candidate_preferences.get_preferences.assert_called_once_with("user-1")
+        assert result == "prefs"
 
 
 # ---------------------------------------------------------------------------

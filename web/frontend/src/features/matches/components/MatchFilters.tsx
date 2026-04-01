@@ -2,15 +2,13 @@
 import React from 'react';
 import type { MatchStatus, SortBy } from '@/types/api';
 import { MATCH_STATUSES, SORT_OPTIONS } from '@/utils/constants';
-import { Filter, SortDesc, Laptop, Eye, Star } from 'lucide-react';
+import { Filter, SortDesc, Laptop, Eye } from 'lucide-react';
 
 interface MatchFiltersProps {
     status: MatchStatus;
     onStatusChange: (status: MatchStatus) => void;
     remoteOnly: boolean;
     onRemoteOnlyChange: (value: boolean) => void;
-    showWantScore: boolean;
-    onShowWantScoreChange: (value: boolean) => void;
     sortBy: SortBy;
     onSortByChange: (value: SortBy) => void;
     showHidden: boolean;
@@ -22,8 +20,6 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
     onStatusChange,
     remoteOnly,
     onRemoteOnlyChange,
-    showWantScore,
-    onShowWantScoreChange,
     sortBy,
     onSortByChange,
     showHidden,
@@ -90,12 +86,6 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
                                 label="Remote Only"
                                 checked={remoteOnly}
                                 onChange={onRemoteOnlyChange}
-                            />
-                            <ToggleOption
-                                icon={<Star className="w-4 h-4" />}
-                                label="Show Want Score"
-                                checked={showWantScore}
-                                onChange={onShowWantScoreChange}
                             />
                             <ToggleOption
                                 icon={<Eye className="w-4 h-4" />}

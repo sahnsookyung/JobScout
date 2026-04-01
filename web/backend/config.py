@@ -18,6 +18,7 @@ from core.config_loader import (
     JobSpyConfig,
     MatchingConfig,
     NotificationConfig,
+    PreferencesConfig,
     load_config_data,
 )
 
@@ -45,6 +46,7 @@ class AppConfig(BaseModel):
     etl: Optional[EtlConfig] = None
     jobspy: Optional[JobSpyConfig] = None
     matching: MatchingConfig = Field(default_factory=MatchingConfig)
+    preferences: PreferencesConfig = Field(default_factory=PreferencesConfig)
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
 
 

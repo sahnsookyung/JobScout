@@ -57,6 +57,35 @@ class LlmConfig(BaseModel):
     embedding_api_secret: Optional[str] = None
     embedding_headers: Optional[Dict[str, str]] = None
 
+class PreferenceModelConfig(BaseModel):
+    enabled: bool = True
+    provider: str = "openai"
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    api_secret: Optional[str] = None
+    headers: Optional[Dict[str, str]] = None
+    model: Optional[str] = None
+    temperature: float = 0.0
+    timeout_seconds: int = 30
+    max_input_tokens: int = 2048
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1024
+    embedding_base_url: Optional[str] = None
+    embedding_api_key: Optional[str] = None
+    embedding_api_secret: Optional[str] = None
+    embedding_headers: Optional[Dict[str, str]] = None
+
+class PreferencesConfig(BaseModel):
+    default_mode: Literal["semantic_rerank", "llm_judge"] = "semantic_rerank"
+    allowed_modes: List[Literal["semantic_rerank", "llm_judge"]] = Field(
+        default_factory=lambda: ["semantic_rerank"]
+    )
+    parser: PreferenceModelConfig = Field(default_factory=PreferenceModelConfig)
+    semantic_reranker: PreferenceModelConfig = Field(default_factory=PreferenceModelConfig)
+    llm_judge: PreferenceModelConfig = Field(
+        default_factory=lambda: PreferenceModelConfig(enabled=False)
+    )
+
 
 class ResumeConfig(BaseModel):
     """Configuration for resume processing in ETL."""
@@ -87,29 +116,12 @@ class MatcherConfig(BaseModel):
     batch_size: Optional[int] = None
 
 
-class FacetWeights(BaseModel):
-    """Weights for each facet in Want score calculation."""
-
-    remote_flexibility: float = 0.15
-    compensation: float = 0.20
-    learning_growth: float = 0.15
-    company_culture: float = 0.15
-    work_life_balance: float = 0.15
-    tech_stack: float = 0.10
-    visa_sponsorship: float = 0.10
-
-
 class ScorerConfig(BaseModel):
     """Configuration for the scoring stage."""
 
     enabled: bool = True
     weight_required: float = 0.7
     weight_preferred: float = 0.3
-
-    fit_weight: float = 0.80
-    want_weight: float = 0.20
-
-    facet_weights: FacetWeights = Field(default_factory=FacetWeights)
 
     penalty_missing_required: float = 15.0
     penalty_seniority_mismatch: float = 10.0
@@ -125,7 +137,6 @@ class MatchingConfig(BaseModel):
     """Top-level matching configuration."""
 
     enabled: bool = True
-    user_wants_file: Optional[str] = None
     matcher: MatcherConfig = MatcherConfig()
     scorer: ScorerConfig = ScorerConfig()
     result_policy: ResultPolicy = Field(default_factory=ResultPolicy)
@@ -177,6 +188,7 @@ class AppConfig(BaseModel):
     jobspy: Optional[JobSpyConfig] = None
     etl: Optional[EtlConfig] = EtlConfig()
     matching: Optional[MatchingConfig] = MatchingConfig()
+    preferences: PreferencesConfig = Field(default_factory=PreferencesConfig)
     notifications: Optional[NotificationConfig] = NotificationConfig()
     schedule: ScheduleConfig
     scrapers: List[ScraperConfig] = Field(default_factory=list)
@@ -200,6 +212,19 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["ETL_EMBEDDING_API_SECRET"], ["etl", "llm", "embedding_api_secret"]),
     (["ETL_LLM_EXTRACTION_MODEL"], ["etl", "llm", "extraction_model"]),
     (["ETL_EMBEDDING_MODEL"], ["etl", "llm", "embedding_model"]),
+    (["PREFERENCES_DEFAULT_MODE"], ["preferences", "default_mode"]),
+    (["PREFERENCES_PARSER_BASE_URL"], ["preferences", "parser", "base_url"]),
+    (["PREFERENCES_PARSER_API_KEY"], ["preferences", "parser", "api_key"]),
+    (["PREFERENCES_PARSER_API_SECRET"], ["preferences", "parser", "api_secret"]),
+    (["PREFERENCES_PARSER_MODEL"], ["preferences", "parser", "model"]),
+    (["PREFERENCES_SEMANTIC_RERANKER_BASE_URL"], ["preferences", "semantic_reranker", "base_url"]),
+    (["PREFERENCES_SEMANTIC_RERANKER_API_KEY"], ["preferences", "semantic_reranker", "api_key"]),
+    (["PREFERENCES_SEMANTIC_RERANKER_API_SECRET"], ["preferences", "semantic_reranker", "api_secret"]),
+    (["PREFERENCES_SEMANTIC_RERANKER_MODEL"], ["preferences", "semantic_reranker", "model"]),
+    (["PREFERENCES_LLM_JUDGE_BASE_URL"], ["preferences", "llm_judge", "base_url"]),
+    (["PREFERENCES_LLM_JUDGE_API_KEY"], ["preferences", "llm_judge", "api_key"]),
+    (["PREFERENCES_LLM_JUDGE_API_SECRET"], ["preferences", "llm_judge", "api_secret"]),
+    (["PREFERENCES_LLM_JUDGE_MODEL"], ["preferences", "llm_judge", "model"]),
     (["REDIS_URL"], ["notifications", "redis_url"]),
     (["BASE_URL"], ["notifications", "base_url"]),
     (["NOTIFICATION_RATE_LIMIT_MAX_WAIT"], ["notifications", "rate_limit_max_wait_seconds"]),
@@ -220,6 +245,9 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
 DEFAULT_HEADER_MAPPINGS: tuple[HeaderMapping, ...] = (
     ("ETL_EXTRACTION_MODEL_HEADER_ENV_VARS", ["etl", "llm", "extraction_headers"]),
     ("ETL_EMBEDDING_MODEL_HEADER_ENV_VARS", ["etl", "llm", "embedding_headers"]),
+    ("PREFERENCES_PARSER_HEADER_ENV_VARS", ["preferences", "parser", "headers"]),
+    ("PREFERENCES_SEMANTIC_RERANKER_HEADER_ENV_VARS", ["preferences", "semantic_reranker", "headers"]),
+    ("PREFERENCES_LLM_JUDGE_HEADER_ENV_VARS", ["preferences", "llm_judge", "headers"]),
 )
 
 

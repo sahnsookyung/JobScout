@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from core.llm.fake_service import FakeLLMService
 from database.models import (
+    CandidatePreferences,
     JobMatch,
     JobMatchRequirement,
     JobPost,
@@ -34,6 +35,7 @@ def reset_split_stack_state(database_url: str) -> None:
     session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = session_local()
     try:
+        session.query(CandidatePreferences).delete()
         session.query(JobMatchRequirement).delete()
         session.query(JobMatch).delete()
         session.query(JobRequirementUnitEmbedding).delete()
