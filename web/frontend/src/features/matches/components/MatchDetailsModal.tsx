@@ -264,27 +264,29 @@ function RequirementCard({
     const evidenceText = verdict?.evidence_text ?? req.evidence_text;
     const evidenceSection = verdict?.evidence_section ?? req.evidence_section;
     const reason = typeof verdict?.reason === 'string' ? verdict.reason : null;
+    let cardToneClasses = 'bg-gray-50 border-gray-200 hover:border-gray-300';
+    let verdictBadgeVariant: 'success' | 'warning' | 'error' = 'error';
+    let verdictBadgeLabel = '✗ Missing';
+
+    if (isCovered) {
+        cardToneClasses = 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200 hover:border-blue-300';
+        verdictBadgeVariant = 'success';
+        verdictBadgeLabel = '✓ Covered';
+    } else if (isPartial) {
+        cardToneClasses = 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200 hover:border-amber-300';
+        verdictBadgeVariant = 'warning';
+        verdictBadgeLabel = '△ Partial';
+    }
 
     return (
-        <div
-            className={`p-5 rounded-2xl border-2 transition-all duration-200 ${
-                isCovered
-                    ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200 hover:border-blue-300'
-                    : isPartial
-                      ? 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200 hover:border-amber-300'
-                      : 'bg-gray-50 border-gray-200 hover:border-gray-300'
-            }`}
-        >
+        <div className={`p-5 rounded-2xl border-2 transition-all duration-200 ${cardToneClasses}`}>
             <div className="flex items-start justify-between gap-4 mb-3">
                 <div className="flex items-center gap-2">
                     <Badge variant={isRequired ? 'info' : 'default'} className="font-bold">
                         {isRequired ? 'Required' : 'Preferred'}
                     </Badge>
-                    <Badge
-                        variant={isCovered ? 'success' : isPartial ? 'warning' : 'error'}
-                        className="font-bold"
-                    >
-                        {isCovered ? '✓ Covered' : isPartial ? '△ Partial' : '✗ Missing'}
+                    <Badge variant={verdictBadgeVariant} className="font-bold">
+                        {verdictBadgeLabel}
                     </Badge>
                 </div>
                 {verdict && (
