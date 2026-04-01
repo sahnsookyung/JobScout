@@ -78,7 +78,7 @@ jobs:
 
       - name: Install uv
         # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
-        uses: astral-sh/setup-uv@22695119d769bdb6f7032ad67b9bca0ef8c4a174
+        uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57
         with:
           version: "0.11.2"
 
