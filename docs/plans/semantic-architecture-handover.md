@@ -1,7 +1,7 @@
 # Semantic Architecture Handover
 
-- Date: 2026-04-01
-- Status: Foundation merged; fit semantic scoring implemented on PR 2 branch; preference semantics still pending
+- Date: 2026-04-02
+- Status: Foundation merged; fit semantic scoring implemented on PR 2 branch; fit rewire plan recorded; preference semantics still pending
 
 ## Recommended PR Split
 
@@ -51,6 +51,7 @@ Behavior:
 - normal user-facing match details now use semantic verdicts and summaries instead of raw `% similarity` badges
 - public explanation summaries are deterministic from verdicts; model free-text is kept internal/debug only
 - fake AI service support was extended so tests can exercise semantic-fit behavior deterministically
+- the next canonical fit plan is now [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md)
 
 ### PR 3: Preference Semantic Reranking
 
@@ -148,6 +149,13 @@ Observed results at handoff:
   - reciprocal-rank fusion is used to merge dense and lexical candidate sets without overwriting dense `job_similarity`
   - retrieval diagnostics are now persisted with fit outputs so match details can show whether a candidate was generated through dense-only or hybrid retrieval
   - semantic scorer diagnostics now capture scorer identity, latency, judged-requirement counts, and fallback reasons in the saved fit payload
+ - the broader fit rewire plan is now recorded in [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md):
+   - hybrid retrieval becomes the default path
+   - semantic fit adds dual provider support: cross-encoder default plus advanced gated LLM mode
+   - fit mode access moves to a DB-backed entitlement model
+   - recall depth becomes configurable
+   - truncation budgets become configurable and instrumented rather than fixed hidden limits
+   - `config.yaml` will carry commented tuning hints for fit controls
 
 ## Important Boundaries
 
@@ -156,9 +164,9 @@ Observed results at handoff:
 - No admin entitlement/capability store exists yet beyond config-driven allowed modes.
 - Persisted reruns are authoritative only after a clean save batch completes; this safety behavior is now intentional and should be preserved when implementing later semantic stages.
 - The current fit semantic scorer is LLM-backed; there is not yet a dedicated cross-encoder scorer.
-- ANN/pgvector is still the retrieval and evidence-recall layer; hybrid retrieval and lexical fusion are still future work.
-- hybrid retrieval is being added behind a matcher config flag and is not yet the default production path.
-- Offline evaluation and acceptance thresholds for semantic fit quality have not been formalized yet.
+- ANN/pgvector is still the retrieval and evidence-recall layer; the rewire plan keeps it as retrieval infrastructure rather than final semantic authority.
+- hybrid retrieval is still behind a matcher config flag in current code; the rewire plan moves it to default-on.
+- Offline evaluation and acceptance thresholds are now specified in the rewire plan, but not yet implemented.
 
 ## Next PR Starting Point
 
@@ -171,10 +179,10 @@ If picking up preference semantics next:
 
 If continuing fit semantics after PR 2:
 
-1. add offline fixtures and acceptance criteria for semantic fit quality
-2. decide whether to keep the LLM scorer as default or add a cheaper cross-encoder scorer
-3. expand observability from the persisted diagnostics into aggregate reporting for latency, fallback frequency, and verdict distributions
-4. plan hybrid retrieval and lexical fusion separately from shortlist fit scoring
+1. follow [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md) as the source of truth
+2. add offline fixtures and acceptance criteria for semantic fit quality
+3. implement cross-encoder default scoring and gated LLM scoring
+4. add aggregate observability from the persisted diagnostics into reporting for latency, fallback frequency, truncation, and verdict distributions
 
 ## Suggested Merge Order
 
