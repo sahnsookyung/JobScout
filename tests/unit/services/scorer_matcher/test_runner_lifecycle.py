@@ -176,7 +176,7 @@ def test_run_matching_pipeline_uses_latest_ready_resume_and_reaches_save_boundar
 
     with patch(
         "services.scorer_matcher.pipeline.job_uow",
-        side_effect=[_uow(first_repo), _uow(second_repo)],
+        side_effect=[_uow(first_repo), _uow(second_repo), _uow(second_repo)],
     ), patch("services.scorer_matcher.pipeline.MatcherService", return_value=matcher), patch(
         "services.scorer_matcher.pipeline.ScoringService", return_value=scorer
     ), patch(
@@ -219,6 +219,7 @@ def test_run_matching_pipeline_materializes_ready_resume_before_uow_closes():
         "services.scorer_matcher.pipeline.job_uow",
         side_effect=[
             _uow(first_repo, on_exit=lambda: setattr(expiring_resume, "expired", True)),
+            _uow(second_repo),
             _uow(second_repo),
         ],
     ), patch("services.scorer_matcher.pipeline.MatcherService", return_value=matcher), patch(

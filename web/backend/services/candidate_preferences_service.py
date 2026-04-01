@@ -7,11 +7,7 @@ from typing import Any, Dict, Iterable, List
 from sqlalchemy.orm import Session
 
 from database.repository import JobRepository
-from services.scorer_matcher.preference_semantics import (
-    LLMPreferenceParser,
-    build_preference_llm,
-    summarize_preference_profile,
-)
+from services.scorer_matcher.preference_semantics import summarize_preference_profile
 from web.backend.config import get_config
 
 VALID_REMOTE_MODES = {"any", "remote", "hybrid", "onsite"}
@@ -60,12 +56,14 @@ class CandidatePreferencesService:
         preferences.employment_types = _normalize_string_list(payload.get("employment_types", []))
         preferences.soft_preferences = payload.get("soft_preferences", "").strip()
         preferences.preference_mode = self._resolve_requested_mode(payload.get("preference_mode"))
-        profile = self._parse_soft_preferences(preferences.soft_preferences)
-        preferences.preference_profile = profile.model_dump() if profile is not None else None
-        preferences.soft_preference_summary = summarize_preference_profile(
-            profile,
-            preferences.soft_preferences,
-        ) if preferences.soft_preferences else None
+        # Parsing remains best-effort foundation work; do not block settings saves on
+        # an optional model call during the request lifecycle.
+        preferences.preference_profile = None
+        preferences.soft_preference_summary = (
+            summarize_preference_profile(None, preferences.soft_preferences)
+            if preferences.soft_preferences
+            else None
+        )
         preferences.revision = int(preferences.revision or 0) + 1
 
         self.db.commit()
@@ -106,18 +104,3 @@ class CandidatePreferencesService:
         if normalized not in allowed_modes:
             return self.config.preferences.default_mode
         return normalized
-
-    def _parse_soft_preferences(self, text: str):
-        if not text.strip():
-            return None
-
-        parser_config = self.config.preferences.parser
-        llm = build_preference_llm(parser_config)
-        if llm is None:
-            return None
-
-        try:
-            parser = LLMPreferenceParser(llm)
-            return parser.parse(text)
-        except Exception:
-            return None

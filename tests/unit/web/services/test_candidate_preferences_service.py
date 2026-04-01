@@ -68,36 +68,10 @@ def test_update_preferences_falls_back_to_default_mode_when_disallowed(mock_get_
 
 
 @patch("web.backend.services.candidate_preferences_service.get_config")
-@patch("web.backend.services.candidate_preferences_service.LLMPreferenceParser")
-@patch("web.backend.services.candidate_preferences_service.build_preference_llm")
-def test_update_preferences_stores_parsed_profile_and_summary(
-    mock_build_preference_llm,
-    mock_parser_class,
+def test_update_preferences_stores_summary_without_blocking_on_parser(
     mock_get_config,
 ):
     mock_get_config.return_value = _config(allowed_modes=["semantic_rerank", "llm_judge"])
-    mock_build_preference_llm.return_value = object()
-    parsed_profile = SimpleNamespace(
-        model_dump=lambda: {
-            "raw_text": "Mentorship and modern backend teams",
-            "parse_version": "2026-04-01.v1",
-            "parser_confidence": 0.8,
-            "work_style": [{"label": "mentorship", "weight": 0.9, "confidence": 0.9}],
-            "team_culture": [],
-            "tech_stack": [{"label": "backend", "weight": 0.7, "confidence": 0.8}],
-            "mission_domain": [],
-            "growth_preferences": [],
-            "negative_preferences": [],
-        },
-        work_style=[SimpleNamespace(label="mentorship")],
-        team_culture=[],
-        tech_stack=[SimpleNamespace(label="backend")],
-        mission_domain=[],
-        growth_preferences=[],
-        negative_preferences=[],
-    )
-    mock_parser_class.return_value.parse.return_value = parsed_profile
-
     db = Mock()
     service = CandidatePreferencesService(db)
     preferences = SimpleNamespace(
@@ -128,6 +102,6 @@ def test_update_preferences_stores_parsed_profile_and_summary(
         },
     )
 
-    assert preferences.preference_profile is not None
-    assert preferences.soft_preference_summary == "mentorship, backend"
-    assert response["soft_preference_summary"] == "mentorship, backend"
+    assert preferences.preference_profile is None
+    assert preferences.soft_preference_summary == "Mentorship and modern backend teams"
+    assert response["soft_preference_summary"] == "Mentorship and modern backend teams"
