@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from services.scorer_matcher.pipeline import (
-    MatchingPipelineResult,
     SaveMatchesBatchResult,
     run_matching_pipeline,
 )
