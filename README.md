@@ -34,7 +34,6 @@ cp .env.example .env
 # 3. (Optional) Add your job preferences
 cp wants.example.txt wants.txt
 # Edit wants.txt - one preference per line in natural language
-# Then uncomment user_wants_file in config.yaml
 ```
 
 ### Start Everything
