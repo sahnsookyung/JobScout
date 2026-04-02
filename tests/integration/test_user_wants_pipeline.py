@@ -29,8 +29,18 @@ def candidate_preferences_env(test_db_url, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", test_db_url)
     monkeypatch.setenv("AUTH_MODE", "dev-bypass")
     monkeypatch.setenv("JOBSCOUT_ENV", "test")
-    monkeypatch.setenv("JOBSCOUT_FAKE_AI", "1")
     monkeypatch.setenv("DEV_BYPASS_USER_ID", str(OWNER_ID))
+
+    from core.llm.fake_service import FakeLLMService
+    from services.scorer_matcher.preference_semantics import LLMPreferenceParser
+    
+    def fake_build_parser(config):
+        return LLMPreferenceParser(FakeLLMService())
+    
+    monkeypatch.setattr(
+        "web.backend.services.candidate_preferences_service.build_preference_parser",
+        fake_build_parser,
+    )
 
     engine = create_engine(test_db_url)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
