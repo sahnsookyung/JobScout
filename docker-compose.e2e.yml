@@ -1,35 +1,67 @@
 # Compose overrides for deterministic split-stack E2E tests.
 
 services:
+  mock-llm:
+    profiles: ["split", "web"]
+    build:
+      context: .
+      dockerfile: services/mock_llm/Dockerfile
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   web-backend:
     environment:
       - JOBSCOUT_ENV=test
       - AUTH_MODE=dev-bypass
-      - JOBSCOUT_FAKE_AI=1
       - DEV_BYPASS_USER_ID=00000000-0000-0000-0000-000000000001
       - DEV_BYPASS_EMAIL=dev-user@jobscout.local
       - DEV_BYPASS_NAME=JobScout Dev User
       - RESUME_ETL_WAIT_TIMEOUT_SECONDS=${RESUME_ETL_WAIT_TIMEOUT_SECONDS:-90}
+      - ETL_LLM_PROVIDER=openai_compatible
+      - ETL_LLM_BASE_URL=http://mock-llm:8090/v1
+      - ETL_LLM_API_KEY=mock-key
+      - ETL_EMBEDDING_BASE_URL=http://mock-llm:8090/v1
+      - ETL_EMBEDDING_API_KEY=mock-key
+      - PREFERENCES_PARSER_PROVIDER=openai_compatible
+      - PREFERENCES_PARSER_BASE_URL=http://mock-llm:8090/v1
+      - PREFERENCES_PARSER_API_KEY=mock-key
+      - PREFERENCES_SEMANTIC_RERANKER_PROVIDER=openai_compatible
+      - PREFERENCES_SEMANTIC_RERANKER_BASE_URL=http://mock-llm:8090/v1
+      - PREFERENCES_SEMANTIC_RERANKER_API_KEY=mock-key
+      - PREFERENCES_LLM_JUDGE_PROVIDER=openai_compatible
+      - PREFERENCES_LLM_JUDGE_BASE_URL=http://mock-llm:8090/v1
+      - PREFERENCES_LLM_JUDGE_API_KEY=mock-key
 
   extraction:
     environment:
       - JOBSCOUT_ENV=test
-      - JOBSCOUT_FAKE_AI=1
+      - ETL_LLM_PROVIDER=openai_compatible
+      - ETL_LLM_BASE_URL=http://mock-llm:8090/v1
+      - ETL_LLM_API_KEY=mock-key
 
   embeddings:
     environment:
       - JOBSCOUT_ENV=test
-      - JOBSCOUT_FAKE_AI=1
+      - ETL_LLM_PROVIDER=openai_compatible
+      - ETL_LLM_BASE_URL=http://mock-llm:8090/v1
+      - ETL_LLM_API_KEY=mock-key
+      - ETL_EMBEDDING_BASE_URL=http://mock-llm:8090/v1
+      - ETL_EMBEDDING_API_KEY=mock-key
 
   scorer-matcher:
     environment:
       - JOBSCOUT_ENV=test
-      - JOBSCOUT_FAKE_AI=1
 
   orchestrator:
     environment:
       - JOBSCOUT_ENV=test
       - AUTH_MODE=dev-bypass
-      - JOBSCOUT_FAKE_AI=1
       - DISABLE_SCRAPER=1
       - LISTENER_TIMEOUT_SECONDS=${LISTENER_TIMEOUT_SECONDS:-90}
+      - ETL_LLM_PROVIDER=openai_compatible
+      - ETL_LLM_BASE_URL=http://mock-llm:8090/v1
+      - ETL_LLM_API_KEY=mock-key

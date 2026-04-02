@@ -4,7 +4,7 @@ Unit tests for ScoringService.
 """
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from typing import List
 
 from core.config_loader import ScorerConfig, ResultPolicy
@@ -156,15 +156,18 @@ scrapers: []
 
         assert self.scorer._resolve_llm_provider(None) is None
 
-    def test_resolve_llm_provider_builds_openai_service_when_configured(self):
+    @patch("core.scorer.service.build_llm_provider")
+    def test_resolve_llm_provider_builds_runtime_provider_when_configured(self, mock_build):
         self.scorer_config.semantic_fit.llm.enabled = True
         self.scorer_config.semantic_fit.llm.api_key = "key"
         self.scorer_config.semantic_fit.llm.base_url = "https://llm.example.com"
+        sentinel = object()
+        mock_build.return_value = sentinel
 
         provider = self.scorer._resolve_llm_provider(None)
 
-        self.assertIsNotNone(provider)
-        self.assertEqual(provider.__class__.__name__, "OpenAIService")
+        self.assertIs(provider, sentinel)
+        mock_build.assert_called_once()
 
 
 class TestBatchPrefetch(unittest.TestCase):

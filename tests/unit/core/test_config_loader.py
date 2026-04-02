@@ -27,7 +27,7 @@ class TestConfigLoader(unittest.TestCase):
             "etl": {
                 "llm": {
                     "base_url": "http://ollama:11434",  # NOSONAR - local test service
-                    "extraction_type": "ollama",
+                    "provider": "openai_compatible",
                     "extraction_model": "qwen3:14b"
                 }
             },
@@ -35,6 +35,7 @@ class TestConfigLoader(unittest.TestCase):
                 "default_mode": "semantic_rerank",
                 "allowed_modes": ["semantic_rerank", "llm_judge"],
                 "parser": {
+                    "provider": "openai_compatible",
                     "base_url": "http://preferences-llm:11434/v1",
                     "model": "qwen3:14b"
                 }
@@ -127,7 +128,7 @@ class TestConfigLoader(unittest.TestCase):
                 try:
                     config = load_config("dummy")
                     # Defaults from LlmConfig
-                    self.assertEqual(config.etl.llm.extraction_type, "openai")
+                    self.assertEqual(config.etl.llm.provider, "openai_compatible")
                     self.assertEqual(config.etl.llm.extraction_model, "gpt-4o-mini")
                 finally:
                     # Restore env vars
@@ -291,7 +292,9 @@ class TestConfigLoader(unittest.TestCase):
         env = {
             "PREFERENCES_DEFAULT_MODE": "llm_judge",
             "PREFERENCES_PARSER_MODEL": "env-parser",
+            "PREFERENCES_PARSER_PROVIDER": "openai_compatible",
             "ETL_LLM_EXTRACTION_MODEL": "etl-model",
+            "ETL_LLM_PROVIDER": "openai_compatible",
         }
 
         with patch("builtins.open", mock_open(read_data=config_yaml)):
@@ -301,7 +304,40 @@ class TestConfigLoader(unittest.TestCase):
 
         self.assertEqual(config.preferences.default_mode, "llm_judge")
         self.assertEqual(config.preferences.parser.model, "env-parser")
+        self.assertEqual(config.preferences.parser.provider, "openai_compatible")
         self.assertEqual(config.etl.llm.extraction_model, "etl-model")
+        self.assertEqual(config.etl.llm.provider, "openai_compatible")
+
+    def test_load_config_rejects_legacy_fake_ai_env(self):
+        config_yaml = yaml.dump({
+            "database": {"url": "test"},
+            "schedule": {"interval_seconds": 60},
+            "scrapers": []
+        })
+
+        with patch("builtins.open", mock_open(read_data=config_yaml)):
+            with patch("os.path.exists", return_value=True):
+                with patch.dict(os.environ, {"JOBSCOUT_FAKE_AI": "1"}, clear=False):
+                    with self.assertRaisesRegex(RuntimeError, "JOBSCOUT_FAKE_AI has been removed"):
+                        load_config("dummy")
+
+    def test_load_config_rejects_removed_extraction_type(self):
+        config_yaml = yaml.dump({
+            "database": {"url": "test"},
+            "etl": {
+                "llm": {
+                    "extraction_type": "ollama",
+                    "extraction_model": "qwen3:14b",
+                }
+            },
+            "schedule": {"interval_seconds": 60},
+            "scrapers": []
+        })
+
+        with patch("builtins.open", mock_open(read_data=config_yaml)):
+            with patch("os.path.exists", return_value=True):
+                with self.assertRaisesRegex(RuntimeError, "etl.llm.extraction_type has been removed"):
+                    load_config("dummy")
 
     def test_semantic_fit_defaults_are_loaded(self):
         config_yaml = yaml.dump({
@@ -367,6 +403,7 @@ class TestConfigLoader(unittest.TestCase):
             "FIT_SEMANTIC_RECALL_TOP_K": "7",
             "FIT_CROSS_ENCODER_LOCAL_RUNTIME": "flag_embedding",
             "FIT_CROSS_ENCODER_LOCAL_MODEL": "BAAI/bge-reranker-v2-gemma",
+            "FIT_LLM_PROVIDER": "openai_compatible",
             "FIT_LLM_BASE_URL": "https://fit-llm.example/v1",
             "FIT_LLM_API_KEY": "fit-key",
             "FIT_LLM_MODEL": "fit-gpt",
@@ -387,6 +424,7 @@ class TestConfigLoader(unittest.TestCase):
             config.matching.scorer.semantic_fit.cross_encoder.local.model_name,
             "BAAI/bge-reranker-v2-gemma",
         )
+        self.assertEqual(config.matching.scorer.semantic_fit.llm.provider, "openai_compatible")
         self.assertEqual(config.matching.scorer.semantic_fit.llm.base_url, "https://fit-llm.example/v1")
         self.assertEqual(config.matching.scorer.semantic_fit.llm.api_key, "fit-key")
         self.assertEqual(config.matching.scorer.semantic_fit.llm.model, "fit-gpt")

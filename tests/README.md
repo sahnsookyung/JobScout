@@ -55,7 +55,7 @@ uv run python -m pytest tests/integration/test_resume_pipeline_lifecycle.py -v
 - `tests/integration/test_full_pipeline.py`: repository-backed end-to-end pipeline coverage
 - `tests/integration/test_resume_pipeline_lifecycle.py`: latest-upload eligibility and stale-result lifecycle rules
 - `tests/integration/services/test_services_lifespan.py`: microservice startup/shutdown behavior
-- `tests/integration/test_split_stack_resume_flow.py`: real Dockerized upload -> extract/embed -> matching happy/failure flow with deterministic fake AI
+- `tests/integration/test_split_stack_resume_flow.py`: real Dockerized upload -> extract/embed -> matching happy/failure flow wired to an external OpenAI-compatible mock LLM service
 
 ## Smoke Tests
 

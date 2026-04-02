@@ -6,11 +6,9 @@ from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.app_context import _current_environment, _ensure_fake_ai_allowed, _fake_ai_enabled
 from core.config_loader import PreferenceModelConfig
-from core.llm.fake_service import FakeLLMService
 from core.llm.interfaces import LLMProvider
-from core.llm.openai_service import OpenAIService
+from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_preference
 
 logger = logging.getLogger(__name__)
 
@@ -107,34 +105,11 @@ def build_preference_llm(config: PreferenceModelConfig) -> Optional[LLMProvider]
     if not config.enabled:
         return None
 
-    _ensure_fake_ai_allowed()
-    if _fake_ai_enabled():
-        return FakeLLMService(embedding_dimensions=1024)
-
     if not config.model:
-        logger.info(
-            "Preference model disabled in %s because no model is configured",
-            _current_environment(),
-        )
+        logger.info("Preference model disabled because no model is configured")
         return None
 
-    model_config = {
-        "extraction_model": config.model,
-        "embedding_model": config.embedding_model,
-        "embedding_dimensions": config.embedding_dimensions,
-        "extraction_temperature": config.temperature,
-    }
-    return OpenAIService(
-        base_url=config.base_url,
-        api_key=config.api_key,
-        api_secret=config.api_secret,
-        model_config=model_config,
-        extraction_headers=config.headers,
-        embedding_base_url=config.embedding_base_url,
-        embedding_api_key=config.embedding_api_key,
-        embedding_api_secret=config.embedding_api_secret,
-        embedding_headers=config.embedding_headers,
-    )
+    return build_llm_provider(runtime_llm_config_from_preference(config))
 
 
 def summarize_preference_profile(

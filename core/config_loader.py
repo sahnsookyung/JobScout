@@ -41,13 +41,13 @@ class JobSpyConfig(BaseModel):
 
 
 class LlmConfig(BaseModel):
+    provider: Literal["openai_compatible"] = "openai_compatible"
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     api_secret: Optional[str] = None
     extraction_headers: Optional[Dict[str, str]] = None
     extraction_model: Optional[str] = "gpt-4o-mini"
     extraction_url: Optional[str] = None
-    extraction_type: str = "openai"
     extraction_labels: Optional[List[str]] = None
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1024
@@ -59,7 +59,7 @@ class LlmConfig(BaseModel):
 
 class PreferenceModelConfig(BaseModel):
     enabled: bool = True
-    provider: str = "openai"
+    provider: Literal["openai_compatible"] = "openai_compatible"
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     api_secret: Optional[str] = None
@@ -456,6 +456,7 @@ def _set_nested(data: dict, keys: list, value: Any) -> None:
 DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["DATABASE_URL"], ["database", "url"]),
     (["JOBSPY_URL"], ["jobspy", "url"]),
+    (["ETL_LLM_PROVIDER"], ["etl", "llm", "provider"]),
     (["ETL_LLM_EXTRACTION_BASE_URL", "ETL_LLM_BASE_URL"], ["etl", "llm", "base_url"]),
     (["ETL_LLM_EXTRACTION_API_KEY", "ETL_LLM_API_KEY"], ["etl", "llm", "api_key"]),
     (["ETL_LLM_EXTRACTION_API_SECRET", "ETL_LLM_API_SECRET"], ["etl", "llm", "api_secret"]),
@@ -465,14 +466,17 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["ETL_LLM_EXTRACTION_MODEL"], ["etl", "llm", "extraction_model"]),
     (["ETL_EMBEDDING_MODEL"], ["etl", "llm", "embedding_model"]),
     (["PREFERENCES_DEFAULT_MODE"], ["preferences", "default_mode"]),
+    (["PREFERENCES_PARSER_PROVIDER"], ["preferences", "parser", "provider"]),
     (["PREFERENCES_PARSER_BASE_URL"], ["preferences", "parser", "base_url"]),
     (["PREFERENCES_PARSER_API_KEY"], ["preferences", "parser", "api_key"]),
     (["PREFERENCES_PARSER_API_SECRET"], ["preferences", "parser", "api_secret"]),
     (["PREFERENCES_PARSER_MODEL"], ["preferences", "parser", "model"]),
+    (["PREFERENCES_SEMANTIC_RERANKER_PROVIDER"], ["preferences", "semantic_reranker", "provider"]),
     (["PREFERENCES_SEMANTIC_RERANKER_BASE_URL"], ["preferences", "semantic_reranker", "base_url"]),
     (["PREFERENCES_SEMANTIC_RERANKER_API_KEY"], ["preferences", "semantic_reranker", "api_key"]),
     (["PREFERENCES_SEMANTIC_RERANKER_API_SECRET"], ["preferences", "semantic_reranker", "api_secret"]),
     (["PREFERENCES_SEMANTIC_RERANKER_MODEL"], ["preferences", "semantic_reranker", "model"]),
+    (["PREFERENCES_LLM_JUDGE_PROVIDER"], ["preferences", "llm_judge", "provider"]),
     (["PREFERENCES_LLM_JUDGE_BASE_URL"], ["preferences", "llm_judge", "base_url"]),
     (["PREFERENCES_LLM_JUDGE_API_KEY"], ["preferences", "llm_judge", "api_key"]),
     (["PREFERENCES_LLM_JUDGE_API_SECRET"], ["preferences", "llm_judge", "api_secret"]),
@@ -488,6 +492,7 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["FIT_CROSS_ENCODER_REMOTE_BASE_URL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "base_url"]),
     (["FIT_CROSS_ENCODER_REMOTE_API_KEY"], ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "api_key"]),
     (["FIT_CROSS_ENCODER_REMOTE_MODEL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "model"]),
+    (["FIT_LLM_PROVIDER"], ["matching", "scorer", "semantic_fit", "llm", "provider"]),
     (["FIT_LLM_BASE_URL"], ["matching", "scorer", "semantic_fit", "llm", "base_url"]),
     (["FIT_LLM_API_KEY"], ["matching", "scorer", "semantic_fit", "llm", "api_key"]),
     (["FIT_LLM_API_SECRET"], ["matching", "scorer", "semantic_fit", "llm", "api_secret"]),
@@ -567,9 +572,22 @@ def load_config_data(
     header_mappings: Sequence[HeaderMapping] = DEFAULT_HEADER_MAPPINGS,
 ) -> Dict[str, Any]:
     """Load YAML configuration and apply environment overrides."""
+    if os.getenv("JOBSCOUT_FAKE_AI"):
+        raise RuntimeError(
+            "JOBSCOUT_FAKE_AI has been removed. Inject fake providers in tests, or "
+            "use an external OpenAI-compatible mock service via base_url."
+        )
+
     resolved_path = resolve_config_path(config_path, fallback_path=fallback_path)
     with open(resolved_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
+
+    llm_config = ((data.get("etl") or {}).get("llm") or {})
+    if "extraction_type" in llm_config:
+        raise RuntimeError(
+            "etl.llm.extraction_type has been removed. Use etl.llm.provider='openai_compatible' "
+            "and point base_url at an OpenAI-compatible endpoint such as Ollama or a mock server."
+        )
 
     return apply_env_overrides(
         data,

@@ -1,13 +1,13 @@
 from unittest.mock import Mock, patch
 
 from core.config_loader import PreferenceModelConfig
+from core.llm.fake_service import FakeLLMService
 from services.scorer_matcher.preference_semantics import (
     LLMPreferenceParser,
     PREFERENCE_PROFILE_VERSION,
-    FakeLLMService,
     PreferenceProfile,
-    summarize_preference_profile,
     build_preference_llm,
+    summarize_preference_profile,
 )
 
 
@@ -83,70 +83,34 @@ def test_build_preference_llm_returns_none_when_disabled():
     assert build_preference_llm(_config(enabled=False)) is None
 
 
-@patch("services.scorer_matcher.preference_semantics._ensure_fake_ai_allowed")
-@patch("services.scorer_matcher.preference_semantics._fake_ai_enabled", return_value=True)
-@patch("services.scorer_matcher.preference_semantics.FakeLLMService")
-def test_build_preference_llm_uses_fake_service_when_enabled(
-    fake_service_cls,
-    _mock_fake_enabled,
-    mock_ensure_fake_ai_allowed,
-):
-    fake_service_cls.return_value = FakeLLMService(embedding_dimensions=1024)
+@patch("services.scorer_matcher.preference_semantics.build_llm_provider")
+def test_build_preference_llm_uses_shared_provider_factory(mock_build):
+    mock_build.return_value = FakeLLMService(embedding_dimensions=1024)
 
     llm = build_preference_llm(_config())
 
-    mock_ensure_fake_ai_allowed.assert_called_once_with()
-    fake_service_cls.assert_called_once_with(embedding_dimensions=1024)
+    mock_build.assert_called_once()
     assert isinstance(llm, FakeLLMService)
 
 
-@patch("services.scorer_matcher.preference_semantics._ensure_fake_ai_allowed")
-@patch("services.scorer_matcher.preference_semantics._fake_ai_enabled", return_value=False)
 @patch("services.scorer_matcher.preference_semantics.logger")
-def test_build_preference_llm_logs_and_returns_none_without_model(
-    mock_logger,
-    _mock_fake_enabled,
-    mock_ensure_fake_ai_allowed,
-):
+def test_build_preference_llm_logs_and_returns_none_without_model(mock_logger):
     llm = build_preference_llm(_config(model=None))
 
     assert llm is None
-    mock_ensure_fake_ai_allowed.assert_called_once_with()
     mock_logger.info.assert_called_once()
 
 
-@patch("services.scorer_matcher.preference_semantics._ensure_fake_ai_allowed")
-@patch("services.scorer_matcher.preference_semantics._fake_ai_enabled", return_value=False)
-@patch("services.scorer_matcher.preference_semantics.OpenAIService")
-def test_build_preference_llm_constructs_openai_service(
-    openai_service_cls,
-    _mock_fake_enabled,
-    mock_ensure_fake_ai_allowed,
-):
+@patch("services.scorer_matcher.preference_semantics.build_llm_provider")
+def test_build_preference_llm_constructs_runtime_provider(mock_build):
     sentinel = object()
-    openai_service_cls.return_value = sentinel
+    mock_build.return_value = sentinel
     config = _config()
 
     llm = build_preference_llm(config)
 
     assert llm is sentinel
-    mock_ensure_fake_ai_allowed.assert_called_once_with()
-    openai_service_cls.assert_called_once_with(
-        base_url=config.base_url,
-        api_key=config.api_key,
-        api_secret=config.api_secret,
-        model_config={
-            "extraction_model": config.model,
-            "embedding_model": config.embedding_model,
-            "embedding_dimensions": config.embedding_dimensions,
-            "extraction_temperature": config.temperature,
-        },
-        extraction_headers=config.headers,
-        embedding_base_url=config.embedding_base_url,
-        embedding_api_key=config.embedding_api_key,
-        embedding_api_secret=config.embedding_api_secret,
-        embedding_headers=config.embedding_headers,
-    )
+    mock_build.assert_called_once()
 
 
 def test_summarize_preference_profile_prefers_unique_labels():
