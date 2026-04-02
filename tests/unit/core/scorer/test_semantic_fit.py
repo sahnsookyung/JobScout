@@ -17,10 +17,24 @@ from core.scorer.semantic_fit import (
     LocalCrossEncoderProvider,
     PairAssessment,
     RemoteCrossEncoderProvider,
+    _build_retrieval_diagnostics,
     _build_serialized_pairs,
+    _candidate_evidence_candidates,
+    _coverage_level_and_reason,
+    _default_effective_allowed,
+    _effective_fit_mode,
+    _fallback_adjusted_match,
+    _missing_assessment_verdict,
+    _normalize_modes,
+    _pairs_by_requirement,
+    _preferred_capability_mode,
     _pair_assessment_from_heuristic,
+    _scored_requirement_verdict,
+    _score_requirement_match,
     _select_best_assessment,
     _serialize_pair,
+    _truncation_aggregate,
+    _zero_evidence_verdict,
     ThresholdSemanticFitScorer,
     resolve_effective_fit_mode,
 )
@@ -768,3 +782,197 @@ def test_cross_encoder_local_policy_does_not_fall_through_to_remote_provider():
     assert result.fit_components["effective_fit_mode"] == "threshold"
     assert result.fit_components["provider_route"] == "threshold"
     assert "local provider is disabled" in result.fit_components["semantic_fit_fallback_reason"]
+
+def test_build_retrieval_diagnostics_dense_mode():
+    preliminary = _make_preliminary()
+    preliminary.lexical_score = None
+    preliminary.retrieval_score = None
+
+    diagnostics = _build_retrieval_diagnostics(preliminary)
+
+    assert diagnostics == {
+        "mode": "dense",
+        "sources": ["dense"],
+        "retrieval_score": 0.0,
+        "job_similarity": 0.75,
+    }
+
+def test_coverage_level_and_reason_thresholds():
+    assert _coverage_level_and_reason(0.85)[0] == "covered"
+    assert _coverage_level_and_reason(0.60)[0] == "partial"
+    assert _coverage_level_and_reason(0.10)[0] == "missing"
+
+def test_candidate_evidence_candidates_creates_fallback_candidate_from_primary_evidence():
+    requirement_match = _make_requirement_match()
+    requirement_match.evidence_candidates = []
+
+    candidates = _candidate_evidence_candidates(requirement_match)
+
+    assert len(candidates) == 1
+    assert candidates[0].rank == 1
+    assert candidates[0].similarity == requirement_match.similarity
+
+def test_zero_evidence_verdict_preserves_partial_match_state():
+    requirement_match = _make_requirement_match(
+        evidence_text="Somewhat related platform work",
+        similarity=0.41,
+        is_covered=False,
+    )
+
+    verdict = _zero_evidence_verdict(requirement_match, threshold=0.5)
+
+    assert verdict["verdict"] == "partial"
+    assert verdict["reason"] != "No supporting resume evidence was recalled for this requirement."
+
+def test_truncation_aggregate_counts_truncated_pairs():
+    preliminary = _make_preliminary(
+        requirement_matches=[
+            _make_requirement_match(
+                text="R" * 700,
+                evidence_text="E" * 3000,
+            )
+        ]
+    )
+    requirement_match = preliminary.requirement_matches[0]
+    pair = _serialize_pair(preliminary, requirement_match, requirement_match.evidence_candidates[0], config=ScorerConfig())
+
+    aggregate = _truncation_aggregate([pair])
+
+    assert aggregate["any_truncated"] is True
+    assert aggregate["pair_count"] == 1
+    assert aggregate["truncated_pair_count"] == 1
+    assert aggregate["total_truncated_chars"] > 0
+
+def test_local_cross_encoder_provider_runtime_helpers():
+    provider = LocalCrossEncoderProvider(
+        model_name="BAAI/bge-reranker-v2-m3",
+        runtime="sentence_transformers",
+    )
+
+    assert provider._candidate_runtimes() == ["sentence_transformers", "heuristic"]
+    assert provider._normalize_runtime_scores({"scores": [{"score": 0.3}, [0.5], 0.9]}) == [0.3, 0.5, 0.9]
+
+    def factory(model_name, cache_dir=None):
+        return model_name, cache_dir
+
+    filtered = provider._filter_supported_kwargs(factory, {"cache_dir": "/tmp", "ignored": True})
+    assert filtered == {"cache_dir": "/tmp"}
+
+def test_local_cross_encoder_provider_heuristic_scores_pairs():
+    requirement_match = _make_requirement_match()
+    preliminary = _make_preliminary(requirement_matches=[requirement_match])
+    pair = _serialize_pair(preliminary, requirement_match, requirement_match.evidence_candidates[0], config=ScorerConfig())
+    provider = LocalCrossEncoderProvider(
+        model_name="BAAI/bge-reranker-v2-m3",
+        runtime="heuristic",
+    )
+
+    assessments, diagnostics = provider.score_pairs([pair])
+
+    assert len(assessments) == 1
+    assert diagnostics["provider_route"] == "local_heuristic"
+    assert diagnostics["provider_id"] == "heuristic-local"
+
+def test_select_best_assessment_skips_missing_pairs():
+    requirement_match = _make_requirement_match()
+    preliminary = _make_preliminary(requirement_matches=[requirement_match])
+    pair = _serialize_pair(preliminary, requirement_match, requirement_match.evidence_candidates[0], config=ScorerConfig())
+
+    best_pair, best_assessment = _select_best_assessment([pair], {})
+
+    assert best_pair is None
+    assert best_assessment is None
+
+def test_score_requirement_match_without_candidate_pairs_uses_fallback_adjustment():
+    requirement_match = _make_requirement_match(
+        evidence_text="Built Python APIs",
+        similarity=0.2,
+        is_covered=False,
+    )
+
+    adjusted, verdict = _score_requirement_match(
+        requirement_match=requirement_match,
+        candidate_pairs=[],
+        assessments_by_pair={},
+        threshold=0.5,
+        provider_route="local",
+    )
+
+    assert adjusted.is_covered is False
+    assert verdict is None
+
+def test_score_requirement_match_without_assessment_returns_unjudged_verdict():
+    requirement_match = _make_requirement_match()
+    preliminary = _make_preliminary(requirement_matches=[requirement_match])
+    pair = _serialize_pair(preliminary, requirement_match, requirement_match.evidence_candidates[0], config=ScorerConfig())
+
+    adjusted, verdict = _score_requirement_match(
+        requirement_match=requirement_match,
+        candidate_pairs=[pair],
+        assessments_by_pair={},
+        threshold=0.5,
+        provider_route="remote",
+    )
+
+    assert adjusted.is_covered is False
+    assert verdict["verdict"] == "missing"
+    assert verdict["provider_route"] == "remote"
+
+def test_scored_requirement_verdict_includes_truncation_and_provider_route():
+    requirement_match = _make_requirement_match()
+    preliminary = _make_preliminary(requirement_matches=[requirement_match])
+    pair = _serialize_pair(preliminary, requirement_match, requirement_match.evidence_candidates[0], config=ScorerConfig())
+    assessment = PairAssessment(
+        pair_id=pair.pair_id,
+        requirement_id=pair.requirement_id,
+        coverage_level="covered",
+        semantic_score=0.91,
+        confidence=0.88,
+        reason="Evidence strongly matches the requirement.",
+    )
+
+    verdict = _scored_requirement_verdict(requirement_match, pair, assessment, "remote")
+
+    assert verdict["provider_route"] == "remote"
+    assert "truncation" in verdict
+
+def test_mode_normalization_and_capability_defaults():
+    config = ScorerConfig().semantic_fit
+    config.deploy_allowed_modes = ["cross_encoder", "cross_encoder", "llm", "ignored"]
+    config.baseline_allowed_modes = ["cross_encoder"]
+
+    assert _normalize_modes(config.deploy_allowed_modes) == ["cross_encoder", "llm"]
+    assert _default_effective_allowed(config) == ["cross_encoder"]
+
+def test_preferred_capability_mode_ignores_invalid_payload():
+    repo = MagicMock()
+    repo.get_capability.return_value = MagicMock(enabled=True, value_json="bad")
+
+    preferred = _preferred_capability_mode(repo, "user-1", ["cross_encoder", "llm"])
+
+    assert preferred is None
+
+def test_effective_fit_mode_maps_routes():
+    assert _effective_fit_mode("local_heuristic", "heuristic-local") == "threshold"
+    assert _effective_fit_mode("threshold", "threshold") == "threshold"
+    assert _effective_fit_mode("llm", "llm") == "llm"
+    assert _effective_fit_mode("remote", "flag_embedding:model") == "cross_encoder"
+
+def test_fallback_adjusted_match_preserves_threshold_logic():
+    requirement_match = _make_requirement_match(
+        similarity=0.72,
+        is_covered=True,
+    )
+
+    adjusted = _fallback_adjusted_match(requirement_match, 0.5)
+
+    assert adjusted.is_covered is True
+    assert adjusted.similarity >= 0.5
+
+def test_missing_assessment_verdict_marks_unjudged_provider_route():
+    requirement_match = _make_requirement_match()
+
+    verdict = _missing_assessment_verdict(requirement_match, "remote")
+
+    assert verdict["reason"] == "Requirement was not judged by the semantic scorer; preserved fallback classification."
+    assert verdict["provider_route"] == "remote"
