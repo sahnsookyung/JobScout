@@ -6,7 +6,7 @@
 
 ## Summary
 
-Rewire the fit subsystem so this branch becomes the home for all fit-related work: hybrid retrieval is enabled by default, semantic fit scoring is routed through one provider interface, cross-encoder scoring is the standard path, LLM scoring is an advanced gated path, and DB-backed entitlements control access to advanced modes.
+Rewire the fit subsystem so this branch becomes the home for all fit-related work: hybrid retrieval is enabled by default, semantic fit scoring is routed through one provider interface, cross-encoder scoring is the standard path, LLM scoring is an advanced gated path, and DB-backed capabilities control access to advanced modes.
 
 The fit pipeline becomes:
 
@@ -37,7 +37,7 @@ The fit pipeline becomes:
   - if the chosen route fails or times out, try the other enabled cross-encoder route once
   - if both fail, use threshold fallback
 - If `matching.scorer.semantic_fit.enabled=false`:
-  - bypass entitlements and mode resolution
+  - bypass capabilities and mode resolution
   - bypass semantic providers
   - run threshold scoring only
   - persist `effective_fit_mode="threshold"` and `semantic_fit_disabled=true`
@@ -177,9 +177,9 @@ The fit pipeline becomes:
   - `job_similarity`
   - `lexical_score` when present
 
-### 8. DB-backed entitlements
+### 8. DB-backed capabilities
 
-- Add `user_feature_entitlement`:
+- Add `user_feature_capability`:
   - `id`
   - `owner_id`
   - `feature_key`
@@ -198,16 +198,16 @@ The fit pipeline becomes:
   - `default_mode`
 - Resolution order:
   1. internal per-run override
-  2. entitled preferred mode if allowed
+  2. capability-preferred mode if allowed
   3. global default
 - Effective allowed modes:
-  - entitlement row present: `intersection(deploy_allowed_modes, entitlement_modes)`
+- capability row present: `intersection(deploy_allowed_modes, capability_modes)`
   - otherwise: `intersection(deploy_allowed_modes, baseline_allowed_modes)`
 - `default_mode` must be both deploy-allowed and baseline-allowed.
-- If an entitled user’s effective allowed modes exclude `default_mode`, resolve to first deterministic allowed mode in order: `cross_encoder`, then `llm`.
+- If a capability-enabled user’s effective allowed modes exclude `default_mode`, resolve to first deterministic allowed mode in order: `cross_encoder`, then `llm`.
 - Internal per-run override:
   - internal-only, never public API input
-  - may bypass per-user entitlement
+  - may bypass per-user capability
   - may not bypass `deploy_allowed_modes`
 
 ### 9. Explicit config schema and startup validation
@@ -339,7 +339,7 @@ matching:
         temperature: 0.0
         timeout_seconds: 20
         max_input_tokens: 4000
-        # enabled: true          # Advanced mode, intended for entitled users only
+        # enabled: true          # Advanced mode, intended for capability-enabled users only
 
       serialization:
         requirement_text_max_chars: 500
@@ -352,21 +352,21 @@ matching:
 
 - Unit tests:
   - config parsing for all semantic-fit fields
-  - mode resolution from deploy config + baseline + entitlements
+  - mode resolution from deploy config + baseline + capabilities
   - route resolution for `local`, `remote`, `auto`
   - local/remote fallback behavior
   - disabled semantic-fit path
-  - denial when `llm` not entitled
+  - denial when `llm` lacks a capability grant
   - top-`k` evidence recall
   - zero-evidence handling
   - deterministic pair ID generation
   - truncation diagnostics emission
   - legacy match detail compatibility
-  - invalid entitlement payload handling
+  - invalid capability payload handling
 - Integration tests:
   - standard user uses `cross_encoder`
-  - entitled user with preferred `llm` uses `llm`
-  - entitled user falls back cleanly when `llm` is unavailable
+  - capability-enabled user with preferred `llm` uses `llm`
+  - capability-enabled user falls back cleanly when `llm` is unavailable
   - partial remote pair failures fall back deterministically
   - persistence includes effective mode, route, retrieval diagnostics, fallback metadata, and truncation metadata
   - hybrid retrieval changes shortlist composition vs dense-only
@@ -377,7 +377,7 @@ matching:
   - title/acronym/product-name retrieval
 - Evaluation harness implementation:
   - keep this harness in Python only
-  - do not split it across Python and TypeScript, because the retrieval fusion, semantic fit scorer, and entitlement resolution all live in the backend Python code
+  - do not split it across Python and TypeScript, because the retrieval fusion, semantic fit scorer, and capability resolution all live in the backend Python code
   - frontend TypeScript remains for UI rendering and end-to-end verification only, not offline fit benchmarking
 
 ## Assumptions and Defaults
@@ -385,11 +385,11 @@ matching:
 - Hybrid retrieval is enabled by default.
 - `cross_encoder` is the default fit mode.
 - `baseline_allowed_modes` defaults to `["cross_encoder"]`.
-- `deploy_allowed_modes` may include `llm`, but standard users do not get it without entitlement.
+- `deploy_allowed_modes` may include `llm`, but standard users do not get it without an explicit capability grant.
 - Threshold scoring is fallback-only.
 - This slice includes a real local cross-encoder runtime.
 - Operating budgets are configurable and instrumented.
 - Emergency ceilings remain as internal safety rails only.
-- Entitlement administration is intentionally internal-first:
+- Capability administration is intentionally internal-first:
   - current path: DB-backed rows plus an internal CLI
   - later options: internal admin API or admin UI on top of the same table/service

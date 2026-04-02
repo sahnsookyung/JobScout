@@ -351,9 +351,9 @@ def test_llm_semantic_fit_fallback_records_diagnostics():
     assert result.fit_explanation["retrieval"]["mode"] == "hybrid"
 
 
-def test_resolve_effective_fit_mode_uses_entitlement_preference_when_allowed():
+def test_resolve_effective_fit_mode_uses_capability_preference_when_allowed():
     repo = MagicMock()
-    repo.get_entitlement.side_effect = [
+    repo.get_capability.side_effect = [
         MagicMock(enabled=True, value_json={"modes": ["cross_encoder", "llm"]}),
         MagicMock(enabled=True, value_json={"mode": "llm"}),
     ]
@@ -364,13 +364,13 @@ def test_resolve_effective_fit_mode_uses_entitlement_preference_when_allowed():
 
     assert resolved_mode == "llm"
     assert allowed == ["cross_encoder", "llm"]
-    repo.get_entitlement.assert_any_call("user-1", FEATURE_ALLOWED_MODES)
-    repo.get_entitlement.assert_any_call("user-1", FEATURE_PREFERRED_MODE)
+    repo.get_capability.assert_any_call("user-1", FEATURE_ALLOWED_MODES)
+    repo.get_capability.assert_any_call("user-1", FEATURE_PREFERRED_MODE)
 
 
-def test_resolve_effective_fit_mode_ignores_invalid_entitlement_payloads():
+def test_resolve_effective_fit_mode_ignores_invalid_capability_payloads():
     repo = MagicMock()
-    repo.get_entitlement.side_effect = [
+    repo.get_capability.side_effect = [
         MagicMock(enabled=True, value_json="invalid"),
         MagicMock(enabled=True, value_json={"mode": "llm"}),
     ]
@@ -554,7 +554,6 @@ def test_select_best_assessment_prefers_score_then_confidence_then_similarity():
     }
 
     best_pair, best_assessment = _select_best_assessment(
-        requirement_match,
         [first_pair, second_pair],
         assessments,
     )
@@ -609,12 +608,12 @@ def test_resolve_effective_fit_mode_falls_back_to_baseline_when_owner_missing():
 
     assert resolved_mode == "cross_encoder"
     assert allowed == ["cross_encoder"]
-    repo.get_entitlement.assert_not_called()
+    repo.get_capability.assert_not_called()
 
 
-def test_resolve_effective_fit_mode_ignores_disabled_entitlement_row():
+def test_resolve_effective_fit_mode_ignores_disabled_capability_row():
     repo = MagicMock()
-    repo.get_entitlement.side_effect = [
+    repo.get_capability.side_effect = [
         MagicMock(enabled=False, value_json={"modes": ["llm"]}),
         MagicMock(enabled=False, value_json={"mode": "llm"}),
     ]

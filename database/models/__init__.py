@@ -28,7 +28,7 @@ from .notification import NotificationTracker
 from .notification_settings import UserNotificationSettings, UserNotificationChannel
 from .settings import AppSettings
 from .user import User, UserAuthIdentity, UserFile
-from .user_feature_entitlement import UserFeatureEntitlement
+from .user_feature_capability import UserFeatureCapability
 
 __all__ = [
     'Base',
@@ -68,5 +68,5 @@ __all__ = [
     'User',
     'UserAuthIdentity',
     'UserFile',
-    'UserFeatureEntitlement',
+    'UserFeatureCapability',
 ]

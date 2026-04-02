@@ -13,7 +13,7 @@ from database.repositories.resume import ResumeRepository
 from database.repositories.match import MatchRepository
 from database.repositories.embedding import EmbeddingRepository
 from database.repositories.candidate_preferences import CandidatePreferencesRepository
-from database.repositories.user_feature_entitlement import UserFeatureEntitlementRepository
+from database.repositories.user_feature_capability import UserFeatureCapabilityRepository
 
 
 def make_repo():
@@ -70,9 +70,9 @@ class TestJobRepositoryProperties:
         second = repo.candidate_preferences
         assert first is second
 
-    def test_user_feature_entitlement_returns_repository(self):
+    def test_user_feature_capability_returns_repository(self):
         repo, _ = make_repo()
-        assert isinstance(repo.user_feature_entitlement, UserFeatureEntitlementRepository)
+        assert isinstance(repo.user_feature_capability, UserFeatureCapabilityRepository)
 
     def test_all_sub_repos_use_same_db(self):
         mock_db = MagicMock()
@@ -503,28 +503,28 @@ class TestCandidatePreferencesRepositoryProperty:
         assert result == "prefs"
 
 
-class TestFeatureEntitlementDelegation:
-    def test_get_entitlement(self):
+class TestFeatureCapabilityDelegation:
+    def test_get_capability(self):
         repo, _ = make_repo()
-        repo.user_feature_entitlement.get_entitlement = MagicMock(return_value="entitlement")
-        result = repo.get_entitlement("user-1", "fit.semantic.allowed_modes")
-        repo.user_feature_entitlement.get_entitlement.assert_called_once_with(
+        repo.user_feature_capability.get_capability = MagicMock(return_value="capability")
+        result = repo.get_capability("user-1", "fit.semantic.allowed_modes")
+        repo.user_feature_capability.get_capability.assert_called_once_with(
             "user-1",
             "fit.semantic.allowed_modes",
         )
-        assert result == "entitlement"
+        assert result == "capability"
 
-    def test_upsert_entitlement(self):
+    def test_upsert_capability(self):
         repo, _ = make_repo()
-        repo.user_feature_entitlement.upsert_entitlement = MagicMock(return_value="updated")
-        result = repo.upsert_entitlement(
+        repo.user_feature_capability.upsert_capability = MagicMock(return_value="updated")
+        result = repo.upsert_capability(
             "user-1",
             "fit.semantic.preferred_mode",
             enabled=True,
             value_json={"mode": "llm"},
             source="admin",
         )
-        repo.user_feature_entitlement.upsert_entitlement.assert_called_once_with(
+        repo.user_feature_capability.upsert_capability.assert_called_once_with(
             "user-1",
             "fit.semantic.preferred_mode",
             enabled=True,

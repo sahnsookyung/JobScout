@@ -9,12 +9,12 @@ from unittest.mock import MagicMock
 SCRIPT_PATH = (
     Path(__file__).resolve().parents[3]
     / "scripts"
-    / "manage_feature_entitlement.py"
+    / "manage_feature_capability.py"
 )
 
 
 def _load_script_module():
-    spec = importlib.util.spec_from_file_location("manage_feature_entitlement_script", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("manage_feature_capability_script", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -43,15 +43,15 @@ def test_resolved_value_supports_modes_helper():
     assert script._resolved_value(args) == {"modes": ["cross_encoder", "llm"]}
 
 
-def test_serialize_none_entitlement():
+def test_serialize_none_capability():
     script = _load_script_module()
 
-    assert script._serialize(None) == {"entitlement": None}
+    assert script._serialize(None) == {"capability": None}
 
 
-def test_main_show_prints_entitlement_json(monkeypatch, capsys):
+def test_main_show_prints_capability_json(monkeypatch, capsys):
     script = _load_script_module()
-    fake_entitlement = SimpleNamespace(
+    fake_capability = SimpleNamespace(
         id="1",
         owner_id="owner",
         feature_key="fit.semantic.allowed_modes",
@@ -62,7 +62,7 @@ def test_main_show_prints_entitlement_json(monkeypatch, capsys):
         updated_at=None,
     )
     repo = MagicMock()
-    repo.get_entitlement.return_value = fake_entitlement
+    repo.get_capability.return_value = fake_capability
     session = MagicMock()
 
     class _Ctx:
@@ -89,12 +89,12 @@ def test_main_show_prints_entitlement_json(monkeypatch, capsys):
 
     assert exit_code == 0
     assert payload["feature_key"] == "fit.semantic.allowed_modes"
-    repo.get_entitlement.assert_called_once()
+    repo.get_capability.assert_called_once()
 
 
-def test_main_set_upserts_entitlement(monkeypatch, capsys):
+def test_main_set_upserts_capability(monkeypatch, capsys):
     script = _load_script_module()
-    fake_entitlement = SimpleNamespace(
+    fake_capability = SimpleNamespace(
         id="1",
         owner_id="owner",
         feature_key="fit.semantic.preferred_mode",
@@ -105,7 +105,7 @@ def test_main_set_upserts_entitlement(monkeypatch, capsys):
         updated_at=None,
     )
     repo = MagicMock()
-    repo.upsert_entitlement.return_value = fake_entitlement
+    repo.upsert_capability.return_value = fake_capability
     session = MagicMock()
 
     class _Ctx:
@@ -137,4 +137,4 @@ def test_main_set_upserts_entitlement(monkeypatch, capsys):
 
     assert exit_code == 0
     assert payload["value_json"] == {"mode": "llm"}
-    repo.upsert_entitlement.assert_called_once()
+    repo.upsert_capability.assert_called_once()

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Internal CLI for reading and updating user feature entitlements."""
+"""Internal CLI for reading and updating user feature capabilities."""
 
 from __future__ import annotations
 
@@ -12,17 +12,17 @@ from database.repository import JobRepository
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Manage JobScout feature entitlements.")
+    parser = argparse.ArgumentParser(description="Manage JobScout feature capabilities.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    show_parser = subparsers.add_parser("show", help="Show one entitlement row.")
+    show_parser = subparsers.add_parser("show", help="Show one capability row.")
     show_parser.add_argument("--owner-id", required=True, help="User UUID.")
     show_parser.add_argument("--feature-key", required=True)
 
-    set_parser = subparsers.add_parser("set", help="Create or update one entitlement row.")
+    set_parser = subparsers.add_parser("set", help="Create or update one capability row.")
     set_parser.add_argument("--owner-id", required=True, help="User UUID.")
     set_parser.add_argument("--feature-key", required=True)
-    set_parser.add_argument("--disable", action="store_true", help="Mark the entitlement disabled.")
+    set_parser.add_argument("--disable", action="store_true", help="Mark the capability disabled.")
     set_parser.add_argument("--source", default="manual-cli")
     set_parser.add_argument(
         "--json-value",
@@ -43,18 +43,18 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _serialize(entitlement) -> dict:
-    if entitlement is None:
-        return {"entitlement": None}
+def _serialize(capability) -> dict:
+    if capability is None:
+        return {"capability": None}
     return {
-        "id": str(entitlement.id),
-        "owner_id": str(entitlement.owner_id),
-        "feature_key": entitlement.feature_key,
-        "enabled": bool(entitlement.enabled),
-        "value_json": entitlement.value_json,
-        "source": entitlement.source,
-        "created_at": entitlement.created_at.isoformat() if entitlement.created_at else None,
-        "updated_at": entitlement.updated_at.isoformat() if entitlement.updated_at else None,
+        "id": str(capability.id),
+        "owner_id": str(capability.owner_id),
+        "feature_key": capability.feature_key,
+        "enabled": bool(capability.enabled),
+        "value_json": capability.value_json,
+        "source": capability.source,
+        "created_at": capability.created_at.isoformat() if capability.created_at else None,
+        "updated_at": capability.updated_at.isoformat() if capability.updated_at else None,
     }
 
 
@@ -75,18 +75,18 @@ def main() -> int:
     with db_session_scope() as session:
         repo = JobRepository(session)
         if args.command == "show":
-            entitlement = repo.get_entitlement(owner_id, args.feature_key)
-            print(json.dumps(_serialize(entitlement), indent=2, sort_keys=True))
+            capability = repo.get_capability(owner_id, args.feature_key)
+            print(json.dumps(_serialize(capability), indent=2, sort_keys=True))
             return 0
 
-        entitlement = repo.upsert_entitlement(
+        capability = repo.upsert_capability(
             owner_id,
             args.feature_key,
             enabled=not args.disable,
             value_json=_resolved_value(args),
             source=args.source,
         )
-        print(json.dumps(_serialize(entitlement), indent=2, sort_keys=True))
+        print(json.dumps(_serialize(capability), indent=2, sort_keys=True))
         return 0
 
 

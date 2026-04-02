@@ -50,7 +50,7 @@ Behavior:
 - LLM semantic fit remains available as an advanced gated mode
 - threshold scoring remains available as the explicit fallback path
 - nested `matching.scorer.semantic_fit.*` config now controls fit-mode routing, recall depth, and serialization budgets
-- per-user feature entitlements now gate advanced fit modes
+- per-user feature capabilities now gate advanced fit modes
 - fit explanations are persisted during scoring and returned by the match explanation endpoint
 - split-stack E2E now exercises `/api/matches` and `/api/matches/{id}/explanation` so the persisted fit diagnostics are verified through real API calls
 - normal user-facing match details now use semantic verdicts and summaries instead of raw `% similarity` badges, and display fit mode/provider route/fallback state
@@ -157,7 +157,7 @@ Observed results at handoff:
  - the broader fit rewire plan is now recorded in [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md):
    - hybrid retrieval becomes the default path
    - semantic fit adds dual provider support: cross-encoder default plus advanced gated LLM mode
-   - fit mode access moves to a DB-backed entitlement model
+   - fit mode access moves to a DB-backed capability model
    - recall depth becomes configurable
    - truncation budgets become configurable and instrumented rather than fixed hidden limits
    - `config.yaml` will carry commented tuning hints for fit controls
@@ -166,10 +166,10 @@ Observed results at handoff:
 
 - No real `PreferenceSemanticReranker` exists yet.
 - Current lexical soft-preference overlap still exists in the matcher pipeline and should be treated as an interim path, not the target architecture.
-- No admin entitlement/capability store exists yet beyond config-driven allowed modes.
-- A DB-backed entitlement control mechanism exists now, plus an internal CLI for dev/staging administration:
-  - [scripts/manage_feature_entitlement.py](/Users/sookyungahn/repos/JobScout-fit-semantics/scripts/manage_feature_entitlement.py)
-  - later options remain an internal admin API or admin UI on top of the same table/service
+- No admin HTTP surface exists for capability management in this phase beyond config-driven allowed modes plus the internal CLI.
+- A DB-backed capability control mechanism exists now, plus an internal CLI for dev/staging administration:
+  - [manage_feature_capability.py](/Users/sookyungahn/repos/JobScout-fit-semantics/scripts/manage_feature_capability.py)
+  - later options remain an internal admin API or admin UI on top of the same table/service if operations truly require it
 - Persisted reruns are authoritative only after a clean save batch completes; this safety behavior is now intentional and should be preserved when implementing later semantic stages.
 - The current fit semantic scorer supports both a dedicated cross-encoder path and a gated LLM path.
 - ANN/pgvector is still the retrieval and evidence-recall layer; the rewire plan keeps it as retrieval infrastructure rather than final semantic authority.

@@ -22,7 +22,7 @@
 - Hybrid retrieval groundwork and retrieval diagnostics are implemented on the branch.
 - Local cross-encoder routing now prefers FlagEmbedding-compatible runtimes in `auto`, with SentenceTransformers and heuristic fallback still supported behind the same provider interface.
 - Offline fit evaluation is now intended to stay Python-only so it can directly exercise backend retrieval fusion and semantic scoring code.
-- Entitlement administration remains internal-first; the branch provides DB-backed control plus an internal CLI rather than a public admin API/UI.
+- Capability administration remains internal-first; the branch provides DB-backed control plus an internal CLI rather than a public admin API/UI.
 - The next canonical planning document for fit work is [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md).
 
 ## Milestone 1
@@ -56,7 +56,7 @@ See [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md) for the repla
 - hybrid retrieval as the default retrieval mode
 - cross-encoder scoring as the default semantic fit mode
 - LLM scoring as an advanced gated mode
-- DB-backed entitlements for fit mode access
+- DB-backed capabilities for fit mode access
 - configurable recall depth and configurable truncation budgets with metrics
 - commented config examples for user-tunable fit settings
 

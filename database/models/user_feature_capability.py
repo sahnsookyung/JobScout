@@ -9,10 +9,10 @@ from .base import Base
 UTC_NOW = sql_text("timezone('UTC', now())")
 
 
-class UserFeatureEntitlement(Base):
+class UserFeatureCapability(Base):
     """Per-user feature gating and configuration overrides."""
 
-    __tablename__ = "user_feature_entitlement"
+    __tablename__ = "user_feature_capability"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -30,10 +30,10 @@ class UserFeatureEntitlement(Base):
 
     __table_args__ = (
         Index(
-            "idx_user_feature_entitlement_owner_feature",
+            "idx_user_feature_capability_owner_feature",
             "owner_id",
             "feature_key",
             unique=True,
         ),
-        Index("idx_user_feature_entitlement_feature", "feature_key"),
+        Index("idx_user_feature_capability_feature", "feature_key"),
     )

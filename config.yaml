@@ -147,7 +147,7 @@ matching:
       #     base_url: "https://fit.example.com"
       #     api_key: "..."
       # llm:
-      #   enabled: true             # Advanced mode, intended for entitled users only
+      #   enabled: true             # Advanced mode, intended for capability-enabled users only
       # serialization:
       #   evidence_text_max_chars: 4000  # Raise if evidence is being truncated too aggressively
       #   # These are operating budgets, not hidden hard limits; truncation emits warnings/diagnostics.

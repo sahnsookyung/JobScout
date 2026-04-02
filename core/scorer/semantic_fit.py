@@ -45,6 +45,17 @@ SEMANTIC_PAIR_SCHEMA_NAME = "semantic_fit_pairs_v1"
 
 FEATURE_ALLOWED_MODES = "fit.semantic.allowed_modes"
 FEATURE_PREFERRED_MODE = "fit.semantic.preferred_mode"
+REASON_COVERED = "Evidence strongly matches the requirement."
+REASON_PARTIAL = "Evidence is related but does not fully satisfy the requirement."
+REASON_MISSING = "Evidence does not support the requirement."
+REASON_NO_EVIDENCE = "No supporting resume evidence was recalled for this requirement."
+REASON_PRESERVED_MATCHER = (
+    "No supporting resume evidence payload was available; preserved matcher classification."
+)
+REASON_UNJUDGED = (
+    "Requirement was not judged by the semantic scorer; preserved fallback classification."
+)
+THRESHOLD_FALLBACK_MESSAGE = "Semantic fit scorer unavailable; using threshold fallback."
 
 _GENERIC_TOKENS = {
     "a", "an", "and", "api", "apis", "as", "at", "be", "build", "building",
@@ -148,6 +159,20 @@ class PairAssessment:
     semantic_score: float
     confidence: float
     reason: str
+
+
+@dataclass(frozen=True)
+class AssessmentScoringMetadata:
+    scorer_name: str
+    scorer_version: str
+    provider_route: str
+    provider_id: str
+    threshold: float
+    latency_ms: float
+    model_summary: Optional[str]
+    truncation_aggregate: Dict[str, Any]
+    fallback_used: bool = False
+    fallback_reason: Optional[str] = None
 
 
 def _tokenize(text: str) -> List[str]:
@@ -573,7 +598,7 @@ def _pair_assessment_from_heuristic(pair: SerializedPair) -> PairAssessment:
             coverage_level="missing",
             semantic_score=0.0,
             confidence=1.0,
-            reason="No supporting resume evidence was recalled for this requirement.",
+            reason=REASON_NO_EVIDENCE,
         )
     if _explicit_tech_mismatch(requirement_text, evidence_text):
         return PairAssessment(
@@ -592,7 +617,7 @@ def _pair_assessment_from_heuristic(pair: SerializedPair) -> PairAssessment:
             coverage_level="covered",
             semantic_score=round(score, 4),
             confidence=min(0.98, 0.72 + 0.06 * len(overlap)),
-            reason="Evidence strongly matches the requirement.",
+            reason=REASON_COVERED,
         )
     if original_similarity >= 0.45:
         return PairAssessment(
@@ -601,7 +626,7 @@ def _pair_assessment_from_heuristic(pair: SerializedPair) -> PairAssessment:
             coverage_level="partial",
             semantic_score=min(0.79, max(0.55, original_similarity)),
             confidence=0.6,
-            reason="Evidence is related but does not fully satisfy the requirement.",
+            reason=REASON_PARTIAL,
         )
     return PairAssessment(
         pair_id=pair.pair_id,
@@ -609,8 +634,16 @@ def _pair_assessment_from_heuristic(pair: SerializedPair) -> PairAssessment:
         coverage_level="missing",
         semantic_score=0.0,
         confidence=0.72,
-        reason="Evidence does not support the requirement.",
+        reason=REASON_MISSING,
     )
+
+
+def _coverage_level_and_reason(semantic_score: float) -> tuple[str, str]:
+    if semantic_score >= 0.80:
+        return "covered", REASON_COVERED
+    if semantic_score >= 0.55:
+        return "partial", REASON_PARTIAL
+    return "missing", REASON_MISSING
 
 
 class LocalCrossEncoderProvider:
@@ -670,6 +703,16 @@ class LocalCrossEncoderProvider:
         }
 
     @staticmethod
+    def _normalize_runtime_item(item: Any) -> float:
+        if isinstance(item, dict):
+            if "score" not in item:
+                raise TypeError(f"Unsupported local reranker item payload: {item!r}")
+            return float(item["score"])
+        if isinstance(item, (list, tuple)) and item:
+            return float(item[0])
+        return float(item)
+
+    @staticmethod
     def _normalize_runtime_scores(result: Any) -> List[float]:
         if result is None:
             return []
@@ -683,15 +726,8 @@ class LocalCrossEncoderProvider:
             raise TypeError(f"Unsupported local reranker result payload: {type(result)!r}")
 
         normalized: List[float] = []
-        for item in list(result):
-            if isinstance(item, dict):
-                if "score" not in item:
-                    raise TypeError(f"Unsupported local reranker item payload: {item!r}")
-                normalized.append(float(item["score"]))
-            elif isinstance(item, (list, tuple)) and item:
-                normalized.append(float(item[0]))
-            else:
-                normalized.append(float(item))
+        for item in result:
+            normalized.append(LocalCrossEncoderProvider._normalize_runtime_item(item))
         return normalized
 
     def _load_flag_embedding_runtime(self) -> Any:
@@ -843,15 +879,7 @@ class LocalCrossEncoderProvider:
             raw_scores = self._normalize_runtime_scores(raw_scores)
             for pair, raw_score in zip(pairs, raw_scores):
                 semantic_score = _normalize_semantic_score(raw_score)
-                if semantic_score >= 0.80:
-                    coverage_level = "covered"
-                    reason = "Evidence strongly matches the requirement."
-                elif semantic_score >= 0.55:
-                    coverage_level = "partial"
-                    reason = "Evidence is related but does not fully satisfy the requirement."
-                else:
-                    coverage_level = "missing"
-                    reason = "Evidence does not support the requirement."
+                coverage_level, reason = _coverage_level_and_reason(semantic_score)
                 confidence = _clamp01(abs(semantic_score - 0.55) / 0.45)
                 assessments.append(
                     PairAssessment(
@@ -922,15 +950,7 @@ class RemoteCrossEncoderProvider:
                 assessments.append(_pair_assessment_from_heuristic(pair))
                 continue
             semantic_score = _normalize_semantic_score(scores_by_pair[pair.pair_id])
-            if semantic_score >= 0.80:
-                coverage_level = "covered"
-                reason = "Evidence strongly matches the requirement."
-            elif semantic_score >= 0.55:
-                coverage_level = "partial"
-                reason = "Evidence is related but does not fully satisfy the requirement."
-            else:
-                coverage_level = "missing"
-                reason = "Evidence does not support the requirement."
+            coverage_level, reason = _coverage_level_and_reason(semantic_score)
             assessments.append(
                 PairAssessment(
                     pair_id=pair.pair_id,
@@ -969,7 +989,6 @@ class LLMSemanticFitScorer:
         if not getattr(config.semantic_fit, "enabled", True):
             return self.fallback_scorer.score(preliminary, fit_penalties=fit_penalties, config=config)
 
-        started_at = time.perf_counter()
         try:
             return self._score_with_llm(preliminary, fit_penalties=fit_penalties, config=config)
         except Exception as exc:
@@ -984,7 +1003,7 @@ class LLMSemanticFitScorer:
                 scorer_version=THRESHOLD_SCORER_VERSION,
                 fallback_used=True,
                 fallback_reason=str(exc),
-                fallback_message="Semantic fit scorer unavailable; using threshold fallback.",
+                fallback_message=THRESHOLD_FALLBACK_MESSAGE,
             )
 
     def _score_with_llm(
@@ -1048,14 +1067,16 @@ class LLMSemanticFitScorer:
             zero_evidence_verdicts=zero_evidence_verdicts,
             fit_penalties=fit_penalties,
             config=config,
-            scorer_name=self.scorer_name,
-            scorer_version=self.scorer_version,
-            provider_route="llm",
-            provider_id="llm",
-            threshold=threshold,
-            latency_ms=round((time.perf_counter() - started_at) * 1000.0, 3),
-            model_summary=summary,
-            truncation_aggregate=truncation_aggregate,
+            metadata=AssessmentScoringMetadata(
+                scorer_name=self.scorer_name,
+                scorer_version=self.scorer_version,
+                provider_route="llm",
+                provider_id="llm",
+                threshold=threshold,
+                latency_ms=round((time.perf_counter() - started_at) * 1000.0, 3),
+                model_summary=summary,
+                truncation_aggregate=truncation_aggregate,
+            ),
         )
 
 
@@ -1064,71 +1085,80 @@ def _build_serialized_pairs(
     *,
     config: ScorerConfig,
 ) -> tuple[List[SerializedPair], List[Dict[str, Any]], Dict[str, Any]]:
+    threshold = float(
+        getattr(config, "req_similarity_threshold", fit_score.DEFAULT_REQ_SIMILARITY_THRESHOLD)
+    )
     pairs: List[SerializedPair] = []
     zero_evidence_verdicts: List[Dict[str, Any]] = []
-    truncated_pair_count = 0
-    total_truncated_chars = 0
-    emergency_ceiling_hits = 0
     for requirement_match in preliminary.requirement_matches + preliminary.missing_requirements:
-        candidates = list(requirement_match.evidence_candidates)
-        if not candidates and requirement_match.evidence is not None:
-            candidates = [
-                RequirementEvidenceCandidate(
-                    evidence=requirement_match.evidence,
-                    similarity=float(requirement_match.similarity or 0.0),
-                    rank=1,
-                )
-            ]
+        candidates = _candidate_evidence_candidates(requirement_match)
         if not candidates:
-            preserved_coverage = _fallback_coverage_level(requirement_match)
-            preserved_score = _semantic_similarity(
-                float(requirement_match.similarity or 0.0),
-                preserved_coverage,
-                float(getattr(config, "req_similarity_threshold", fit_score.DEFAULT_REQ_SIMILARITY_THRESHOLD)),
-            )
-            zero_evidence_verdicts.append(
-                _base_verdict(
-                    requirement_match,
-                    evidence=None,
-                    coverage_level=preserved_coverage,
-                    semantic_score=preserved_score,
-                    confidence=1.0 if preserved_coverage == "missing" else 0.0,
-                    reason=(
-                        "No supporting resume evidence was recalled for this requirement."
-                        if preserved_coverage == "missing"
-                        else "No supporting resume evidence payload was available; preserved matcher classification."
-                    ),
-                )
-            )
+            zero_evidence_verdicts.append(_zero_evidence_verdict(requirement_match, threshold))
             continue
         for candidate in candidates:
             pair = _serialize_pair(preliminary, requirement_match, candidate, config=config)
             pairs.append(pair)
-            if pair.truncation["truncated"]:
-                truncated_pair_count += 1
-            total_truncated_chars += int(pair.truncation["total_truncated_chars"])
-            if pair.truncation["emergency_ceiling_hit"]:
-                emergency_ceiling_hits += 1
-    aggregate = {
+    aggregate = _truncation_aggregate(pairs)
+    _log_truncation_aggregate(aggregate)
+    return pairs, zero_evidence_verdicts, aggregate
+
+
+def _candidate_evidence_candidates(requirement_match: RequirementMatchResult) -> List[RequirementEvidenceCandidate]:
+    candidates = list(requirement_match.evidence_candidates)
+    if candidates or requirement_match.evidence is None:
+        return candidates
+    return [
+        RequirementEvidenceCandidate(
+            evidence=requirement_match.evidence,
+            similarity=float(requirement_match.similarity or 0.0),
+            rank=1,
+        )
+    ]
+
+
+def _zero_evidence_verdict(requirement_match: RequirementMatchResult, threshold: float) -> Dict[str, Any]:
+    preserved_coverage = _fallback_coverage_level(requirement_match)
+    preserved_score = _semantic_similarity(
+        float(requirement_match.similarity or 0.0),
+        preserved_coverage,
+        threshold,
+    )
+    return _base_verdict(
+        requirement_match,
+        evidence=None,
+        coverage_level=preserved_coverage,
+        semantic_score=preserved_score,
+        confidence=1.0 if preserved_coverage == "missing" else 0.0,
+        reason=REASON_NO_EVIDENCE if preserved_coverage == "missing" else REASON_PRESERVED_MATCHER,
+    )
+
+
+def _truncation_aggregate(pairs: List[SerializedPair]) -> Dict[str, Any]:
+    truncated_pair_count = sum(1 for pair in pairs if pair.truncation["truncated"])
+    total_truncated_chars = sum(int(pair.truncation["total_truncated_chars"]) for pair in pairs)
+    emergency_ceiling_hits = sum(1 for pair in pairs if pair.truncation["emergency_ceiling_hit"])
+    return {
         "any_truncated": truncated_pair_count > 0,
         "pair_count": len(pairs),
         "truncated_pair_count": truncated_pair_count,
         "total_truncated_chars": total_truncated_chars,
         "emergency_ceiling_hits": emergency_ceiling_hits,
     }
-    if aggregate["any_truncated"]:
-        logger.warning(
-            "Semantic fit serialization truncated %d/%d pairs (%d chars discarded, emergency ceiling hits=%d)",
-            truncated_pair_count,
-            len(pairs),
-            total_truncated_chars,
-            emergency_ceiling_hits,
-        )
-    return pairs, zero_evidence_verdicts, aggregate
+
+
+def _log_truncation_aggregate(aggregate: Dict[str, Any]) -> None:
+    if not aggregate["any_truncated"]:
+        return
+    logger.warning(
+        "Semantic fit serialization truncated %d/%d pairs (%d chars discarded, emergency ceiling hits=%d)",
+        aggregate["truncated_pair_count"],
+        aggregate["pair_count"],
+        aggregate["total_truncated_chars"],
+        aggregate["emergency_ceiling_hits"],
+    )
 
 
 def _select_best_assessment(
-    requirement_match: RequirementMatchResult,
     candidate_pairs: List[SerializedPair],
     assessments_by_pair: Dict[str, PairAssessment],
 ) -> tuple[Optional[SerializedPair], Optional[PairAssessment]]:
@@ -1166,91 +1196,28 @@ def _score_with_assessments(
     zero_evidence_verdicts: List[Dict[str, Any]],
     fit_penalties: float,
     config: ScorerConfig,
-    scorer_name: str,
-    scorer_version: str,
-    provider_route: str,
-    provider_id: str,
-    threshold: float,
-    latency_ms: float,
-    model_summary: Optional[str],
-    truncation_aggregate: Dict[str, Any],
-    fallback_used: bool = False,
-    fallback_reason: Optional[str] = None,
+    metadata: AssessmentScoringMetadata,
 ) -> SemanticFitScoreResult:
     assessments_by_pair = {assessment.pair_id: assessment for assessment in assessments}
-    pairs_by_requirement: Dict[str, List[SerializedPair]] = {}
-    for pair in serialized_pairs:
-        pairs_by_requirement.setdefault(pair.requirement_id, []).append(pair)
-
+    pairs_by_requirement = _pairs_by_requirement(serialized_pairs)
     adjusted_matched: List[RequirementMatchResult] = []
     adjusted_missing: List[RequirementMatchResult] = []
     verdicts: List[Dict[str, Any]] = list(zero_evidence_verdicts)
 
     for requirement_match in preliminary.requirement_matches + preliminary.missing_requirements:
-        requirement_id = _requirement_id(requirement_match)
-        candidate_pairs = pairs_by_requirement.get(requirement_id, [])
-        if not candidate_pairs:
-            preserved_coverage = _fallback_coverage_level(requirement_match)
-            adjusted = _clone_match(
-                requirement_match,
-                evidence=requirement_match.evidence,
-                similarity=_semantic_similarity(
-                    float(requirement_match.similarity or 0.0),
-                    preserved_coverage,
-                    threshold,
-                ),
-                is_covered=preserved_coverage == "covered",
-            )
-            if adjusted.is_covered:
-                adjusted_matched.append(adjusted)
-            else:
-                adjusted_missing.append(adjusted)
-            continue
-        best_pair, best_assessment = _select_best_assessment(requirement_match, candidate_pairs, assessments_by_pair)
-        if best_pair is None or best_assessment is None:
-            adjusted_missing.append(
-                _clone_match(
-                    requirement_match,
-                    evidence=requirement_match.evidence,
-                    similarity=0.0,
-                    is_covered=False,
-                )
-            )
-            verdicts.append(
-                _base_verdict(
-                    requirement_match,
-                    evidence=requirement_match.evidence,
-                    coverage_level="missing",
-                    semantic_score=0.0,
-                    confidence=0.0,
-                    reason="Requirement was not judged by the semantic scorer; preserved fallback classification.",
-                    provider_route=provider_route,
-                )
-            )
-            continue
-        similarity = _semantic_similarity(best_assessment.semantic_score, best_assessment.coverage_level, threshold)
-        adjusted = _clone_match(
-            requirement_match,
-            evidence=best_pair.candidate.evidence,
-            similarity=similarity,
-            is_covered=best_assessment.coverage_level == "covered",
+        adjusted, verdict = _score_requirement_match(
+            requirement_match=requirement_match,
+            candidate_pairs=pairs_by_requirement.get(_requirement_id(requirement_match), []),
+            assessments_by_pair=assessments_by_pair,
+            threshold=metadata.threshold,
+            provider_route=metadata.provider_route,
         )
         if adjusted.is_covered:
             adjusted_matched.append(adjusted)
         else:
             adjusted_missing.append(adjusted)
-        verdicts.append(
-            _base_verdict(
-                requirement_match,
-                evidence=best_pair.candidate.evidence,
-                coverage_level=best_assessment.coverage_level,
-                semantic_score=round(_clamp01(best_assessment.semantic_score), 4),
-                confidence=round(_clamp01(best_assessment.confidence), 4),
-                reason=best_assessment.reason,
-                provider_route=provider_route,
-                truncation=best_pair.truncation,
-            )
-        )
+        if verdict is not None:
+            verdicts.append(verdict)
 
     fit_value, fit_components = fit_score.calculate_fit_score(
         job_similarity=preliminary.job_similarity,
@@ -1265,58 +1232,150 @@ def _score_with_assessments(
     base_confidence = (sum(confidence_values) / len(confidence_values)) if confidence_values else 0.0
     fit_confidence = round(max(base_confidence, _fit_confidence(required_coverage, preliminary.job_similarity)), 4)
     retrieval_diagnostics = _build_retrieval_diagnostics(preliminary)
-    effective_fit_mode = "llm" if provider_route == "llm" else "cross_encoder"
-    if provider_route in {"local_heuristic", "threshold"} or provider_id == "heuristic-local":
-        effective_fit_mode = "threshold"
-
     scorer_diagnostics = {
-        "name": scorer_name,
-        "version": scorer_version,
-        "effective_fit_mode": effective_fit_mode,
-        "provider_route": provider_route,
-        "provider_id": provider_id,
-        "latency_ms": latency_ms,
-        "fallback_used": fallback_used,
+        "name": metadata.scorer_name,
+        "version": metadata.scorer_version,
+        "effective_fit_mode": _effective_fit_mode(metadata.provider_route, metadata.provider_id),
+        "provider_route": metadata.provider_route,
+        "provider_id": metadata.provider_id,
+        "latency_ms": metadata.latency_ms,
+        "fallback_used": metadata.fallback_used,
         "judged_requirements": len(verdicts),
-        "truncation": truncation_aggregate,
+        "truncation": metadata.truncation_aggregate,
     }
-    if fallback_reason:
-        scorer_diagnostics["fallback_reason"] = fallback_reason
+    if metadata.fallback_reason:
+        scorer_diagnostics["fallback_reason"] = metadata.fallback_reason
     fit_explanation = _build_fit_explanation(
         verdicts,
         required_coverage=required_coverage,
         preferred_coverage=preferred_coverage,
         fit_confidence=fit_confidence,
         job_similarity=preliminary.job_similarity,
-        scorer_name=scorer_name,
-        scorer_version=scorer_version,
+        scorer_name=metadata.scorer_name,
+        scorer_version=metadata.scorer_version,
         retrieval_diagnostics=retrieval_diagnostics,
         scorer_diagnostics=scorer_diagnostics,
-        fallback_message="Semantic fit scorer unavailable; using threshold fallback." if fallback_used else None,
+        fallback_message=THRESHOLD_FALLBACK_MESSAGE if metadata.fallback_used else None,
     )
     enriched_components = dict(fit_components)
     enriched_components["fit_confidence"] = fit_confidence
-    enriched_components["fit_scorer"] = {"name": scorer_name, "version": scorer_version}
+    enriched_components["fit_scorer"] = {"name": metadata.scorer_name, "version": metadata.scorer_version}
     enriched_components["effective_fit_mode"] = scorer_diagnostics["effective_fit_mode"]
-    enriched_components["provider_route"] = provider_route
+    enriched_components["provider_route"] = metadata.provider_route
     enriched_components["retrieval"] = retrieval_diagnostics
     enriched_components["semantic_fit_diagnostics"] = scorer_diagnostics
-    enriched_components["semantic_fit_truncation"] = truncation_aggregate
-    if fallback_reason:
-        enriched_components["semantic_fit_fallback_reason"] = fallback_reason
-    if model_summary:
-        enriched_components["semantic_fit_summary"] = model_summary
+    enriched_components["semantic_fit_truncation"] = metadata.truncation_aggregate
+    if metadata.fallback_reason:
+        enriched_components["semantic_fit_fallback_reason"] = metadata.fallback_reason
+    if metadata.model_summary:
+        enriched_components["semantic_fit_summary"] = metadata.model_summary
     enriched_components["fit_explanation"] = fit_explanation
     return SemanticFitScoreResult(
         fit_score=fit_value,
         fit_components=enriched_components,
         fit_confidence=fit_confidence,
         fit_explanation=fit_explanation,
-        scorer_name=scorer_name,
-        scorer_version=scorer_version,
+        scorer_name=metadata.scorer_name,
+        scorer_version=metadata.scorer_version,
         matched_requirements=adjusted_matched,
         missing_requirements=adjusted_missing,
     )
+
+
+def _pairs_by_requirement(serialized_pairs: List[SerializedPair]) -> Dict[str, List[SerializedPair]]:
+    pairs_by_requirement: Dict[str, List[SerializedPair]] = {}
+    for pair in serialized_pairs:
+        pairs_by_requirement.setdefault(pair.requirement_id, []).append(pair)
+    return pairs_by_requirement
+
+
+def _fallback_adjusted_match(requirement_match: RequirementMatchResult, threshold: float) -> RequirementMatchResult:
+    preserved_coverage = _fallback_coverage_level(requirement_match)
+    return _clone_match(
+        requirement_match,
+        evidence=requirement_match.evidence,
+        similarity=_semantic_similarity(
+            float(requirement_match.similarity or 0.0),
+            preserved_coverage,
+            threshold,
+        ),
+        is_covered=preserved_coverage == "covered",
+    )
+
+
+def _missing_assessment_verdict(
+    requirement_match: RequirementMatchResult,
+    provider_route: str,
+) -> Dict[str, Any]:
+    return _base_verdict(
+        requirement_match,
+        evidence=requirement_match.evidence,
+        coverage_level="missing",
+        semantic_score=0.0,
+        confidence=0.0,
+        reason=REASON_UNJUDGED,
+        provider_route=provider_route,
+    )
+
+
+def _scored_requirement_verdict(
+    requirement_match: RequirementMatchResult,
+    best_pair: SerializedPair,
+    best_assessment: PairAssessment,
+    provider_route: str,
+) -> Dict[str, Any]:
+    return _base_verdict(
+        requirement_match,
+        evidence=best_pair.candidate.evidence,
+        coverage_level=best_assessment.coverage_level,
+        semantic_score=round(_clamp01(best_assessment.semantic_score), 4),
+        confidence=round(_clamp01(best_assessment.confidence), 4),
+        reason=best_assessment.reason,
+        provider_route=provider_route,
+        truncation=best_pair.truncation,
+    )
+
+
+def _score_requirement_match(
+    *,
+    requirement_match: RequirementMatchResult,
+    candidate_pairs: List[SerializedPair],
+    assessments_by_pair: Dict[str, PairAssessment],
+    threshold: float,
+    provider_route: str,
+) -> tuple[RequirementMatchResult, Optional[Dict[str, Any]]]:
+    if not candidate_pairs:
+        return _fallback_adjusted_match(requirement_match, threshold), None
+
+    best_pair, best_assessment = _select_best_assessment(candidate_pairs, assessments_by_pair)
+    if best_pair is None or best_assessment is None:
+        adjusted = _clone_match(
+            requirement_match,
+            evidence=requirement_match.evidence,
+            similarity=0.0,
+            is_covered=False,
+        )
+        return adjusted, _missing_assessment_verdict(requirement_match, provider_route)
+
+    similarity = _semantic_similarity(best_assessment.semantic_score, best_assessment.coverage_level, threshold)
+    adjusted = _clone_match(
+        requirement_match,
+        evidence=best_pair.candidate.evidence,
+        similarity=similarity,
+        is_covered=best_assessment.coverage_level == "covered",
+    )
+    return adjusted, _scored_requirement_verdict(
+        requirement_match,
+        best_pair,
+        best_assessment,
+        provider_route,
+    )
+
+
+def _effective_fit_mode(provider_route: str, provider_id: str) -> str:
+    if provider_route in {"local_heuristic", "threshold"} or provider_id == "heuristic-local":
+        return "threshold"
+    return "llm" if provider_route == "llm" else "cross_encoder"
 
 
 class CrossEncoderSemanticFitScorer:
@@ -1334,79 +1393,66 @@ class CrossEncoderSemanticFitScorer:
         self.remote_provider = remote_provider
         self.fallback_scorer = fallback_scorer or ThresholdSemanticFitScorer()
 
-    def score(
+    @staticmethod
+    def _cross_encoder_threshold(config: ScorerConfig) -> float:
+        return float(
+            getattr(config, "req_similarity_threshold", fit_score.DEFAULT_REQ_SIMILARITY_THRESHOLD)
+        )
+
+    @staticmethod
+    def _is_production_environment() -> bool:
+        environment = (
+            os.getenv("JOBSCOUT_ENV")
+            or os.getenv("APP_ENV")
+            or os.getenv("ENVIRONMENT")
+            or "development"
+        )
+        return environment.strip().lower() == "production"
+
+    @staticmethod
+    def _available_providers(*providers: Any) -> List[Any]:
+        return [provider for provider in providers if provider is not None]
+
+    def _providers_for_route(
+        self,
+        *,
+        route_policy: str,
+        pair_count: int,
+        config: ScorerConfig,
+    ) -> tuple[List[Any], Optional[Exception]]:
+        if route_policy == "remote":
+            if self.remote_provider is not None:
+                return [self.remote_provider], None
+            return [], RuntimeError("Remote cross-encoder route requested but no remote provider is configured")
+
+        if route_policy == "auto":
+            promote_threshold = int(getattr(config.semantic_fit.cross_encoder, "remote_promote_pair_count", 40))
+            prefer_remote = (
+                self.remote_provider is not None
+                and self._is_production_environment()
+                and pair_count > promote_threshold
+            )
+            if prefer_remote:
+                return self._available_providers(self.remote_provider, self.local_provider), None
+            return self._available_providers(self.local_provider, self.remote_provider), None
+
+        providers: List[Any] = []
+        last_error: Optional[Exception] = None
+        if self.local_provider is not None:
+            providers.append(self.local_provider)
+        else:
+            last_error = RuntimeError("Local cross-encoder route requested but local provider is disabled")
+        providers.extend(self._available_providers(self.remote_provider))
+        return providers, last_error
+
+    def _fallback_result(
         self,
         preliminary: JobMatchPreliminary,
         *,
         fit_penalties: float,
         config: ScorerConfig,
-        owner_id: Any | None = None,
+        last_error: Optional[Exception],
     ) -> SemanticFitScoreResult:
-        del owner_id
-        if not getattr(config.semantic_fit, "enabled", True):
-            return self.fallback_scorer.score(preliminary, fit_penalties=fit_penalties, config=config)
-
-        threshold = float(
-            getattr(config, "req_similarity_threshold", fit_score.DEFAULT_REQ_SIMILARITY_THRESHOLD)
-        )
-        serialized_pairs, zero_evidence_verdicts, truncation_aggregate = _build_serialized_pairs(preliminary, config=config)
-        pair_count = len(serialized_pairs)
-        route_policy = getattr(config.semantic_fit.cross_encoder, "route_policy", "local")
-        providers: List[Any] = []
-        last_error: Optional[Exception] = None
-        if route_policy == "remote":
-            if self.remote_provider is not None:
-                providers.append(self.remote_provider)
-            else:
-                last_error = RuntimeError("Remote cross-encoder route requested but no remote provider is configured")
-        elif route_policy == "auto":
-            promote_threshold = int(getattr(config.semantic_fit.cross_encoder, "remote_promote_pair_count", 40))
-            in_production = (
-                os.getenv("JOBSCOUT_ENV")
-                or os.getenv("APP_ENV")
-                or os.getenv("ENVIRONMENT")
-                or "development"
-            ).strip().lower() == "production"
-            if self.remote_provider is not None and in_production and pair_count > promote_threshold:
-                providers = [provider for provider in [self.remote_provider, self.local_provider] if provider is not None]
-            else:
-                providers = [provider for provider in [self.local_provider, self.remote_provider] if provider is not None]
-        else:
-            if self.local_provider is not None:
-                providers.append(self.local_provider)
-            else:
-                last_error = RuntimeError("Local cross-encoder route requested but local provider is disabled")
-            if self.remote_provider is not None:
-                providers.append(self.remote_provider)
-
-        for provider in [provider for provider in providers if provider is not None]:
-            try:
-                assessments, provider_diagnostics = provider.score_pairs(serialized_pairs)
-                return _score_with_assessments(
-                    preliminary,
-                    assessments=assessments,
-                    serialized_pairs=serialized_pairs,
-                    zero_evidence_verdicts=zero_evidence_verdicts,
-                    fit_penalties=fit_penalties,
-                    config=config,
-                    scorer_name=self.scorer_name,
-                    scorer_version=self.scorer_version,
-                    provider_route=provider_diagnostics.get("provider_route", provider.route_name),
-                    provider_id=provider_diagnostics["provider_id"],
-                    threshold=threshold,
-                    latency_ms=provider_diagnostics["latency_ms"],
-                    model_summary=None,
-                    truncation_aggregate=truncation_aggregate,
-                )
-            except Exception as exc:
-                last_error = exc
-                logger.warning(
-                    "Cross-encoder provider route %s failed; trying next route if available: %s",
-                    getattr(provider, "route_name", "unknown"),
-                    exc,
-                    exc_info=True,
-                )
-
         if not getattr(config.semantic_fit, "threshold_fallback_enabled", True):
             if last_error:
                 raise last_error
@@ -1420,7 +1466,66 @@ class CrossEncoderSemanticFitScorer:
             scorer_version=THRESHOLD_SCORER_VERSION,
             fallback_used=True,
             fallback_reason=str(last_error) if last_error else "no_provider_available",
-            fallback_message="Semantic fit scorer unavailable; using threshold fallback.",
+            fallback_message=THRESHOLD_FALLBACK_MESSAGE,
+        )
+
+    def score(
+        self,
+        preliminary: JobMatchPreliminary,
+        *,
+        fit_penalties: float,
+        config: ScorerConfig,
+        owner_id: Any | None = None,
+    ) -> SemanticFitScoreResult:
+        del owner_id
+        if not getattr(config.semantic_fit, "enabled", True):
+            return self.fallback_scorer.score(preliminary, fit_penalties=fit_penalties, config=config)
+
+        threshold = self._cross_encoder_threshold(config)
+        serialized_pairs, zero_evidence_verdicts, truncation_aggregate = _build_serialized_pairs(preliminary, config=config)
+        pair_count = len(serialized_pairs)
+        route_policy = getattr(config.semantic_fit.cross_encoder, "route_policy", "local")
+        providers, last_error = self._providers_for_route(
+            route_policy=route_policy,
+            pair_count=pair_count,
+            config=config,
+        )
+
+        for provider in providers:
+            try:
+                assessments, provider_diagnostics = provider.score_pairs(serialized_pairs)
+                return _score_with_assessments(
+                    preliminary,
+                    assessments=assessments,
+                    serialized_pairs=serialized_pairs,
+                    zero_evidence_verdicts=zero_evidence_verdicts,
+                    fit_penalties=fit_penalties,
+                    config=config,
+                    metadata=AssessmentScoringMetadata(
+                        scorer_name=self.scorer_name,
+                        scorer_version=self.scorer_version,
+                        provider_route=provider_diagnostics.get("provider_route", provider.route_name),
+                        provider_id=provider_diagnostics["provider_id"],
+                        threshold=threshold,
+                        latency_ms=provider_diagnostics["latency_ms"],
+                        model_summary=None,
+                        truncation_aggregate=truncation_aggregate,
+                    ),
+                )
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Cross-encoder provider route %s failed; trying next route if available: %s",
+                    getattr(provider, "route_name", "unknown"),
+                    exc,
+                    exc_info=True,
+                )
+
+        return self._fallback_result(
+            preliminary,
+            fit_penalties=fit_penalties,
+            config=config,
+            last_error=last_error,
         )
 
 
@@ -1432,38 +1537,58 @@ def _normalize_modes(raw_modes: Iterable[str]) -> List[str]:
     return normalized
 
 
-def resolve_effective_fit_mode(repo, config: ScorerConfig, owner_id: Any) -> tuple[str, List[str]]:
-    semantic_fit = config.semantic_fit
+def _default_effective_allowed(semantic_fit: SemanticFitConfig) -> List[str]:
     deploy_allowed = _normalize_modes(getattr(semantic_fit, "deploy_allowed_modes", []))
     baseline_allowed = _normalize_modes(getattr(semantic_fit, "baseline_allowed_modes", []))
     if not baseline_allowed:
         baseline_allowed = [semantic_fit.default_mode]
     effective_allowed = [mode for mode in baseline_allowed if mode in deploy_allowed]
+    if effective_allowed:
+        return effective_allowed
+    return [mode for mode in ["cross_encoder", "llm"] if mode in deploy_allowed] or ["cross_encoder"]
+
+
+def _capability_allowed_modes(repo: Any, owner_id: Any, deploy_allowed: List[str]) -> List[str]:
+    allowed_row = repo.get_capability(owner_id, FEATURE_ALLOWED_MODES)
+    if not allowed_row or not getattr(allowed_row, "enabled", True):
+        return []
+
+    value_json = getattr(allowed_row, "value_json", None) or {}
+    if not isinstance(value_json, dict):
+        logger.warning("Ignoring invalid capability payload for %s", FEATURE_ALLOWED_MODES)
+        return []
+
+    capability_modes = _normalize_modes(value_json.get("modes", []))
+    return [mode for mode in capability_modes if mode in deploy_allowed]
+
+
+def _preferred_capability_mode(repo: Any, owner_id: Any, effective_allowed: List[str]) -> Optional[str]:
+    preferred_row = repo.get_capability(owner_id, FEATURE_PREFERRED_MODE)
+    if not preferred_row or not getattr(preferred_row, "enabled", True):
+        return None
+
+    value_json = getattr(preferred_row, "value_json", None) or {}
+    if not isinstance(value_json, dict):
+        logger.warning("Ignoring invalid capability payload for %s", FEATURE_PREFERRED_MODE)
+        return None
+
+    preferred_mode = value_json.get("mode")
+    return preferred_mode if preferred_mode in effective_allowed else None
+
+
+def resolve_effective_fit_mode(repo, config: ScorerConfig, owner_id: Any) -> tuple[str, List[str]]:
+    semantic_fit = config.semantic_fit
+    deploy_allowed = _normalize_modes(getattr(semantic_fit, "deploy_allowed_modes", []))
+    effective_allowed = _default_effective_allowed(semantic_fit)
 
     if owner_id:
-        allowed_row = repo.get_entitlement(owner_id, FEATURE_ALLOWED_MODES)
-        if allowed_row and getattr(allowed_row, "enabled", True):
-            value_json = getattr(allowed_row, "value_json", None) or {}
-            if isinstance(value_json, dict):
-                entitled_modes = _normalize_modes(value_json.get("modes", []))
-                filtered = [mode for mode in entitled_modes if mode in deploy_allowed]
-                if filtered:
-                    effective_allowed = filtered
-            else:
-                logger.warning("Ignoring invalid entitlement payload for %s", FEATURE_ALLOWED_MODES)
-
-    if not effective_allowed:
-        effective_allowed = [mode for mode in ["cross_encoder", "llm"] if mode in deploy_allowed] or ["cross_encoder"]
+        capability_allowed = _capability_allowed_modes(repo, owner_id, deploy_allowed)
+        if capability_allowed:
+            effective_allowed = capability_allowed
 
     resolved_mode = semantic_fit.default_mode if semantic_fit.default_mode in effective_allowed else effective_allowed[0]
     if owner_id:
-        preferred_row = repo.get_entitlement(owner_id, FEATURE_PREFERRED_MODE)
-        if preferred_row and getattr(preferred_row, "enabled", True):
-            value_json = getattr(preferred_row, "value_json", None) or {}
-            if isinstance(value_json, dict):
-                preferred_mode = value_json.get("mode")
-                if preferred_mode in effective_allowed:
-                    resolved_mode = preferred_mode
-            else:
-                logger.warning("Ignoring invalid entitlement payload for %s", FEATURE_PREFERRED_MODE)
+        preferred_mode = _preferred_capability_mode(repo, owner_id, effective_allowed)
+        if preferred_mode:
+            resolved_mode = preferred_mode
     return resolved_mode, effective_allowed

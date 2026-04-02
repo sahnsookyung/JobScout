@@ -1,4 +1,4 @@
-"""Add per-user feature entitlements for semantic-fit mode gating."""
+"""Add per-user feature capabilities for semantic-fit mode gating."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from sqlalchemy.engine import Connection
 
 DDL_STATEMENTS = [
     """
-    CREATE TABLE IF NOT EXISTS user_feature_entitlement (
+    CREATE TABLE IF NOT EXISTS user_feature_capability (
         id UUID PRIMARY KEY,
         owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         feature_key TEXT NOT NULL,
@@ -19,12 +19,12 @@ DDL_STATEMENTS = [
     )
     """,
     """
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_feature_entitlement_owner_feature
-    ON user_feature_entitlement (owner_id, feature_key)
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_feature_capability_owner_feature
+    ON user_feature_capability (owner_id, feature_key)
     """,
     """
-    CREATE INDEX IF NOT EXISTS idx_user_feature_entitlement_feature
-    ON user_feature_entitlement (feature_key)
+    CREATE INDEX IF NOT EXISTS idx_user_feature_capability_feature
+    ON user_feature_capability (feature_key)
     """,
 ]
 
@@ -35,4 +35,4 @@ def migrate(conn: Connection) -> None:
 
 
 def rollback(conn: Connection) -> None:
-    conn.execute(text("DROP TABLE IF EXISTS user_feature_entitlement"))
+    conn.execute(text("DROP TABLE IF EXISTS user_feature_capability"))

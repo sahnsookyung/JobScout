@@ -9,7 +9,7 @@ from database.repositories.match import MatchRepository
 from database.repositories.embedding import EmbeddingRepository
 from database.repositories.candidate_preferences import CandidatePreferencesRepository
 from database.repositories.notification_settings import NotificationSettingsRepository
-from database.repositories.user_feature_entitlement import UserFeatureEntitlementRepository
+from database.repositories.user_feature_capability import UserFeatureCapabilityRepository
 
 class JobRepository:
     def __init__(self, db: Session):
@@ -20,7 +20,7 @@ class JobRepository:
         self._embedding_repo: Optional[EmbeddingRepository] = None
         self._candidate_preferences_repo: Optional[CandidatePreferencesRepository] = None
         self._notification_settings_repo: Optional[NotificationSettingsRepository] = None
-        self._user_feature_entitlement_repo: Optional[UserFeatureEntitlementRepository] = None
+        self._user_feature_capability_repo: Optional[UserFeatureCapabilityRepository] = None
 
     @property
     def job_post(self) -> JobPostRepository:
@@ -59,10 +59,10 @@ class JobRepository:
         return self._notification_settings_repo
 
     @property
-    def user_feature_entitlement(self) -> UserFeatureEntitlementRepository:
-        if self._user_feature_entitlement_repo is None:
-            self._user_feature_entitlement_repo = UserFeatureEntitlementRepository(self.db)
-        return self._user_feature_entitlement_repo
+    def user_feature_capability(self) -> UserFeatureCapabilityRepository:
+        if self._user_feature_capability_repo is None:
+            self._user_feature_capability_repo = UserFeatureCapabilityRepository(self.db)
+        return self._user_feature_capability_repo
 
     def commit(self) -> None:
         self.db.commit()
@@ -395,10 +395,10 @@ class JobRepository:
     def get_structured_resume_by_fingerprint(self, resume_fingerprint: str) -> Any:
         return self.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
 
-    def get_entitlement(self, owner_id: Any, feature_key: str) -> Any:
-        return self.user_feature_entitlement.get_entitlement(owner_id, feature_key)
+    def get_capability(self, owner_id: Any, feature_key: str) -> Any:
+        return self.user_feature_capability.get_capability(owner_id, feature_key)
 
-    def upsert_entitlement(
+    def upsert_capability(
         self,
         owner_id: Any,
         feature_key: str,
@@ -407,7 +407,7 @@ class JobRepository:
         value_json: Optional[dict] = None,
         source: Optional[str] = None,
     ) -> Any:
-        return self.user_feature_entitlement.upsert_entitlement(
+        return self.user_feature_capability.upsert_capability(
             owner_id,
             feature_key,
             enabled=enabled,

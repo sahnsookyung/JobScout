@@ -556,7 +556,7 @@ class TestSemanticFitRouter(unittest.TestCase):
     def test_llm_mode_uses_llm_scorer_when_enabled(self):
         self.config.semantic_fit.llm.enabled = True
         self.config.semantic_fit.deploy_allowed_modes = ["cross_encoder", "llm"]
-        self.repo.get_entitlement.side_effect = [
+        self.repo.get_capability.side_effect = [
             MagicMock(enabled=True, value_json={"modes": ["cross_encoder", "llm"]}),
             MagicMock(enabled=True, value_json={"mode": "llm"}),
         ]
@@ -570,7 +570,7 @@ class TestSemanticFitRouter(unittest.TestCase):
         self.router.llm_scorer = None
         self.config.semantic_fit.llm.enabled = True
         self.config.semantic_fit.deploy_allowed_modes = ["cross_encoder", "llm"]
-        self.repo.get_entitlement.side_effect = [
+        self.repo.get_capability.side_effect = [
             MagicMock(enabled=True, value_json={"modes": ["cross_encoder", "llm"]}),
             MagicMock(enabled=True, value_json={"mode": "llm"}),
         ]

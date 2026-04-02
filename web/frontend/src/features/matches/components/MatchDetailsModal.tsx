@@ -202,7 +202,12 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
     const scorerName = typeof match.fit_scorer?.name === 'string' ? match.fit_scorer.name : null;
     const retrieval = fitExplanation?.retrieval as RetrievalExplanation | undefined;
     const diagnostics = fitExplanation?.diagnostics as FitDiagnosticsExplanation | undefined;
-    const retrievalMode = retrieval?.mode === 'hybrid' ? 'Hybrid retrieval' : retrieval?.mode === 'dense' ? 'Dense retrieval' : null;
+    let retrievalMode: string | null = null;
+    if (retrieval?.mode === 'hybrid') {
+        retrievalMode = 'Hybrid retrieval';
+    } else if (retrieval?.mode === 'dense') {
+        retrievalMode = 'Dense retrieval';
+    }
     const retrievalSources = Array.isArray(retrieval?.sources) ? retrieval.sources.join(' + ') : null;
     const fitMode = typeof diagnostics?.effective_fit_mode === 'string'
         ? diagnostics.effective_fit_mode.replaceAll('_', ' ')
@@ -210,11 +215,12 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
     const providerRoute = typeof diagnostics?.provider_route === 'string'
         ? diagnostics.provider_route.replaceAll('_', ' ')
         : null;
-    const fallbackMessage = typeof fitExplanation?.message === 'string'
-        ? fitExplanation.message
-        : diagnostics?.fallback_used
-            ? 'Semantic fit fallback was used for this match.'
-            : null;
+    let fallbackMessage: string | null = null;
+    if (typeof fitExplanation?.message === 'string') {
+        fallbackMessage = fitExplanation.message;
+    } else if (diagnostics?.fallback_used) {
+        fallbackMessage = 'Semantic fit fallback was used for this match.';
+    }
 
     return (
         <section>
