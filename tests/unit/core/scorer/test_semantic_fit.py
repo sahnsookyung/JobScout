@@ -451,3 +451,65 @@ def test_cross_encoder_without_available_local_provider_uses_threshold_fallback(
     assert result.fit_components["effective_fit_mode"] == "threshold"
     assert result.fit_components["provider_route"] == "threshold"
     assert "disabled" in result.fit_components["semantic_fit_fallback_reason"]
+
+def test_cross_encoder_local_policy_can_fall_through_to_remote_provider():
+    class FakeRemoteProvider:
+        route_name = "remote"
+
+        @property
+        def provider_id(self):
+            return "remote:test-model"
+
+        def score_pairs(self, pairs):
+            return (
+                [
+                    MagicMock(
+                        pair_id=pairs[0].pair_id,
+                        requirement_id=pairs[0].requirement_id,
+                        coverage_level="covered",
+                        semantic_score=0.91,
+                        confidence=0.88,
+                        reason="Evidence strongly matches the requirement.",
+                    )
+                ],
+                {
+                    "provider_id": self.provider_id,
+                    "provider_route": self.route_name,
+                    "latency_ms": 12.3,
+                },
+            )
+
+    job = MagicMock()
+    job.id = "job-local-remote"
+    requirement = RequirementMatchResult(
+        requirement=_make_requirement(
+            req_id="req-local-remote",
+            req_type="required",
+            text="Python backend API development",
+        ),
+        evidence=_make_evidence("Built Python backend APIs for internal services", "experience"),
+        similarity=0.72,
+        is_covered=True,
+    )
+    preliminary = JobMatchPreliminary(
+        job=job,
+        job_similarity=0.7,
+        requirement_matches=[requirement],
+        missing_requirements=[],
+        resume_fingerprint="fp-local-remote",
+    )
+    config = ScorerConfig()
+    config.semantic_fit.cross_encoder.route_policy = "local"
+
+    result = CrossEncoderSemanticFitScorer(
+        local_provider=None,
+        remote_provider=FakeRemoteProvider(),
+        fallback_scorer=ThresholdSemanticFitScorer(),
+    ).score(
+        preliminary,
+        fit_penalties=0.0,
+        config=config,
+    )
+
+    assert result.fit_components["effective_fit_mode"] == "cross_encoder"
+    assert result.fit_components["provider_route"] == "remote"
