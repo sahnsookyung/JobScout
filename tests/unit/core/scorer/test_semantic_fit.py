@@ -1,5 +1,7 @@
 """Unit tests for semantic fit scoring contracts."""
 
+import sys
+import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -611,6 +613,31 @@ def test_remote_cross_encoder_provider_maps_missing_pairs_to_heuristic(monkeypat
     assert assessments[0].coverage_level in {"covered", "partial", "missing"}
     assert diagnostics["provider_route"] == "remote"
 
+def test_remote_cross_encoder_provider_maps_scores_to_partial(monkeypatch):
+    requirement_match = _make_requirement_match()
+    preliminary = _make_preliminary(requirement_matches=[requirement_match])
+    pair = _serialize_pair(preliminary, requirement_match, requirement_match.evidence_candidates[0], config=ScorerConfig())
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"scores": [{"pair_id": pair.pair_id, "raw_logit": 0.6}]}
+
+    monkeypatch.setattr("core.scorer.semantic_fit.requests.post", lambda *args, **kwargs: FakeResponse())
+
+    provider = RemoteCrossEncoderProvider(
+        base_url="https://fit.example.com",
+        api_key=None,
+        model="reranker-v1",
+        timeout_ms=1500,
+    )
+
+    assessments, _ = provider.score_pairs([pair])
+
+    assert assessments[0].coverage_level == "partial"
+
 
 def test_resolve_effective_fit_mode_falls_back_to_baseline_when_owner_missing():
     repo = MagicMock()
@@ -783,6 +810,27 @@ def test_cross_encoder_local_policy_does_not_fall_through_to_remote_provider():
     assert result.fit_components["provider_route"] == "threshold"
     assert "local provider is disabled" in result.fit_components["semantic_fit_fallback_reason"]
 
+def test_cross_encoder_auto_prefers_remote_in_production(monkeypatch):
+    provider = CrossEncoderSemanticFitScorer(
+        local_provider=MagicMock(route_name="local"),
+        remote_provider=MagicMock(route_name="remote"),
+        fallback_scorer=ThresholdSemanticFitScorer(),
+    )
+    config = ScorerConfig()
+    config.semantic_fit.cross_encoder.route_policy = "auto"
+    config.semantic_fit.cross_encoder.remote.enabled = True
+    config.semantic_fit.cross_encoder.remote_promote_pair_count = 1
+    monkeypatch.setenv("JOBSCOUT_ENV", "production")
+
+    providers, error = provider._providers_for_route(
+        route_policy="auto",
+        pair_count=2,
+        config=config,
+    )
+
+    assert providers[0].route_name == "remote"
+    assert error is None
+
 def test_build_retrieval_diagnostics_dense_mode():
     preliminary = _make_preliminary()
     preliminary.lexical_score = None
@@ -858,6 +906,70 @@ def test_local_cross_encoder_provider_runtime_helpers():
     filtered = provider._filter_supported_kwargs(factory, {"cache_dir": "/tmp", "ignored": True})
     assert filtered == {"cache_dir": "/tmp"}
 
+def test_local_cross_encoder_provider_normalize_runtime_errors():
+    with pytest.raises(TypeError):
+        LocalCrossEncoderProvider._normalize_runtime_item({"unexpected": 1})
+
+    with pytest.raises(TypeError):
+        LocalCrossEncoderProvider._normalize_runtime_scores({"unexpected": 1})
+
+def test_local_cross_encoder_provider_loads_flag_embedding_runtime_via_factory(monkeypatch):
+    provider = LocalCrossEncoderProvider(
+        model_name="BAAI/bge-reranker-v2-m3",
+        runtime="flag_embedding",
+        cache_path="/models",
+        trust_remote_code=True,
+    )
+
+    class FakeReranker:
+        @staticmethod
+        def from_finetuned(model_name, cache_dir=None, trust_remote_code=None):
+            return {
+                "model_name": model_name,
+                "cache_dir": cache_dir,
+                "trust_remote_code": trust_remote_code,
+            }
+
+    fake_module = types.SimpleNamespace(FlagAutoReranker=FakeReranker)
+    monkeypatch.setattr("core.scorer.semantic_fit.importlib.import_module", lambda name: fake_module)
+
+    model = provider._load_flag_embedding_runtime()
+
+    assert model["model_name"] == "BAAI/bge-reranker-v2-m3"
+    assert model["cache_dir"] == "/models"
+    assert provider.provider_id == "flag_embedding:BAAI/bge-reranker-v2-m3"
+
+def test_local_cross_encoder_provider_loads_sentence_transformers_runtime(monkeypatch):
+    provider = LocalCrossEncoderProvider(
+        model_name="BAAI/bge-reranker-v2-m3",
+        runtime="sentence_transformers",
+        cache_path="/cache",
+    )
+
+    class FakeCrossEncoder:
+        def __init__(self, model_name, **kwargs):
+            self.model_name = model_name
+            self.kwargs = kwargs
+
+    monkeypatch.setitem(sys.modules, "sentence_transformers", types.SimpleNamespace(CrossEncoder=FakeCrossEncoder))
+
+    model = provider._load_sentence_transformers_runtime()
+
+    assert model.model_name == "BAAI/bge-reranker-v2-m3"
+    assert model.kwargs["cache_folder"] == "/cache"
+    assert provider.provider_id == "sentence_transformers:BAAI/bge-reranker-v2-m3"
+
+def test_local_cross_encoder_provider_unknown_runtime_falls_back_to_heuristic():
+    provider = LocalCrossEncoderProvider(
+        model_name="BAAI/bge-reranker-v2-m3",
+        runtime="custom_runtime",
+    )
+
+    result = provider._load_model()
+
+    assert result is False
+    assert provider.effective_route_name == "local_heuristic"
+
 def test_local_cross_encoder_provider_heuristic_scores_pairs():
     requirement_match = _make_requirement_match()
     preliminary = _make_preliminary(requirement_matches=[requirement_match])
@@ -872,6 +984,59 @@ def test_local_cross_encoder_provider_heuristic_scores_pairs():
     assert len(assessments) == 1
     assert diagnostics["provider_route"] == "local_heuristic"
     assert diagnostics["provider_id"] == "heuristic-local"
+
+def test_local_cross_encoder_provider_scores_pairs_with_compute_score_runtime():
+    requirement_match = _make_requirement_match()
+    preliminary = _make_preliminary(requirement_matches=[requirement_match])
+    pair = _serialize_pair(preliminary, requirement_match, requirement_match.evidence_candidates[0], config=ScorerConfig())
+    provider = LocalCrossEncoderProvider(
+        model_name="BAAI/bge-reranker-v2-m3",
+        runtime="heuristic",
+    )
+    provider._model = types.SimpleNamespace(compute_score=lambda pairs, batch_size=32: [3.0])
+    provider._provider_id = "flag_embedding:test"
+    provider._effective_route_name = "local"
+
+    assessments, diagnostics = provider.score_pairs([pair])
+
+    assert assessments[0].coverage_level == "covered"
+    assert diagnostics["provider_route"] == "local"
+
+def test_local_cross_encoder_provider_scores_pairs_with_predict_runtime():
+    requirement_match = _make_requirement_match()
+    preliminary = _make_preliminary(requirement_matches=[requirement_match])
+    pair = _serialize_pair(preliminary, requirement_match, requirement_match.evidence_candidates[0], config=ScorerConfig())
+
+    class PredictModel:
+        def predict(self, pairs, batch_size=32, show_progress_bar=False):
+            return {"scores": [{"score": 0.6}]}
+
+    provider = LocalCrossEncoderProvider(
+        model_name="BAAI/bge-reranker-v2-m3",
+        runtime="heuristic",
+    )
+    provider._model = PredictModel()
+    provider._provider_id = "sentence_transformers:test"
+    provider._effective_route_name = "local"
+
+    assessments, _ = provider.score_pairs([pair])
+
+    assert assessments[0].coverage_level == "partial"
+
+def test_local_cross_encoder_provider_raises_for_unsupported_runtime_object():
+    requirement_match = _make_requirement_match()
+    preliminary = _make_preliminary(requirement_matches=[requirement_match])
+    pair = _serialize_pair(preliminary, requirement_match, requirement_match.evidence_candidates[0], config=ScorerConfig())
+    provider = LocalCrossEncoderProvider(
+        model_name="BAAI/bge-reranker-v2-m3",
+        runtime="heuristic",
+    )
+    provider._model = object()
+    provider._provider_id = "local:test"
+    provider._effective_route_name = "local"
+
+    with pytest.raises(TypeError, match="Unsupported local cross-encoder runtime"):
+        provider.score_pairs([pair])
 
 def test_select_best_assessment_skips_missing_pairs():
     requirement_match = _make_requirement_match()
@@ -976,3 +1141,32 @@ def test_missing_assessment_verdict_marks_unjudged_provider_route():
 
     assert verdict["reason"] == "Requirement was not judged by the semantic scorer; preserved fallback classification."
     assert verdict["provider_route"] == "remote"
+
+def test_llm_semantic_fit_with_no_serialized_pairs_uses_empty_summary():
+    job = MagicMock()
+    job.id = "job-empty"
+    job.title = "Python Engineer"
+    job.company = "Acme"
+    job.description = "Backend role"
+    requirement = _make_requirement_match(
+        req_id="req-empty",
+        evidence_text=None,
+        similarity=0.0,
+        is_covered=False,
+    )
+    preliminary = JobMatchPreliminary(
+        job=job,
+        job_similarity=0.4,
+        requirement_matches=[],
+        missing_requirements=[requirement],
+        resume_fingerprint="fp-empty",
+    )
+
+    result = LLMSemanticFitScorer(FakeLLMService()).score(
+        preliminary,
+        fit_penalties=0.0,
+        config=ScorerConfig(),
+    )
+
+    assert result.fit_components["semantic_fit_summary"] == "No recalled resume evidence supported the evaluated requirements."
+    assert result.fit_components["semantic_fit_diagnostics"]["provider_route"] == "llm"
