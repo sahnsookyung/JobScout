@@ -14,6 +14,7 @@ from uuid import UUID
 from dataclasses import dataclass
 
 from core.app_context import AppContext
+from core.config_loader import PreferencesConfig
 from core.policy import get_result_policy_store
 from core.matcher import (
     MatcherService, MatchResultDTO, JobMatchDTO, JobEvidenceDTO,
@@ -491,6 +492,13 @@ def _resolve_pipeline_ai_service(ctx: AppContext) -> Optional[LLMProvider]:
     return ai_service if isinstance(ai_service, LLMProvider) else None
 
 
+def _resolve_preferences_config(ctx: AppContext) -> PreferencesConfig:
+    preferences = getattr(getattr(ctx, "config", None), "preferences", None)
+    if preferences is not None:
+        return preferences
+    return PreferencesConfig()
+
+
 def _resolve_result_policy(matching_config):
     """Resolve the active result policy from the shared store with config fallback."""
     fallback_policy = getattr(matching_config, "result_policy", None)
@@ -649,7 +657,7 @@ def _run_matching_and_scoring(
         scored_matches = apply_preference_semantic_reranking(
             scored_matches,
             candidate_preferences,
-            config=ctx.config.preferences,
+            config=_resolve_preferences_config(ctx),
         )
         scored_matches = _apply_final_result_policy(scored_matches, matching_config)
 
