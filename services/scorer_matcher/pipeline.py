@@ -395,13 +395,16 @@ def _load_structured_resume(repo, resume_fingerprint: str, should_re_extract: bo
 
 def _prepare_matcher_service(ctx, repo, matching_config):
     """Create and configure matcher service."""
+    scorer_config = getattr(matching_config, "scorer", None)
+    semantic_fit_config = getattr(scorer_config, "semantic_fit", None)
+    recall_top_k = getattr(semantic_fit_config, "recall_top_k", 5)
     return MatcherService(
         resume_profiler=ResumeProfiler(
             ai_service=ctx.ai_service,
             store=JobRepositoryAdapter(repo),
         ),
         config=matching_config.matcher,
-        requirement_recall_top_k=matching_config.scorer.semantic_fit.recall_top_k,
+        requirement_recall_top_k=recall_top_k,
     )
 
 
