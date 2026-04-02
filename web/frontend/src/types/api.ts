@@ -50,6 +50,9 @@ export interface MatchDetail {
     fit_score: number | null;
     overall_score: number;
     fit_components: Record<string, any> | null;
+    fit_confidence: number | null;
+    fit_explanation: Record<string, any> | null;
+    fit_scorer: Record<string, any> | null;
     base_score: number;
     penalties: number;
     required_coverage: number;
@@ -68,6 +71,13 @@ export interface MatchDetailResponse {
     match: MatchDetail;
     job: JobDetails;
     requirements: RequirementDetail[];
+}
+
+export interface MatchExplanationResponse {
+    success: boolean;
+    match_id: string;
+    explanation: Record<string, any> | null;
+    message?: string | null;
 }
 
 export interface MatchesResponse {

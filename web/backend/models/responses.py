@@ -109,6 +109,9 @@ class MatchDetail(BaseModel):
 
     # Score breakdowns
     fit_components: Optional[Dict[str, Any]] = None
+    fit_confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    fit_explanation: Optional[Dict[str, Any]] = None
+    fit_scorer: Optional[Dict[str, Any]] = None
 
     # Legacy fields
     base_score: float

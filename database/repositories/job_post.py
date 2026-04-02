@@ -486,6 +486,58 @@ class JobPostRepository(BaseRepository):
         rows = self.db.execute(stmt).all()
         return [(row[0], cosine_similarity_from_distance(row._mapping['distance'])) for row in rows]
 
+    def get_top_jobs_by_lexical_query(
+        self,
+        lexical_query: str,
+        *,
+        resume_embedding: List[float],
+        limit: Optional[int] = None,
+        tenant_id: Optional[Any] = None,
+        require_remote: Optional[bool] = None,
+    ) -> List[Tuple[JobPost, float, float]]:
+        if not lexical_query.strip():
+            return []
+
+        document_text = func.concat_ws(
+            " ",
+            func.coalesce(JobPost.title, ""),
+            func.coalesce(JobPost.canonical_job_summary, ""),
+            func.coalesce(JobPost.description, ""),
+            func.coalesce(JobPost.skills_raw, ""),
+            func.coalesce(JobPost.company_description, ""),
+            func.coalesce(JobPost.work_from_home_type, ""),
+        )
+        document = func.to_tsvector("simple", document_text)
+        query = func.to_tsquery("simple", lexical_query)
+        lexical_rank = func.ts_rank_cd(document, query).label("lexical_rank")
+        distance_expr = JobPost.summary_embedding.cosine_distance(resume_embedding).label("distance")
+
+        stmt = select(JobPost, lexical_rank, distance_expr).where(
+            JobPost.is_embedded.is_(True),
+            JobPost.summary_embedding != None,
+            document.op("@@")(query),
+        )
+
+        if tenant_id is not None:
+            stmt = stmt.where(JobPost.tenant_id == tenant_id)
+
+        if require_remote is not None:
+            stmt = stmt.where(JobPost.is_remote == require_remote)
+
+        stmt = stmt.order_by(lexical_rank.desc(), distance_expr)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+
+        rows = self.db.execute(stmt).all()
+        return [
+            (
+                row[0],
+                float(row._mapping["lexical_rank"] or 0.0),
+                cosine_similarity_from_distance(row._mapping["distance"]),
+            )
+            for row in rows
+        ]
+
     def save_job_facet_embedding(
         self,
         job_post_id: Any,

@@ -21,6 +21,7 @@ from core.matcher import (
 )
 from core.scorer import ScoringService
 from core.scorer.persistence import save_match_to_db
+from core.llm.interfaces import LLMProvider
 from core.llm.schema_models import ResumeSchema
 from etl.resume import ResumeProfiler
 from etl.resume.embedding_store import JobRepositoryAdapter
@@ -394,12 +395,16 @@ def _load_structured_resume(repo, resume_fingerprint: str, should_re_extract: bo
 
 def _prepare_matcher_service(ctx, repo, matching_config):
     """Create and configure matcher service."""
+    scorer_config = getattr(matching_config, "scorer", None)
+    semantic_fit_config = getattr(scorer_config, "semantic_fit", None)
+    recall_top_k = getattr(semantic_fit_config, "recall_top_k", 5)
     return MatcherService(
         resume_profiler=ResumeProfiler(
             ai_service=ctx.ai_service,
             store=JobRepositoryAdapter(repo),
         ),
         config=matching_config.matcher,
+        requirement_recall_top_k=recall_top_k,
     )
 
 
@@ -423,7 +428,15 @@ def _get_pre_extracted_resume(structured_resume, should_re_extract: bool):
         raise ValueError(f"Failed to parse stored ready resume: {e}") from e
 
 
-def _run_vector_matching(matcher, repo, resume_data, stop_event, pre_extracted_resume, resume_fingerprint):
+def _run_vector_matching(
+    matcher,
+    repo,
+    resume_data,
+    stop_event,
+    pre_extracted_resume,
+    resume_fingerprint,
+    owner_id=None,
+):
     """Run vector-based job matching."""
     logger.info("=== MATCHING STEP 1: Running MatcherService (Vector Retrieval) ===")
     preliminary_matches = matcher.match_resume_two_stage(
@@ -432,6 +445,7 @@ def _run_vector_matching(matcher, repo, resume_data, stop_event, pre_extracted_r
         stop_event=stop_event,
         pre_extracted_resume=pre_extracted_resume,
         resume_fingerprint=resume_fingerprint,
+        owner_id=owner_id,
     )
     return preliminary_matches
 
@@ -447,6 +461,11 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event
         match_type="requirements_only",
         stop_event=stop_event,
     )
+
+
+def _resolve_pipeline_ai_service(ctx: AppContext) -> Optional[LLMProvider]:
+    ai_service = getattr(ctx, "ai_service", None)
+    return ai_service if isinstance(ai_service, LLMProvider) else None
 
 
 def _resolve_result_policy(matching_config):
@@ -497,6 +516,7 @@ def _run_preliminary_matching(
     structured_resume,
     should_re_extract: bool,
     resume_fingerprint: str,
+    owner_id=None,
 ):
     """Run vector matching and log its completion timing."""
     step_start = time.time()
@@ -505,7 +525,13 @@ def _run_preliminary_matching(
 
     pre_extracted_resume = _get_pre_extracted_resume(structured_resume, should_re_extract)
     preliminary_matches = _run_vector_matching(
-        matcher, repo, resume_data, stop_event, pre_extracted_resume, resume_fingerprint,
+        matcher,
+        repo,
+        resume_data,
+        stop_event,
+        pre_extracted_resume,
+        resume_fingerprint,
+        owner_id=owner_id,
     )
 
     step_elapsed = time.time() - step_start
@@ -575,6 +601,7 @@ def _run_matching_and_scoring(
             structured_resume,
             should_re_extract,
             resume_fingerprint,
+            owner_id=getattr(structured_resume, "owner_id", None) or owner_id,
         )
         preliminary_matches = apply_candidate_preference_filters(
             preliminary_matches,
@@ -588,7 +615,11 @@ def _run_matching_and_scoring(
 
         if status_callback:
             status_callback("scoring")
-        scorer = ScoringService(repo=repo, config=matching_config.scorer)
+        scorer = ScoringService(
+            repo=repo,
+            config=matching_config.scorer,
+            ai_service=_resolve_pipeline_ai_service(ctx),
+        )
         scored_matches = _run_scorer_service(
             scorer, preliminary_matches, matching_config, stop_event,
         )

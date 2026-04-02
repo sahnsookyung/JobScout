@@ -10,6 +10,27 @@ type MatchDetailsModalProps = Readonly<{
     onClose: () => void;
 }>;
 
+type SemanticVerdict = Readonly<{
+    requirement_id: string;
+    verdict: 'covered' | 'partial' | 'missing';
+    reason?: string;
+    semantic_score?: number;
+    evidence_text?: string | null;
+    evidence_section?: string | null;
+}>;
+
+type RetrievalExplanation = Readonly<{
+    mode?: 'dense' | 'hybrid';
+    sources?: string[];
+}>;
+
+type FitDiagnosticsExplanation = Readonly<{
+    effective_fit_mode?: string;
+    provider_route?: string;
+    fallback_used?: boolean;
+    fallback_reason?: string;
+}>;
+
 function useEscapeKey(onClose: () => void, enabled: boolean) {
     useEffect(() => {
         if (!enabled) return;
@@ -175,6 +196,31 @@ function JobInfoSection({ job }: Readonly<{ job: any }>) {
 
 function ScoresSection({ match }: Readonly<{ match: any }>) {
     const isHighScore = match.overall_score >= 80;
+    const fitExplanation = match.fit_explanation;
+    const semanticSummary = typeof fitExplanation?.summary === 'string' ? fitExplanation.summary : null;
+    const fitConfidence = typeof match.fit_confidence === 'number' ? match.fit_confidence : null;
+    const scorerName = typeof match.fit_scorer?.name === 'string' ? match.fit_scorer.name : null;
+    const retrieval = fitExplanation?.retrieval as RetrievalExplanation | undefined;
+    const diagnostics = fitExplanation?.diagnostics as FitDiagnosticsExplanation | undefined;
+    let retrievalMode: string | null = null;
+    if (retrieval?.mode === 'hybrid') {
+        retrievalMode = 'Hybrid retrieval';
+    } else if (retrieval?.mode === 'dense') {
+        retrievalMode = 'Dense retrieval';
+    }
+    const retrievalSources = Array.isArray(retrieval?.sources) ? retrieval.sources.join(' + ') : null;
+    const fitMode = typeof diagnostics?.effective_fit_mode === 'string'
+        ? diagnostics.effective_fit_mode.replaceAll('_', ' ')
+        : null;
+    const providerRoute = typeof diagnostics?.provider_route === 'string'
+        ? diagnostics.provider_route.replaceAll('_', ' ')
+        : null;
+    let fallbackMessage: string | null = null;
+    if (typeof fitExplanation?.message === 'string') {
+        fallbackMessage = fitExplanation.message;
+    } else if (diagnostics?.fallback_used) {
+        fallbackMessage = 'Semantic fit fallback was used for this match.';
+    }
 
     return (
         <section>
@@ -214,43 +260,117 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
                     <div className="text-2xl font-black text-gray-900">{match.penalties.toFixed(1)}</div>
                 </div>
             </div>
+
+            {semanticSummary && (
+                <div className="mt-6 rounded-2xl border-2 border-blue-100 bg-gradient-to-br from-blue-50 to-indigo-50 p-6">
+                    <div className="flex flex-wrap items-center gap-3 mb-3">
+                        <Badge variant="info" className="font-bold">Semantic Fit</Badge>
+                        {fitConfidence !== null && (
+                            <span className="text-sm font-bold text-blue-700">
+                                Confidence {formatScore(fitConfidence * 100)}
+                            </span>
+                        )}
+                        {scorerName && (
+                            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                                {scorerName.replaceAll('_', ' ')}
+                            </span>
+                        )}
+                        {retrievalMode && (
+                            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                                {retrievalMode}
+                            </span>
+                        )}
+                        {fitMode && (
+                            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                                {fitMode}
+                            </span>
+                        )}
+                        {providerRoute && (
+                            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                                {providerRoute}
+                            </span>
+                        )}
+                    </div>
+                    <p className="text-base font-medium text-gray-800 leading-relaxed">{semanticSummary}</p>
+                    {retrievalSources && (
+                        <p className="mt-3 text-sm font-medium text-blue-700">
+                            Candidate generation used {retrievalSources}.
+                        </p>
+                    )}
+                    {fallbackMessage && (
+                        <p className="mt-3 text-sm font-medium text-amber-700">
+                            {fallbackMessage}
+                        </p>
+                    )}
+                </div>
+            )}
         </section>
     );
 }
 
-function RequirementCard({ req }: Readonly<{ req: any }>) {
+function RequirementCard({
+    req,
+    verdict,
+}: Readonly<{
+    req: any;
+    verdict?: SemanticVerdict;
+}>) {
     const isRequired = req.req_type === 'required';
-    const isCovered = req.is_covered;
+    const verdictLabel = verdict?.verdict ?? (req.is_covered ? 'covered' : 'missing');
+    const isCovered = verdictLabel === 'covered';
+    const isPartial = verdictLabel === 'partial';
+    const evidenceText = verdict?.evidence_text ?? req.evidence_text;
+    const evidenceSection = verdict?.evidence_section ?? req.evidence_section;
+    const reason = typeof verdict?.reason === 'string' ? verdict.reason : null;
+    let cardToneClasses = 'bg-gray-50 border-gray-200 hover:border-gray-300';
+    let verdictBadgeVariant: 'success' | 'warning' | 'error' = 'error';
+    let verdictBadgeLabel = '✗ Missing';
+
+    if (isCovered) {
+        cardToneClasses = 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200 hover:border-blue-300';
+        verdictBadgeVariant = 'success';
+        verdictBadgeLabel = '✓ Covered';
+    } else if (isPartial) {
+        cardToneClasses = 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200 hover:border-amber-300';
+        verdictBadgeVariant = 'warning';
+        verdictBadgeLabel = '△ Partial';
+    }
 
     return (
-        <div className={`p-5 rounded-2xl border-2 transition-all duration-200 ${isCovered
-            ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200 hover:border-blue-300'
-            : 'bg-gray-50 border-gray-200 hover:border-gray-300'
-        }`}>
+        <div className={`p-5 rounded-2xl border-2 transition-all duration-200 ${cardToneClasses}`}>
             <div className="flex items-start justify-between gap-4 mb-3">
                 <div className="flex items-center gap-2">
                     <Badge variant={isRequired ? 'info' : 'default'} className="font-bold">
                         {isRequired ? 'Required' : 'Preferred'}
                     </Badge>
-                    <Badge variant={isCovered ? 'success' : 'error'} className="font-bold">
-                        {isCovered ? '✓ Covered' : '✗ Missing'}
+                    <Badge variant={verdictBadgeVariant} className="font-bold">
+                        {verdictBadgeLabel}
                     </Badge>
                 </div>
-                <div className="text-xs font-bold text-gray-500 bg-white px-3 py-1 rounded-lg">
-                    {(req.similarity_score * 100).toFixed(0)}% match
-                </div>
+                {verdict && (
+                    <div className="text-xs font-bold text-gray-500 bg-white px-3 py-1 rounded-lg">
+                        Semantic review
+                    </div>
+                )}
             </div>
 
             <div className="font-semibold text-gray-900 mb-3">
                 {req.requirement_text || 'No description'}
             </div>
 
-            {req.evidence_text && (
+            {reason && (
+                <div className="mb-3 rounded-lg border border-blue-100 bg-white/80 p-3">
+                    <div className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">Why this verdict</div>
+                    <div className="text-sm text-gray-700">{reason}</div>
+                </div>
+            )}
+
+            {evidenceText && (
                 <div className="p-3 bg-white rounded-lg border border-gray-200">
                     <div className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">Evidence Found</div>
-                    <div className="text-sm text-gray-700">{req.evidence_text}</div>
-                    {req.evidence_section && (
-                        <div className="text-xs text-gray-500 mt-1">Source: {req.evidence_section}</div>
+                    <div className="text-sm text-gray-700">{evidenceText}</div>
+                    {evidenceSection && (
+                        <div className="text-xs text-gray-500 mt-1">Source: {evidenceSection}</div>
                     )}
                 </div>
             )}
@@ -258,9 +378,19 @@ function RequirementCard({ req }: Readonly<{ req: any }>) {
     );
 }
 
-function RequirementsSection({ requirements }: Readonly<{ requirements: any[] }>) {
+function RequirementsSection({
+    requirements,
+    fitExplanation,
+}: Readonly<{
+    requirements: any[];
+    fitExplanation?: { requirement_verdicts?: SemanticVerdict[] } | null;
+}>) {
     const requiredReqs = requirements.filter((req) => req.req_type === 'required');
     const preferredReqs = requirements.filter((req) => req.req_type === 'preferred');
+    const verdicts = Array.isArray(fitExplanation?.requirement_verdicts)
+        ? fitExplanation.requirement_verdicts
+        : [];
+    const verdictById = new Map(verdicts.map((verdict) => [verdict.requirement_id, verdict]));
 
     const requiredCovered = requiredReqs.filter((req) => req.is_covered).length;
     const preferredCovered = preferredReqs.filter((req) => req.is_covered).length;
@@ -285,7 +415,11 @@ function RequirementsSection({ requirements }: Readonly<{ requirements: any[] }>
                     </div>
                     <div className="space-y-3">
                         {requiredReqs.map((req) => (
-                            <RequirementCard key={req.requirement_id} req={req} />
+                            <RequirementCard
+                                key={req.requirement_id}
+                                req={req}
+                                verdict={verdictById.get(req.requirement_id)}
+                            />
                         ))}
                     </div>
                 </div>
@@ -307,7 +441,11 @@ function RequirementsSection({ requirements }: Readonly<{ requirements: any[] }>
                     </div>
                     <div className="space-y-3">
                         {preferredReqs.map((req) => (
-                            <RequirementCard key={req.requirement_id} req={req} />
+                            <RequirementCard
+                                key={req.requirement_id}
+                                req={req}
+                                verdict={verdictById.get(req.requirement_id)}
+                            />
                         ))}
                     </div>
                 </div>
@@ -335,7 +473,7 @@ function ModalBody({ isLoading, data }: Readonly<{ isLoading: boolean; data: any
         <div className="space-y-8">
             <JobInfoSection job={data.job} />
             <ScoresSection match={data.match} />
-            <RequirementsSection requirements={data.requirements} />
+            <RequirementsSection requirements={data.requirements} fitExplanation={data.match.fit_explanation} />
             {data.job.description && <JobDescriptionSection description={data.job.description} />}
         </div>
     );

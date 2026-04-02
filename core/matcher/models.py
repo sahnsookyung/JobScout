@@ -2,11 +2,19 @@
 Matcher Models - Data structures for matching.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 
 from database.models import JobRequirementUnit
 from etl.resume.models import ResumeEvidenceUnit
+
+
+@dataclass
+class RequirementEvidenceCandidate:
+    """Candidate resume evidence recalled for a requirement."""
+    evidence: ResumeEvidenceUnit
+    similarity: float
+    rank: int
 
 
 @dataclass
@@ -16,6 +24,7 @@ class RequirementMatchResult:
     evidence: Optional[ResumeEvidenceUnit]
     similarity: float
     is_covered: bool
+    evidence_candidates: List[RequirementEvidenceCandidate] = field(default_factory=list)
 
 
 @dataclass
@@ -26,3 +35,6 @@ class JobMatchPreliminary:
     requirement_matches: List[RequirementMatchResult]
     missing_requirements: List[RequirementMatchResult]
     resume_fingerprint: str
+    owner_id: Optional[Any] = None
+    retrieval_score: float = 0.0
+    lexical_score: Optional[float] = None

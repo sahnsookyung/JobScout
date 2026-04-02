@@ -484,6 +484,25 @@ def _update_candidate_preferences(base_url: str, payload: dict) -> dict:
     return response.json()
 
 
+def _get_matches(base_url: str, *, status: str = "active") -> dict:
+    response = requests.get(
+        f"{base_url}/api/matches",
+        params={"status": status},
+        timeout=15,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _get_match_explanation(base_url: str, match_id: str) -> dict:
+    response = requests.get(
+        f"{base_url}/api/matches/{match_id}/explanation",
+        timeout=15,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def _send_notification_settings_test(base_url: str, channel_type: str) -> dict:
     response = requests.post(
         f"{base_url}/api/v1/notification-settings/test",
@@ -708,9 +727,24 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
         matches = session.execute(select(JobMatch)).scalars().all()
         assert matches, "Expected persisted matches after matching completed"
         assert any(match.notified for match in matches)
+        active_match = next(match for match in matches if match.status == "active")
     finally:
         session.close()
         engine.dispose()
+
+    matches_payload = _get_matches(split_stack.base_url)
+    assert matches_payload["success"] is True, matches_payload
+    assert matches_payload["count"] >= 1, matches_payload
+    assert any(match["match_id"] == str(active_match.id) for match in matches_payload["matches"])
+
+    explanation_payload = _get_match_explanation(split_stack.base_url, str(active_match.id))
+    assert explanation_payload["success"] is True, explanation_payload
+    explanation = explanation_payload["explanation"]
+    assert explanation is not None
+    assert explanation["fit_scorer"]["name"] == "cross_encoder_semantic_fit"
+    assert explanation["diagnostics"]["effective_fit_mode"] in {"cross_encoder", "threshold"}
+    assert explanation["diagnostics"]["provider_route"] in {"local", "local_heuristic", "remote", "threshold"}
+    assert explanation["retrieval"]["mode"] in {"dense", "hybrid"}
 
 
 def test_candidate_preferences_round_trip_updates_matching_behavior(

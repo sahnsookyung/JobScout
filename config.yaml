@@ -72,10 +72,85 @@ matching:
     enabled: true
     similarity_threshold: 0.5
     batch_size: 100
-  
+    hybrid_retrieval_enabled: true
+    lexical_limit: 100
+    fusion_rank_constant: 60
+    lexical_query_token_limit: 24
+    # lexical_limit: 200          # Raise if dense-only retrieval misses exact skill/title matches
+    # fusion_rank_constant: 40    # Lower values make top-ranked retrieval hits weigh more in fusion
+
   # Stage 2: Scorer Service (Rule-based Scoring)
   scorer:
     enabled: true
+    semantic_fit:
+      enabled: true
+      deploy_allowed_modes: ["cross_encoder"]
+      baseline_allowed_modes: ["cross_encoder"]
+      default_mode: "cross_encoder"
+      threshold_fallback_enabled: true
+      recall_top_k: 5
+
+      cross_encoder:
+        route_policy: "local"
+        remote_promote_pair_count: 40
+
+        local:
+          enabled: true
+          runtime: "auto"
+          model_name: "BAAI/bge-reranker-v2-m3"
+          model_cache_path: null
+          device_policy: "cpu"
+          max_batch_size: 32
+          max_concurrency: 1
+          timeout_ms: 2000
+          trust_remote_code: false
+
+        remote:
+          enabled: false
+          base_url: null
+          api_key: null
+          model: "fit-cross-encoder-v1"
+          timeout_ms: 1500
+          max_batch_size: 64
+
+      llm:
+        enabled: false
+        provider: "openai_compatible"
+        base_url: null
+        api_key: null
+        api_secret: null
+        headers: null
+        model: "gpt-4o-mini"
+        temperature: 0.0
+        timeout_seconds: 20
+        max_input_tokens: 4000
+
+      serialization:
+        requirement_text_max_chars: 500
+        evidence_text_max_chars: 2500
+        evidence_section_max_chars: 64
+        job_title_max_chars: 200
+        job_company_max_chars: 200
+        job_summary_max_chars: 1800
+
+      # recall_top_k: 8             # Raise for better recall, lower for lower latency/cost
+      # cross_encoder:
+      #   route_policy: "auto"      # Prefer remote in production when pair volume is high
+      #   local:
+      #     runtime: "flag_embedding"   # Prefer FlagEmbedding locally for multilingual reranking
+      #     model_name: "BAAI/bge-reranker-v2-gemma"
+      #     max_batch_size: 64      # Raise if CPU/memory allow larger batches
+      #     timeout_ms: 4000        # Raise if long evidence/job contexts are common
+      #     trust_remote_code: true # Needed by some local reranker models; leave false unless required
+      #   remote:
+      #     enabled: true           # Turn on remote scoring for production or larger pair volumes
+      #     base_url: "https://fit.example.com"
+      #     api_key: "..."
+      # llm:
+      #   enabled: true             # Advanced mode, intended for capability-enabled users only
+      # serialization:
+      #   evidence_text_max_chars: 4000  # Raise if evidence is being truncated too aggressively
+      #   # These are operating budgets, not hidden hard limits; truncation emits warnings/diagnostics.
 
     # Coverage weights (used in Fit score calculation)
     weight_required: 0.7

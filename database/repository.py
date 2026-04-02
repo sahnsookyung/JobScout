@@ -9,6 +9,7 @@ from database.repositories.match import MatchRepository
 from database.repositories.embedding import EmbeddingRepository
 from database.repositories.candidate_preferences import CandidatePreferencesRepository
 from database.repositories.notification_settings import NotificationSettingsRepository
+from database.repositories.user_feature_capability import UserFeatureCapabilityRepository
 
 class JobRepository:
     def __init__(self, db: Session):
@@ -19,6 +20,7 @@ class JobRepository:
         self._embedding_repo: Optional[EmbeddingRepository] = None
         self._candidate_preferences_repo: Optional[CandidatePreferencesRepository] = None
         self._notification_settings_repo: Optional[NotificationSettingsRepository] = None
+        self._user_feature_capability_repo: Optional[UserFeatureCapabilityRepository] = None
 
     @property
     def job_post(self) -> JobPostRepository:
@@ -55,6 +57,12 @@ class JobRepository:
         if self._notification_settings_repo is None:
             self._notification_settings_repo = NotificationSettingsRepository(self.db)
         return self._notification_settings_repo
+
+    @property
+    def user_feature_capability(self) -> UserFeatureCapabilityRepository:
+        if self._user_feature_capability_repo is None:
+            self._user_feature_capability_repo = UserFeatureCapabilityRepository(self.db)
+        return self._user_feature_capability_repo
 
     def commit(self) -> None:
         self.db.commit()
@@ -158,6 +166,23 @@ class JobRepository:
     ) -> List[Tuple[JobPost, float]]:
         return self.job_post.get_top_jobs_by_summary_embedding(
             resume_embedding, limit, tenant_id, require_remote
+        )
+
+    def get_top_jobs_by_lexical_query(
+        self,
+        lexical_query: str,
+        *,
+        resume_embedding: List[float],
+        limit: Optional[int] = None,
+        tenant_id: Optional[Any] = None,
+        require_remote: Optional[bool] = None,
+    ) -> List[Tuple[JobPost, float, float]]:
+        return self.job_post.get_top_jobs_by_lexical_query(
+            lexical_query,
+            resume_embedding=resume_embedding,
+            limit=limit,
+            tenant_id=tenant_id,
+            require_remote=require_remote,
         )
 
     def save_job_facet_embedding(
@@ -369,6 +394,26 @@ class JobRepository:
 
     def get_structured_resume_by_fingerprint(self, resume_fingerprint: str) -> Any:
         return self.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
+
+    def get_capability(self, owner_id: Any, feature_key: str) -> Any:
+        return self.user_feature_capability.get_capability(owner_id, feature_key)
+
+    def upsert_capability(
+        self,
+        owner_id: Any,
+        feature_key: str,
+        *,
+        enabled: bool = True,
+        value_json: Optional[dict] = None,
+        source: Optional[str] = None,
+    ) -> Any:
+        return self.user_feature_capability.upsert_capability(
+            owner_id,
+            feature_key,
+            enabled=enabled,
+            value_json=value_json,
+            source=source,
+        )
 
     def find_similar_resume_sections(
         self,

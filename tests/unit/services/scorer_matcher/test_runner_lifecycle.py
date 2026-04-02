@@ -315,3 +315,43 @@ def test_run_matching_pipeline_reports_cancelled_before_save_when_stop_requested
     assert result.success is False
     assert result.cancelled is True
     assert result.error == "Cancelled by user"
+
+
+def test_run_matching_pipeline_uses_default_recall_top_k_when_semantic_fit_config_missing():
+    ctx = _ctx()
+    structured = _structured_resume(
+        {"profile": {"summary": {"text": "Ready summary"}, "experience": []}}
+    )
+    first_repo = MagicMock()
+    first_repo.get_latest_ready_resume_fingerprint.return_value = "fp-ready"
+    first_repo.get_latest_resume_processing_state.return_value = None
+    first_repo.resume.get_structured_resume_by_fingerprint.return_value = structured
+
+    second_repo = MagicMock()
+    second_repo.resume.get_structured_resume_by_fingerprint.return_value = structured
+
+    matcher = MagicMock()
+    matcher.match_resume_two_stage.return_value = []
+    scorer = MagicMock()
+    scorer.score_matches.return_value = []
+
+    with patch(
+        "services.scorer_matcher.pipeline.job_uow",
+        side_effect=[_uow(first_repo), _uow(second_repo), _uow(second_repo)],
+    ), patch("services.scorer_matcher.pipeline.MatcherService", return_value=matcher) as matcher_cls, patch(
+        "services.scorer_matcher.pipeline.ScoringService", return_value=scorer
+    ), patch(
+        "services.scorer_matcher.pipeline.ResumeSchema.model_validate",
+        return_value=SimpleNamespace(profile=SimpleNamespace()),
+    ), patch(
+        "services.scorer_matcher.pipeline._save_matches_batch",
+        return_value=SaveMatchesBatchResult(
+            saved_count=0,
+            failed_count=0,
+            active_job_ids=frozenset(),
+        ),
+    ):
+        result = run_matching_pipeline(ctx)
+
+    assert result.success is True
+    assert matcher_cls.call_args.kwargs["requirement_recall_top_k"] == 5

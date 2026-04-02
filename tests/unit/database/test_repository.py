@@ -13,6 +13,7 @@ from database.repositories.resume import ResumeRepository
 from database.repositories.match import MatchRepository
 from database.repositories.embedding import EmbeddingRepository
 from database.repositories.candidate_preferences import CandidatePreferencesRepository
+from database.repositories.user_feature_capability import UserFeatureCapabilityRepository
 
 
 def make_repo():
@@ -68,6 +69,10 @@ class TestJobRepositoryProperties:
         first = repo.candidate_preferences
         second = repo.candidate_preferences
         assert first is second
+
+    def test_user_feature_capability_returns_repository(self):
+        repo, _ = make_repo()
+        assert isinstance(repo.user_feature_capability, UserFeatureCapabilityRepository)
 
     def test_all_sub_repos_use_same_db(self):
         mock_db = MagicMock()
@@ -271,6 +276,25 @@ class TestJobPostDelegation:
         repo.job_post.get_top_jobs_by_summary_embedding = MagicMock(return_value=[("job", 0.9)])
         result = repo.get_top_jobs_by_summary_embedding([0.1, 0.2], 10, None, True)
         assert result == [("job", 0.9)]
+
+    def test_get_top_jobs_by_lexical_query(self):
+        repo, _ = make_repo()
+        repo.job_post.get_top_jobs_by_lexical_query = MagicMock(return_value=[("job", 0.5, 0.8)])
+        result = repo.get_top_jobs_by_lexical_query(
+            "python | aws",
+            resume_embedding=[0.1, 0.2],
+            limit=10,
+            tenant_id="tenant-x",
+            require_remote=True,
+        )
+        repo.job_post.get_top_jobs_by_lexical_query.assert_called_once_with(
+            "python | aws",
+            resume_embedding=[0.1, 0.2],
+            limit=10,
+            tenant_id="tenant-x",
+            require_remote=True,
+        )
+        assert result == [("job", 0.5, 0.8)]
 
     def test_save_job_facet_embedding(self):
         repo, _ = make_repo()
@@ -477,6 +501,37 @@ class TestCandidatePreferencesRepositoryProperty:
         result = repo.candidate_preferences.get_preferences("user-1")
         repo.candidate_preferences.get_preferences.assert_called_once_with("user-1")
         assert result == "prefs"
+
+
+class TestFeatureCapabilityDelegation:
+    def test_get_capability(self):
+        repo, _ = make_repo()
+        repo.user_feature_capability.get_capability = MagicMock(return_value="capability")
+        result = repo.get_capability("user-1", "fit.semantic.allowed_modes")
+        repo.user_feature_capability.get_capability.assert_called_once_with(
+            "user-1",
+            "fit.semantic.allowed_modes",
+        )
+        assert result == "capability"
+
+    def test_upsert_capability(self):
+        repo, _ = make_repo()
+        repo.user_feature_capability.upsert_capability = MagicMock(return_value="updated")
+        result = repo.upsert_capability(
+            "user-1",
+            "fit.semantic.preferred_mode",
+            enabled=True,
+            value_json={"mode": "llm"},
+            source="admin",
+        )
+        repo.user_feature_capability.upsert_capability.assert_called_once_with(
+            "user-1",
+            "fit.semantic.preferred_mode",
+            enabled=True,
+            value_json={"mode": "llm"},
+            source="admin",
+        )
+        assert result == "updated"
 
 
 # ---------------------------------------------------------------------------

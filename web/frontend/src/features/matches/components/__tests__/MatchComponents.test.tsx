@@ -370,6 +370,9 @@ function makeModalData(overrides: Record<string, any> = {}) {
         match: {
             overall_score: 90,
             fit_score: 88,
+            fit_confidence: null,
+            fit_scorer: null,
+            fit_explanation: null,
             required_coverage: 0.95,
             preferred_coverage: 0.85,
             matched_requirements_count: 9,
@@ -454,6 +457,65 @@ describe('MatchDetailsModal', () => {
         mockUseMatchDetails.mockReturnValue({ data: makeModalData(), isLoading: false });
         render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
         expect(screen.getByText('Remote')).toBeInTheDocument();
+    });
+
+    it('shows semantic fit summary when explanation is available', () => {
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({
+                match: {
+                    fit_confidence: 0.84,
+                    fit_scorer: { name: 'llm_semantic_fit', version: '1' },
+                    fit_explanation: {
+                        summary: 'Covered 2 of 3 required requirements (67%) and 1 of 1 preferred requirements (100%).',
+                        diagnostics: {
+                            effective_fit_mode: 'llm',
+                            provider_route: 'remote',
+                        },
+                        retrieval: {
+                            mode: 'hybrid',
+                            sources: ['dense', 'lexical'],
+                        },
+                    },
+                },
+            }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText('Semantic Fit')).toBeInTheDocument();
+        expect(screen.getByText(/Confidence 84%/i)).toBeInTheDocument();
+        expect(screen.getByText(/llm semantic fit/i)).toBeInTheDocument();
+        expect(screen.getByText(/Hybrid retrieval/i)).toBeInTheDocument();
+        expect(screen.getByText(/^llm$/i)).toBeInTheDocument();
+        expect(screen.getAllByText(/^remote$/i)).toHaveLength(2);
+        expect(screen.getByText(/Candidate generation used dense \+ lexical\./i)).toBeInTheDocument();
+        expect(screen.getByText(/Covered 2 of 3 required requirements/i)).toBeInTheDocument();
+    });
+
+    it('shows fallback messaging when semantic fit falls back', () => {
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({
+                match: {
+                    fit_scorer: { name: 'threshold_semantic_fit', version: '2' },
+                    fit_explanation: {
+                        summary: 'Covered 1 of 2 required requirements (50%) and 0 of 0 preferred requirements (0%).',
+                        message: 'Semantic fit scorer unavailable; using threshold fallback.',
+                        diagnostics: {
+                            effective_fit_mode: 'threshold',
+                            provider_route: 'threshold',
+                            fallback_used: true,
+                        },
+                        retrieval: {
+                            mode: 'dense',
+                            sources: ['dense'],
+                        },
+                    },
+                },
+            }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText(/Semantic fit scorer unavailable; using threshold fallback\./i)).toBeInTheDocument();
+        expect(screen.getAllByText(/^threshold$/i)).toHaveLength(2);
     });
 
     it('shows job description when present', () => {
@@ -610,6 +672,45 @@ describe('MatchDetailsModal', () => {
         render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
         expect(screen.getByText('✓ Covered')).toBeInTheDocument();
         expect(screen.getByText('✗ Missing')).toBeInTheDocument();
+    });
+
+    it('uses semantic verdict copy instead of raw similarity percentages when available', () => {
+        const requirements = [
+            {
+                requirement_id: 'req-8',
+                req_type: 'required',
+                is_covered: false,
+                similarity_score: 0.92,
+                requirement_text: 'Python API development',
+                evidence_text: 'Built internal APIs',
+                evidence_section: 'Work Experience',
+            },
+        ];
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({
+                requirements,
+                match: {
+                    fit_explanation: {
+                        summary: 'Covered 0 of 1 required requirements (0%) and 0 of 0 preferred requirements (0%).',
+                        requirement_verdicts: [
+                            {
+                                requirement_id: 'req-8',
+                                verdict: 'partial',
+                                reason: 'Evidence is related but does not clearly satisfy the requirement.',
+                                evidence_text: 'Built internal APIs',
+                                evidence_section: 'Work Experience',
+                            },
+                        ],
+                    },
+                },
+            }),
+            isLoading: false,
+        });
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText('Semantic review')).toBeInTheDocument();
+        expect(screen.getByText('Why this verdict')).toBeInTheDocument();
+        expect(screen.getByText('△ Partial')).toBeInTheDocument();
+        expect(screen.queryByText('92% match')).not.toBeInTheDocument();
     });
 
     it('shows both required and preferred requirement sections', () => {

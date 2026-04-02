@@ -17,6 +17,19 @@ into focused, single-responsibility modules:
 """
 
 from core.scorer.models import ScoredJobMatch
+from core.scorer.semantic_fit import (
+    LLMSemanticFitScorer,
+    SemanticFitScorer,
+    SemanticFitScoreResult,
+    ThresholdSemanticFitScorer,
+)
 from core.scorer.service import ScoringService
 
-__all__ = ['ScoringService', 'ScoredJobMatch']
+__all__ = [
+    'ScoringService',
+    'ScoredJobMatch',
+    'LLMSemanticFitScorer',
+    'SemanticFitScorer',
+    'SemanticFitScoreResult',
+    'ThresholdSemanticFitScorer',
+]

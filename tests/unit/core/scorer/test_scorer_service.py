@@ -10,7 +10,7 @@ from typing import List
 from core.config_loader import ScorerConfig, ResultPolicy
 from core.matcher import JobMatchPreliminary, RequirementMatchResult
 from core.scorer import ScoringService
-from core.scorer.service import _prefetch_total_years
+from core.scorer.service import SemanticFitRouter, _prefetch_total_years
 
 
 class TestScorerService(unittest.TestCase):
@@ -120,10 +120,11 @@ scrapers: []
         preliminary = JobMatchPreliminary(
             job=job,
             job_similarity=0.75,
-            
             requirement_matches=[req_match],
             missing_requirements=[],
-            resume_fingerprint="test_fp"
+            resume_fingerprint="test_fp",
+            retrieval_score=0.88,
+            lexical_score=0.44,
         )
 
         scored = self.scorer.score_preliminary_match(preliminary)
@@ -131,10 +132,39 @@ scrapers: []
         self.assertIsNotNone(scored)
         self.assertGreater(scored.overall_score, 0)
         self.assertAlmostEqual(scored.jd_required_coverage, 0.8, places=2)
+        self.assertIn("fit_explanation", scored.fit_components)
+        self.assertGreater(scored.fit_confidence, 0)
+        self.assertEqual(scored.fit_scorer["name"], "cross_encoder_semantic_fit")
+        self.assertIn(scored.fit_components["effective_fit_mode"], {"cross_encoder", "threshold"})
+        self.assertIn(scored.fit_components["provider_route"], {"local", "local_heuristic"})
+        self.assertEqual(scored.fit_components["retrieval"]["mode"], "hybrid")
+        self.assertEqual(scored.fit_components["retrieval"]["retrieval_score"], 0.88)
+        self.assertEqual(scored.fit_explanation["retrieval"]["lexical_score"], 0.44)
 
         print(f"  ✓ Overall score: {scored.overall_score:.1f}")
         print(f"  ✓ Base score: {scored.base_score:.1f}")
         print(f"  ✓ JD Required coverage: {scored.jd_required_coverage*100:.0f}%")
+
+    def test_local_cross_encoder_can_be_disabled_in_config(self):
+        self.scorer_config.semantic_fit.cross_encoder.local.enabled = False
+        scorer = ScoringService(self.mock_repo, self.scorer_config)
+
+        self.assertIsNone(scorer.semantic_fit_scorer.cross_encoder_scorer.local_provider)
+
+    def test_resolve_llm_provider_returns_none_when_disabled(self):
+        self.scorer_config.semantic_fit.llm.enabled = False
+
+        assert self.scorer._resolve_llm_provider(None) is None
+
+    def test_resolve_llm_provider_builds_openai_service_when_configured(self):
+        self.scorer_config.semantic_fit.llm.enabled = True
+        self.scorer_config.semantic_fit.llm.api_key = "key"
+        self.scorer_config.semantic_fit.llm.base_url = "https://llm.example.com"
+
+        provider = self.scorer._resolve_llm_provider(None)
+
+        self.assertIsNotNone(provider)
+        self.assertEqual(provider.__class__.__name__, "OpenAIService")
 
 
 class TestBatchPrefetch(unittest.TestCase):
@@ -496,6 +526,75 @@ class TestResultPolicy(unittest.TestCase):
 
         self.assertEqual(len(scored), 3)
         print(f"  ✓ Limited to top {len(scored)} matches")
+
+
+class TestSemanticFitRouter(unittest.TestCase):
+    def setUp(self):
+        self.repo = MagicMock()
+        self.threshold_scorer = MagicMock()
+        self.cross_encoder_scorer = MagicMock()
+        self.llm_scorer = MagicMock()
+        self.config = ScorerConfig()
+        self.preliminary = MagicMock()
+        self.preliminary.owner_id = "owner-1"
+        self.router = SemanticFitRouter(
+            repo=self.repo,
+            config=self.config,
+            threshold_scorer=self.threshold_scorer,
+            cross_encoder_scorer=self.cross_encoder_scorer,
+            llm_scorer=self.llm_scorer,
+        )
+
+    def test_disabled_semantic_fit_uses_threshold(self):
+        self.config.semantic_fit.enabled = False
+
+        self.router.score(self.preliminary, fit_penalties=0.0, config=self.config)
+
+        self.threshold_scorer.score.assert_called_once()
+        self.cross_encoder_scorer.score.assert_not_called()
+
+    def test_llm_mode_uses_llm_scorer_when_enabled(self):
+        self.config.semantic_fit.llm.enabled = True
+        self.config.semantic_fit.deploy_allowed_modes = ["cross_encoder", "llm"]
+        self.repo.get_capability.side_effect = [
+            MagicMock(enabled=True, value_json={"modes": ["cross_encoder", "llm"]}),
+            MagicMock(enabled=True, value_json={"mode": "llm"}),
+        ]
+
+        self.router.score(self.preliminary, fit_penalties=0.0, config=self.config)
+
+        self.llm_scorer.score.assert_called_once()
+        self.cross_encoder_scorer.score.assert_not_called()
+
+    def test_llm_mode_falls_back_to_cross_encoder_when_llm_scorer_missing(self):
+        self.router.llm_scorer = None
+        self.config.semantic_fit.llm.enabled = True
+        self.config.semantic_fit.deploy_allowed_modes = ["cross_encoder", "llm"]
+        self.repo.get_capability.side_effect = [
+            MagicMock(enabled=True, value_json={"modes": ["cross_encoder", "llm"]}),
+            MagicMock(enabled=True, value_json={"mode": "llm"}),
+        ]
+
+        self.router.score(self.preliminary, fit_penalties=0.0, config=self.config)
+
+        self.cross_encoder_scorer.score.assert_called_once()
+
+    def test_llm_mode_without_llm_scorer_or_cross_encoder_permission_raises(self):
+        self.router.llm_scorer = None
+        self.config.semantic_fit.llm.enabled = False
+        self.config.semantic_fit.deploy_allowed_modes = ["llm"]
+        self.config.semantic_fit.baseline_allowed_modes = ["llm"]
+        self.config.semantic_fit.default_mode = "llm"
+        self.repo.get_capability.side_effect = [
+            MagicMock(enabled=True, value_json={"modes": ["llm"]}),
+            MagicMock(enabled=True, value_json={"mode": "llm"}),
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "no LLM scorer is configured"):
+            self.router.score(self.preliminary, fit_penalties=0.0, config=self.config)
+
+        self.cross_encoder_scorer.score.assert_not_called()
+        self.threshold_scorer.score.assert_not_called()
 
 
 if __name__ == '__main__':

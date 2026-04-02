@@ -1,7 +1,7 @@
 # Semantic Architecture Handover
 
-- Date: 2026-04-01
-- Status: Ready for follow-on PRs
+- Date: 2026-04-02
+- Status: Foundation merged; fit semantic scoring and fit rewire implementation active on PR 2 branch; preference semantics still pending
 
 ## Recommended PR Split
 
@@ -23,7 +23,7 @@ Why separate:
 
 ### PR 2: Fit Semantic Scoring
 
-Target scope:
+Scope now implemented on this branch:
 
 - introduce `SemanticFitScorer`
 - keep pgvector similarity as retrieval/evidence recall only
@@ -31,11 +31,32 @@ Target scope:
 - move user-facing explainability to semantic fit outputs
 - keep cosine-based explanation internal/admin-only if still needed
 
-Why separate:
+What landed:
 
-- highest correctness risk
-- requires offline evaluation and likely prompt/model iteration
-- changes fit semantics independently from preference personalization
+- [core/scorer/semantic_fit.py](/Users/sookyungahn/repos/JobScout-fit-semantics/core/scorer/semantic_fit.py)
+- [core/scorer/service.py](/Users/sookyungahn/repos/JobScout-fit-semantics/core/scorer/service.py)
+- [services/scorer_matcher/pipeline.py](/Users/sookyungahn/repos/JobScout-fit-semantics/services/scorer_matcher/pipeline.py)
+- [core/llm/fake_service.py](/Users/sookyungahn/repos/JobScout-fit-semantics/core/llm/fake_service.py)
+- [web/backend/services/match_service.py](/Users/sookyungahn/repos/JobScout-fit-semantics/web/backend/services/match_service.py)
+- [web/backend/routers/matches.py](/Users/sookyungahn/repos/JobScout-fit-semantics/web/backend/routers/matches.py)
+- [web/frontend/src/features/matches/components/MatchDetailsModal.tsx](/Users/sookyungahn/repos/JobScout-fit-semantics/web/frontend/src/features/matches/components/MatchDetailsModal.tsx)
+
+Behavior:
+
+- `ScoringService` now routes fit evaluation through a dedicated `SemanticFitScorer` contract
+- hybrid retrieval is now enabled by default, with reciprocal-rank fusion over dense and lexical candidates
+- the default semantic implementation on this branch is cross-encoder mode with local/remote routing support
+- local cross-encoder routing now prefers FlagEmbedding-compatible runtimes in `auto` for multilingual-friendly local scoring, with SentenceTransformers and heuristic fallback still supported through the same provider interface
+- LLM semantic fit remains available as an advanced gated mode
+- threshold scoring remains available as the explicit fallback path
+- nested `matching.scorer.semantic_fit.*` config now controls fit-mode routing, recall depth, and serialization budgets
+- per-user feature capabilities now gate advanced fit modes
+- fit explanations are persisted during scoring and returned by the match explanation endpoint
+- split-stack E2E now exercises `/api/matches` and `/api/matches/{id}/explanation` so the persisted fit diagnostics are verified through real API calls
+- normal user-facing match details now use semantic verdicts and summaries instead of raw `% similarity` badges, and display fit mode/provider route/fallback state
+- public explanation summaries are deterministic from verdicts; model free-text is kept internal/debug only
+- fake AI service support was extended so tests can exercise semantic-fit behavior deterministically
+- the next canonical fit plan is now [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md)
 
 ### PR 3: Preference Semantic Reranking
 
@@ -122,23 +143,45 @@ Observed results at handoff:
   - active match refresh now happens after a clean save batch, not before saving
   - rerun refresh is skipped when any per-match save fails, preserving the last good active set
   - `recalculate_existing=False` semantics are preserved for unchanged active matches
+- fit semantic scoring was implemented on the follow-on worktree branch:
+  - LLM-backed semantic requirement/evidence judgments feed fit aggregation
+  - threshold scoring is retained as a guarded fallback, not the only fit path
+  - persisted semantic explanations now back the explanation endpoint and match details modal
+  - follow-up Sonar cleanup removed nested ternaries from the semantic explanation UI
+ - hybrid retrieval is implemented on the fit-semantics branch:
+  - dense retrieval uses `canonical_job_summary` embeddings
+  - lexical retrieval uses PostgreSQL full-text candidate generation over existing job text fields
+  - reciprocal-rank fusion merges dense and lexical candidate sets without overwriting dense `job_similarity`
+  - retrieval diagnostics are persisted with fit outputs so match details can show whether a candidate was generated through dense-only or hybrid retrieval
+  - semantic scorer diagnostics capture scorer identity, latency, judged-requirement counts, and fallback reasons in the saved fit payload
+ - the broader fit rewire plan is now recorded in [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md):
+   - hybrid retrieval becomes the default path
+   - semantic fit adds dual provider support: cross-encoder default plus advanced gated LLM mode
+   - fit mode access moves to a DB-backed capability model
+   - recall depth becomes configurable
+   - truncation budgets become configurable and instrumented rather than fixed hidden limits
+   - `config.yaml` will carry commented tuning hints for fit controls
+   - container-level observability rollout is tracked separately in [container-observability-plan.md](./container-observability-plan.md)
 
 ## Important Boundaries
 
-- No real `SemanticFitScorer` exists yet.
 - No real `PreferenceSemanticReranker` exists yet.
 - Current lexical soft-preference overlap still exists in the matcher pipeline and should be treated as an interim path, not the target architecture.
-- No admin entitlement/capability store exists yet beyond config-driven allowed modes.
+- No admin HTTP surface exists for capability management in this phase beyond config-driven allowed modes plus the internal CLI.
+- A DB-backed capability control mechanism exists now, plus an internal CLI for dev/staging administration:
+  - [manage_feature_capability.py](/Users/sookyungahn/repos/JobScout-fit-semantics/scripts/manage_feature_capability.py)
+  - later options remain an internal admin API or admin UI on top of the same table/service if operations truly require it
+- Truncation and fit-routing diagnostics are persisted, but they are not yet exported into a Grafana dashboard; use [container-observability-plan.md](./container-observability-plan.md) as the follow-on operational plan.
 - Persisted reruns are authoritative only after a clean save batch completes; this safety behavior is now intentional and should be preserved when implementing later semantic stages.
+- The current fit semantic scorer supports both a dedicated cross-encoder path and a gated LLM path.
+- ANN/pgvector is still the retrieval and evidence-recall layer; the rewire plan keeps it as retrieval infrastructure rather than final semantic authority.
+- hybrid retrieval is now default-on in config.
+- A Python-only offline evaluation harness now exists for fit pair judgments and retrieval fusion:
+  - [scripts/evaluate_fit_semantics.py](/Users/sookyungahn/repos/JobScout-fit-semantics/scripts/evaluate_fit_semantics.py)
+  - [tests/fixtures/evaluations/fit_semantics_cases.json](/Users/sookyungahn/repos/JobScout-fit-semantics/tests/fixtures/evaluations/fit_semantics_cases.json)
+- The offline harness intentionally lives in Python only; TypeScript remains for UI and end-to-end verification, not backend fit benchmarking.
 
 ## Next PR Starting Point
-
-If picking up fit semantics next:
-
-1. introduce a fit-scoring interface and default implementation
-2. thread semantic fit outputs into persistence/explanations
-3. gate UI explainability away from cosine internals
-4. add offline fixtures and acceptance criteria
 
 If picking up preference semantics next:
 
@@ -147,10 +190,21 @@ If picking up preference semantics next:
 3. log mode used, fallback reason, and latency
 4. evaluate whether `llm_judge` should remain disabled by default
 
+If continuing fit semantics after PR 2:
+
+1. follow [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md) as the source of truth
+2. tune and expand the offline fixture set and acceptance criteria for semantic fit quality
+3. harden the local FlagEmbedding runtime path in deployment environments where model provisioning differs
+4. add aggregate observability from the persisted diagnostics into reporting for latency, fallback frequency, truncation, and verdict distributions
+
 ## Suggested Merge Order
 
 1. PR 1 foundation
 2. PR 2 fit semantic scoring
 3. PR 3 preference semantic reranking
 
-This keeps the highest-risk semantic behavior changes out of the schema/docs/config groundwork review.
+Current state:
+
+- PR 1 is merged
+- PR 2 is the active fit-semantics PR branch
+- PR 3 remains the next major architecture slice after PR 2 lands

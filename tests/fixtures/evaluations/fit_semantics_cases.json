@@ -1,0 +1,64 @@
+{
+  "pair_cases": [
+    {
+      "name": "java_python_mismatch",
+      "job_title": "Java Backend Engineer",
+      "job_company": "Acme Cloud",
+      "job_summary": "Backend role focused on Java microservices.",
+      "requirement_text": "Strong Java programming experience",
+      "req_type": "required",
+      "evidence_text": "Built Python FastAPI services and internal APIs",
+      "evidence_section": "experience",
+      "original_similarity": 0.82,
+      "expected_verdict": "missing"
+    },
+    {
+      "name": "python_backend_match",
+      "job_title": "Python Platform Engineer",
+      "job_company": "Acme Cloud",
+      "job_summary": "Platform role building Python APIs and microservices.",
+      "requirement_text": "Python backend API development",
+      "req_type": "required",
+      "evidence_text": "Built Python backend APIs for internal services",
+      "evidence_section": "experience",
+      "original_similarity": 0.31,
+      "expected_verdict": "covered"
+    },
+    {
+      "name": "partial_cloud_overlap",
+      "job_title": "Cloud Engineer",
+      "job_company": "Acme Cloud",
+      "job_summary": "Role covering AWS infrastructure and deployment automation.",
+      "requirement_text": "AWS production infrastructure experience",
+      "req_type": "required",
+      "evidence_text": "Worked on containerized deployments and CI pipelines",
+      "evidence_section": "projects",
+      "original_similarity": 0.38,
+      "expected_verdict": "partial"
+    }
+  ],
+  "retrieval_cases": [
+    {
+      "name": "lexical_fastapi_rescue",
+      "dense_candidates": [
+        {"job_id": "dense-generalist", "dense_score": 0.95},
+        {"job_id": "exact-fastapi", "dense_score": 0.70}
+      ],
+      "lexical_candidates": [
+        {"job_id": "exact-fastapi", "lexical_score": 0.99, "dense_similarity": 0.70}
+      ],
+      "expected_top_job_id": "exact-fastapi"
+    },
+    {
+      "name": "acronym_title_recall",
+      "dense_candidates": [
+        {"job_id": "backend-platform", "dense_score": 0.88},
+        {"job_id": "mlops-role", "dense_score": 0.55}
+      ],
+      "lexical_candidates": [
+        {"job_id": "mlops-role", "lexical_score": 0.96, "dense_similarity": 0.55}
+      ],
+      "expected_top_job_id": "mlops-role"
+    }
+  ]
+}

@@ -783,6 +783,52 @@ class TestGetTopJobsBySummaryEmbedding:
         mock_db.execute.assert_called_once()
 
 
+class TestGetTopJobsByLexicalQuery:
+    def test_returns_job_rank_and_dense_similarity(self):
+        repo, mock_db = make_repo()
+        mock_job = MagicMock(spec=JobPost)
+        row = MagicMock()
+        row.__getitem__.return_value = mock_job
+        row._mapping = {"lexical_rank": 0.42, "distance": 0.2}
+        mock_db.execute.return_value.all.return_value = [row]
+
+        result = repo.get_top_jobs_by_lexical_query(
+            "python | aws",
+            resume_embedding=[0.1, 0.2],
+        )
+
+        assert len(result) == 1
+        job, lexical_rank, dense_similarity = result[0]
+        assert job is mock_job
+        assert lexical_rank == pytest.approx(0.42)
+        assert dense_similarity == pytest.approx(0.8)
+
+    def test_returns_empty_for_blank_query(self):
+        repo, mock_db = make_repo()
+
+        result = repo.get_top_jobs_by_lexical_query(
+            "   ",
+            resume_embedding=[0.1],
+        )
+
+        assert result == []
+        mock_db.execute.assert_not_called()
+
+    def test_executes_query_with_tenant_and_remote_filters(self):
+        repo, mock_db = make_repo()
+        mock_db.execute.return_value.all.return_value = []
+
+        repo.get_top_jobs_by_lexical_query(
+            "python | fastapi",
+            resume_embedding=[0.1],
+            tenant_id="tenant-x",
+            require_remote=True,
+            limit=10,
+        )
+
+        mock_db.execute.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # get_job_facet_embeddings / get_facets_for_job / get_jobs_needing_facet_embedding
 # ---------------------------------------------------------------------------
