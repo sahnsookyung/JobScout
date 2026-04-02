@@ -33,6 +33,8 @@ def _normalize_string_list(values: Iterable[str]) -> List[str]:
         seen.add(lowered)
         normalized.append(item)
     return normalized
+
+
 class CandidatePreferencesService:
     """Resolve and persist per-user candidate preferences."""
 
@@ -76,7 +78,7 @@ class CandidatePreferencesService:
     def _to_response(self, preferences) -> Dict[str, Any]:
         allowed_modes = self._allowed_modes()
         stored_mode = getattr(preferences, "preference_mode", None) or self.config.preferences.default_mode
-        effective_mode = stored_mode if stored_mode in allowed_modes else self.config.preferences.default_mode
+        effective_mode = self._resolve_effective_mode(stored_mode, allowed_modes)
         return {
             "remote_mode": preferences.remote_mode,
             "target_locations": list(preferences.target_locations or []),
@@ -98,15 +100,19 @@ class CandidatePreferencesService:
             return [self.config.preferences.default_mode]
         return normalized
 
-    def _resolve_requested_mode(self, requested_mode: Any) -> str:
+    def _resolve_effective_mode(self, requested_mode: Any, allowed_modes: List[str]) -> str:
         normalized = str(requested_mode or self.config.preferences.default_mode).strip().lower()
         if normalized not in VALID_PREFERENCE_MODES:
             normalized = self.config.preferences.default_mode
-
-        allowed_modes = self._allowed_modes()
-        if normalized not in allowed_modes:
+        if normalized in allowed_modes:
+            return normalized
+        if self.config.preferences.default_mode in allowed_modes:
             return self.config.preferences.default_mode
-        return normalized
+        return allowed_modes[0]
+
+    def _resolve_requested_mode(self, requested_mode: Any) -> str:
+        allowed_modes = self._allowed_modes()
+        return self._resolve_effective_mode(requested_mode, allowed_modes)
 
     def _parse_preference_profile(self, raw_text: str):
         if not raw_text.strip():

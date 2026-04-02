@@ -216,6 +216,8 @@ def _job_preference_haystack(job_payload: Dict[str, Any]) -> str:
             str(job_payload.get("summary", "")),
             str(job_payload.get("company_description", "")),
             " ".join(str(skill) for skill in (job_payload.get("skills") or [])),
+            " ".join(str(requirement) for requirement in (job_payload.get("requirements") or [])),
+            " ".join(str(benefit) for benefit in (job_payload.get("benefits") or [])),
         ]
     ).lower()
 

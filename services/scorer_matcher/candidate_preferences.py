@@ -320,7 +320,8 @@ def _fit_only_fallback(
                 "preference_reason_codes": ["fallback_fit_only"],
                 "preference_explanation": "Preference reranking unavailable for this run.",
                 "preference_mode_requested": requested_mode,
-                "preference_mode_used": effective_mode,
+                "preference_mode_effective": effective_mode,
+                "preference_mode_used": "fit_only_fallback",
                 "preference_fallback_reason": reason,
             }
         )
@@ -363,6 +364,7 @@ def _apply_assessments(
                 "preference_reason_codes": reason_codes,
                 "preference_explanation": explanation,
                 "preference_mode_requested": requested_mode,
+                "preference_mode_effective": effective_mode,
                 "preference_mode_used": effective_mode,
             }
         )

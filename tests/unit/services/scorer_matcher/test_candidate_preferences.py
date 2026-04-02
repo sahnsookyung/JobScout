@@ -218,7 +218,8 @@ class TestPreferenceSemanticReranking:
             config=_preferences_config(),
         )
 
-        assert reranked[0].fit_components["preference_mode_used"] == "semantic_rerank"
+        assert reranked[0].fit_components["preference_mode_used"] == "fit_only_fallback"
+        assert reranked[0].fit_components["preference_mode_effective"] == "semantic_rerank"
         assert reranked[0].fit_components["preference_fallback_reason"] == "preference_profile_unavailable"
 
     @patch("services.scorer_matcher.candidate_preferences.build_preference_semantic_reranker")
@@ -379,6 +380,7 @@ class TestPreferenceSemanticReranking:
 
         assert reranked[0].fit_components["preference_mode_requested"] == "llm_judge"
         assert reranked[0].fit_components["preference_mode_used"] == "semantic_rerank"
+        assert reranked[0].fit_components["preference_mode_effective"] == "semantic_rerank"
         assert "preference_fallback_reason" not in reranked[0].fit_components
 
     def test_preference_sort_keeps_job_id_ascending_for_exact_ties(self):

@@ -249,6 +249,39 @@ def _payload_char_budget(max_input_tokens: int) -> int:
     return max(MIN_PREFERENCE_PAYLOAD_CHARS, int(max_input_tokens) * APPROX_CHARS_PER_TOKEN)
 
 
+def _truncate_preference_profile(
+    profile: PreferenceProfile,
+    *,
+    max_input_tokens: int,
+) -> PreferenceProfile:
+    budget_chars = _payload_char_budget(max_input_tokens)
+    label_budget = min(120, max(48, int(budget_chars * 0.03)))
+    raw_text_budget = min(800, max(180, int(budget_chars * 0.18)))
+
+    profile_data = profile.model_dump(mode="json")
+    profile_data["raw_text"] = _truncate_text(profile_data.get("raw_text", ""), raw_text_budget)
+
+    for field_name in (
+        "work_style",
+        "team_culture",
+        "tech_stack",
+        "mission_domain",
+        "growth_preferences",
+        "negative_preferences",
+    ):
+        items = []
+        for item in list(profile_data.get(field_name, []) or [])[:6]:
+            mutated = dict(item)
+            mutated["label"] = _truncate_text(mutated.get("label", ""), label_budget)
+            items.append(mutated)
+        profile_data[field_name] = items
+
+    truncated = PreferenceProfile.model_validate(profile_data)
+    if _score_payload_char_size(truncated, [], scorer_name="profile_only") > budget_chars:
+        raise ValueError("Preference profile exceeds configured max_input_tokens")
+    return truncated
+
+
 def _truncate_job_payload(
     payload: PreferenceJobPayload,
     *,
@@ -408,15 +441,19 @@ class _BaseLLMPreferenceScorer:
         if not jobs:
             return []
 
+        prepared_profile = _truncate_preference_profile(
+            profile,
+            max_input_tokens=self.max_input_tokens,
+        )
         results: List[PreferenceAssessment] = []
         for chunk in _chunk_jobs_for_budget(
-            profile,
+            prepared_profile,
             jobs,
             scorer_name=self.scorer_name,
             max_input_tokens=self.max_input_tokens,
         ):
             payload = {
-                "profile": profile.model_dump(mode="json"),
+                "profile": prepared_profile.model_dump(mode="json"),
                 "jobs": [job.model_dump(mode="json") for job in chunk],
                 "mode": self.scorer_name,
             }

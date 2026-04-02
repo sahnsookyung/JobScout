@@ -264,3 +264,32 @@ def test_update_preferences_truncates_long_summary_and_normalizes_mode(mock_get_
     assert response["effective_preference_mode"] == "llm_judge"
     assert len(response["soft_preference_summary"]) == 160
     assert response["soft_preference_summary"].endswith("…")
+
+
+@patch("web.backend.services.candidate_preferences_service.get_config")
+def test_get_preferences_uses_allowed_mode_when_default_is_disallowed(mock_get_config):
+    mock_get_config.return_value = _config(
+        allowed_modes=["llm_judge"],
+        default_mode="semantic_rerank",
+    )
+    db = Mock()
+    service = CandidatePreferencesService(db)
+    preferences = SimpleNamespace(
+        owner_id="user-1",
+        remote_mode="any",
+        target_locations=[],
+        visa_sponsorship_required=False,
+        salary_min=None,
+        employment_types=[],
+        soft_preferences="",
+        soft_preference_summary=None,
+        preference_mode="semantic_rerank",
+        preference_profile=None,
+        revision=0,
+    )
+    service.repo.candidate_preferences.get_or_create_preferences = Mock(return_value=preferences)
+
+    response = service.get_preferences(SimpleNamespace(id="user-1"))
+
+    assert response["allowed_preference_modes"] == ["llm_judge"]
+    assert response["effective_preference_mode"] == "llm_judge"

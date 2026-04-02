@@ -17,6 +17,7 @@ from core.preference_semantics import (
     summarize_preference_profile,
     build_preference_llm,
     _chunk_jobs_for_budget,
+    _payload_char_budget,
 )
 
 
@@ -330,3 +331,23 @@ def test_chunk_jobs_for_budget_splits_large_shortlist():
 
     assert len(chunks) >= 2
     assert sum(len(chunk) for chunk in chunks) == 3
+
+
+def test_preference_reranker_truncates_oversized_profile_before_scoring():
+    llm = Mock()
+    llm.extract_structured_data.return_value = {"results": []}
+    reranker = LLMPreferenceSemanticReranker(llm, max_input_tokens=220)
+    profile = PreferenceProfile(
+        raw_text="platform engineering " * 300,
+        parser_confidence=0.8,
+        work_style=[{"label": "remote-first collaboration " * 20, "weight": 0.8, "confidence": 0.8}],
+        team_culture=[{"label": "mentorship " * 20, "weight": 0.9, "confidence": 0.9}],
+    )
+
+    reranker.rerank(
+        profile,
+        [PreferenceJobPayload(job_id="job-1", title="Platform Engineer", summary="Mentorship and growth")],
+    )
+
+    sent_payload = llm.extract_structured_data.call_args.args[0]
+    assert len(sent_payload) <= _payload_char_budget(220)

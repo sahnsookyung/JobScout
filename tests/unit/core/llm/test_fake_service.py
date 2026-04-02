@@ -114,6 +114,29 @@ def test_fake_preference_rerank_response_scores_matching_jobs():
 
     assert result["results"][0]["preference_score"] > result["results"][1]["preference_score"]
 
+
+def test_fake_preference_rerank_response_uses_requirements_and_benefits_in_haystack():
+    result = _fake_preference_rerank_response(
+        {
+            "profile": _fake_preference_profile_response("mentorship growth"),
+            "jobs": [
+                {
+                    "job_id": "job-1",
+                    "title": "Backend Engineer",
+                    "summary": "",
+                    "company_description": "",
+                    "skills": [],
+                    "requirements": ["Mentorship culture and backend ownership"],
+                    "benefits": ["Growth budget for learning"],
+                }
+            ],
+        },
+        judge_mode=False,
+    )
+
+    assert result["results"][0]["preference_score"] > 0.5
+    assert "team_culture_match" in result["results"][0]["preference_reason_codes"]
+
 def test_fake_service_extract_structured_data_supports_preference_schemas():
     service = FakeLLMService()
 
