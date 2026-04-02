@@ -32,6 +32,7 @@ class TestCreateApp:
         route_paths = [getattr(r, 'path', '') for r in app.routes]
         assert "/health" in route_paths
         assert "/" in route_paths
+        assert "/dashboard" in route_paths
 
     def test_static_dir_not_mounted_when_missing(self):
         """No StaticFiles mount added when the static directory doesn't exist."""
@@ -95,7 +96,7 @@ class TestHealthCheckEndpoint:
 
 
 class TestReadRootEndpoint:
-    """Test GET / endpoint."""
+    """Test dashboard HTML endpoints."""
 
     def test_404_when_template_missing(self):
         from fastapi.testclient import TestClient
@@ -116,6 +117,27 @@ class TestReadRootEndpoint:
             resp = client.get("/")
         assert resp.status_code == 200
         assert b"Dashboard" in resp.content
+
+    def test_dashboard_route_serves_same_html_when_template_exists(self, tmp_path):
+        (tmp_path / 'web' / 'templates').mkdir(parents=True)
+        html = '<html><body>Dashboard Route</body></html>'
+        (tmp_path / 'web' / 'templates' / 'index.html').write_text(html)
+        from fastapi.testclient import TestClient
+        from web.backend.app import create_app
+        with patch('web.backend.app.get_project_root', return_value=tmp_path):
+            client = TestClient(create_app())
+            resp = client.get("/dashboard")
+        assert resp.status_code == 200
+        assert resp.text == html
+
+    def test_dashboard_route_404_when_template_missing(self):
+        from fastapi.testclient import TestClient
+        from web.backend.app import create_app
+        with patch('web.backend.app.get_project_root', return_value=Path('/nonexistent_xyz_abc_123')):
+            client = TestClient(create_app())
+        resp = client.get("/dashboard")
+        assert resp.status_code == 404
+        assert b"Dashboard not found" in resp.content
 
     def test_content_type_is_html(self, tmp_path):
         (tmp_path / 'web' / 'templates').mkdir(parents=True)

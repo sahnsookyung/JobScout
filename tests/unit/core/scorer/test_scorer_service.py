@@ -10,7 +10,7 @@ from typing import List
 from core.config_loader import ScorerConfig, ResultPolicy
 from core.matcher import JobMatchPreliminary, RequirementMatchResult
 from core.scorer import ScoringService
-from core.scorer.service import _prefetch_total_years
+from core.scorer.service import SemanticFitRouter, _prefetch_total_years
 
 
 class TestScorerService(unittest.TestCase):
@@ -150,6 +150,21 @@ scrapers: []
         scorer = ScoringService(self.mock_repo, self.scorer_config)
 
         self.assertIsNone(scorer.semantic_fit_scorer.cross_encoder_scorer.local_provider)
+
+    def test_resolve_llm_provider_returns_none_when_disabled(self):
+        self.scorer_config.semantic_fit.llm.enabled = False
+
+        assert self.scorer._resolve_llm_provider(None) is None
+
+    def test_resolve_llm_provider_builds_openai_service_when_configured(self):
+        self.scorer_config.semantic_fit.llm.enabled = True
+        self.scorer_config.semantic_fit.llm.api_key = "key"
+        self.scorer_config.semantic_fit.llm.base_url = "https://llm.example.com"
+
+        provider = self.scorer._resolve_llm_provider(None)
+
+        self.assertIsNotNone(provider)
+        self.assertEqual(provider.__class__.__name__, "OpenAIService")
 
 
 class TestBatchPrefetch(unittest.TestCase):
@@ -511,6 +526,58 @@ class TestResultPolicy(unittest.TestCase):
 
         self.assertEqual(len(scored), 3)
         print(f"  ✓ Limited to top {len(scored)} matches")
+
+
+class TestSemanticFitRouter(unittest.TestCase):
+    def setUp(self):
+        self.repo = MagicMock()
+        self.threshold_scorer = MagicMock()
+        self.cross_encoder_scorer = MagicMock()
+        self.llm_scorer = MagicMock()
+        self.config = ScorerConfig()
+        self.preliminary = MagicMock()
+        self.preliminary.owner_id = "owner-1"
+        self.router = SemanticFitRouter(
+            repo=self.repo,
+            config=self.config,
+            threshold_scorer=self.threshold_scorer,
+            cross_encoder_scorer=self.cross_encoder_scorer,
+            llm_scorer=self.llm_scorer,
+        )
+
+    def test_disabled_semantic_fit_uses_threshold(self):
+        self.config.semantic_fit.enabled = False
+
+        self.router.score(self.preliminary, fit_penalties=0.0, config=self.config)
+
+        self.threshold_scorer.score.assert_called_once()
+        self.cross_encoder_scorer.score.assert_not_called()
+
+    def test_llm_mode_uses_llm_scorer_when_enabled(self):
+        self.config.semantic_fit.llm.enabled = True
+        self.config.semantic_fit.deploy_allowed_modes = ["cross_encoder", "llm"]
+        self.repo.get_entitlement.side_effect = [
+            MagicMock(enabled=True, value_json={"modes": ["cross_encoder", "llm"]}),
+            MagicMock(enabled=True, value_json={"mode": "llm"}),
+        ]
+
+        self.router.score(self.preliminary, fit_penalties=0.0, config=self.config)
+
+        self.llm_scorer.score.assert_called_once()
+        self.cross_encoder_scorer.score.assert_not_called()
+
+    def test_llm_mode_falls_back_to_cross_encoder_when_llm_scorer_missing(self):
+        self.router.llm_scorer = None
+        self.config.semantic_fit.llm.enabled = True
+        self.config.semantic_fit.deploy_allowed_modes = ["cross_encoder", "llm"]
+        self.repo.get_entitlement.side_effect = [
+            MagicMock(enabled=True, value_json={"modes": ["cross_encoder", "llm"]}),
+            MagicMock(enabled=True, value_json={"mode": "llm"}),
+        ]
+
+        self.router.score(self.preliminary, fit_penalties=0.0, config=self.config)
+
+        self.cross_encoder_scorer.score.assert_called_once()
 
 
 if __name__ == '__main__':

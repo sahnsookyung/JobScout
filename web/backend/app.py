@@ -56,6 +56,20 @@ logger.debug("NUL log sanitization active=%s", is_nul_filter_active())
 config = get_config()
 
 
+def _dashboard_response() -> HTMLResponse:
+    """Serve the dashboard shell used by both `/` and `/dashboard`."""
+    html_path = get_project_root() / 'web' / 'templates' / 'index.html'
+
+    if not html_path.exists():
+        return HTMLResponse(
+            content="<h1>Dashboard not found</h1><p>Please ensure web/templates/index.html exists</p>",
+            status_code=404
+        )
+
+    with open(html_path, 'r', encoding='utf-8') as f:
+        return HTMLResponse(content=f.read())
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     _ensure_dev_bypass_allowed()
@@ -104,16 +118,12 @@ def create_app() -> FastAPI:
     @_app.get("/", response_class=HTMLResponse)
     def read_root():
         """Serve the main dashboard HTML page."""
-        html_path = get_project_root() / 'web' / 'templates' / 'index.html'
+        return _dashboard_response()
 
-        if not html_path.exists():
-            return HTMLResponse(
-                content="<h1>Dashboard not found</h1><p>Please ensure web/templates/index.html exists</p>",
-                status_code=404
-            )
-
-        with open(html_path, 'r', encoding='utf-8') as f:
-            return HTMLResponse(content=f.read())
+    @_app.get("/dashboard", response_class=HTMLResponse)
+    def read_dashboard():
+        """Serve the dashboard shell from an explicit dashboard URL."""
+        return _dashboard_response()
 
     @_app.get("/health")
     def health_check():

@@ -1,17 +1,26 @@
 """Unit tests for semantic fit scoring contracts."""
 
-import pytest
+from types import SimpleNamespace
 from unittest.mock import MagicMock
+
+import pytest
 
 from core.config_loader import ScorerConfig
 from core.llm.fake_service import FakeLLMService
 from core.matcher import JobMatchPreliminary, RequirementMatchResult
+from core.matcher.models import RequirementEvidenceCandidate
 from core.scorer.semantic_fit import (
     CrossEncoderSemanticFitScorer,
     FEATURE_ALLOWED_MODES,
     FEATURE_PREFERRED_MODE,
     LLMSemanticFitScorer,
     LocalCrossEncoderProvider,
+    PairAssessment,
+    RemoteCrossEncoderProvider,
+    _build_serialized_pairs,
+    _pair_assessment_from_heuristic,
+    _select_best_assessment,
+    _serialize_pair,
     ThresholdSemanticFitScorer,
     resolve_effective_fit_mode,
 )
@@ -31,6 +40,58 @@ def _make_evidence(text: str, source_section: str):
     evidence.text = text
     evidence.source_section = source_section
     return evidence
+
+
+def _make_requirement_match(
+    *,
+    req_id: str = "req-1",
+    req_type: str = "required",
+    text: str = "Python backend API development",
+    evidence_text: str | None = "Built Python backend APIs for internal services",
+    evidence_section: str = "experience",
+    similarity: float = 0.72,
+    is_covered: bool = True,
+    rank: int = 1,
+):
+    evidence = _make_evidence(evidence_text, evidence_section) if evidence_text is not None else None
+    evidence_candidates = []
+    if evidence is not None:
+        evidence_candidates = [
+            RequirementEvidenceCandidate(
+                evidence=evidence,
+                similarity=similarity,
+                rank=rank,
+            )
+        ]
+    return RequirementMatchResult(
+        requirement=_make_requirement(
+            req_id=req_id,
+            req_type=req_type,
+            text=text,
+        ),
+        evidence=evidence,
+        similarity=similarity,
+        is_covered=is_covered,
+        evidence_candidates=evidence_candidates,
+    )
+
+
+def _make_preliminary(requirement_matches=None, missing_requirements=None):
+    job = MagicMock()
+    job.id = "job-1"
+    job.title = "Python Engineer"
+    job.company = "Acme"
+    job.canonical_job_summary = "Python backend APIs, services, and platform ownership."
+    job.description = "Python backend APIs, services, and platform ownership."
+    return JobMatchPreliminary(
+        job=job,
+        job_similarity=0.75,
+        requirement_matches=requirement_matches or [],
+        missing_requirements=missing_requirements or [],
+        resume_fingerprint="fp-1",
+        retrieval_score=0.83,
+        lexical_score=0.55,
+    )
 
 
 def test_threshold_semantic_fit_adds_structured_explanation():
@@ -370,6 +431,200 @@ def test_local_cross_encoder_provider_heuristic_fallback_when_no_runtime_availab
     assert result is False
     assert provider.provider_id == "heuristic-local"
     assert provider.effective_route_name == "local_heuristic"
+
+
+def test_serialize_pair_records_truncation_details():
+    preliminary = _make_preliminary(
+        requirement_matches=[
+            _make_requirement_match(
+                text="R" * 700,
+                evidence_text="E" * 3000,
+            )
+        ]
+    )
+    requirement_match = preliminary.requirement_matches[0]
+    candidate = requirement_match.evidence_candidates[0]
+    config = ScorerConfig()
+
+    pair = _serialize_pair(preliminary, requirement_match, candidate, config=config)
+
+    assert pair.truncation["truncated"] is True
+    assert "requirement_text" in pair.truncation["truncated_fields"]
+    assert "evidence_text" in pair.truncation["truncated_fields"]
+    assert pair.truncation["field_lengths"]["requirement_text"]["submitted_length"] == 500
+    assert pair.truncation["field_lengths"]["evidence_text"]["submitted_length"] == 2500
+    assert len(pair.pair_id) == 32
+
+
+def test_build_serialized_pairs_emits_zero_evidence_verdicts():
+    preliminary = _make_preliminary(
+        missing_requirements=[
+            _make_requirement_match(
+                req_id="req-missing",
+                evidence_text=None,
+                similarity=0.0,
+                is_covered=False,
+            )
+        ]
+    )
+
+    pairs, zero_evidence_verdicts, aggregate = _build_serialized_pairs(
+        preliminary,
+        config=ScorerConfig(),
+    )
+
+    assert pairs == []
+    assert len(zero_evidence_verdicts) == 1
+    assert zero_evidence_verdicts[0]["verdict"] == "missing"
+    assert aggregate["pair_count"] == 0
+
+
+def test_pair_assessment_from_heuristic_marks_overlap_as_covered():
+    preliminary = _make_preliminary(
+        requirement_matches=[_make_requirement_match()]
+    )
+    requirement_match = preliminary.requirement_matches[0]
+    pair = _serialize_pair(preliminary, requirement_match, requirement_match.evidence_candidates[0], config=ScorerConfig())
+
+    assessment = _pair_assessment_from_heuristic(pair)
+
+    assert assessment.coverage_level == "covered"
+    assert assessment.semantic_score >= 0.75
+
+
+def test_pair_assessment_from_heuristic_marks_related_similarity_as_partial():
+    requirement_match = _make_requirement_match(
+        text="Kubernetes operations",
+        evidence_text="Container orchestration and production deployment work",
+        similarity=0.58,
+        is_covered=False,
+    )
+    preliminary = _make_preliminary(missing_requirements=[requirement_match])
+    pair = _serialize_pair(preliminary, requirement_match, requirement_match.evidence_candidates[0], config=ScorerConfig())
+
+    assessment = _pair_assessment_from_heuristic(pair)
+
+    assert assessment.coverage_level == "partial"
+    assert 0.55 <= assessment.semantic_score <= 0.79
+
+
+def test_pair_assessment_from_heuristic_marks_tech_mismatch_as_missing():
+    requirement_match = _make_requirement_match(
+        text="Strong Java programming experience",
+        evidence_text="Built Python backend APIs for internal services",
+        similarity=0.82,
+        is_covered=True,
+    )
+    preliminary = _make_preliminary(requirement_matches=[requirement_match])
+    pair = _serialize_pair(preliminary, requirement_match, requirement_match.evidence_candidates[0], config=ScorerConfig())
+
+    assessment = _pair_assessment_from_heuristic(pair)
+
+    assert assessment.coverage_level == "missing"
+    assert assessment.reason == "Evidence references different technologies than the requirement."
+
+
+def test_select_best_assessment_prefers_score_then_confidence_then_similarity():
+    requirement_match = _make_requirement_match()
+    preliminary = _make_preliminary(requirement_matches=[requirement_match])
+    first_pair = _serialize_pair(preliminary, requirement_match, requirement_match.evidence_candidates[0], config=ScorerConfig())
+    second_candidate = RequirementEvidenceCandidate(
+        evidence=_make_evidence("Built Python APIs", "projects"),
+        similarity=0.81,
+        rank=2,
+    )
+    second_pair = _serialize_pair(preliminary, requirement_match, second_candidate, config=ScorerConfig())
+    assessments = {
+        first_pair.pair_id: PairAssessment(
+            pair_id=first_pair.pair_id,
+            requirement_id=first_pair.requirement_id,
+            coverage_level="partial",
+            semantic_score=0.7,
+            confidence=0.7,
+            reason="partial",
+        ),
+        second_pair.pair_id: PairAssessment(
+            pair_id=second_pair.pair_id,
+            requirement_id=second_pair.requirement_id,
+            coverage_level="covered",
+            semantic_score=0.8,
+            confidence=0.5,
+            reason="covered",
+        ),
+    }
+
+    best_pair, best_assessment = _select_best_assessment(
+        requirement_match,
+        [first_pair, second_pair],
+        assessments,
+    )
+
+    assert best_pair == second_pair
+    assert best_assessment == assessments[second_pair.pair_id]
+
+
+def test_remote_cross_encoder_provider_maps_missing_pairs_to_heuristic(monkeypatch):
+    requirement_match = _make_requirement_match()
+    preliminary = _make_preliminary(requirement_matches=[requirement_match])
+    pair = _serialize_pair(preliminary, requirement_match, requirement_match.evidence_candidates[0], config=ScorerConfig())
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"scores": []}
+
+    captured = {}
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured["json"] = kwargs["json"]
+        return FakeResponse()
+
+    monkeypatch.setattr("core.scorer.semantic_fit.requests.post", fake_post)
+
+    provider = RemoteCrossEncoderProvider(
+        base_url="https://fit.example.com",
+        api_key="secret",
+        model="reranker-v1",
+        timeout_ms=1500,
+    )
+
+    assessments, diagnostics = provider.score_pairs([pair])
+
+    assert captured["url"].endswith("/v1/fit/score")
+    assert captured["json"]["model"] == "reranker-v1"
+    assert assessments[0].coverage_level in {"covered", "partial", "missing"}
+    assert diagnostics["provider_route"] == "remote"
+
+
+def test_resolve_effective_fit_mode_falls_back_to_baseline_when_owner_missing():
+    repo = MagicMock()
+    config = ScorerConfig()
+    config.semantic_fit.deploy_allowed_modes = ["cross_encoder", "llm"]
+    config.semantic_fit.baseline_allowed_modes = ["cross_encoder"]
+
+    resolved_mode, allowed = resolve_effective_fit_mode(repo, config, owner_id=None)
+
+    assert resolved_mode == "cross_encoder"
+    assert allowed == ["cross_encoder"]
+    repo.get_entitlement.assert_not_called()
+
+
+def test_resolve_effective_fit_mode_ignores_disabled_entitlement_row():
+    repo = MagicMock()
+    repo.get_entitlement.side_effect = [
+        MagicMock(enabled=False, value_json={"modes": ["llm"]}),
+        MagicMock(enabled=False, value_json={"mode": "llm"}),
+    ]
+    config = ScorerConfig()
+    config.semantic_fit.deploy_allowed_modes = ["cross_encoder", "llm"]
+
+    resolved_mode, allowed = resolve_effective_fit_mode(repo, config, owner_id="user-1")
+
+    assert resolved_mode == "cross_encoder"
+    assert allowed == ["cross_encoder"]
 
 def test_cross_encoder_route_policy_remote_without_remote_provider_uses_threshold_fallback():
     job = MagicMock()
