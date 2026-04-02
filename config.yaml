@@ -35,6 +35,8 @@ etl:
     # api_secret: "your-api-secret"
     
     # Extraction
+    extraction_url: "" # Not used for Ollama/OpenAI
+    provider: "openai_compatible" # OpenAI-compatible runtime (Ollama, OpenAI, or any compatible endpoint)
     extraction_model: "qwen3:14b"
     extraction_temperature: 0.5  # Temperature for extraction. 0.0 = "deterministic", but the results are not great. Research suggests we need a higher temperature than 0.
     
