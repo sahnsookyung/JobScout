@@ -579,6 +579,23 @@ class TestSemanticFitRouter(unittest.TestCase):
 
         self.cross_encoder_scorer.score.assert_called_once()
 
+    def test_llm_mode_without_llm_scorer_or_cross_encoder_permission_raises(self):
+        self.router.llm_scorer = None
+        self.config.semantic_fit.llm.enabled = False
+        self.config.semantic_fit.deploy_allowed_modes = ["llm"]
+        self.config.semantic_fit.baseline_allowed_modes = ["llm"]
+        self.config.semantic_fit.default_mode = "llm"
+        self.repo.get_capability.side_effect = [
+            MagicMock(enabled=True, value_json={"modes": ["llm"]}),
+            MagicMock(enabled=True, value_json={"mode": "llm"}),
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "no LLM scorer is configured"):
+            self.router.score(self.preliminary, fit_penalties=0.0, config=self.config)
+
+        self.cross_encoder_scorer.score.assert_not_called()
+        self.threshold_scorer.score.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

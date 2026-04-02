@@ -706,7 +706,7 @@ def test_cross_encoder_without_available_local_provider_uses_threshold_fallback(
     assert result.fit_components["provider_route"] == "threshold"
     assert "disabled" in result.fit_components["semantic_fit_fallback_reason"]
 
-def test_cross_encoder_local_policy_can_fall_through_to_remote_provider():
+def test_cross_encoder_local_policy_does_not_fall_through_to_remote_provider():
     class FakeRemoteProvider:
         route_name = "remote"
 
@@ -765,5 +765,6 @@ def test_cross_encoder_local_policy_can_fall_through_to_remote_provider():
         config=config,
     )
 
-    assert result.fit_components["effective_fit_mode"] == "cross_encoder"
-    assert result.fit_components["provider_route"] == "remote"
+    assert result.fit_components["effective_fit_mode"] == "threshold"
+    assert result.fit_components["provider_route"] == "threshold"
+    assert "local provider is disabled" in result.fit_components["semantic_fit_fallback_reason"]

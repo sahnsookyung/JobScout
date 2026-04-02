@@ -273,6 +273,11 @@ class SemanticFitRouter:
                 fit_penalties=fit_penalties,
                 config=config,
             )
+        if resolved_mode == "llm":
+            raise RuntimeError(
+                "Semantic fit mode resolved to 'llm', but no LLM scorer is configured and "
+                "cross-encoder fallback is not allowed."
+            )
         if resolved_mode == "cross_encoder":
             return self.cross_encoder_scorer.score(
                 preliminary,

@@ -1442,7 +1442,6 @@ class CrossEncoderSemanticFitScorer:
             providers.append(self.local_provider)
         else:
             last_error = RuntimeError("Local cross-encoder route requested but local provider is disabled")
-        providers.extend(self._available_providers(self.remote_provider))
         return providers, last_error
 
     def _fallback_result(
