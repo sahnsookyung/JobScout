@@ -318,6 +318,63 @@ def _truncate_job_payload(
     )
 
 
+def _fit_single_job_payload_to_budget(
+    profile: PreferenceProfile,
+    payload: PreferenceJobPayload,
+    *,
+    scorer_name: str,
+    budget_chars: int,
+) -> PreferenceJobPayload:
+    candidate = payload
+    if _score_payload_char_size(profile, [candidate], scorer_name=scorer_name) <= budget_chars:
+        return candidate
+
+    shrinking_specs = (
+        {"summary": 800, "company_description": 400, "list_chars": 160, "list_items": 6, "skill_chars": 60, "skill_items": 8},
+        {"summary": 480, "company_description": 220, "list_chars": 120, "list_items": 4, "skill_chars": 48, "skill_items": 6},
+        {"title": 80, "company": 80, "location_text": 80, "summary": 280, "company_description": 120, "list_chars": 80, "list_items": 2, "skill_chars": 32, "skill_items": 4},
+        {"title": 64, "company": 64, "location_text": 64, "summary": 160, "company_description": 0, "list_chars": 0, "list_items": 0, "skill_chars": 24, "skill_items": 2},
+    )
+
+    for spec in shrinking_specs:
+        update: Dict[str, Any] = {
+            "summary": _truncate_text(candidate.summary, spec["summary"]),
+            "company_description": (
+                ""
+                if spec["company_description"] <= 0
+                else _truncate_text(candidate.company_description, spec["company_description"])
+            ),
+            "requirements": _truncate_text_list(
+                candidate.requirements,
+                max_chars=spec["list_chars"],
+                max_items=spec["list_items"],
+            ),
+            "benefits": _truncate_text_list(
+                candidate.benefits,
+                max_chars=spec["list_chars"],
+                max_items=spec["list_items"],
+            ),
+            "skills": _truncate_text_list(
+                candidate.skills,
+                max_chars=spec["skill_chars"],
+                max_items=spec["skill_items"],
+            ),
+        }
+        if "title" in spec:
+            update["title"] = _truncate_text(candidate.title, spec["title"])
+            update["company"] = _truncate_text(candidate.company, spec["company"])
+            update["location_text"] = _truncate_text(
+                candidate.location_text,
+                spec["location_text"],
+            )
+
+        candidate = candidate.model_copy(update=update)
+        if _score_payload_char_size(profile, [candidate], scorer_name=scorer_name) <= budget_chars:
+            return candidate
+
+    raise ValueError("Preference job payload exceeds configured max_input_tokens")
+
+
 def _score_payload_char_size(
     profile: PreferenceProfile,
     jobs: List[PreferenceJobPayload],
@@ -349,6 +406,13 @@ def _chunk_jobs_for_budget(
 
     for job in jobs:
         truncated_job = _truncate_job_payload(job, max_input_tokens=max_input_tokens)
+        if _score_payload_char_size(profile, [truncated_job], scorer_name=scorer_name) > budget_chars:
+            truncated_job = _fit_single_job_payload_to_budget(
+                profile,
+                truncated_job,
+                scorer_name=scorer_name,
+                budget_chars=budget_chars,
+            )
         next_size = _score_payload_char_size(
             profile,
             current + [truncated_job],

@@ -351,3 +351,26 @@ def test_preference_reranker_truncates_oversized_profile_before_scoring():
 
     sent_payload = llm.extract_structured_data.call_args.args[0]
     assert len(sent_payload) <= _payload_char_budget(220)
+
+
+def test_preference_reranker_truncates_single_oversized_job_to_budget():
+    llm = Mock()
+    llm.extract_structured_data.return_value = {"results": []}
+    reranker = LLMPreferenceSemanticReranker(llm, max_input_tokens=220)
+    profile = PreferenceProfile(raw_text="mentorship", parser_confidence=0.8)
+    oversized_job = PreferenceJobPayload(
+        job_id="job-1",
+        title="Platform Engineer " * 20,
+        company="Acme " * 20,
+        location_text="Remote " * 20,
+        summary="backend growth mentorship " * 300,
+        company_description="team culture learning " * 200,
+        skills=["python " * 20 for _ in range(20)],
+        requirements=["mentorship growth ownership " * 40 for _ in range(20)],
+        benefits=["learning budget flexibility " * 40 for _ in range(20)],
+    )
+
+    reranker.rerank(profile, [oversized_job])
+
+    sent_payload = llm.extract_structured_data.call_args.args[0]
+    assert len(sent_payload) <= _payload_char_budget(220)
