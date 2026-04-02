@@ -1,0 +1,120 @@
+from __future__ import annotations
+
+import os
+from typing import Dict, Literal, Optional
+
+from pydantic import BaseModel
+
+from core.config_loader import LlmConfig, PreferenceModelConfig, SemanticFitLlmConfig
+from core.llm.interfaces import LLMProvider
+from core.llm.openai_service import OpenAIService
+
+LEGACY_FAKE_AI_ENV_VAR = "JOBSCOUT_FAKE_AI"
+
+
+class RuntimeLLMConfig(BaseModel):
+    provider: Literal["openai_compatible"] = "openai_compatible"
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    api_secret: Optional[str] = None
+    headers: Optional[Dict[str, str]] = None
+    model: Optional[str] = None
+    temperature: float = 0.0
+    timeout_seconds: Optional[int] = None
+    embedding_model: Optional[str] = None
+    embedding_dimensions: Optional[int] = None
+    embedding_base_url: Optional[str] = None
+    embedding_api_key: Optional[str] = None
+    embedding_api_secret: Optional[str] = None
+    embedding_headers: Optional[Dict[str, str]] = None
+
+
+def reject_legacy_fake_ai_env() -> None:
+    if os.getenv(LEGACY_FAKE_AI_ENV_VAR):
+        raise RuntimeError(
+            "JOBSCOUT_FAKE_AI has been removed. Fake providers are test-only now; "
+            "inject a fake LLMProvider in tests, or point provider='openai_compatible' "
+            "at an external mock base_url for HTTP-level development and integration runs."
+        )
+
+
+def runtime_llm_config_from_etl(config: LlmConfig) -> RuntimeLLMConfig:
+    return RuntimeLLMConfig(
+        provider=config.provider,
+        base_url=config.base_url,
+        api_key=config.api_key,
+        api_secret=config.api_secret,
+        headers=config.extraction_headers,
+        model=config.extraction_model,
+        temperature=config.extraction_temperature,
+        embedding_model=config.embedding_model,
+        embedding_dimensions=config.embedding_dimensions,
+        embedding_base_url=config.embedding_base_url,
+        embedding_api_key=config.embedding_api_key,
+        embedding_api_secret=config.embedding_api_secret,
+        embedding_headers=config.embedding_headers,
+    )
+
+
+def runtime_llm_config_from_preference(config: PreferenceModelConfig) -> RuntimeLLMConfig:
+    return RuntimeLLMConfig(
+        provider=config.provider,
+        base_url=config.base_url,
+        api_key=config.api_key,
+        api_secret=config.api_secret,
+        headers=config.headers,
+        model=config.model,
+        temperature=config.temperature,
+        timeout_seconds=config.timeout_seconds,
+        embedding_model=config.embedding_model,
+        embedding_dimensions=config.embedding_dimensions,
+        embedding_base_url=config.embedding_base_url,
+        embedding_api_key=config.embedding_api_key,
+        embedding_api_secret=config.embedding_api_secret,
+        embedding_headers=config.embedding_headers,
+    )
+
+
+def runtime_llm_config_from_fit(config: SemanticFitLlmConfig) -> RuntimeLLMConfig:
+    return RuntimeLLMConfig(
+        provider=config.provider,
+        base_url=config.base_url,
+        api_key=config.api_key,
+        api_secret=config.api_secret,
+        headers=config.headers,
+        model=config.model,
+        temperature=config.temperature,
+        timeout_seconds=config.timeout_seconds,
+    )
+
+
+def build_llm_provider(config: RuntimeLLMConfig) -> LLMProvider:
+    reject_legacy_fake_ai_env()
+    if config.provider != "openai_compatible":
+        raise RuntimeError(
+            f"Unsupported runtime LLM provider '{config.provider}'. "
+            "Only 'openai_compatible' is supported at runtime."
+        )
+    if not str(config.model or "").strip():
+        raise RuntimeError(
+            "Runtime LLM provider configuration requires a model for "
+            "provider='openai_compatible'."
+        )
+
+    model_config = {
+        "extraction_model": config.model,
+        "embedding_model": config.embedding_model,
+        "embedding_dimensions": config.embedding_dimensions,
+        "extraction_temperature": config.temperature,
+    }
+    return OpenAIService(
+        base_url=config.base_url,
+        api_key=config.api_key,
+        api_secret=config.api_secret,
+        model_config=model_config,
+        extraction_headers=config.headers,
+        embedding_base_url=config.embedding_base_url,
+        embedding_api_key=config.embedding_api_key,
+        embedding_api_secret=config.embedding_api_secret,
+        embedding_headers=config.embedding_headers,
+    )

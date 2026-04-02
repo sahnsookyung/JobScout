@@ -1,41 +1,14 @@
-import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 from core.config_loader import AppConfig, LlmConfig
-from core.llm.fake_service import FakeLLMService
 from core.llm.interfaces import LLMProvider
-from core.llm.openai_service import OpenAIService
+from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_etl
 from core.scraper.jobspy_client import JobSpyClient
 
 if TYPE_CHECKING:
     from etl.orchestrator import JobETLService
     from notification.service import NotificationService
-
-
-ALLOWED_FAKE_AI_ENVIRONMENTS = {"development", "dev", "test"}
-
-
-def _current_environment() -> str:
-    return (
-        os.getenv("JOBSCOUT_ENV")
-        or os.getenv("APP_ENV")
-        or os.getenv("ENVIRONMENT")
-        or "development"
-    ).strip().lower()
-
-
-def _fake_ai_enabled() -> bool:
-    return os.getenv("JOBSCOUT_FAKE_AI", "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _ensure_fake_ai_allowed() -> None:
-    if not _fake_ai_enabled():
-        return
-    if _current_environment() not in ALLOWED_FAKE_AI_ENVIRONMENTS:
-        raise RuntimeError(
-            "JOBSCOUT_FAKE_AI is only allowed in development/test environments"
-        )
 
 
 @dataclass
@@ -89,31 +62,8 @@ class AppContext:
 
     @staticmethod
     def _build_ai_service(llm_config: LlmConfig) -> LLMProvider:
-        """Build AI service from configuration, with fake mode for tests."""
-        _ensure_fake_ai_allowed()
-        if _fake_ai_enabled():
-            return FakeLLMService(
-                embedding_dimensions=llm_config.embedding_dimensions or 1024
-            )
-
-        model_config = {
-            'extraction_model': llm_config.extraction_model,
-            'embedding_model': llm_config.embedding_model,
-            'embedding_dimensions': llm_config.embedding_dimensions,
-            'extraction_temperature': llm_config.extraction_temperature,
-        }
-
-        return OpenAIService(
-            base_url=llm_config.base_url,
-            api_key=llm_config.api_key,
-            api_secret=llm_config.api_secret,
-            model_config=model_config,
-            extraction_headers=llm_config.extraction_headers,
-            embedding_base_url=llm_config.embedding_base_url,
-            embedding_api_key=llm_config.embedding_api_key,
-            embedding_api_secret=llm_config.embedding_api_secret,
-            embedding_headers=llm_config.embedding_headers
-        )
+        """Build the ETL AI service from canonical runtime provider config."""
+        return build_llm_provider(runtime_llm_config_from_etl(llm_config))
 
     @staticmethod
     def _build_jobspy_client(config: AppConfig) -> JobSpyClient:

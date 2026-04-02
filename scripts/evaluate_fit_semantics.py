@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from core.config_loader import MatcherConfig, load_config
-from core.llm.fake_service import FakeLLMService
+from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_fit
 from core.matcher.models import (
     JobMatchPreliminary,
     RequirementEvidenceCandidate,
@@ -112,7 +112,13 @@ def _build_scorer(mode: str, config) -> Any:
     if mode == "threshold":
         return ThresholdSemanticFitScorer()
     if mode == "llm":
-        return LLMSemanticFitScorer(FakeLLMService())
+        llm_config = config.matching.scorer.semantic_fit.llm
+        if not llm_config.enabled:
+            raise RuntimeError(
+                "LLM fit evaluation requires matching.scorer.semantic_fit.llm.enabled=true "
+                "and a real openai_compatible endpoint configuration."
+            )
+        return LLMSemanticFitScorer(build_llm_provider(runtime_llm_config_from_fit(llm_config)))
     local_provider = LocalCrossEncoderProvider(
         model_name=config.matching.scorer.semantic_fit.cross_encoder.local.model_name,
         cache_path=config.matching.scorer.semantic_fit.cross_encoder.local.model_cache_path,

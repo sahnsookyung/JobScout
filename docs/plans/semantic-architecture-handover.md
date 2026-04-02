@@ -55,7 +55,7 @@ Behavior:
 - split-stack E2E now exercises `/api/matches` and `/api/matches/{id}/explanation` so the persisted fit diagnostics are verified through real API calls
 - normal user-facing match details now use semantic verdicts and summaries instead of raw `% similarity` badges, and display fit mode/provider route/fallback state
 - public explanation summaries are deterministic from verdicts; model free-text is kept internal/debug only
-- fake AI service support was extended so tests can exercise semantic-fit behavior deterministically
+- runtime fake-AI selection has been removed; deterministic tests now rely on injected fake providers or an external OpenAI-compatible mock service
 - the next canonical fit plan is now [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md)
 
 ### PR 3: Preference Semantic Reranking

@@ -19,6 +19,9 @@ etl:
     # resume_file: "resume.pdf"  # DEPRECATED - removed
     # force_re_extraction: false  # Uncomment to force re-extraction every time
   llm:
+    # Runtime LLM provider contract. Use openai_compatible for OpenAI, Ollama, or an
+    # external mock server that implements the same API surface.
+    provider: "openai_compatible"
     # Base URL for LLM (extraction) - can be overridden by ETL_LLM_BASE_URL env var
     # For local Ollama: http://localhost:11434/v1
     # For external services: https://api.openai.com/v1, https://your-ollama-host/v1, etc.
@@ -32,8 +35,6 @@ etl:
     # api_secret: "your-api-secret"
     
     # Extraction
-    extraction_url: "" # Not used for Ollama/OpenAI
-    extraction_type: "ollama" # Use "openai", "ollama" or "mock"
     extraction_model: "qwen3:14b"
     extraction_temperature: 0.5  # Temperature for extraction. 0.0 = "deterministic", but the results are not great. Research suggests we need a higher temperature than 0.
     
@@ -172,7 +173,8 @@ preferences:
     - "semantic_rerank"
   parser:
     enabled: true
-    provider: "ollama"
+    # Parser/reranker/judge all use the same runtime provider contract.
+    provider: "openai_compatible"
     base_url: "http://localhost:11434/v1"
     api_key: "ollama"
     model: "qwen3:14b"
@@ -180,7 +182,7 @@ preferences:
     max_input_tokens: 1200
   semantic_reranker:
     enabled: true
-    provider: "ollama"
+    provider: "openai_compatible"
     base_url: "http://localhost:11434/v1"
     api_key: "ollama"
     model: "qwen3:14b"
@@ -188,7 +190,7 @@ preferences:
     max_input_tokens: 1200
   llm_judge:
     enabled: false
-    provider: "ollama"
+    provider: "openai_compatible"
     base_url: "http://localhost:11434/v1"
     api_key: "ollama"
     model: "qwen3:14b"

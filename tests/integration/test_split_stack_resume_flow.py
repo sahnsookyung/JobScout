@@ -319,6 +319,7 @@ def _stack_diagnostics(context: SplitStackContext) -> str:
         "extraction",
         "embeddings",
         "scorer-matcher",
+        "mock-llm",
         check=False,
         timeout=120,
     )
@@ -361,6 +362,7 @@ def split_stack() -> SplitStackContext:
         "redis",
         "mailpit",
         "db-migrate",
+        "mock-llm",
         "extraction",
         "embeddings",
         "notification-worker",
