@@ -135,8 +135,8 @@ scrapers: []
         self.assertIn("fit_explanation", scored.fit_components)
         self.assertGreater(scored.fit_confidence, 0)
         self.assertEqual(scored.fit_scorer["name"], "cross_encoder_semantic_fit")
-        self.assertEqual(scored.fit_components["effective_fit_mode"], "cross_encoder")
-        self.assertEqual(scored.fit_components["provider_route"], "local")
+        self.assertEqual(scored.fit_components["effective_fit_mode"], "threshold")
+        self.assertEqual(scored.fit_components["provider_route"], "local_heuristic")
         self.assertEqual(scored.fit_components["retrieval"]["mode"], "hybrid")
         self.assertEqual(scored.fit_components["retrieval"]["retrieval_score"], 0.88)
         self.assertEqual(scored.fit_explanation["retrieval"]["lexical_score"], 0.44)
@@ -144,6 +144,12 @@ scrapers: []
         print(f"  ✓ Overall score: {scored.overall_score:.1f}")
         print(f"  ✓ Base score: {scored.base_score:.1f}")
         print(f"  ✓ JD Required coverage: {scored.jd_required_coverage*100:.0f}%")
+
+    def test_local_cross_encoder_can_be_disabled_in_config(self):
+        self.scorer_config.semantic_fit.cross_encoder.local.enabled = False
+        scorer = ScoringService(self.mock_repo, self.scorer_config)
+
+        self.assertIsNone(scorer.semantic_fit_scorer.cross_encoder_scorer.local_provider)
 
 
 class TestBatchPrefetch(unittest.TestCase):

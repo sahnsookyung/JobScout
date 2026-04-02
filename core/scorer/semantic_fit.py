@@ -632,10 +632,15 @@ class LocalCrossEncoderProvider:
         self.trust_remote_code = trust_remote_code
         self._model: Any = None
         self._provider_id = "heuristic-local"
+        self._effective_route_name = self.route_name
 
     @property
     def provider_id(self) -> str:
         return self._provider_id
+
+    @property
+    def effective_route_name(self) -> str:
+        return self._effective_route_name
 
     def _candidate_runtimes(self) -> List[str]:
         if self.runtime == "auto":
@@ -733,6 +738,7 @@ class LocalCrossEncoderProvider:
             model = cls(self.model_name, **filtered_kwargs)
 
         self._provider_id = f"flag_embedding:{self.model_name}"
+        self._effective_route_name = self.route_name
         return model
 
     def _load_sentence_transformers_runtime(self) -> Any:
@@ -743,6 +749,7 @@ class LocalCrossEncoderProvider:
             model_kwargs["cache_folder"] = self.cache_path
         model = CrossEncoder(self.model_name, **model_kwargs)
         self._provider_id = f"sentence_transformers:{self.model_name}"
+        self._effective_route_name = self.route_name
         return model
 
     def _load_model(self):
@@ -752,6 +759,7 @@ class LocalCrossEncoderProvider:
         for runtime_name in self._candidate_runtimes():
             if runtime_name == "heuristic":
                 self._provider_id = "heuristic-local"
+                self._effective_route_name = "local_heuristic"
                 self._model = False
                 return self._model
             try:
@@ -771,6 +779,7 @@ class LocalCrossEncoderProvider:
                     exc,
                 )
         self._provider_id = "heuristic-local"
+        self._effective_route_name = "local_heuristic"
         self._model = False
         if last_error is not None:
             logger.warning(
@@ -856,7 +865,7 @@ class LocalCrossEncoderProvider:
                 )
         diagnostics = {
             "provider_id": self.provider_id,
-            "provider_route": self.route_name,
+            "provider_route": self.effective_route_name,
             "latency_ms": round((time.perf_counter() - started_at) * 1000.0, 3),
         }
         return assessments, diagnostics
@@ -1256,10 +1265,14 @@ def _score_with_assessments(
     base_confidence = (sum(confidence_values) / len(confidence_values)) if confidence_values else 0.0
     fit_confidence = round(max(base_confidence, _fit_confidence(required_coverage, preliminary.job_similarity)), 4)
     retrieval_diagnostics = _build_retrieval_diagnostics(preliminary)
+    effective_fit_mode = "llm" if provider_route == "llm" else "cross_encoder"
+    if provider_route in {"local_heuristic", "threshold"} or provider_id == "heuristic-local":
+        effective_fit_mode = "threshold"
+
     scorer_diagnostics = {
         "name": scorer_name,
         "version": scorer_version,
-        "effective_fit_mode": "llm" if provider_route == "llm" else "cross_encoder",
+        "effective_fit_mode": effective_fit_mode,
         "provider_route": provider_route,
         "provider_id": provider_id,
         "latency_ms": latency_ms,
@@ -1313,7 +1326,7 @@ class CrossEncoderSemanticFitScorer:
     def __init__(
         self,
         *,
-        local_provider: LocalCrossEncoderProvider,
+        local_provider: Optional[LocalCrossEncoderProvider],
         remote_provider: Optional[RemoteCrossEncoderProvider],
         fallback_scorer: Optional[ThresholdSemanticFitScorer] = None,
     ):
@@ -1340,10 +1353,12 @@ class CrossEncoderSemanticFitScorer:
         pair_count = len(serialized_pairs)
         route_policy = getattr(config.semantic_fit.cross_encoder, "route_policy", "local")
         providers: List[Any] = []
+        last_error: Optional[Exception] = None
         if route_policy == "remote":
-            if self.remote_provider is None:
-                raise RuntimeError("Remote cross-encoder route requested but no remote provider is configured")
-            providers = [self.remote_provider]
+            if self.remote_provider is not None:
+                providers.append(self.remote_provider)
+            else:
+                last_error = RuntimeError("Remote cross-encoder route requested but no remote provider is configured")
         elif route_policy == "auto":
             promote_threshold = int(getattr(config.semantic_fit.cross_encoder, "remote_promote_pair_count", 40))
             in_production = (
@@ -1353,13 +1368,15 @@ class CrossEncoderSemanticFitScorer:
                 or "development"
             ).strip().lower() == "production"
             if self.remote_provider is not None and in_production and pair_count > promote_threshold:
-                providers = [self.remote_provider, self.local_provider]
+                providers = [provider for provider in [self.remote_provider, self.local_provider] if provider is not None]
             else:
-                providers = [self.local_provider] + ([self.remote_provider] if self.remote_provider else [])
+                providers = [provider for provider in [self.local_provider, self.remote_provider] if provider is not None]
         else:
-            providers = [self.local_provider] + ([self.remote_provider] if self.remote_provider else [])
+            if self.local_provider is not None:
+                providers.append(self.local_provider)
+            else:
+                last_error = RuntimeError("Local cross-encoder route requested but local provider is disabled")
 
-        last_error: Optional[Exception] = None
         for provider in [provider for provider in providers if provider is not None]:
             try:
                 assessments, provider_diagnostics = provider.score_pairs(serialized_pairs)
@@ -1372,7 +1389,7 @@ class CrossEncoderSemanticFitScorer:
                     config=config,
                     scorer_name=self.scorer_name,
                     scorer_version=self.scorer_version,
-                    provider_route=provider.route_name,
+                    provider_route=provider_diagnostics.get("provider_route", provider.route_name),
                     provider_id=provider_diagnostics["provider_id"],
                     threshold=threshold,
                     latency_ms=provider_diagnostics["latency_ms"],

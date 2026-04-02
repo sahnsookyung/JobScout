@@ -54,6 +54,11 @@ def _parse_args() -> argparse.Namespace:
         default=PROJECT_ROOT / "config.yaml",
         help="Config file used to build matcher/scorer settings.",
     )
+    parser.add_argument(
+        "--allow-failures",
+        action="store_true",
+        help="Exit zero even when evaluation cases fail; useful for exploratory reporting.",
+    )
     return parser.parse_args()
 
 
@@ -216,9 +221,13 @@ def main() -> int:
         "fixture": str(args.fixture),
         "pair_summary": pair_summary,
         "retrieval_summary": retrieval_summary,
+        "all_passed": pair_summary["passed"] == pair_summary["total"]
+        and retrieval_summary["passed"] == retrieval_summary["total"],
     }
     print(json.dumps(report, indent=2, sort_keys=True))
-    return 0 if pair_summary["passed"] == pair_summary["total"] and retrieval_summary["passed"] == retrieval_summary["total"] else 1
+    if not report["all_passed"] and not args.allow_failures:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ from core.config_loader import ScorerConfig
 from core.llm.fake_service import FakeLLMService
 from core.matcher import JobMatchPreliminary, RequirementMatchResult
 from core.scorer.semantic_fit import (
+    CrossEncoderSemanticFitScorer,
     FEATURE_ALLOWED_MODES,
     FEATURE_PREFERRED_MODE,
     LLMSemanticFitScorer,
@@ -368,3 +369,85 @@ def test_local_cross_encoder_provider_heuristic_fallback_when_no_runtime_availab
 
     assert result is False
     assert provider.provider_id == "heuristic-local"
+    assert provider.effective_route_name == "local_heuristic"
+
+def test_cross_encoder_route_policy_remote_without_remote_provider_uses_threshold_fallback():
+    job = MagicMock()
+    job.id = "job-remote-fallback"
+    job.title = "Python Engineer"
+    job.company = "Acme"
+    job.description = "Backend Python role"
+
+    requirement = RequirementMatchResult(
+        requirement=_make_requirement(
+            req_id="req-remote-fallback",
+            req_type="required",
+            text="Python backend API development",
+        ),
+        evidence=_make_evidence("Built Python backend APIs for internal services", "experience"),
+        similarity=0.72,
+        is_covered=True,
+    )
+    preliminary = JobMatchPreliminary(
+        job=job,
+        job_similarity=0.7,
+        requirement_matches=[requirement],
+        missing_requirements=[],
+        resume_fingerprint="fp-remote-fallback",
+    )
+    config = ScorerConfig()
+    config.semantic_fit.cross_encoder.route_policy = "remote"
+
+    result = CrossEncoderSemanticFitScorer(
+        local_provider=LocalCrossEncoderProvider(
+            model_name="BAAI/bge-reranker-v2-m3",
+            runtime="heuristic",
+        ),
+        remote_provider=None,
+        fallback_scorer=ThresholdSemanticFitScorer(),
+    ).score(
+        preliminary,
+        fit_penalties=0.0,
+        config=config,
+    )
+
+    assert result.fit_components["provider_route"] == "threshold"
+    assert result.fit_components["effective_fit_mode"] == "threshold"
+    assert "remote provider" in result.fit_components["semantic_fit_fallback_reason"]
+
+def test_cross_encoder_without_available_local_provider_uses_threshold_fallback():
+    job = MagicMock()
+    job.id = "job-no-local"
+    requirement = RequirementMatchResult(
+        requirement=_make_requirement(
+            req_id="req-no-local",
+            req_type="required",
+            text="Python backend API development",
+        ),
+        evidence=_make_evidence("Built Python backend APIs for internal services", "experience"),
+        similarity=0.72,
+        is_covered=True,
+    )
+    preliminary = JobMatchPreliminary(
+        job=job,
+        job_similarity=0.7,
+        requirement_matches=[requirement],
+        missing_requirements=[],
+        resume_fingerprint="fp-no-local",
+    )
+    config = ScorerConfig()
+    config.semantic_fit.cross_encoder.route_policy = "local"
+
+    result = CrossEncoderSemanticFitScorer(
+        local_provider=None,
+        remote_provider=None,
+        fallback_scorer=ThresholdSemanticFitScorer(),
+    ).score(
+        preliminary,
+        fit_penalties=0.0,
+        config=config,
+    )
+
+    assert result.fit_components["effective_fit_mode"] == "threshold"
+    assert result.fit_components["provider_route"] == "threshold"
+    assert "disabled" in result.fit_components["semantic_fit_fallback_reason"]

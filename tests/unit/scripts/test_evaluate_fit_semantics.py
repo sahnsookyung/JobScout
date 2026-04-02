@@ -111,6 +111,7 @@ def test_main_prints_json_report(monkeypatch, capsys, tmp_path):
             fixture=fixture_path,
             mode="threshold",
             config=Path(__file__).resolve().parents[3] / "config.yaml",
+            allow_failures=False,
         ),
     )
 
@@ -121,3 +122,82 @@ def test_main_prints_json_report(monkeypatch, capsys, tmp_path):
     assert exit_code == 0
     assert payload["mode"] == "threshold"
     assert payload["pair_summary"]["total"] == 0
+    assert payload["all_passed"] is True
+
+def test_main_returns_non_zero_when_cases_fail_by_default(monkeypatch, tmp_path):
+    script = _load_script_module()
+    fixture_path = tmp_path / "fixture.json"
+    fixture_path.write_text(
+        json.dumps(
+            {
+                "pair_cases": [
+                    {
+                        "name": "java_python_mismatch",
+                        "job_title": "Java Backend Engineer",
+                        "job_company": "Acme Cloud",
+                        "job_summary": "Backend role focused on Java microservices.",
+                        "requirement_text": "Strong Java programming experience",
+                        "req_type": "required",
+                        "evidence_text": "Built Python FastAPI services and internal APIs",
+                        "evidence_section": "experience",
+                        "original_similarity": 0.82,
+                        "expected_verdict": "missing",
+                    }
+                ],
+                "retrieval_cases": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        script,
+        "_parse_args",
+        lambda: SimpleNamespace(
+            fixture=fixture_path,
+            mode="threshold",
+            config=Path(__file__).resolve().parents[3] / "config.yaml",
+            allow_failures=False,
+        ),
+    )
+
+    assert script.main() == 1
+
+def test_main_allows_failures_when_requested(monkeypatch, tmp_path):
+    script = _load_script_module()
+    fixture_path = tmp_path / "fixture.json"
+    fixture_path.write_text(
+        json.dumps(
+            {
+                "pair_cases": [
+                    {
+                        "name": "java_python_mismatch",
+                        "job_title": "Java Backend Engineer",
+                        "job_company": "Acme Cloud",
+                        "job_summary": "Backend role focused on Java microservices.",
+                        "requirement_text": "Strong Java programming experience",
+                        "req_type": "required",
+                        "evidence_text": "Built Python FastAPI services and internal APIs",
+                        "evidence_section": "experience",
+                        "original_similarity": 0.82,
+                        "expected_verdict": "missing",
+                    }
+                ],
+                "retrieval_cases": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        script,
+        "_parse_args",
+        lambda: SimpleNamespace(
+            fixture=fixture_path,
+            mode="threshold",
+            config=Path(__file__).resolve().parents[3] / "config.yaml",
+            allow_failures=True,
+        ),
+    )
+
+    assert script.main() == 0
