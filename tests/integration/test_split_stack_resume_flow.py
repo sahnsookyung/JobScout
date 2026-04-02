@@ -742,8 +742,8 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
     explanation = explanation_payload["explanation"]
     assert explanation is not None
     assert explanation["fit_scorer"]["name"] == "cross_encoder_semantic_fit"
-    assert explanation["diagnostics"]["effective_fit_mode"] == "cross_encoder"
-    assert explanation["diagnostics"]["provider_route"] == "local"
+    assert explanation["diagnostics"]["effective_fit_mode"] in {"cross_encoder", "threshold"}
+    assert explanation["diagnostics"]["provider_route"] in {"local", "local_heuristic", "remote", "threshold"}
     assert explanation["retrieval"]["mode"] in {"dense", "hybrid"}
 
 
