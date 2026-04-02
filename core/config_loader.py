@@ -244,9 +244,12 @@ class SemanticFitConfig(BaseModel):
         default_factory=SemanticFitSerializationConfig
     )
 
-    def model_post_init(self, __context: Any) -> None:
-        del __context
-        deploy_allowed = list(dict.fromkeys(mode for mode in self.deploy_allowed_modes if mode in {"cross_encoder", "llm"}))
+    def _normalize_allowed_modes(self) -> None:
+        deploy_allowed = list(
+            dict.fromkeys(
+                mode for mode in self.deploy_allowed_modes if mode in {"cross_encoder", "llm"}
+            )
+        )
         if not deploy_allowed:
             deploy_allowed = [self.default_mode]
         self.deploy_allowed_modes = deploy_allowed
@@ -271,6 +274,7 @@ class SemanticFitConfig(BaseModel):
                 "matching.scorer.semantic_fit.default_mode must be included in baseline_allowed_modes"
             )
 
+    def _validate_scalar_limits(self) -> None:
         self.recall_top_k = int(self.recall_top_k)
         if self.recall_top_k <= 0:
             raise ValueError("matching.scorer.semantic_fit.recall_top_k must be positive")
@@ -282,13 +286,13 @@ class SemanticFitConfig(BaseModel):
                 "matching.scorer.semantic_fit.cross_encoder.remote_promote_pair_count must be positive"
             )
 
-        if not self.enabled:
-            return
-
-        route_policy = self.cross_encoder.route_policy
-        local_enabled = bool(self.cross_encoder.local.enabled)
-        remote_enabled = bool(self.cross_encoder.remote.enabled)
-
+    def _validate_cross_encoder_inputs(
+        self,
+        *,
+        route_policy: str,
+        local_enabled: bool,
+        remote_enabled: bool,
+    ) -> None:
         if local_enabled and not str(self.cross_encoder.local.model_name).strip():
             raise ValueError(
                 "matching.scorer.semantic_fit.cross_encoder.local.model_name is required when local cross-encoder is enabled"
@@ -316,14 +320,7 @@ class SemanticFitConfig(BaseModel):
                 "matching.scorer.semantic_fit.cross_encoder.route_policy='auto' requires at least one cross-encoder provider to be enabled"
             )
 
-        if "cross_encoder" in self.deploy_allowed_modes:
-            if route_policy == "local" and not local_enabled:
-                raise ValueError("cross_encoder mode is deploy-allowed but no local provider is enabled")
-            if route_policy == "remote" and not remote_enabled:
-                raise ValueError("cross_encoder mode is deploy-allowed but no remote provider is enabled")
-            if route_policy == "auto" and not (local_enabled or remote_enabled):
-                raise ValueError("cross_encoder mode is deploy-allowed but no cross-encoder provider is enabled")
-
+    def _validate_deployable_modes(self) -> None:
         if "llm" in self.deploy_allowed_modes and not self.llm.enabled:
             raise ValueError(
                 "matching.scorer.semantic_fit.deploy_allowed_modes includes 'llm' but llm semantic fit is disabled"
@@ -337,10 +334,24 @@ class SemanticFitConfig(BaseModel):
                 raise ValueError(
                     "matching.scorer.semantic_fit.llm.model is required when llm semantic fit is enabled"
                 )
-        if self.default_mode == "llm" and not self.llm.enabled:
-            raise ValueError(
-                "matching.scorer.semantic_fit.default_mode='llm' requires llm semantic fit to be enabled"
-            )
+
+    def model_post_init(self, __context: Any) -> None:
+        del __context
+        self._normalize_allowed_modes()
+        self._validate_scalar_limits()
+
+        if not self.enabled:
+            return
+
+        route_policy = self.cross_encoder.route_policy
+        local_enabled = bool(self.cross_encoder.local.enabled)
+        remote_enabled = bool(self.cross_encoder.remote.enabled)
+        self._validate_cross_encoder_inputs(
+            route_policy=route_policy,
+            local_enabled=local_enabled,
+            remote_enabled=remote_enabled,
+        )
+        self._validate_deployable_modes()
 
 
 class ScorerConfig(BaseModel):

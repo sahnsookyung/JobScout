@@ -4,7 +4,19 @@ import yaml
 from unittest.mock import patch, mock_open
 from pydantic import ValidationError
 
-from core.config_loader import AppConfig, LlmConfig, ScorerConfig, SemanticFitConfig, load_config
+from core.config_loader import (
+    AppConfig,
+    LlmConfig,
+    MatcherConfig,
+    ScorerConfig,
+    SemanticFitConfig,
+    SemanticFitCrossEncoderLocalConfig,
+    SemanticFitCrossEncoderRemoteConfig,
+    SemanticFitLlmConfig,
+    apply_env_overrides,
+    load_config,
+    resolve_config_path,
+)
 
 class TestConfigLoader(unittest.TestCase):
 
@@ -497,6 +509,152 @@ class TestConfigLoader(unittest.TestCase):
         )
 
         self.assertFalse(config.enabled)
+
+    def test_semantic_fit_accepts_empty_deploy_allowed_by_falling_back_to_default(self):
+        config = SemanticFitConfig(
+            deploy_allowed_modes=[],
+            baseline_allowed_modes=["cross_encoder"],
+            default_mode="cross_encoder",
+        )
+
+        self.assertEqual(config.deploy_allowed_modes, ["cross_encoder"])
+
+    def test_semantic_fit_raises_for_invalid_baseline_mode(self):
+        with self.assertRaises(ValidationError) as ctx:
+            SemanticFitConfig(
+                deploy_allowed_modes=["cross_encoder"],
+                baseline_allowed_modes=["cross_encoder", "llm"],
+            )
+
+        self.assertIn("baseline_allowed_modes contains modes that are not deploy-allowed", str(ctx.exception))
+
+    def test_semantic_fit_raises_for_blank_local_model_name(self):
+        with self.assertRaises(ValidationError) as ctx:
+            SemanticFitConfig(
+                cross_encoder={
+                    "route_policy": "local",
+                    "local": {"enabled": True, "model_name": "   "},
+                }
+            )
+
+        self.assertIn("local.model_name is required", str(ctx.exception))
+
+    def test_semantic_fit_raises_for_blank_remote_model(self):
+        with self.assertRaises(ValidationError) as ctx:
+            SemanticFitConfig(
+                cross_encoder={
+                    "route_policy": "remote",
+                    "remote": {
+                        "enabled": True,
+                        "base_url": "https://fit.example.com",
+                        "model": "   ",
+                    },
+                }
+            )
+
+        self.assertIn("remote.model is required", str(ctx.exception))
+
+    def test_semantic_fit_raises_for_auto_route_without_any_provider(self):
+        with self.assertRaises(ValidationError) as ctx:
+            SemanticFitConfig(
+                cross_encoder={
+                    "route_policy": "auto",
+                    "local": {"enabled": False},
+                    "remote": {"enabled": False},
+                }
+            )
+
+        self.assertIn("route_policy='auto' requires at least one cross-encoder provider", str(ctx.exception))
+
+    def test_matcher_config_raises_for_invalid_limits(self):
+        invalid_cases = [
+            {"similarity_threshold": 1.5},
+            {"batch_size": 0},
+            {"lexical_limit": 0},
+            {"fusion_rank_constant": 0},
+            {"lexical_query_token_limit": 0},
+        ]
+
+        for overrides in invalid_cases:
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(ValidationError):
+                    MatcherConfig(**overrides)
+
+    def test_cross_encoder_local_config_raises_for_non_positive_limits(self):
+        invalid_cases = [
+            {"max_batch_size": 0},
+            {"max_concurrency": 0},
+            {"timeout_ms": 0},
+        ]
+
+        for overrides in invalid_cases:
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(ValidationError):
+                    SemanticFitCrossEncoderLocalConfig(**overrides)
+
+    def test_cross_encoder_remote_config_raises_for_non_positive_limits(self):
+        invalid_cases = [
+            {"timeout_ms": 0},
+            {"max_batch_size": 0},
+        ]
+
+        for overrides in invalid_cases:
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(ValidationError):
+                    SemanticFitCrossEncoderRemoteConfig(**overrides)
+
+    def test_llm_config_raises_for_non_positive_limits(self):
+        invalid_cases = [
+            {"timeout_seconds": 0},
+            {"max_input_tokens": 0},
+        ]
+
+        for overrides in invalid_cases:
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(ValidationError):
+                    SemanticFitLlmConfig(**overrides)
+
+    def test_semantic_fit_raises_for_blank_llm_model(self):
+        with self.assertRaises(ValidationError) as ctx:
+            SemanticFitConfig(
+                deploy_allowed_modes=["llm"],
+                baseline_allowed_modes=["llm"],
+                default_mode="llm",
+                llm={
+                    "enabled": True,
+                    "base_url": "https://fit-llm.example/v1",
+                    "model": "   ",
+                },
+            )
+
+        self.assertIn("llm.model is required", str(ctx.exception))
+
+    def test_resolve_config_path_prefers_existing_path(self):
+        with patch("pathlib.Path.exists", side_effect=[True]):
+            resolved = resolve_config_path("present.yaml", fallback_path="fallback.yaml")
+
+        self.assertEqual(str(resolved), "present.yaml")
+
+    def test_resolve_config_path_prefers_existing_fallback(self):
+        with patch("pathlib.Path.exists", side_effect=[False, True]):
+            resolved = resolve_config_path("missing.yaml", fallback_path="fallback.yaml")
+
+        self.assertEqual(str(resolved), "fallback.yaml")
+
+    def test_apply_env_overrides_applies_header_mappings(self):
+        data = {"matching": {"scorer": {"semantic_fit": {"llm": {}}}}}
+        env = {
+            "FIT_LLM_HEADER_ENV_VARS": '{"Authorization":"FIT_API_TOKEN"}',
+            "FIT_API_TOKEN": "Bearer token",
+        }
+
+        with patch.dict(os.environ, env, clear=False):
+            updated = apply_env_overrides(data)
+
+        self.assertEqual(
+            updated["matching"]["scorer"]["semantic_fit"]["llm"]["headers"],
+            {"Authorization": "Bearer token"},
+        )
 
 if __name__ == "__main__":
     unittest.main()
