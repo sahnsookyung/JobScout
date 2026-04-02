@@ -9,10 +9,12 @@ from services.scorer_matcher.candidate_preferences import (
     _job_matches_locations,
     _job_matches_remote_mode,
     _job_meets_salary_floor,
+    _allowed_preference_modes,
     _job_supports_visa,
     _job_work_mode,
     _matches_candidate_preferences,
     _preference_sort_key,
+    _resolve_requested_mode,
     apply_candidate_preference_filters,
     apply_preference_semantic_reranking,
     load_candidate_preferences,
@@ -216,7 +218,7 @@ class TestPreferenceSemanticReranking:
             config=_preferences_config(),
         )
 
-        assert reranked[0].fit_components["preference_mode_used"] == "fit_only_fallback"
+        assert reranked[0].fit_components["preference_mode_used"] == "semantic_rerank"
         assert reranked[0].fit_components["preference_fallback_reason"] == "preference_profile_unavailable"
 
     @patch("services.scorer_matcher.candidate_preferences.build_preference_semantic_reranker")
@@ -327,4 +329,72 @@ class TestPreferenceSemanticReranking:
             fit_components={"preference_score": 0.2},
         )
 
-        assert _preference_sort_key(high_pref) > _preference_sort_key(low_pref)
+        assert _preference_sort_key(high_pref) < _preference_sort_key(low_pref)
+
+    def test_disallowed_requested_mode_resolves_to_allowed_mode_before_matching(self):
+        config = _preferences_config().model_copy(update={"allowed_modes": ["semantic_rerank"]})
+        requested_mode, effective_mode = _resolve_requested_mode("llm_judge", config)
+
+        assert requested_mode == "llm_judge"
+        assert effective_mode == "semantic_rerank"
+        assert _allowed_preference_modes(config) == ["semantic_rerank"]
+
+    @patch("services.scorer_matcher.candidate_preferences.build_preference_semantic_reranker")
+    def test_disallowed_requested_mode_uses_allowed_reranker_instead_of_falling_back(
+        self,
+        mock_build_reranker,
+    ):
+        mock_build_reranker.return_value = Mock(
+            rerank=Mock(
+                return_value=[
+                    PreferenceAssessment(
+                        job_id="job-1",
+                        preference_score=0.7,
+                        preference_confidence=0.8,
+                        preference_reason_codes=["work_style_match"],
+                        preference_explanation="Good mentorship signal.",
+                    )
+                ]
+            )
+        )
+        config = _preferences_config().model_copy(
+            update={
+                "allowed_modes": ["semantic_rerank"],
+                "semantic_reranker": _preferences_config().parser.model_copy(
+                    update={"enabled": True, "model": "fake"}
+                ),
+            }
+        )
+        profile = PreferenceProfile(raw_text="Mentorship", parser_confidence=0.8)
+
+        reranked = apply_preference_semantic_reranking(
+            [_scored_match(_job(id="job-1"))],
+            {
+                "soft_preferences": "Mentorship",
+                "preference_mode": "llm_judge",
+                "preference_profile": profile.model_dump(mode="json"),
+            },
+            config=config,
+        )
+
+        assert reranked[0].fit_components["preference_mode_requested"] == "llm_judge"
+        assert reranked[0].fit_components["preference_mode_used"] == "semantic_rerank"
+        assert "preference_fallback_reason" not in reranked[0].fit_components
+
+    def test_preference_sort_keeps_job_id_ascending_for_exact_ties(self):
+        first = _scored_match(
+            _job(id="job-1"),
+            fit_score=82.0,
+            job_similarity=0.6,
+            fit_components={"preference_score": 0.7},
+        )
+        second = _scored_match(
+            _job(id="job-2"),
+            fit_score=82.0,
+            job_similarity=0.6,
+            fit_components={"preference_score": 0.7},
+        )
+
+        ordered = sorted([second, first], key=_preference_sort_key)
+
+        assert [match.job.id for match in ordered] == ["job-1", "job-2"]

@@ -47,10 +47,10 @@ def _fit_band(match: Any) -> int:
 def _preference_sort_key(match: Any) -> tuple[float, float, float, float, str]:
     fit_components = dict(getattr(match, "fit_components", {}) or {})
     return (
-        float(_fit_band(match)),
-        float(fit_components.get("preference_score", 0.0) or 0.0),
-        float(getattr(match, "fit_score", 0.0) or 0.0),
-        float(getattr(match, "job_similarity", 0.0) or 0.0),
+        -float(_fit_band(match)),
+        -float(fit_components.get("preference_score", 0.0) or 0.0),
+        -float(getattr(match, "fit_score", 0.0) or 0.0),
+        -float(getattr(match, "job_similarity", 0.0) or 0.0),
         str(getattr(getattr(match, "job", None), "id", "")),
     )
 
@@ -275,10 +275,40 @@ def _resolve_preference_profile(
         return None
 
 
+def _allowed_preference_modes(config: PreferencesConfig) -> List[str]:
+    normalized = [
+        mode
+        for mode in (
+            str(item).strip().lower()
+            for item in (getattr(config, "allowed_modes", None) or [])
+        )
+        if mode in {"semantic_rerank", "llm_judge"}
+    ]
+    if normalized:
+        return list(dict.fromkeys(normalized))
+    return [getattr(config, "default_mode", "semantic_rerank")]
+
+
+def _resolve_requested_mode(
+    requested_mode: Any,
+    config: PreferencesConfig,
+) -> tuple[str, str]:
+    requested = str(requested_mode or config.default_mode).strip().lower()
+    if requested not in {"semantic_rerank", "llm_judge"}:
+        requested = config.default_mode
+
+    allowed_modes = _allowed_preference_modes(config)
+    effective = requested if requested in allowed_modes else config.default_mode
+    if effective not in allowed_modes:
+        effective = allowed_modes[0]
+    return requested, effective
+
+
 def _fit_only_fallback(
     scored_matches,
     *,
     requested_mode: str,
+    effective_mode: str,
     reason: str,
 ):
     for match in scored_matches:
@@ -290,7 +320,7 @@ def _fit_only_fallback(
                 "preference_reason_codes": ["fallback_fit_only"],
                 "preference_explanation": "Preference reranking unavailable for this run.",
                 "preference_mode_requested": requested_mode,
-                "preference_mode_used": "fit_only_fallback",
+                "preference_mode_used": effective_mode,
                 "preference_fallback_reason": reason,
             }
         )
@@ -309,6 +339,7 @@ def _apply_assessments(
     assessments: List[PreferenceAssessment],
     *,
     requested_mode: str,
+    effective_mode: str,
 ):
     by_job_id = _assessments_by_job_id(assessments)
     for match in scored_matches:
@@ -332,13 +363,13 @@ def _apply_assessments(
                 "preference_reason_codes": reason_codes,
                 "preference_explanation": explanation,
                 "preference_mode_requested": requested_mode,
-                "preference_mode_used": requested_mode,
+                "preference_mode_used": effective_mode,
             }
         )
         match.fit_components = fit_components
         match.overall_score = _bounded_preference_overall_score(match, preference_score)
 
-    scored_matches.sort(key=_preference_sort_key, reverse=True)
+    scored_matches.sort(key=_preference_sort_key)
     return scored_matches
 
 
@@ -356,24 +387,29 @@ def apply_preference_semantic_reranking(
     if not soft_preferences:
         return scored_matches
 
-    requested_mode = str(preferences.get("preference_mode") or config.default_mode).strip().lower()
+    requested_mode, effective_mode = _resolve_requested_mode(
+        preferences.get("preference_mode"),
+        config,
+    )
     profile = _resolve_preference_profile(preferences, config)
     if profile is None:
         return _fit_only_fallback(
             scored_matches,
             requested_mode=requested_mode,
+            effective_mode=effective_mode,
             reason="preference_profile_unavailable",
         )
 
     job_payloads = [serialize_job_for_preference(match.job) for match in scored_matches]
 
     try:
-        if requested_mode == "llm_judge":
+        if effective_mode == "llm_judge":
             judge = build_preference_judge(config.llm_judge)
             if judge is None:
                 return _fit_only_fallback(
                     scored_matches,
                     requested_mode=requested_mode,
+                    effective_mode=effective_mode,
                     reason="preference_judge_unavailable",
                 )
             assessments = judge.judge(profile, job_payloads)
@@ -383,6 +419,7 @@ def apply_preference_semantic_reranking(
                 return _fit_only_fallback(
                     scored_matches,
                     requested_mode=requested_mode,
+                    effective_mode=effective_mode,
                     reason="preference_reranker_unavailable",
                 )
             assessments = reranker.rerank(profile, job_payloads)
@@ -391,6 +428,7 @@ def apply_preference_semantic_reranking(
         return _fit_only_fallback(
             scored_matches,
             requested_mode=requested_mode,
+            effective_mode=effective_mode,
             reason="preference_reranking_failed",
         )
 
@@ -398,4 +436,5 @@ def apply_preference_semantic_reranking(
         scored_matches,
         assessments,
         requested_mode=requested_mode,
+        effective_mode=effective_mode,
     )

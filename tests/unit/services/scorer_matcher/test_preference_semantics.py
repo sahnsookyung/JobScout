@@ -16,6 +16,7 @@ from core.preference_semantics import (
     serialize_job_for_preference,
     summarize_preference_profile,
     build_preference_llm,
+    _chunk_jobs_for_budget,
 )
 
 
@@ -99,7 +100,7 @@ def test_preference_reranker_returns_structured_assessments():
             }
         ]
     }
-    reranker = LLMPreferenceSemanticReranker(llm)
+    reranker = LLMPreferenceSemanticReranker(llm, max_input_tokens=2048)
     profile = PreferenceProfile(raw_text="Mentorship", parser_confidence=0.8)
 
     results = reranker.rerank(
@@ -130,7 +131,7 @@ def test_preference_judge_returns_structured_assessments():
             }
         ]
     }
-    judge = LLMPreferenceJudge(llm)
+    judge = LLMPreferenceJudge(llm, max_input_tokens=2048)
     profile = PreferenceProfile(raw_text="Python", parser_confidence=0.8)
 
     results = judge.judge(
@@ -164,6 +165,7 @@ def test_build_preference_semantic_reranker_wraps_llm(mock_build_llm):
 
     assert isinstance(reranker, LLMPreferenceSemanticReranker)
     assert reranker.llm is llm
+    assert reranker.max_input_tokens == 2048
 
 @patch("core.preference_semantics.build_preference_llm")
 def test_build_preference_judge_wraps_llm(mock_build_llm):
@@ -174,6 +176,7 @@ def test_build_preference_judge_wraps_llm(mock_build_llm):
 
     assert isinstance(judge, LLMPreferenceJudge)
     assert judge.llm is llm
+    assert judge.max_input_tokens == 2048
 
 
 @patch("core.preference_semantics._ensure_fake_ai_allowed")
@@ -290,6 +293,8 @@ def test_serialize_job_for_preference_prefers_canonical_summary():
         description="Long description",
         company_description="Mentorship-focused team",
         skills_raw="python, fastapi",
+        requirements=[Mock(text="Build Python APIs"), Mock(text="Mentor junior engineers")],
+        benefits=[Mock(text="Learning budget"), Mock(text="Flexible schedule")],
         raw_payload={"ai_job_summary": "ignored"},
     )
 
@@ -299,3 +304,29 @@ def test_serialize_job_for_preference_prefers_canonical_summary():
     assert payload.work_mode == "remote"
     assert payload.summary == "Build backend platforms"
     assert payload.skills == ["python", "fastapi"]
+    assert payload.requirements == ["Build Python APIs", "Mentor junior engineers"]
+    assert payload.benefits == ["Learning budget", "Flexible schedule"]
+
+
+def test_chunk_jobs_for_budget_splits_large_shortlist():
+    profile = PreferenceProfile(raw_text="Mentorship", parser_confidence=0.8)
+    jobs = [
+        PreferenceJobPayload(
+            job_id=f"job-{index}",
+            title=f"Backend Engineer {index}",
+            summary="x" * 1800,
+            requirements=["y" * 280 for _ in range(8)],
+            benefits=["z" * 280 for _ in range(8)],
+        )
+        for index in range(3)
+    ]
+
+    chunks = _chunk_jobs_for_budget(
+        profile,
+        jobs,
+        scorer_name="semantic_rerank",
+        max_input_tokens=600,
+    )
+
+    assert len(chunks) >= 2
+    assert sum(len(chunk) for chunk in chunks) == 3
