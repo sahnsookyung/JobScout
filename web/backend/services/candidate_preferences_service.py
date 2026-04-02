@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterable, List
 
 from sqlalchemy.orm import Session
 
-from core.preference_semantics import (
+from services.scorer_matcher.preference_semantics import (
     build_preference_parser,
     summarize_preference_profile,
 )

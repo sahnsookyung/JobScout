@@ -8,7 +8,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from core.config_loader import PreferencesConfig
-from core.preference_semantics import (
+from services.scorer_matcher.preference_semantics import (
     PreferenceAssessment,
     PreferenceProfile,
     build_preference_judge,
