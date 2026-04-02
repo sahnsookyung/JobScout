@@ -2,7 +2,9 @@ import unittest
 import os
 import yaml
 from unittest.mock import patch, mock_open
-from core.config_loader import AppConfig, LlmConfig, ScorerConfig, load_config
+from pydantic import ValidationError
+
+from core.config_loader import AppConfig, LlmConfig, ScorerConfig, SemanticFitConfig, load_config
 
 class TestConfigLoader(unittest.TestCase):
 
@@ -296,8 +298,8 @@ class TestConfigLoader(unittest.TestCase):
             "matching": {
                 "scorer": {
                     "semantic_fit": {
-                        "deploy_allowed_modes": ["cross_encoder", "llm"],
-                        "baseline_allowed_modes": ["cross_encoder", "llm"],
+                        "deploy_allowed_modes": ["cross_encoder"],
+                        "baseline_allowed_modes": ["cross_encoder"],
                     }
                 }
             },
@@ -376,6 +378,125 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config.matching.scorer.semantic_fit.llm.base_url, "https://fit-llm.example/v1")
         self.assertEqual(config.matching.scorer.semantic_fit.llm.api_key, "fit-key")
         self.assertEqual(config.matching.scorer.semantic_fit.llm.model, "fit-gpt")
+
+    def test_semantic_fit_raises_when_default_mode_not_in_deploy_allowed(self):
+        with self.assertRaises(ValidationError) as ctx:
+            SemanticFitConfig(
+                deploy_allowed_modes=["cross_encoder"],
+                baseline_allowed_modes=["cross_encoder"],
+                default_mode="llm",
+            )
+
+        self.assertIn("default_mode must be included in deploy_allowed_modes", str(ctx.exception))
+
+    def test_semantic_fit_raises_when_default_mode_not_in_baseline_allowed(self):
+        with self.assertRaises(ValidationError) as ctx:
+            SemanticFitConfig(
+                deploy_allowed_modes=["cross_encoder", "llm"],
+                baseline_allowed_modes=["cross_encoder"],
+                default_mode="llm",
+                llm={
+                    "enabled": True,
+                    "base_url": "https://fit-llm.example/v1",
+                    "model": "fit-gpt",
+                },
+            )
+
+        self.assertIn("default_mode must be included in baseline_allowed_modes", str(ctx.exception))
+
+    def test_semantic_fit_raises_for_local_route_without_local_provider(self):
+        with self.assertRaises(ValidationError) as ctx:
+            SemanticFitConfig(
+                cross_encoder={
+                    "route_policy": "local",
+                    "local": {"enabled": False},
+                }
+            )
+
+        self.assertIn("route_policy='local' requires local cross-encoder", str(ctx.exception))
+
+    def test_semantic_fit_raises_for_remote_route_without_remote_provider(self):
+        with self.assertRaises(ValidationError) as ctx:
+            SemanticFitConfig(
+                cross_encoder={
+                    "route_policy": "remote",
+                    "remote": {"enabled": False},
+                }
+            )
+
+        self.assertIn("route_policy='remote' requires remote cross-encoder", str(ctx.exception))
+
+    def test_semantic_fit_raises_for_remote_route_without_remote_base_url(self):
+        with self.assertRaises(ValidationError) as ctx:
+            SemanticFitConfig(
+                cross_encoder={
+                    "route_policy": "remote",
+                    "remote": {"enabled": True, "base_url": None},
+                }
+            )
+
+        self.assertIn("remote.base_url is required", str(ctx.exception))
+
+    def test_semantic_fit_raises_when_llm_is_deploy_allowed_but_disabled(self):
+        with self.assertRaises(ValidationError) as ctx:
+            SemanticFitConfig(
+                deploy_allowed_modes=["cross_encoder", "llm"],
+                baseline_allowed_modes=["cross_encoder", "llm"],
+                llm={"enabled": False},
+            )
+
+        self.assertIn("deploy_allowed_modes includes 'llm' but llm semantic fit is disabled", str(ctx.exception))
+
+    def test_semantic_fit_raises_when_llm_is_enabled_without_base_url(self):
+        with self.assertRaises(ValidationError) as ctx:
+            SemanticFitConfig(
+                llm={
+                    "enabled": True,
+                    "base_url": None,
+                }
+            )
+
+        self.assertIn("llm.base_url is required", str(ctx.exception))
+
+    def test_semantic_fit_raises_for_non_positive_serialization_budget(self):
+        with self.assertRaises(ValidationError) as ctx:
+            SemanticFitConfig(
+                serialization={
+                    "evidence_text_max_chars": 0,
+                }
+            )
+
+        self.assertIn("serialization.evidence_text_max_chars must be positive", str(ctx.exception))
+
+    def test_semantic_fit_raises_for_non_positive_recall_top_k(self):
+        with self.assertRaises(ValidationError) as ctx:
+            SemanticFitConfig(recall_top_k=0)
+
+        self.assertIn("semantic_fit.recall_top_k must be positive", str(ctx.exception))
+
+    def test_semantic_fit_raises_for_non_positive_remote_promote_pair_count(self):
+        with self.assertRaises(ValidationError) as ctx:
+            SemanticFitConfig(
+                cross_encoder={
+                    "remote_promote_pair_count": 0,
+                }
+            )
+
+        self.assertIn("remote_promote_pair_count must be positive", str(ctx.exception))
+
+    def test_semantic_fit_disabled_allows_incomplete_provider_config(self):
+        config = SemanticFitConfig(
+            enabled=False,
+            deploy_allowed_modes=["cross_encoder"],
+            baseline_allowed_modes=["cross_encoder"],
+            cross_encoder={
+                "route_policy": "local",
+                "local": {"enabled": False},
+            },
+            llm={"enabled": True, "base_url": None, "model": "fit-gpt"},
+        )
+
+        self.assertFalse(config.enabled)
 
 if __name__ == "__main__":
     unittest.main()

@@ -119,6 +119,19 @@ class MatcherConfig(BaseModel):
     fusion_rank_constant: int = 60
     lexical_query_token_limit: int = 24
 
+    def model_post_init(self, __context: Any) -> None:
+        del __context
+        if not 0.0 <= float(self.similarity_threshold) <= 1.0:
+            raise ValueError("matching.matcher.similarity_threshold must be between 0 and 1")
+        if self.batch_size is not None and int(self.batch_size) <= 0:
+            raise ValueError("matching.matcher.batch_size must be positive when set")
+        if self.lexical_limit is not None and int(self.lexical_limit) <= 0:
+            raise ValueError("matching.matcher.lexical_limit must be positive when set")
+        if int(self.fusion_rank_constant) <= 0:
+            raise ValueError("matching.matcher.fusion_rank_constant must be positive")
+        if int(self.lexical_query_token_limit) <= 0:
+            raise ValueError("matching.matcher.lexical_query_token_limit must be positive")
+
 
 class SemanticFitSerializationConfig(BaseModel):
     requirement_text_max_chars: int = 500
@@ -127,6 +140,21 @@ class SemanticFitSerializationConfig(BaseModel):
     job_title_max_chars: int = 200
     job_company_max_chars: int = 200
     job_summary_max_chars: int = 1800
+
+    def model_post_init(self, __context: Any) -> None:
+        del __context
+        positive_fields = (
+            "requirement_text_max_chars",
+            "evidence_text_max_chars",
+            "evidence_section_max_chars",
+            "job_title_max_chars",
+            "job_company_max_chars",
+            "job_summary_max_chars",
+        )
+        for field_name in positive_fields:
+            value = int(getattr(self, field_name))
+            if value <= 0:
+                raise ValueError(f"matching.scorer.semantic_fit.serialization.{field_name} must be positive")
 
 
 class SemanticFitCrossEncoderLocalConfig(BaseModel):
@@ -140,6 +168,15 @@ class SemanticFitCrossEncoderLocalConfig(BaseModel):
     timeout_ms: int = 2000
     trust_remote_code: bool = False
 
+    def model_post_init(self, __context: Any) -> None:
+        del __context
+        if int(self.max_batch_size) <= 0:
+            raise ValueError("matching.scorer.semantic_fit.cross_encoder.local.max_batch_size must be positive")
+        if int(self.max_concurrency) <= 0:
+            raise ValueError("matching.scorer.semantic_fit.cross_encoder.local.max_concurrency must be positive")
+        if int(self.timeout_ms) <= 0:
+            raise ValueError("matching.scorer.semantic_fit.cross_encoder.local.timeout_ms must be positive")
+
 
 class SemanticFitCrossEncoderRemoteConfig(BaseModel):
     enabled: bool = False
@@ -148,6 +185,13 @@ class SemanticFitCrossEncoderRemoteConfig(BaseModel):
     model: str = "fit-cross-encoder-v1"
     timeout_ms: int = 1500
     max_batch_size: int = 64
+
+    def model_post_init(self, __context: Any) -> None:
+        del __context
+        if int(self.timeout_ms) <= 0:
+            raise ValueError("matching.scorer.semantic_fit.cross_encoder.remote.timeout_ms must be positive")
+        if int(self.max_batch_size) <= 0:
+            raise ValueError("matching.scorer.semantic_fit.cross_encoder.remote.max_batch_size must be positive")
 
 
 class SemanticFitCrossEncoderConfig(BaseModel):
@@ -172,6 +216,13 @@ class SemanticFitLlmConfig(BaseModel):
     temperature: float = 0.0
     timeout_seconds: int = 20
     max_input_tokens: int = 4000
+
+    def model_post_init(self, __context: Any) -> None:
+        del __context
+        if int(self.timeout_seconds) <= 0:
+            raise ValueError("matching.scorer.semantic_fit.llm.timeout_seconds must be positive")
+        if int(self.max_input_tokens) <= 0:
+            raise ValueError("matching.scorer.semantic_fit.llm.max_input_tokens must be positive")
 
 
 class SemanticFitConfig(BaseModel):
@@ -200,21 +251,96 @@ class SemanticFitConfig(BaseModel):
             deploy_allowed = [self.default_mode]
         self.deploy_allowed_modes = deploy_allowed
 
-        baseline_allowed = list(
-            dict.fromkeys(mode for mode in self.baseline_allowed_modes if mode in self.deploy_allowed_modes)
-        )
-        if not baseline_allowed:
-            baseline_allowed = [self.default_mode] if self.default_mode in self.deploy_allowed_modes else [self.deploy_allowed_modes[0]]
-        self.baseline_allowed_modes = baseline_allowed
+        configured_baseline = list(dict.fromkeys(self.baseline_allowed_modes))
+        invalid_baseline_modes = [
+            mode for mode in configured_baseline if mode not in self.deploy_allowed_modes
+        ]
+        if invalid_baseline_modes:
+            raise ValueError(
+                "matching.scorer.semantic_fit.baseline_allowed_modes contains modes that are not deploy-allowed: "
+                + ", ".join(invalid_baseline_modes)
+            )
+        self.baseline_allowed_modes = configured_baseline or [self.default_mode]
 
         if self.default_mode not in self.deploy_allowed_modes:
-            self.default_mode = self.deploy_allowed_modes[0]
+            raise ValueError(
+                "matching.scorer.semantic_fit.default_mode must be included in deploy_allowed_modes"
+            )
+        if self.default_mode not in self.baseline_allowed_modes:
+            raise ValueError(
+                "matching.scorer.semantic_fit.default_mode must be included in baseline_allowed_modes"
+            )
 
-        self.recall_top_k = max(1, int(self.recall_top_k))
-        self.cross_encoder.remote_promote_pair_count = max(
-            1,
-            int(self.cross_encoder.remote_promote_pair_count),
+        self.recall_top_k = int(self.recall_top_k)
+        if self.recall_top_k <= 0:
+            raise ValueError("matching.scorer.semantic_fit.recall_top_k must be positive")
+        self.cross_encoder.remote_promote_pair_count = int(
+            self.cross_encoder.remote_promote_pair_count
         )
+        if self.cross_encoder.remote_promote_pair_count <= 0:
+            raise ValueError(
+                "matching.scorer.semantic_fit.cross_encoder.remote_promote_pair_count must be positive"
+            )
+
+        if not self.enabled:
+            return
+
+        route_policy = self.cross_encoder.route_policy
+        local_enabled = bool(self.cross_encoder.local.enabled)
+        remote_enabled = bool(self.cross_encoder.remote.enabled)
+
+        if local_enabled and not str(self.cross_encoder.local.model_name).strip():
+            raise ValueError(
+                "matching.scorer.semantic_fit.cross_encoder.local.model_name is required when local cross-encoder is enabled"
+            )
+        if remote_enabled:
+            if not str(self.cross_encoder.remote.base_url or "").strip():
+                raise ValueError(
+                    "matching.scorer.semantic_fit.cross_encoder.remote.base_url is required when remote cross-encoder is enabled"
+                )
+            if not str(self.cross_encoder.remote.model).strip():
+                raise ValueError(
+                    "matching.scorer.semantic_fit.cross_encoder.remote.model is required when remote cross-encoder is enabled"
+                )
+
+        if route_policy == "local" and not local_enabled:
+            raise ValueError(
+                "matching.scorer.semantic_fit.cross_encoder.route_policy='local' requires local cross-encoder to be enabled"
+            )
+        if route_policy == "remote" and not remote_enabled:
+            raise ValueError(
+                "matching.scorer.semantic_fit.cross_encoder.route_policy='remote' requires remote cross-encoder to be enabled"
+            )
+        if route_policy == "auto" and not (local_enabled or remote_enabled):
+            raise ValueError(
+                "matching.scorer.semantic_fit.cross_encoder.route_policy='auto' requires at least one cross-encoder provider to be enabled"
+            )
+
+        if "cross_encoder" in self.deploy_allowed_modes:
+            if route_policy == "local" and not local_enabled:
+                raise ValueError("cross_encoder mode is deploy-allowed but no local provider is enabled")
+            if route_policy == "remote" and not remote_enabled:
+                raise ValueError("cross_encoder mode is deploy-allowed but no remote provider is enabled")
+            if route_policy == "auto" and not (local_enabled or remote_enabled):
+                raise ValueError("cross_encoder mode is deploy-allowed but no cross-encoder provider is enabled")
+
+        if "llm" in self.deploy_allowed_modes and not self.llm.enabled:
+            raise ValueError(
+                "matching.scorer.semantic_fit.deploy_allowed_modes includes 'llm' but llm semantic fit is disabled"
+            )
+        if self.llm.enabled:
+            if not str(self.llm.base_url or "").strip():
+                raise ValueError(
+                    "matching.scorer.semantic_fit.llm.base_url is required when llm semantic fit is enabled"
+                )
+            if not str(self.llm.model).strip():
+                raise ValueError(
+                    "matching.scorer.semantic_fit.llm.model is required when llm semantic fit is enabled"
+                )
+        if self.default_mode == "llm" and not self.llm.enabled:
+            raise ValueError(
+                "matching.scorer.semantic_fit.default_mode='llm' requires llm semantic fit to be enabled"
+            )
 
 
 class ScorerConfig(BaseModel):

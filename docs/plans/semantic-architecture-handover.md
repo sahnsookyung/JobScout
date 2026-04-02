@@ -148,12 +148,12 @@ Observed results at handoff:
   - threshold scoring is retained as a guarded fallback, not the only fit path
   - persisted semantic explanations now back the explanation endpoint and match details modal
   - follow-up Sonar cleanup removed nested ternaries from the semantic explanation UI
- - hybrid retrieval groundwork is in progress on the fit-semantics branch:
-  - dense retrieval still uses `canonical_job_summary` embeddings
-  - lexical retrieval is being added as PostgreSQL full-text candidate generation over existing job text fields
-  - reciprocal-rank fusion is used to merge dense and lexical candidate sets without overwriting dense `job_similarity`
-  - retrieval diagnostics are now persisted with fit outputs so match details can show whether a candidate was generated through dense-only or hybrid retrieval
-  - semantic scorer diagnostics now capture scorer identity, latency, judged-requirement counts, and fallback reasons in the saved fit payload
+ - hybrid retrieval is implemented on the fit-semantics branch:
+  - dense retrieval uses `canonical_job_summary` embeddings
+  - lexical retrieval uses PostgreSQL full-text candidate generation over existing job text fields
+  - reciprocal-rank fusion merges dense and lexical candidate sets without overwriting dense `job_similarity`
+  - retrieval diagnostics are persisted with fit outputs so match details can show whether a candidate was generated through dense-only or hybrid retrieval
+  - semantic scorer diagnostics capture scorer identity, latency, judged-requirement counts, and fallback reasons in the saved fit payload
  - the broader fit rewire plan is now recorded in [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md):
    - hybrid retrieval becomes the default path
    - semantic fit adds dual provider support: cross-encoder default plus advanced gated LLM mode
@@ -161,6 +161,7 @@ Observed results at handoff:
    - recall depth becomes configurable
    - truncation budgets become configurable and instrumented rather than fixed hidden limits
    - `config.yaml` will carry commented tuning hints for fit controls
+   - container-level observability rollout is tracked separately in [container-observability-plan.md](./container-observability-plan.md)
 
 ## Important Boundaries
 
@@ -170,6 +171,7 @@ Observed results at handoff:
 - A DB-backed capability control mechanism exists now, plus an internal CLI for dev/staging administration:
   - [manage_feature_capability.py](/Users/sookyungahn/repos/JobScout-fit-semantics/scripts/manage_feature_capability.py)
   - later options remain an internal admin API or admin UI on top of the same table/service if operations truly require it
+- Truncation and fit-routing diagnostics are persisted, but they are not yet exported into a Grafana dashboard; use [container-observability-plan.md](./container-observability-plan.md) as the follow-on operational plan.
 - Persisted reruns are authoritative only after a clean save batch completes; this safety behavior is now intentional and should be preserved when implementing later semantic stages.
 - The current fit semantic scorer supports both a dedicated cross-encoder path and a gated LLM path.
 - ANN/pgvector is still the retrieval and evidence-recall layer; the rewire plan keeps it as retrieval infrastructure rather than final semantic authority.

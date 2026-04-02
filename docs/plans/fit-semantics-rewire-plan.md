@@ -36,6 +36,9 @@ The fit pipeline becomes:
   - otherwise choose `local`
   - if the chosen route fails or times out, try the other enabled cross-encoder route once
   - if both fail, use threshold fallback
+- explicit route policies are strict:
+  - `local` must not fall through to remote
+  - `remote` must not fall through to local
 - If `matching.scorer.semantic_fit.enabled=false`:
   - bypass capabilities and mode resolution
   - bypass semantic providers
@@ -158,6 +161,7 @@ The fit pipeline becomes:
   - truncation rate by scorer mode/provider
   - average discarded chars
   - emergency-ceiling hit count
+- Those metrics are not yet surfaced in Grafana; see [container-observability-plan.md](./container-observability-plan.md) for the recommended Prometheus/Grafana/Loki rollout.
 
 ### 7. Hybrid retrieval defaults
 
@@ -201,7 +205,7 @@ The fit pipeline becomes:
   2. capability-preferred mode if allowed
   3. global default
 - Effective allowed modes:
-- capability row present: `intersection(deploy_allowed_modes, capability_modes)`
+  - capability row present: `intersection(deploy_allowed_modes, capability_modes)`
   - otherwise: `intersection(deploy_allowed_modes, baseline_allowed_modes)`
 - `default_mode` must be both deploy-allowed and baseline-allowed.
 - If a capability-enabled user’s effective allowed modes exclude `default_mode`, resolve to first deterministic allowed mode in order: `cross_encoder`, then `llm`.
@@ -257,6 +261,8 @@ The fit pipeline becomes:
   - explicit route policy targeting a disabled route fails startup
   - if deploy allows `llm`, then `llm.enabled=true`, `llm.model` set, and `llm.api_key` present
   - if `cross_encoder.remote.enabled=true`, require `base_url`, `model`, `timeout_ms`
+  - if `default_mode=llm`, require `llm.enabled=true`
+  - if `default_mode=llm` and `cross_encoder` is not in the effective allowed set, missing LLM scorer configuration must fail fast rather than silently degrade to threshold
 
 ### 10. Diagnostics and compatibility
 
@@ -311,7 +317,7 @@ matching:
         remote_promote_pair_count: 40
         local:
           enabled: true
-          model_name: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+          model_name: "BAAI/bge-reranker-v2-m3"
           model_cache_path: "/models/cross-encoders"
           device_policy: "cpu"
           max_batch_size: 32
@@ -393,3 +399,4 @@ matching:
 - Capability administration is intentionally internal-first:
   - current path: DB-backed rows plus an internal CLI
   - later options: internal admin API or admin UI on top of the same table/service
+- Observability administration is separate from capability administration; internal metrics should flow through Prometheus/Grafana rather than a public dashboard route.
