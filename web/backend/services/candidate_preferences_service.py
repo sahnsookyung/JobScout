@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Iterable, List
 
 from sqlalchemy.orm import Session
 
+from core.preference_semantics import (
+    build_preference_parser,
+    summarize_preference_profile,
+)
 from database.repository import JobRepository
 from web.backend.config import get_config
+
+logger = logging.getLogger(__name__)
 
 VALID_REMOTE_MODES = {"any", "remote", "hybrid", "onsite"}
 VALID_PREFERENCE_MODES = {"semantic_rerank", "llm_judge"}
@@ -26,15 +33,6 @@ def _normalize_string_list(values: Iterable[str]) -> List[str]:
         seen.add(lowered)
         normalized.append(item)
     return normalized
-
-
-def _summarize_soft_preferences(raw_text: str, *, max_length: int = 160) -> str:
-    trimmed = " ".join(raw_text.split())
-    if len(trimmed) <= max_length:
-        return trimmed
-    return f"{trimmed[: max_length - 1].rstrip()}…"
-
-
 class CandidatePreferencesService:
     """Resolve and persist per-user candidate preferences."""
 
@@ -62,11 +60,10 @@ class CandidatePreferencesService:
         preferences.employment_types = _normalize_string_list(payload.get("employment_types", []))
         preferences.soft_preferences = payload.get("soft_preferences", "").strip()
         preferences.preference_mode = self._resolve_requested_mode(payload.get("preference_mode"))
-        # Parsing remains best-effort foundation work; do not block settings saves on
-        # an optional model call during the request lifecycle.
-        preferences.preference_profile = None
+        profile = self._parse_preference_profile(preferences.soft_preferences)
+        preferences.preference_profile = profile.model_dump(mode="json") if profile else None
         preferences.soft_preference_summary = (
-            _summarize_soft_preferences(preferences.soft_preferences)
+            summarize_preference_profile(profile, preferences.soft_preferences)
             if preferences.soft_preferences
             else None
         )
@@ -110,3 +107,16 @@ class CandidatePreferencesService:
         if normalized not in allowed_modes:
             return self.config.preferences.default_mode
         return normalized
+
+    def _parse_preference_profile(self, raw_text: str):
+        if not raw_text.strip():
+            return None
+
+        parser = build_preference_parser(self.config.preferences.parser)
+        if parser is None:
+            return None
+        try:
+            return parser.parse(raw_text)
+        except Exception:
+            logger.warning("Preference parsing failed during preference update", exc_info=True)
+            return None

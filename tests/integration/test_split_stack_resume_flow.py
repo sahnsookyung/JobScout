@@ -878,8 +878,9 @@ def test_candidate_preferences_round_trip_updates_matching_behavior(
             match for match in matches if str(match.job_post_id) == seeded_jobs.positive_job_id
         )
         fit_components = positive_match.fit_components or {}
-        assert fit_components.get("soft_preference_bonus", 0) > 0
-        assert "python" in (fit_components.get("soft_preference_overlap") or [])
+        assert fit_components.get("preference_score", 0) > 0
+        assert fit_components.get("preference_mode_used") == "semantic_rerank"
+        assert "tech_stack_match" in (fit_components.get("preference_reason_codes") or [])
     finally:
         session.close()
         engine.dispose()

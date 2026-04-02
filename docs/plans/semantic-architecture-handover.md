@@ -1,7 +1,7 @@
 # Semantic Architecture Handover
 
 - Date: 2026-04-02
-- Status: Foundation merged; fit semantic scoring and fit rewire implementation active on PR 2 branch; preference semantics still pending
+- Status: Foundation merged; fit semantic scoring and fit rewire merged; preference semantic reranking implementation active on PR 3 branch
 
 ## Recommended PR Split
 
@@ -60,7 +60,7 @@ Behavior:
 
 ### PR 3: Preference Semantic Reranking
 
-Target scope:
+Scope now implemented on this branch:
 
 - implement `PreferenceSemanticReranker` on fit-qualified shortlists
 - add degraded/fallback observability
@@ -71,6 +71,24 @@ Why separate:
 
 - product and ranking behavior change is distinct from fit correctness
 - easier to evaluate personalization separately from fit improvements
+
+What landed:
+
+- [core/preference_semantics.py](/Users/sookyungahn/repos/JobScout-preference-semantics/core/preference_semantics.py)
+- [services/scorer_matcher/preference_semantics.py](/Users/sookyungahn/repos/JobScout-preference-semantics/services/scorer_matcher/preference_semantics.py)
+- [services/scorer_matcher/candidate_preferences.py](/Users/sookyungahn/repos/JobScout-preference-semantics/services/scorer_matcher/candidate_preferences.py)
+- [services/scorer_matcher/pipeline.py](/Users/sookyungahn/repos/JobScout-preference-semantics/services/scorer_matcher/pipeline.py)
+- [web/backend/services/candidate_preferences_service.py](/Users/sookyungahn/repos/JobScout-preference-semantics/web/backend/services/candidate_preferences_service.py)
+- [core/llm/fake_service.py](/Users/sookyungahn/repos/JobScout-preference-semantics/core/llm/fake_service.py)
+
+Behavior:
+
+- candidate preference saves now parse and persist a normalized `PreferenceProfile` when a parser is available
+- preference reranking now runs semantically on fit-qualified shortlists instead of using lexical token-overlap bonus logic
+- final `top_k` truncation now happens after preference reranking so shortlisted jobs are not trimmed too early
+- fit-band ordering is preserved through a bounded overall-score recomputation
+- degraded reranking now records explicit fallback metadata in persisted `fit_components`
+- split-stack candidate-preferences flow now validates semantic preference metadata through the real API and persisted matches
 
 ## What Landed In PR 1 Foundation
 
@@ -165,8 +183,8 @@ Observed results at handoff:
 
 ## Important Boundaries
 
-- No real `PreferenceSemanticReranker` exists yet.
-- Current lexical soft-preference overlap still exists in the matcher pipeline and should be treated as an interim path, not the target architecture.
+- Preference reranking is now implemented, but it is still backed by LLM/fake-LLM structured judgments rather than a cheaper dedicated non-LLM reranker model.
+- Preference mode gating is still backend allowlist-based; there is no separate per-user capability model for preference modes yet.
 - No admin HTTP surface exists for capability management in this phase beyond config-driven allowed modes plus the internal CLI.
 - A DB-backed capability control mechanism exists now, plus an internal CLI for dev/staging administration:
   - [manage_feature_capability.py](/Users/sookyungahn/repos/JobScout-fit-semantics/scripts/manage_feature_capability.py)
@@ -183,12 +201,12 @@ Observed results at handoff:
 
 ## Next PR Starting Point
 
-If picking up preference semantics next:
+If continuing preference semantics next:
 
-1. implement shortlist reranker using `PreferenceProfile`
-2. add bounded fit-band ordering logic
-3. log mode used, fallback reason, and latency
-4. evaluate whether `llm_judge` should remain disabled by default
+1. add explicit latency and shortlist-size observability for preference reranking runs
+2. evaluate whether `llm_judge` should remain disabled by default
+3. decide whether preference modes need their own capability layer or can remain backend allowlist-controlled
+4. consider exposing preference diagnostics more directly in match detail UI if product wants that visibility
 
 If continuing fit semantics after PR 2:
 
@@ -206,5 +224,5 @@ If continuing fit semantics after PR 2:
 Current state:
 
 - PR 1 is merged
-- PR 2 is the active fit-semantics PR branch
-- PR 3 remains the next major architecture slice after PR 2 lands
+- PR 2 is merged
+- PR 3 is the active preference-semantics branch

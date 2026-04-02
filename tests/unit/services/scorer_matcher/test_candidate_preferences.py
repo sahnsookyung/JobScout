@@ -1,8 +1,9 @@
 """Unit tests for candidate preference helper logic."""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
+from core.config_loader import PreferencesConfig
 from services.scorer_matcher.candidate_preferences import (
     _job_matches_employment_types,
     _job_matches_locations,
@@ -11,15 +12,18 @@ from services.scorer_matcher.candidate_preferences import (
     _job_supports_visa,
     _job_work_mode,
     _matches_candidate_preferences,
-    _tokenize_soft_preferences,
+    _preference_sort_key,
     apply_candidate_preference_filters,
-    apply_soft_preference_reranking,
+    apply_preference_semantic_reranking,
     load_candidate_preferences,
 )
+from services.scorer_matcher.preference_semantics import PreferenceProfile
+from services.scorer_matcher.preference_semantics import PreferenceAssessment
 
 
 def _job(**overrides):
     defaults = {
+        "id": "job-1",
         "title": "Backend Engineer",
         "company": "Acme",
         "is_remote": None,
@@ -40,6 +44,28 @@ def _job(**overrides):
 
 def _preliminary(job=None):
     return SimpleNamespace(job=job or _job())
+
+
+def _scored_match(job, *, overall_score=80.0, fit_score=80.0, job_similarity=0.8, fit_components=None):
+    return SimpleNamespace(
+        job=job,
+        overall_score=overall_score,
+        fit_score=fit_score,
+        job_similarity=job_similarity,
+        fit_components=fit_components or {},
+    )
+
+
+def _preferences_config() -> PreferencesConfig:
+    return PreferencesConfig.model_validate(
+        {
+            "default_mode": "semantic_rerank",
+            "allowed_modes": ["semantic_rerank", "llm_judge"],
+            "parser": {"enabled": False, "model": None},
+            "semantic_reranker": {"enabled": False, "model": None},
+            "llm_judge": {"enabled": False, "model": None},
+        }
+    )
 
 
 class TestLoadCandidatePreferences:
@@ -64,7 +90,9 @@ class TestLoadCandidatePreferences:
             salary_min=120000,
             employment_types=["Full-time"],
             soft_preferences="Mentorship",
+            soft_preference_summary="Mentorship",
             preference_mode="semantic_rerank",
+            preference_profile={"raw_text": "Mentorship", "parser_confidence": 0.7},
             revision=7,
         )
 
@@ -77,7 +105,9 @@ class TestLoadCandidatePreferences:
             "salary_min": 120000,
             "employment_types": ["Full-time"],
             "soft_preferences": "Mentorship",
+            "soft_preference_summary": "Mentorship",
             "preference_mode": "semantic_rerank",
+            "preference_profile": {"raw_text": "Mentorship", "parser_confidence": 0.7},
             "revision": 7,
         }
 
@@ -170,51 +200,131 @@ class TestHardFilterHelpers:
         assert apply_candidate_preference_filters(matches, None) == matches
 
 
-class TestSoftPreferenceHelpers:
-    def test_tokenize_soft_preferences_drops_short_words_and_stopwords(self):
-        assert _tokenize_soft_preferences("the next backend product role with growth") == {
-            "backend",
-            "product",
-            "growth",
-        }
+class TestPreferenceSemanticReranking:
+    @patch("services.scorer_matcher.candidate_preferences.build_preference_parser")
+    def test_falls_back_to_fit_only_when_profile_unavailable(self, mock_build_parser):
+        mock_build_parser.return_value = None
+        matches = [_scored_match(_job(id="job-1"))]
 
-    def test_apply_soft_preference_reranking_handles_empty_and_no_overlap_cases(self):
-        matches = [
-            SimpleNamespace(
-                job=_job(description="Legacy COBOL systems", skills_raw="cobol, mainframe"),
-                overall_score=80.0,
-                fit_components={},
-            )
-        ]
-
-        assert apply_soft_preference_reranking(matches, None) == matches
-        assert apply_soft_preference_reranking(matches, {"soft_preferences": "", "revision": 1}) == matches
-        assert apply_soft_preference_reranking(
+        reranked = apply_preference_semantic_reranking(
             matches,
-            {"soft_preferences": "python mentorship", "revision": 1},
-        )[0].overall_score == 80.0
-
-    def test_apply_soft_preference_reranking_adds_bonus_and_overlap_metadata(self):
-        low_overlap = SimpleNamespace(
-            job=_job(description="Python backend role"),
-            overall_score=80.0,
-            fit_components={},
-        )
-        high_overlap = SimpleNamespace(
-            job=_job(
-                description="Python backend role with mentorship and product growth",
-                raw_payload={"ai_job_summary": "Growth and mentorship focused team"},
-            ),
-            overall_score=79.5,
-            fit_components={},
+            {
+                "soft_preferences": "Mentorship and backend teams",
+                "preference_mode": "semantic_rerank",
+                "preference_profile": None,
+            },
+            config=_preferences_config(),
         )
 
-        reranked = apply_soft_preference_reranking(
-            [low_overlap, high_overlap],
-            {"soft_preferences": "python mentorship product growth", "revision": 2},
+        assert reranked[0].fit_components["preference_mode_used"] == "fit_only_fallback"
+        assert reranked[0].fit_components["preference_fallback_reason"] == "preference_profile_unavailable"
+
+    @patch("services.scorer_matcher.candidate_preferences.build_preference_semantic_reranker")
+    def test_semantic_reranker_updates_scores_and_order_with_fit_band_guardrail(
+        self,
+        mock_build_reranker,
+    ):
+        mock_build_reranker.return_value = Mock(
+            rerank=Mock(
+                return_value=[
+                    PreferenceAssessment(
+                        job_id="job-2",
+                        preference_score=0.95,
+                        preference_confidence=0.9,
+                        preference_reason_codes=["team_culture_match"],
+                        preference_explanation="Matches mentorship preferences.",
+                    ),
+                    PreferenceAssessment(
+                        job_id="job-1",
+                        preference_score=0.15,
+                        preference_confidence=0.5,
+                        preference_reason_codes=["no_preference_signal"],
+                        preference_explanation="Weak preference signal.",
+                    ),
+                ]
+            )
+        )
+        config = _preferences_config().model_copy(
+            update={
+                "semantic_reranker": _preferences_config().parser.model_copy(
+                    update={"enabled": True, "model": "fake"}
+                )
+            }
+        )
+        profile = PreferenceProfile(
+            raw_text="Mentorship and backend teams",
+            parser_confidence=0.8,
+            team_culture=[{"label": "Mentorship", "weight": 0.9, "confidence": 0.9}],
+        )
+        low_fit_high_pref = _scored_match(_job(id="job-2", title="Mentorship Team"), fit_score=84.0)
+        high_fit_low_pref = _scored_match(_job(id="job-1", title="Backend Engineer"), fit_score=86.0)
+
+        reranked = apply_preference_semantic_reranking(
+            [low_fit_high_pref, high_fit_low_pref],
+            {
+                "soft_preferences": "Mentorship and backend teams",
+                "preference_mode": "semantic_rerank",
+                "preference_profile": profile.model_dump(mode="json"),
+            },
+            config=config,
         )
 
-        assert reranked[0] is high_overlap
-        assert reranked[0].overall_score > reranked[1].overall_score
-        assert reranked[0].fit_components["soft_preference_bonus"] > 0
-        assert "mentorship" in reranked[0].fit_components["soft_preference_overlap"]
+        assert reranked[0].job.id == "job-1"
+        assert reranked[1].job.id == "job-2"
+        assert reranked[1].fit_components["preference_score"] == 0.95
+        assert reranked[1].fit_components["preference_mode_used"] == "semantic_rerank"
+
+    @patch("services.scorer_matcher.candidate_preferences.build_preference_judge")
+    def test_llm_judge_mode_uses_judge_builder(self, mock_build_judge):
+        mock_build_judge.return_value = Mock(
+            judge=Mock(
+                return_value=[
+                    PreferenceAssessment(
+                        job_id="job-1",
+                        preference_score=0.8,
+                        preference_confidence=0.88,
+                        preference_reason_codes=["tech_stack_match"],
+                        preference_explanation="Strong Python preference match.",
+                    )
+                ]
+            )
+        )
+        config = _preferences_config().model_copy(
+            update={
+                "llm_judge": _preferences_config().parser.model_copy(
+                    update={"enabled": True, "model": "fake"}
+                )
+            }
+        )
+        profile = PreferenceProfile(
+            raw_text="Python backend mentorship",
+            parser_confidence=0.8,
+            tech_stack=[{"label": "Python", "weight": 0.9, "confidence": 0.9}],
+        )
+
+        reranked = apply_preference_semantic_reranking(
+            [_scored_match(_job(id="job-1", title="Python Engineer"))],
+            {
+                "soft_preferences": "Python backend mentorship",
+                "preference_mode": "llm_judge",
+                "preference_profile": profile.model_dump(mode="json"),
+            },
+            config=config,
+        )
+
+        assert reranked[0].fit_components["preference_mode_used"] == "llm_judge"
+        assert reranked[0].fit_components["preference_score"] == 0.8
+
+    def test_preference_sort_key_prefers_band_then_preference(self):
+        high_pref = _scored_match(
+            _job(id="job-1"),
+            fit_score=82.0,
+            fit_components={"preference_score": 0.9},
+        )
+        low_pref = _scored_match(
+            _job(id="job-2"),
+            fit_score=82.0,
+            fit_components={"preference_score": 0.2},
+        )
+
+        assert _preference_sort_key(high_pref) > _preference_sort_key(low_pref)

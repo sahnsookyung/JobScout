@@ -44,6 +44,22 @@ _GENERIC_TOKENS = {
     "required", "preferred", "with", "using", "plus", "have", "hands", "on",
 }
 
+_PREFERENCE_SIGNALS = {
+    "remote": ("work_style", "Remote-friendly"),
+    "hybrid": ("work_style", "Hybrid collaboration"),
+    "mentorship": ("team_culture", "Mentorship"),
+    "backend": ("tech_stack", "Backend systems"),
+    "python": ("tech_stack", "Python"),
+    "fastapi": ("tech_stack", "FastAPI"),
+    "microservices": ("tech_stack", "Microservices"),
+    "product": ("mission_domain", "Product-minded"),
+    "mission": ("mission_domain", "Mission-driven"),
+    "climate": ("mission_domain", "Climate"),
+    "growth": ("growth_preferences", "Growth opportunities"),
+    "modern": ("team_culture", "Modern engineering"),
+    "teams": ("team_culture", "Collaborative teams"),
+}
+
 
 def _tokenize(text: str) -> List[str]:
     return re.findall(r"[a-z0-9_+-]+", text.lower())
@@ -131,6 +147,150 @@ def _fake_semantic_fit_response(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _fake_preference_profile_response(text: str) -> Dict[str, Any]:
+    normalized = " ".join(text.split())
+    lowered_tokens = _tokenize(normalized)
+    grouped: Dict[str, List[Dict[str, Any]]] = {
+        "work_style": [],
+        "team_culture": [],
+        "tech_stack": [],
+        "mission_domain": [],
+        "growth_preferences": [],
+        "negative_preferences": [],
+    }
+    seen: set[tuple[str, str]] = set()
+    for token in lowered_tokens:
+        signal = _PREFERENCE_SIGNALS.get(token)
+        if not signal:
+            continue
+        field_name, label = signal
+        key = (field_name, label.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        grouped[field_name].append(
+            {
+                "label": label,
+                "weight": 0.8 if field_name != "growth_preferences" else 0.7,
+                "confidence": 0.85,
+            }
+        )
+
+    negative_phrases = []
+    lowered = normalized.lower()
+    for phrase in ("avoid consulting", "avoid salesforce", "no startup chaos"):
+        if phrase in lowered:
+            negative_phrases.append(
+                {
+                    "label": phrase,
+                    "weight": 0.8,
+                    "confidence": 0.8,
+                }
+            )
+    grouped["negative_preferences"] = negative_phrases
+
+    return {
+        "raw_text": normalized,
+        "parse_version": "2026-04-01.v1",
+        "parser_confidence": 0.82 if seen or negative_phrases else 0.45,
+        **grouped,
+    }
+
+
+def _preference_label_tokens(label: str) -> set[str]:
+    return {
+        token
+        for token in _tokenize(label)
+        if token not in _GENERIC_TOKENS and len(token) >= 4
+    }
+
+
+def _job_preference_haystack(job_payload: Dict[str, Any]) -> str:
+    return " ".join(
+        [
+            str(job_payload.get("title", "")),
+            str(job_payload.get("company", "")),
+            str(job_payload.get("location_text", "")),
+            str(job_payload.get("work_mode", "")),
+            str(job_payload.get("employment_type", "")),
+            str(job_payload.get("summary", "")),
+            str(job_payload.get("company_description", "")),
+            " ".join(str(skill) for skill in (job_payload.get("skills") or [])),
+        ]
+    ).lower()
+
+
+def _fake_preference_rerank_response(payload: Dict[str, Any], *, judge_mode: bool) -> Dict[str, Any]:
+    profile = payload.get("profile", {}) or {}
+    jobs = payload.get("jobs", []) or []
+    results: List[Dict[str, Any]] = []
+    positive_fields = (
+        "work_style",
+        "team_culture",
+        "tech_stack",
+        "mission_domain",
+        "growth_preferences",
+    )
+    for job in jobs:
+        haystack = _job_preference_haystack(job)
+        possible_score = 0.0
+        positive_score = 0.0
+        negative_score = 0.0
+        reason_codes: List[str] = []
+        matched_labels: List[str] = []
+
+        for field_name in positive_fields:
+            for item in profile.get(field_name, []) or []:
+                item_weight = float(item.get("weight", 0.0) or 0.0) * float(
+                    item.get("confidence", 0.0) or 0.0
+                )
+                possible_score += item_weight
+                label = str(item.get("label", ""))
+                label_tokens = _preference_label_tokens(label)
+                if label_tokens and any(token in haystack for token in label_tokens):
+                    positive_score += item_weight
+                    matched_labels.append(label)
+                    reason_codes.append(f"{field_name}_match")
+
+        for item in profile.get("negative_preferences", []) or []:
+            label = str(item.get("label", ""))
+            label_tokens = _preference_label_tokens(label)
+            if label_tokens and any(token in haystack for token in label_tokens):
+                negative_score += float(item.get("weight", 0.0) or 0.0) * float(
+                    item.get("confidence", 0.0) or 0.0
+                )
+                reason_codes.append("negative_preference_match")
+
+        base_score = positive_score / max(possible_score, 1.0)
+        score = max(0.0, min(1.0, base_score - min(0.75, negative_score)))
+        confidence = max(0.3, min(0.95, 0.45 + (0.12 * len(set(reason_codes)))))
+
+        if matched_labels:
+            explanation = (
+                "Matches preferences for " + ", ".join(matched_labels[:3]) + "."
+            )
+        elif negative_score > 0:
+            explanation = "Conflicts with at least one saved negative preference."
+        else:
+            explanation = "The job description does not strongly reflect the saved preferences."
+
+        if judge_mode and score > 0:
+            score = min(1.0, score + 0.05)
+            confidence = min(0.98, confidence + 0.05)
+
+        results.append(
+            {
+                "job_id": str(job.get("job_id", "")),
+                "preference_score": round(score, 4),
+                "preference_confidence": round(confidence, 4),
+                "preference_reason_codes": sorted(set(reason_codes))[:4] or ["no_preference_signal"],
+                "preference_explanation": explanation,
+            }
+        )
+
+    return {"results": results}
+
+
 class FakeLLMService(LLMProvider):
     """Deterministic fake provider that never calls external services."""
 
@@ -162,11 +322,24 @@ class FakeLLMService(LLMProvider):
     ) -> Dict[str, Any]:
         del system_prompt, user_message
         self._maybe_fail_extraction(text)
-        if isinstance(schema_spec, dict) and schema_spec.get("name") == "semantic_fit_pairs_v1":
+        schema_name = schema_spec.get("name") if isinstance(schema_spec, dict) else None
+        if schema_name == "semantic_fit_pairs_v1":
             parsed_payload = json.loads(text)
             if not isinstance(parsed_payload, dict):
                 raise ValueError("Fake semantic fit extraction expected a JSON payload object")
             return _fake_semantic_fit_response(parsed_payload)
+        if schema_name == "preference_profile_schema":
+            return _fake_preference_profile_response(text)
+        if schema_name == "preference_semantic_rerank_v1":
+            parsed_payload = json.loads(text)
+            if not isinstance(parsed_payload, dict):
+                raise ValueError("Fake preference rerank extraction expected a JSON payload object")
+            return _fake_preference_rerank_response(parsed_payload, judge_mode=False)
+        if schema_name == "preference_llm_judge_v1":
+            parsed_payload = json.loads(text)
+            if not isinstance(parsed_payload, dict):
+                raise ValueError("Fake preference judge extraction expected a JSON payload object")
+            return _fake_preference_rerank_response(parsed_payload, judge_mode=True)
         try:
             parsed = json.loads(text)
             if isinstance(parsed, dict):

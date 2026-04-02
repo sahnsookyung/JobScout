@@ -29,7 +29,7 @@ from database.uow import job_uow
 from notification.orchestrator import send_notifications
 from services.scorer_matcher.candidate_preferences import (
     apply_candidate_preference_filters,
-    apply_soft_preference_reranking,
+    apply_preference_semantic_reranking,
     load_candidate_preferences,
 )
 
@@ -454,6 +454,18 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event
     """Run rule-based scoring."""
     logger.info("=== MATCHING STEP 2: Running ScorerService (Fit-first scoring) ===")
     result_policy = _resolve_result_policy(matching_config)
+    if result_policy and preliminary_matches:
+        widened_top_k = max(
+            int(getattr(result_policy, "top_k", len(preliminary_matches)) or len(preliminary_matches)),
+            len(preliminary_matches),
+        )
+        if hasattr(result_policy, "model_copy"):
+            result_policy = result_policy.model_copy(update={"top_k": widened_top_k})
+        elif hasattr(result_policy, "top_k"):
+            try:
+                result_policy.top_k = widened_top_k
+            except Exception:
+                logger.warning("Could not widen result policy top_k prior to preference reranking", exc_info=True)
 
     return scorer.score_matches(
         preliminary_matches=preliminary_matches,
@@ -461,6 +473,17 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event
         match_type="requirements_only",
         stop_event=stop_event,
     )
+
+
+def _apply_final_result_policy(scored_matches, matching_config):
+    """Apply the final result truncation after semantic preference reranking."""
+    result_policy = _resolve_result_policy(matching_config)
+    if not result_policy:
+        return scored_matches
+    top_k = int(getattr(result_policy, "top_k", len(scored_matches)) or len(scored_matches))
+    if top_k <= 0:
+        return []
+    return scored_matches[:top_k]
 
 
 def _resolve_pipeline_ai_service(ctx: AppContext) -> Optional[LLMProvider]:
@@ -623,10 +646,12 @@ def _run_matching_and_scoring(
         scored_matches = _run_scorer_service(
             scorer, preliminary_matches, matching_config, stop_event,
         )
-        scored_matches = apply_soft_preference_reranking(
+        scored_matches = apply_preference_semantic_reranking(
             scored_matches,
             candidate_preferences,
+            config=ctx.config.preferences,
         )
+        scored_matches = _apply_final_result_policy(scored_matches, matching_config)
 
         match_dtos = _convert_matches_to_dtos(scored_matches)
 

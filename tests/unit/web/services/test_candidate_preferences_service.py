@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from services.scorer_matcher.preference_semantics import PreferenceProfile
 from web.backend.services.candidate_preferences_service import CandidatePreferencesService
 
 
@@ -89,22 +90,65 @@ def test_update_preferences_stores_summary_without_blocking_on_parser(
     )
     service.repo.candidate_preferences.get_or_create_preferences = Mock(return_value=preferences)
 
-    response = service.update_preferences(
-        SimpleNamespace(id="user-1"),
-        {
-            "remote_mode": "any",
-            "target_locations": [],
-            "visa_sponsorship_required": False,
-            "salary_min": None,
-            "employment_types": [],
-            "soft_preferences": "Mentorship and modern backend teams",
-            "preference_mode": "semantic_rerank",
-        },
-    )
+    with patch.object(service, "_parse_preference_profile", return_value=None):
+        response = service.update_preferences(
+            SimpleNamespace(id="user-1"),
+            {
+                "remote_mode": "any",
+                "target_locations": [],
+                "visa_sponsorship_required": False,
+                "salary_min": None,
+                "employment_types": [],
+                "soft_preferences": "Mentorship and modern backend teams",
+                "preference_mode": "semantic_rerank",
+            },
+        )
 
     assert preferences.preference_profile is None
     assert preferences.soft_preference_summary == "Mentorship and modern backend teams"
     assert response["soft_preference_summary"] == "Mentorship and modern backend teams"
+
+@patch("web.backend.services.candidate_preferences_service.get_config")
+def test_update_preferences_persists_preference_profile_when_available(mock_get_config):
+    mock_get_config.return_value = _config(allowed_modes=["semantic_rerank", "llm_judge"])
+    db = Mock()
+    service = CandidatePreferencesService(db)
+    preferences = SimpleNamespace(
+        owner_id="user-1",
+        remote_mode="any",
+        target_locations=[],
+        visa_sponsorship_required=False,
+        salary_min=None,
+        employment_types=[],
+        soft_preferences="",
+        soft_preference_summary=None,
+        preference_mode="semantic_rerank",
+        preference_profile=None,
+        revision=0,
+    )
+    service.repo.candidate_preferences.get_or_create_preferences = Mock(return_value=preferences)
+    profile = PreferenceProfile(
+        raw_text="Mentorship and backend teams",
+        parser_confidence=0.81,
+        team_culture=[{"label": "Mentorship", "weight": 0.9, "confidence": 0.9}],
+    )
+
+    with patch.object(service, "_parse_preference_profile", return_value=profile):
+        response = service.update_preferences(
+            SimpleNamespace(id="user-1"),
+            {
+                "remote_mode": "any",
+                "target_locations": [],
+                "visa_sponsorship_required": False,
+                "salary_min": None,
+                "employment_types": [],
+                "soft_preferences": "Mentorship and backend teams",
+                "preference_mode": "semantic_rerank",
+            },
+        )
+
+    assert preferences.preference_profile == profile.model_dump(mode="json")
+    assert response["soft_preference_summary"] == "Mentorship"
 
 
 @patch("web.backend.services.candidate_preferences_service.get_config")

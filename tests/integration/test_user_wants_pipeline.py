@@ -29,6 +29,7 @@ def candidate_preferences_env(test_db_url, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", test_db_url)
     monkeypatch.setenv("AUTH_MODE", "dev-bypass")
     monkeypatch.setenv("JOBSCOUT_ENV", "test")
+    monkeypatch.setenv("JOBSCOUT_FAKE_AI", "1")
     monkeypatch.setenv("DEV_BYPASS_USER_ID", str(OWNER_ID))
 
     engine = create_engine(test_db_url)
@@ -135,7 +136,7 @@ def test_candidate_preferences_api_round_trip(candidate_preferences_env):
     assert payload["target_locations"] == ["Remote"]
     assert payload["preference_mode"] == "semantic_rerank"
     assert payload["effective_preference_mode"] == "semantic_rerank"
-    assert payload["soft_preference_summary"] == "Mentorship and modern backend teams"
+    assert payload["soft_preference_summary"] == "Mentorship, Modern engineering, Backend systems"
 
     session = candidate_preferences_env()
     try:
@@ -143,7 +144,8 @@ def test_candidate_preferences_api_round_trip(candidate_preferences_env):
             select(CandidatePreferences).where(CandidatePreferences.owner_id == OWNER_ID)
         ).scalar_one()
         assert stored.preference_mode == "semantic_rerank"
-        assert stored.preference_profile is None
-        assert stored.soft_preference_summary == "Mentorship and modern backend teams"
+        assert stored.preference_profile is not None
+        assert stored.preference_profile["raw_text"] == "Mentorship and modern backend teams"
+        assert stored.soft_preference_summary == "Mentorship, Modern engineering, Backend systems"
     finally:
         session.close()
