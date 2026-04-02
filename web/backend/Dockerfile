@@ -30,6 +30,7 @@ COPY web/shared/ ./web/shared/
 COPY web/backend/ ./web/backend/
 # Services: base utilities for compact mode (extraction and embeddings runners)
 COPY services/base/ ./services/base/
+COPY services/scorer_matcher/ ./services/scorer_matcher/
 COPY config.yaml ./
 
 RUN uv sync --frozen --no-dev --group web
