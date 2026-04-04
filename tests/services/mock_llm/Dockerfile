@@ -12,6 +12,7 @@ ENV UV_LINK_MODE=copy
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project --group web
 
+COPY core/ ./core/
 COPY tests/__init__.py ./tests/__init__.py
 COPY tests/mocks/ ./tests/mocks/
 COPY tests/services/ ./tests/services/
