@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from core.llm.fake_service import FakeLLMService
+from tests.mocks.fake_service import FakeLLMService
 from database.models import (
     CandidatePreferences,
     JobMatch,

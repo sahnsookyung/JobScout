@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.config_loader import ScorerConfig
-from core.llm.fake_service import FakeLLMService
+from tests.mocks.fake_service import FakeLLMService
 from core.matcher import JobMatchPreliminary, RequirementMatchResult
 from core.matcher.models import RequirementEvidenceCandidate
 from core.scorer.semantic_fit import (

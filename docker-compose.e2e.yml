@@ -5,7 +5,7 @@ services:
     profiles: ["split", "web"]
     build:
       context: .
-      dockerfile: services/mock_llm/Dockerfile
+      dockerfile: tests/services/mock_llm/Dockerfile
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=5)"]
       interval: 30s

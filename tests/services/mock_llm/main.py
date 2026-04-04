@@ -8,7 +8,7 @@ from typing import Any, Dict, Iterable, List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from core.llm.fake_service import FakeLLMService
+from tests.mocks.fake_service import FakeLLMService
 
 app = FastAPI(title="JobScout Mock OpenAI-Compatible LLM", version="1.0")
 
@@ -175,7 +175,7 @@ def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/v1/chat/completions")
+@app.post("/v1/chat/completions", responses={400: {"description": "Invalid request or schema mismatch"}})
 def chat_completions(payload: ChatCompletionsRequest) -> Dict[str, Any]:
     content = json.dumps(_build_schema_response(payload))
     return {

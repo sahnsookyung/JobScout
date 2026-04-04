@@ -229,6 +229,44 @@ def _job_preference_haystack(job_payload: Dict[str, Any]) -> str:
     ).lower()
 
 
+def _score_job_against_profile(
+    job: Dict[str, Any],
+    profile: Dict[str, Any],
+    positive_fields: tuple,
+) -> tuple:
+    """Return (positive_score, possible_score, negative_score, reason_codes, matched_labels)."""
+    haystack = _job_preference_haystack(job)
+    possible_score = 0.0
+    positive_score = 0.0
+    negative_score = 0.0
+    reason_codes: List[str] = []
+    matched_labels: List[str] = []
+
+    for field_name in positive_fields:
+        for item in profile.get(field_name, []) or []:
+            item_weight = float(item.get("weight", 0.0) or 0.0) * float(
+                item.get("confidence", 0.0) or 0.0
+            )
+            possible_score += item_weight
+            label = str(item.get("label", ""))
+            label_tokens = _preference_label_tokens(label)
+            if label_tokens and any(token in haystack for token in label_tokens):
+                positive_score += item_weight
+                matched_labels.append(label)
+                reason_codes.append(f"{field_name}_match")
+
+    for item in profile.get("negative_preferences", []) or []:
+        label = str(item.get("label", ""))
+        label_tokens = _preference_label_tokens(label)
+        if label_tokens and any(token in haystack for token in label_tokens):
+            negative_score += float(item.get("weight", 0.0) or 0.0) * float(
+                item.get("confidence", 0.0) or 0.0
+            )
+            reason_codes.append("negative_preference_match")
+
+    return positive_score, possible_score, negative_score, reason_codes, matched_labels
+
+
 def _fake_preference_rerank_response(payload: Dict[str, Any], *, judge_mode: bool) -> Dict[str, Any]:
     profile = payload.get("profile", {}) or {}
     jobs = payload.get("jobs", []) or []
@@ -241,34 +279,9 @@ def _fake_preference_rerank_response(payload: Dict[str, Any], *, judge_mode: boo
         "growth_preferences",
     )
     for job in jobs:
-        haystack = _job_preference_haystack(job)
-        possible_score = 0.0
-        positive_score = 0.0
-        negative_score = 0.0
-        reason_codes: List[str] = []
-        matched_labels: List[str] = []
-
-        for field_name in positive_fields:
-            for item in profile.get(field_name, []) or []:
-                item_weight = float(item.get("weight", 0.0) or 0.0) * float(
-                    item.get("confidence", 0.0) or 0.0
-                )
-                possible_score += item_weight
-                label = str(item.get("label", ""))
-                label_tokens = _preference_label_tokens(label)
-                if label_tokens and any(token in haystack for token in label_tokens):
-                    positive_score += item_weight
-                    matched_labels.append(label)
-                    reason_codes.append(f"{field_name}_match")
-
-        for item in profile.get("negative_preferences", []) or []:
-            label = str(item.get("label", ""))
-            label_tokens = _preference_label_tokens(label)
-            if label_tokens and any(token in haystack for token in label_tokens):
-                negative_score += float(item.get("weight", 0.0) or 0.0) * float(
-                    item.get("confidence", 0.0) or 0.0
-                )
-                reason_codes.append("negative_preference_match")
+        positive_score, possible_score, negative_score, reason_codes, matched_labels = (
+            _score_job_against_profile(job, profile, positive_fields)
+        )
 
         base_score = positive_score / max(possible_score, 1.0)
         score = max(0.0, min(1.0, base_score - min(0.75, negative_score)))

@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
-from core.llm.fake_service import (
+from tests.mocks.fake_service import (
     FAIL_EMBEDDING_MARKER,
     FAIL_EXTRACTION_MARKER,
     FakeLLMService,

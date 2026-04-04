@@ -12,8 +12,9 @@ ENV UV_LINK_MODE=copy
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project --group web
 
-COPY core/ ./core/
-COPY services/mock_llm/ ./services/mock_llm/
+COPY tests/__init__.py ./tests/__init__.py
+COPY tests/mocks/ ./tests/mocks/
+COPY tests/services/ ./tests/services/
 
 RUN uv sync --frozen --no-dev --group web
 
@@ -31,4 +32,4 @@ ENV PYTHONPATH=/app
 USER appuser
 EXPOSE 8090
 
-CMD ["uvicorn", "services.mock_llm.main:app", "--host", "0.0.0.0", "--port", "8090"]
+CMD ["uvicorn", "tests.services.mock_llm.main:app", "--host", "0.0.0.0", "--port", "8090"]

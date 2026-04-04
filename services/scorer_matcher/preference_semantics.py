@@ -398,7 +398,6 @@ def _chunk_jobs_for_budget(
         return []
 
     budget_chars = _payload_char_budget(max_input_tokens)
-    base_size = _score_payload_char_size(profile, [], scorer_name=scorer_name)
     chunks: List[List[PreferenceJobPayload]] = []
     current: List[PreferenceJobPayload] = []
 
@@ -597,6 +596,82 @@ class CrossEncoderPreferenceReranker(PreferenceSemanticReranker):
                 segments.append((f"skill:{i}", skill))
         return segments
 
+    def _assess_job(
+        self,
+        job: PreferenceJobPayload,
+        pref_labels: List[tuple[str, str, float]],
+        negative_labels: List[str],
+    ) -> PreferenceAssessment:
+        job_text = " ".join(
+            filter(None, [job.title, job.summary] + job.skills + job.requirements + job.benefits)
+        ).lower()
+        if any(neg in job_text for neg in negative_labels):
+            return PreferenceAssessment(
+                job_id=job.job_id,
+                preference_score=0.0,
+                preference_confidence=0.9,
+                preference_reason_codes=["negative_preference_conflict"],
+                preference_explanation="Conflicts with candidate's stated negative preferences.",
+            )
+
+        segments = self._job_segments(job)
+        if not pref_labels or not segments:
+            return PreferenceAssessment(
+                job_id=job.job_id,
+                preference_score=0.0,
+                preference_confidence=0.0,
+            )
+
+        pairs: List[tuple[str, str]] = []
+        pair_meta: List[tuple[str, str, str, float]] = []
+        for category, label, weight in pref_labels:
+            for seg_label, seg_text in segments:
+                pairs.append((label, seg_text))
+                pair_meta.append((category, label, seg_label, weight))
+
+        scores = self._cross_encoder.score_text_pairs(pairs)
+        weighted = [score * meta[3] for score, meta in zip(scores, pair_meta)]
+
+        top_k = 5
+        top_indices = sorted(range(len(weighted)), key=lambda i, w=weighted: w[i], reverse=True)[:top_k]
+        top_scores = [weighted[i] for i in top_indices]
+        overall_score = sum(top_scores) / len(top_scores) if top_scores else 0.0
+
+        # Emit reason codes for top-K pairs ordered by score.
+        # The cut is > 0 only — CE scores are relatively ordered within a query
+        # and have no calibrated absolute meaning. A weighted score of exactly 0
+        # means either heuristic no-overlap or preference weight = 0; both are
+        # genuine non-signals. All other top-K pairs are included.
+        # NOTE: for production real-model use, sigmoid-neutral pairs score ~0.5,
+        # so preference_score baseline for irrelevant jobs may be ~0.3-0.4 after
+        # weighting. Calibrate the score→preference_score mapping on domain data.
+        matched_categories: set[str] = set()
+        detail_codes: List[str] = []
+        seen_details: set[str] = set()
+        for idx in top_indices:
+            if weighted[idx] <= 0:
+                break
+            category, label, seg_label, _ = pair_meta[idx]
+            matched_categories.add(f"{category}_match")
+            detail = f"{category}:{label}|{seg_label}"
+            if detail not in seen_details:
+                seen_details.add(detail)
+                detail_codes.append(detail)
+
+        reason_codes = sorted(matched_categories) + detail_codes
+
+        return PreferenceAssessment(
+            job_id=job.job_id,
+            preference_score=round(min(1.0, max(0.0, overall_score)), 4),
+            preference_confidence=round(min(1.0, overall_score), 4),
+            preference_reason_codes=reason_codes,
+            preference_explanation=(
+                f"Matched {len(matched_categories)} preference categories across job segments."
+                if matched_categories
+                else "No preference signals matched."
+            ),
+        )
+
     def rerank(
         self,
         profile: PreferenceProfile,
@@ -604,90 +679,13 @@ class CrossEncoderPreferenceReranker(PreferenceSemanticReranker):
     ) -> List[PreferenceAssessment]:
         if not jobs:
             return []
-
         negative_labels = [p.label.lower() for p in profile.negative_preferences if p.label]
-
-        assessments: List[PreferenceAssessment] = []
-        for job in jobs:
-            job_text = " ".join(
-                filter(None, [job.title, job.summary] + job.skills + job.requirements + job.benefits)
-            ).lower()
-            if any(neg in job_text for neg in negative_labels):
-                assessments.append(PreferenceAssessment(
-                    job_id=job.job_id,
-                    preference_score=0.0,
-                    preference_confidence=0.9,
-                    preference_reason_codes=["negative_preference_conflict"],
-                    preference_explanation="Conflicts with candidate's stated negative preferences.",
-                ))
-                continue
-
-            pref_labels: List[tuple[str, str, float]] = []
-            for category in self._PROFILE_CATEGORIES:
-                for pref in getattr(profile, category, []):
-                    if pref.label:
-                        pref_labels.append((category, pref.label, float(pref.weight)))
-
-            segments = self._job_segments(job)
-            if not pref_labels or not segments:
-                assessments.append(PreferenceAssessment(
-                    job_id=job.job_id,
-                    preference_score=0.0,
-                    preference_confidence=0.0,
-                ))
-                continue
-
-            pairs: List[tuple[str, str]] = []
-            pair_meta: List[tuple[str, str, str, float]] = []
-            for category, label, weight in pref_labels:
-                for seg_label, seg_text in segments:
-                    pairs.append((label, seg_text))
-                    pair_meta.append((category, label, seg_label, weight))
-
-            scores = self._cross_encoder.score_text_pairs(pairs)
-            weighted = [score * meta[3] for score, meta in zip(scores, pair_meta)]
-
-            top_k = 5
-            top_indices = sorted(range(len(weighted)), key=lambda i: weighted[i], reverse=True)[:top_k]
-            top_scores = [weighted[i] for i in top_indices]
-            overall_score = sum(top_scores) / len(top_scores) if top_scores else 0.0
-
-            # Emit reason codes for top-K pairs ordered by score.
-            # The cut is > 0 only — CE scores are relatively ordered within a query
-            # and have no calibrated absolute meaning. A weighted score of exactly 0
-            # means either heuristic no-overlap or preference weight = 0; both are
-            # genuine non-signals. All other top-K pairs are included.
-            # NOTE: for production real-model use, sigmoid-neutral pairs score ~0.5,
-            # so preference_score baseline for irrelevant jobs may be ~0.3-0.4 after
-            # weighting. Calibrate the score→preference_score mapping on domain data.
-            matched_categories: set[str] = set()
-            detail_codes: List[str] = []
-            seen_details: set[str] = set()
-            for idx in top_indices:
-                if weighted[idx] <= 0:
-                    break
-                category, label, seg_label, _ = pair_meta[idx]
-                matched_categories.add(f"{category}_match")
-                detail = f"{category}:{label}|{seg_label}"
-                if detail not in seen_details:
-                    seen_details.add(detail)
-                    detail_codes.append(detail)
-
-            reason_codes = sorted(matched_categories) + detail_codes
-
-            assessments.append(PreferenceAssessment(
-                job_id=job.job_id,
-                preference_score=round(min(1.0, max(0.0, overall_score)), 4),
-                preference_confidence=round(min(1.0, overall_score), 4),
-                preference_reason_codes=reason_codes,
-                preference_explanation=(
-                    f"Matched {len(matched_categories)} preference categories across job segments."
-                    if matched_categories
-                    else "No preference signals matched."
-                ),
-            ))
-
-        return assessments
+        pref_labels: List[tuple[str, str, float]] = []
+        for category in self._PROFILE_CATEGORIES:
+            for pref in getattr(profile, category, []):
+                if pref.label:
+                    pref_labels.append((category, pref.label, float(pref.weight)))
+        return [self._assess_job(job, pref_labels, negative_labels) for job in jobs]
 
 
 def build_preference_llm(config: PreferenceModelConfig) -> Optional[LLMProvider]:

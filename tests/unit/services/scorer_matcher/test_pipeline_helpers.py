@@ -5,7 +5,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from core.llm.fake_service import FakeLLMService
+from tests.mocks.fake_service import FakeLLMService
 from services.scorer_matcher.candidate_preferences import (
     apply_candidate_preference_filters,
     apply_preference_semantic_reranking,

@@ -6,7 +6,7 @@ import pytest
 
 from core.app_context import AppContext
 from core.config_loader import LlmConfig
-from core.llm.fake_service import FakeLLMService
+from tests.mocks.fake_service import FakeLLMService
 
 
 def test_build_ai_service_uses_shared_provider_factory():

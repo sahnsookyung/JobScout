@@ -4,8 +4,8 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from core.llm.fake_service import FAIL_EXTRACTION_MARKER
-from services.mock_llm.main import app
+from tests.mocks.fake_service import FAIL_EXTRACTION_MARKER
+from tests.services.mock_llm.main import app
 
 client = TestClient(app)
 

@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import Mock, patch
 
 from core.config_loader import PreferenceCrossEncoderConfig, PreferenceModelConfig, PreferencesConfig
-from core.llm.fake_service import FakeLLMService
+from tests.mocks.fake_service import FakeLLMService
 from services.scorer_matcher.preference_semantics import (
     CrossEncoderPreferenceReranker,
     LLMPreferenceJudge,
