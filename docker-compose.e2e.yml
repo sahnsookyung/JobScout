@@ -14,6 +14,9 @@ services:
       start_period: 10s
 
   web-backend:
+    depends_on:
+      mock-llm:
+        condition: service_healthy
     environment:
       - JOBSCOUT_ENV=test
       - AUTH_MODE=dev-bypass
@@ -37,6 +40,9 @@ services:
       - PREFERENCES_LLM_JUDGE_API_KEY=mock-key
 
   extraction:
+    depends_on:
+      mock-llm:
+        condition: service_healthy
     environment:
       - JOBSCOUT_ENV=test
       - ETL_LLM_PROVIDER=openai_compatible
@@ -44,6 +50,9 @@ services:
       - ETL_LLM_API_KEY=mock-key
 
   embeddings:
+    depends_on:
+      mock-llm:
+        condition: service_healthy
     environment:
       - JOBSCOUT_ENV=test
       - ETL_LLM_PROVIDER=openai_compatible
@@ -53,6 +62,9 @@ services:
       - ETL_EMBEDDING_API_KEY=mock-key
 
   scorer-matcher:
+    depends_on:
+      mock-llm:
+        condition: service_healthy
     environment:
       - JOBSCOUT_ENV=test
       - ETL_LLM_PROVIDER=openai_compatible
@@ -77,6 +89,9 @@ services:
       - PREFERENCES_CROSS_ENCODER_RUNTIME=heuristic
 
   orchestrator:
+    depends_on:
+      mock-llm:
+        condition: service_healthy
     environment:
       - JOBSCOUT_ENV=test
       - AUTH_MODE=dev-bypass
