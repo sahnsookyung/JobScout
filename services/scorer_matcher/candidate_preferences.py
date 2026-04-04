@@ -416,7 +416,7 @@ def apply_preference_semantic_reranking(
                 )
             assessments = judge.judge(profile, job_payloads)
         else:
-            reranker = build_preference_semantic_reranker(config.semantic_reranker)
+            reranker = build_preference_semantic_reranker(config)
             if reranker is None:
                 return _fit_only_fallback(
                     scored_matches,

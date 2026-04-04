@@ -75,16 +75,27 @@ class PreferenceModelConfig(BaseModel):
     embedding_api_secret: Optional[str] = None
     embedding_headers: Optional[Dict[str, str]] = None
 
+class PreferenceCrossEncoderConfig(BaseModel):
+    enabled: bool = False
+    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    cache_path: Optional[str] = None
+    runtime: str = "auto"
+    max_batch_size: int = 32
+    trust_remote_code: bool = False
+
+
 class PreferencesConfig(BaseModel):
     default_mode: Literal["semantic_rerank", "llm_judge"] = "semantic_rerank"
     allowed_modes: List[Literal["semantic_rerank", "llm_judge"]] = Field(
         default_factory=lambda: ["semantic_rerank"]
     )
+    reranker: Literal["llm", "cross_encoder"] = "llm"
     parser: PreferenceModelConfig = Field(default_factory=PreferenceModelConfig)
     semantic_reranker: PreferenceModelConfig = Field(default_factory=PreferenceModelConfig)
     llm_judge: PreferenceModelConfig = Field(
         default_factory=lambda: PreferenceModelConfig(enabled=False)
     )
+    cross_encoder: PreferenceCrossEncoderConfig = Field(default_factory=PreferenceCrossEncoderConfig)
 
 
 class ResumeConfig(BaseModel):

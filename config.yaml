@@ -171,6 +171,10 @@ preferences:
   default_mode: "semantic_rerank"
   allowed_modes:
     - "semantic_rerank"
+  # reranker controls which backend handles semantic_rerank mode:
+  #   "llm"           — use the LLM (default; full explanations, requires model)
+  #   "cross_encoder" — use a local cross-encoder (cheap, no LLM calls; free-tier path)
+  reranker: "llm"
   parser:
     enabled: true
     # Parser/reranker/judge all use the same runtime provider contract.
@@ -196,6 +200,13 @@ preferences:
     model: "qwen3:14b"
     temperature: 0.0
     max_input_tokens: 1800
+  # cross_encoder: used when reranker is set to "cross_encoder"
+  # cross_encoder:
+  #   enabled: true
+  #   model_name: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  #   runtime: "auto"       # "flag_embedding", "sentence_transformers", or "auto"
+  #   max_batch_size: 32
+  #   trust_remote_code: false
 
 
 notifications:

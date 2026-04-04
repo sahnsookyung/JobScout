@@ -1,9 +1,10 @@
 import pytest
 from unittest.mock import Mock, patch
 
-from core.config_loader import PreferenceModelConfig
+from core.config_loader import PreferenceCrossEncoderConfig, PreferenceModelConfig, PreferencesConfig
 from core.llm.fake_service import FakeLLMService
 from services.scorer_matcher.preference_semantics import (
+    CrossEncoderPreferenceReranker,
     LLMPreferenceJudge,
     LLMPreferenceParser,
     LLMPreferenceSemanticReranker,
@@ -11,6 +12,7 @@ from services.scorer_matcher.preference_semantics import (
     PreferenceAssessment,
     PreferenceJobPayload,
     PreferenceProfile,
+    WeightedPreference,
     build_preference_judge,
     build_preference_llm,
     build_preference_parser,
@@ -171,7 +173,8 @@ def test_build_preference_semantic_reranker_wraps_llm(mock_build_llm):
     llm = Mock()
     mock_build_llm.return_value = llm
 
-    reranker = build_preference_semantic_reranker(_config())
+    config = PreferencesConfig(reranker="llm", semantic_reranker=_config())
+    reranker = build_preference_semantic_reranker(config)
 
     assert isinstance(reranker, LLMPreferenceSemanticReranker)
     assert reranker.llm is llm
@@ -502,10 +505,113 @@ def test_preference_reranker_skips_non_dict_llm_response():
 # ---------------------------------------------------------------------------
 
 def test_build_preference_semantic_reranker_returns_none_when_disabled():
-    config = _config(enabled=False)
+    config = PreferencesConfig(reranker="llm", semantic_reranker=_config(enabled=False))
     assert build_preference_semantic_reranker(config) is None
 
 
 def test_build_preference_judge_returns_none_when_disabled():
     config = _config(enabled=False)
     assert build_preference_judge(config) is None
+
+
+# ---------------------------------------------------------------------------
+# CrossEncoderPreferenceReranker
+# ---------------------------------------------------------------------------
+
+def test_cross_encoder_reranker_returns_empty_for_no_jobs():
+    ce = Mock()
+    reranker = CrossEncoderPreferenceReranker(ce)
+    profile = PreferenceProfile(raw_text="python", parser_confidence=0.8)
+    assert reranker.rerank(profile, []) == []
+    ce.score_text_pairs.assert_not_called()
+
+
+def test_cross_encoder_reranker_zero_score_when_no_preference_labels():
+    ce = Mock()
+    reranker = CrossEncoderPreferenceReranker(ce)
+    # Profile has no category labels → no pairs to score
+    profile = PreferenceProfile(raw_text="no preferences", parser_confidence=0.5)
+    result = reranker.rerank(
+        profile,
+        [PreferenceJobPayload(job_id="j1", title="Python Engineer", summary="python role")],
+    )
+    assert result[0].preference_score == 0.0
+    ce.score_text_pairs.assert_not_called()
+
+
+def test_cross_encoder_reranker_scores_job_from_cross_encoder_output():
+    ce = Mock()
+    # title segment only; score 0.8 × weight 1.0 → weighted = 0.8
+    ce.score_text_pairs.return_value = [0.8]
+    reranker = CrossEncoderPreferenceReranker(ce)
+    profile = PreferenceProfile(
+        raw_text="python",
+        parser_confidence=0.8,
+        tech_stack=[WeightedPreference(label="python", weight=1.0, confidence=0.9)],
+    )
+    job = PreferenceJobPayload(job_id="j1", title="Python Backend")
+    result = reranker.rerank(profile, [job])
+    assert result[0].job_id == "j1"
+    assert result[0].preference_score > 0.0
+
+
+def test_cross_encoder_reranker_negative_conflict_zeroes_score():
+    ce = Mock()
+    reranker = CrossEncoderPreferenceReranker(ce)
+    profile = PreferenceProfile(
+        raw_text="avoid salesforce",
+        parser_confidence=0.8,
+        negative_preferences=[WeightedPreference(label="salesforce", weight=0.9, confidence=0.9)],
+    )
+    job = PreferenceJobPayload(job_id="j1", title="Salesforce Developer", summary="Salesforce CRM")
+    result = reranker.rerank(profile, [job])
+    assert result[0].preference_score == 0.0
+    assert "negative_preference_conflict" in result[0].preference_reason_codes
+    ce.score_text_pairs.assert_not_called()
+
+
+def test_cross_encoder_reranker_emits_category_match_codes():
+    ce = Mock()
+    # Two segments for one label: title (0.9) + summary (0.1)
+    ce.score_text_pairs.return_value = [0.9, 0.1]
+    reranker = CrossEncoderPreferenceReranker(ce)
+    profile = PreferenceProfile(
+        raw_text="python",
+        parser_confidence=0.8,
+        tech_stack=[WeightedPreference(label="python", weight=1.0, confidence=0.9)],
+    )
+    job = PreferenceJobPayload(job_id="j1", title="Python Backend", summary="java role")
+    result = reranker.rerank(profile, [job])
+    assert "tech_stack_match" in result[0].preference_reason_codes
+
+
+def test_cross_encoder_reranker_all_zero_scores_gives_empty_reason_codes():
+    ce = Mock()
+    ce.score_text_pairs.return_value = [0.0, 0.0]
+    reranker = CrossEncoderPreferenceReranker(ce)
+    profile = PreferenceProfile(
+        raw_text="python",
+        parser_confidence=0.8,
+        tech_stack=[WeightedPreference(label="python", weight=1.0, confidence=0.9)],
+    )
+    job = PreferenceJobPayload(job_id="j1", title="Python Backend", summary="role")
+    result = reranker.rerank(profile, [job])
+    assert result[0].preference_score == 0.0
+    assert result[0].preference_reason_codes == []
+
+
+def test_build_preference_semantic_reranker_routes_to_cross_encoder():
+    config = PreferencesConfig(
+        reranker="cross_encoder",
+        cross_encoder=PreferenceCrossEncoderConfig(enabled=True),
+    )
+    reranker = build_preference_semantic_reranker(config)
+    assert isinstance(reranker, CrossEncoderPreferenceReranker)
+
+
+def test_build_preference_semantic_reranker_returns_none_for_disabled_cross_encoder():
+    config = PreferencesConfig(
+        reranker="cross_encoder",
+        cross_encoder=PreferenceCrossEncoderConfig(enabled=False),
+    )
+    assert build_preference_semantic_reranker(config) is None

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.config_loader import PreferenceModelConfig
+from core.config_loader import PreferenceCrossEncoderConfig, PreferenceModelConfig, PreferencesConfig
 from core.llm.interfaces import LLMProvider
 from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_preference
 
@@ -569,6 +569,120 @@ class LLMPreferenceJudge(_BaseLLMPreferenceScorer, PreferenceJudge):
         return self._score(profile, jobs)
 
 
+class CrossEncoderPreferenceReranker(PreferenceSemanticReranker):
+    """Preference reranker using a local cross-encoder (cheap compute, no LLM calls)."""
+
+    _PROFILE_CATEGORIES = (
+        "work_style", "team_culture", "tech_stack", "mission_domain", "growth_preferences",
+    )
+    _MATCH_THRESHOLD = 0.3
+
+    def __init__(self, cross_encoder: Any):
+        self._cross_encoder = cross_encoder
+
+    def _job_segments(self, job: PreferenceJobPayload) -> List[tuple[str, str]]:
+        segments: List[tuple[str, str]] = []
+        title_text = " ".join(filter(None, [job.title, job.company])).strip()
+        if title_text:
+            segments.append(("title", title_text))
+        if job.summary:
+            segments.append(("summary", job.summary))
+        for i, req in enumerate(job.requirements[:MAX_PREFERENCE_LIST_ITEMS]):
+            if req:
+                segments.append((f"req:{i}", req))
+        for i, benefit in enumerate(job.benefits[:MAX_PREFERENCE_LIST_ITEMS]):
+            if benefit:
+                segments.append((f"benefit:{i}", benefit))
+        for i, skill in enumerate(job.skills[:MAX_PREFERENCE_LIST_ITEMS]):
+            if skill:
+                segments.append((f"skill:{i}", skill))
+        return segments
+
+    def rerank(
+        self,
+        profile: PreferenceProfile,
+        jobs: List[PreferenceJobPayload],
+    ) -> List[PreferenceAssessment]:
+        if not jobs:
+            return []
+
+        negative_labels = [p.label.lower() for p in profile.negative_preferences if p.label]
+
+        assessments: List[PreferenceAssessment] = []
+        for job in jobs:
+            job_text = " ".join(
+                filter(None, [job.title, job.summary] + job.skills + job.requirements + job.benefits)
+            ).lower()
+            if any(neg in job_text for neg in negative_labels):
+                assessments.append(PreferenceAssessment(
+                    job_id=job.job_id,
+                    preference_score=0.0,
+                    preference_confidence=0.9,
+                    preference_reason_codes=["negative_preference_conflict"],
+                    preference_explanation="Conflicts with candidate's stated negative preferences.",
+                ))
+                continue
+
+            pref_labels: List[tuple[str, str, float]] = []
+            for category in self._PROFILE_CATEGORIES:
+                for pref in getattr(profile, category, []):
+                    if pref.label:
+                        pref_labels.append((category, pref.label, float(pref.weight)))
+
+            segments = self._job_segments(job)
+            if not pref_labels or not segments:
+                assessments.append(PreferenceAssessment(
+                    job_id=job.job_id,
+                    preference_score=0.0,
+                    preference_confidence=0.0,
+                ))
+                continue
+
+            pairs: List[tuple[str, str]] = []
+            pair_meta: List[tuple[str, str, str, float]] = []
+            for category, label, weight in pref_labels:
+                for seg_label, seg_text in segments:
+                    pairs.append((label, seg_text))
+                    pair_meta.append((category, label, seg_label, weight))
+
+            scores = self._cross_encoder.score_text_pairs(pairs)
+            weighted = [score * meta[3] for score, meta in zip(scores, pair_meta)]
+
+            top_k = 5
+            top_indices = sorted(range(len(weighted)), key=lambda i: weighted[i], reverse=True)[:top_k]
+            top_scores = [weighted[i] for i in top_indices]
+            overall_score = sum(top_scores) / len(top_scores) if top_scores else 0.0
+
+            matched_categories: set[str] = set()
+            detail_codes: List[str] = []
+            seen_details: set[str] = set()
+            for idx in top_indices:
+                if weighted[idx] < self._MATCH_THRESHOLD:
+                    break
+                category, label, seg_label, _ = pair_meta[idx]
+                matched_categories.add(f"{category}_match")
+                detail = f"{category}:{label}|{seg_label}"
+                if detail not in seen_details:
+                    seen_details.add(detail)
+                    detail_codes.append(detail)
+
+            reason_codes = sorted(matched_categories) + detail_codes
+
+            assessments.append(PreferenceAssessment(
+                job_id=job.job_id,
+                preference_score=round(min(1.0, max(0.0, overall_score)), 4),
+                preference_confidence=round(min(1.0, overall_score), 4),
+                preference_reason_codes=reason_codes,
+                preference_explanation=(
+                    f"Matched {len(matched_categories)} preference categories across job segments."
+                    if matched_categories
+                    else "No preference signals matched."
+                ),
+            ))
+
+        return assessments
+
+
 def build_preference_llm(config: PreferenceModelConfig) -> Optional[LLMProvider]:
     if not config.enabled:
         return None
@@ -588,12 +702,26 @@ def build_preference_parser(config: PreferenceModelConfig) -> Optional[Preferenc
 
 
 def build_preference_semantic_reranker(
-    config: PreferenceModelConfig,
+    config: PreferencesConfig,
 ) -> Optional[PreferenceSemanticReranker]:
-    llm = build_preference_llm(config)
+    if config.reranker == "cross_encoder":
+        ce_config = config.cross_encoder
+        if not ce_config.enabled:
+            logger.info("Cross-encoder preference reranker disabled")
+            return None
+        from core.scorer.semantic_fit import LocalCrossEncoderProvider
+        cross_encoder = LocalCrossEncoderProvider(
+            model_name=ce_config.model_name,
+            cache_path=ce_config.cache_path,
+            runtime=ce_config.runtime,
+            max_batch_size=ce_config.max_batch_size,
+            trust_remote_code=ce_config.trust_remote_code,
+        )
+        return CrossEncoderPreferenceReranker(cross_encoder)
+    llm = build_preference_llm(config.semantic_reranker)
     if llm is None:
         return None
-    return LLMPreferenceSemanticReranker(llm, max_input_tokens=config.max_input_tokens)
+    return LLMPreferenceSemanticReranker(llm, max_input_tokens=config.semantic_reranker.max_input_tokens)
 
 
 def build_preference_judge(config: PreferenceModelConfig) -> Optional[PreferenceJudge]:
