@@ -1,6 +1,6 @@
 from .base import Base
 from .tenant import Tenant
-from .job import JobPost, JobPostSource, JobRequirementUnit, JobRequirementUnitEmbedding, JobBenefit, JobFacetEmbedding
+from .job import JobPost, JobPostSource, JobRequirementUnit, JobRequirementUnitEmbedding, JobBenefit
 from .candidate_preferences import CandidatePreferences
 from .resume import (
     ResumeSectionEmbedding,
@@ -38,7 +38,6 @@ __all__ = [
     'JobRequirementUnit',
     'JobRequirementUnitEmbedding',
     'JobBenefit',
-    'JobFacetEmbedding',
     'CandidatePreferences',
     'ResumeSectionEmbedding',
     'ResumeEvidenceUnitEmbedding',

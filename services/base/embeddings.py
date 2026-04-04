@@ -15,43 +15,6 @@ from database.models import DEFAULT_LEGACY_OWNER_ID
 logger = logging.getLogger(__name__)
 
 
-def _run_facet_embedding_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 100) -> int:
-    """Run facet embedding batch - embed extracted facets for all jobs."""
-    with job_uow() as repo:
-        jobs = repo.get_jobs_needing_facet_embedding(limit)
-        job_ids = [j.id for j in jobs]
-
-    if job_ids:
-        logger.info(f"Found {len(job_ids)} jobs needing facet embedding")
-    else:
-        logger.info("No jobs need facet embedding — all already processed")
-
-    processed = 0
-    total_new = 0
-    for job_id in job_ids:
-        if stop_event.is_set():
-            break
-        try:
-            with job_uow() as repo:
-                job = repo.get_by_id(job_id)
-                if job is None:
-                    logger.warning(f"Job {job_id} not found, may have been deleted")
-                    continue
-                if job.facet_status == 'done':
-                    total_new += ctx.job_etl_service.embed_facets_one(repo, job)
-                    processed += 1
-                else:
-                    logger.debug(f"Job {job_id} facet_status is '{job.facet_status}', skipping")
-        except Exception:
-            logger.error("Facet embedding error job_id=%s", job_id, exc_info=True)
-
-    if total_new > 0:
-        logger.info(f"Facet embedding batch completed: {total_new} new embeddings across {processed} jobs")
-    elif processed > 0:
-        logger.info(f"Facet embedding batch: {processed} jobs checked — all facets already embedded")
-    return processed
-
-
 def _build_job_embedding_text(job) -> str:
     """Build a job embedding payload from requirements, benefits, or description."""
     parts = []
@@ -234,15 +197,13 @@ def run_embedding_extraction(ctx: AppContext, stop_event: threading.Event, limit
     Args:
         ctx: Application context
         stop_event: Event to signal shutdown
-        limit: Maximum items to process per category (facets, jobs, requirements)
+        limit: Maximum items to process per category (jobs, requirements)
 
     Returns:
-        Total number of items processed (facets, jobs, and requirements).
-        Note: May be as large as 3 * limit since each category is limited separately.
+        Total number of items processed (jobs and requirements).
+        Note: May be as large as 2 * limit since each category is limited separately.
     """
-    facet_count = _run_facet_embedding_batch(ctx, stop_event, limit)
-    embed_count = _run_embedding_batch(ctx, stop_event, limit)
-    return facet_count + embed_count
+    return _run_embedding_batch(ctx, stop_event, limit)
 
 
 def generate_resume_embedding(

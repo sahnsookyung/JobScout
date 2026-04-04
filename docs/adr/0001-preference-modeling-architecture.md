@@ -148,3 +148,23 @@ Expected follow-up work includes:
 - update retrieval to hybrid dense plus lexical search
 - add shortlist reranking for soft preferences
 - deprecate facet-based preference scoring and related dead paths
+
+## Implementation Update (2026-04-04)
+
+All follow-up items are now complete:
+
+- **Candidate preference data model**: `CandidatePreferences` table and `CandidatePreferencesRepository` shipped; `PreferenceProfile` Pydantic model in `core/preference_semantics/`.
+- **Frontend hard-filter controls**: structured filter fields (remote, visa, salary, employment type) captured in frontend and enforced deterministically in retrieval.
+- **Hybrid retrieval**: dense ANN over job summary embeddings plus lexical retrieval over skills and titles.
+- **Shortlist reranking**: `LLMPreferenceSemanticReranker` and `LLMPreferenceJudge` implemented in `services/scorer_matcher/preference_semantics.py`. Both use `extract_structured_data` against named schema specs (`preference_semantic_rerank_v1`, `preference_llm_judge_v1`). E2E covered by `test_candidate_preferences_round_trip_updates_matching_behavior`.
+- **Facet pipeline removed** (this PR): `job_facet_embedding` table, all 7 facet columns from `job_post`, 12 repository methods, ETL orchestrator methods, LLM interface method, and all associated tests deleted. Migration `007_remove_facet_pipeline.py` drops the DB objects.
+
+### Preference Reranker: LLM vs Cross-Encoder
+
+ADR 0001 recommended a cross-encoder for preference reranking. After evaluation, the LLM reranker is the deliberate choice for the current stage:
+
+- The preference shortlist is 5–20 jobs; LLM latency is acceptable for manual runs.
+- A bare cross-encoder returns only scalar scores; it cannot produce `preference_reason_codes` (e.g., `tech_stack_match`, `work_style_match`) which are asserted by the E2E test and surfaced in the UI as explanations.
+- A hybrid (cross-encoder scoring + LLM explanations) is architecturally clean but adds infrastructure complexity with no near-term benefit.
+
+**Decision**: Keep the LLM reranker. If usage scales to automated high-frequency runs, introduce a cross-encoder for scoring and retain the LLM only for explanation generation on the top N results.

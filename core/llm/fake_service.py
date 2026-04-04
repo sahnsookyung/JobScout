@@ -403,18 +403,6 @@ class FakeLLMService(LLMProvider):
             "benefits": [],
         }
 
-    def extract_facet_data(self, text: str) -> Dict[str, str]:
-        self._maybe_fail_extraction(text)
-        return {
-            "remote_flexibility": "Remote-friendly" if "remote" in text.lower() else "On-site",
-            "compensation": "Competitive compensation",
-            "learning_growth": "Learning budget and mentorship",
-            "company_culture": "Collaborative engineering culture",
-            "work_life_balance": "Flexible work practices",
-            "tech_stack": text[:200],
-            "visa_sponsorship": "Not specified",
-        }
-
     def generate_embedding(self, text: str) -> List[float]:
         self._maybe_fail_embedding(text)
         vector = [0.0] * self.embedding_dimensions

@@ -18,10 +18,8 @@ from typing import Dict, Any, List
 from core.llm.schema_models import (
     RESUME_SCHEMA,
     EXTRACTION_SCHEMA,
-    FACET_EXTRACTION_SCHEMA_FOR_WANTS,
     ResumeSchema,
     JobExtraction,
-    FacetExtraction,
 )
 
 
@@ -43,14 +41,6 @@ class TestOpenAISchemaStructure:
         assert EXTRACTION_SCHEMA["strict"] == True
         assert "schema" in EXTRACTION_SCHEMA
         assert isinstance(EXTRACTION_SCHEMA["schema"], dict)
-
-    def test_facet_schema_has_required_top_level_fields(self):
-        """Top-level schema must have name, strict, and schema keys."""
-        assert "name" in FACET_EXTRACTION_SCHEMA_FOR_WANTS
-        assert "strict" in FACET_EXTRACTION_SCHEMA_FOR_WANTS
-        assert FACET_EXTRACTION_SCHEMA_FOR_WANTS["strict"] == True
-        assert "schema" in FACET_EXTRACTION_SCHEMA_FOR_WANTS
-        assert isinstance(FACET_EXTRACTION_SCHEMA_FOR_WANTS["schema"], dict)
 
 
 class TestOpenAIStrictRequirements:
@@ -119,14 +109,6 @@ class TestOpenAIStrictRequirements:
     def test_job_extraction_schema_has_additional_properties_false(self):
         """All objects in job extraction schema must have additionalProperties: false."""
         inner_schema = EXTRACTION_SCHEMA["schema"]
-        errors = self._check_additional_properties_false(inner_schema)
-        
-        if errors:
-            pytest.fail(f"additionalProperties: false missing:\n" + "\n".join(errors))
-
-    def test_facet_schema_has_additional_properties_false(self):
-        """All objects in facet schema must have additionalProperties: false."""
-        inner_schema = FACET_EXTRACTION_SCHEMA_FOR_WANTS["schema"]
         errors = self._check_additional_properties_false(inner_schema)
         
         if errors:
@@ -265,22 +247,6 @@ class TestOpenAIStrictRequirements:
         if errors:
             pytest.fail(f"Missing required fields:\n" + "\n".join(errors))
 
-    def test_facet_schema_has_no_defaults(self):
-        """FACET_EXTRACTION_SCHEMA_FOR_WANTS should have no default values."""
-        inner_schema = FACET_EXTRACTION_SCHEMA_FOR_WANTS["schema"]
-        errors = self._check_no_default_values(inner_schema)
-        
-        if errors:
-            pytest.fail(f"Default values found:\n" + "\n".join(errors))
-
-    def test_facet_schema_all_fields_required(self):
-        """All properties in FACET_EXTRACTION_SCHEMA_FOR_WANTS must be listed in required array."""
-        inner_schema = FACET_EXTRACTION_SCHEMA_FOR_WANTS["schema"]
-        errors = self._check_all_fields_required(inner_schema)
-        
-        if errors:
-            pytest.fail(f"Missing required fields:\n" + "\n".join(errors))
-
 
 class TestOpenAIExampleValidation:
     """Test that valid examples pass schema validation."""
@@ -334,21 +300,6 @@ class TestOpenAIExampleValidation:
         job = JobExtraction.model_validate(valid_job)
         assert job is not None
 
-    def test_facet_schema_accepts_valid_facets(self):
-        """Valid facet extraction should generate a schema that accepts it."""
-        valid_facets = {
-            "remote_flexibility": "Fully remote with flexible hours",
-            "compensation": "$100k-$150k base salary plus equity",
-            "learning_growth": "$2000 learning budget annually",
-            "company_culture": "Fast-paced startup environment",
-            "work_life_balance": "Flexible PTO policy",
-            "tech_stack": "Python, React, PostgreSQL, AWS",
-            "visa_sponsorship": "H1B sponsorship available"
-        }
-        
-        facets = FacetExtraction.model_validate(valid_facets)
-        assert facets is not None
-
 
 class TestSchemaSerialization:
     """Test that schemas can be serialized for OpenAI API."""
@@ -370,15 +321,6 @@ class TestSchemaSerialization:
         """Schema must be JSON serializable for API calls."""
         try:
             schema_json = json.dumps(EXTRACTION_SCHEMA)
-            assert schema_json is not None
-            assert len(schema_json) > 0
-        except (TypeError, ValueError) as e:
-            pytest.fail(f"Schema is not JSON serializable: {e}")
-
-    def test_facet_schema_is_json_serializable(self):
-        """Schema must be JSON serializable for API calls."""
-        try:
-            schema_json = json.dumps(FACET_EXTRACTION_SCHEMA_FOR_WANTS)
             assert schema_json is not None
             assert len(schema_json) > 0
         except (TypeError, ValueError) as e:

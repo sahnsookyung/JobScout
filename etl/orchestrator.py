@@ -24,17 +24,6 @@ from etl.resume.embedding_store import JobRepositoryAdapter
 
 logger = logging.getLogger(__name__)
 DEFAULT_LEGACY_OWNER_ID = "00000000-0000-0000-0000-000000000001"
-FACET_KEYS = [
-    "remote_flexibility",
-    "compensation",
-    "learning_growth",
-    "company_culture",
-    "work_life_balance",
-    "tech_stack",
-    "visa_sponsorship",
-]
-
-
 def _effective_owner_id(owner_id: Optional[Any]) -> Any:
     return owner_id or DEFAULT_LEGACY_OWNER_ID
 
@@ -139,93 +128,6 @@ class JobETLService:
         repo.save_requirements(job, data.get('requirements', []))
         repo.save_benefits(job, data.get('benefits', []))
         repo.mark_as_extracted(job)
-
-    def extract_facets_one(self, repo: JobRepository, job) -> None:
-        """Extract job facets for a single job for Want score matching.
-
-        Extracts per-facet text from job descriptions. Embedding is done
-        separately in embed_facets_one() for better batch efficiency.
-
-        Args:
-            repo: JobRepository instance (provided by UoW)
-            job: JobPost ORM instance (loaded within this UoW session)
-        """
-        logger.info(f"Extracting facets for job {job.id}: {job.title}")
-
-        try:
-            repo.delete_all_facet_embeddings_for_job(job.id)
-
-            facets = self.ai.extract_facet_data(job.description)
-
-            content_hash = job.content_hash or ''
-            saved_count = 0
-
-            for facet_key in FACET_KEYS:
-                facet_text = facets.get(facet_key, "")
-                if facet_text:
-                    repo.save_job_facet_embedding(
-                        job.id, facet_key, facet_text, None, content_hash
-                    )
-                    saved_count += 1
-                else:
-                    logger.debug(f"Empty facet '{facet_key}' for job {job.id}")
-
-            logger.info(f"Saved {saved_count} facets for job {job.id}")
-
-            repo.mark_job_facets_extracted(job.id, content_hash)
-
-        except Exception as e:
-            repo.mark_job_facets_failed(job.id, str(e))
-            logger.error(f"Facet extraction failed for job {job.id}: {e}")
-            raise
-
-    def embed_facets_one(self, repo: JobRepository, job) -> int:
-        """Generate embeddings for extracted facets of a single job.
-
-        Args:
-            repo: JobRepository instance (provided by UoW)
-            job: JobPost ORM instance (loaded within this UoW session)
-
-        Returns:
-            Number of new facet embeddings created (0 if all already embedded).
-        """
-        try:
-            facets = repo.get_facets_for_job(job.id)
-            if not facets:
-                logger.debug(f"No facets found for job {job.id}")
-                return 0
-
-            unembedded = [f for f in facets if f.embedding is None]
-            if not unembedded:
-                logger.debug(
-                    f"All {len(facets)} facets already embedded for job {job.id} — skipping"
-                )
-                return 0
-
-            logger.info(
-                f"Embedding {len(unembedded)}/{len(facets)} facets for job {job.id}: {job.title}"
-            )
-            content_hash = job.content_hash or ''
-            saved_count = 0
-
-            for facet in unembedded:
-                # DB model stores facet content in facet_text; keep text fallback for older mocks.
-                facet_text = getattr(facet, "facet_text", None) or getattr(facet, "text", None)
-                if not facet_text:
-                    logger.debug(f"Facet {getattr(facet, 'id', 'unknown')} has no text, skipping")
-                    continue
-                embedding = _validate_embedding_vector(
-                    self.ai.generate_embedding(facet_text),
-                    f"job facet {facet.id}",
-                )
-                repo.update_facet_embedding(facet.id, embedding, content_hash)
-                saved_count += 1
-
-            return saved_count
-
-        except Exception as e:
-            logger.error(f"Facet embedding failed for job {job.id}: {e}")
-            raise
 
     def embed_job_one(self, repo: JobRepository, job) -> None:
         """Generate embedding for a single job.

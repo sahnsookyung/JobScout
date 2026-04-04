@@ -64,14 +64,6 @@ class JobPost(Base):
     embedding_last_attempt_at = Column(TIMESTAMP(timezone=True))
     embedding_next_retry_at = Column(TIMESTAMP(timezone=True))
 
-    # Facet Extraction State
-    facet_status = Column(Text, default='pending')  # pending|in_progress|done|failed|quarantined
-    facet_claimed_by = Column(Text)
-    facet_claimed_at = Column(TIMESTAMP(timezone=True))
-    facet_extraction_hash = Column(Text)
-    facet_retry_count = Column(Integer, default=0)
-    facet_last_error = Column(Text)
-
     # === Structural Fields (Metadata) ===
     job_type = Column(Text)
     job_level = Column(Text)
@@ -209,36 +201,4 @@ class JobBenefit(Base):
     __table_args__ = (
         Index('idx_jb_job', 'job_post_id'),
         Index('idx_jb_category', 'category'),
-    )
-
-class JobFacetEmbedding(Base):
-    """
-    Stores per-facet embeddings for job posts.
-
-    Each job can have multiple facets describing perks/benefits/working conditions:
-    - remote_flexibility
-    - compensation
-    - learning_growth
-    - company_culture
-    - work_life_balance
-    - tech_stack
-    - visa_sponsorship
-    """
-    __tablename__ = 'job_facet_embedding'
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_post_id = Column(UUID(as_uuid=True), ForeignKey(JOB_POST_ID_FK, ondelete='CASCADE'), nullable=False)
-
-    facet_key = Column(Text, nullable=False)
-    facet_text = Column(Text, nullable=False)
-    embedding = Column(Vector(1024), nullable=True)
-
-    content_hash = Column(Text)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
-
-    __table_args__ = (
-        UniqueConstraint('job_post_id', 'facet_key', name='uq_job_facet_job_key'),
-        Index('idx_job_facet_job', 'job_post_id'),
-        Index('idx_job_facet_key', 'facet_key'),
-        Index('jru_facet_embedding_hnsw', 'embedding', postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}, postgresql_ops={'embedding': 'vector_cosine_ops'}),
     )

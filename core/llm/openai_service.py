@@ -26,12 +26,10 @@ from core.llm.system_prompts import (
     DEFAULT_EXTRACTION_SYSTEM_PROMPT,
     RESUME_EXTRACTION_SYSTEM_PROMPT,
     REQUIREMENTS_EXTRACTION_SYSTEM_PROMPT,
-    FACET_EXTRACTION_SYSTEM_PROMPT,
 )
 from core.llm.schema_models import (
     RESUME_SCHEMA,
     EXTRACTION_SCHEMA,
-    FACET_EXTRACTION_SCHEMA_FOR_WANTS,
 )
 
 logger = logging.getLogger(__name__)
@@ -345,32 +343,6 @@ class OpenAIService(LLMProvider):
         logger.debug("extract_structured_data returned type=%s value=%r", type(data), data)
         logger.debug("=" * 60)
 
-        return data
-
-    def extract_facet_data(self, text: str) -> Dict[str, str]:
-        """Extract per-facet text from job description for Want score matching.
-
-        Args:
-            text: Job description text
-
-        Returns:
-            Dictionary with keys:
-            - remote_flexibility
-            - compensation
-            - learning_growth
-            - company_culture
-            - work_life_balance
-            - tech_stack
-            - visa_sponsorship
-        """
-        data = self.extract_structured_data(
-            text,
-            FACET_EXTRACTION_SCHEMA_FOR_WANTS,
-            system_prompt=FACET_EXTRACTION_SYSTEM_PROMPT,
-            user_message=f"<JOB_DESCRIPTION>\n{text}\n</JOB_DESCRIPTION>\n\nExtract all 7 facets from this job description."
-        )
-
-        logger.debug(f"Extracted facets: {list(data.keys())}")
         return data
 
     @_llm_retry()

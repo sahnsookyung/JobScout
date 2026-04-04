@@ -151,8 +151,6 @@ def _build_schema_response(payload: ChatCompletionsRequest) -> Dict[str, Any]:
         return fake_llm.extract_resume_data(_extract_resume_text(user_message))
     if schema_name == "job_extraction_schema":
         return fake_llm.extract_requirements_data(_extract_job_description(user_message))
-    if schema_name == "facet_extraction_schema":
-        return fake_llm.extract_facet_data(_extract_job_description(user_message))
     if schema_name == "preference_profile_schema":
         raw_text = _extract_json_suffix(user_message)
         return _fake_preference_profile(raw_text)

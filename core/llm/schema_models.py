@@ -291,51 +291,9 @@ EXTRACTION_SCHEMA = {
 }
 
 
-# ============================================================================
-# FACET EXTRACTION SCHEMA MODELS
-# ============================================================================
-
-class FacetExtraction(BaseModel):
-    """Per-facet text extraction for Want score matching."""
-    model_config = ConfigDict(extra='forbid')
-    
-    remote_flexibility: str = Field(
-        description="Text about remote work, WFH policies, location independence"
-    )
-    compensation: str = Field(
-        description="Text about salary, bonuses, equity, benefits"
-    )
-    learning_growth: str = Field(
-        description="Text about learning opportunities, mentorship, career development"
-    )
-    company_culture: str = Field(
-        description="Text about company values, DEI, work environment"
-    )
-    work_life_balance: str = Field(
-        description="Text about working hours, PTO, burnout prevention"
-    )
-    tech_stack: str = Field(
-        description="Text about technologies, tools, frameworks used"
-    )
-    visa_sponsorship: str = Field(
-        description="Text about visa sponsorship and relocation assistance"
-    )
-
-
-# Generate OpenAI-compatible schema
-FACET_EXTRACTION_SCHEMA_FOR_WANTS = {
-    "name": "facet_extraction_schema",
-    "strict": True,
-    "schema": FacetExtraction.model_json_schema()
-}
-
-
 # Convenience aliases for clarity (optional, for gradual migration)
 EXTRACTION_SCHEMA_SPEC = EXTRACTION_SCHEMA
 EXTRACTION_JSON_SCHEMA = EXTRACTION_SCHEMA["schema"]
 
 RESUME_SCHEMA_SPEC = RESUME_SCHEMA
 RESUME_JSON_SCHEMA = RESUME_SCHEMA["schema"]
-
-FACET_EXTRACTION_SCHEMA_SPEC = FACET_EXTRACTION_SCHEMA_FOR_WANTS
-FACET_EXTRACTION_JSON_SCHEMA = FACET_EXTRACTION_SCHEMA_FOR_WANTS["schema"]
