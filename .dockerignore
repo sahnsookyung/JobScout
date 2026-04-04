@@ -17,4 +17,8 @@ build
 .env
 *.log
 tests/
+# mock-llm test service needs these at image build time
+!tests/__init__.py
+!tests/mocks/
+!tests/services/
 **/node_modules
