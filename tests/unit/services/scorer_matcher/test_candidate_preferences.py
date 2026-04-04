@@ -15,6 +15,9 @@ from services.scorer_matcher.candidate_preferences import (
     _matches_candidate_preferences,
     _preference_sort_key,
     _resolve_requested_mode,
+    _resolve_preference_profile,
+    _stored_preference_profile,
+    _apply_assessments,
     apply_candidate_preference_filters,
     apply_preference_semantic_reranking,
     load_candidate_preferences,
@@ -202,6 +205,62 @@ class TestHardFilterHelpers:
         assert apply_candidate_preference_filters(matches, None) == matches
 
 
+class TestStoredPreferenceProfile:
+    def test_returns_none_when_no_profile_key(self):
+        assert _stored_preference_profile({}) is None
+
+    def test_returns_none_on_validation_error(self):
+        # raw_profile present but invalid — model_validate raises
+        assert _stored_preference_profile({"preference_profile": {"bad": "data", "parser_confidence": "not-a-float"}}) is None
+
+    def test_returns_profile_on_valid_data(self):
+        profile = _stored_preference_profile(
+            {"preference_profile": {"raw_text": "Python", "parser_confidence": 0.9}}
+        )
+        assert profile is not None
+        assert profile.raw_text == "Python"
+
+
+class TestResolvePreferenceProfile:
+    def test_returns_none_when_soft_preferences_empty(self):
+        config = _preferences_config()
+        result = _resolve_preference_profile({"soft_preferences": ""}, config)
+        assert result is None
+
+    def test_returns_none_when_parser_is_none(self):
+        config = _preferences_config()
+        with patch(
+            "services.scorer_matcher.candidate_preferences.build_preference_parser",
+            return_value=None,
+        ):
+            result = _resolve_preference_profile({"soft_preferences": "Python"}, config)
+        assert result is None
+
+    def test_returns_none_when_parser_raises(self):
+        config = _preferences_config()
+        mock_parser = Mock()
+        mock_parser.parse.side_effect = RuntimeError("parse error")
+        with patch(
+            "services.scorer_matcher.candidate_preferences.build_preference_parser",
+            return_value=mock_parser,
+        ):
+            result = _resolve_preference_profile({"soft_preferences": "Python"}, config)
+        assert result is None
+
+
+class TestApplyAssessments:
+    def test_fills_no_preference_signal_when_job_not_in_assessments(self):
+        match = _scored_match(_job(id="job-99"), fit_components={})
+        result = _apply_assessments(
+            [match],
+            [],
+            requested_mode="semantic_rerank",
+            effective_mode="semantic_rerank",
+        )
+        assert result[0].fit_components["preference_reason_codes"] == ["no_preference_signal"]
+        assert result[0].fit_components["preference_score"] == 0.0
+
+
 class TestPreferenceSemanticReranking:
     @patch("services.scorer_matcher.candidate_preferences.build_preference_parser")
     def test_falls_back_to_fit_only_when_profile_unavailable(self, mock_build_parser):
@@ -382,6 +441,54 @@ class TestPreferenceSemanticReranking:
         assert reranked[0].fit_components["preference_mode_used"] == "semantic_rerank"
         assert reranked[0].fit_components["preference_mode_effective"] == "semantic_rerank"
         assert "preference_fallback_reason" not in reranked[0].fit_components
+
+    def test_reranker_none_falls_back_to_fit_only(self):
+        config = _preferences_config()
+        match = _scored_match(_job(), fit_components={})
+        profile = PreferenceProfile(raw_text="Python", parser_confidence=0.9)
+        with patch(
+            "services.scorer_matcher.candidate_preferences._resolve_preference_profile",
+            return_value=profile,
+        ), patch(
+            "services.scorer_matcher.candidate_preferences.build_preference_semantic_reranker",
+            return_value=None,
+        ):
+            result = apply_preference_semantic_reranking(
+                [match],
+                {"soft_preferences": "Python", "preference_mode": "semantic_rerank"},
+                config=config,
+            )
+        assert result[0].fit_components["preference_mode_used"] == "fit_only_fallback"
+        assert result[0].fit_components["preference_fallback_reason"] == "preference_reranker_unavailable"
+
+    def test_reranking_exception_falls_back_to_fit_only(self):
+        config = _preferences_config()
+        match = _scored_match(_job(), fit_components={})
+        profile = PreferenceProfile(raw_text="Python", parser_confidence=0.9)
+        with patch(
+            "services.scorer_matcher.candidate_preferences._resolve_preference_profile",
+            return_value=profile,
+        ), patch(
+            "services.scorer_matcher.candidate_preferences.build_preference_semantic_reranker",
+        ) as mock_build:
+            mock_build.return_value.rerank.side_effect = RuntimeError("boom")
+            result = apply_preference_semantic_reranking(
+                [match],
+                {"soft_preferences": "Python", "preference_mode": "semantic_rerank"},
+                config=config,
+            )
+        assert result[0].fit_components["preference_mode_used"] == "fit_only_fallback"
+        assert result[0].fit_components["preference_fallback_reason"] == "preference_reranking_failed"
+
+    def test_empty_soft_preferences_returns_matches_unchanged(self):
+        config = _preferences_config()
+        match = _scored_match(_job(), fit_components={})
+        result = apply_preference_semantic_reranking(
+            [match],
+            {"soft_preferences": "   ", "preference_mode": "semantic_rerank"},
+            config=config,
+        )
+        assert result[0].fit_components == {}
 
     def test_preference_sort_keeps_job_id_ascending_for_exact_ties(self):
         first = _scored_match(
