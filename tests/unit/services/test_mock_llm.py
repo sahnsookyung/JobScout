@@ -1,7 +1,6 @@
 """Unit tests for services/mock_llm/main.py"""
 import json
 
-import pytest
 from fastapi.testclient import TestClient
 
 from tests.mocks.fake_service import FAIL_EXTRACTION_MARKER

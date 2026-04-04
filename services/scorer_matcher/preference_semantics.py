@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.config_loader import PreferenceCrossEncoderConfig, PreferenceModelConfig, PreferencesConfig
+from core.config_loader import PreferenceModelConfig, PreferencesConfig
 from core.llm.interfaces import LLMProvider
 from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_preference
 

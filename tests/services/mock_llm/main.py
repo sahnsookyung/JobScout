@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, Iterable, List
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from tests.mocks.fake_service import FakeLLMService
 
