@@ -888,6 +888,85 @@ def test_candidate_preferences_round_trip_updates_matching_behavior(
         engine.dispose()
 
 
+def test_preference_cross_encoder_reranking_emits_detail_codes(split_stack: SplitStackContext):
+    reset_split_stack_state(split_stack.database_url)
+    seeded_jobs = seed_matcher_ready_jobs(split_stack.database_url)
+
+    _update_candidate_preferences(
+        split_stack.base_url,
+        {
+            "remote_mode": "remote",
+            "target_locations": ["Remote"],
+            "visa_sponsorship_required": False,
+            "salary_min": None,
+            "employment_types": [],
+            "soft_preferences": "Python backend FastAPI microservices mentorship",
+        },
+    )
+
+    diagnostics = lambda: _stack_diagnostics(split_stack)
+    upload_payload = _upload_resume(split_stack.base_url, VALID_RESUME_FIXTURE)
+    resume_state = wait_for_resume_terminal(
+        split_stack.base_url,
+        upload_payload["task_id"],
+        timeout_s=UPLOAD_TIMEOUT_SECONDS,
+        diagnostics=diagnostics,
+    )
+    assert resume_state["status"] == "completed", resume_state
+
+    run_response = requests.post(
+        f"{split_stack.base_url}/api/pipeline/run-matching",
+        timeout=30,
+    )
+    assert run_response.status_code == 200, run_response.text
+    run_payload = run_response.json()
+    assert run_payload["success"] is True, run_payload
+
+    matching_state = wait_for_matching_terminal(
+        split_stack.base_url,
+        run_payload["task_id"],
+        timeout_s=MATCHING_TIMEOUT_SECONDS,
+        diagnostics=diagnostics,
+    )
+    assert matching_state["status"] == "completed", matching_state
+    assert (matching_state.get("saved_count") or 0) >= 1, matching_state
+
+    engine, session = _session_for(split_stack.database_url)
+    try:
+        upload = session.execute(
+            select(ResumeUpload).where(ResumeUpload.id == upload_payload["upload_id"])
+        ).scalar_one()
+        fingerprint = upload.resume_fingerprint
+
+        matches = session.execute(
+            select(JobMatch).where(
+                JobMatch.resume_fingerprint == fingerprint,
+                JobMatch.status == "active",
+            )
+        ).scalars().all()
+        matched_job_ids = {str(match.job_post_id) for match in matches}
+        assert seeded_jobs.positive_job_id in matched_job_ids, (
+            f"Expected positive job {seeded_jobs.positive_job_id} in matches {matched_job_ids}"
+        )
+
+        positive_match = next(
+            match for match in matches if str(match.job_post_id) == seeded_jobs.positive_job_id
+        )
+        fit_components = positive_match.fit_components or {}
+        preference_reason_codes = fit_components.get("preference_reason_codes") or []
+
+        assert fit_components.get("preference_score", 0) > 0, fit_components
+        assert fit_components.get("preference_mode_used") == "semantic_rerank", fit_components
+        assert "tech_stack_match" in preference_reason_codes, preference_reason_codes
+        # CE path emits detail codes in "category:label|segment" format; LLM path does not.
+        assert any("|" in code for code in preference_reason_codes), (
+            f"Expected CE detail codes with '|' separator, got: {preference_reason_codes}"
+        )
+    finally:
+        session.close()
+        engine.dispose()
+
+
 def test_resume_upload_failure_becomes_terminal_not_infinite_poll(split_stack: SplitStackContext):
     reset_split_stack_state(split_stack.database_url)
 

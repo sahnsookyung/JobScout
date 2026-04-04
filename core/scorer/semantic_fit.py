@@ -904,7 +904,14 @@ class LocalCrossEncoderProvider:
             return []
         model = self._load_model()
         if model is False:
-            return [0.0] * len(pairs)
+            # Heuristic fallback: keyword-overlap scoring mirrors _pair_assessment_from_heuristic.
+            # Score 0.0 = no overlap (genuine non-match); > 0 = overlap exists.
+            # For real cross-encoder models these paths are never reached.
+            scores = []
+            for left, right in pairs:
+                overlap = _meaningful_overlap(left, right)
+                scores.append(min(0.85, 0.45 + 0.1 * len(overlap)) if overlap else 0.0)
+            return scores
         if hasattr(model, "compute_score"):
             compute_score = getattr(model, "compute_score")
             raw_scores = compute_score(

@@ -118,8 +118,7 @@ class ScoringService:
             llm_scorer=llm_scorer,
         )
 
-    def _resolve_llm_provider(self, ai_service: Optional[LLMProvider]) -> Optional[LLMProvider]:
-        del ai_service
+    def _resolve_llm_provider(self, _ai_service: Optional[LLMProvider]) -> Optional[LLMProvider]:
         llm_config = getattr(getattr(self.config, "semantic_fit", None), "llm", None)
         if not llm_config or not getattr(llm_config, "enabled", False):
             return None

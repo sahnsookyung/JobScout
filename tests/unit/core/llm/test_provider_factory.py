@@ -93,20 +93,6 @@ def test_build_llm_provider_constructs_openai_compatible_service():
     assert provider.embedding_dimensions == 1024
 
 
-def test_build_llm_provider_rejects_removed_fake_env(monkeypatch):
-    monkeypatch.setenv("JOBSCOUT_FAKE_AI", "1")
-
-    with pytest.raises(RuntimeError, match="JOBSCOUT_FAKE_AI has been removed"):
-        build_llm_provider(
-            RuntimeLLMConfig(
-                provider="openai_compatible",
-                base_url="https://llm.example/v1",
-                api_key="llm-key",
-                model="gpt-runtime",
-            )
-        )
-
-
 def test_build_llm_provider_requires_model():
     with pytest.raises(RuntimeError, match="requires a model"):
         build_llm_provider(

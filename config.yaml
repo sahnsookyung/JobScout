@@ -179,6 +179,7 @@ preferences:
     enabled: true
     # Parser/reranker/judge all use the same runtime provider contract.
     provider: "openai_compatible"
+    # Local-dev defaults (Ollama). Override base_url and api_key for production.
     base_url: "http://localhost:11434/v1"
     api_key: "ollama"
     model: "qwen3:14b"

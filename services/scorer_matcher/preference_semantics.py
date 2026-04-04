@@ -575,7 +575,6 @@ class CrossEncoderPreferenceReranker(PreferenceSemanticReranker):
     _PROFILE_CATEGORIES = (
         "work_style", "team_culture", "tech_stack", "mission_domain", "growth_preferences",
     )
-    _MATCH_THRESHOLD = 0.3
 
     def __init__(self, cross_encoder: Any):
         self._cross_encoder = cross_encoder
@@ -653,11 +652,19 @@ class CrossEncoderPreferenceReranker(PreferenceSemanticReranker):
             top_scores = [weighted[i] for i in top_indices]
             overall_score = sum(top_scores) / len(top_scores) if top_scores else 0.0
 
+            # Emit reason codes for top-K pairs ordered by score.
+            # The cut is > 0 only — CE scores are relatively ordered within a query
+            # and have no calibrated absolute meaning. A weighted score of exactly 0
+            # means either heuristic no-overlap or preference weight = 0; both are
+            # genuine non-signals. All other top-K pairs are included.
+            # NOTE: for production real-model use, sigmoid-neutral pairs score ~0.5,
+            # so preference_score baseline for irrelevant jobs may be ~0.3-0.4 after
+            # weighting. Calibrate the score→preference_score mapping on domain data.
             matched_categories: set[str] = set()
             detail_codes: List[str] = []
             seen_details: set[str] = set()
             for idx in top_indices:
-                if weighted[idx] < self._MATCH_THRESHOLD:
+                if weighted[idx] <= 0:
                     break
                 category, label, seg_label, _ = pair_meta[idx]
                 matched_categories.add(f"{category}_match")

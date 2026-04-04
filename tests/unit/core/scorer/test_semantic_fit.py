@@ -1170,3 +1170,15 @@ def test_llm_semantic_fit_with_no_serialized_pairs_uses_empty_summary():
 
     assert result.fit_components["semantic_fit_summary"] == "No recalled resume evidence supported the evaluated requirements."
     assert result.fit_components["semantic_fit_diagnostics"]["provider_route"] == "llm"
+
+
+def test_score_text_pairs_heuristic_returns_nonzero_for_overlap():
+    provider = LocalCrossEncoderProvider("heuristic-model", runtime="heuristic")
+    scores = provider.score_text_pairs([("python backend", "Python FastAPI backend service")])
+    assert scores[0] > 0.0
+
+
+def test_score_text_pairs_heuristic_returns_zero_for_no_overlap():
+    provider = LocalCrossEncoderProvider("heuristic-model", runtime="heuristic")
+    scores = provider.score_text_pairs([("python", "Java enterprise application")])
+    assert scores[0] == 0.0

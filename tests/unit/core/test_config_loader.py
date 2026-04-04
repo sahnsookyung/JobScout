@@ -308,37 +308,6 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config.etl.llm.extraction_model, "etl-model")
         self.assertEqual(config.etl.llm.provider, "openai_compatible")
 
-    def test_load_config_rejects_legacy_fake_ai_env(self):
-        config_yaml = yaml.dump({
-            "database": {"url": "test"},
-            "schedule": {"interval_seconds": 60},
-            "scrapers": []
-        })
-
-        with patch("builtins.open", mock_open(read_data=config_yaml)):
-            with patch("os.path.exists", return_value=True):
-                with patch.dict(os.environ, {"JOBSCOUT_FAKE_AI": "1"}, clear=False):
-                    with self.assertRaisesRegex(RuntimeError, "JOBSCOUT_FAKE_AI has been removed"):
-                        load_config("dummy")
-
-    def test_load_config_rejects_removed_extraction_type(self):
-        config_yaml = yaml.dump({
-            "database": {"url": "test"},
-            "etl": {
-                "llm": {
-                    "extraction_type": "ollama",
-                    "extraction_model": "qwen3:14b",
-                }
-            },
-            "schedule": {"interval_seconds": 60},
-            "scrapers": []
-        })
-
-        with patch("builtins.open", mock_open(read_data=config_yaml)):
-            with patch("os.path.exists", return_value=True):
-                with self.assertRaisesRegex(RuntimeError, "etl.llm.extraction_type has been removed"):
-                    load_config("dummy")
-
     def test_semantic_fit_defaults_are_loaded(self):
         config_yaml = yaml.dump({
             "database": {"url": "test"},

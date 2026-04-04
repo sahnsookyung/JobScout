@@ -62,6 +62,10 @@ class CandidatePreferencesService:
         preferences.employment_types = _normalize_string_list(payload.get("employment_types", []))
         preferences.soft_preferences = payload.get("soft_preferences", "").strip()
         preferences.preference_mode = self._resolve_requested_mode(payload.get("preference_mode"))
+        # Parse eagerly so the profile is persisted alongside preferences. This is an
+        # intentional sync LLM call: preferences are set infrequently and the parsed
+        # profile is needed at match time. Failures are swallowed — the scorer-matcher
+        # will re-parse on demand if preference_profile is None.
         profile = self._parse_preference_profile(preferences.soft_preferences)
         preferences.preference_profile = profile.model_dump(mode="json") if profile else None
         preferences.soft_preference_summary = (
@@ -107,7 +111,20 @@ class CandidatePreferencesService:
         if normalized in allowed_modes:
             return normalized
         if self.config.preferences.default_mode in allowed_modes:
+            logger.warning(
+                "Requested mode %r not allowed; falling back to configured default %r",
+                normalized,
+                self.config.preferences.default_mode,
+            )
             return self.config.preferences.default_mode
+        logger.warning(
+            "Neither requested mode %r nor default_mode %r is in allowed_modes %r; "
+            "using first allowed mode %r. Check preferences.allowed_modes config.",
+            normalized,
+            self.config.preferences.default_mode,
+            allowed_modes,
+            allowed_modes[0],
+        )
         return allowed_modes[0]
 
     def _resolve_requested_mode(self, requested_mode: Any) -> str:

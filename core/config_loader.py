@@ -47,7 +47,6 @@ class LlmConfig(BaseModel):
     api_secret: Optional[str] = None
     extraction_headers: Optional[Dict[str, str]] = None
     extraction_model: Optional[str] = "gpt-4o-mini"
-    extraction_url: Optional[str] = None
     extraction_labels: Optional[List[str]] = None
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1024
@@ -77,9 +76,11 @@ class PreferenceModelConfig(BaseModel):
 
 class PreferenceCrossEncoderConfig(BaseModel):
     enabled: bool = False
+    # Default is a commonly available open-source CE for quick local testing.
+    # Choose the best model for your language, domain, and latency budget.
     model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     cache_path: Optional[str] = None
-    runtime: str = "auto"
+    runtime: Literal["auto", "heuristic", "flag_embedding", "sentence_transformers"] = "auto"
     max_batch_size: int = 32
     trust_remote_code: bool = False
 
@@ -492,6 +493,13 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["PREFERENCES_LLM_JUDGE_API_KEY"], ["preferences", "llm_judge", "api_key"]),
     (["PREFERENCES_LLM_JUDGE_API_SECRET"], ["preferences", "llm_judge", "api_secret"]),
     (["PREFERENCES_LLM_JUDGE_MODEL"], ["preferences", "llm_judge", "model"]),
+    (["PREFERENCES_RERANKER"], ["preferences", "reranker"]),
+    (["PREFERENCES_CROSS_ENCODER_ENABLED"], ["preferences", "cross_encoder", "enabled"]),
+    (["PREFERENCES_CROSS_ENCODER_MODEL_NAME"], ["preferences", "cross_encoder", "model_name"]),
+    (["PREFERENCES_CROSS_ENCODER_CACHE_PATH"], ["preferences", "cross_encoder", "cache_path"]),
+    (["PREFERENCES_CROSS_ENCODER_RUNTIME"], ["preferences", "cross_encoder", "runtime"]),
+    (["PREFERENCES_CROSS_ENCODER_MAX_BATCH_SIZE"], ["preferences", "cross_encoder", "max_batch_size"]),
+    (["PREFERENCES_CROSS_ENCODER_TRUST_REMOTE_CODE"], ["preferences", "cross_encoder", "trust_remote_code"]),
     (["FIT_SEMANTIC_ENABLED"], ["matching", "scorer", "semantic_fit", "enabled"]),
     (["FIT_SEMANTIC_DEFAULT_MODE"], ["matching", "scorer", "semantic_fit", "default_mode"]),
     (["FIT_SEMANTIC_RECALL_TOP_K"], ["matching", "scorer", "semantic_fit", "recall_top_k"]),
@@ -583,22 +591,9 @@ def load_config_data(
     header_mappings: Sequence[HeaderMapping] = DEFAULT_HEADER_MAPPINGS,
 ) -> Dict[str, Any]:
     """Load YAML configuration and apply environment overrides."""
-    if os.getenv("JOBSCOUT_FAKE_AI"):
-        raise RuntimeError(
-            "JOBSCOUT_FAKE_AI has been removed. Inject fake providers in tests, or "
-            "use an external OpenAI-compatible mock service via base_url."
-        )
-
     resolved_path = resolve_config_path(config_path, fallback_path=fallback_path)
     with open(resolved_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
-
-    llm_config = ((data.get("etl") or {}).get("llm") or {})
-    if "extraction_type" in llm_config:
-        raise RuntimeError(
-            "etl.llm.extraction_type has been removed. Use etl.llm.provider='openai_compatible' "
-            "and point base_url at an OpenAI-compatible endpoint such as Ollama or a mock server."
-        )
 
     return apply_env_overrides(
         data,

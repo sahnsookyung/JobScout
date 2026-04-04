@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Dict, Literal, Optional
 
 from pydantic import BaseModel
@@ -8,8 +7,6 @@ from pydantic import BaseModel
 from core.config_loader import LlmConfig, PreferenceModelConfig, SemanticFitLlmConfig
 from core.llm.interfaces import LLMProvider
 from core.llm.openai_service import OpenAIService
-
-LEGACY_FAKE_AI_ENV_VAR = "JOBSCOUT_FAKE_AI"
 
 
 class RuntimeLLMConfig(BaseModel):
@@ -27,15 +24,6 @@ class RuntimeLLMConfig(BaseModel):
     embedding_api_key: Optional[str] = None
     embedding_api_secret: Optional[str] = None
     embedding_headers: Optional[Dict[str, str]] = None
-
-
-def reject_legacy_fake_ai_env() -> None:
-    if os.getenv(LEGACY_FAKE_AI_ENV_VAR):
-        raise RuntimeError(
-            "JOBSCOUT_FAKE_AI has been removed. Fake providers are test-only now; "
-            "inject a fake LLMProvider in tests, or point provider='openai_compatible' "
-            "at an external mock base_url for HTTP-level development and integration runs."
-        )
 
 
 def runtime_llm_config_from_etl(config: LlmConfig) -> RuntimeLLMConfig:
@@ -89,7 +77,6 @@ def runtime_llm_config_from_fit(config: SemanticFitLlmConfig) -> RuntimeLLMConfi
 
 
 def build_llm_provider(config: RuntimeLLMConfig) -> LLMProvider:
-    reject_legacy_fake_ai_env()
     if config.provider != "openai_compatible":
         raise RuntimeError(
             f"Unsupported runtime LLM provider '{config.provider}'. "

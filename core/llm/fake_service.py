@@ -44,6 +44,13 @@ _GENERIC_TOKENS = {
     "required", "preferred", "with", "using", "plus", "have", "hands", "on",
 }
 
+# Mirrors PREFERENCE_PROFILE_VERSION in services/scorer_matcher/preference_semantics.py.
+# Keep in sync when the real parser bumps its version string.
+_FAKE_PREFERENCE_PROFILE_VERSION = "2026-04-01.v1"
+
+# Exact single-token matching only — multi-word phrases like "React Native" won't match.
+# Extend when test fixtures need additional signals; don't rely on this for coverage of
+# the real parser's full vocabulary.
 _PREFERENCE_SIGNALS = {
     "remote": ("work_style", "Remote-friendly"),
     "hybrid": ("work_style", "Hybrid collaboration"),
@@ -191,7 +198,7 @@ def _fake_preference_profile_response(text: str) -> Dict[str, Any]:
 
     return {
         "raw_text": normalized,
-        "parse_version": "2026-04-01.v1",
+        "parse_version": _FAKE_PREFERENCE_PROFILE_VERSION,
         "parser_confidence": 0.82 if seen or negative_phrases else 0.45,
         **grouped,
     }

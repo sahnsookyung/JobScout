@@ -600,6 +600,21 @@ def test_cross_encoder_reranker_all_zero_scores_gives_empty_reason_codes():
     assert result[0].preference_reason_codes == []
 
 
+def test_cross_encoder_reranker_any_positive_score_emits_reason_code():
+    ce = Mock()
+    ce.score_text_pairs.return_value = [0.01]  # tiny but positive
+    reranker = CrossEncoderPreferenceReranker(ce)
+    profile = PreferenceProfile(
+        raw_text="python",
+        parser_confidence=0.8,
+        tech_stack=[WeightedPreference(label="python", weight=1.0, confidence=0.9)],
+    )
+    result = reranker.rerank(
+        profile, [PreferenceJobPayload(job_id="j1", title="Python Backend")]
+    )
+    assert "tech_stack_match" in result[0].preference_reason_codes
+
+
 def test_build_preference_semantic_reranker_routes_to_cross_encoder():
     config = PreferencesConfig(
         reranker="cross_encoder",

@@ -19,13 +19,6 @@ def test_build_ai_service_uses_shared_provider_factory():
     mock_build.assert_called_once()
 
 
-def test_build_ai_service_rejects_legacy_fake_env(monkeypatch):
-    monkeypatch.setenv("JOBSCOUT_FAKE_AI", "1")
-
-    with pytest.raises(RuntimeError, match="JOBSCOUT_FAKE_AI has been removed"):
-        AppContext._build_ai_service(LlmConfig())
-
-
 def test_fake_llm_service_zero_vector_normalizes_last_slot_for_custom_dimensions():
     service = FakeLLMService(embedding_dimensions=8)
 
