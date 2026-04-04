@@ -519,11 +519,12 @@ class _BaseLLMPreferenceScorer:
                 "jobs": [job.model_dump(mode="json") for job in chunk],
                 "mode": self.scorer_name,
             }
+            payload_json = json.dumps(payload)
             data = self.llm.extract_structured_data(
-                json.dumps(payload),
+                payload_json,
                 self.schema_spec,
                 system_prompt=self.system_prompt,
-                user_message="Score these fit-qualified jobs against the candidate's soft preferences.",
+                user_message=f"Score these fit-qualified jobs against the candidate's soft preferences.\n\n{payload_json}",
             )
             if not isinstance(data, dict):
                 continue
