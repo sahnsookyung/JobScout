@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import Mock, patch
 
 from core.config_loader import PreferenceModelConfig
@@ -17,7 +18,13 @@ from services.scorer_matcher.preference_semantics import (
     serialize_job_for_preference,
     summarize_preference_profile,
     _chunk_jobs_for_budget,
+    _fit_single_job_payload_to_budget,
+    _job_work_mode,
+    _normalize_job_text_list,
+    _normalize_skills,
     _payload_char_budget,
+    _truncate_preference_profile,
+    _truncate_text,
 )
 
 
@@ -341,3 +348,164 @@ def test_preference_reranker_truncates_single_oversized_job_to_budget():
 
     sent_payload = llm.extract_structured_data.call_args.args[0]
     assert len(sent_payload) <= _payload_char_budget(220)
+
+
+# ---------------------------------------------------------------------------
+# _normalize_skills
+# ---------------------------------------------------------------------------
+
+def test_normalize_skills_with_list_input():
+    assert _normalize_skills(["Python", "FastAPI", ""]) == ["Python", "FastAPI"]
+
+
+def test_normalize_skills_with_falsy_input():
+    assert _normalize_skills(None) == []
+    assert _normalize_skills("") == []
+
+
+# ---------------------------------------------------------------------------
+# _truncate_text edge cases
+# ---------------------------------------------------------------------------
+
+def test_truncate_text_max_chars_zero_or_one():
+    assert _truncate_text("hello", 0) == ""
+    assert _truncate_text("hello", 1) == "h"
+
+
+# ---------------------------------------------------------------------------
+# _normalize_job_text_list
+# ---------------------------------------------------------------------------
+
+def test_normalize_job_text_list_with_object_having_text_attr():
+    class FakeReq:
+        def __init__(self, text):
+            self.text = text
+
+    items = [FakeReq("Python experience"), FakeReq("FastAPI knowledge")]
+    result = _normalize_job_text_list(items)
+    assert "Python experience" in result
+
+
+def test_normalize_job_text_list_with_dict_items():
+    items = [{"text": "Remote work"}, {"label": "Flexible hours"}, {"name": "Equity"}]
+    result = _normalize_job_text_list(items)
+    assert "Remote work" in result
+    assert "Flexible hours" in result
+
+
+def test_normalize_job_text_list_respects_max_items():
+    items = [{"text": f"item {i}"} for i in range(20)]
+    result = _normalize_job_text_list(items, max_items=3)
+    assert len(result) == 3
+
+
+# ---------------------------------------------------------------------------
+# _job_work_mode
+# ---------------------------------------------------------------------------
+
+def test_job_work_mode_returns_hybrid():
+    class FakeJob:
+        is_remote = False
+        work_from_home_type = "hybrid"
+        location_text = ""
+
+    assert _job_work_mode(FakeJob()) == "hybrid"
+
+
+def test_job_work_mode_returns_hybrid_from_location():
+    class FakeJob:
+        is_remote = False
+        work_from_home_type = ""
+        location_text = "New York / Hybrid"
+
+    assert _job_work_mode(FakeJob()) == "hybrid"
+
+
+# ---------------------------------------------------------------------------
+# _truncate_preference_profile raises when too large after all truncation
+# ---------------------------------------------------------------------------
+
+def test_truncate_preference_profile_raises_when_still_too_large():
+    """Profile that still exceeds budget after all truncation raises ValueError."""
+    profile = PreferenceProfile(raw_text="mentorship", parser_confidence=0.9)
+    # Patch the budget function to return a tiny value so even a minimal profile fails
+    with patch(
+        "services.scorer_matcher.preference_semantics._payload_char_budget",
+        return_value=1,
+    ):
+        with pytest.raises(ValueError, match="max_input_tokens"):
+            _truncate_preference_profile(profile, max_input_tokens=10)
+
+
+# ---------------------------------------------------------------------------
+# _fit_single_job_payload_to_budget
+# ---------------------------------------------------------------------------
+
+def test_fit_single_job_early_return_when_already_fits():
+    """Job that already fits budget is returned without shrinking."""
+    profile = PreferenceProfile(raw_text="mentorship", parser_confidence=0.8)
+    job = PreferenceJobPayload(job_id="j1", title="SWE", summary="short summary")
+    result = _fit_single_job_payload_to_budget(
+        profile, job, scorer_name="test", budget_chars=100_000
+    )
+    assert result.job_id == "j1"
+    assert result.summary == "short summary"
+
+
+def test_fit_single_job_raises_when_cannot_fit():
+    """Job that cannot be shrunk to budget raises ValueError."""
+    profile = PreferenceProfile(raw_text="x" * 5_000, parser_confidence=0.9)
+    job = PreferenceJobPayload(job_id="j1", title="SWE", summary="short")
+    with pytest.raises(ValueError, match="max_input_tokens"):
+        _fit_single_job_payload_to_budget(
+            profile, job, scorer_name="test", budget_chars=10
+        )
+
+
+# ---------------------------------------------------------------------------
+# _chunk_jobs_for_budget — empty input
+# ---------------------------------------------------------------------------
+
+def test_chunk_jobs_for_budget_empty_returns_empty():
+    profile = PreferenceProfile(raw_text="mentorship", parser_confidence=0.8)
+    assert _chunk_jobs_for_budget(profile, [], scorer_name="test", max_input_tokens=4096) == []
+
+
+# ---------------------------------------------------------------------------
+# _BaseLLMPreferenceScorer._score edge cases
+# ---------------------------------------------------------------------------
+
+def test_preference_reranker_score_empty_jobs_returns_empty():
+    llm = Mock()
+    reranker = LLMPreferenceSemanticReranker(llm, max_input_tokens=4096)
+    profile = PreferenceProfile(raw_text="mentorship", parser_confidence=0.8)
+    result = reranker.rerank(profile, [])
+    assert result == []
+    llm.extract_structured_data.assert_not_called()
+
+
+def test_preference_reranker_skips_non_dict_llm_response():
+    """When LLM returns a non-dict, the chunk result is silently skipped."""
+    llm = Mock()
+    llm.extract_structured_data.return_value = "not a dict"
+    reranker = LLMPreferenceSemanticReranker(llm, max_input_tokens=4096)
+    profile = PreferenceProfile(raw_text="mentorship", parser_confidence=0.8)
+    result = reranker.rerank(
+        profile,
+        [PreferenceJobPayload(job_id="j1", title="SWE", summary="mentorship role")],
+    )
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# build_preference_semantic_reranker / build_preference_judge disabled path
+# ---------------------------------------------------------------------------
+
+def test_build_preference_semantic_reranker_returns_none_when_disabled():
+    config = _config(enabled=False)
+    assert build_preference_semantic_reranker(config) is None
+
+
+def test_build_preference_judge_returns_none_when_disabled():
+    config = _config(enabled=False)
+    assert build_preference_judge(config) is None

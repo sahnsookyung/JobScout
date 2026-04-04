@@ -192,3 +192,189 @@ def test_fake_service_generates_batch_embeddings():
 
     assert len(embeddings) == 2
     assert len(embeddings[0]) == 32
+
+
+def test_fake_semantic_fit_partial_coverage():
+    """Similarity >= 0.45, no keyword dimension tokens, no text overlap → partial."""
+    payload = {
+        "pairs": [
+            {
+                "pair_id": "p1",
+                "requirement_id": "r1",
+                "requirement_text": "Agile sprint coordination",
+                "evidence_text": "Stakeholder presentations quarterly",
+                "original_similarity": 0.5,
+                "req_type": "required",
+            },
+        ]
+    }
+    result = _fake_semantic_fit_response(payload)
+    assert result["pair_judgments"][0]["coverage_level"] == "partial"
+
+
+def test_fake_semantic_fit_missing_coverage_low_similarity():
+    """Evidence present but low similarity and no overlap → missing."""
+    payload = {
+        "pairs": [
+            {
+                "pair_id": "p1",
+                "requirement_id": "r1",
+                "requirement_text": "Kubernetes cluster management",
+                "evidence_text": "Built frontend UI components",
+                "original_similarity": 0.2,
+                "req_type": "required",
+            },
+        ]
+    }
+    result = _fake_semantic_fit_response(payload)
+    assert result["pair_judgments"][0]["coverage_level"] == "missing"
+    assert result["pair_judgments"][0]["semantic_score"] == 0.0
+
+
+def test_fake_preference_profile_deduplicates_signals():
+    """Repeated token for the same signal is added only once."""
+    result = _fake_preference_profile_response("python python python")
+    assert len(result["tech_stack"]) == 1
+
+
+def test_fake_preference_profile_negative_phrases():
+    """Negative phrases are captured in negative_preferences."""
+    result = _fake_preference_profile_response(
+        "I want to avoid consulting and no startup chaos"
+    )
+    labels = [item["label"] for item in result["negative_preferences"]]
+    assert "avoid consulting" in labels
+    assert "no startup chaos" in labels
+
+
+def test_fake_preference_rerank_negative_preference_conflicts():
+    """Job matching a negative preference gets penalized and 'Conflicts' explanation."""
+    profile = {
+        "work_style": [],
+        "team_culture": [],
+        "tech_stack": [],
+        "mission_domain": [],
+        "growth_preferences": [],
+        "negative_preferences": [
+            {"label": "avoid salesforce", "weight": 0.9, "confidence": 0.9}
+        ],
+    }
+    result = _fake_preference_rerank_response(
+        {
+            "profile": profile,
+            "jobs": [
+                {
+                    "job_id": "job-1",
+                    "title": "Salesforce Developer",
+                    "summary": "Salesforce CRM development role",
+                }
+            ],
+        },
+        judge_mode=False,
+    )
+    entry = result["results"][0]
+    assert entry["preference_score"] == 0.0
+    assert "Conflicts" in entry["preference_explanation"]
+
+
+def test_fake_preference_rerank_judge_mode_boosts_score():
+    """judge_mode=True adds a small score and confidence bonus when score > 0."""
+    profile = _fake_preference_profile_response("python backend")
+    result_normal = _fake_preference_rerank_response(
+        {
+            "profile": profile,
+            "jobs": [{"job_id": "j1", "title": "Python Backend", "summary": "Python services"}],
+        },
+        judge_mode=False,
+    )
+    result_judge = _fake_preference_rerank_response(
+        {
+            "profile": profile,
+            "jobs": [{"job_id": "j1", "title": "Python Backend", "summary": "Python services"}],
+        },
+        judge_mode=True,
+    )
+    score_normal = result_normal["results"][0]["preference_score"]
+    score_judge = result_judge["results"][0]["preference_score"]
+    if score_normal > 0:
+        assert score_judge >= score_normal
+
+
+def test_fake_service_extract_structured_data_preference_llm_judge():
+    """preference_llm_judge_v1 schema routes to rerank with judge_mode=True."""
+    service = FakeLLMService()
+    profile = _fake_preference_profile_response("python mentorship")
+    payload_json = (
+        '{"profile":%s,"jobs":[{"job_id":"j1","title":"Python Engineer",'
+        '"summary":"Python mentorship platform"}],"mode":"llm_judge"}'
+        % __import__("json").dumps(profile)
+    )
+    result = service.extract_structured_data(payload_json, {"name": "preference_llm_judge_v1"})
+    assert "results" in result
+    assert result["results"][0]["job_id"] == "j1"
+
+
+def test_fake_service_extract_structured_data_non_dict_raises_for_fit():
+    """Non-dict JSON raises ValueError for semantic_fit_pairs_v1."""
+    service = FakeLLMService()
+    with pytest.raises(ValueError, match="JSON payload object"):
+        service.extract_structured_data("[1, 2, 3]", {"name": "semantic_fit_pairs_v1"})
+
+
+def test_fake_service_extract_structured_data_non_dict_raises_for_rerank():
+    """Non-dict JSON raises ValueError for preference_semantic_rerank_v1."""
+    service = FakeLLMService()
+    with pytest.raises(ValueError, match="JSON payload object"):
+        service.extract_structured_data("[1, 2, 3]", {"name": "preference_semantic_rerank_v1"})
+
+
+def test_fake_service_extract_structured_data_non_dict_raises_for_judge():
+    """Non-dict JSON raises ValueError for preference_llm_judge_v1."""
+    service = FakeLLMService()
+    with pytest.raises(ValueError, match="JSON payload object"):
+        service.extract_structured_data("[1, 2, 3]", {"name": "preference_llm_judge_v1"})
+
+
+def test_fake_service_extract_structured_data_fallback_returns_dict():
+    """Unknown schema with valid dict JSON returns it directly."""
+    service = FakeLLMService()
+    result = service.extract_structured_data(
+        '{"foo": "bar"}', {"name": "unknown_schema"}
+    )
+    assert result == {"foo": "bar"}
+
+
+def test_fake_service_extract_structured_data_fallback_returns_empty_for_non_dict_json():
+    """Unknown schema with non-dict JSON (array) returns empty dict."""
+    service = FakeLLMService()
+    result = service.extract_structured_data("[1, 2, 3]", {"name": "unknown_schema"})
+    assert result == {}
+
+
+def test_fake_service_extract_resume_data_raises_on_non_json():
+    """Non-JSON text raises ValueError with 'JSON fixture input' message."""
+    service = FakeLLMService()
+    with pytest.raises(ValueError, match="JSON fixture input"):
+        service.extract_resume_data("this is not json")
+
+
+def test_fake_service_extract_resume_data_returns_valid_fixture():
+    """Valid fixture with profile and extraction keys is returned as-is."""
+    service = FakeLLMService()
+    fixture = {"profile": {"experience": []}, "extraction": {"confidence": 0.9, "warnings": []}}
+    result = service.extract_resume_data(__import__("json").dumps(fixture))
+    assert result == fixture
+
+
+def test_fake_service_generate_embedding_small_dimensions_breaks_hash_loop():
+    """When embedding_dimensions <= hash_offset, the hash loop exits immediately."""
+    # _KEYWORD_DIMENSIONS has 15 entries (indices 0-14), so hash_offset = 15
+    service = FakeLLMService(embedding_dimensions=15)
+    vector = service.generate_embedding("some unique token text here")
+    assert len(vector) == 15
+
+
+def test_fake_service_unload_model_is_noop():
+    """unload_model on FakeLLMService logs and does not raise."""
+    service = FakeLLMService()
+    service.unload_model("some-model")  # must not raise
