@@ -2,7 +2,7 @@
 
 - Date: 2026-04-01
 - Related ADR: [ADR 0003](../adr/0003-preference-semantics-and-personalization.md)
-- Status: In Progress
+- Status: Milestones 1 and 2 implemented. Milestone 3 partially implemented (llm_judge behind flag; broader rollout and capability gating are follow-up work).
 
 ## Milestone 1
 

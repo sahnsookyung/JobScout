@@ -4,6 +4,8 @@
 - Related ADR: [ADR 0001](../adr/0001-preference-modeling-architecture.md)
 - Status: Superseded by fit-semantics-implementation-plan.md and preference-semantics-implementation-plan.md
 
+> **SUPERSEDED** — All phases in this plan are delivered. See [`preference-semantics-implementation-plan.md`](./preference-semantics-implementation-plan.md) for the current preference work status and [`fit-semantics-rewire-plan.md`](./fit-semantics-rewire-plan.md) for the fit architecture status. Do not use this document for planning.
+
 ## Goal
 
 Replace the current facet-based `want_score` architecture with:

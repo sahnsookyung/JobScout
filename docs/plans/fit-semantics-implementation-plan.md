@@ -4,6 +4,8 @@
 - Related ADR: [ADR 0002](../adr/0002-fit-semantics-and-explainability.md)
 - Status: Superseded by [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md) for the next fit architecture slice
 
+> **SUPERSEDED** — This plan describes the initial LLM-first fit semantics milestone. The rewire plan replaced it as the canonical fit architecture document; cross-encoder scoring is now the default, not LLM scoring. See [`fit-semantics-rewire-plan.md`](./fit-semantics-rewire-plan.md) for current state. Do not use this document for planning.
+
 ## Architecture Decisions
 
 - Retrieval and fit scoring are separate concerns.
@@ -45,7 +47,7 @@ Status:
 Status:
 
 - implemented on the PR 2 branch
-- current default semantic scorer is LLM-backed
+- the initial default semantic scorer was LLM-backed; cross-encoder is now the default per the rewire plan
 - threshold scoring is retained as a guarded fallback
 - public fit explanation now comes from semantic verdicts rather than raw similarity percentages
 

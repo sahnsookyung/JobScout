@@ -33,13 +33,13 @@ Scope now implemented on this branch:
 
 What landed:
 
-- [core/scorer/semantic_fit.py](/Users/sookyungahn/repos/JobScout-fit-semantics/core/scorer/semantic_fit.py)
-- [core/scorer/service.py](/Users/sookyungahn/repos/JobScout-fit-semantics/core/scorer/service.py)
-- [services/scorer_matcher/pipeline.py](/Users/sookyungahn/repos/JobScout-fit-semantics/services/scorer_matcher/pipeline.py)
-- [core/llm/fake_service.py](/Users/sookyungahn/repos/JobScout-fit-semantics/core/llm/fake_service.py)
-- [web/backend/services/match_service.py](/Users/sookyungahn/repos/JobScout-fit-semantics/web/backend/services/match_service.py)
-- [web/backend/routers/matches.py](/Users/sookyungahn/repos/JobScout-fit-semantics/web/backend/routers/matches.py)
-- [web/frontend/src/features/matches/components/MatchDetailsModal.tsx](/Users/sookyungahn/repos/JobScout-fit-semantics/web/frontend/src/features/matches/components/MatchDetailsModal.tsx)
+- [core/scorer/semantic_fit.py](../../core/scorer/semantic_fit.py)
+- [core/scorer/service.py](../../core/scorer/service.py)
+- [services/scorer_matcher/pipeline.py](../../services/scorer_matcher/pipeline.py)
+- [core/llm/fake_service.py](../../core/llm/fake_service.py)
+- [web/backend/services/match_service.py](../../web/backend/services/match_service.py)
+- [web/backend/routers/matches.py](../../web/backend/routers/matches.py)
+- [web/frontend/src/features/matches/components/MatchDetailsModal.tsx](../../web/frontend/src/features/matches/components/MatchDetailsModal.tsx)
 
 Behavior:
 
@@ -74,12 +74,12 @@ Why separate:
 
 What landed:
 
-- [core/preference_semantics.py](/Users/sookyungahn/repos/JobScout-preference-semantics/core/preference_semantics.py)
-- [services/scorer_matcher/preference_semantics.py](/Users/sookyungahn/repos/JobScout-preference-semantics/services/scorer_matcher/preference_semantics.py)
-- [services/scorer_matcher/candidate_preferences.py](/Users/sookyungahn/repos/JobScout-preference-semantics/services/scorer_matcher/candidate_preferences.py)
-- [services/scorer_matcher/pipeline.py](/Users/sookyungahn/repos/JobScout-preference-semantics/services/scorer_matcher/pipeline.py)
-- [web/backend/services/candidate_preferences_service.py](/Users/sookyungahn/repos/JobScout-preference-semantics/web/backend/services/candidate_preferences_service.py)
-- [core/llm/fake_service.py](/Users/sookyungahn/repos/JobScout-preference-semantics/core/llm/fake_service.py)
+- [core/preference_semantics.py](../../core/preference_semantics.py)
+- [services/scorer_matcher/preference_semantics.py](../../services/scorer_matcher/preference_semantics.py)
+- [services/scorer_matcher/candidate_preferences.py](../../services/scorer_matcher/candidate_preferences.py)
+- [services/scorer_matcher/pipeline.py](../../services/scorer_matcher/pipeline.py)
+- [web/backend/services/candidate_preferences_service.py](../../web/backend/services/candidate_preferences_service.py)
+- [core/llm/fake_service.py](../../core/llm/fake_service.py)
 
 Behavior:
 
@@ -101,11 +101,11 @@ Behavior:
 
 ### Canonical Summary Foundation
 
-- [etl/canonical_summary.py](/Users/sookyungahn/repos/JobScout/etl/canonical_summary.py)
-- [etl/orchestrator.py](/Users/sookyungahn/repos/JobScout/etl/orchestrator.py)
-- [database/models/job.py](/Users/sookyungahn/repos/JobScout/database/models/job.py)
-- [database/repositories/job_post.py](/Users/sookyungahn/repos/JobScout/database/repositories/job_post.py)
-- [migrations/005_semantic_architecture_foundation.py](/Users/sookyungahn/repos/JobScout/migrations/005_semantic_architecture_foundation.py)
+- [etl/canonical_summary.py](../../etl/canonical_summary.py)
+- [etl/orchestrator.py](../../etl/orchestrator.py)
+- [database/models/job.py](../../database/models/job.py)
+- [database/repositories/job_post.py](../../database/repositories/job_post.py)
+- [migrations/005_semantic_architecture_foundation.py](../../migrations/005_semantic_architecture_foundation.py)
 
 Behavior:
 
@@ -115,15 +115,15 @@ Behavior:
 
 ### Preference Foundation
 
-- [services/scorer_matcher/preference_semantics.py](/Users/sookyungahn/repos/JobScout/services/scorer_matcher/preference_semantics.py)
-- [core/config_loader.py](/Users/sookyungahn/repos/JobScout/core/config_loader.py)
-- [config.yaml](/Users/sookyungahn/repos/JobScout/config.yaml)
-- [web/backend/services/candidate_preferences_service.py](/Users/sookyungahn/repos/JobScout/web/backend/services/candidate_preferences_service.py)
-- [web/backend/models/requests.py](/Users/sookyungahn/repos/JobScout/web/backend/models/requests.py)
-- [web/backend/models/responses.py](/Users/sookyungahn/repos/JobScout/web/backend/models/responses.py)
-- [web/backend/routers/candidate_preferences.py](/Users/sookyungahn/repos/JobScout/web/backend/routers/candidate_preferences.py)
-- [web/frontend/src/features/preferences/components/CandidatePreferencesPanel.tsx](/Users/sookyungahn/repos/JobScout/web/frontend/src/features/preferences/components/CandidatePreferencesPanel.tsx)
-- [web/frontend/src/types/api.ts](/Users/sookyungahn/repos/JobScout/web/frontend/src/types/api.ts)
+- [services/scorer_matcher/preference_semantics.py](../../services/scorer_matcher/preference_semantics.py)
+- [core/config_loader.py](../../core/config_loader.py)
+- [config.yaml](../../config.yaml)
+- [web/backend/services/candidate_preferences_service.py](../../web/backend/services/candidate_preferences_service.py)
+- [web/backend/models/requests.py](../../web/backend/models/requests.py)
+- [web/backend/models/responses.py](../../web/backend/models/responses.py)
+- [web/backend/routers/candidate_preferences.py](../../web/backend/routers/candidate_preferences.py)
+- [web/frontend/src/features/preferences/components/CandidatePreferencesPanel.tsx](../../web/frontend/src/features/preferences/components/CandidatePreferencesPanel.tsx)
+- [web/frontend/src/types/api.ts](../../web/frontend/src/types/api.ts)
 
 Behavior:
 
@@ -157,7 +157,7 @@ Observed results at handoff:
   - duplicate SQL literal cleanup for candidate-preferences timestamps
   - dedicated unit coverage for `preference_semantics.py`
 - web backend preference saving was decoupled from scorer-package imports so split-stack startup stays healthy
-- rerun persistence semantics were hardened in [services/scorer_matcher/pipeline.py](/Users/sookyungahn/repos/JobScout/services/scorer_matcher/pipeline.py):
+- rerun persistence semantics were hardened in [services/scorer_matcher/pipeline.py](../../services/scorer_matcher/pipeline.py):
   - active match refresh now happens after a clean save batch, not before saving
   - rerun refresh is skipped when any per-match save fails, preserving the last good active set
   - `recalculate_existing=False` semantics are preserved for unchanged active matches
@@ -187,7 +187,7 @@ Observed results at handoff:
 - Preference mode gating is still backend allowlist-based; there is no separate per-user capability model for preference modes yet.
 - No admin HTTP surface exists for capability management in this phase beyond config-driven allowed modes plus the internal CLI.
 - A DB-backed capability control mechanism exists now, plus an internal CLI for dev/staging administration:
-  - [manage_feature_capability.py](/Users/sookyungahn/repos/JobScout-fit-semantics/scripts/manage_feature_capability.py)
+  - [manage_feature_capability.py](../../scripts/manage_feature_capability.py)
   - later options remain an internal admin API or admin UI on top of the same table/service if operations truly require it
 - Truncation and fit-routing diagnostics are persisted, but they are not yet exported into a Grafana dashboard; use [container-observability-plan.md](./container-observability-plan.md) as the follow-on operational plan.
 - Persisted reruns are authoritative only after a clean save batch completes; this safety behavior is now intentional and should be preserved when implementing later semantic stages.
@@ -195,8 +195,8 @@ Observed results at handoff:
 - ANN/pgvector is still the retrieval and evidence-recall layer; the rewire plan keeps it as retrieval infrastructure rather than final semantic authority.
 - hybrid retrieval is now default-on in config.
 - A Python-only offline evaluation harness now exists for fit pair judgments and retrieval fusion:
-  - [scripts/evaluate_fit_semantics.py](/Users/sookyungahn/repos/JobScout-fit-semantics/scripts/evaluate_fit_semantics.py)
-  - [tests/fixtures/evaluations/fit_semantics_cases.json](/Users/sookyungahn/repos/JobScout-fit-semantics/tests/fixtures/evaluations/fit_semantics_cases.json)
+  - [scripts/evaluate_fit_semantics.py](../../scripts/evaluate_fit_semantics.py)
+  - [tests/fixtures/evaluations/fit_semantics_cases.json](../../tests/fixtures/evaluations/fit_semantics_cases.json)
 - The offline harness intentionally lives in Python only; TypeScript remains for UI and end-to-end verification, not backend fit benchmarking.
 
 ## Next PR Starting Point
