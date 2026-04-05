@@ -11,6 +11,7 @@ from core.config_loader import PreferencesConfig
 from services.scorer_matcher.preference_semantics import (
     PreferenceAssessment,
     PreferenceProfile,
+    _job_work_mode,
     build_preference_judge,
     build_preference_parser,
     build_preference_semantic_reranker,
@@ -94,17 +95,6 @@ def load_candidate_preferences(repo, owner_id: Optional[str]) -> Optional[Dict[s
         "revision": int(getattr(preferences, "revision", 0) or 0),
     }
 
-
-def _job_work_mode(job) -> str:
-    """Infer the job's work arrangement from structured metadata."""
-    work_from_home_type = _normalize_text(getattr(job, "work_from_home_type", ""))
-    location_text = _normalize_text(getattr(job, "location_text", ""))
-
-    if getattr(job, "is_remote", None) is True or "remote" in work_from_home_type:
-        return "remote"
-    if "hybrid" in work_from_home_type or "hybrid" in location_text:
-        return "hybrid"
-    return "onsite"
 
 
 def _job_matches_remote_mode(job, remote_mode: str) -> bool:
@@ -276,17 +266,7 @@ def _resolve_preference_profile(
 
 
 def _allowed_preference_modes(config: PreferencesConfig) -> List[str]:
-    normalized = [
-        mode
-        for mode in (
-            str(item).strip().lower()
-            for item in (getattr(config, "allowed_modes", None) or [])
-        )
-        if mode in {"semantic_rerank", "llm_judge"}
-    ]
-    if normalized:
-        return list(dict.fromkeys(normalized))
-    return [getattr(config, "default_mode", "semantic_rerank")]
+    return config.allowed_modes_normalized()
 
 
 def _resolve_requested_mode(

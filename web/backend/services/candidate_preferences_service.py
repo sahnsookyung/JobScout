@@ -98,11 +98,7 @@ class CandidatePreferencesService:
         }
 
     def _allowed_modes(self) -> List[str]:
-        configured = list(self.config.preferences.allowed_modes or [])
-        normalized = [mode for mode in configured if mode in VALID_PREFERENCE_MODES]
-        if not normalized:
-            return [self.config.preferences.default_mode]
-        return normalized
+        return self.config.preferences.allowed_modes_normalized()
 
     def _resolve_effective_mode(self, requested_mode: Any, allowed_modes: List[str]) -> str:
         normalized = str(requested_mode or self.config.preferences.default_mode).strip().lower()

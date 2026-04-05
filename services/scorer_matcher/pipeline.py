@@ -9,7 +9,6 @@ import time
 import logging
 import threading
 from typing import List, Optional, Dict, Any, Callable
-from uuid import UUID
 
 from dataclasses import dataclass
 
@@ -654,10 +653,16 @@ def _run_matching_and_scoring(
         scored_matches = _run_scorer_service(
             scorer, preliminary_matches, matching_config, stop_event,
         )
+        rerank_start = time.time()
         scored_matches = apply_preference_semantic_reranking(
             scored_matches,
             candidate_preferences,
             config=_resolve_preferences_config(ctx),
+        )
+        logger.info(
+            "Preference reranking completed in %.2fs for %d matches",
+            time.time() - rerank_start,
+            len(scored_matches),
         )
         scored_matches = _apply_final_result_policy(scored_matches, matching_config)
 

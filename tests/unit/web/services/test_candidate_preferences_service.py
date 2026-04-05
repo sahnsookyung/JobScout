@@ -6,27 +6,32 @@ from web.backend.services.candidate_preferences_service import CandidatePreferen
 
 
 def _config(allowed_modes=None, default_mode="semantic_rerank"):
-    return SimpleNamespace(
-        preferences=SimpleNamespace(
-            default_mode=default_mode,
-            allowed_modes=allowed_modes or ["semantic_rerank"],
-            parser=SimpleNamespace(
-                enabled=False,
-                model=None,
-                base_url=None,
-                api_key=None,
-                api_secret=None,
-                headers=None,
-                temperature=0.0,
-                embedding_model="text-embedding-3-small",
-                embedding_dimensions=1024,
-                embedding_base_url=None,
-                embedding_api_key=None,
-                embedding_api_secret=None,
-                embedding_headers=None,
-            ),
-        )
+    _valid = {"semantic_rerank", "llm_judge"}
+    _modes = allowed_modes or ["semantic_rerank"]
+    prefs = SimpleNamespace(
+        default_mode=default_mode,
+        allowed_modes=_modes,
+        parser=SimpleNamespace(
+            enabled=False,
+            model=None,
+            base_url=None,
+            api_key=None,
+            api_secret=None,
+            headers=None,
+            temperature=0.0,
+            embedding_model="text-embedding-3-small",
+            embedding_dimensions=1024,
+            embedding_base_url=None,
+            embedding_api_key=None,
+            embedding_api_secret=None,
+            embedding_headers=None,
+        ),
     )
+    prefs.allowed_modes_normalized = lambda: (
+        [m for m in dict.fromkeys(str(x).strip().lower() for x in prefs.allowed_modes) if m in _valid]
+        or [prefs.default_mode]
+    )
+    return SimpleNamespace(preferences=prefs)
 
 
 @patch("web.backend.services.candidate_preferences_service.get_config")

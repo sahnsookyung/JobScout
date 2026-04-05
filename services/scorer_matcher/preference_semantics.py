@@ -464,10 +464,9 @@ class LLMPreferenceParser(PreferenceParser):
             return None
 
         data = self.llm.extract_structured_data(
-            normalized,
+            f"Normalize this candidate preference text.\n\n{normalized}",
             PREFERENCE_PROFILE_SCHEMA,
             system_prompt=PREFERENCE_PARSER_SYSTEM_PROMPT,
-            user_message=f"Normalize this candidate preference text.\n\n{normalized}",
         )
         if not isinstance(data, dict):
             return None
@@ -520,10 +519,9 @@ class _BaseLLMPreferenceScorer:
             }
             payload_json = json.dumps(payload)
             data = self.llm.extract_structured_data(
-                payload_json,
+                f"Score these fit-qualified jobs against the candidate's soft preferences.\n\n{payload_json}",
                 self.schema_spec,
                 system_prompt=self.system_prompt,
-                user_message=f"Score these fit-qualified jobs against the candidate's soft preferences.\n\n{payload_json}",
             )
             if not isinstance(data, dict):
                 continue
@@ -642,9 +640,12 @@ class CrossEncoderPreferenceReranker(PreferenceSemanticReranker):
         # and have no calibrated absolute meaning. A weighted score of exactly 0
         # means either heuristic no-overlap or preference weight = 0; both are
         # genuine non-signals. All other top-K pairs are included.
-        # NOTE: for production real-model use, sigmoid-neutral pairs score ~0.5,
-        # so preference_score baseline for irrelevant jobs may be ~0.3-0.4 after
-        # weighting. Calibrate the score→preference_score mapping on domain data.
+        # NOTE: raw cross-encoder outputs are unbounded. score_text_pairs applies
+        # _normalize_semantic_score, which runs sigmoid only when the raw score
+        # falls outside [0, 1]. Models that output calibrated probabilities pass
+        # through unchanged. The resulting neutral-pair score is model-dependent
+        # and should not be assumed to be 0.5. overall_score is relatively ordered
+        # within a query; absolute thresholds require per-model calibration.
         matched_categories: set[str] = set()
         detail_codes: List[str] = []
         seen_details: set[str] = set()
@@ -660,10 +661,15 @@ class CrossEncoderPreferenceReranker(PreferenceSemanticReranker):
 
         reason_codes = sorted(matched_categories) + detail_codes
 
+        total_categories = len({cat for cat, _, _, _ in pair_meta}) if pair_meta else 0
+        confidence = (
+            len(matched_categories) / total_categories if total_categories else 0.0
+        )
+
         return PreferenceAssessment(
             job_id=job.job_id,
             preference_score=round(min(1.0, max(0.0, overall_score)), 4),
-            preference_confidence=round(min(1.0, overall_score), 4),
+            preference_confidence=round(min(1.0, confidence), 4),
             preference_reason_codes=reason_codes,
             preference_explanation=(
                 f"Matched {len(matched_categories)} preference categories across job segments."

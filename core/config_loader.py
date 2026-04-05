@@ -98,6 +98,17 @@ class PreferencesConfig(BaseModel):
     )
     cross_encoder: PreferenceCrossEncoderConfig = Field(default_factory=PreferenceCrossEncoderConfig)
 
+    def allowed_modes_normalized(self) -> List[str]:
+        """Return deduplicated allowed modes filtered to valid values, falling back to default_mode."""
+        _valid = {"semantic_rerank", "llm_judge"}
+        normalized = [
+            m for m in dict.fromkeys(
+                str(x).strip().lower() for x in (self.allowed_modes or [])
+            )
+            if m in _valid
+        ]
+        return normalized or [self.default_mode]
+
 
 class ResumeConfig(BaseModel):
     """Configuration for resume processing in ETL."""
