@@ -1,7 +1,7 @@
 """Unit tests for etl/resume/loader.py"""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from etl.resume.loader import load_resume_with_parser
 

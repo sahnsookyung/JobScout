@@ -45,8 +45,11 @@ def mock_service():
 def app(mock_service):
     app = FastAPI()
     app.include_router(router)
-    app.dependency_overrides[get_candidate_preferences_service] = lambda: mock_service
-    app.dependency_overrides[get_current_user] = lambda: _User()
+    def _service_override():
+        return mock_service
+
+    app.dependency_overrides[get_candidate_preferences_service] = _service_override
+    app.dependency_overrides[get_current_user] = _User
     yield app
     app.dependency_overrides.clear()
 
