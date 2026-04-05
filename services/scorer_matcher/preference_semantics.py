@@ -464,7 +464,7 @@ class LLMPreferenceParser(PreferenceParser):
             return None
 
         data = self.llm.extract_structured_data(
-            f"Normalize this candidate preference text.\n\n{normalized}",
+            normalized,
             PREFERENCE_PROFILE_SCHEMA,
             system_prompt=PREFERENCE_PARSER_SYSTEM_PROMPT,
         )
@@ -519,7 +519,7 @@ class _BaseLLMPreferenceScorer:
             }
             payload_json = json.dumps(payload)
             data = self.llm.extract_structured_data(
-                f"Score these fit-qualified jobs against the candidate's soft preferences.\n\n{payload_json}",
+                payload_json,
                 self.schema_spec,
                 system_prompt=self.system_prompt,
             )

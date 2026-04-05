@@ -232,11 +232,17 @@ class TestCandidatePreferenceHelpers:
             },
             "revision": 5,
         }
+        _valid_modes = {"semantic_rerank", "llm_judge"}
         preference_config = SimpleNamespace(
             default_mode="semantic_rerank",
+            allowed_modes=["semantic_rerank"],
             parser=SimpleNamespace(enabled=False, model=None),
             semantic_reranker=SimpleNamespace(enabled=True, model="fake"),
             llm_judge=SimpleNamespace(enabled=False, model=None),
+        )
+        preference_config.allowed_modes_normalized = lambda: (
+            [m for m in dict.fromkeys(preference_config.allowed_modes) if m in _valid_modes]
+            or [preference_config.default_mode]
         )
         scored_matches = [
             SimpleNamespace(
