@@ -14,6 +14,7 @@ from sqlalchemy import select, delete, func
 from database.models import JobMatch, JobMatchRequirement
 from core.scorer.models import ScoredJobMatch
 from core.matcher.dto import MatchResultDTO
+from core.utils import _to_native_types
 
 logger = logging.getLogger(__name__)
 
@@ -32,21 +33,6 @@ def _to_optional_float(value):
     if value is None:
         return None
     return float(value)
-
-
-def _to_native_types(obj):
-    """Recursively convert numpy types to native Python types for JSON serialization."""
-    if obj is None:
-        return None
-    if hasattr(obj, 'tolist'):  # numpy array or matrix (check before scalars)
-        return obj.tolist()
-    if hasattr(obj, 'item'):  # numpy scalar (float32, int64, etc.)
-        return obj.item()
-    if isinstance(obj, dict):
-        return {k: _to_native_types(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_to_native_types(item) for item in obj]
-    return obj
 
 
 def _extract_job_data(scored_match: ScoredMatch):

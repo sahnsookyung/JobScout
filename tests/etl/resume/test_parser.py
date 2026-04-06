@@ -4,7 +4,6 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-import yaml
 from docx import Document
 
 from etl.resume.parser import ResumeParser

@@ -13,7 +13,6 @@ Tests cover:
 """
 
 import os
-import time
 from datetime import datetime, timezone
 from unittest.mock import Mock, patch, MagicMock
 import pytest
@@ -176,7 +175,8 @@ class TestHTMLSanitization:
         """Test valid URL is sanitized correctly."""
         result = _sanitize_url('https://example.com/path?query=value')
         assert result is not None
-        assert 'https://example.com' in result
+        from urllib.parse import urlparse
+        assert urlparse(result).hostname == 'example.com'
 
     def test_sanitize_url_invalid_scheme(self):
         """Test invalid scheme returns None."""

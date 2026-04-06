@@ -160,11 +160,12 @@ class MatchService:
         
         repo = MatchRepository(self.db)
         match = repo.get_match_by_id(match_id)
-        
+
         if not match:
             raise MatchNotFoundException(f"Match {match_id} not found")
-        
-        new_status = not (match.is_hidden or False)
+
+        is_currently_hidden = match.is_hidden or False
+        new_status = not is_currently_hidden
         repo.update_hidden_status(match_id, new_status)
         self.db.commit()
         

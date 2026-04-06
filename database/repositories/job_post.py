@@ -5,10 +5,8 @@ import re
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select, delete, func, text, update
+from sqlalchemy import select, delete, func, update
 from sqlalchemy import and_, or_
-
-from sqlalchemy.dialects.postgresql import insert
 
 from database.models import (
     JobPost, JobPostSource,

@@ -7,7 +7,6 @@ service and shared extraction helpers used by the current runtime.
 
 import logging
 import threading
-import traceback
 from typing import Optional
 
 from core.app_context import AppContext
@@ -16,9 +15,6 @@ from etl.resume.loader import load_resume_with_parser
 from database.models import DEFAULT_LEGACY_OWNER_ID, generate_file_fingerprint
 
 logger = logging.getLogger(__name__)
-
-
-import os
 
 
 def _format_http_error(e: Exception) -> str:

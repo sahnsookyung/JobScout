@@ -123,7 +123,7 @@ def _validate_webhook_url(url: str) -> bool:
                     logger.error(f"URL resolves to private/reserved IP: {ip}")
                     return False
         except socket.gaierror:
-            logger.error(f"Could not resolve hostname: {parsed.hostname}")
+            logger.error("Could not resolve webhook URL hostname")
             return False
         
         return True
@@ -525,8 +525,8 @@ class DiscordChannel(NotificationChannel):
             if retry_after is not None:
                 return int(float(retry_after))
         except Exception:
-            pass
-        
+            pass  # response body is not valid JSON; fall back to headers
+
         # Check headers (X-RateLimit-Reset-After may have fractional seconds)
         reset_after = response.headers.get('X-RateLimit-Reset-After')
         if reset_after:
@@ -644,8 +644,8 @@ class TelegramChannel(NotificationChannel):
             if retry_after is not None:
                 return int(retry_after)
         except Exception:
-            pass
-        
+            pass  # response body is not valid JSON; try alternate field
+
         # Fallback: try description field
         try:
             data = response.json()
@@ -653,7 +653,7 @@ class TelegramChannel(NotificationChannel):
             if retry_after is not None:
                 return int(retry_after)
         except Exception:
-            pass
+            pass  # response body is not valid JSON; use default wait
         
         # Default fallback
         logger.warning("Could not parse Telegram rate limit info, using default 60s")

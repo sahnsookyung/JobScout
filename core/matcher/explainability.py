@@ -31,7 +31,7 @@ def _get_requirement_embedding(job_requirement: JobRequirementUnit) -> Optional[
         elif hasattr(job_requirement, 'embedding_row') and job_requirement.embedding_row:
             return job_requirement.embedding_row.unit.embedding
     except AttributeError:
-        pass
+        pass  # embedding chain may be incomplete; return None to caller
     return None
 
 

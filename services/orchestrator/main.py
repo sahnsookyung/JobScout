@@ -1525,9 +1525,11 @@ async def health(request: Request):
         client.ping()
         redis_status = "connected"
     except redis.ConnectionError as e:
-        redis_status = f"connection_error: {e}"
+        logger.error("Redis connection error in health check: %s", e)
+        redis_status = "connection_error"
     except Exception as e:
-        redis_status = f"error: {e}"
+        logger.error("Redis error in health check: %s", e)
+        redis_status = "error"
 
     registry: OrchestratorRegistry = request.app.state.registry
     async with registry.lock:
@@ -1994,11 +1996,13 @@ def _get_stream_diagnostic(stream_name: str) -> dict:
                 for g in groups
             ]
         except Exception as e:
-            result["consumer_groups_error"] = str(e)  # codeql[py/stack-trace-exposure] admin-only diagnostic endpoint
+            logger.error("Consumer groups error for stream %s: %s", stream_name, e)
+            result["consumer_groups_error"] = "Failed to retrieve consumer groups"
 
         return result
     except Exception as e:
-        return {"error": str(e)}  # codeql[py/stack-trace-exposure] admin-only diagnostic endpoint
+        logger.error("Stream diagnostic error for %s: %s", stream_name, e)
+        return {"error": "Failed to retrieve stream info"}
 
 
 async def _get_active_orchestration_states(
@@ -2036,7 +2040,8 @@ def _get_recent_tasks(redis_client) -> list | dict:
                 )
         return recent
     except Exception as e:
-        return {"error": str(e)}  # codeql[py/stack-trace-exposure] admin-only diagnostic endpoint
+        logger.error("Failed to retrieve recent tasks from Redis: %s", e)
+        return {"error": "Failed to retrieve recent tasks"}
 
 
 @app.get("/orchestrate/diagnostics")

@@ -85,7 +85,7 @@ def penalty_details_from_orm(orm_penalty_details, total_penalties: float = 0.0, 
     Returns:
         Dict with 'details' and 'total'
     """
-    from core.scorer.persistence import _to_native_types
+    from core.utils import _to_native_types
     
     if isinstance(orm_penalty_details, dict):
         return orm_penalty_details
