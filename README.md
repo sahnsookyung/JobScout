@@ -8,7 +8,7 @@ AI-powered job matching pipeline that scrapes, analyzes, and ranks jobs against 
 - **AI Extraction**: Uses any OpenAI-compatible LLM (Ollama, OpenAI, etc.) to extract structured requirements from job descriptions and resume
 - **Vector Search**: Hybrid retrieval with pgvector — dense embedding similarity + BM25 lexical fusion
 - **Semantic Fit Scoring**: Cross-encoder reranker (`BAAI/bge-reranker-v2-m3`) scores resume evidence against each requirement
-- **Preference Semantics**: LLM-powered reranker reads your `wants.txt` and adjusts ranking based on soft preferences
+- **Preference Semantics**: LLM-powered reranker adjusts ranking based on natural language preferences set in the dashboard
 - **Ranking Pipeline**: Three ranking modes — `balanced`, `preference_first`, `fit_first` — configurable per request or globally
 - **Dashboard**: Web interface to browse ranked matches, view per-requirement evidence, hide jobs, and trigger the pipeline
 
@@ -45,13 +45,10 @@ cd web/frontend && npm install && cd ../..
 cp .env.example .env
 # Edit .env — set notification secrets (e.g. DISCORD_WEBHOOK_URL), DB/Redis URLs if non-default
 
-# 3. (Optional) Add your job preferences
-# Create wants.txt — one preference per line in plain language
-# Example: "I prefer remote-first companies", "I want a role focused on backend systems"
-echo "I want remote work flexibility" >> wants.txt
 ```
 
 > **Resume**: Upload your resume (PDF or JSON) via the web dashboard. The old `resume.json` file config is deprecated and no longer used.
+> **Preferences**: Set your job preferences in natural language via the web dashboard.
 
 ### Start Everything
 
@@ -178,7 +175,7 @@ matching:
 
 ### Preference Semantics
 
-JobScout parses your `wants.txt` and uses an LLM (or cross-encoder) to rerank matches by soft preferences.
+Natural language preferences set via the dashboard are parsed and used by an LLM (or cross-encoder) to rerank matches.
 
 ```yaml
 preferences:
@@ -238,7 +235,6 @@ scrapers:
 ```
 jobscout/
 ├── config.yaml                  # All configuration
-├── wants.txt                    # Your soft preferences (one per line)
 ├── core/                        # Shared AI/matching/scoring logic
 │   ├── matcher/                 # Hybrid retrieval (pgvector + lexical)
 │   ├── scorer/                  # Fit scoring, cross-encoder, persistence
