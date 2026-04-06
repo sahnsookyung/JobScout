@@ -60,7 +60,8 @@ def rank_matches(matches: List[Any], ctx: RankingContext) -> List[Any]:
         .fit_score        float | None  — 0–100 scale
         .job_similarity   float | None  — 0–1 scale
         .preference_score float | None  — 0–1, or None if not evaluated
-        .id               str | UUID    — used as stable tie-break key
+        .id               str | UUID    — used when stable_tie_break_key="match_id" (default)
+        .job_id           str | UUID    — used when stable_tie_break_key="job_id"
 
     Attaches a RankingExplanation instance to match.ranking_explanation.
     Returns the same list (sorted in-place).
@@ -77,7 +78,7 @@ def rank_matches(matches: List[Any], ctx: RankingContext) -> List[Any]:
         pref, fit, sim, missing = _resolve_scores(match)
         if pref is None:
             null_count += 1
-        stable = _stable_key(match)
+        stable = _stable_key(match, config)
         sort_key = _build_sort_key(pref, fit, sim, stable, mode, config)
         _attach_explanation(match, pref, fit, sim, mode, config, missing)
         keyed.append((sort_key, match))
@@ -127,8 +128,15 @@ def _resolve_scores(match: Any) -> tuple[Optional[float], float, float, list[str
     return pref, fit, sim, missing
 
 
-def _stable_key(match: Any) -> str:
-    """Deterministic tie-break key — always a string for comparison safety."""
+def _stable_key(match: Any, config: RankingConfig) -> str:
+    """Deterministic tie-break key selected by config.stable_tie_break_key.
+
+    "match_id" (default): reads match.id
+    "job_id": reads match.job_id, falls back to match.id
+    Falls back to Python id() only when the chosen attribute is absent.
+    """
+    if config.stable_tie_break_key == "job_id":
+        return str(getattr(match, "job_id", getattr(match, "id", id(match))))
     return str(getattr(match, "id", id(match)))
 
 

@@ -8,7 +8,7 @@ from typing import Any, Dict, Iterable, List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from tests.mocks.fake_service import FakeLLMService
+from tests.mocks.fake_service import FakeLLMService, _fake_preference_profile_response
 
 app = FastAPI(title="JobScout Mock OpenAI-Compatible LLM", version="1.0")
 
@@ -73,66 +73,6 @@ def _extract_job_description(message: str) -> str:
     return (match.group("body") if match else message).strip()
 
 
-def _fake_preference_profile(raw_text: str) -> Dict[str, Any]:
-    normalized = " ".join(raw_text.split())
-    lowered = normalized.lower()
-
-    def _match_preferences(keywords: Dict[str, str]) -> List[Dict[str, Any]]:
-        items: List[Dict[str, Any]] = []
-        for token, label in keywords.items():
-            if token in lowered:
-                items.append({"label": label, "weight": 0.8, "confidence": 0.9})
-        return items
-
-    return {
-        "raw_text": normalized,
-        "parse_version": "2026-04-01.v1",
-        "parser_confidence": 0.82 if normalized else 0.0,
-        "work_style": _match_preferences(
-            {
-                "remote": "Remote-friendly",
-                "hybrid": "Hybrid",
-                "mentorship": "Mentorship",
-            }
-        ),
-        "team_culture": _match_preferences(
-            {
-                "collaborative": "Collaborative",
-                "high trust": "High trust",
-                "kind": "Kind team",
-            }
-        ),
-        "tech_stack": _match_preferences(
-            {
-                "python": "Python",
-                "fastapi": "FastAPI",
-                "microservices": "Microservices",
-                "aws": "AWS",
-                "postgres": "PostgreSQL",
-            }
-        ),
-        "mission_domain": _match_preferences(
-            {
-                "climate": "Climate",
-                "health": "Health",
-                "education": "Education",
-            }
-        ),
-        "growth_preferences": _match_preferences(
-            {
-                "growth": "Growth",
-                "learning": "Learning",
-                "ownership": "Ownership",
-            }
-        ),
-        "negative_preferences": _match_preferences(
-            {
-                "onsite": "On-site only",
-                "bureaucracy": "Heavy bureaucracy",
-            }
-        ),
-    }
-
 
 def _schema_name(payload: ChatCompletionsRequest) -> str:
     response_format = payload.response_format or {}
@@ -153,7 +93,7 @@ def _build_schema_response(payload: ChatCompletionsRequest) -> Dict[str, Any]:
         return fake_llm.extract_requirements_data(_extract_job_description(user_message))
     if schema_name == "preference_profile_schema":
         raw_text = _extract_json_suffix(user_message)
-        return _fake_preference_profile(raw_text)
+        return _fake_preference_profile_response(raw_text)
     if schema_name == "semantic_fit_pairs_v1":
         json_payload = _extract_json_suffix(user_message)
         return fake_llm.extract_structured_data(
