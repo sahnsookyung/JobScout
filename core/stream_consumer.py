@@ -31,7 +31,7 @@ Usage:
 import asyncio
 import logging
 import threading
-from typing import Any, Callable, Optional
+from typing import Optional
 
 from core.redis_streams import read_stream, ack_message, publish_completion
 

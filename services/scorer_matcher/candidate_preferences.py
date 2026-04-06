@@ -6,32 +6,19 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
+from core.config_loader import PreferencesConfig
+from services.scorer_matcher.preference_semantics import (
+    PreferenceAssessment,
+    PreferenceProfile,
+    job_work_mode,
+    build_preference_judge,
+    build_preference_parser,
+    build_preference_semantic_reranker,
+    serialize_job_for_preference,
+)
+
 logger = logging.getLogger(__name__)
 
-SOFT_PREFERENCE_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
-SOFT_PREFERENCE_STOPWORDS = {
-    "about",
-    "after",
-    "among",
-    "and",
-    "are",
-    "for",
-    "from",
-    "have",
-    "into",
-    "next",
-    "role",
-    "that",
-    "the",
-    "their",
-    "them",
-    "then",
-    "they",
-    "this",
-    "want",
-    "with",
-    "your",
-}
 POSITIVE_VISA_PATTERNS = (
     re.compile(r"\bvisa sponsorship\b"),
     re.compile(r"\bsponsor(?:ship|ing)?\b"),
@@ -71,21 +58,13 @@ def load_candidate_preferences(repo, owner_id: Optional[str]) -> Optional[Dict[s
         "salary_min": getattr(preferences, "salary_min", None),
         "employment_types": list(getattr(preferences, "employment_types", []) or []),
         "soft_preferences": getattr(preferences, "soft_preferences", "") or "",
-        "preference_mode": getattr(preferences, "preference_mode", "semantic_rerank") or "semantic_rerank",
+        "soft_preference_summary": getattr(preferences, "soft_preference_summary", None),
+        "preference_mode": getattr(preferences, "preference_mode", "semantic_rerank")
+        or "semantic_rerank",
+        "preference_profile": getattr(preferences, "preference_profile", None),
         "revision": int(getattr(preferences, "revision", 0) or 0),
     }
 
-
-def _job_work_mode(job) -> str:
-    """Infer the job's work arrangement from structured metadata."""
-    work_from_home_type = _normalize_text(getattr(job, "work_from_home_type", ""))
-    location_text = _normalize_text(getattr(job, "location_text", ""))
-
-    if getattr(job, "is_remote", None) is True or "remote" in work_from_home_type:
-        return "remote"
-    if "hybrid" in work_from_home_type or "hybrid" in location_text:
-        return "hybrid"
-    return "onsite"
 
 
 def _job_matches_remote_mode(job, remote_mode: str) -> bool:
@@ -93,7 +72,7 @@ def _job_matches_remote_mode(job, remote_mode: str) -> bool:
     if remote_mode == "any":
         return True
 
-    job_mode = _job_work_mode(job)
+    job_mode = job_work_mode(job)
     if remote_mode == "remote":
         return job_mode == "remote"
     if remote_mode == "hybrid":
@@ -223,61 +202,197 @@ def apply_candidate_preference_filters(preliminary_matches, preferences: Optiona
     return filtered_matches
 
 
-def _tokenize_soft_preferences(text: str) -> set[str]:
-    """Tokenize soft preference text into a small, stable signal vocabulary."""
-    return {
-        token
-        for token in SOFT_PREFERENCE_TOKEN_PATTERN.findall(_normalize_text(text))
-        if len(token) >= 4 and token not in SOFT_PREFERENCE_STOPWORDS
-    }
-
-
-def _job_preference_tokens(job) -> set[str]:
-    """Collect lexical signals from the job record for soft-preference reranking."""
-    raw_payload = getattr(job, "raw_payload", {}) or {}
-    ai_summary = raw_payload.get("ai_job_summary") if isinstance(raw_payload, dict) else ""
-    canonical_summary = getattr(job, "canonical_job_summary", None)
-    job_text = " ".join(
-        filter(
-            None,
-            [
-                getattr(job, "title", None),
-                getattr(job, "company", None),
-                getattr(job, "description", None),
-                getattr(job, "company_description", None),
-                getattr(job, "skills_raw", None),
-                getattr(job, "job_type", None),
-                getattr(job, "location_text", None),
-                getattr(job, "work_from_home_type", None),
-                canonical_summary,
-                ai_summary,
-            ],
+def _stored_preference_profile(preferences: Dict[str, Any]) -> Optional[PreferenceProfile]:
+    raw_profile = preferences.get("preference_profile")
+    if not raw_profile:
+        return None
+    try:
+        return PreferenceProfile.model_validate(raw_profile)
+    except Exception:
+        logger.info(
+            "Stored preference profile failed validation and will be re-parsed from soft_preferences text. "
+            "Re-saving preferences will update the stored profile.",
+            exc_info=True,
         )
-    )
-    return _tokenize_soft_preferences(job_text)
+        return None
 
 
-def apply_soft_preference_reranking(scored_matches, preferences: Optional[Dict[str, Any]]):
-    """Apply a bounded lexical rerank so soft preferences can influence close calls."""
+def _resolve_preference_profile(
+    preferences: Dict[str, Any],
+    config: PreferencesConfig,
+) -> Optional[PreferenceProfile]:
+    stored = _stored_preference_profile(preferences)
+    if stored is not None:
+        return stored
+
+    raw_text = str(preferences.get("soft_preferences") or "").strip()
+    if not raw_text:
+        return None
+
+    parser = build_preference_parser(config.parser)
+    if parser is None:
+        return None
+    try:
+        return parser.parse(raw_text)
+    except Exception:
+        logger.warning("Preference parsing failed during matching", exc_info=True)
+        return None
+
+
+def _allowed_preference_modes(config: PreferencesConfig) -> List[str]:
+    return config.allowed_modes_normalized()
+
+
+def _resolve_requested_mode(
+    requested_mode: Any,
+    config: PreferencesConfig,
+) -> tuple[str, str]:
+    requested = str(requested_mode or config.default_mode).strip().lower()
+    if requested not in {"semantic_rerank", "llm_judge"}:
+        requested = config.default_mode
+
+    allowed_modes = _allowed_preference_modes(config)
+    effective = requested if requested in allowed_modes else config.default_mode
+    if effective not in allowed_modes:
+        logger.warning(
+            "Preference default_mode '%s' is not in allowed_modes %s; falling back to '%s'",
+            config.default_mode,
+            allowed_modes,
+            allowed_modes[0],
+        )
+        effective = allowed_modes[0]
+    return requested, effective
+
+
+def _fit_only_fallback(
+    scored_matches,
+    *,
+    requested_mode: str,
+    effective_mode: str,
+    reason: str,
+):
+    for match in scored_matches:
+        fit_components = dict(getattr(match, "fit_components", {}) or {})
+        fit_components.update(
+            {
+                "preference_reason_codes": ["fallback_fit_only"],
+                "preference_explanation": "Preference reranking unavailable for this run.",
+                "preference_mode_requested": requested_mode,
+                "preference_mode_effective": effective_mode,
+                "preference_mode_used": "fit_only_fallback",
+                "preference_fallback_reason": reason,
+            }
+        )
+        match.fit_components = fit_components
+        match.preference_score = None  # NULL = evaluator did not run
+    return scored_matches
+
+
+def _assessments_by_job_id(
+    assessments: List[PreferenceAssessment],
+) -> Dict[str, PreferenceAssessment]:
+    return {assessment.job_id: assessment for assessment in assessments}
+
+
+def _apply_assessments(
+    scored_matches,
+    assessments: List[PreferenceAssessment],
+    *,
+    requested_mode: str,
+    effective_mode: str,
+):
+    by_job_id = _assessments_by_job_id(assessments)
+    for match in scored_matches:
+        assessment = by_job_id.get(str(getattr(match.job, "id")))
+        fit_components = dict(getattr(match, "fit_components", {}) or {})
+        if assessment is None:
+            preference_score = 0.0
+            preference_confidence = 0.0
+            reason_codes = ["no_preference_signal"]
+            explanation = "The job description did not strongly reflect the saved soft preferences."
+        else:
+            preference_score = float(assessment.preference_score)
+            preference_confidence = float(assessment.preference_confidence)
+            reason_codes = list(assessment.preference_reason_codes or [])
+            explanation = assessment.preference_explanation
+
+        fit_components.update(
+            {
+                "preference_confidence": preference_confidence,
+                "preference_reason_codes": reason_codes,
+                "preference_explanation": explanation,
+                "preference_mode_requested": requested_mode,
+                "preference_mode_effective": effective_mode,
+                "preference_mode_used": effective_mode,
+            }
+        )
+        match.fit_components = fit_components
+        match.preference_score = preference_score  # 0.0 = scored poor; None = not evaluated
+    return scored_matches
+
+
+def apply_preference_semantic_reranking(
+    scored_matches,
+    preferences: Optional[Dict[str, Any]],
+    *,
+    config: PreferencesConfig,
+):
+    """Apply semantic preference reranking after fit-qualified scoring."""
     if not preferences:
         return scored_matches
 
-    preference_tokens = _tokenize_soft_preferences(preferences["soft_preferences"])
-    if not preference_tokens:
+    soft_preferences = str(preferences.get("soft_preferences") or "").strip()
+    if not soft_preferences:
         return scored_matches
 
-    for match in scored_matches:
-        overlap = preference_tokens & _job_preference_tokens(match.job)
-        if not overlap:
-            continue
+    requested_mode, effective_mode = _resolve_requested_mode(
+        preferences.get("preference_mode"),
+        config,
+    )
+    profile = _resolve_preference_profile(preferences, config)
+    if profile is None:
+        return _fit_only_fallback(
+            scored_matches,
+            requested_mode=requested_mode,
+            effective_mode=effective_mode,
+            reason="preference_profile_unavailable",
+        )
 
-        bonus = round(min(5.0, 5.0 * (len(overlap) / len(preference_tokens))), 2)
-        match.overall_score = min(100.0, round(match.overall_score + bonus, 2))
+    job_payloads = [serialize_job_for_preference(match.job) for match in scored_matches]
 
-        fit_components = dict(match.fit_components or {})
-        fit_components["soft_preference_bonus"] = bonus
-        fit_components["soft_preference_overlap"] = sorted(overlap)[:8]
-        match.fit_components = fit_components
+    try:
+        if effective_mode == "llm_judge":
+            judge = build_preference_judge(config.llm_judge)
+            if judge is None:
+                return _fit_only_fallback(
+                    scored_matches,
+                    requested_mode=requested_mode,
+                    effective_mode=effective_mode,
+                    reason="preference_judge_unavailable",
+                )
+            assessments = judge.judge(profile, job_payloads)
+        else:
+            reranker = build_preference_semantic_reranker(config)
+            if reranker is None:
+                return _fit_only_fallback(
+                    scored_matches,
+                    requested_mode=requested_mode,
+                    effective_mode=effective_mode,
+                    reason="preference_reranker_unavailable",
+                )
+            assessments = reranker.rerank(profile, job_payloads)
+    except Exception:
+        logger.warning("Preference reranking failed; degrading to fit-only ordering", exc_info=True)
+        return _fit_only_fallback(
+            scored_matches,
+            requested_mode=requested_mode,
+            effective_mode=effective_mode,
+            reason="preference_reranking_failed",
+        )
 
-    scored_matches.sort(key=lambda match: match.overall_score, reverse=True)
-    return scored_matches
+    return _apply_assessments(
+        scored_matches,
+        assessments,
+        requested_mode=requested_mode,
+        effective_mode=effective_mode,
+    )

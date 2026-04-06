@@ -4,7 +4,6 @@ Unit tests for database/repositories/base.py
 Directly tests BaseRepository to ensure all branches are covered.
 """
 
-import pytest
 from unittest.mock import MagicMock
 from database.repositories.base import BaseRepository
 

@@ -780,7 +780,6 @@ class TestMatcherAppLifespan:
         state = MatcherState(mock_ctx, mock_consumer)
 
         # Simulate shutdown
-        import asyncio
         asyncio.run(state.ctx.aclose())
 
         mock_ctx.aclose.assert_called_once()

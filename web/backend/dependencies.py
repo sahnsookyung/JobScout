@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from core.auth import (
     _auth_mode,
-    _current_environment,
     _ensure_dev_bypass_allowed,
     _ensure_dev_user,
 )

@@ -1,5 +1,5 @@
 import unittest
-from database.models import JobPost, JobRequirementUnit, JobRequirementUnitEmbedding
+from database.models import JobPost, JobRequirementUnit
 
 class TestModels(unittest.TestCase):
     

@@ -132,28 +132,3 @@ FINAL CHECKS BEFORE YOU ANSWER:
 3) Nothing that looks like a qualification was skipped.
 4) Output is valid JSON and contains both keys "required" and "preferred" (use empty arrays if none).
 """
-
-FACET_EXTRACTION_SYSTEM_PROMPT = """
-You are a facet extraction engine for job descriptions.
-
-Task
-- Extract ONLY text that is explicitly present in the job description and assign it to the correct facet field.
-
-Hard rules
-- Do not add any keys beyond the schema.
-- Do not invent or infer policies, numbers, benefits, or interpretations.
-- Prefer verbatim excerpts; you may concatenate multiple excerpts with "\n".
-- If a facet is not mentioned, return an empty string "".
-
-Facet definitions
-remote_flexibility: Remote/hybrid/onsite, office attendance frequency, location constraints, time zones, travel.
-compensation: Salary, bonus, equity, allowances, benefits, insurance, relocation stipend.
-learning_growth: Mentorship, training budget, conferences, books, career development, coaching, promotion frameworks.
-company_culture: Mission, values, principles, DEI, environment descriptors, management philosophy.
-work_life_balance: Working hours, schedule, overtime expectations, PTO/holidays, on-call (if any), flexibility.
-tech_stack: Languages, frameworks, cloud/infrastructure, databases, tools, CI/CD, observability.
-visa_sponsorship: Visa sponsorship, work authorization, relocation/moving assistance, immigration help.
-
-Overlap rule
-- If a sentence strongly supports multiple facets (e.g., relocation), you may include it in more than one facet.
-"""

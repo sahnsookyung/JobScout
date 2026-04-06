@@ -42,4 +42,4 @@ ENV PYTHONPATH=/app
 USER appuser
 EXPOSE 8084
 
-CMD ["uvicorn", "services.orchestrator.main:app", "--host", "0.0.0.0", "--port", "8084"]
+CMD ["sh", "-c", "umask 0002 && exec uvicorn services.orchestrator.main:app --host 0.0.0.0 --port 8084"]

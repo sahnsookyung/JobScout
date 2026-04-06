@@ -7,8 +7,6 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { usePipelineEvents } from '../usePipelineEvents';
 import type { PipelineStatusResponse } from '@/types/api';
 
-// Helper to flush pending promises
-const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0));
 
 // Mock EventSource with precise typing
 class MockEventSource {

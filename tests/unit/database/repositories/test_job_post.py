@@ -1,11 +1,11 @@
 """Unit tests for database/repositories/job_post.py"""
 
 import pytest
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 from database.repositories.job_post import JobPostRepository
 from database.models import (
     JobPost, JobPostSource, JobRequirementUnit, JobBenefit,
-    JobRequirementUnitEmbedding, JobFacetEmbedding,
+    JobRequirementUnitEmbedding,
 )
 
 
@@ -71,7 +71,7 @@ class TestCreateJobPost:
             'company_name': 'Acme',
             'is_remote': True,
         }
-        result = repo.create_job_post(job_data, "fp-123", "Remote")
+        repo.create_job_post(job_data, "fp-123", "Remote")
 
         mock_db.add.assert_called_once()
         mock_db.flush.assert_called_once()
@@ -84,13 +84,13 @@ class TestCreateJobPost:
         assert added.canonical_fingerprint == 'fp-123'
 
     def test_returns_new_job_post(self):
-        repo, mock_db = make_repo()
+        repo, _ = make_repo()
         job_data = {'title': 'Dev', 'company_name': 'Corp', 'is_remote': False}
         result = repo.create_job_post(job_data, "fp-1", "NYC")
         assert isinstance(result, JobPost)
 
     def test_sets_raw_payload_empty(self):
-        repo, mock_db = make_repo()
+        repo, _ = make_repo()
         job_data = {'title': 'Dev', 'company_name': 'Corp'}
         result = repo.create_job_post(job_data, "fp-1", "NYC")
         assert result.raw_payload == {}
@@ -350,12 +350,12 @@ class TestExtractYearsFromRequirement:
 
     def test_extracts_years_from_text(self):
         repo, _ = make_repo()
-        years, ctx = repo._extract_years_from_requirement("5 years of Python experience")
+        years, _ = repo._extract_years_from_requirement("5 years of Python experience")
         assert years == 5
 
     def test_extracts_years_minimum_pattern(self):
         repo, _ = make_repo()
-        years, ctx = repo._extract_years_from_requirement("minimum 3 years experience")
+        years, _ = repo._extract_years_from_requirement("minimum 3 years experience")
         assert years == 3
 
     def test_no_years_returns_none(self):
@@ -366,7 +366,7 @@ class TestExtractYearsFromRequirement:
 
     def test_plus_pattern(self):
         repo, _ = make_repo()
-        years, ctx = repo._extract_years_from_requirement("3+ years of JavaScript")
+        years, _ = repo._extract_years_from_requirement("3+ years of JavaScript")
         assert years == 3
 
 
@@ -827,182 +827,6 @@ class TestGetTopJobsByLexicalQuery:
         )
 
         mock_db.execute.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# get_job_facet_embeddings / get_facets_for_job / get_jobs_needing_facet_embedding
-# ---------------------------------------------------------------------------
-
-class TestGetJobFacetEmbeddings:
-    def test_returns_dict_of_embeddings(self):
-        repo, mock_db = make_repo()
-        facet1 = MagicMock()
-        facet1.facet_key = "skills"
-        facet1.embedding = [0.1, 0.2]
-        facet2 = MagicMock()
-        facet2.facet_key = "remote"
-        facet2.embedding = None  # Should be excluded
-        mock_db.execute.return_value.scalars.return_value.all.return_value = [facet1, facet2]
-
-        result = repo.get_job_facet_embeddings("job-id")
-        assert result == {"skills": [0.1, 0.2]}
-        assert "remote" not in result
-
-
-class TestGetFacetsForJob:
-    def test_returns_list_of_facets(self):
-        repo, mock_db = make_repo()
-        facets = [MagicMock(spec=JobFacetEmbedding) for _ in range(3)]
-        mock_db.execute.return_value.scalars.return_value.all.return_value = facets
-        result = repo.get_facets_for_job("job-id")
-        assert result == facets
-
-
-class TestGetJobsNeedingFacetEmbedding:
-    def test_returns_list(self):
-        repo, mock_db = make_repo()
-        mock_db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-        result = repo.get_jobs_needing_facet_embedding(limit=5)
-        assert len(result) == 1
-
-    def test_returns_empty_when_no_unembedded_facets(self):
-        repo, mock_db = make_repo()
-        mock_db.execute.return_value.scalars.return_value.all.return_value = []
-        result = repo.get_jobs_needing_facet_embedding()
-        assert result == []
-
-    def test_query_joins_facet_embedding_for_null_filter(self):
-        """Change 3: query must join JobFacetEmbedding and filter embedding IS NULL."""
-        import inspect
-        from database.repositories.job_post import JobPostRepository
-        src = inspect.getsource(JobPostRepository.get_jobs_needing_facet_embedding)
-        assert "JobFacetEmbedding" in src
-        assert "is_(None)" in src
-        assert "distinct" in src
-
-
-# ---------------------------------------------------------------------------
-# get_and_claim_jobs_for_facet_extraction (Change 1 — extraction_status fix)
-# ---------------------------------------------------------------------------
-
-class TestGetAndClaimJobsForFacetExtraction:
-    def _side_effect(self, claimed_ids, jobs):
-        """Provide execute() side-effects: stale-reset UPDATE, quarantine UPDATE, claim CTE, SELECT."""
-        claim_result = MagicMock()
-        claim_result.fetchall.return_value = [(id_,) for id_ in claimed_ids]
-        jobs_result = MagicMock()
-        jobs_result.scalars.return_value.all.return_value = jobs
-        return [MagicMock(), MagicMock(), claim_result, jobs_result]
-
-    def test_claim_sql_uses_extraction_status_not_is_embedded(self):
-        """Change 1: claim CTE must filter on extraction_status='succeeded', not is_embedded=true."""
-        import inspect
-        from database.repositories.job_post import JobPostRepository
-        src = inspect.getsource(JobPostRepository.get_and_claim_jobs_for_facet_extraction)
-        assert "extraction_status = 'succeeded'" in src
-        assert "is_embedded = true" not in src
-
-    def test_returns_empty_when_nothing_claimed(self):
-        repo, mock_db = make_repo()
-        claim_result = MagicMock()
-        claim_result.fetchall.return_value = []
-        mock_db.execute.side_effect = [MagicMock(), MagicMock(), claim_result]
-        result = repo.get_and_claim_jobs_for_facet_extraction()
-        assert result == []
-
-    def test_returns_claimed_jobs(self):
-        repo, mock_db = make_repo()
-        mock_job = MagicMock(spec=JobPost)
-        mock_db.execute.side_effect = self._side_effect(["id-1"], [mock_job])
-        result = repo.get_and_claim_jobs_for_facet_extraction()
-        assert result == [mock_job]
-
-    def test_extraction_status_succeeded_is_embedded_false_jobs_are_eligible(self):
-        """Change 1: is_embedded=false must not block claiming when extraction_status=succeeded."""
-        # Verified via source inspection: the old is_embedded = true guard is gone.
-        import inspect
-        from database.repositories.job_post import JobPostRepository
-        src = inspect.getsource(JobPostRepository.get_and_claim_jobs_for_facet_extraction)
-        assert "is_embedded = true" not in src
-
-
-# ---------------------------------------------------------------------------
-# update_facet_embedding
-# ---------------------------------------------------------------------------
-
-class TestUpdateFacetEmbedding:
-    def test_executes_update(self):
-        repo, mock_db = make_repo()
-        repo.update_facet_embedding("facet-id", [0.1, 0.2], "hash-abc")
-        mock_db.execute.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# reset_stale_facet_jobs
-# ---------------------------------------------------------------------------
-
-class TestResetStaleFacetJobs:
-    def test_returns_rowcount(self):
-        repo, mock_db = make_repo()
-        mock_db.execute.return_value.rowcount = 3
-        result = repo.reset_stale_facet_jobs(timeout_minutes=30, max_retries=5)
-        assert result == 3
-        mock_db.execute.assert_called_once()
-
-    def test_default_params(self):
-        repo, mock_db = make_repo()
-        mock_db.execute.return_value.rowcount = 0
-        result = repo.reset_stale_facet_jobs()
-        assert result == 0
-
-
-# ---------------------------------------------------------------------------
-# get_jobs_with_failed_facets
-# ---------------------------------------------------------------------------
-
-class TestGetJobsWithFailedFacets:
-    def test_returns_failed_jobs(self):
-        repo, mock_db = make_repo()
-        mock_db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-        result = repo.get_jobs_with_failed_facets(limit=10)
-        assert len(result) == 1
-
-    def test_returns_empty(self):
-        repo, mock_db = make_repo()
-        mock_db.execute.return_value.scalars.return_value.all.return_value = []
-        result = repo.get_jobs_with_failed_facets()
-        assert result == []
-
-
-# ---------------------------------------------------------------------------
-# get_jobs_with_missing_facet_embeddings
-# ---------------------------------------------------------------------------
-
-class TestGetJobsWithMissingFacetEmbeddings:
-    def test_returns_empty_when_no_job_ids(self):
-        repo, mock_db = make_repo()
-        result_mock = MagicMock()
-        result_mock.fetchall.return_value = []
-        mock_db.execute.return_value = result_mock
-
-        result = repo.get_jobs_with_missing_facet_embeddings()
-        assert result == []
-
-    def test_returns_jobs_when_ids_found(self):
-        repo, mock_db = make_repo()
-        mock_row = MagicMock()
-        mock_row.__getitem__ = MagicMock(return_value="job-id-1")
-        result_mock = MagicMock()
-        result_mock.fetchall.return_value = [mock_row]
-
-        mock_jobs = [MagicMock(spec=JobPost)]
-        second_result = MagicMock()
-        second_result.scalars.return_value.all.return_value = mock_jobs
-
-        mock_db.execute.side_effect = [result_mock, second_result]
-
-        result = repo.get_jobs_with_missing_facet_embeddings()
-        assert result == mock_jobs
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,6 @@ import json
 import pytest
 import tempfile
 import os
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from etl.resume.parser import ResumeParser, ParsedResume

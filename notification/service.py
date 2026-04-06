@@ -29,7 +29,7 @@ import math
 import time
 import uuid
 from datetime import timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from enum import Enum
 from uuid import UUID
@@ -38,7 +38,6 @@ from uuid import UUID
 try:
     from redis import Redis
     from rq import Queue, get_current_job
-    from rq.job import Job
     from rq.registry import FailedJobRegistry
     RQ_AVAILABLE = True
 except ImportError:
@@ -53,8 +52,8 @@ from notification.exceptions import (
     TerminalNotificationError,
     TransientNotificationError,
 )
-from notification.tracker import NotificationTrackerService, NotificationEvent
-from notification.message_builder import NotificationMessageBuilder, JobNotificationContent
+from notification.tracker import NotificationTrackerService
+from notification.message_builder import JobNotificationContent
 from notification.runtime_config import (
     REDIS_URL_DEFAULT,
     get_notification_runtime_config,

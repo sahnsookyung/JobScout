@@ -9,11 +9,8 @@ Running it directly as a CLI is intentionally unsupported.
 import time
 import logging
 import signal
-import sys
 import os
-import json
 import threading
-import traceback
 from typing import Optional
 
 from core.config_loader import load_config
@@ -23,14 +20,8 @@ from core.logging_utils import (
     setup_logging as setup_shared_logging,
 )
 setup_shared_logging(level=logging.INFO)
-from core.matcher import MatcherService, MatchResultDTO, JobMatchDTO, JobEvidenceDTO, RequirementMatchDTO, JobRequirementDTO, penalty_details_from_orm
-from core.scorer import ScoringService
-from core.scorer.persistence import save_match_to_db
-
-from etl.resume import ResumeProfiler, ResumeParser
-from etl.resume.embedding_store import JobRepositoryAdapter
+from etl.resume import ResumeParser
 from database.uow import job_uow
-from database.init_db import init_db
 from web.backend.services.clients import extraction_client, orchestrator_client
 
 PIPELINE_API_URL = "http://localhost:8080/api/pipeline"

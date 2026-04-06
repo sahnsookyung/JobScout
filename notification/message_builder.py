@@ -86,16 +86,9 @@ class NotificationMessageBuilder:
         return " | ".join(parts) if parts else "📍 Location not specified"
     
     @staticmethod
-    def build_notification_content(
-        job_post: JobPost,
-        overall_score: float,
-        fit_score: float,
-        required_coverage: float = 0,
-        apply_url: Optional[str] = None
-    ) -> JobNotificationContent:
-        """Build notification content from individual parameters."""
-        
-        job_info = JobInfo(
+    def _job_info_from_orm(job_post: JobPost) -> "JobInfo":
+        """Build a JobInfo from an ORM JobPost object."""
+        return JobInfo(
             title=getattr(job_post, 'title', None) or "Unknown Position",
             company=getattr(job_post, 'company', None) or "Unknown Company",
             location=NotificationMessageBuilder.format_location(job_post),
@@ -105,6 +98,18 @@ class NotificationMessageBuilder:
             job_level=getattr(job_post, 'job_level', None),
             description=getattr(job_post, 'description', None) or getattr(job_post, 'summary', None),
         )
+
+    @staticmethod
+    def build_notification_content(
+        job_post: JobPost,
+        overall_score: float,
+        fit_score: float,
+        required_coverage: float = 0,
+        apply_url: Optional[str] = None
+    ) -> JobNotificationContent:
+        """Build notification content from individual parameters."""
+
+        job_info = NotificationMessageBuilder._job_info_from_orm(job_post)
         
         match_info = MatchInfo(
             overall_score=float(overall_score),
@@ -167,19 +172,10 @@ class NotificationMessageBuilder:
         This method extracts data directly from SQLAlchemy ORM objects,
         handling Column types that need to be accessed via getattr.
         """
-        job_info = JobInfo(
-            title=getattr(job_post, 'title', None) or "Unknown Position",
-            company=getattr(job_post, 'company', None) or "Unknown Company",
-            location=NotificationMessageBuilder.format_location(job_post),
-            is_remote=getattr(job_post, 'is_remote', False) or False,
-            salary=NotificationMessageBuilder.format_salary(job_post),
-            job_type=getattr(job_post, 'job_type', None),
-            job_level=getattr(job_post, 'job_level', None),
-            description=getattr(job_post, 'description', None) or getattr(job_post, 'summary', None),
-        )
-        
+        job_info = NotificationMessageBuilder._job_info_from_orm(job_post)
+
         match_info = MatchInfo(
-            overall_score=float(getattr(job_match, 'overall_score', 0) or 0),
+            overall_score=float(getattr(job_match, 'fit_score', 0) or 0),
             fit_score=float(getattr(job_match, 'fit_score', 0) or 0),
             required_coverage=float(getattr(job_match, 'required_coverage', 0) or 0),
         )

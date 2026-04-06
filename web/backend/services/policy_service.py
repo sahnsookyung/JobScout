@@ -4,7 +4,6 @@ from typing import Dict, Optional
 
 from core.config_loader import ResultPolicy
 from core.policy import (
-    POLICY_PRESETS,
     ResultPolicyStore,
     get_result_policy_store,
 )

@@ -8,10 +8,9 @@ Usage:
 """
 
 import asyncio
-import logging
 import pytest
 import threading
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
+from unittest.mock import Mock, patch, AsyncMock
 
 from core.stream_consumer import validate_message, StreamConsumer, StreamConsumerWithCompletion
 

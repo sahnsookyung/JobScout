@@ -19,6 +19,9 @@ etl:
     # resume_file: "resume.pdf"  # DEPRECATED - removed
     # force_re_extraction: false  # Uncomment to force re-extraction every time
   llm:
+    # Runtime LLM provider contract. Use openai_compatible for OpenAI, Ollama, or an
+    # external mock server that implements the same API surface.
+    provider: "openai_compatible"
     # Base URL for LLM (extraction) - can be overridden by ETL_LLM_BASE_URL env var
     # For local Ollama: http://localhost:11434/v1
     # For external services: https://api.openai.com/v1, https://your-ollama-host/v1, etc.
@@ -32,8 +35,6 @@ etl:
     # api_secret: "your-api-secret"
     
     # Extraction
-    extraction_url: "" # Not used for Ollama/OpenAI
-    extraction_type: "ollama" # Use "openai", "ollama" or "mock"
     extraction_model: "qwen3:14b"
     extraction_temperature: 0.5  # Temperature for extraction. 0.0 = "deterministic", but the results are not great. Research suggests we need a higher temperature than 0.
     
@@ -170,9 +171,15 @@ preferences:
   default_mode: "semantic_rerank"
   allowed_modes:
     - "semantic_rerank"
+  # reranker controls which backend handles semantic_rerank mode:
+  #   "llm"           — use the LLM (default; full explanations, requires model)
+  #   "cross_encoder" — use a local cross-encoder (cheap, no LLM calls; free-tier path)
+  reranker: "llm"
   parser:
     enabled: true
-    provider: "ollama"
+    # Parser/reranker/judge all use the same runtime provider contract.
+    provider: "openai_compatible"
+    # Local-dev defaults (Ollama). Override base_url and api_key for production.
     base_url: "http://localhost:11434/v1"
     api_key: "ollama"
     model: "qwen3:14b"
@@ -180,7 +187,7 @@ preferences:
     max_input_tokens: 1200
   semantic_reranker:
     enabled: true
-    provider: "ollama"
+    provider: "openai_compatible"
     base_url: "http://localhost:11434/v1"
     api_key: "ollama"
     model: "qwen3:14b"
@@ -188,12 +195,19 @@ preferences:
     max_input_tokens: 1200
   llm_judge:
     enabled: false
-    provider: "ollama"
+    provider: "openai_compatible"
     base_url: "http://localhost:11434/v1"
     api_key: "ollama"
     model: "qwen3:14b"
     temperature: 0.0
     max_input_tokens: 1800
+  # cross_encoder: used when reranker is set to "cross_encoder"
+  # cross_encoder:
+  #   enabled: true
+  #   model_name: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  #   runtime: "auto"       # "flag_embedding", "sentence_transformers", or "auto"
+  #   max_batch_size: 32
+  #   trust_remote_code: false
 
 
 notifications:
@@ -263,6 +277,26 @@ notifications:
   
   # Rate limiting: max seconds to wait when rate limited (5 minutes)
   rate_limit_max_wait_seconds: 300
+
+ranking:
+  config_version: "1.0.0"
+  # Default ranking mode when the caller does not specify one.
+  # preference_first | fit_first | balanced
+  active_default_mode: "balanced"
+  # Balanced blend weights — must sum to 1.0. Tune after rollout based on engagement data.
+  balanced_w_pref: 0.6
+  balanced_w_fit: 0.4
+  stable_tie_break_key: "match_id"
+  # Retrieve-stage bound: how many DB rows (ordered fit_score DESC) enter the ranker.
+  # Increase as the job database grows beyond pre-production volumes.
+  max_ranking_candidates: 500
+  # Response bounds.
+  default_top_k: 25
+  max_top_k: 100
+  explanation_labels:
+    preference_first: "Sorted by your soft preference match"
+    fit_first: "Sorted by skill & requirement fit"
+    balanced: "Balanced blend of preference and fit"
 
 schedule:
   interval_seconds: 3600  # Run every hour

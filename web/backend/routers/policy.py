@@ -4,7 +4,7 @@ Policy endpoints - manage result filtering policies.
 """
 
 from fastapi import APIRouter, HTTPException
-from typing import Optional, cast
+from typing import cast
 
 from ..services.policy_service import get_policy_service
 from ..models.requests import PolicyUpdate

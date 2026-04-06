@@ -10,11 +10,15 @@ from database.models import JobPost
 
 @dataclass
 class ScoredJobMatch:
-    """Complete scored match result with fit and final overall scores."""
+    """Complete scored match result.
+
+    preference_score is None until apply_preference_semantic_reranking() runs.
+    None means "evaluator did not run" — distinct from 0.0 ("scored, poor match").
+    """
     job: JobPost
 
     fit_score: float = 0.0
-    overall_score: float = 0.0
+    preference_score: Optional[float] = None  # 0–1 or None (not evaluated)
 
     fit_components: Dict[str, Any] = field(default_factory=dict)
     fit_confidence: float = 0.0

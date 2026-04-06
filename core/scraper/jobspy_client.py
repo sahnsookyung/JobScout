@@ -5,10 +5,9 @@ from typing import Optional, Dict, Any, List
 
 import requests
 from tenacity import (
-    retry, 
-    stop_after_attempt, 
-    wait_fixed, 
-    retry_if_exception_type,
+    retry,
+    stop_after_attempt,
+    wait_fixed,
     retry_if_exception,
     before_sleep_log
 )
@@ -99,7 +98,7 @@ class JobSpyClient:
         
         logger.info(f"Submitting job for {site_name}")
         
-        response = self.session.post(
+        response = self.session.post(  # codeql[py/partial-ssrf] URL is config-driven (config.yaml), not user-supplied
             f"{self.base_url}/scrape",
             json=payload,
             timeout=request_timeout
@@ -122,7 +121,7 @@ class JobSpyClient:
     ) -> Optional[Dict[str, Any]]:
         """Poll job status once."""
         timeout = request_timeout_s or self.request_timeout_seconds
-        response = self.session.get(
+        response = self.session.get(  # codeql[py/partial-ssrf] URL is config-driven (config.yaml), not user-supplied
             f"{self.base_url}/status/{task_id}",
             timeout=timeout
         )

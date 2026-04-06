@@ -13,14 +13,12 @@ uv run pytest tests/unit/services/test_orchestrator.py -v
 import asyncio
 import time
 import uuid
-from contextlib import asynccontextmanager
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import (
     AsyncMock,
     MagicMock,
     Mock,
-    PropertyMock,
     patch,
 )
 
@@ -1911,7 +1909,7 @@ class TestLifespan:
         mock_ctx.aclose = AsyncMock()
 
         mock_cleanup_task = asyncio.create_task(asyncio.sleep(0))
-        await mock_cleanup_task
+        _ = await mock_cleanup_task
 
         def create_mock_task(coro):
             if hasattr(coro, "close"):
@@ -1942,7 +1940,7 @@ class TestLifespan:
 
         created_coroutines = []
         mock_cleanup_task = asyncio.create_task(asyncio.sleep(0))
-        await mock_cleanup_task
+        _ = await mock_cleanup_task
 
         def create_mock_task(coro):
             cr_code = getattr(coro, "cr_code", None)
@@ -1975,7 +1973,7 @@ class TestLifespan:
         app.state.ctx = mock_ctx
 
         mock_cleanup_task = asyncio.create_task(asyncio.sleep(0))
-        await mock_cleanup_task
+        _ = await mock_cleanup_task
 
         def create_mock_task(coro):
             if hasattr(coro, "close"):
@@ -2008,7 +2006,7 @@ class TestLifespan:
         app.state.ctx = mock_ctx
 
         mock_cleanup_task = asyncio.create_task(asyncio.sleep(0))
-        await mock_cleanup_task
+        _ = await mock_cleanup_task
 
         def create_mock_task(coro):
             if hasattr(coro, "close"):
@@ -2526,7 +2524,7 @@ class TestFullPipelinePaths:
                                     resume_fingerprint="existing-fp-123"
                                 )
                         except asyncio.TimeoutError:
-                            pass
+                            pass  # Expected: timeout exits the coroutine under test
 
         # Verify: matching was enqueued (extraction/embedding should be skipped)
         assert mock_enqueue.called, "Should enqueue matching job"
@@ -2580,7 +2578,7 @@ class TestFullPipelinePaths:
                                     "test-123", mock_registry, resume_fingerprint="fp-123"
                                 )
                         except asyncio.TimeoutError:
-                            pass
+                            pass  # Expected: timeout exits the coroutine under test
 
         # Verify: state was updated with matches count
         assert mock_state._save_to_redis.called or mock_state.notify.called
@@ -2838,7 +2836,7 @@ class TestPipelineStageTimeout:
                             stage_name="test",
                         )
                 except asyncio.TimeoutError:
-                    pass
+                    pass  # Expected: timeout exits the coroutine under test
 
         # Verify state was updated
         assert state.status == "failed" or state.error is not None
@@ -2876,7 +2874,7 @@ class TestRunExtractionStage:
                     async with asyncio.timeout(0.1):
                         result = await _run_extraction_stage(state, "test-123", mock_pubsub)
                 except asyncio.TimeoutError:
-                    pass
+                    pass  # Expected: timeout exits the coroutine under test
 
         # Verify extraction completed successfully
         assert state.resume_fingerprint == "fp123"
@@ -2916,7 +2914,7 @@ class TestRunEmbeddingsStage:
                     async with asyncio.timeout(0.1):
                         result = await _run_embeddings_stage(state, "test-123", mock_pubsub)
                 except asyncio.TimeoutError:
-                    pass
+                    pass  # Expected: timeout exits the coroutine under test
 
         # Verify embeddings completed
         assert state.status == "embedding"
@@ -2959,7 +2957,7 @@ class TestRunMatchingStage:
                             state, "test-123", mock_pubsub, CHANNEL_EMBEDDINGS_DONE
                         )
                 except asyncio.TimeoutError:
-                    pass
+                    pass  # Expected: timeout exits the coroutine under test
 
         # Verify matching was attempted
         assert mock_pubsub.subscribe.called
@@ -3030,7 +3028,7 @@ class TestOrchestrateMatchCompletion:
                                     "test-123", mock_registry, resume_fingerprint=None
                                 )
                         except asyncio.TimeoutError:
-                            pass
+                            pass  # Expected: timeout exits the coroutine under test
 
         # Verify completion handling was reached
         assert mock_state._save_to_redis.called
@@ -3136,9 +3134,9 @@ class TestLogStreamBacklogs:
                 async with asyncio.timeout(0.1):
                     await _log_stream_backlogs_periodically(stop_event)
             except asyncio.TimeoutError:
-                pass
+                pass  # Expected: timeout exits the coroutine under test
             except Exception:
-                pass
+                pass  # codeql[py/empty-except] intentional: testing error paths
         
         stop_event.set()
 
@@ -3220,7 +3218,7 @@ class TestOrchestrateMatchFullPipeline:
                                     "test-123", mock_registry, resume_fingerprint=None
                                 )
                         except asyncio.TimeoutError:
-                            pass
+                            pass  # Expected: timeout exits the coroutine under test
 
         # Verify completion was reached
         assert mock_state._save_to_redis.called
@@ -3349,7 +3347,7 @@ class TestOrchestrateMatchTimeoutHandler:
                                     "test-123", mock_registry, resume_fingerprint=None
                                 )
                         except asyncio.TimeoutError:
-                            pass
+                            pass  # Expected: timeout exits the coroutine under test
 
         # Verify timeout was handled
         assert mock_state._save_to_redis.called
@@ -3430,7 +3428,7 @@ class TestFullPipelinePragmas:
                                     resume_fingerprint="existing-fp",
                                 )
                         except asyncio.TimeoutError:
-                            pass
+                            pass  # Expected: timeout exits the coroutine under test
 
     @pytest.mark.asyncio
     async def test_full_pipeline_embeddings_failure(self):
@@ -3487,7 +3485,7 @@ class TestFullPipelinePragmas:
                                         resume_fingerprint=None,
                                     )
                             except asyncio.TimeoutError:
-                                pass
+                                pass  # Expected: timeout exits the coroutine under test
 
         assert mock_enqueue.called
 
@@ -3556,7 +3554,7 @@ class TestFullPipelinePragmas:
                                     resume_fingerprint=None,
                                 )
                         except asyncio.TimeoutError:
-                            pass
+                            pass  # Expected: timeout exits the coroutine under test
 
         assert mock_state._save_to_redis.called
 
@@ -4421,7 +4419,7 @@ class TestTriggerScrapeEndpoint:
                 response = await trigger_scrape(mock_request)
 
                 assert response.success is False
-                assert "Unexpected error" in response.errors[0]
+                assert "Scrape failed unexpectedly" in response.errors[0]
 
 
 class TestScraperSchedulerLoopErrors:

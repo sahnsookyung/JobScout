@@ -638,8 +638,7 @@ class TestBuildFromORM:
         )
 
         job_match = _make_mock_job_match(
-            overall_score=88.0,
-            fit_score=85.0,
+            fit_score=88.0,
             required_coverage=0.88,
             total_requirements=10,
             matched_requirements_count=9

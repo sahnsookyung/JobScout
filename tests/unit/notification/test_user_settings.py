@@ -158,7 +158,7 @@ class TestUserNotificationSettingsService:
     @patch("notification.user_settings._auth_mode", return_value="dev-bypass")
     def test_get_settings_snapshot_returns_defaults(self, mock_auth_mode, mock_validate_email):
         user = _make_user()
-        service, db, repo = _make_service(user=user, settings=None, channels={})
+        service, _, _ = _make_service(user=user, settings=None, channels={})
 
         snapshot = service.get_settings_snapshot(user)
 
@@ -186,7 +186,7 @@ class TestUserNotificationSettingsService:
             config_json={"x": 1},
         )
         settings = _make_settings(user.id, revision=3, channels=[discord_channel])
-        service, db, repo = _make_service(
+        service, _, _ = _make_service(
             user=user,
             settings=settings,
             channels={"discord": discord_channel},
@@ -205,7 +205,7 @@ class TestUserNotificationSettingsService:
         discord_channel = _make_channel("discord")
         settings = _make_settings(user.id)
         channels = {"discord": discord_channel}
-        service, db, repo = _make_service(user=user, settings=settings, channels=channels)
+        service, db, _ = _make_service(user=user, settings=settings, channels=channels)
         service.get_settings_snapshot = Mock(return_value="snapshot")
 
         snapshot = service.update_settings(
@@ -237,7 +237,7 @@ class TestUserNotificationSettingsService:
     def test_update_settings_rejects_unavailable_channel(self, mock_available):
         user = _make_user()
         settings = _make_settings(user.id)
-        service, db, repo = _make_service(user=user, settings=settings, channels={})
+        service, _, _ = _make_service(user=user, settings=settings, channels={})
 
         with pytest.raises(NotificationConfigurationError, match="Channel unavailable"):
             service.update_settings(
@@ -254,7 +254,7 @@ class TestUserNotificationSettingsService:
     def test_update_settings_rejects_unsupported_channel(self):
         user = _make_user()
         settings = _make_settings(user.id)
-        service, db, repo = _make_service(user=user, settings=settings, channels={})
+        service, _, _ = _make_service(user=user, settings=settings, channels={})
 
         with pytest.raises(NotificationConfigurationError, match="Unsupported notification channel"):
             service.update_settings(
@@ -273,7 +273,7 @@ class TestUserNotificationSettingsService:
         user = _make_user()
         discord_channel = _make_channel("discord")
         settings = _make_settings(user.id)
-        service, db, repo = _make_service(
+        service, _, _ = _make_service(
             user=user,
             settings=settings,
             channels={"discord": discord_channel},
@@ -294,7 +294,7 @@ class TestUserNotificationSettingsService:
     def test_mark_test_result_updates_channel_and_commits(self):
         owner_id = uuid4()
         webhook_channel = _make_channel("webhook")
-        service, db, repo = _make_service(user=_make_user(id=owner_id), settings=None, channels={"webhook": webhook_channel})
+        service, db, _ = _make_service(user=_make_user(id=owner_id), settings=None, channels={"webhook": webhook_channel})
 
         service.mark_test_result(
             owner_id=owner_id,
@@ -310,14 +310,14 @@ class TestUserNotificationSettingsService:
 
     def test_resolve_delivery_target_requires_active_user(self):
         owner_id = uuid4()
-        service, db, repo = _make_service(user=None, settings=None, channels={})
+        service, _, _ = _make_service(user=None, settings=None, channels={})
 
         with pytest.raises(NotificationConfigurationError, match="does not exist or is inactive"):
             service.resolve_delivery_target(owner_id=owner_id, channel_type="email")
 
     def test_resolve_delivery_target_enforces_notifications_enabled(self):
         user = _make_user()
-        service, db, repo = _make_service(user=user, settings=None, channels={})
+        service, _, _ = _make_service(user=user, settings=None, channels={})
         service.get_settings_snapshot = Mock(
             return_value=SimpleNamespace(
                 notifications_enabled=False,
@@ -332,7 +332,7 @@ class TestUserNotificationSettingsService:
     def test_resolve_delivery_target_enforces_channel_state(self):
         user = _make_user()
         channel = SimpleNamespace(enabled=False, available=True, configured=True, masked_recipient="***@example.com")
-        service, db, repo = _make_service(user=user, settings=None, channels={})
+        service, _, _ = _make_service(user=user, settings=None, channels={})
         service.get_settings_snapshot = Mock(
             return_value=SimpleNamespace(
                 notifications_enabled=True,
@@ -357,7 +357,7 @@ class TestUserNotificationSettingsService:
 
     def test_resolve_delivery_target_returns_email_and_in_app_recipients(self):
         user = _make_user()
-        service, db, repo = _make_service(user=user, settings=None, channels={})
+        service, _, _ = _make_service(user=user, settings=None, channels={})
         service.get_settings_snapshot = Mock(
             return_value=SimpleNamespace(
                 notifications_enabled=True,
@@ -385,7 +385,7 @@ class TestUserNotificationSettingsService:
             secret_ciphertext="enc:https://discord.com/api/webhooks/test",
             secret_key_version="v1",
         )
-        service, db, repo = _make_service(
+        service, _, _ = _make_service(
             user=user,
             settings=None,
             channels={"discord": discord_channel},
@@ -405,7 +405,7 @@ class TestUserNotificationSettingsService:
 
     def test_apply_channel_update_handles_clear_and_cached_mask(self):
         user = _make_user()
-        service, db, repo = _make_service(user=user, settings=None, channels={})
+        service, _, _ = _make_service(user=user, settings=None, channels={})
         channel = _make_channel(
             "webhook",
             secret_ciphertext="enc:https://hooks.example.com/h",
@@ -426,7 +426,7 @@ class TestUserNotificationSettingsService:
     @patch("notification.user_settings._channel_available", return_value=(True, None))
     def test_channel_snapshot_uses_channel_state(self, mock_available):
         user = _make_user()
-        service, db, repo = _make_service(user=user, settings=None, channels={})
+        service, _, _ = _make_service(user=user, settings=None, channels={})
         settings_channel = _make_channel(
             "discord",
             enabled=True,

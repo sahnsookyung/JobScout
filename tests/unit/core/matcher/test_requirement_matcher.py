@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test RequirementMatcher using pgvector queries."""
 import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
 from core.matcher.requirement_matcher import RequirementMatcher
 from etl.resume import ResumeEvidenceUnit

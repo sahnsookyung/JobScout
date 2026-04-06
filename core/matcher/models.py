@@ -3,7 +3,7 @@ Matcher Models - Data structures for matching.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
+from typing import List, Any, Optional
 
 from database.models import JobRequirementUnit
 from etl.resume.models import ResumeEvidenceUnit

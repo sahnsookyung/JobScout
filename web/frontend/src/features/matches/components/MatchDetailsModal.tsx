@@ -195,7 +195,7 @@ function JobInfoSection({ job }: Readonly<{ job: any }>) {
 }
 
 function ScoresSection({ match }: Readonly<{ match: any }>) {
-    const isHighScore = match.overall_score >= 80;
+    const isHighScore = (match.fit_score ?? 0) >= 80;
     const fitExplanation = match.fit_explanation;
     const semanticSummary = typeof fitExplanation?.summary === 'string' ? fitExplanation.summary : null;
     const fitConfidence = typeof match.fit_confidence === 'number' ? match.fit_confidence : null;
@@ -235,8 +235,8 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
             <h4 className="text-xl font-black text-gray-900 mb-6">Match Scores</h4>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                <ScoreDisplay label="Overall" value={match.overall_score} gradient="from-blue-500 to-indigo-600" />
-                <ScoreDisplay label="Fit" value={match.fit_score ?? 0} gradient="from-blue-400 to-blue-600" />
+                <ScoreDisplay label="Fit" value={match.fit_score ?? 0} gradient="from-blue-500 to-indigo-600" />
+                <ScoreDisplay label="Preference" value={(match.preference_score ?? 0) * 100} gradient="from-blue-400 to-blue-600" />
             </div>
 
             {/* Coverage details */}

@@ -6,8 +6,8 @@ from sqlalchemy import select
 from database.repository import JobRepository
 from database.models import StructuredResume  # keep ResumeSectionEmbedding only if you truly need it
 from core.config_loader import ScorerConfig, ResultPolicy
-from core.llm.openai_service import OpenAIService
 from core.llm.interfaces import LLMProvider
+from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_fit
 from core.matcher import JobMatchPreliminary
 from core.scorer.models import ScoredJobMatch
 from core.scorer import penalties as penalty_calculations
@@ -57,10 +57,6 @@ def _prefetch_total_years(preliminary_matches: List[JobMatchPreliminary], db) ->
         fingerprint: values.get("total_years")
         for fingerprint, values in metadata_by_fp.items()
     }
-
-
-def _blend_overall(fit: float) -> float:
-    return min(100.0, fit)
 
 
 class ScoringService:
@@ -118,22 +114,11 @@ class ScoringService:
             llm_scorer=llm_scorer,
         )
 
-    def _resolve_llm_provider(self, ai_service: Optional[LLMProvider]) -> Optional[LLMProvider]:
+    def _resolve_llm_provider(self, _ai_service: Optional[LLMProvider]) -> Optional[LLMProvider]:
         llm_config = getattr(getattr(self.config, "semantic_fit", None), "llm", None)
         if not llm_config or not getattr(llm_config, "enabled", False):
             return None
-        if llm_config.api_key or llm_config.base_url:
-            return OpenAIService(
-                api_key=llm_config.api_key,
-                api_secret=llm_config.api_secret,
-                base_url=llm_config.base_url,
-                extraction_headers=llm_config.headers,
-                model_config={
-                    "extraction_model": llm_config.model,
-                    "extraction_temperature": llm_config.temperature,
-                },
-            )
-        return ai_service
+        return build_llm_provider(runtime_llm_config_from_fit(llm_config))
 
     def score_matches(
         self,
@@ -158,7 +143,7 @@ class ScoringService:
                 owner_id=pm.owner_id or (metadata_by_fp.get(pm.resume_fingerprint) or {}).get("owner_id"),
             ))
 
-        scored.sort(key=lambda x: x.overall_score, reverse=True)
+        scored.sort(key=lambda x: x.fit_score or 0.0, reverse=True)
 
         if result_policy:
             if result_policy.min_fit > 0:
@@ -194,12 +179,9 @@ class ScoringService:
             owner_id=owner_id,
         )
 
-        overall = _blend_overall(semantic_fit.fit_score)
-
         return ScoredJobMatch(
             job=job,
             fit_score=semantic_fit.fit_score,
-            overall_score=overall,
             fit_components=semantic_fit.fit_components,
             fit_confidence=semantic_fit.fit_confidence,
             fit_explanation=semantic_fit.fit_explanation,

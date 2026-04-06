@@ -4,7 +4,7 @@ Unit tests for ScoringService.
 """
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from typing import List
 
 from core.config_loader import ScorerConfig, ResultPolicy
@@ -130,7 +130,7 @@ scrapers: []
         scored = self.scorer.score_preliminary_match(preliminary)
 
         self.assertIsNotNone(scored)
-        self.assertGreater(scored.overall_score, 0)
+        self.assertGreater(scored.fit_score, 0)
         self.assertAlmostEqual(scored.jd_required_coverage, 0.8, places=2)
         self.assertIn("fit_explanation", scored.fit_components)
         self.assertGreater(scored.fit_confidence, 0)
@@ -141,7 +141,7 @@ scrapers: []
         self.assertEqual(scored.fit_components["retrieval"]["retrieval_score"], 0.88)
         self.assertEqual(scored.fit_explanation["retrieval"]["lexical_score"], 0.44)
 
-        print(f"  ✓ Overall score: {scored.overall_score:.1f}")
+        print(f"  ✓ Overall score: {scored.fit_score:.1f}")
         print(f"  ✓ Base score: {scored.base_score:.1f}")
         print(f"  ✓ JD Required coverage: {scored.jd_required_coverage*100:.0f}%")
 
@@ -156,15 +156,18 @@ scrapers: []
 
         assert self.scorer._resolve_llm_provider(None) is None
 
-    def test_resolve_llm_provider_builds_openai_service_when_configured(self):
+    @patch("core.scorer.service.build_llm_provider")
+    def test_resolve_llm_provider_builds_runtime_provider_when_configured(self, mock_build):
         self.scorer_config.semantic_fit.llm.enabled = True
         self.scorer_config.semantic_fit.llm.api_key = "key"
         self.scorer_config.semantic_fit.llm.base_url = "https://llm.example.com"
+        sentinel = object()
+        mock_build.return_value = sentinel
 
         provider = self.scorer._resolve_llm_provider(None)
 
-        self.assertIsNotNone(provider)
-        self.assertEqual(provider.__class__.__name__, "OpenAIService")
+        self.assertIs(provider, sentinel)
+        mock_build.assert_called_once()
 
 
 class TestBatchPrefetch(unittest.TestCase):
@@ -349,7 +352,7 @@ class TestScoreEquivalence(unittest.TestCase):
         self.assertEqual(scored_with_data.jd_required_coverage, scored_without_data.jd_required_coverage)
         self.assertEqual(scored_with_data.base_score, scored_without_data.base_score)
 
-        print(f"  ✓ Scores consistent: overall={scored_with_data.overall_score:.1f}")
+        print(f"  ✓ Scores consistent: overall={scored_with_data.fit_score:.1f}")
 
     def test_score_with_total_years_matches_expected_values(self):
         """Verify scores match expected values with total years data."""
@@ -364,14 +367,14 @@ class TestScoreEquivalence(unittest.TestCase):
         )
 
         self.assertIsNotNone(scored)
-        self.assertGreater(scored.overall_score, 0)
-        self.assertLessEqual(scored.overall_score, 100)
+        self.assertGreater(scored.fit_score, 0)
+        self.assertLessEqual(scored.fit_score, 100)
         self.assertAlmostEqual(scored.jd_required_coverage, 0.85, places=2)
         self.assertEqual(scored.jd_preferences_coverage, 0.0)
         self.assertEqual(scored.match_type, "requirements_only")
         self.assertEqual(scored.resume_fingerprint, "test-fp-123")
 
-        print(f"  ✓ Score verified: overall={scored.overall_score:.1f}, base={scored.base_score:.1f}")
+        print(f"  ✓ Score verified: overall={scored.fit_score:.1f}, base={scored.base_score:.1f}")
 
     def test_batch_scores_sorted_by_overall(self):
         """Verify batch scoring returns results sorted by overall score."""
@@ -419,9 +422,9 @@ class TestScoreEquivalence(unittest.TestCase):
 
         self.assertEqual(len(scored), 5)
         for i in range(len(scored) - 1):
-            self.assertGreaterEqual(scored[i].overall_score, scored[i + 1].overall_score)
+            self.assertGreaterEqual(scored[i].fit_score, scored[i + 1].fit_score)
 
-        print(f"  ✓ Scores sorted correctly: {[s.overall_score for s in scored]}")
+        print(f"  ✓ Scores sorted correctly: {[s.fit_score for s in scored]}")
 
 
 class TestResultPolicy(unittest.TestCase):

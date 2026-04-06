@@ -1,7 +1,7 @@
 # Semantic Architecture Handover
 
 - Date: 2026-04-02
-- Status: Foundation merged; fit semantic scoring and fit rewire implementation active on PR 2 branch; preference semantics still pending
+- Status: Foundation merged; fit semantic scoring and fit rewire merged; preference semantic reranking implementation active on PR 3 branch
 
 ## Recommended PR Split
 
@@ -33,13 +33,13 @@ Scope now implemented on this branch:
 
 What landed:
 
-- [core/scorer/semantic_fit.py](/Users/sookyungahn/repos/JobScout-fit-semantics/core/scorer/semantic_fit.py)
-- [core/scorer/service.py](/Users/sookyungahn/repos/JobScout-fit-semantics/core/scorer/service.py)
-- [services/scorer_matcher/pipeline.py](/Users/sookyungahn/repos/JobScout-fit-semantics/services/scorer_matcher/pipeline.py)
-- [core/llm/fake_service.py](/Users/sookyungahn/repos/JobScout-fit-semantics/core/llm/fake_service.py)
-- [web/backend/services/match_service.py](/Users/sookyungahn/repos/JobScout-fit-semantics/web/backend/services/match_service.py)
-- [web/backend/routers/matches.py](/Users/sookyungahn/repos/JobScout-fit-semantics/web/backend/routers/matches.py)
-- [web/frontend/src/features/matches/components/MatchDetailsModal.tsx](/Users/sookyungahn/repos/JobScout-fit-semantics/web/frontend/src/features/matches/components/MatchDetailsModal.tsx)
+- [core/scorer/semantic_fit.py](../../core/scorer/semantic_fit.py)
+- [core/scorer/service.py](../../core/scorer/service.py)
+- [services/scorer_matcher/pipeline.py](../../services/scorer_matcher/pipeline.py)
+- [core/llm/fake_service.py](../../core/llm/fake_service.py)
+- [web/backend/services/match_service.py](../../web/backend/services/match_service.py)
+- [web/backend/routers/matches.py](../../web/backend/routers/matches.py)
+- [web/frontend/src/features/matches/components/MatchDetailsModal.tsx](../../web/frontend/src/features/matches/components/MatchDetailsModal.tsx)
 
 Behavior:
 
@@ -55,12 +55,12 @@ Behavior:
 - split-stack E2E now exercises `/api/matches` and `/api/matches/{id}/explanation` so the persisted fit diagnostics are verified through real API calls
 - normal user-facing match details now use semantic verdicts and summaries instead of raw `% similarity` badges, and display fit mode/provider route/fallback state
 - public explanation summaries are deterministic from verdicts; model free-text is kept internal/debug only
-- fake AI service support was extended so tests can exercise semantic-fit behavior deterministically
+- runtime fake-AI selection has been removed; deterministic tests now rely on injected fake providers or an external OpenAI-compatible mock service
 - the next canonical fit plan is now [fit-semantics-rewire-plan.md](./fit-semantics-rewire-plan.md)
 
 ### PR 3: Preference Semantic Reranking
 
-Target scope:
+Scope now implemented on this branch:
 
 - implement `PreferenceSemanticReranker` on fit-qualified shortlists
 - add degraded/fallback observability
@@ -71,6 +71,24 @@ Why separate:
 
 - product and ranking behavior change is distinct from fit correctness
 - easier to evaluate personalization separately from fit improvements
+
+What landed:
+
+- [core/preference_semantics.py](../../core/preference_semantics.py)
+- [services/scorer_matcher/preference_semantics.py](../../services/scorer_matcher/preference_semantics.py)
+- [services/scorer_matcher/candidate_preferences.py](../../services/scorer_matcher/candidate_preferences.py)
+- [services/scorer_matcher/pipeline.py](../../services/scorer_matcher/pipeline.py)
+- [web/backend/services/candidate_preferences_service.py](../../web/backend/services/candidate_preferences_service.py)
+- [core/llm/fake_service.py](../../core/llm/fake_service.py)
+
+Behavior:
+
+- candidate preference saves now parse and persist a normalized `PreferenceProfile` when a parser is available
+- preference reranking now runs semantically on fit-qualified shortlists instead of using lexical token-overlap bonus logic
+- final `top_k` truncation now happens after preference reranking so shortlisted jobs are not trimmed too early
+- fit-band ordering is preserved through a bounded overall-score recomputation
+- degraded reranking now records explicit fallback metadata in persisted `fit_components`
+- split-stack candidate-preferences flow now validates semantic preference metadata through the real API and persisted matches
 
 ## What Landed In PR 1 Foundation
 
@@ -83,11 +101,11 @@ Why separate:
 
 ### Canonical Summary Foundation
 
-- [etl/canonical_summary.py](/Users/sookyungahn/repos/JobScout/etl/canonical_summary.py)
-- [etl/orchestrator.py](/Users/sookyungahn/repos/JobScout/etl/orchestrator.py)
-- [database/models/job.py](/Users/sookyungahn/repos/JobScout/database/models/job.py)
-- [database/repositories/job_post.py](/Users/sookyungahn/repos/JobScout/database/repositories/job_post.py)
-- [migrations/005_semantic_architecture_foundation.py](/Users/sookyungahn/repos/JobScout/migrations/005_semantic_architecture_foundation.py)
+- [etl/canonical_summary.py](../../etl/canonical_summary.py)
+- [etl/orchestrator.py](../../etl/orchestrator.py)
+- [database/models/job.py](../../database/models/job.py)
+- [database/repositories/job_post.py](../../database/repositories/job_post.py)
+- [migrations/005_semantic_architecture_foundation.py](../../migrations/005_semantic_architecture_foundation.py)
 
 Behavior:
 
@@ -97,15 +115,15 @@ Behavior:
 
 ### Preference Foundation
 
-- [services/scorer_matcher/preference_semantics.py](/Users/sookyungahn/repos/JobScout/services/scorer_matcher/preference_semantics.py)
-- [core/config_loader.py](/Users/sookyungahn/repos/JobScout/core/config_loader.py)
-- [config.yaml](/Users/sookyungahn/repos/JobScout/config.yaml)
-- [web/backend/services/candidate_preferences_service.py](/Users/sookyungahn/repos/JobScout/web/backend/services/candidate_preferences_service.py)
-- [web/backend/models/requests.py](/Users/sookyungahn/repos/JobScout/web/backend/models/requests.py)
-- [web/backend/models/responses.py](/Users/sookyungahn/repos/JobScout/web/backend/models/responses.py)
-- [web/backend/routers/candidate_preferences.py](/Users/sookyungahn/repos/JobScout/web/backend/routers/candidate_preferences.py)
-- [web/frontend/src/features/preferences/components/CandidatePreferencesPanel.tsx](/Users/sookyungahn/repos/JobScout/web/frontend/src/features/preferences/components/CandidatePreferencesPanel.tsx)
-- [web/frontend/src/types/api.ts](/Users/sookyungahn/repos/JobScout/web/frontend/src/types/api.ts)
+- [services/scorer_matcher/preference_semantics.py](../../services/scorer_matcher/preference_semantics.py)
+- [core/config_loader.py](../../core/config_loader.py)
+- [config.yaml](../../config.yaml)
+- [web/backend/services/candidate_preferences_service.py](../../web/backend/services/candidate_preferences_service.py)
+- [web/backend/models/requests.py](../../web/backend/models/requests.py)
+- [web/backend/models/responses.py](../../web/backend/models/responses.py)
+- [web/backend/routers/candidate_preferences.py](../../web/backend/routers/candidate_preferences.py)
+- [web/frontend/src/features/preferences/components/CandidatePreferencesPanel.tsx](../../web/frontend/src/features/preferences/components/CandidatePreferencesPanel.tsx)
+- [web/frontend/src/types/api.ts](../../web/frontend/src/types/api.ts)
 
 Behavior:
 
@@ -139,7 +157,7 @@ Observed results at handoff:
   - duplicate SQL literal cleanup for candidate-preferences timestamps
   - dedicated unit coverage for `preference_semantics.py`
 - web backend preference saving was decoupled from scorer-package imports so split-stack startup stays healthy
-- rerun persistence semantics were hardened in [services/scorer_matcher/pipeline.py](/Users/sookyungahn/repos/JobScout/services/scorer_matcher/pipeline.py):
+- rerun persistence semantics were hardened in [services/scorer_matcher/pipeline.py](../../services/scorer_matcher/pipeline.py):
   - active match refresh now happens after a clean save batch, not before saving
   - rerun refresh is skipped when any per-match save fails, preserving the last good active set
   - `recalculate_existing=False` semantics are preserved for unchanged active matches
@@ -165,11 +183,11 @@ Observed results at handoff:
 
 ## Important Boundaries
 
-- No real `PreferenceSemanticReranker` exists yet.
-- Current lexical soft-preference overlap still exists in the matcher pipeline and should be treated as an interim path, not the target architecture.
+- Preference reranking is now implemented, but it is still backed by LLM/fake-LLM structured judgments rather than a cheaper dedicated non-LLM reranker model.
+- Preference mode gating is still backend allowlist-based; there is no separate per-user capability model for preference modes yet.
 - No admin HTTP surface exists for capability management in this phase beyond config-driven allowed modes plus the internal CLI.
 - A DB-backed capability control mechanism exists now, plus an internal CLI for dev/staging administration:
-  - [manage_feature_capability.py](/Users/sookyungahn/repos/JobScout-fit-semantics/scripts/manage_feature_capability.py)
+  - [manage_feature_capability.py](../../scripts/manage_feature_capability.py)
   - later options remain an internal admin API or admin UI on top of the same table/service if operations truly require it
 - Truncation and fit-routing diagnostics are persisted, but they are not yet exported into a Grafana dashboard; use [container-observability-plan.md](./container-observability-plan.md) as the follow-on operational plan.
 - Persisted reruns are authoritative only after a clean save batch completes; this safety behavior is now intentional and should be preserved when implementing later semantic stages.
@@ -177,18 +195,18 @@ Observed results at handoff:
 - ANN/pgvector is still the retrieval and evidence-recall layer; the rewire plan keeps it as retrieval infrastructure rather than final semantic authority.
 - hybrid retrieval is now default-on in config.
 - A Python-only offline evaluation harness now exists for fit pair judgments and retrieval fusion:
-  - [scripts/evaluate_fit_semantics.py](/Users/sookyungahn/repos/JobScout-fit-semantics/scripts/evaluate_fit_semantics.py)
-  - [tests/fixtures/evaluations/fit_semantics_cases.json](/Users/sookyungahn/repos/JobScout-fit-semantics/tests/fixtures/evaluations/fit_semantics_cases.json)
+  - [scripts/evaluate_fit_semantics.py](../../scripts/evaluate_fit_semantics.py)
+  - [tests/fixtures/evaluations/fit_semantics_cases.json](../../tests/fixtures/evaluations/fit_semantics_cases.json)
 - The offline harness intentionally lives in Python only; TypeScript remains for UI and end-to-end verification, not backend fit benchmarking.
 
 ## Next PR Starting Point
 
-If picking up preference semantics next:
+If continuing preference semantics next:
 
-1. implement shortlist reranker using `PreferenceProfile`
-2. add bounded fit-band ordering logic
-3. log mode used, fallback reason, and latency
-4. evaluate whether `llm_judge` should remain disabled by default
+1. add explicit latency and shortlist-size observability for preference reranking runs
+2. evaluate whether `llm_judge` should remain disabled by default
+3. decide whether preference modes need their own capability layer or can remain backend allowlist-controlled
+4. consider exposing preference diagnostics more directly in match detail UI if product wants that visibility
 
 If continuing fit semantics after PR 2:
 
@@ -206,5 +224,5 @@ If continuing fit semantics after PR 2:
 Current state:
 
 - PR 1 is merged
-- PR 2 is the active fit-semantics PR branch
-- PR 3 remains the next major architecture slice after PR 2 lands
+- PR 2 is merged
+- PR 3 is the active preference-semantics branch

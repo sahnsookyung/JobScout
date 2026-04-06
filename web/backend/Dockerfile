@@ -30,6 +30,7 @@ COPY web/shared/ ./web/shared/
 COPY web/backend/ ./web/backend/
 # Services: base utilities for compact mode (extraction and embeddings runners)
 COPY services/base/ ./services/base/
+COPY services/scorer_matcher/ ./services/scorer_matcher/
 COPY config.yaml ./
 
 RUN uv sync --frozen --no-dev --group web
@@ -39,7 +40,7 @@ RUN uv sync --frozen --no-dev --group web
 FROM python:3.14-slim AS runtime
 
 # Create non-root user
-RUN groupadd -g 1001 appgroup && \
+RUN groupadd -g 1000 appgroup && \
     useradd -u 1001 -g appgroup -m -d /app -s /bin/false appuser
 
 WORKDIR /app
@@ -54,4 +55,4 @@ USER appuser
 EXPOSE 8080
 
 # Run uvicorn directly from the virtual environment
-CMD ["uvicorn", "web.backend.app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["sh", "-c", "umask 0002 && exec uvicorn web.backend.app:app --host 0.0.0.0 --port 8080"]

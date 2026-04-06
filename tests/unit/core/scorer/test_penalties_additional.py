@@ -308,12 +308,12 @@ class TestCalculateExperiencePenalty:
 
     def test_no_penalty_for_uncovered_requirement(self, penalty_config):
         req = self._req(evidence=None, is_covered=False)
-        penalty, details = _calculate_experience_penalty([req], None, penalty_config, set())
+        penalty, _ = _calculate_experience_penalty([req], None, penalty_config, set())
         assert penalty == 0.0
 
     def test_no_penalty_when_min_years_not_configured(self, penalty_config):
         req = self._req(min_years=None, evidence=Mock(years_value=5.0))
-        penalty, details = _calculate_experience_penalty([req], None, penalty_config, set())
+        penalty, _ = _calculate_experience_penalty([req], None, penalty_config, set())
         assert penalty == 0.0
 
     def test_already_penalized_requirement_is_skipped(self, penalty_config):
@@ -408,15 +408,15 @@ class TestScorePreliminaryMatch:
         scored = scorer.score_preliminary_match(preliminary)
 
         assert scored is not None
-        assert 0 < scored.overall_score <= 100
+        assert 0 < scored.fit_score <= 100
         assert scored.jd_required_coverage == pytest.approx(0.85, abs=0.01)
         assert scored.jd_preferences_coverage == 0.0
         assert scored.match_type == 'requirements_only'
         assert scored.resume_fingerprint == 'test-fp-123'
 
-    def test_overall_score_bounded_0_to_100(self, scorer):
+    def test_fit_score_bounded_0_to_100(self, scorer):
         scored = scorer.score_preliminary_match(_make_preliminary())
-        assert 0 <= scored.overall_score <= 100
+        assert 0 <= scored.fit_score <= 100
 
     def test_candidate_total_years_is_no_op(self, scorer):
         """candidate_total_years is deprecated — scores must be identical either way."""
@@ -485,7 +485,7 @@ class TestScoreMatchesBatch:
 
         assert mock_db.execute.call_count == 1
 
-    def test_results_sorted_descending_by_overall_score(self, scorer):
+    def test_results_sorted_descending_by_fit_score(self, scorer):
         matches = [
             _make_preliminary(
                 job=_make_job(id=f'job-{i}'),
@@ -498,7 +498,7 @@ class TestScoreMatchesBatch:
 
         assert len(scored) == 5
         for i in range(len(scored) - 1):
-            assert scored[i].overall_score >= scored[i + 1].overall_score
+            assert scored[i].fit_score >= scored[i + 1].fit_score
 
     def test_stop_event_interrupts_mid_batch(self, scorer):
         matches = [_make_preliminary(fingerprint=f'fp_{i}') for i in range(5)]

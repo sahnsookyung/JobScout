@@ -13,7 +13,6 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
-from typing import Optional
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel

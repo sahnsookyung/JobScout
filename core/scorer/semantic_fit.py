@@ -898,6 +898,41 @@ class LocalCrossEncoderProvider:
         }
         return assessments, diagnostics
 
+    def score_text_pairs(self, pairs: List[tuple[str, str]]) -> List[float]:
+        """Score raw (left, right) string pairs and return one normalized [0, 1] score per pair."""
+        if not pairs:
+            return []
+        model = self._load_model()
+        if model is False:
+            # Heuristic fallback when model load fails; warning already logged by _load_model().
+            # Mirrors _pair_assessment_from_heuristic: 0.0 = no overlap, > 0 = overlap exists.
+            scores = []
+            for left, right in pairs:
+                overlap = _meaningful_overlap(left, right)
+                scores.append(min(0.85, 0.45 + 0.1 * len(overlap)) if overlap else 0.0)
+            return scores
+        if hasattr(model, "compute_score"):
+            compute_score = getattr(model, "compute_score")
+            raw_scores = compute_score(
+                pairs,
+                **self._filter_supported_kwargs(compute_score, {"batch_size": self.max_batch_size}),
+            )
+        elif hasattr(model, "predict"):
+            predict = getattr(model, "predict")
+            raw_scores = predict(
+                pairs,
+                **self._filter_supported_kwargs(
+                    predict,
+                    {"batch_size": self.max_batch_size, "show_progress_bar": False},
+                ),
+            )
+        else:
+            raise TypeError(
+                f"Unsupported local cross-encoder runtime for {self.model_name}: {type(model)!r}"
+            )
+        raw_scores = self._normalize_runtime_scores(raw_scores)
+        return [_normalize_semantic_score(s) for s in raw_scores]
+
 
 class RemoteCrossEncoderProvider:
     route_name = "remote"

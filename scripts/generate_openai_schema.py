@@ -25,10 +25,8 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from core.llm.schema_models import (
-    ResumeSchema,
     RESUME_SCHEMA,
     EXTRACTION_SCHEMA,
-    FACET_EXTRACTION_SCHEMA_FOR_WANTS,
 )
 
 
@@ -78,7 +76,7 @@ def main():
     )
     parser.add_argument(
         '--schema',
-        choices=['resume', 'job', 'facet', 'all'],
+        choices=['resume', 'job', 'all'],
         default='all',
         help='Which schema to generate (default: all)'
     )
@@ -105,7 +103,6 @@ def main():
     schemas = {
         'resume': ('Resume Schema', RESUME_SCHEMA),
         'job': ('Job Extraction Schema', EXTRACTION_SCHEMA),
-        'facet': ('Job Facet Schema', FACET_EXTRACTION_SCHEMA_FOR_WANTS),
     }
 
     output = []

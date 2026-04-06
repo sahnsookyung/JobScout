@@ -63,17 +63,6 @@ class TestEmbeddingsState:
         assert state.stop_event.is_set() is True
 
 
-class TestEmbeddingsLifespan:
-    """Test embeddings service lifespan."""
-
-    def test_setup_logging(self):
-        """Test setup_service_logging configures logging."""
-        from core.logging_utils import setup_service_logging
-        import logging
-        # Just verify it runs without error
-        setup_service_logging(logging.getLogger("test"))
-
-
 class TestEmbeddingsModels:
     """Test embeddings Pydantic models."""
 
@@ -286,6 +275,12 @@ class TestEmbeddingsConsumerClass:
 class TestEmbeddingsLifespan:
     """Test embeddings lifespan startup and shutdown."""
 
+    def test_setup_logging(self):
+        """Test setup_service_logging configures logging."""
+        from core.logging_utils import setup_service_logging
+        import logging
+        setup_service_logging(logging.getLogger("test"))
+
     @pytest.mark.asyncio
     async def test_lifespan_startup_sets_state(self):
         """Lifespan sets app.state.embeddings to an EmbeddingsState instance."""
@@ -297,7 +292,7 @@ class TestEmbeddingsLifespan:
         mock_ctx.aclose = AsyncMock()
 
         done_task = asyncio.create_task(asyncio.sleep(0))
-        await done_task
+        _ = await done_task
 
         def _stub_create_task(coro):
             if hasattr(coro, "close"):
@@ -322,7 +317,7 @@ class TestEmbeddingsLifespan:
         mock_ctx.aclose = AsyncMock()
 
         done_task = asyncio.create_task(asyncio.sleep(0))
-        await done_task
+        _ = await done_task
 
         def _stub_create_task(coro):
             if hasattr(coro, "close"):
@@ -351,7 +346,7 @@ class TestEmbeddingsLifespan:
         mock_ctx = MagicMock(spec=_SyncCtx)
 
         done_task = asyncio.create_task(asyncio.sleep(0))
-        await done_task
+        _ = await done_task
 
         def _stub_create_task(coro):
             if hasattr(coro, "close"):

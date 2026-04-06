@@ -1,6 +1,6 @@
 import contextlib
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker
 
 from core.config_loader import load_config_data
 

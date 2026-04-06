@@ -3,7 +3,7 @@
 
 import threading
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from notification.models import NotificationDeliveryPlan
 from notification.orchestrator import (

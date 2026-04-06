@@ -25,10 +25,9 @@ from notification.channels import (
     _mask_email, _validate_channel_file_path,
     NotificationChannelFactory, InAppChannel
 )
-from notification.exceptions import NotificationConfigurationError, TerminalNotificationError, TransientNotificationError
+from notification.exceptions import NotificationConfigurationError, TransientNotificationError
 from notification.runtime_config import clear_notification_runtime_config_cache
 from notification.service import NotificationRateLimiter
-from notification.message_builder import JobNotificationContent, JobInfo, MatchInfo, RequirementsInfo
 
 
 @pytest.fixture(autouse=True)

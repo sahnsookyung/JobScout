@@ -1,16 +1,18 @@
 """Unit tests for scorer_matcher pipeline helpers."""
 
+import pytest
 import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from core.llm.fake_service import FakeLLMService
+from tests.mocks.fake_service import FakeLLMService
 from services.scorer_matcher.candidate_preferences import (
     apply_candidate_preference_filters,
-    apply_soft_preference_reranking,
+    apply_preference_semantic_reranking,
 )
 from services.scorer_matcher.pipeline import (
+    _apply_final_result_policy,
     _convert_matches_to_dtos,
     _finish_pipeline_result,
     _load_resume_from_db,
@@ -32,7 +34,7 @@ def _uow(repo):
 
 def _dto(job_id: str = "job-1") -> SimpleNamespace:
     job = SimpleNamespace(id=job_id, title="Engineer", company="Acme", content_hash="hash-1")
-    return SimpleNamespace(job=job, overall_score=85.0, fit_score=80.0)
+    return SimpleNamespace(job=job, fit_score=80.0, preference_score=None)
 
 
 def _preliminary(
@@ -140,6 +142,22 @@ class TestRunScorerService:
         )
 
 
+class TestFinalResultPolicy:
+    @patch(
+        "services.scorer_matcher.pipeline.get_result_policy_store",
+        return_value=SimpleNamespace(get_current_policy=lambda: SimpleNamespace(top_k=1)),
+    )
+    def test_applies_top_k_after_preference_reranking(self, _mock_policy_store):
+        matches = [_dto("job-1"), _dto("job-2")]
+
+        result = _apply_final_result_policy(
+            matches,
+            SimpleNamespace(result_policy=SimpleNamespace(top_k=1)),
+        )
+
+        assert result == [matches[0]]
+
+
 class TestCandidatePreferenceHelpers:
     def test_filters_preliminary_matches_with_hard_preferences(self):
         preferences = {
@@ -175,7 +193,28 @@ class TestCandidatePreferenceHelpers:
 
         assert [match.job.id for match in filtered] == ["job-keep"]
 
-    def test_soft_preferences_add_bounded_bonus_and_resort_matches(self):
+    @patch("services.scorer_matcher.candidate_preferences.build_preference_semantic_reranker")
+    def test_soft_preferences_semantically_rerank_within_fit_band(self, mock_build_reranker):
+        mock_build_reranker.return_value = MagicMock(
+            rerank=MagicMock(
+                return_value=[
+                    SimpleNamespace(
+                        job_id="job-high-preference",
+                        preference_score=0.95,
+                        preference_confidence=0.91,
+                        preference_reason_codes=["team_culture_match"],
+                        preference_explanation="Matches mentorship preferences.",
+                    ),
+                    SimpleNamespace(
+                        job_id="job-low-preference",
+                        preference_score=0.2,
+                        preference_confidence=0.55,
+                        preference_reason_codes=["no_preference_signal"],
+                        preference_explanation="Weak preference signal.",
+                    ),
+                ]
+            )
+        )
         preferences = {
             "remote_mode": "any",
             "target_locations": [],
@@ -183,11 +222,33 @@ class TestCandidatePreferenceHelpers:
             "salary_min": None,
             "employment_types": [],
             "soft_preferences": "mentorship product python backend growth",
+            "preference_mode": "semantic_rerank",
+            "preference_profile": {
+                "raw_text": "mentorship product python backend growth",
+                "parse_version": "2026-04-01.v1",
+                "parser_confidence": 0.8,
+                "team_culture": [
+                    {"label": "Mentorship", "weight": 0.9, "confidence": 0.9},
+                ],
+            },
             "revision": 5,
         }
+        _valid_modes = {"semantic_rerank", "llm_judge"}
+        preference_config = SimpleNamespace(
+            default_mode="semantic_rerank",
+            allowed_modes=["semantic_rerank"],
+            parser=SimpleNamespace(enabled=False, model=None),
+            semantic_reranker=SimpleNamespace(enabled=True, model="fake"),
+            llm_judge=SimpleNamespace(enabled=False, model=None),
+        )
+        preference_config.allowed_modes_normalized = lambda: (
+            [m for m in dict.fromkeys(preference_config.allowed_modes) if m in _valid_modes]
+            or [preference_config.default_mode]
+        )
         scored_matches = [
             SimpleNamespace(
                 job=SimpleNamespace(
+                    id="job-low-preference",
                     title="Platform Engineer",
                     company="Acme",
                     description="Stable backend role",
@@ -204,6 +265,7 @@ class TestCandidatePreferenceHelpers:
             ),
             SimpleNamespace(
                 job=SimpleNamespace(
+                    id="job-high-preference",
                     title="Product Backend Engineer",
                     company="Acme",
                     description="Python backend role with mentorship and growth",
@@ -220,11 +282,18 @@ class TestCandidatePreferenceHelpers:
             ),
         ]
 
-        reranked = apply_soft_preference_reranking(scored_matches, preferences)
+        reranked = apply_preference_semantic_reranking(
+            scored_matches,
+            preferences,
+            config=preference_config,
+        )
 
-        assert reranked[0].job.title == "Product Backend Engineer"
-        assert reranked[0].overall_score > reranked[1].overall_score
-        assert 0 < reranked[0].fit_components["soft_preference_bonus"] <= 5.0
+        # Input order is preserved — no sorting at pipeline stage
+        assert reranked[0].job.title == "Platform Engineer"
+        assert reranked[1].job.title == "Product Backend Engineer"
+        # Preference scores written to each match
+        assert reranked[0].preference_score == pytest.approx(0.2)
+        assert reranked[1].preference_score == pytest.approx(0.95)
 
 
 class TestConvertMatchesToDtos:
@@ -238,8 +307,8 @@ class TestConvertMatchesToDtos:
                 is_remote=True,
                 content_hash="hash-1",
             ),
-            overall_score=82.0,
             fit_score=79.0,
+            preference_score=None,
             job_similarity=0.8,
             jd_required_coverage=0.75,
             jd_preferences_coverage=0.5,
@@ -256,13 +325,15 @@ class TestConvertMatchesToDtos:
         dtos = _convert_matches_to_dtos([scored_match])
 
         assert len(dtos) == 1
-        assert dtos[0].overall_score == 82.0
         assert dtos[0].fit_score == 79.0
+        assert dtos[0].preference_score is None
         assert dtos[0].job.id == "job-1"
 
 
 class TestRunMatchingAndScoring:
     @patch("services.scorer_matcher.pipeline._convert_matches_to_dtos", return_value=[_dto()])
+    @patch("services.scorer_matcher.pipeline._apply_final_result_policy", return_value=["reranked"])
+    @patch("services.scorer_matcher.pipeline.apply_preference_semantic_reranking", return_value=["reranked"])
     @patch("services.scorer_matcher.pipeline._run_scorer_service", return_value=["scored"])
     @patch("services.scorer_matcher.pipeline.ScoringService")
     @patch("services.scorer_matcher.pipeline._run_preliminary_matching", return_value=["prelim"])
@@ -275,9 +346,12 @@ class TestRunMatchingAndScoring:
         _mock_preliminary,
         mock_scorer_cls,
         mock_run_scorer,
+        mock_apply_preferences,
+        mock_apply_final_policy,
         _mock_convert,
     ):
         repo = MagicMock()
+        repo.candidate_preferences.get_preferences.return_value = None
         mock_uow.return_value = _uow(repo)
         scorer_config = MagicMock()
         mock_prepare.return_value = (
@@ -286,7 +360,7 @@ class TestRunMatchingAndScoring:
         )
 
         result = _run_matching_and_scoring(
-            ctx=MagicMock(),
+            ctx=SimpleNamespace(config=SimpleNamespace(preferences=SimpleNamespace()), ai_service=None),
             resume_data={"profile": {}},
             resume_fingerprint="fp-123",
             should_re_extract=False,
@@ -298,8 +372,16 @@ class TestRunMatchingAndScoring:
         assert result == [_dto()]
         mock_scorer_cls.assert_called_once_with(repo=repo, config=scorer_config, ai_service=None)
         mock_run_scorer.assert_called_once()
+        mock_apply_preferences.assert_called_once_with(
+            ["scored"],
+            None,
+            config=SimpleNamespace(),
+        )
+        mock_apply_final_policy.assert_called_once_with(["reranked"], SimpleNamespace(scorer=scorer_config))
 
     @patch("services.scorer_matcher.pipeline._convert_matches_to_dtos", return_value=[_dto()])
+    @patch("services.scorer_matcher.pipeline._apply_final_result_policy", return_value=["scored"])
+    @patch("services.scorer_matcher.pipeline.apply_preference_semantic_reranking", return_value=["scored"])
     @patch("services.scorer_matcher.pipeline._run_scorer_service", return_value=["scored"])
     @patch("services.scorer_matcher.pipeline.ScoringService")
     @patch("services.scorer_matcher.pipeline._run_preliminary_matching", return_value=["prelim"])
@@ -311,6 +393,8 @@ class TestRunMatchingAndScoring:
         mock_prepare,
         _mock_preliminary,
         mock_scorer_cls,
+        _mock_run_preference,
+        _mock_apply_final_policy,
         _mock_run_scorer,
         _mock_convert,
     ):
@@ -324,7 +408,10 @@ class TestRunMatchingAndScoring:
         )
 
         _run_matching_and_scoring(
-            ctx=SimpleNamespace(ai_service=fake_ai),
+            ctx=SimpleNamespace(
+                ai_service=fake_ai,
+                config=SimpleNamespace(preferences=SimpleNamespace()),
+            ),
             resume_data={"profile": {}},
             resume_fingerprint="fp-123",
             should_re_extract=False,
@@ -340,6 +427,8 @@ class TestRunMatchingAndScoring:
         )
 
     @patch("services.scorer_matcher.pipeline._convert_matches_to_dtos", return_value=[_dto()])
+    @patch("services.scorer_matcher.pipeline._apply_final_result_policy", return_value=["scored"])
+    @patch("services.scorer_matcher.pipeline.apply_preference_semantic_reranking", return_value=["scored"])
     @patch("services.scorer_matcher.pipeline._run_scorer_service", return_value=["scored"])
     @patch("services.scorer_matcher.pipeline.ScoringService")
     @patch("services.scorer_matcher.pipeline._run_preliminary_matching")
@@ -352,6 +441,8 @@ class TestRunMatchingAndScoring:
         mock_run_preliminary,
         _mock_scorer_cls,
         mock_run_scorer,
+        _mock_run_preference,
+        _mock_apply_final_policy,
         _mock_convert,
     ):
         repo = MagicMock()
@@ -375,7 +466,7 @@ class TestRunMatchingAndScoring:
         ]
 
         _run_matching_and_scoring(
-            ctx=MagicMock(),
+            ctx=SimpleNamespace(config=SimpleNamespace(preferences=SimpleNamespace()), ai_service=None),
             resume_data={"profile": {}},
             resume_fingerprint="fp-123",
             should_re_extract=False,

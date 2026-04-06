@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Iterable, List
 
 from sqlalchemy.orm import Session
 
+from services.scorer_matcher.preference_semantics import (
+    build_preference_parser,
+    summarize_preference_profile,
+)
 from database.repository import JobRepository
 from web.backend.config import get_config
+
+logger = logging.getLogger(__name__)
 
 VALID_REMOTE_MODES = {"any", "remote", "hybrid", "onsite"}
 VALID_PREFERENCE_MODES = {"semantic_rerank", "llm_judge"}
@@ -26,13 +33,6 @@ def _normalize_string_list(values: Iterable[str]) -> List[str]:
         seen.add(lowered)
         normalized.append(item)
     return normalized
-
-
-def _summarize_soft_preferences(raw_text: str, *, max_length: int = 160) -> str:
-    trimmed = " ".join(raw_text.split())
-    if len(trimmed) <= max_length:
-        return trimmed
-    return f"{trimmed[: max_length - 1].rstrip()}…"
 
 
 class CandidatePreferencesService:
@@ -62,11 +62,14 @@ class CandidatePreferencesService:
         preferences.employment_types = _normalize_string_list(payload.get("employment_types", []))
         preferences.soft_preferences = payload.get("soft_preferences", "").strip()
         preferences.preference_mode = self._resolve_requested_mode(payload.get("preference_mode"))
-        # Parsing remains best-effort foundation work; do not block settings saves on
-        # an optional model call during the request lifecycle.
-        preferences.preference_profile = None
+        # Parse eagerly so the profile is persisted alongside preferences. This is an
+        # intentional sync LLM call: preferences are set infrequently and the parsed
+        # profile is needed at match time. Failures are swallowed — the scorer-matcher
+        # will re-parse on demand if preference_profile is None.
+        profile = self._parse_preference_profile(preferences.soft_preferences)
+        preferences.preference_profile = profile.model_dump(mode="json") if profile else None
         preferences.soft_preference_summary = (
-            _summarize_soft_preferences(preferences.soft_preferences)
+            summarize_preference_profile(profile, preferences.soft_preferences)
             if preferences.soft_preferences
             else None
         )
@@ -79,7 +82,7 @@ class CandidatePreferencesService:
     def _to_response(self, preferences) -> Dict[str, Any]:
         allowed_modes = self._allowed_modes()
         stored_mode = getattr(preferences, "preference_mode", None) or self.config.preferences.default_mode
-        effective_mode = stored_mode if stored_mode in allowed_modes else self.config.preferences.default_mode
+        effective_mode = self._resolve_effective_mode(stored_mode, allowed_modes)
         return {
             "remote_mode": preferences.remote_mode,
             "target_locations": list(preferences.target_locations or []),
@@ -95,18 +98,44 @@ class CandidatePreferencesService:
         }
 
     def _allowed_modes(self) -> List[str]:
-        configured = list(self.config.preferences.allowed_modes or [])
-        normalized = [mode for mode in configured if mode in VALID_PREFERENCE_MODES]
-        if not normalized:
-            return [self.config.preferences.default_mode]
-        return normalized
+        return self.config.preferences.allowed_modes_normalized()
 
-    def _resolve_requested_mode(self, requested_mode: Any) -> str:
+    def _resolve_effective_mode(self, requested_mode: Any, allowed_modes: List[str]) -> str:
         normalized = str(requested_mode or self.config.preferences.default_mode).strip().lower()
         if normalized not in VALID_PREFERENCE_MODES:
             normalized = self.config.preferences.default_mode
-
-        allowed_modes = self._allowed_modes()
-        if normalized not in allowed_modes:
+        if normalized in allowed_modes:
+            return normalized
+        if self.config.preferences.default_mode in allowed_modes:
+            logger.warning(
+                "Requested mode %r not allowed; falling back to configured default %r",
+                normalized,
+                self.config.preferences.default_mode,
+            )
             return self.config.preferences.default_mode
-        return normalized
+        logger.warning(
+            "Neither requested mode %r nor default_mode %r is in allowed_modes %r; "
+            "using first allowed mode %r. Check preferences.allowed_modes config.",
+            normalized,
+            self.config.preferences.default_mode,
+            allowed_modes,
+            allowed_modes[0],
+        )
+        return allowed_modes[0]
+
+    def _resolve_requested_mode(self, requested_mode: Any) -> str:
+        allowed_modes = self._allowed_modes()
+        return self._resolve_effective_mode(requested_mode, allowed_modes)
+
+    def _parse_preference_profile(self, raw_text: str):
+        if not raw_text.strip():
+            return None
+
+        parser = build_preference_parser(self.config.preferences.parser)
+        if parser is None:
+            return None
+        try:
+            return parser.parse(raw_text)
+        except Exception:
+            logger.warning("Preference parsing failed during preference update", exc_info=True)
+            return None

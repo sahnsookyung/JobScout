@@ -24,8 +24,6 @@ _YEARS_PATTERNS = [
     r'over\s+(\d+)\s*years'
 ]
 
-_YEARS_KEYWORDS = ['years', 'year', 'experience', 'exp', 'yrs', 'yr']
-
 
 def _extract_years_from_evidence(evidence) -> Optional[float]:
     """Extract years value from evidence object."""

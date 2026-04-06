@@ -9,11 +9,11 @@ import time
 import logging
 import threading
 from typing import List, Optional, Dict, Any, Callable
-from uuid import UUID
 
 from dataclasses import dataclass
 
 from core.app_context import AppContext
+from core.config_loader import PreferencesConfig
 from core.policy import get_result_policy_store
 from core.matcher import (
     MatcherService, MatchResultDTO, JobMatchDTO, JobEvidenceDTO,
@@ -29,7 +29,7 @@ from database.uow import job_uow
 from notification.orchestrator import send_notifications
 from services.scorer_matcher.candidate_preferences import (
     apply_candidate_preference_filters,
-    apply_soft_preference_reranking,
+    apply_preference_semantic_reranking,
     load_candidate_preferences,
 )
 
@@ -454,6 +454,21 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event
     """Run rule-based scoring."""
     logger.info("=== MATCHING STEP 2: Running ScorerService (Fit-first scoring) ===")
     result_policy = _resolve_result_policy(matching_config)
+    if result_policy and preliminary_matches:
+        widened_top_k = max(
+            int(getattr(result_policy, "top_k", len(preliminary_matches)) or len(preliminary_matches)),
+            len(preliminary_matches),
+        )
+        if hasattr(result_policy, "model_copy"):
+            result_policy = result_policy.model_copy(update={"top_k": widened_top_k})
+        elif hasattr(result_policy, "top_k"):
+            try:
+                result_policy.top_k = widened_top_k
+            except Exception:
+                # Mutation failed — clear the policy so scorer returns all matches;
+                # _apply_final_result_policy will re-apply the original limit afterward.
+                logger.warning("Could not widen result policy top_k prior to preference reranking; passing all matches to reranker", exc_info=True)
+                result_policy = None
 
     return scorer.score_matches(
         preliminary_matches=preliminary_matches,
@@ -463,9 +478,27 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event
     )
 
 
+def _apply_final_result_policy(scored_matches, matching_config):
+    """Apply the final result truncation after semantic preference reranking."""
+    result_policy = _resolve_result_policy(matching_config)
+    if not result_policy:
+        return scored_matches
+    top_k = int(getattr(result_policy, "top_k", len(scored_matches)) or len(scored_matches))
+    if top_k <= 0:
+        return []
+    return scored_matches[:top_k]
+
+
 def _resolve_pipeline_ai_service(ctx: AppContext) -> Optional[LLMProvider]:
     ai_service = getattr(ctx, "ai_service", None)
     return ai_service if isinstance(ai_service, LLMProvider) else None
+
+
+def _resolve_preferences_config(ctx: AppContext) -> PreferencesConfig:
+    preferences = getattr(getattr(ctx, "config", None), "preferences", None)
+    if preferences is not None:
+        return preferences
+    return PreferencesConfig()
 
 
 def _resolve_result_policy(matching_config):
@@ -549,10 +582,12 @@ def _log_match_results(match_dtos: List[MatchResultDTO]) -> None:
 
     logger.info("Top 5 Matches:")
     for i, dto in enumerate(match_dtos[:5], 1):
+        pref = dto.preference_score
         logger.info(
-            "  %d. %s @ %s: overall=%.1f/100 (fit=%.1f)",
+            "  %d. %s @ %s: fit=%.1f, pref=%s",
             i, dto.job.title, dto.job.company,
-            dto.overall_score, dto.fit_score,
+            dto.fit_score,
+            f"{pref:.4f}" if pref is not None else "None",
         )
 
 
@@ -623,10 +658,18 @@ def _run_matching_and_scoring(
         scored_matches = _run_scorer_service(
             scorer, preliminary_matches, matching_config, stop_event,
         )
-        scored_matches = apply_soft_preference_reranking(
+        rerank_start = time.time()
+        scored_matches = apply_preference_semantic_reranking(
             scored_matches,
             candidate_preferences,
+            config=_resolve_preferences_config(ctx),
         )
+        logger.info(
+            "Preference reranking completed in %.2fs for %d matches",
+            time.time() - rerank_start,
+            len(scored_matches),
+        )
+        scored_matches = _apply_final_result_policy(scored_matches, matching_config)
 
         match_dtos = _convert_matches_to_dtos(scored_matches)
 
@@ -691,8 +734,8 @@ def _convert_matches_to_dtos(scored_matches) -> List[MatchResultDTO]:
                 is_remote=match.job.is_remote,
                 content_hash=match.job.content_hash,
             ),
-            overall_score=match.overall_score or 0.0,
             fit_score=match.fit_score or 0.0,
+            preference_score=match.preference_score,
             job_similarity=match.job_similarity or 0.0,
             jd_required_coverage=match.jd_required_coverage,
             jd_preferences_coverage=match.jd_preferences_coverage,

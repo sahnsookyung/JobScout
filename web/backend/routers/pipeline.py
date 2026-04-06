@@ -29,10 +29,10 @@ from core.resume_selection import (
     serialize_owner_id,
 )
 from core.redis_streams import (
+    _sanitize_log,
     clear_task_cancellation_requested,
     get_redis_client,
     get_task_state,
-    is_task_cancellation_requested,
     set_task_cancellation_requested,
     set_task_state,
     enqueue_job,
@@ -635,7 +635,7 @@ def _get_resume_upload_status(repo, owner_id, task_id: str) -> Optional[ResumeSt
     except Exception:
         logger.warning(
             "Failed to load persisted resume upload state for task %s",
-            task_id,
+            _sanitize_log(task_id),
             exc_info=True,
         )
         return None
@@ -667,24 +667,23 @@ def _ensure_no_active_matching_task(redis, owner_id: str) -> None:
 
 def _require_resume_eligibility_or_raise(owner_id):
     eligibility = evaluate_resume_eligibility(owner_id)
-    if eligibility.can_run:
-        return eligibility
-
-    status_code = 409 if eligibility.processing_status in {
-        "extracting",
-        "extracted",
-        "embedding",
-    } else 400
-    error_code = (
-        PIPELINE_RESUME_UPLOAD_IN_PROGRESS
-        if status_code == 409
-        else PIPELINE_RESUME_NOT_READY
-    )
-    _raise_pipeline_error(
-        status_code=status_code,
-        code=error_code,
-        message=eligibility.message,
-    )
+    if not eligibility.can_run:
+        status_code = 409 if eligibility.processing_status in {
+            "extracting",
+            "extracted",
+            "embedding",
+        } else 400
+        error_code = (
+            PIPELINE_RESUME_UPLOAD_IN_PROGRESS
+            if status_code == 409
+            else PIPELINE_RESUME_NOT_READY
+        )
+        _raise_pipeline_error(
+            status_code=status_code,
+            code=error_code,
+            message=eligibility.message,
+        )
+    return eligibility
 
 
 def _set_initial_matching_task_state(
@@ -1566,11 +1565,11 @@ def _compute_and_verify_hash(content: bytes, provided_hash: Optional[str]) -> st
     from database.models.resume import generate_file_fingerprint
 
     computed_hash = generate_file_fingerprint(content)
-    logger.debug(f"Hash check - frontend: {provided_hash}, backend: {computed_hash}, len: {len(computed_hash)}")
+    logger.debug("Hash check - frontend: %s, backend: %s, len: %d", _sanitize_log(provided_hash), computed_hash, len(computed_hash))
 
     # If client provided a hash, verify it matches
     if provided_hash and provided_hash != computed_hash:
-        logger.debug(f"Hash mismatch - provided: {provided_hash}, computed: {computed_hash}")
+        logger.debug("Hash mismatch - provided: %s, computed: %s", _sanitize_log(provided_hash), computed_hash)
         _raise_pipeline_error(
             status_code=400,
             code=PIPELINE_RESUME_HASH_MISMATCH,
@@ -1751,8 +1750,6 @@ def _write_resume_failure_state(
     error: Exception,
 ) -> None:
     """Persist failed state for resume ETL tasks and upload attempts."""
-    upload_status = RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED
-    upload_error = str(error)
     retryable = False
     with job_uow() as repo:
         upload_status, upload_error, retryable = _classify_failed_resume_upload(repo, resume_fingerprint)

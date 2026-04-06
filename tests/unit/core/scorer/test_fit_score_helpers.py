@@ -2,7 +2,6 @@
 
 import pytest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 from core.scorer.fit_score import (
     _warn_correct,
@@ -188,7 +187,7 @@ class TestCalculateFitScoreEdgeCases:
             missing_required_penalty_cap=0.0,
             enable_explicit_missing_required_penalty=False,
         )
-        score, components = calculate_fit_score(
+        score, _ = calculate_fit_score(
             job_similarity=1.0,
             matched_requirements=[],
             missing_requirements=[],

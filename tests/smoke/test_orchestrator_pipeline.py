@@ -325,7 +325,7 @@ def wait_for_service(host_port, check_type, timeout=60):
                 if result.returncode == 0:
                     return
         except (requests.exceptions.RequestException, ConnectionError):
-            pass
+            pass  # service not yet up; retry
         time.sleep(0.5)
 
 

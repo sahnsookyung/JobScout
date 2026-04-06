@@ -41,13 +41,12 @@ class JobSpyConfig(BaseModel):
 
 
 class LlmConfig(BaseModel):
+    provider: Literal["openai_compatible"] = "openai_compatible"
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     api_secret: Optional[str] = None
     extraction_headers: Optional[Dict[str, str]] = None
     extraction_model: Optional[str] = "gpt-4o-mini"
-    extraction_url: Optional[str] = None
-    extraction_type: str = "openai"
     extraction_labels: Optional[List[str]] = None
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1024
@@ -59,7 +58,7 @@ class LlmConfig(BaseModel):
 
 class PreferenceModelConfig(BaseModel):
     enabled: bool = True
-    provider: str = "openai"
+    provider: Literal["openai_compatible"] = "openai_compatible"
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     api_secret: Optional[str] = None
@@ -75,16 +74,41 @@ class PreferenceModelConfig(BaseModel):
     embedding_api_secret: Optional[str] = None
     embedding_headers: Optional[Dict[str, str]] = None
 
+
+class PreferenceCrossEncoderConfig(BaseModel):
+    enabled: bool = False
+    # Default is a commonly available open-source CE for quick local testing.
+    # Choose the best model for your language, domain, and latency budget.
+    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    cache_path: Optional[str] = None
+    runtime: Literal["auto", "heuristic", "flag_embedding", "sentence_transformers"] = "auto"
+    max_batch_size: int = 32
+    trust_remote_code: bool = False
+
+
 class PreferencesConfig(BaseModel):
     default_mode: Literal["semantic_rerank", "llm_judge"] = "semantic_rerank"
     allowed_modes: List[Literal["semantic_rerank", "llm_judge"]] = Field(
         default_factory=lambda: ["semantic_rerank"]
     )
+    reranker: Literal["llm", "cross_encoder"] = "llm"
     parser: PreferenceModelConfig = Field(default_factory=PreferenceModelConfig)
     semantic_reranker: PreferenceModelConfig = Field(default_factory=PreferenceModelConfig)
     llm_judge: PreferenceModelConfig = Field(
         default_factory=lambda: PreferenceModelConfig(enabled=False)
     )
+    cross_encoder: PreferenceCrossEncoderConfig = Field(default_factory=PreferenceCrossEncoderConfig)
+
+    def allowed_modes_normalized(self) -> List[str]:
+        """Return deduplicated allowed modes filtered to valid values, falling back to default_mode."""
+        _valid = {"semantic_rerank", "llm_judge"}
+        normalized = [
+            m for m in dict.fromkeys(
+                str(x).strip().lower() for x in (self.allowed_modes or [])
+            )
+            if m in _valid
+        ]
+        return normalized or [self.default_mode]
 
 
 class ResumeConfig(BaseModel):
@@ -435,12 +459,58 @@ class NotificationConfig(BaseModel):
     smtp: NotificationSmtpConfig = Field(default_factory=NotificationSmtpConfig)
 
 
+class RankingConfig(BaseModel):
+    """Retrieve-then-rerank ranking configuration.
+
+    max_ranking_candidates controls how many rows are fetched from the DB
+    (ordered by fit_score DESC) before ranking.  This is the explicit scaling
+    boundary: increase it as the job database grows beyond pre-production volumes.
+
+    balanced_w_pref + balanced_w_fit must equal 1.0 (validated at init).
+    Initial weights (0.6 / 0.4) are a starting point — tune after rollout.
+    """
+
+    config_version: str = "1.0.0"
+    active_default_mode: Literal["preference_first", "fit_first", "balanced"] = "balanced"
+    balanced_w_pref: float = Field(default=0.6, ge=0.0, le=1.0)
+    balanced_w_fit: float = Field(default=0.4, ge=0.0, le=1.0)
+    stable_tie_break_key: Literal["job_id", "match_id"] = "match_id"
+    max_ranking_candidates: int = Field(default=500, ge=10, le=10_000)
+    default_top_k: int = Field(default=25, ge=1, le=500)
+    max_top_k: int = Field(default=100, ge=1, le=1_000)
+    explanation_labels: Dict[str, str] = Field(
+        default_factory=lambda: {
+            "preference_first": "Sorted by your soft preference match",
+            "fit_first": "Sorted by skill & requirement fit",
+            "balanced": "Balanced blend of preference and fit",
+        }
+    )
+
+    def model_post_init(self, __context: Any) -> None:
+        del __context
+        total = round(self.balanced_w_pref + self.balanced_w_fit, 10)
+        if abs(total - 1.0) > 1e-9:
+            raise ValueError(
+                f"ranking.balanced_w_pref + ranking.balanced_w_fit must equal 1.0, "
+                f"got {self.balanced_w_pref} + {self.balanced_w_fit} = {total}"
+            )
+
+    def label_for_mode(self, mode: str) -> str:
+        return self.explanation_labels.get(mode, mode)
+
+    def effective_top_k(self, requested: Optional[int]) -> int:
+        """Return the effective top_k, applying default and max cap."""
+        k = requested if requested is not None else self.default_top_k
+        return min(k, self.max_top_k)
+
+
 class AppConfig(BaseModel):
     database: DatabaseConfig
     jobspy: Optional[JobSpyConfig] = None
     etl: Optional[EtlConfig] = EtlConfig()
     matching: Optional[MatchingConfig] = MatchingConfig()
     preferences: PreferencesConfig = Field(default_factory=PreferencesConfig)
+    ranking: RankingConfig = Field(default_factory=RankingConfig)
     notifications: Optional[NotificationConfig] = NotificationConfig()
     schedule: ScheduleConfig
     scrapers: List[ScraperConfig] = Field(default_factory=list)
@@ -456,6 +526,7 @@ def _set_nested(data: dict, keys: list, value: Any) -> None:
 DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["DATABASE_URL"], ["database", "url"]),
     (["JOBSPY_URL"], ["jobspy", "url"]),
+    (["ETL_LLM_PROVIDER"], ["etl", "llm", "provider"]),
     (["ETL_LLM_EXTRACTION_BASE_URL", "ETL_LLM_BASE_URL"], ["etl", "llm", "base_url"]),
     (["ETL_LLM_EXTRACTION_API_KEY", "ETL_LLM_API_KEY"], ["etl", "llm", "api_key"]),
     (["ETL_LLM_EXTRACTION_API_SECRET", "ETL_LLM_API_SECRET"], ["etl", "llm", "api_secret"]),
@@ -465,18 +536,28 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["ETL_LLM_EXTRACTION_MODEL"], ["etl", "llm", "extraction_model"]),
     (["ETL_EMBEDDING_MODEL"], ["etl", "llm", "embedding_model"]),
     (["PREFERENCES_DEFAULT_MODE"], ["preferences", "default_mode"]),
+    (["PREFERENCES_PARSER_PROVIDER"], ["preferences", "parser", "provider"]),
     (["PREFERENCES_PARSER_BASE_URL"], ["preferences", "parser", "base_url"]),
     (["PREFERENCES_PARSER_API_KEY"], ["preferences", "parser", "api_key"]),
     (["PREFERENCES_PARSER_API_SECRET"], ["preferences", "parser", "api_secret"]),
     (["PREFERENCES_PARSER_MODEL"], ["preferences", "parser", "model"]),
+    (["PREFERENCES_SEMANTIC_RERANKER_PROVIDER"], ["preferences", "semantic_reranker", "provider"]),
     (["PREFERENCES_SEMANTIC_RERANKER_BASE_URL"], ["preferences", "semantic_reranker", "base_url"]),
     (["PREFERENCES_SEMANTIC_RERANKER_API_KEY"], ["preferences", "semantic_reranker", "api_key"]),
     (["PREFERENCES_SEMANTIC_RERANKER_API_SECRET"], ["preferences", "semantic_reranker", "api_secret"]),
     (["PREFERENCES_SEMANTIC_RERANKER_MODEL"], ["preferences", "semantic_reranker", "model"]),
+    (["PREFERENCES_LLM_JUDGE_PROVIDER"], ["preferences", "llm_judge", "provider"]),
     (["PREFERENCES_LLM_JUDGE_BASE_URL"], ["preferences", "llm_judge", "base_url"]),
     (["PREFERENCES_LLM_JUDGE_API_KEY"], ["preferences", "llm_judge", "api_key"]),
     (["PREFERENCES_LLM_JUDGE_API_SECRET"], ["preferences", "llm_judge", "api_secret"]),
     (["PREFERENCES_LLM_JUDGE_MODEL"], ["preferences", "llm_judge", "model"]),
+    (["PREFERENCES_RERANKER"], ["preferences", "reranker"]),
+    (["PREFERENCES_CROSS_ENCODER_ENABLED"], ["preferences", "cross_encoder", "enabled"]),
+    (["PREFERENCES_CROSS_ENCODER_MODEL_NAME"], ["preferences", "cross_encoder", "model_name"]),
+    (["PREFERENCES_CROSS_ENCODER_CACHE_PATH"], ["preferences", "cross_encoder", "cache_path"]),
+    (["PREFERENCES_CROSS_ENCODER_RUNTIME"], ["preferences", "cross_encoder", "runtime"]),
+    (["PREFERENCES_CROSS_ENCODER_MAX_BATCH_SIZE"], ["preferences", "cross_encoder", "max_batch_size"]),
+    (["PREFERENCES_CROSS_ENCODER_TRUST_REMOTE_CODE"], ["preferences", "cross_encoder", "trust_remote_code"]),
     (["FIT_SEMANTIC_ENABLED"], ["matching", "scorer", "semantic_fit", "enabled"]),
     (["FIT_SEMANTIC_DEFAULT_MODE"], ["matching", "scorer", "semantic_fit", "default_mode"]),
     (["FIT_SEMANTIC_RECALL_TOP_K"], ["matching", "scorer", "semantic_fit", "recall_top_k"]),
@@ -488,6 +569,7 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["FIT_CROSS_ENCODER_REMOTE_BASE_URL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "base_url"]),
     (["FIT_CROSS_ENCODER_REMOTE_API_KEY"], ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "api_key"]),
     (["FIT_CROSS_ENCODER_REMOTE_MODEL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "model"]),
+    (["FIT_LLM_PROVIDER"], ["matching", "scorer", "semantic_fit", "llm", "provider"]),
     (["FIT_LLM_BASE_URL"], ["matching", "scorer", "semantic_fit", "llm", "base_url"]),
     (["FIT_LLM_API_KEY"], ["matching", "scorer", "semantic_fit", "llm", "api_key"]),
     (["FIT_LLM_API_SECRET"], ["matching", "scorer", "semantic_fit", "llm", "api_secret"]),
@@ -507,6 +589,11 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["SMTP_USE_TLS"], ["notifications", "smtp", "use_tls"]),
     (["FROM_EMAIL"], ["notifications", "smtp", "from_email"]),
     (["NOTIFICATION_DRY_RUN"], ["notifications", "dry_run"]),
+    (["RANKING_DEFAULT_MODE"], ["ranking", "active_default_mode"]),
+    (["RANKING_CONFIG_VERSION"], ["ranking", "config_version"]),
+    (["RANKING_BALANCED_W_PREF"], ["ranking", "balanced_w_pref"]),
+    (["RANKING_BALANCED_W_FIT"], ["ranking", "balanced_w_fit"]),
+    (["RANKING_MAX_CANDIDATES"], ["ranking", "max_ranking_candidates"]),
 )
 
 DEFAULT_HEADER_MAPPINGS: tuple[HeaderMapping, ...] = (

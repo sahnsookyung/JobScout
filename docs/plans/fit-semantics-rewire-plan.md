@@ -2,7 +2,7 @@
 
 - Date: 2026-04-02
 - Related ADR: [ADR 0002](../adr/0002-fit-semantics-and-explainability.md)
-- Status: Implemented direction on the active fit-semantics branch; remaining work is tuning, offline evaluation, and operationalization
+- Status: Implemented and merged (PR 2). Remaining work: tuning, offline evaluation, and operationalization per [semantic-architecture-handover.md](./semantic-architecture-handover.md)
 
 ## Summary
 
@@ -125,17 +125,19 @@ The fit pipeline becomes:
   - `job_title`: 200
   - `job_company`: 200
   - `job_summary`: 1800
-- Local serialization template:
-  - `Requirement: {requirement_text}`
-  - `Requirement Type: {req_type}`
-  - `Evidence: {evidence_text}`
-  - `Evidence Section: {evidence_section}`
-  - `Job Title: {job_title}`
-  - `Company: {job_company}`
-  - `Job Summary: {job_summary}`
-- Each line appears once, in that exact order, with missing values as empty strings.
-- Remote provider receives structured fields directly.
-- LLM provider receives the same fields in JSON in the same order.
+- Local serialization template (cross-encoder takes a **(left, right) pair**, not a single string):
+  - Left (requirement + job context):
+    - `Requirement: {requirement_text}`
+    - `Requirement Type: {req_type}`
+    - `Job Title: {job_title}`
+    - `Company: {job_company}`
+    - `Job Summary: {job_summary}`
+  - Right (evidence):
+    - `Evidence: {evidence_text}`
+    - `Evidence Section: {evidence_section}`
+- Each field appears once, in that exact order, with missing values as empty strings. Fields are newline-joined within each side.
+- Remote provider receives all fields as structured JSON (not as (left, right) strings).
+- LLM provider receives the same fields in JSON in the logical order above.
 - Pair IDs use post-truncation values:
   - `sha256(job_id + '|' + requirement_id + '|' + evidence_rank + '|' + evidence_section + '|' + evidence_text)[:32]`
 - Truncation policy:

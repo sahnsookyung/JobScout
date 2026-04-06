@@ -267,24 +267,6 @@ INVALID_MISSING_SUMMARY_TEXT = {
 }
 
 
-# Missing required field in summary
-INVALID_MISSING_SUMMARY_TEXT = {
-    "profile": {
-        "summary": {
-            "total_experience_years": 5.0
-            # Missing "text"
-        },
-        "experience": [],
-        "projects": {"items": []},
-        "education": [],
-        "skills": {"groups": [], "all": []},
-        "certifications": [],
-        "languages": []
-    },
-    "extraction": {"confidence": 0.95, "warnings": []}
-}
-
-
 # Missing required field in experience item
 INVALID_MISSING_EXPERIENCE_FIELDS = make_invalid_resume({
     "profile": {

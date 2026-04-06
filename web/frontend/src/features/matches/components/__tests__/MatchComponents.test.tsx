@@ -42,9 +42,10 @@ vi.mock('@/utils/constants', () => ({
         { value: 'stale', label: 'Stale' },
         { value: 'all', label: 'All' },
     ],
-    SORT_OPTIONS: [
-        { value: 'overall', label: 'Overall Score' },
-        { value: 'fit', label: 'Fit Score' },
+    RANKING_MODE_OPTIONS: [
+        { value: 'balanced', label: 'Balanced' },
+        { value: 'preference_first', label: 'Preference First' },
+        { value: 'fit_first', label: 'Fit First' },
     ],
 }));
 
@@ -89,10 +90,15 @@ function makeMatch(overrides: Record<string, any> = {}) {
         location: 'San Francisco, CA',
         is_remote: false,
         is_hidden: false,
-        overall_score: 85,
-        fit_score: 80,
+        fit_score: 85,
+        preference_score: null,
         required_coverage: 0.9,
         match_type: 'vector_match',
+        ranking_mode_used: null,
+        dominant_reason_code: null,
+        explanation_label: null,
+        balanced_primary_score: null,
+        missing_scores: [],
         ...overrides,
     };
 }
@@ -105,8 +111,8 @@ describe('MatchFilters', () => {
         onStatusChange: vi.fn(),
         remoteOnly: false,
         onRemoteOnlyChange: vi.fn(),
-        sortBy: 'overall' as const,
-        onSortByChange: vi.fn(),
+        rankingMode: 'balanced' as const,
+        onRankingModeChange: vi.fn(),
         showHidden: false,
         onShowHiddenChange: vi.fn(),
     };
@@ -120,10 +126,11 @@ describe('MatchFilters', () => {
         expect(screen.getByText('All')).toBeInTheDocument();
     });
 
-    it('renders sort select with options', () => {
+    it('renders ranking mode select with options', () => {
         render(<MatchFilters {...defaultProps} />);
-        expect(screen.getByText('Overall Score')).toBeInTheDocument();
-        expect(screen.getByText('Fit Score')).toBeInTheDocument();
+        expect(screen.getByText('Balanced')).toBeInTheDocument();
+        expect(screen.getByText('Preference First')).toBeInTheDocument();
+        expect(screen.getByText('Fit First')).toBeInTheDocument();
     });
 
     it('calls onStatusChange when status select changes', () => {
@@ -133,11 +140,11 @@ describe('MatchFilters', () => {
         expect(defaultProps.onStatusChange).toHaveBeenCalledWith('stale');
     });
 
-    it('calls onSortByChange when sort select changes', () => {
+    it('calls onRankingModeChange when ranking mode select changes', () => {
         render(<MatchFilters {...defaultProps} />);
         const selects = screen.getAllByRole('combobox');
-        fireEvent.change(selects[1], { target: { value: 'fit' } });
-        expect(defaultProps.onSortByChange).toHaveBeenCalledWith('fit');
+        fireEvent.change(selects[1], { target: { value: 'fit_first' } });
+        expect(defaultProps.onRankingModeChange).toHaveBeenCalledWith('fit_first');
     });
 
     it('renders Remote Only toggle', () => {
@@ -205,12 +212,12 @@ describe('MatchCard', () => {
     });
 
     it('shows Top Match badge for high scores (>=80)', () => {
-        render(<MatchCard match={makeMatch({ overall_score: 85 })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+        render(<MatchCard match={makeMatch({ fit_score: 85 })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
         expect(screen.getByText('Top Match')).toBeInTheDocument();
     });
 
     it('does not show Top Match badge for scores below 80', () => {
-        render(<MatchCard match={makeMatch({ overall_score: 70 })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+        render(<MatchCard match={makeMatch({ fit_score: 70 })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
         expect(screen.queryByText('Top Match')).not.toBeInTheDocument();
     });
 
@@ -237,8 +244,9 @@ describe('MatchCard', () => {
     });
 
     it('renders formatted score value', () => {
-        render(<MatchCard match={makeMatch({ overall_score: 85 })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(screen.getByText('85%')).toBeInTheDocument();
+        render(<MatchCard match={makeMatch({ fit_score: 85 })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+        // fit_score renders in both the score badge and the Fit Match bar
+        expect(screen.getAllByText('85%').length).toBeGreaterThan(0);
     });
 
     it('renders match_type with underscores replaced by spaces', () => {
@@ -368,8 +376,8 @@ function makeModalData(overrides: Record<string, any> = {}) {
             ...overrides.job,
         },
         match: {
-            overall_score: 90,
-            fit_score: 88,
+            fit_score: 90,
+            preference_score: null,
             fit_confidence: null,
             fit_scorer: null,
             fit_explanation: null,
@@ -446,7 +454,7 @@ describe('MatchDetailsModal', () => {
 
     it('shows exceptional match badge for high scores', () => {
         mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ match: { overall_score: 90 } }),
+            data: makeModalData({ match: { fit_score: 90 } }),
             isLoading: false,
         });
         render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
@@ -572,9 +580,9 @@ describe('MatchDetailsModal', () => {
         expect(screen.getByText('Not Required')).toBeInTheDocument();
     });
 
-    it('does not show exceptional badge for low overall score', () => {
+    it('does not show exceptional badge for low fit score', () => {
         mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ match: { overall_score: 70 } }),
+            data: makeModalData({ match: { fit_score: 70 } }),
             isLoading: false,
         });
         render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);

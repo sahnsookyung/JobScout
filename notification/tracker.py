@@ -13,7 +13,7 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 
-from sqlalchemy import select, delete, desc
+from sqlalchemy import select
 from database.repository import JobRepository
 from database.models import NotificationTracker
 

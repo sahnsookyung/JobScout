@@ -4,7 +4,6 @@ Unit tests for OpenAI service schema handling.
 Tests verify:
 - Schema unwrapping helper works correctly
 - extract_structured_data sends proper JSON schema to LLM
-- extract_job_facets sends proper JSON schema to LLM
 - Guardrails catch invalid schemas
 """
 import pytest
@@ -21,7 +20,7 @@ from core.llm.openai_service import (
     _wait_from_rate_limit_headers,
     _wait_respecting_retry_after,
 )
-from core.llm.schema_models import EXTRACTION_SCHEMA, FACET_EXTRACTION_SCHEMA_FOR_WANTS
+from core.llm.schema_models import EXTRACTION_SCHEMA
 
 
 class TestUnwrapSchemaSpec:
@@ -46,19 +45,10 @@ class TestUnwrapSchemaSpec:
         assert strict is False
         assert result == raw
 
-    def test_facet_schema_unwrapping(self):
-        """FACET_EXTRACTION_SCHEMA_FOR_WANTS should unwrap correctly."""
-        name, strict, raw_schema = _unwrap_schema_spec(FACET_EXTRACTION_SCHEMA_FOR_WANTS)
-
-        assert name == "facet_extraction_schema"
-        assert strict is True
-        assert "properties" in raw_schema
-        assert "remote_flexibility" in raw_schema["properties"]
-
     def test_wrapper_missing_strict_defaults_to_false(self):
         """Wrapper without strict key should default to False."""
         wrapped = {"name": "test", "schema": {"type": "object", "properties": {}}}
-        name, strict, raw_schema = _unwrap_schema_spec(wrapped)
+        name, strict, _ = _unwrap_schema_spec(wrapped)
 
         assert name == "test"
         assert strict is False
@@ -125,44 +115,6 @@ class TestExtractStructuredData:
 
         with pytest.raises(ValueError, match="Not a valid JSON Schema object"):
             service.extract_structured_data("test text", invalid)
-
-
-class TestExtractJobFacets:
-    """Tests for extract_facet_data method."""
-
-    @pytest.fixture
-    def service(self):
-        """Create service with mocked client."""
-        svc = OpenAIService(api_key="test")
-        svc.client = MagicMock()
-
-        mock_message = MagicMock()
-        mock_message.content = json.dumps({"remote_flexibility": "remote"})
-        mock_choice = MagicMock()
-        mock_choice.message = mock_message
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        svc.client.chat.completions.create.return_value = mock_response
-
-        return svc
-
-    def test_facets_extraction_sends_unwrapped_schema(self, service):
-        """Facet extraction should use unwrapped schema, not wrapper."""
-        service.extract_facet_data("test text")
-
-        call_kwargs = service.client.chat.completions.create.call_args[1]
-        json_schema = call_kwargs['response_format']['json_schema']
-
-        assert json_schema['schema'].get("type") == "object"
-        assert "properties" in json_schema['schema']
-        assert "name" not in json_schema['schema']
-
-    def test_facets_preserves_strict_setting(self, service):
-        """Strict setting should be preserved from FACET_EXTRACTION_SCHEMA_FOR_WANTS."""
-        service.extract_facet_data("test text")
-
-        call_kwargs = service.client.chat.completions.create.call_args[1]
-        assert call_kwargs['response_format']['json_schema']['strict'] is True
 
 
 class TestRetryHelpers:
@@ -671,7 +623,7 @@ class TestUnloadModel:
     def test_sends_request_for_localhost_url(self):
         """Should POST to Ollama API when base_url contains localhost."""
         svc = OpenAIService(api_key="test", base_url="http://localhost:11434/v1")
-        with MagicMock() as mock_requests:
+        with MagicMock():
             import unittest.mock
             with unittest.mock.patch("core.llm.openai_service.requests.post") as mock_post:
                 svc.unload_model("llama3")

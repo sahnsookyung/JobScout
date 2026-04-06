@@ -36,12 +36,16 @@ class MatchSummary(BaseModel):
                 "location": "Remote",
                 "is_remote": True,
                 "fit_score": 82.5,
-                "overall_score": 82.5,
-                "base_score": 95.0,
+                "preference_score": 0.74,
                 "penalties": 9.5,
                 "required_coverage": 0.9,
                 "preferred_coverage": 0.8,
                 "match_type": "requirements_only",
+                "ranking_mode_used": "balanced",
+                "dominant_reason_code": "balanced_blend",
+                "explanation_label": "Balanced blend of preference and fit",
+                "balanced_primary_score": 0.775,
+                "missing_scores": [],
                 "created_at": "2026-02-01T12:00:00",
                 "calculated_at": "2026-02-01T12:00:00"
             }
@@ -55,12 +59,9 @@ class MatchSummary(BaseModel):
     location: Optional[str] = None
     is_remote: Optional[bool] = None
 
-    # Explicit fit and final overall scores
     fit_score: Optional[float] = Field(default=None, ge=0, le=100)
-    overall_score: float = Field(ge=0, le=100)
+    preference_score: Optional[float] = Field(default=None, ge=0, le=1)
 
-    # Legacy fields for backward compatibility
-    base_score: float = Field(ge=0, le=100)
     penalties: float = Field(ge=0)
     required_coverage: float = Field(ge=0, le=1)
     preferred_coverage: float = Field(ge=0, le=1)
@@ -68,6 +69,13 @@ class MatchSummary(BaseModel):
     is_hidden: bool = False
     created_at: Optional[str] = None
     calculated_at: Optional[str] = None
+
+    # Ranking explanation fields
+    ranking_mode_used: Optional[str] = None
+    dominant_reason_code: Optional[str] = None
+    explanation_label: Optional[str] = None
+    balanced_primary_score: Optional[float] = None
+    missing_scores: List[str] = Field(default_factory=list)
 
 
 class RequirementDetail(BaseModel):
@@ -103,9 +111,8 @@ class MatchDetail(BaseModel):
     match_id: str
     resume_fingerprint: str
 
-    # Explicit fit and final overall scores
     fit_score: Optional[float] = None
-    overall_score: float
+    preference_score: Optional[float] = None
 
     # Score breakdowns
     fit_components: Optional[Dict[str, Any]] = None

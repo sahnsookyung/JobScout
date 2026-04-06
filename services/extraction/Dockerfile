@@ -42,4 +42,4 @@ ENV PYTHONPATH=/app
 USER appuser
 EXPOSE 8081
 
-CMD ["uvicorn", "services.extraction.main:app", "--host", "0.0.0.0", "--port", "8081"]
+CMD ["sh", "-c", "umask 0002 && exec uvicorn services.extraction.main:app --host 0.0.0.0 --port 8081"]

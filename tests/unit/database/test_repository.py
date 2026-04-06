@@ -3,7 +3,6 @@
 Tests lazy-loading properties and delegation methods of JobRepository.
 """
 
-import pytest
 from unittest.mock import MagicMock
 
 from database.models import DEFAULT_LEGACY_OWNER_ID
@@ -42,7 +41,9 @@ class TestJobRepositoryProperties:
 
     def test_resume_cached(self):
         repo, _ = make_repo()
-        assert repo.resume is repo.resume
+        first = repo.resume
+        second = repo.resume
+        assert first is second
 
     def test_match_returns_match_repository(self):
         repo, _ = make_repo()
@@ -50,7 +51,9 @@ class TestJobRepositoryProperties:
 
     def test_match_cached(self):
         repo, _ = make_repo()
-        assert repo.match is repo.match
+        first = repo.match
+        second = repo.match
+        assert first is second
 
     def test_embedding_returns_embedding_repository(self):
         repo, _ = make_repo()
@@ -58,7 +61,9 @@ class TestJobRepositoryProperties:
 
     def test_embedding_cached(self):
         repo, _ = make_repo()
-        assert repo.embedding is repo.embedding
+        first = repo.embedding
+        second = repo.embedding
+        assert first is second
 
     def test_candidate_preferences_returns_candidate_preferences_repository(self):
         repo, _ = make_repo()
@@ -295,78 +300,6 @@ class TestJobPostDelegation:
             require_remote=True,
         )
         assert result == [("job", 0.5, 0.8)]
-
-    def test_save_job_facet_embedding(self):
-        repo, _ = make_repo()
-        repo.job_post.save_job_facet_embedding = MagicMock(return_value="facet")
-        result = repo.save_job_facet_embedding("job-id", "skills", "python", [0.1], "hash")
-        assert result == "facet"
-
-    def test_get_job_facet_embeddings(self):
-        repo, _ = make_repo()
-        repo.job_post.get_job_facet_embeddings = MagicMock(return_value={"skills": [0.1]})
-        result = repo.get_job_facet_embeddings("job-id")
-        assert result == {"skills": [0.1]}
-
-    def test_get_facets_for_job(self):
-        repo, _ = make_repo()
-        repo.job_post.get_facets_for_job = MagicMock(return_value=["facet-1"])
-        result = repo.get_facets_for_job("job-id")
-        assert result == ["facet-1"]
-
-    def test_get_jobs_needing_facet_embedding(self):
-        repo, _ = make_repo()
-        repo.job_post.get_jobs_needing_facet_embedding = MagicMock(return_value=[])
-        result = repo.get_jobs_needing_facet_embedding(limit=20)
-        assert result == []
-
-    def test_update_facet_embedding(self):
-        repo, _ = make_repo()
-        repo.job_post.update_facet_embedding = MagicMock()
-        repo.update_facet_embedding("facet-id", [0.3], "hash-xyz")
-        repo.job_post.update_facet_embedding.assert_called_once_with("facet-id", [0.3], "hash-xyz")
-
-    def test_mark_job_facets_extracted(self):
-        repo, _ = make_repo()
-        repo.job_post.mark_job_facets_extracted = MagicMock()
-        repo.mark_job_facets_extracted("job-id", content_hash="abc123")
-        repo.job_post.mark_job_facets_extracted.assert_called_once_with("job-id", "abc123")
-
-    def test_delete_all_facet_embeddings_for_job(self):
-        repo, _ = make_repo()
-        repo.job_post.delete_all_facet_embeddings_for_job = MagicMock()
-        repo.delete_all_facet_embeddings_for_job("job-id")
-        repo.job_post.delete_all_facet_embeddings_for_job.assert_called_once_with("job-id")
-
-    def test_get_and_claim_jobs_for_facet_extraction(self):
-        repo, _ = make_repo()
-        repo.job_post.get_and_claim_jobs_for_facet_extraction = MagicMock(return_value=["j"])
-        result = repo.get_and_claim_jobs_for_facet_extraction(limit=10, worker_id="w1")
-        assert result == ["j"]
-
-    def test_mark_job_facets_failed(self):
-        repo, _ = make_repo()
-        repo.job_post.mark_job_facets_failed = MagicMock()
-        repo.mark_job_facets_failed("job-id", error="some error")
-        repo.job_post.mark_job_facets_failed.assert_called_once_with("job-id", "some error")
-
-    def test_reset_stale_facet_jobs(self):
-        repo, _ = make_repo()
-        repo.job_post.reset_stale_facet_jobs = MagicMock(return_value=3)
-        result = repo.reset_stale_facet_jobs(timeout_minutes=60, max_retries=3)
-        assert result == 3
-
-    def test_get_jobs_with_failed_facets(self):
-        repo, _ = make_repo()
-        repo.job_post.get_jobs_with_failed_facets = MagicMock(return_value=[])
-        result = repo.get_jobs_with_failed_facets(limit=50, max_retries=3)
-        assert result == []
-
-    def test_get_jobs_with_missing_facet_embeddings(self):
-        repo, _ = make_repo()
-        repo.job_post.get_jobs_with_missing_facet_embeddings = MagicMock(return_value=["j"])
-        result = repo.get_jobs_with_missing_facet_embeddings(limit=10, max_retries=2)
-        assert result == ["j"]
 
 
 # ---------------------------------------------------------------------------

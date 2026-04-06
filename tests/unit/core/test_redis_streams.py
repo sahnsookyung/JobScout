@@ -6,10 +6,9 @@ Covers: core/redis_streams.py
 
 
 import pytest
-import json
 import threading
 import itertools
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from redis import Redis
 
 
@@ -23,8 +22,6 @@ from core.redis_streams import (
     _is_running,
     _yield_claimed_messages,
     _yield_new_messages,
-    _read_stream_loop,
-    read_stream,
     ack_message,
     publish_completion,
     subscribe,
@@ -44,7 +41,6 @@ from core.redis_streams import (
     STREAM_MATCHING,
     CHANNEL_EXTRACTION_DONE,
     CHANNEL_EXTRACTION_BATCH_DONE,
-    CHANNEL_EMBEDDINGS_DONE,
     CHANNEL_EMBEDDINGS_BATCH_DONE,
     CHANNEL_MATCHING_DONE,
 )
@@ -528,7 +524,7 @@ class TestSubscribe:
 
     def test_subscribe_success(self, mock_redis):
         """Test successful subscription."""
-        result = subscribe([CHANNEL_MATCHING_DONE, CHANNEL_EXTRACTION_DONE])
+        subscribe([CHANNEL_MATCHING_DONE, CHANNEL_EXTRACTION_DONE])
 
         mock_redis.pubsub.assert_called_once()
         pubsub = mock_redis.pubsub.return_value

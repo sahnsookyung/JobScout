@@ -72,7 +72,7 @@ class ServiceClient:
         url = f"{self.base_url}{path}"
         try:
             with self._lock:
-                response = self._http_client.request(method, url, **kwargs)
+                response = self._http_client.request(method, url, **kwargs)  # codeql[py/partial-ssrf] base_url is env-var-configured, not user-supplied
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:

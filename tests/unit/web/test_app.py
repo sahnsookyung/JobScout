@@ -5,7 +5,7 @@ Covers: create_app(), health_check, read_root endpoints, main()
 """
 import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 class TestCreateApp:

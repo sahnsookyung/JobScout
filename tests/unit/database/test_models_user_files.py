@@ -7,7 +7,7 @@ import uuid
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from database.models import Base, User, UserAuthIdentity, UserFile
+from database.models import User, UserAuthIdentity, UserFile
 
 TEST_EMAIL = "test@example.com"
 

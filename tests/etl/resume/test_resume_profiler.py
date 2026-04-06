@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Test ResumeProfiler separation of profiling and persistence."""
 import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
 from etl.resume import ResumeProfiler
 from etl.resume.embedding_store import InMemoryEmbeddingStore, JobRepositoryAdapter
-from etl.resume.models import ResumeEvidenceUnit
 from core.llm.schema_models import ResumeSchema
 
 

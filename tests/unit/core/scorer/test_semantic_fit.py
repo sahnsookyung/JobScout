@@ -2,13 +2,12 @@
 
 import sys
 import types
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
 from core.config_loader import ScorerConfig
-from core.llm.fake_service import FakeLLMService
+from tests.mocks.fake_service import FakeLLMService
 from core.matcher import JobMatchPreliminary, RequirementMatchResult
 from core.matcher.models import RequirementEvidenceCandidate
 from core.scorer.semantic_fit import (
@@ -28,7 +27,6 @@ from core.scorer.semantic_fit import (
     _fallback_adjusted_match,
     _missing_assessment_verdict,
     _normalize_modes,
-    _pairs_by_requirement,
     _preferred_capability_mode,
     _pair_assessment_from_heuristic,
     _scored_requirement_verdict,
@@ -749,7 +747,7 @@ def test_cross_encoder_without_available_local_provider_uses_threshold_fallback(
 
 def test_cross_encoder_local_policy_does_not_fall_through_to_remote_provider():
     class FakeRemoteProvider:
-        route_name = "remote"
+        "remote"
 
         @property
         def provider_id(self):
@@ -1170,3 +1168,15 @@ def test_llm_semantic_fit_with_no_serialized_pairs_uses_empty_summary():
 
     assert result.fit_components["semantic_fit_summary"] == "No recalled resume evidence supported the evaluated requirements."
     assert result.fit_components["semantic_fit_diagnostics"]["provider_route"] == "llm"
+
+
+def test_score_text_pairs_heuristic_returns_nonzero_for_overlap():
+    provider = LocalCrossEncoderProvider("heuristic-model", runtime="heuristic")
+    scores = provider.score_text_pairs([("python backend", "Python FastAPI backend service")])
+    assert scores[0] > 0.0
+
+
+def test_score_text_pairs_heuristic_returns_zero_for_no_overlap():
+    provider = LocalCrossEncoderProvider("heuristic-model", runtime="heuristic")
+    scores = provider.score_text_pairs([("python", "Java enterprise application")])
+    assert scores[0] == 0.0

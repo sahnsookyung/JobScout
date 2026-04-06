@@ -213,6 +213,7 @@ jobs:
           )
           services=(
             db-migrate
+            mock-llm
             notification-worker
             extraction
             embeddings

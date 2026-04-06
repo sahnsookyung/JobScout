@@ -6,18 +6,11 @@ section (experience, projects, skills, summary) gets its own embedding
 and is matched individually against job requirements.
 """
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock
 
 from etl.resume import ResumeProfiler
-from core.scorer import ScoringService, ScoredJobMatch
-from database.models import (
-    JobPost,
-    JobRequirementUnit,
-    JobRequirementUnitEmbedding,
-    ResumeSectionEmbedding
-)
 from database.repository import JobRepository
-from database.models import DEFAULT_LEGACY_OWNER_ID
+from database.models import DEFAULT_LEGACY_OWNER_ID, JobRequirementUnit
 from core.llm.openai_service import OpenAIService
 
 

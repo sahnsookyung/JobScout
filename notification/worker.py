@@ -23,7 +23,6 @@ from redis import Redis
 from rq import Worker, Queue
 from rq.registry import FailedJobRegistry
 
-from notification import process_notification_task
 from notification.runtime_config import get_notification_runtime_config
 
 logging.basicConfig(
@@ -88,7 +87,13 @@ def start_worker(burst: bool = False, queues: list = None):
         queues = ['notifications']
 
     logger.info("Starting RQ Worker")
-    logger.info("Redis URL: %s", redis_url)
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(redis_url)
+        safe_url = parsed._replace(password="***").geturl() if parsed.password else redis_url  # NOSONAR
+    except Exception:
+        safe_url = "<unparseable>"
+    logger.info("Redis URL: %s", safe_url)
     logger.info("Queues: %s", ", ".join(queues))
     logger.info("Burst mode: %s", burst)
 

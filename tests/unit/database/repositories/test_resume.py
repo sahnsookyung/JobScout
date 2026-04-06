@@ -75,7 +75,7 @@ class TestSaveStructuredResume:
         repo, mock_db = make_repo()
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
-        result = repo.save_structured_resume("fp-1", {"name": "Alice"})
+        repo.save_structured_resume("fp-1", {"name": "Alice"})
 
         mock_db.add.assert_called_once()
         added = mock_db.add.call_args[0][0]
@@ -175,7 +175,7 @@ class TestSaveResumeSectionEmbeddings:
         assert len(result) == 3
 
     def test_returns_list_of_embedding_records(self):
-        repo, mock_db = make_repo()
+        repo, _ = make_repo()
         sections = [{'section_type': 'summary', 'section_index': 0, 'source_text': 'x', 'source_data': {}, 'embedding': [0.5]}]
         result = repo.save_resume_section_embeddings("fp-1", sections)
         assert all(isinstance(r, ResumeSectionEmbedding) for r in result)

@@ -70,8 +70,9 @@ export const MatchCard: React.FC<MatchCardProps> = ({
         toggleHiddenMutation.mutate(match.match_id);
     };
 
-    const isHighScore = match.overall_score >= 80;
-    const isMediumScore = match.overall_score >= 60 && match.overall_score < 80;
+    const fitScore = match.fit_score ?? 0;
+    const isHighScore = fitScore >= 80;
+    const isMediumScore = fitScore >= 60 && fitScore < 80;
     let cardClasses = 'border-gray-200 hover:border-blue-300';
     if (match.is_hidden) {
         cardClasses = 'opacity-50 border-gray-200';
@@ -106,7 +107,7 @@ export const MatchCard: React.FC<MatchCardProps> = ({
                 {/* Score Badge */}
                 <div className={`w-20 h-20 rounded-xl bg-gradient-to-br shadow-md flex flex-col items-center justify-center ${scoreBadgeGradient}`}>
                     <div className="text-2xl font-bold text-white leading-none">
-                        {formatScore(match.overall_score)}
+                        {formatScore(fitScore)}
                     </div>
                     <div className="text-[8px] font-medium text-white/70 uppercase tracking-wider mt-0.5">
                         Score

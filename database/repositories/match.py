@@ -44,9 +44,9 @@ class MatchRepository(BaseRepository):
         )
 
         if min_score is not None:
-            stmt = stmt.where(JobMatch.overall_score >= min_score)
+            stmt = stmt.where(JobMatch.fit_score >= min_score)
 
-        stmt = stmt.order_by(JobMatch.overall_score.desc())
+        stmt = stmt.order_by(JobMatch.fit_score.desc())
         return self.db.execute(stmt).scalars().all()
 
     def invalidate_matches_for_job(

@@ -16,9 +16,6 @@ class ConcreteProvider(LLMProvider):
     def extract_requirements_data(self, text):
         return super().extract_requirements_data(text)
 
-    def extract_facet_data(self, text):
-        return super().extract_facet_data(text)
-
     def generate_embedding(self, text):
         return super().generate_embedding(text)
 
@@ -33,9 +30,6 @@ class RealProvider(LLMProvider):
         return {}
 
     def extract_requirements_data(self, text):
-        return {}
-
-    def extract_facet_data(self, text):
         return {}
 
     def generate_embedding(self, text):
@@ -56,11 +50,6 @@ class TestLLMProviderAbstractMethods:
     def test_extract_requirements_data_pass_returns_none(self):
         provider = ConcreteProvider()
         result = provider.extract_requirements_data("job description")
-        assert result is None
-
-    def test_extract_facet_data_pass_returns_none(self):
-        provider = ConcreteProvider()
-        result = provider.extract_facet_data("job text")
         assert result is None
 
     def test_generate_embedding_pass_returns_none(self):

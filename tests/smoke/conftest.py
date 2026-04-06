@@ -9,7 +9,6 @@ Or by setting SMOKE_TESTS=1:
     SMOKE_TESTS=1 pytest tests/smoke/
 """
 import os
-import pytest
 
 collect_ignore_glob: list[str] = []
 

@@ -4,9 +4,9 @@ import pytest
 from unittest.mock import Mock
 
 from core.config_loader import ResultPolicy
+from core.policy import POLICY_PRESETS
 from web.backend.exceptions import InvalidPolicyException
 from web.backend.services.policy_service import (
-    POLICY_PRESETS,
     PolicyService,
     get_policy_service,
 )
