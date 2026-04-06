@@ -12,7 +12,7 @@ Key invariants verified:
 """
 
 import pytest
-from unittest.mock import Mock, MagicMock, patch, call
+from unittest.mock import Mock, MagicMock, patch
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 

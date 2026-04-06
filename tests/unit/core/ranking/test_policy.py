@@ -1,8 +1,6 @@
 """Unit tests for core/ranking/policy.py — RankingPolicyStore."""
 
-import json
-import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from core.ranking.policy import RankingConfig, RankingPolicyStore, get_ranking_policy_store
 
@@ -40,7 +38,7 @@ class TestRankingPolicyStoreInit:
     @patch("core.ranking.policy.RankingPolicyStore._load_default_from_yaml")
     def test_calls_load_default_when_no_config_given(self, mock_load):
         mock_load.return_value = _cfg()
-        store = RankingPolicyStore()
+        RankingPolicyStore()
         mock_load.assert_called_once()
 
     def test_load_default_from_yaml_returns_valid_config(self):
@@ -153,7 +151,7 @@ class TestUpdateConfig:
 
 class TestGetRankingPolicyStoreSingleton:
     def test_returns_same_instance_on_repeated_calls(self):
-        import core.ranking.policy as policy_module
+        import core.ranking.policy as policy_module  # noqa: PLC0415 (needed for module-level state reset)
         policy_module._ranking_policy_store = None  # reset
         s1 = get_ranking_policy_store()
         s2 = get_ranking_policy_store()

@@ -63,19 +63,6 @@ def test_fake_semantic_fit_response_handles_keyword_mismatch_and_empty_evidence(
 
 def test_fake_service_extract_structured_data_supports_semantic_fit_schema():
     service = FakeLLMService()
-    {
-        "pairs": [
-            {
-                "pair_id": "p1",
-                "requirement_id": "r1",
-                "requirement_text": "Python APIs",
-                "evidence_text": "Built Python APIs",
-                "original_similarity": 0.6,
-                "req_type": "required",
-            }
-        ]
-    }
-
     result = service.extract_structured_data(
         text='{"pairs":[{"pair_id":"p1","requirement_id":"r1","requirement_text":"Python APIs","evidence_text":"Built Python APIs","original_similarity":0.6,"req_type":"required"}]}',
         schema_spec={"name": "semantic_fit_pairs_v1"},

@@ -6,10 +6,9 @@ section (experience, projects, skills, summary) gets its own embedding
 and is matched individually against job requirements.
 """
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from etl.resume import ResumeProfiler
-from core.scorer import ScoringService
 from database.repository import JobRepository
 from database.models import DEFAULT_LEGACY_OWNER_ID, JobRequirementUnit
 from core.llm.openai_service import OpenAIService

@@ -282,7 +282,7 @@ class TestStableTieBreak:
     def test_stable_across_modes(self):
         m1 = FakeMatch("b_id", fit_score=50, preference_score=None)
         m2 = FakeMatch("a_id", fit_score=50, preference_score=None)
-        for mode in RankingMode:
+        for mode in list(RankingMode):
             result = rank_matches([m1, m2], _ctx(mode))
             assert result[0].id == "a_id", f"Mode {mode}: expected a_id first"
 
