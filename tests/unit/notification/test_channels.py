@@ -165,7 +165,7 @@ class TestURLValidation:
         """Test unresolvable hostnames are rejected."""
         result = _validate_webhook_url('https://invalid-hostname-that-does-not-exist.com/webhook')
         assert result is False
-        assert "Could not resolve hostname" in caplog.text
+        assert "Could not resolve webhook URL hostname" in caplog.text
 
 
 class TestHTMLSanitization:

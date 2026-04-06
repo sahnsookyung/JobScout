@@ -503,7 +503,7 @@ class TestOrchestratorEndpoints:
                 response = client.get("/health")
 
         assert response.status_code == 200
-        assert response.json()["redis"] == "error: boom"
+        assert response.json()["redis"] == "error"
 
     def test_metrics_endpoint(self):
         """Test metrics endpoint."""
@@ -4503,8 +4503,7 @@ class TestHealthEndpoint:
             result = await health(mock_request)
 
             assert result["status"] == "healthy"
-            assert "connection_error" in result["redis"]
-            assert "Connection refused" in result["redis"]
+            assert result["redis"] == "connection_error"
 
 
 class TestGetStreamDiagnostic:
@@ -4547,7 +4546,7 @@ class TestGetStreamDiagnostic:
                 result = _get_stream_diagnostic("test-stream")
 
                 assert "consumer_groups_error" in result
-                assert "XINFO failed" in result["consumer_groups_error"]
+                assert result["consumer_groups_error"] == "Failed to retrieve consumer groups"
 
 
 class TestRunBatchStage:
