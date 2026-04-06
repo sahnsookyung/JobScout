@@ -1,79 +1,14 @@
-"""Ranking configuration model and optional DB-backed runtime store."""
+"""DB-backed runtime store for the active RankingConfig."""
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, Literal, Optional
+from typing import Optional
 
-from pydantic import BaseModel, Field
+from core.config_loader import RankingConfig  # canonical definition lives in config_loader
 
 logger = logging.getLogger(__name__)
-
-
-class RankingConfig(BaseModel):
-    """Immutable config snapshot for one ranking evaluation.
-
-    Retrieve-stage bounds
-    ─────────────────────
-    max_ranking_candidates — how many DB rows are fetched into the ranking pool,
-        ordered by fit_score DESC.  This is the intentional scaling boundary:
-        candidates outside the pool are excluded before ranking, so this value
-        must be large enough to contain every result the user might care about.
-        Default 500 is appropriate for pre-production volumes; raise for larger
-        job databases.
-
-    Response bounds
-    ───────────────
-    default_top_k — returned when the caller does not specify top_k.
-    max_top_k     — ceiling; caller-requested top_k is silently capped here.
-
-    Balanced weights
-    ────────────────
-    balanced_w_pref + balanced_w_fit must equal 1.0 (validated at init).
-    Initial values (0.6 / 0.4) are a starting point, not permanent policy.
-    Re-evaluate against user behaviour data after rollout and update via config.
-    """
-
-    config_version: str = "1.0.0"
-    active_default_mode: Literal["preference_first", "fit_first", "balanced"] = "balanced"
-
-    balanced_w_pref: float = Field(default=0.6, ge=0.0, le=1.0)
-    balanced_w_fit: float = Field(default=0.4, ge=0.0, le=1.0)
-
-    stable_tie_break_key: Literal["job_id", "match_id"] = "match_id"
-
-    # Retrieve-stage bound — explicit, config-driven scaling policy.
-    max_ranking_candidates: int = Field(default=500, ge=10, le=10_000)
-
-    # Response bounds.
-    default_top_k: int = Field(default=25, ge=1, le=500)
-    max_top_k: int = Field(default=100, ge=1, le=1_000)
-
-    explanation_labels: Dict[str, str] = Field(
-        default_factory=lambda: {
-            "preference_first": "Sorted by your soft preference match",
-            "fit_first": "Sorted by skill & requirement fit",
-            "balanced": "Balanced blend of preference and fit",
-        }
-    )
-
-    def model_post_init(self, __context: Any) -> None:
-        del __context
-        total = round(self.balanced_w_pref + self.balanced_w_fit, 10)
-        if abs(total - 1.0) > 1e-9:
-            raise ValueError(
-                f"ranking.balanced_w_pref + ranking.balanced_w_fit must equal 1.0, "
-                f"got {self.balanced_w_pref} + {self.balanced_w_fit} = {total}"
-            )
-
-    def label_for_mode(self, mode: str) -> str:
-        return self.explanation_labels.get(mode, mode)
-
-    def effective_top_k(self, requested: Optional[int]) -> int:
-        """Return the effective top_k, applying default and max cap."""
-        k = requested if requested is not None else self.default_top_k
-        return min(k, self.max_top_k)
 
 
 class RankingPolicyStore:

@@ -77,7 +77,7 @@ def rank_matches(matches: List[Any], ctx: RankingContext) -> List[Any]:
         pref, fit, sim, missing = _resolve_scores(match)
         if pref is None:
             null_count += 1
-        stable = _stable_key(match, config)
+        stable = _stable_key(match)
         sort_key = _build_sort_key(pref, fit, sim, stable, mode, config)
         _attach_explanation(match, pref, fit, sim, mode, config, missing)
         keyed.append((sort_key, match))
@@ -127,7 +127,7 @@ def _resolve_scores(match: Any) -> tuple[Optional[float], float, float, list[str
     return pref, fit, sim, missing
 
 
-def _stable_key(match: Any, config: RankingConfig) -> str:
+def _stable_key(match: Any) -> str:
     """Deterministic tie-break key — always a string for comparison safety."""
     return str(getattr(match, "id", id(match)))
 

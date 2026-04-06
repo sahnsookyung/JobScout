@@ -1,13 +1,10 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 from core.config_loader import AppConfig, LlmConfig
 from core.llm.interfaces import LLMProvider
 from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_etl
 from core.scraper.jobspy_client import JobSpyClient
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass

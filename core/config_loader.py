@@ -495,6 +495,14 @@ class RankingConfig(BaseModel):
                 f"got {self.balanced_w_pref} + {self.balanced_w_fit} = {total}"
             )
 
+    def label_for_mode(self, mode: str) -> str:
+        return self.explanation_labels.get(mode, mode)
+
+    def effective_top_k(self, requested: Optional[int]) -> int:
+        """Return the effective top_k, applying default and max cap."""
+        k = requested if requested is not None else self.default_top_k
+        return min(k, self.max_top_k)
+
 
 class AppConfig(BaseModel):
     database: DatabaseConfig
