@@ -405,7 +405,7 @@ class TestExtractionLifespan:
         app = FastAPI()
 
         class _SyncCtx:
-            def close(self): ...
+            def close(self): pass
 
         mock_ctx = MagicMock(spec=_SyncCtx)
 

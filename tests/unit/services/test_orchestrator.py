@@ -13,7 +13,6 @@ uv run pytest tests/unit/services/test_orchestrator.py -v
 import asyncio
 import time
 import uuid
-from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import (
     AsyncMock,
@@ -338,7 +337,7 @@ class TestGetOrCreateOrchestration:
             mock_state = AsyncMock()
             mock_create.return_value = mock_state
 
-            state = await get_or_create_orchestration(registry, "new-task-456")
+            await get_or_create_orchestration(registry, "new-task-456")
 
         mock_create.assert_called_once_with("new-task-456", load_from_redis=True)
         assert "new-task-456" in registry.orchestrations
@@ -2828,7 +2827,7 @@ class TestPipelineStageTimeout:
             with patch("services.orchestrator.main.asyncio.to_thread"):
                 try:
                     async with asyncio.timeout(0.05):
-                        success, data = await _run_pipeline_stage(
+                        await _run_pipeline_stage(
                             state=state,
                             pubsub=mock_pubsub,
                             stream="test:stream",
@@ -2872,7 +2871,7 @@ class TestRunExtractionStage:
             with patch("services.orchestrator.main.asyncio.to_thread"):
                 try:
                     async with asyncio.timeout(0.1):
-                        result = await _run_extraction_stage(state, "test-123", mock_pubsub)
+                        await _run_extraction_stage(state, "test-123", mock_pubsub)
                 except asyncio.TimeoutError:
                     pass  # Expected: timeout exits the coroutine under test
 
@@ -2912,7 +2911,7 @@ class TestRunEmbeddingsStage:
             with patch("services.orchestrator.main.asyncio.to_thread"):
                 try:
                     async with asyncio.timeout(0.1):
-                        result = await _run_embeddings_stage(state, "test-123", mock_pubsub)
+                        await _run_embeddings_stage(state, "test-123", mock_pubsub)
                 except asyncio.TimeoutError:
                     pass  # Expected: timeout exits the coroutine under test
 
@@ -2953,7 +2952,7 @@ class TestRunMatchingStage:
             with patch("services.orchestrator.main.asyncio.to_thread"):
                 try:
                     async with asyncio.timeout(0.1):
-                        success, data = await _run_matching_stage(
+                        await _run_matching_stage(
                             state, "test-123", mock_pubsub, CHANNEL_EMBEDDINGS_DONE
                         )
                 except asyncio.TimeoutError:

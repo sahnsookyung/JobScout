@@ -367,7 +367,7 @@ class FakeLLMService(LLMProvider):
             if isinstance(parsed, dict):
                 return parsed
         except Exception:
-            pass
+            pass  # not valid JSON; return empty dict
         return {}
 
     def extract_resume_data(self, text: str) -> Dict[str, Any]:

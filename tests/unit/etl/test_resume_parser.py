@@ -6,7 +6,7 @@ import tempfile
 import os
 from unittest.mock import MagicMock, patch
 
-from etl.resume.parser import ResumeParser, ParsedResume
+from etl.resume.parser import ResumeParser
 
 
 @pytest.fixture

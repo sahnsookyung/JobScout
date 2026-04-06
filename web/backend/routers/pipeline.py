@@ -1142,7 +1142,10 @@ async def _stream_orchestrator_sse(orchestrator_url: str, task_id: str):
     """Async generator that proxies SSE bytes from the orchestrator."""
     import httpx
 
-    # URL-encode task_id to prevent path injection (CWE-952)
+    # Validate task_id to only safe alphanumeric/hyphen characters (UUID format)
+    if not task_id.replace('-', '').isalnum():
+        logger.error("Invalid task_id format rejected: contains unsafe characters")
+        return
     encoded_task_id = quote(task_id, safe='')
 
     try:
@@ -1788,4 +1791,4 @@ def _remove_temporary_resume_file(tmp_path: str) -> None:
     try:
         os.unlink(tmp_path)
     except Exception:
-        pass
+        pass  # best-effort cleanup; ignore missing file or permission errors

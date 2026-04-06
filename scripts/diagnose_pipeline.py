@@ -166,7 +166,7 @@ def main():
             if choice == 'y':
                 test_pipeline_trigger(base_url)
         except (KeyboardInterrupt, EOFError):
-            pass
+            pass  # user cancelled or running non-interactively
 
     # Summary
     print_header("SUMMARY")

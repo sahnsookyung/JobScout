@@ -579,8 +579,6 @@ class JobETLService:
             logger.error(f"Failed to extract resume: {e}")
             raise
 
-        return False, fingerprint, None
-
     def extract_resume(
         self,
         repo: JobRepository,

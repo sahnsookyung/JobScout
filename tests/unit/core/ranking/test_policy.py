@@ -151,7 +151,8 @@ class TestUpdateConfig:
 
 class TestGetRankingPolicyStoreSingleton:
     def test_returns_same_instance_on_repeated_calls(self):
-        import core.ranking.policy as policy_module  # noqa: PLC0415 (needed for module-level state reset)
+        import sys
+        policy_module = sys.modules['core.ranking.policy']
         policy_module._ranking_policy_store = None  # reset
         s1 = get_ranking_policy_store()
         s2 = get_ranking_policy_store()

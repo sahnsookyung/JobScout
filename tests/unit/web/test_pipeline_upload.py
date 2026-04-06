@@ -94,7 +94,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             temp_resume_path = os.path.join(tmp_dir, "test_resume.json")
-            mocks = self._create_upload_mocks(
+            self._create_upload_mocks(
                 temp_resume_path,
                 resume_exists=False,
                 process_result=(True, "test_fingerprint_123456", sample_resume)
@@ -133,7 +133,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             temp_resume_path = os.path.join(tmp_dir, "resume.txt")
-            mocks = self._create_upload_mocks(
+            self._create_upload_mocks(
                 temp_resume_path,
                 resume_exists=False,
                 process_result=(True, "test_fingerprint_123", None)
@@ -152,7 +152,7 @@ class TestResumeUploadEndpoint(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             temp_resume_path = os.path.join(tmp_dir, "resume.json")
-            mocks = self._create_upload_mocks(
+            self._create_upload_mocks(
                 temp_resume_path,
                 resume_exists=False,
                 process_result=(True, "fingerprint_abc123", sample_resume)
@@ -360,7 +360,6 @@ class TestResumeUploadSecurity(unittest.TestCase):
     def test_upload_hash_mismatch_rejected(self):
         """Test that server rejects file when client hash doesn't match computed hash (security)."""
         sample_content = b'{"name": "Test User"}'
-        correct_hash = hashlib.sha256(sample_content).hexdigest()[:32]
         wrong_hash = "wrong_hash_that_attacker_provides"
 
         files = {'file': ('resume.json', sample_content, 'application/json')}

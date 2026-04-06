@@ -7,7 +7,7 @@ Covers: web/backend/services/clients.py
 import pytest
 import os
 import httpx
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 from web.backend.services.clients import (
     ServiceClient,
@@ -600,7 +600,7 @@ class TestOrchestratorClient:
                 response=Mock(status_code=500)
             )
 
-            result = client.wait_for_completion("match-abc123", timeout=0.2, poll_interval=0.1)
+            client.wait_for_completion("match-abc123", timeout=0.2, poll_interval=0.1)
 
             assert "HTTP error polling" in caplog.text
 
@@ -614,7 +614,7 @@ class TestOrchestratorClient:
                 request=Mock()
             )
 
-            result = client.wait_for_completion("match-abc123", timeout=0.2, poll_interval=0.1)
+            client.wait_for_completion("match-abc123", timeout=0.2, poll_interval=0.1)
 
             assert "Connection error polling" in caplog.text
 

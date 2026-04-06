@@ -18,7 +18,6 @@ from notification.tracker import (
     NotificationEvent,
     DefaultDeduplicationStrategy,
     AggressiveDeduplicationStrategy,
-    DeduplicationStrategy,
     RESEND_INTERVAL_NEVER,
     _masked_recipient_for_storage,
     should_notify_user

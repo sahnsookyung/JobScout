@@ -152,7 +152,7 @@ class TestRunEmbeddingBatch:
             mock_ctx.job_etl_service.embed_requirement_one = Mock()
             stop_event = threading.Event()
 
-            result = _run_embedding_batch(mock_ctx, stop_event, limit=10)
+            _run_embedding_batch(mock_ctx, stop_event, limit=10)
 
             # Per-item fallback should have been called
             mock_ctx.job_etl_service.embed_requirement_one.assert_called_once()

@@ -157,7 +157,7 @@ class NotificationRateLimiter:
             try:
                 self._redis = Redis.from_url(self.redis_url)
             except Exception:
-                pass
+                pass  # Redis unavailable; rate limiting will be skipped
         return self._redis
     
     def set_rate_limit(self, channel_type: str, retry_after: int) -> None:

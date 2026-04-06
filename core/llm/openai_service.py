@@ -101,7 +101,7 @@ def _wait_from_rate_limit_headers(exc: openai.RateLimitError) -> float:
             try:
                 candidates.append(float(retry_after))
             except ValueError:
-                pass
+                pass  # ignore non-numeric retry-after header values
 
         for header in ("x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"):
             parsed = _parse_reset_duration(headers.get(header, ""))
