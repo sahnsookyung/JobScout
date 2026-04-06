@@ -80,8 +80,7 @@ def load_resume_data(resume_file_path: str) -> Optional[dict]:
 
     except FileNotFoundError:
         logger.error(f"Resume file not found: {resume_file_path}")
-        logger.error("→ Create one: cp resume.example.json " + resume_file_path)
-        logger.error("→ Or set path in config.yaml: etl.resume.resume_file")
+        logger.error("→ Upload your resume via the web dashboard, or set path in config.yaml: etl.resume.resume_file")
         return None
     except ValueError as e:
         supported = ', '.join(ResumeParser.get_supported_formats())

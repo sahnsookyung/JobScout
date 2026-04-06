@@ -100,7 +100,7 @@ if [[ -f "resume.json" ]]; then
         log_error "resume.json is invalid JSON. Fix syntax errors"
     fi
 else
-    log_warn "resume.json not found. Create with: cp resume.example.json resume.json"
+    log_warn "resume.json not found. Upload your resume via the web dashboard instead."
 fi
 
 # Check config.yaml

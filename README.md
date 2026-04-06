@@ -46,9 +46,9 @@ cp .env.example .env
 # Edit .env — set notification secrets (e.g. DISCORD_WEBHOOK_URL), DB/Redis URLs if non-default
 
 # 3. (Optional) Add your job preferences
-cp wants.example.txt wants.txt
-# Edit wants.txt — one preference per line in plain language
+# Create wants.txt — one preference per line in plain language
 # Example: "I prefer remote-first companies", "I want a role focused on backend systems"
+echo "I want remote work flexibility" >> wants.txt
 ```
 
 > **Resume**: Upload your resume (PDF or JSON) via the web dashboard. The old `resume.json` file config is deprecated and no longer used.
