@@ -245,7 +245,8 @@ describe('MatchCard', () => {
 
     it('renders formatted score value', () => {
         render(<MatchCard match={makeMatch({ fit_score: 85 })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(screen.getByText('85%')).toBeInTheDocument();
+        // fit_score renders in both the score badge and the Fit Match bar
+        expect(screen.getAllByText('85%').length).toBeGreaterThan(0);
     });
 
     it('renders match_type with underscores replaced by spaces', () => {
