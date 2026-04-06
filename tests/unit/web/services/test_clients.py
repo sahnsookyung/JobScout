@@ -8,7 +8,6 @@ import pytest
 import os
 import httpx
 from unittest.mock import Mock, patch, MagicMock
-from urllib.parse import urlparse
 
 from web.backend.services.clients import (
     ServiceClient,
@@ -681,7 +680,7 @@ class TestSingletonFunctions:
 
     def setup_method(self):
         """Reset singletons before each test."""
-        import web.backend.services.clients as clients_module
+        from web.backend.services import clients as clients_module
         clients_module._extraction_client = None
         clients_module._embeddings_client = None
         clients_module._scorer_matcher_client = None
@@ -737,7 +736,7 @@ class TestLazyLoading:
 
     def setup_method(self):
         """Reset singletons before each test."""
-        import web.backend.services.clients as clients_module
+        from web.backend.services import clients as clients_module
         clients_module._extraction_client = None
         clients_module._embeddings_client = None
         clients_module._scorer_matcher_client = None

@@ -3,7 +3,6 @@
 Tests lazy-loading properties and delegation methods of JobRepository.
 """
 
-import pytest
 from unittest.mock import MagicMock
 
 from database.models import DEFAULT_LEGACY_OWNER_ID
@@ -42,7 +41,9 @@ class TestJobRepositoryProperties:
 
     def test_resume_cached(self):
         repo, _ = make_repo()
-        assert repo.resume is repo.resume
+        first = repo.resume
+        second = repo.resume
+        assert first is second
 
     def test_match_returns_match_repository(self):
         repo, _ = make_repo()
@@ -50,7 +51,9 @@ class TestJobRepositoryProperties:
 
     def test_match_cached(self):
         repo, _ = make_repo()
-        assert repo.match is repo.match
+        first = repo.match
+        second = repo.match
+        assert first is second
 
     def test_embedding_returns_embedding_repository(self):
         repo, _ = make_repo()
@@ -58,7 +61,9 @@ class TestJobRepositoryProperties:
 
     def test_embedding_cached(self):
         repo, _ = make_repo()
-        assert repo.embedding is repo.embedding
+        first = repo.embedding
+        second = repo.embedding
+        assert first is second
 
     def test_candidate_preferences_returns_candidate_preferences_repository(self):
         repo, _ = make_repo()

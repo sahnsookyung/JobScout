@@ -1369,7 +1369,7 @@ class TestProcessNotificationTask:
              patch('notification.service.NotificationTrackerService') as mock_tracker_class, \
              patch('notification.service.NotificationRateLimiter') as mock_rl_class:
 
-            mock_tracker, mock_rl = _make_task_patches(
+            _, mock_rl = _make_task_patches(
                 mock_scope, mock_tracker_class, mock_rl_class
             )
             mock_rl.get_wait_time.return_value = 15

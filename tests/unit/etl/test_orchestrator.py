@@ -11,10 +11,7 @@ Usage:
 """
 
 import pytest
-import os
-import json
-from unittest.mock import Mock, MagicMock, patch, mock_open
-from pathlib import Path
+from unittest.mock import Mock, patch, mock_open
 
 
 class TestJobETLServiceInitialization:
@@ -843,7 +840,7 @@ class TestLoadAndCheckResumeAdditional:
                     with patch("etl.orchestrator.ResumeParser") as mock_parser_class:
                         mock_parser_class.return_value.parse.return_value = mock_parsed
 
-                        changed, fp, data = service._load_and_check_resume(
+                        changed, _, data = service._load_and_check_resume(
                             mock_repo, "resume.pdf"
                         )
 

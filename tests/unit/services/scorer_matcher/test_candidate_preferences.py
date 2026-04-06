@@ -1,5 +1,6 @@
 """Unit tests for candidate preference helper logic."""
 
+import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -11,9 +12,8 @@ from services.scorer_matcher.candidate_preferences import (
     _job_meets_salary_floor,
     _allowed_preference_modes,
     _job_supports_visa,
-    _job_work_mode,
+    job_work_mode,
     _matches_candidate_preferences,
-    _preference_sort_key,
     _resolve_requested_mode,
     _resolve_preference_profile,
     _stored_preference_profile,
@@ -51,12 +51,12 @@ def _preliminary(job=None):
     return SimpleNamespace(job=job or _job())
 
 
-def _scored_match(job, *, overall_score=80.0, fit_score=80.0, job_similarity=0.8, fit_components=None):
+def _scored_match(job, *, fit_score=80.0, job_similarity=0.8, fit_components=None):
     return SimpleNamespace(
         job=job,
-        overall_score=overall_score,
         fit_score=fit_score,
         job_similarity=job_similarity,
+        preference_score=None,
         fit_components=fit_components or {},
     )
 
@@ -118,11 +118,11 @@ class TestLoadCandidatePreferences:
 
 
 class TestHardFilterHelpers:
-    def test_job_work_mode_detects_remote_hybrid_and_onsite(self):
-        assert _job_work_mode(_job(is_remote=True)) == "remote"
-        assert _job_work_mode(_job(work_from_home_type="Hybrid")) == "hybrid"
-        assert _job_work_mode(_job(location_text="Hybrid - London")) == "hybrid"
-        assert _job_work_mode(_job(location_text="Austin")) == "onsite"
+    def testjob_work_mode_detects_remote_hybrid_and_onsite(self):
+        assert job_work_mode(_job(is_remote=True)) == "remote"
+        assert job_work_mode(_job(work_from_home_type="Hybrid")) == "hybrid"
+        assert job_work_mode(_job(location_text="Hybrid - London")) == "hybrid"
+        assert job_work_mode(_job(location_text="Austin")) == "onsite"
 
     def test_job_matches_remote_mode_covers_supported_modes(self):
         hybrid_job = _job(work_from_home_type="Hybrid")
@@ -258,7 +258,7 @@ class TestApplyAssessments:
             effective_mode="semantic_rerank",
         )
         assert result[0].fit_components["preference_reason_codes"] == ["no_preference_signal"]
-        assert result[0].fit_components["preference_score"] == 0.0
+        assert result[0].preference_score == pytest.approx(0.0)
 
 
 class TestPreferenceSemanticReranking:
@@ -282,10 +282,11 @@ class TestPreferenceSemanticReranking:
         assert reranked[0].fit_components["preference_fallback_reason"] == "preference_profile_unavailable"
 
     @patch("services.scorer_matcher.candidate_preferences.build_preference_semantic_reranker")
-    def test_semantic_reranker_updates_scores_and_order_with_fit_band_guardrail(
+    def test_semantic_reranker_stores_scores_preserves_input_order(
         self,
         mock_build_reranker,
     ):
+        """_apply_assessments stores preference_score on each match; does NOT sort."""
         mock_build_reranker.return_value = Mock(
             rerank=Mock(
                 return_value=[
@@ -318,6 +319,7 @@ class TestPreferenceSemanticReranking:
             parser_confidence=0.8,
             team_culture=[{"label": "Mentorship", "weight": 0.9, "confidence": 0.9}],
         )
+        # Input order: job-2 first, job-1 second
         low_fit_high_pref = _scored_match(_job(id="job-2", title="Mentorship Team"), fit_score=84.0)
         high_fit_low_pref = _scored_match(_job(id="job-1", title="Backend Engineer"), fit_score=86.0)
 
@@ -331,10 +333,13 @@ class TestPreferenceSemanticReranking:
             config=config,
         )
 
-        assert reranked[0].job.id == "job-1"
-        assert reranked[1].job.id == "job-2"
-        assert reranked[1].fit_components["preference_score"] == 0.95
-        assert reranked[1].fit_components["preference_mode_used"] == "semantic_rerank"
+        # Input order preserved — no sort performed
+        assert reranked[0].job.id == "job-2"
+        assert reranked[1].job.id == "job-1"
+        # Scores written to both matches
+        assert reranked[0].preference_score == pytest.approx(0.95)
+        assert reranked[1].preference_score == pytest.approx(0.15)
+        assert reranked[0].fit_components["preference_mode_used"] == "semantic_rerank"
 
     @patch("services.scorer_matcher.candidate_preferences.build_preference_judge")
     def test_llm_judge_mode_uses_judge_builder(self, mock_build_judge):
@@ -375,21 +380,7 @@ class TestPreferenceSemanticReranking:
         )
 
         assert reranked[0].fit_components["preference_mode_used"] == "llm_judge"
-        assert reranked[0].fit_components["preference_score"] == 0.8
-
-    def test_preference_sort_key_prefers_band_then_preference(self):
-        high_pref = _scored_match(
-            _job(id="job-1"),
-            fit_score=82.0,
-            fit_components={"preference_score": 0.9},
-        )
-        low_pref = _scored_match(
-            _job(id="job-2"),
-            fit_score=82.0,
-            fit_components={"preference_score": 0.2},
-        )
-
-        assert _preference_sort_key(high_pref) < _preference_sort_key(low_pref)
+        assert reranked[0].preference_score == pytest.approx(0.8)
 
     def test_disallowed_requested_mode_resolves_to_allowed_mode_before_matching(self):
         config = _preferences_config().model_copy(update={"allowed_modes": ["semantic_rerank"]})
@@ -490,20 +481,29 @@ class TestPreferenceSemanticReranking:
         )
         assert result[0].fit_components == {}
 
-    def test_preference_sort_keeps_job_id_ascending_for_exact_ties(self):
-        first = _scored_match(
-            _job(id="job-1"),
-            fit_score=82.0,
-            job_similarity=0.6,
-            fit_components={"preference_score": 0.7},
-        )
-        second = _scored_match(
-            _job(id="job-2"),
-            fit_score=82.0,
-            job_similarity=0.6,
-            fit_components={"preference_score": 0.7},
+    def test_apply_assessments_stores_scores_on_all_matches_with_equal_scores(self):
+        """_apply_assessments writes preference_score to every match; no sorting."""
+        assessments = [
+            PreferenceAssessment(
+                job_id="job-1", preference_score=0.7, preference_confidence=0.8,
+                preference_reason_codes=["tech_match"], preference_explanation="ok",
+            ),
+            PreferenceAssessment(
+                job_id="job-2", preference_score=0.7, preference_confidence=0.8,
+                preference_reason_codes=["tech_match"], preference_explanation="ok",
+            ),
+        ]
+        # Input order: job-2, job-1
+        m1 = _scored_match(_job(id="job-2"), fit_score=82.0, job_similarity=0.6)
+        m2 = _scored_match(_job(id="job-1"), fit_score=82.0, job_similarity=0.6)
+
+        result = _apply_assessments(
+            [m1, m2], assessments,
+            requested_mode="semantic_rerank", effective_mode="semantic_rerank",
         )
 
-        ordered = sorted([second, first], key=_preference_sort_key)
-
-        assert [match.job.id for match in ordered] == ["job-1", "job-2"]
+        # Order unchanged
+        assert [m.job.id for m in result] == ["job-2", "job-1"]
+        # Both scores written
+        assert result[0].preference_score == pytest.approx(0.7)
+        assert result[1].preference_score == pytest.approx(0.7)

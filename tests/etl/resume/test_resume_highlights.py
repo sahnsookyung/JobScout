@@ -1,10 +1,8 @@
 
-import pytest
 from unittest.mock import MagicMock
 from etl.resume.profiler import ResumeProfiler
-from etl.resume.models import ResumeEvidenceUnit
 from core.llm.schema_models import (
-    ResumeSchema, Profile, ExperienceItem, ProjectItem, EducationItem,
+    Profile, ExperienceItem, ProjectItem, EducationItem,
     Summary, Projects, SkillsBlock
 )
 

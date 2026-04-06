@@ -8,7 +8,6 @@ Usage:
     uv run pytest tests/unit/services/test_base_embeddings.py -v
 """
 
-import pytest
 import threading
 from unittest.mock import Mock, patch, MagicMock
 

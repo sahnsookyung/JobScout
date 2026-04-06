@@ -2,7 +2,7 @@
 
 import threading
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock
 
 from etl.resume.profiler import ResumeProfiler
 from etl.resume.models import ResumeEvidenceUnit
@@ -12,14 +12,11 @@ from core.llm.schema_models import (
     ExperienceItem,
     EducationItem,
     SkillsBlock,
-    SkillGroup,
     SkillItem,
     Projects,
     ProjectItem,
     Summary,
     Extraction,
-    CertificationItem,
-    LanguageItem,
 )
 
 
@@ -105,7 +102,7 @@ class TestExtractStructuredResume:
     def test_success_with_raw_text(self):
         profiler = make_profiler()
         profile_data = make_profile()
-        schema = make_resume_schema(profile_data)
+        make_resume_schema(profile_data)
         profiler.ai.extract_resume_data.return_value = {
             "profile": profile_data.model_dump(),
             "extraction": {"confidence": 0.9, "warnings": []},
@@ -537,7 +534,7 @@ class TestProfileResume:
         profiler = make_profiler()
         exp = make_experience()
         profile_data = make_profile(experience=[exp])
-        schema = make_resume_schema(profile_data)
+        make_resume_schema(profile_data)
         profiler.ai.extract_resume_data.return_value = {
             "profile": profile_data.model_dump(),
             "extraction": {"confidence": 0.9, "warnings": []},
@@ -557,7 +554,7 @@ class TestProfileResume:
         profile_data = make_profile()
         pre_extracted = make_resume_schema(profile_data)
 
-        resume, evidence_units, payload = profiler.profile_resume(
+        resume, _, _ = profiler.profile_resume(
             resume_data={"raw_text": "ignored"},
             resume_fingerprint="fp-1",
             pre_extracted_resume=pre_extracted,

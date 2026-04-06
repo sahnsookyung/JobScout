@@ -1,6 +1,5 @@
 """Unit tests for etl/resume/embedding_store.py"""
 
-import pytest
 from unittest.mock import MagicMock
 
 from etl.resume.embedding_store import (

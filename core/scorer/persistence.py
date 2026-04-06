@@ -27,6 +27,13 @@ def _to_float(value):
     return float(value)
 
 
+def _to_optional_float(value):
+    """Convert value to native Python float, preserving None."""
+    if value is None:
+        return None
+    return float(value)
+
+
 def _to_native_types(obj):
     """Recursively convert numpy types to native Python types for JSON serialization."""
     if obj is None:
@@ -115,7 +122,7 @@ def _extract_scores(scored_match: ScoredMatch):
         return {
             'job_similarity': scored_match.job_similarity,
             'fit_score': scored_match.fit_score,
-            'overall_score': scored_match.overall_score,
+            'preference_score': scored_match.preference_score,
             'fit_components': scored_match.fit_components,
             'base_score': scored_match.base_score,
             'penalties': scored_match.penalties,
@@ -128,7 +135,7 @@ def _extract_scores(scored_match: ScoredMatch):
         return {
             'job_similarity': scored_match.job_similarity,
             'fit_score': scored_match.fit_score,
-            'overall_score': scored_match.overall_score,
+            'preference_score': getattr(scored_match, 'preference_score', None),
             'fit_components': _to_native_types(getattr(scored_match, 'fit_components', {})),
             'base_score': scored_match.base_score,
             'penalties': scored_match.penalties,
@@ -147,7 +154,7 @@ def _build_match_values(scores, matched_reqs, missing_reqs, job_content_hash):
     return {
         'job_similarity': _to_float(scores['job_similarity']),
         'fit_score': _to_float(scores['fit_score']),
-        'overall_score': _to_float(scores['overall_score']),
+        'preference_score': _to_optional_float(scores['preference_score']),
         'fit_components': _to_native_types(scores['fit_components']),
         'base_score': _to_float(scores['base_score']),
         'penalties': _to_float(scores['penalties']),
@@ -165,7 +172,7 @@ def _build_match_values(scores, matched_reqs, missing_reqs, job_content_hash):
 def _apply_match_values(match_record: JobMatch, values) -> None:
     match_record.job_similarity = values['job_similarity']
     match_record.fit_score = values['fit_score']
-    match_record.overall_score = values['overall_score']
+    match_record.preference_score = values['preference_score']
     match_record.fit_components = values['fit_components']
     match_record.base_score = values['base_score']
     match_record.penalties = values['penalties']
@@ -206,7 +213,7 @@ def _create_match_record(scored_match: ScoredMatch, values, is_hidden: bool) -> 
         resume_fingerprint=scored_match.resume_fingerprint,
         job_similarity=values['job_similarity'],
         fit_score=values['fit_score'],
-        overall_score=values['overall_score'],
+        preference_score=values['preference_score'],
         fit_components=values['fit_components'],
         base_score=values['base_score'],
         penalties=values['penalties'],
@@ -347,11 +354,12 @@ def save_match_to_db(
 
     repo.db.commit()
 
+    pref = scores['preference_score']
     logger.info(
-        "Saved match for job %s: fit=%.1f, overall=%.1f",
+        "Saved match for job %s: fit=%.1f, preference=%s",
         job_id,
         scores['fit_score'],
-        scores['overall_score'],
+        f"{pref:.4f}" if pref is not None else "None",
     )
 
     return match_record

@@ -10,7 +10,8 @@ export const MATCH_STATUSES = [
     { value: 'all', label: 'All' },
 ] as const;
 
-export const SORT_OPTIONS = [
-    { value: 'overall', label: 'Overall Score' },
-    { value: 'fit', label: 'Fit Score' },
+export const RANKING_MODE_OPTIONS = [
+    { value: 'balanced', label: 'Balanced' },
+    { value: 'preference_first', label: 'Preference First' },
+    { value: 'fit_first', label: 'Fit First' },
 ] as const;

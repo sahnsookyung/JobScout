@@ -59,10 +59,6 @@ def _prefetch_total_years(preliminary_matches: List[JobMatchPreliminary], db) ->
     }
 
 
-def _blend_overall(fit: float) -> float:
-    return min(100.0, fit)
-
-
 class ScoringService:
     def __init__(
         self,
@@ -147,7 +143,7 @@ class ScoringService:
                 owner_id=pm.owner_id or (metadata_by_fp.get(pm.resume_fingerprint) or {}).get("owner_id"),
             ))
 
-        scored.sort(key=lambda x: x.overall_score, reverse=True)
+        scored.sort(key=lambda x: x.fit_score or 0.0, reverse=True)
 
         if result_policy:
             if result_policy.min_fit > 0:
@@ -183,12 +179,9 @@ class ScoringService:
             owner_id=owner_id,
         )
 
-        overall = _blend_overall(semantic_fit.fit_score)
-
         return ScoredJobMatch(
             job=job,
             fit_score=semantic_fit.fit_score,
-            overall_score=overall,
             fit_components=semantic_fit.fit_components,
             fit_confidence=semantic_fit.fit_confidence,
             fit_explanation=semantic_fit.fit_explanation,

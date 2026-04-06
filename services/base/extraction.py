@@ -5,13 +5,11 @@ This module provides extraction functionality for the split extraction
 service and shared extraction helpers used by the current runtime.
 """
 
-import json
 import logging
 import threading
 import traceback
 from typing import Optional
 
-from core.config_loader import load_config
 from core.app_context import AppContext
 from database.uow import job_uow
 from etl.resume.loader import load_resume_with_parser
@@ -20,7 +18,6 @@ from database.models import DEFAULT_LEGACY_OWNER_ID, generate_file_fingerprint
 logger = logging.getLogger(__name__)
 
 
-import time
 import os
 
 

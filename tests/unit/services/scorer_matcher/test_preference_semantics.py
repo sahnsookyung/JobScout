@@ -21,7 +21,7 @@ from services.scorer_matcher.preference_semantics import (
     summarize_preference_profile,
     _chunk_jobs_for_budget,
     _fit_single_job_payload_to_budget,
-    _job_work_mode,
+    job_work_mode,
     _normalize_job_text_list,
     _normalize_skills,
     _payload_char_budget,
@@ -403,25 +403,25 @@ def test_normalize_job_text_list_respects_max_items():
 
 
 # ---------------------------------------------------------------------------
-# _job_work_mode
+# job_work_mode
 # ---------------------------------------------------------------------------
 
-def test_job_work_mode_returns_hybrid():
+def testjob_work_mode_returns_hybrid():
     class FakeJob:
         is_remote = False
         work_from_home_type = "hybrid"
         location_text = ""
 
-    assert _job_work_mode(FakeJob()) == "hybrid"
+    assert job_work_mode(FakeJob()) == "hybrid"
 
 
-def test_job_work_mode_returns_hybrid_from_location():
+def testjob_work_mode_returns_hybrid_from_location():
     class FakeJob:
         is_remote = False
         work_from_home_type = ""
         location_text = "New York / Hybrid"
 
-    assert _job_work_mode(FakeJob()) == "hybrid"
+    assert job_work_mode(FakeJob()) == "hybrid"
 
 
 # ---------------------------------------------------------------------------

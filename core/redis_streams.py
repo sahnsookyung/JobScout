@@ -11,6 +11,11 @@ logger = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+
+def _sanitize_log(value: object) -> str:
+    """Strip newline characters to prevent log injection."""
+    return str(value).replace('\n', '\\n').replace('\r', '\\r')
+
 _connection_pool: Optional[redis.ConnectionPool] = None
 _pool_lock = threading.Lock()
 
@@ -430,7 +435,7 @@ def get_task_state(task_id: str) -> Optional[dict]:
         try:
             return json.loads(data)
         except json.JSONDecodeError:
-            logger.warning(f"Failed to decode task state for {task_id}, returning None")
+            logger.warning("Failed to decode task state for %s, returning None", _sanitize_log(task_id))
             return None
     return None
 

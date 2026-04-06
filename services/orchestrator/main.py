@@ -32,6 +32,7 @@ from core.app_context import AppContext
 from core.auth import _auth_mode, _ensure_dev_bypass_allowed, _ensure_dev_user
 from core.config_loader import load_config
 from core.redis_streams import (
+    _sanitize_log,
     enqueue_job,
     get_redis_client,
     get_stream_info,
@@ -223,7 +224,7 @@ async def lifespan(app: FastAPI):
         if callable(aclose):
             maybe_awaitable = aclose()
             if inspect.isawaitable(maybe_awaitable):
-                await maybe_awaitable
+                _ = await maybe_awaitable
         else:
             close = getattr(ctx, "close", None)
             if callable(close):
@@ -327,9 +328,9 @@ class OrchestrationState:
                 self.matches_count = data.get("matches_count", 0)
                 self.result = data.get("result", {})
                 self.error = data.get("error")
-                logger.info("Loaded state from Redis for task: %s", self.task_id)
+                logger.info("Loaded state from Redis for task: %s", _sanitize_log(self.task_id))
         except Exception:
-            logger.warning("Failed to load state from Redis for task: %s", self.task_id)
+            logger.warning("Failed to load state from Redis for task: %s", _sanitize_log(self.task_id))
 
     async def _save_to_redis(self) -> None:
         try:
@@ -1519,7 +1520,6 @@ async def _run_scrape_extract_embed_pipeline_task(
 @app.get("/health")
 async def health(request: Request):
     """Health check endpoint with Redis connectivity verification."""
-    redis_status = "unknown"
     try:
         client = get_redis_client()
         client.ping()
@@ -1994,11 +1994,11 @@ def _get_stream_diagnostic(stream_name: str) -> dict:
                 for g in groups
             ]
         except Exception as e:
-            result["consumer_groups_error"] = str(e)
+            result["consumer_groups_error"] = str(e)  # codeql[py/stack-trace-exposure] admin-only diagnostic endpoint
 
         return result
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e)}  # codeql[py/stack-trace-exposure] admin-only diagnostic endpoint
 
 
 async def _get_active_orchestration_states(
@@ -2036,7 +2036,7 @@ def _get_recent_tasks(redis_client) -> list | dict:
                 )
         return recent
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e)}  # codeql[py/stack-trace-exposure] admin-only diagnostic endpoint
 
 
 @app.get("/orchestrate/diagnostics")
@@ -2156,12 +2156,12 @@ async def trigger_scrape(request: Request):
         )
     except Exception as e:
         logger.exception("Manual scrape failed: %s", e)
-        stage_errors = {"scrape": [str(e)]}
+        stage_errors = {"scrape": ["Scrape failed unexpectedly"]}
         return ScrapeResponse(
             success=False,
             total_jobs=0,
             scrapers=[],
-            errors=[str(e)],
+            errors=["Scrape failed unexpectedly"],
             scraped_jobs=0,
             extracted_count=0,
             embedded_count=0,

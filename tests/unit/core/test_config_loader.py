@@ -6,7 +6,6 @@ from pydantic import ValidationError
 
 from core.config_loader import (
     AppConfig,
-    LlmConfig,
     MatcherConfig,
     ScorerConfig,
     SemanticFitConfig,

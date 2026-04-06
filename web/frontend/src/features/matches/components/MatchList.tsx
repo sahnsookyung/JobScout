@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useMatches } from '@/hooks/useMatches';
 import { MatchCard } from './MatchCard';
 import { MatchFilters } from './MatchFilters';
-import type { MatchStatus, SortBy } from '@/types/api';
+import type { MatchStatus, RankingMode } from '@/types/api';
 
 interface MatchListProps {
     onMatchSelect: (matchId: string) => void;
@@ -11,7 +11,7 @@ interface MatchListProps {
 export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
     const [status, setStatus] = useState<MatchStatus>('active');
     const [remoteOnly, setRemoteOnly] = useState(false);
-    const [sortBy, setSortBy] = useState<SortBy>('overall');
+    const [rankingMode, setRankingMode] = useState<RankingMode>('balanced');
     const [showHidden, setShowHidden] = useState(() => {
         const saved = localStorage.getItem('jobscout_show_hidden');
         return saved === 'true';
@@ -26,20 +26,10 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
         status,
         remote_only: remoteOnly,
         show_hidden: showHidden,
+        ranking_mode: rankingMode,
     });
 
-    // Client-side sorting
-    const sortedMatches = React.useMemo(() => {
-        if (!data?.matches) return [];
-
-        const matches = [...data.matches];
-
-        if (sortBy === 'fit') {
-            return matches.sort((a, b) => (b.fit_score || 0) - (a.fit_score || 0));
-        } else {
-            return matches.sort((a, b) => b.overall_score - a.overall_score);
-        }
-    }, [data?.matches, sortBy]);
+    const matches = data?.matches ?? [];
 
     if (isLoading) {
         return (
@@ -70,18 +60,18 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                 onStatusChange={setStatus}
                 remoteOnly={remoteOnly}
                 onRemoteOnlyChange={setRemoteOnly}
-                sortBy={sortBy}
-                onSortByChange={setSortBy}
+                rankingMode={rankingMode}
+                onRankingModeChange={setRankingMode}
                 showHidden={showHidden}
                 onShowHiddenChange={setShowHidden}
             />
 
             <div className="text-sm text-gray-600">
-                Showing {sortedMatches.length} match{sortedMatches.length === 1 ? '' : 'es'}
+                Showing {matches.length} match{matches.length === 1 ? '' : 'es'}
             </div>
 
             <div className="grid grid-cols-1 gap-4">
-                {sortedMatches.map((match) => (
+                {matches.map((match) => (
                     <MatchCard
                         key={match.match_id}
                         match={match}
@@ -90,7 +80,7 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                 ))}
             </div>
 
-            {sortedMatches.length === 0 && (
+            {matches.length === 0 && (
                 <div className="text-center text-gray-500 py-12">
                     No matches found with current filters.
                 </div>

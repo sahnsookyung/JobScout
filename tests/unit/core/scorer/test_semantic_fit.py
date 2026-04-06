@@ -2,7 +2,6 @@
 
 import sys
 import types
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -28,7 +27,6 @@ from core.scorer.semantic_fit import (
     _fallback_adjusted_match,
     _missing_assessment_verdict,
     _normalize_modes,
-    _pairs_by_requirement,
     _preferred_capability_mode,
     _pair_assessment_from_heuristic,
     _scored_requirement_verdict,
@@ -749,7 +747,7 @@ def test_cross_encoder_without_available_local_provider_uses_threshold_fallback(
 
 def test_cross_encoder_local_policy_does_not_fall_through_to_remote_provider():
     class FakeRemoteProvider:
-        route_name = "remote"
+        "remote"
 
         @property
         def provider_id(self):

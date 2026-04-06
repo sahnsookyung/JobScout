@@ -10,11 +10,8 @@ Tests cover:
 5. Metadata handling
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from datetime import datetime, timedelta, timezone
-import json
-import hashlib
 
 from notification.tracker import (
     NotificationTrackerService,

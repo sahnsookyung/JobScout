@@ -5,16 +5,16 @@ Test Mock Implementations - Mock services for testing.
 Moved from core/matcher/mock_service.py to separate production code from test utilities.
 These mocks provide deterministic behavior for unit and integration tests.
 """
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 import random
 import math
 
 from core.llm.interfaces import LLMProvider
 from etl.resume import ResumeEvidenceUnit
 from core.matcher.models import (
-    JobMatchPreliminary, RequirementMatchResult
+    JobMatchPreliminary,
 )
-from database.models import JobPost, JobRequirementUnit
+from database.models import JobPost
 
 
 class MockLLMProvider(LLMProvider):

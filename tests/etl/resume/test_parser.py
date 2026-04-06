@@ -6,9 +6,8 @@ from unittest import TestCase
 
 import yaml
 from docx import Document
-from pypdf import PdfWriter
 
-from etl.resume.parser import ResumeParser, ParsedResume
+from etl.resume.parser import ResumeParser
 
 
 class TestResumeParser(TestCase):

@@ -3,16 +3,14 @@
 Unit tests for MatcherService.
 """
 
-import json
 import os
 import tempfile
 import unittest
-from typing import Dict, Any
 from unittest.mock import MagicMock
 
 from core.config_loader import load_config, MatcherConfig
 from core.matcher import MatcherService
-from etl.resume import ResumeEvidenceUnit, ResumeProfiler
+from etl.resume import ResumeProfiler
 from etl.resume.embedding_store import JobRepositoryAdapter
 from tests.mocks.matcher_mocks import MockMatcherService
 from database.models import generate_file_fingerprint

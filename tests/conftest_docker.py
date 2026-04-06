@@ -15,7 +15,6 @@ Usage:
 
 import subprocess
 import time
-import socket
 import os
 import atexit
 import uuid

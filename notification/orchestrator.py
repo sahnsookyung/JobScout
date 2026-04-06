@@ -92,7 +92,7 @@ def _high_score_matches_for_plan(
     )
     return [
         dto for dto in scored_match_dtos
-        if dto.overall_score is not None and dto.overall_score >= threshold
+        if dto.fit_score is not None and dto.fit_score >= threshold
     ]
 
 
@@ -124,7 +124,7 @@ def _send_match_notification(
         if job_post:
             content = NotificationMessageBuilder.build_notification_content(
                 job_post=job_post,
-                overall_score=float(dto.overall_score),
+                overall_score=float(dto.fit_score or 0.0),
                 fit_score=dto.fit_score,
                 required_coverage=dto.jd_required_coverage,
                 apply_url=job_post.company_url_direct,

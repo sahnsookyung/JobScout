@@ -32,7 +32,7 @@ def test_current_environment_prefers_jobscout_env(monkeypatch):
     monkeypatch.setenv("APP_ENV", "dev")
     monkeypatch.setenv("ENVIRONMENT", "test")
 
-    module = importlib.import_module("web.backend.dependencies")
+    module = importlib.import_module("core.auth")
 
     assert module._current_environment() == "production"
 

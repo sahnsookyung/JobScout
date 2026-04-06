@@ -1,5 +1,6 @@
 """Unit tests for scorer_matcher pipeline helpers."""
 
+import pytest
 import threading
 import time
 from types import SimpleNamespace
@@ -33,7 +34,7 @@ def _uow(repo):
 
 def _dto(job_id: str = "job-1") -> SimpleNamespace:
     job = SimpleNamespace(id=job_id, title="Engineer", company="Acme", content_hash="hash-1")
-    return SimpleNamespace(job=job, overall_score=85.0, fit_score=80.0)
+    return SimpleNamespace(job=job, fit_score=80.0, preference_score=None)
 
 
 def _preliminary(
@@ -287,9 +288,12 @@ class TestCandidatePreferenceHelpers:
             config=preference_config,
         )
 
-        assert reranked[0].job.title == "Product Backend Engineer"
-        assert reranked[0].overall_score > reranked[1].overall_score
-        assert reranked[0].fit_components["preference_score"] == 0.95
+        # Input order is preserved — no sorting at pipeline stage
+        assert reranked[0].job.title == "Platform Engineer"
+        assert reranked[1].job.title == "Product Backend Engineer"
+        # Preference scores written to each match
+        assert reranked[0].preference_score == pytest.approx(0.2)
+        assert reranked[1].preference_score == pytest.approx(0.95)
 
 
 class TestConvertMatchesToDtos:
@@ -303,8 +307,8 @@ class TestConvertMatchesToDtos:
                 is_remote=True,
                 content_hash="hash-1",
             ),
-            overall_score=82.0,
             fit_score=79.0,
+            preference_score=None,
             job_similarity=0.8,
             jd_required_coverage=0.75,
             jd_preferences_coverage=0.5,
@@ -321,8 +325,8 @@ class TestConvertMatchesToDtos:
         dtos = _convert_matches_to_dtos([scored_match])
 
         assert len(dtos) == 1
-        assert dtos[0].overall_score == 82.0
         assert dtos[0].fit_score == 79.0
+        assert dtos[0].preference_score is None
         assert dtos[0].job.id == "job-1"
 
 

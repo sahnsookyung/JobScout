@@ -74,6 +74,7 @@ class PreferenceModelConfig(BaseModel):
     embedding_api_secret: Optional[str] = None
     embedding_headers: Optional[Dict[str, str]] = None
 
+
 class PreferenceCrossEncoderConfig(BaseModel):
     enabled: bool = False
     # Default is a commonly available open-source CE for quick local testing.
@@ -458,12 +459,50 @@ class NotificationConfig(BaseModel):
     smtp: NotificationSmtpConfig = Field(default_factory=NotificationSmtpConfig)
 
 
+class RankingConfig(BaseModel):
+    """Retrieve-then-rerank ranking configuration.
+
+    max_ranking_candidates controls how many rows are fetched from the DB
+    (ordered by fit_score DESC) before ranking.  This is the explicit scaling
+    boundary: increase it as the job database grows beyond pre-production volumes.
+
+    balanced_w_pref + balanced_w_fit must equal 1.0 (validated at init).
+    Initial weights (0.6 / 0.4) are a starting point — tune after rollout.
+    """
+
+    config_version: str = "1.0.0"
+    active_default_mode: Literal["preference_first", "fit_first", "balanced"] = "balanced"
+    balanced_w_pref: float = Field(default=0.6, ge=0.0, le=1.0)
+    balanced_w_fit: float = Field(default=0.4, ge=0.0, le=1.0)
+    stable_tie_break_key: Literal["job_id", "match_id"] = "match_id"
+    max_ranking_candidates: int = Field(default=500, ge=10, le=10_000)
+    default_top_k: int = Field(default=25, ge=1, le=500)
+    max_top_k: int = Field(default=100, ge=1, le=1_000)
+    explanation_labels: Dict[str, str] = Field(
+        default_factory=lambda: {
+            "preference_first": "Sorted by your soft preference match",
+            "fit_first": "Sorted by skill & requirement fit",
+            "balanced": "Balanced blend of preference and fit",
+        }
+    )
+
+    def model_post_init(self, __context: Any) -> None:
+        del __context
+        total = round(self.balanced_w_pref + self.balanced_w_fit, 10)
+        if abs(total - 1.0) > 1e-9:
+            raise ValueError(
+                f"ranking.balanced_w_pref + ranking.balanced_w_fit must equal 1.0, "
+                f"got {self.balanced_w_pref} + {self.balanced_w_fit} = {total}"
+            )
+
+
 class AppConfig(BaseModel):
     database: DatabaseConfig
     jobspy: Optional[JobSpyConfig] = None
     etl: Optional[EtlConfig] = EtlConfig()
     matching: Optional[MatchingConfig] = MatchingConfig()
     preferences: PreferencesConfig = Field(default_factory=PreferencesConfig)
+    ranking: RankingConfig = Field(default_factory=RankingConfig)
     notifications: Optional[NotificationConfig] = NotificationConfig()
     schedule: ScheduleConfig
     scrapers: List[ScraperConfig] = Field(default_factory=list)
@@ -542,6 +581,11 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["SMTP_USE_TLS"], ["notifications", "smtp", "use_tls"]),
     (["FROM_EMAIL"], ["notifications", "smtp", "from_email"]),
     (["NOTIFICATION_DRY_RUN"], ["notifications", "dry_run"]),
+    (["RANKING_DEFAULT_MODE"], ["ranking", "active_default_mode"]),
+    (["RANKING_CONFIG_VERSION"], ["ranking", "config_version"]),
+    (["RANKING_BALANCED_W_PREF"], ["ranking", "balanced_w_pref"]),
+    (["RANKING_BALANCED_W_FIT"], ["ranking", "balanced_w_fit"]),
+    (["RANKING_MAX_CANDIDATES"], ["ranking", "max_ranking_candidates"]),
 )
 
 DEFAULT_HEADER_MAPPINGS: tuple[HeaderMapping, ...] = (

@@ -1,7 +1,7 @@
 """Unit tests for database/repositories/job_post.py"""
 
 import pytest
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 from database.repositories.job_post import JobPostRepository
 from database.models import (
     JobPost, JobPostSource, JobRequirementUnit, JobBenefit,
@@ -71,7 +71,7 @@ class TestCreateJobPost:
             'company_name': 'Acme',
             'is_remote': True,
         }
-        result = repo.create_job_post(job_data, "fp-123", "Remote")
+        repo.create_job_post(job_data, "fp-123", "Remote")
 
         mock_db.add.assert_called_once()
         mock_db.flush.assert_called_once()
@@ -84,13 +84,13 @@ class TestCreateJobPost:
         assert added.canonical_fingerprint == 'fp-123'
 
     def test_returns_new_job_post(self):
-        repo, mock_db = make_repo()
+        repo, _ = make_repo()
         job_data = {'title': 'Dev', 'company_name': 'Corp', 'is_remote': False}
         result = repo.create_job_post(job_data, "fp-1", "NYC")
         assert isinstance(result, JobPost)
 
     def test_sets_raw_payload_empty(self):
-        repo, mock_db = make_repo()
+        repo, _ = make_repo()
         job_data = {'title': 'Dev', 'company_name': 'Corp'}
         result = repo.create_job_post(job_data, "fp-1", "NYC")
         assert result.raw_payload == {}
@@ -350,12 +350,12 @@ class TestExtractYearsFromRequirement:
 
     def test_extracts_years_from_text(self):
         repo, _ = make_repo()
-        years, ctx = repo._extract_years_from_requirement("5 years of Python experience")
+        years, _ = repo._extract_years_from_requirement("5 years of Python experience")
         assert years == 5
 
     def test_extracts_years_minimum_pattern(self):
         repo, _ = make_repo()
-        years, ctx = repo._extract_years_from_requirement("minimum 3 years experience")
+        years, _ = repo._extract_years_from_requirement("minimum 3 years experience")
         assert years == 3
 
     def test_no_years_returns_none(self):
@@ -366,7 +366,7 @@ class TestExtractYearsFromRequirement:
 
     def test_plus_pattern(self):
         repo, _ = make_repo()
-        years, ctx = repo._extract_years_from_requirement("3+ years of JavaScript")
+        years, _ = repo._extract_years_from_requirement("3+ years of JavaScript")
         assert years == 3
 
 

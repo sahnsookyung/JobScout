@@ -4,8 +4,7 @@ Tests for Explainability Module
 Covers: core/matcher/explainability.py
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 from core.matcher.explainability import (
     _get_requirement_embedding,
@@ -109,7 +108,7 @@ class TestCalculateSectionSimilarities:
             source_text="5 years Python experience"
         )
 
-        best_section, best_distance, similarities = _calculate_section_similarities(
+        best_section, _, similarities = _calculate_section_similarities(
             [0.1, 0.2, 0.3], [mock_section]
         )
 
@@ -138,7 +137,7 @@ class TestCalculateSectionSimilarities:
             ),
         ]
 
-        best_section, best_distance, similarities = _calculate_section_similarities(
+        best_section, _, similarities = _calculate_section_similarities(
             [0.1, 0.2, 0.3], sections
         )
 
@@ -160,7 +159,7 @@ class TestCalculateSectionSimilarities:
             ),
         ]
 
-        best_section, best_distance, similarities = _calculate_section_similarities(
+        _, _, similarities = _calculate_section_similarities(
             [0.1, 0.2, 0.3], sections
         )
 
@@ -183,7 +182,7 @@ class TestCalculateSectionSimilarities:
             source_text="Test"
         )
 
-        best_section, best_distance, similarities = _calculate_section_similarities(
+        best_section, _, similarities = _calculate_section_similarities(
             [0.1, 0.2, 0.3], [mock_section]
         )
 
@@ -215,7 +214,7 @@ class TestCalculateSectionSimilarities:
             source_text=long_text
         )
 
-        best_section, best_distance, similarities = _calculate_section_similarities(
+        _, _, similarities = _calculate_section_similarities(
             [0.1, 0.2, 0.3], [mock_section]
         )
 
@@ -360,7 +359,7 @@ class TestCalculateRequirementSimilarityWithResumeSections:
                 mock_best_section.source_text = "Best section text"
                 mock_calc.return_value = (mock_best_section, 0.1, all_matches)
 
-                similarity, details = calculate_requirement_similarity_with_resume_sections(
+                _, details = calculate_requirement_similarity_with_resume_sections(
                     mock_requirement, "fp-123", mock_repo, top_k=5
                 )
 

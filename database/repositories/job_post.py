@@ -371,7 +371,7 @@ class JobPostRepository(BaseRepository):
 
     def get_unembedded_requirements(self, limit: int = 1000) -> List[JobRequirementUnit]:
         stmt = select(JobRequirementUnit).outerjoin(JobRequirementUnitEmbedding).where(
-            JobRequirementUnitEmbedding.job_requirement_unit_id == None
+            JobRequirementUnitEmbedding.job_requirement_unit_id.is_(None)
         ).limit(limit)
         return self.db.execute(stmt).scalars().all()
 
@@ -470,7 +470,7 @@ class JobPostRepository(BaseRepository):
 
         stmt = select(JobPost, distance_expr).where(
             JobPost.is_embedded.is_(True),
-            JobPost.summary_embedding != None
+            JobPost.summary_embedding.isnot(None)
         )
 
         if tenant_id is not None:
@@ -514,7 +514,7 @@ class JobPostRepository(BaseRepository):
 
         stmt = select(JobPost, lexical_rank, distance_expr).where(
             JobPost.is_embedded.is_(True),
-            JobPost.summary_embedding != None,
+            JobPost.summary_embedding.isnot(None),
             document.op("@@")(query),
         )
 

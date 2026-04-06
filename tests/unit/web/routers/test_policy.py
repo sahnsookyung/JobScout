@@ -6,7 +6,7 @@ Covers: web/backend/routers/policy.py
 
 import pytest
 from unittest.mock import Mock, patch
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from web.backend.routers.policy import router

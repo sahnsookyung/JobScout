@@ -25,7 +25,6 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from core.llm.schema_models import (
-    ResumeSchema,
     RESUME_SCHEMA,
     EXTRACTION_SCHEMA,
 )

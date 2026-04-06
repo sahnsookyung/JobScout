@@ -1,7 +1,7 @@
 // MatchFilters.tsx
 import React from 'react';
-import type { MatchStatus, SortBy } from '@/types/api';
-import { MATCH_STATUSES, SORT_OPTIONS } from '@/utils/constants';
+import type { MatchStatus, RankingMode } from '@/types/api';
+import { MATCH_STATUSES, RANKING_MODE_OPTIONS } from '@/utils/constants';
 import { Filter, SortDesc, Laptop, Eye } from 'lucide-react';
 
 interface MatchFiltersProps {
@@ -9,8 +9,8 @@ interface MatchFiltersProps {
     onStatusChange: (status: MatchStatus) => void;
     remoteOnly: boolean;
     onRemoteOnlyChange: (value: boolean) => void;
-    sortBy: SortBy;
-    onSortByChange: (value: SortBy) => void;
+    rankingMode: RankingMode;
+    onRankingModeChange: (value: RankingMode) => void;
     showHidden: boolean;
     onShowHiddenChange: (value: boolean) => void;
 }
@@ -20,13 +20,13 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
     onStatusChange,
     remoteOnly,
     onRemoteOnlyChange,
-    sortBy,
-    onSortByChange,
+    rankingMode,
+    onRankingModeChange,
     showHidden,
     onShowHiddenChange,
 }) => {
     const statusId = 'match-filter-status';
-    const sortById = 'match-filter-sort-by';
+    const rankingModeId = 'match-filter-ranking-mode';
 
     return (
         <div className="relative bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 rounded-3xl overflow-hidden">
@@ -55,19 +55,19 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
                         </select>
                     </div>
 
-                    {/* Sort By */}
+                    {/* Ranking Mode */}
                     <div>
-                        <label htmlFor={sortById} className="flex items-center gap-2 text-xs font-black text-gray-600 uppercase tracking-wider mb-3">
+                        <label htmlFor={rankingModeId} className="flex items-center gap-2 text-xs font-black text-gray-600 uppercase tracking-wider mb-3">
                             <SortDesc className="w-4 h-4" aria-hidden="true" />
-                            Sort By
+                            Ranking
                         </label>
                         <select
-                            id={sortById}
-                            value={sortBy}
-                            onChange={(e) => onSortByChange(e.target.value as SortBy)}
+                            id={rankingModeId}
+                            value={rankingMode}
+                            onChange={(e) => onRankingModeChange(e.target.value as RankingMode)}
                             className="w-full px-4 py-3 bg-white border-2 border-gray-200 rounded-xl font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-sm hover:shadow-md"
                         >
-                            {SORT_OPTIONS.map((opt) => (
+                            {RANKING_MODE_OPTIONS.map((opt) => (
                                 <option key={opt.value} value={opt.value}>
                                     {opt.label}
                                 </option>

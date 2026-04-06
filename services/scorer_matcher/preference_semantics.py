@@ -14,6 +14,7 @@ from core.llm.provider_factory import build_llm_provider, runtime_llm_config_fro
 logger = logging.getLogger(__name__)
 
 PreferenceMode = Literal["semantic_rerank", "llm_judge"]
+# Bump this when PreferenceProfile schema changes to invalidate cached stored profiles.
 PREFERENCE_PROFILE_VERSION = "2026-04-01.v1"
 APPROX_CHARS_PER_TOKEN = 4
 MIN_PREFERENCE_PAYLOAD_CHARS = 1200
@@ -197,7 +198,7 @@ def _truncate_text_list(values: List[str], *, max_chars: int, max_items: int) ->
     return truncated
 
 
-def _job_work_mode(job: Any) -> str:
+def job_work_mode(job: Any) -> str:
     work_from_home_type = _normalize_text(getattr(job, "work_from_home_type", "")).lower()
     location_text = _normalize_text(getattr(job, "location_text", "")).lower()
     if getattr(job, "is_remote", None) is True or "remote" in work_from_home_type:
@@ -227,7 +228,7 @@ def serialize_job_for_preference(job: Any) -> PreferenceJobPayload:
             getattr(job, "location_text", ""),
             MAX_PREFERENCE_LOCATION_CHARS,
         ),
-        work_mode=_truncate_text(_job_work_mode(job), MAX_PREFERENCE_WORK_MODE_CHARS),
+        work_mode=_truncate_text(job_work_mode(job), MAX_PREFERENCE_WORK_MODE_CHARS),
         employment_type=_truncate_text(
             getattr(job, "job_type", ""),
             MAX_PREFERENCE_EMPLOYMENT_TYPE_CHARS,

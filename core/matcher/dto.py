@@ -6,7 +6,7 @@ can be safely used after the database session is closed.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Any, Optional
+from typing import List, Optional
 
 
 @dataclass
@@ -58,7 +58,6 @@ class MatchResultDTO:
     while the database session is still active.
     """
     job: JobMatchDTO
-    overall_score: float
     fit_score: float
     job_similarity: float
     jd_required_coverage: float
@@ -66,6 +65,7 @@ class MatchResultDTO:
     requirement_matches: List[RequirementMatchDTO]
     missing_requirements: List[RequirementMatchDTO]
     resume_fingerprint: str
+    preference_score: Optional[float] = None  # None = evaluator did not run
     fit_components: dict = field(default_factory=dict)
     base_score: float = 0.0
     penalties: float = 0.0

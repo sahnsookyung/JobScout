@@ -465,7 +465,10 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event
             try:
                 result_policy.top_k = widened_top_k
             except Exception:
-                logger.warning("Could not widen result policy top_k prior to preference reranking", exc_info=True)
+                # Mutation failed — clear the policy so scorer returns all matches;
+                # _apply_final_result_policy will re-apply the original limit afterward.
+                logger.warning("Could not widen result policy top_k prior to preference reranking; passing all matches to reranker", exc_info=True)
+                result_policy = None
 
     return scorer.score_matches(
         preliminary_matches=preliminary_matches,
@@ -579,10 +582,12 @@ def _log_match_results(match_dtos: List[MatchResultDTO]) -> None:
 
     logger.info("Top 5 Matches:")
     for i, dto in enumerate(match_dtos[:5], 1):
+        pref = dto.preference_score
         logger.info(
-            "  %d. %s @ %s: overall=%.1f/100 (fit=%.1f)",
+            "  %d. %s @ %s: fit=%.1f, pref=%s",
             i, dto.job.title, dto.job.company,
-            dto.overall_score, dto.fit_score,
+            dto.fit_score,
+            f"{pref:.4f}" if pref is not None else "None",
         )
 
 
@@ -729,8 +734,8 @@ def _convert_matches_to_dtos(scored_matches) -> List[MatchResultDTO]:
                 is_remote=match.job.is_remote,
                 content_hash=match.job.content_hash,
             ),
-            overall_score=match.overall_score or 0.0,
             fit_score=match.fit_score or 0.0,
+            preference_score=match.preference_score,
             job_similarity=match.job_similarity or 0.0,
             jd_required_coverage=match.jd_required_coverage,
             jd_preferences_coverage=match.jd_preferences_coverage,

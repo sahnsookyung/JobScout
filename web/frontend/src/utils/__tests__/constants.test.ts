@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { POLICY_PRESETS, MATCH_STATUSES, SORT_OPTIONS } from '../constants';
+import { POLICY_PRESETS, MATCH_STATUSES, RANKING_MODE_OPTIONS } from '../constants';
 
 describe('POLICY_PRESETS', () => {
     it('has strict, balanced, and discovery keys', () => {
@@ -48,25 +48,26 @@ describe('MATCH_STATUSES', () => {
     });
 });
 
-describe('SORT_OPTIONS', () => {
-    it('has 2 sort options', () => {
-        expect(SORT_OPTIONS).toHaveLength(2);
+describe('RANKING_MODE_OPTIONS', () => {
+    it('has 3 ranking mode options', () => {
+        expect(RANKING_MODE_OPTIONS).toHaveLength(3);
     });
 
-    it('includes overall and fit sort options', () => {
-        const values = SORT_OPTIONS.map(s => s.value);
-        expect(values).toContain('overall');
-        expect(values).toContain('fit');
+    it('includes balanced, preference_first, and fit_first modes', () => {
+        const values = RANKING_MODE_OPTIONS.map(s => s.value);
+        expect(values).toContain('balanced');
+        expect(values).toContain('preference_first');
+        expect(values).toContain('fit_first');
     });
 
     it('each option has a label', () => {
-        SORT_OPTIONS.forEach(option => {
+        RANKING_MODE_OPTIONS.forEach(option => {
             expect(option.label).toBeTruthy();
         });
     });
 
-    it('overall option is labeled "Overall Score"', () => {
-        const overall = SORT_OPTIONS.find(s => s.value === 'overall');
-        expect(overall?.label).toBe('Overall Score');
+    it('balanced option is labeled "Balanced"', () => {
+        const balanced = RANKING_MODE_OPTIONS.find(s => s.value === 'balanced');
+        expect(balanced?.label).toBe('Balanced');
     });
 });

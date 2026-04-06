@@ -278,6 +278,26 @@ notifications:
   # Rate limiting: max seconds to wait when rate limited (5 minutes)
   rate_limit_max_wait_seconds: 300
 
+ranking:
+  config_version: "1.0.0"
+  # Default ranking mode when the caller does not specify one.
+  # preference_first | fit_first | balanced
+  active_default_mode: "balanced"
+  # Balanced blend weights — must sum to 1.0. Tune after rollout based on engagement data.
+  balanced_w_pref: 0.6
+  balanced_w_fit: 0.4
+  stable_tie_break_key: "match_id"
+  # Retrieve-stage bound: how many DB rows (ordered fit_score DESC) enter the ranker.
+  # Increase as the job database grows beyond pre-production volumes.
+  max_ranking_candidates: 500
+  # Response bounds.
+  default_top_k: 25
+  max_top_k: 100
+  explanation_labels:
+    preference_first: "Sorted by your soft preference match"
+    fit_first: "Sorted by skill & requirement fit"
+    balanced: "Balanced blend of preference and fit"
+
 schedule:
   interval_seconds: 3600  # Run every hour
 

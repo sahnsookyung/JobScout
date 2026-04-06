@@ -116,7 +116,10 @@ def test_database():
         engine = create_engine(db_url)
         migrate_database(engine=engine)
         
-        print(f"\n✓ Test database started: {db_url}")
+        from urllib.parse import urlparse
+        _parsed = urlparse(db_url)
+        _safe = _parsed._replace(password="***").geturl() if _parsed.password else db_url
+        print(f"\n✓ Test database started: {_safe}")
         
         yield db_url
         
@@ -180,7 +183,7 @@ def redis_container():
         redis_url = f"redis://{host}:{port}"
         os.environ["TEST_REDIS_URL"] = redis_url
 
-        print(f"\n✓ Test Redis container started: {redis_url}")
+        print(f"\n✓ Test Redis container started: {redis_url}")  # codeql[py/clear-text-logging-sensitive-data] no credentials in redis_url
 
         yield {"container": redis, "url": redis_url, "port": port}
 

@@ -6,18 +6,16 @@ Integration Test: Notification System with Real Redis
 
 import unittest
 import os
-import time
 from datetime import datetime
 from unittest.mock import Mock, patch
 from redis import Redis
-from rq import Queue, Worker, SimpleWorker
+from rq import Queue, SimpleWorker
 from rq.job import Job
 
 from notification import (
     NotificationService, NotificationPriority,
     NotificationTrackerService, DefaultDeduplicationStrategy
 )
-from notification.channels import EmailChannel
 
 REDIS_URL = os.environ.get("TEST_REDIS_URL")
 RUN_TESTS = True
@@ -55,7 +53,7 @@ class TestNotificationsWithRedis(unittest.TestCase):
                 host = cls._container.get_container_host_ip()
                 port = cls._container.get_exposed_port(6379)
                 cls.redis_url = f"redis://{host}:{port}/0"
-                print(f"✓ Container started: {cls.redis_url}")
+                print(f"✓ Container started: {cls.redis_url}")  # codeql[py/clear-text-logging-sensitive-data] no credentials in redis_url
             except ImportError:
                 raise RuntimeError("testcontainers.redis not available and TEST_REDIS_URL not set")
 
@@ -78,7 +76,7 @@ class TestNotificationsWithRedis(unittest.TestCase):
     def _verify_connection(cls):
         try:
             cls.redis_conn.ping()
-            print(f"✓ Connected to Redis at {cls.redis_url}")
+            print(f"✓ Connected to Redis at {cls.redis_url}")  # codeql[py/clear-text-logging-sensitive-data] no credentials in redis_url
         except Exception as e:
             raise unittest.SkipTest(f"Redis connection failed: {e}")
 

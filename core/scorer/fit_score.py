@@ -13,7 +13,7 @@ Key behavior:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Any, Tuple, List, Optional, Protocol, Literal, runtime_checkable
+from typing import Dict, Any, Tuple, List, Protocol, Literal, runtime_checkable
 import logging
 
 from core.config_loader import ScorerConfig

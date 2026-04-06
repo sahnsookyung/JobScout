@@ -7,9 +7,7 @@ Usage:
 """
 
 import os
-import sys
 import httpx
-import json
 
 # Colors for output
 class Colors:

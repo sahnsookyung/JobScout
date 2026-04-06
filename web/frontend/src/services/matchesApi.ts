@@ -4,6 +4,7 @@ import type {
     MatchDetailResponse,
     MatchExplanationResponse,
     MatchStatus,
+    RankingMode,
     StatsResponse,
 } from '@/types/api';
 
@@ -13,6 +14,7 @@ export interface GetMatchesParams {
     top_k?: number;
     remote_only?: boolean;
     show_hidden?: boolean;
+    ranking_mode?: RankingMode;
 }
 
 export const matchesApi = {

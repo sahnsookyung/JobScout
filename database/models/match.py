@@ -41,7 +41,7 @@ class JobMatch(Base):
     job_similarity = Column(Numeric(3, 2))
 
     fit_score = Column(Numeric(5, 2))
-    overall_score = Column(Numeric(5, 2))
+    preference_score = Column(Numeric(5, 4), nullable=True)  # 0–1; NULL = not evaluated
 
     fit_components = Column(JSONB, default={})
 
@@ -71,7 +71,7 @@ class JobMatch(Base):
     __table_args__ = (
         UniqueConstraint('job_post_id', 'resume_fingerprint', name='uq_job_match_job_resume'),
         Index('idx_job_match_resume', 'resume_fingerprint'),
-        Index('idx_job_match_score', 'overall_score'),
+        Index('idx_job_match_pref', 'preference_score'),
         Index('idx_job_match_fit', 'fit_score'),
         Index('idx_job_match_status', 'status'),
         Index('idx_job_match_notified', 'notified'),

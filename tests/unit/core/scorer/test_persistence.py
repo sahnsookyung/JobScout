@@ -1,7 +1,7 @@
 """Unit tests for core/scorer/persistence.py"""
 
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock
 from sqlalchemy.exc import IntegrityError
 
 from core.scorer.persistence import (
@@ -59,7 +59,6 @@ def make_dto(
         ]
     return MatchResultDTO(
         job=job,
-        overall_score=75.0,
         fit_score=70.0,
         job_similarity=0.8,
         jd_required_coverage=0.7,
@@ -67,6 +66,7 @@ def make_dto(
         requirement_matches=matched_reqs,
         missing_requirements=missing_reqs,
         resume_fingerprint=fingerprint,
+        preference_score=None,
         fit_components={"required": 0.7},
         penalty_details={"details": [], "total": 0.0},
         base_score=72.0,
@@ -188,8 +188,9 @@ class TestExtractScores:
     def test_dto_scores(self):
         dto = make_dto()
         scores = _extract_scores(dto)
-        assert scores["overall_score"] == 75.0
+        assert "overall_score" not in scores
         assert scores["fit_score"] == 70.0
+        assert scores["preference_score"] is None
         assert scores["job_similarity"] == 0.8
         assert scores["jd_required_coverage"] == 0.7
         assert scores["jd_preferences_coverage"] == 0.5
@@ -204,7 +205,6 @@ class TestExtractScores:
         job.content_hash = "h1"
         scored = ScoredJobMatch(
             job=job,
-            overall_score=60.0,
             fit_score=55.0,
             job_similarity=0.6,
             jd_required_coverage=0.5,
@@ -216,8 +216,9 @@ class TestExtractScores:
             match_type="hybrid",
         )
         scores = _extract_scores(scored)
-        assert scores["overall_score"] == 60.0
+        assert "overall_score" not in scores
         assert scores["fit_score"] == 55.0
+        assert scores["preference_score"] is None
         assert scores["match_type"] == "hybrid"
         # penalty_details gets wrapped with total
         assert "total" in scores["penalty_details"]
@@ -258,7 +259,7 @@ class TestExtractRequirementMatches:
             ],
             missing_reqs=[],
         )
-        matched, missing = _extract_requirement_matches(dto)
+        matched, _ = _extract_requirement_matches(dto)
         assert matched[0]["evidence_text"] == ""
         assert matched[0]["evidence_section"] is None
         assert matched[0]["evidence_tags"] == {}
@@ -394,7 +395,6 @@ class TestSaveMatchToDb:
 
         assert result is existing
         assert existing.status == "active"
-        assert existing.overall_score == pytest.approx(75.0)
         assert existing.fit_score == pytest.approx(70.0)
         repo.db.commit.assert_called_once()
 

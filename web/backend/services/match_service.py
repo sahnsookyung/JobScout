@@ -6,9 +6,11 @@ Match service - business logic for job match operations.
 import json
 import logging
 from typing import List, Optional, Dict, Any
+from core.redis_streams import _sanitize_log
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
 
+from core.ranking import rank_matches, RankingContext, RankingMode, get_ranking_policy_store
 from database.models import JobMatch, JobPost, JobMatchRequirement
 from ..models.responses import (
     MatchSummary,
@@ -35,54 +37,71 @@ class MatchService:
         min_fit: Optional[float] = None,
         top_k: Optional[int] = None,
         remote_only: bool = False,
-        show_hidden: bool = False
+        show_hidden: bool = False,
+        ranking_mode: Optional[str] = None,
     ) -> List[MatchSummary]:
         """
-        Get filtered job matches.
-        
+        Get filtered job matches, ranked by the requested mode.
+
+        Stage 1 — DB retrieve: ordered by fit_score DESC, bounded to
+            max_ranking_candidates (config-driven scaling policy).
+        Stage 2 — Python rank: rank_matches() applies the declared mode
+            with NULL-aware sort keys; attaches RankingExplanation per item.
+        Stage 3 — Truncate: [:effective_top_k] applied after ranking so
+            the global ordering is always correct before pagination.
+
         Args:
             status: Match status filter ("active", "stale", or "all").
             min_fit: Minimum fit score filter.
-            top_k: Maximum number of results to return.
+            top_k: Maximum number of results (capped to config.max_top_k).
             remote_only: Filter to remote jobs only.
             show_hidden: Include hidden matches in results.
-        
+            ranking_mode: One of "preference_first", "fit_first", "balanced".
+                Defaults to config.active_default_mode.
+
         Returns:
-            List of match summaries.
+            List of match summaries with ranking explanation fields.
         """
+        ranking_config = get_ranking_policy_store().get_current_config()
+
+        # Resolve ranking mode
+        try:
+            mode = RankingMode(ranking_mode) if ranking_mode else RankingMode(ranking_config.active_default_mode)
+        except ValueError:
+            mode = RankingMode(ranking_config.active_default_mode)
+
+        # Stage 1: DB retrieve — fit_score DESC, bounded pool
         query = self.db.query(JobMatch)
-        
-        # Filter by status
+
         if status != "all":
             query = query.filter(JobMatch.status == status)
-        
-        # Filter by fit score
+
         if min_fit is not None:
             query = query.filter(
                 (JobMatch.fit_score >= min_fit) | (JobMatch.fit_score.is_(None))
             )
-        
-        # Filter hidden matches
+
         if not show_hidden:
             query = query.filter(JobMatch.is_hidden.is_(False))
-        
-        # Eager load job posts to avoid N+1 queries
+
         query = query.options(joinedload(JobMatch.job_post))
-        
-        # Order by overall score
-        query = query.order_by(desc(JobMatch.overall_score))
-        
-        # Filter remote jobs before limit (via SQL JOIN)
+        query = query.order_by(desc(JobMatch.fit_score))
+
         if remote_only:
             query = query.join(JobPost).filter(JobPost.is_remote.is_(True))
-        
-        # Apply limit
-        if top_k:
-            query = query.limit(top_k)
-        
-        matches = query.all()
-        
-        return [self._to_match_summary(m) for m in matches]
+
+        query = query.limit(ranking_config.max_ranking_candidates)
+        pool = query.all()
+
+        # Stage 2: Python rank
+        ctx = RankingContext(mode=mode, config=ranking_config)
+        rank_matches(pool, ctx)
+
+        # Stage 3: Truncate
+        effective_k = ranking_config.effective_top_k(top_k)
+        ranked = pool[:effective_k]
+
+        return [self._to_match_summary(m) for m in ranked]
     
     def get_match_detail(self, match_id: str) -> MatchDetailResponse:
         """
@@ -121,7 +140,7 @@ class MatchService:
                 requirements=requirements
             )
         except Exception as e:
-            logger.error(f"Database error fetching match details for {match_id}: {e}", exc_info=True)
+            logger.error("Database error fetching match details for %s: %s", _sanitize_log(match_id), e, exc_info=True)
             raise
     
     def toggle_hidden(self, match_id: str) -> bool:
@@ -219,6 +238,8 @@ class MatchService:
         """Convert ORM model to MatchSummary response model."""
         job_fields = self._extract_summary_job_fields(match)
 
+        expl = getattr(match, "ranking_explanation", None)
+
         return MatchSummary(
             match_id=str(match.id),
             job_id=job_fields["job_id"],
@@ -227,8 +248,7 @@ class MatchService:
             location=job_fields["location"],
             is_remote=job_fields["is_remote"],
             fit_score=self._optional_float(match.fit_score),
-            overall_score=self._float_or_zero(match.overall_score),
-            base_score=self._float_or_zero(match.base_score),
+            preference_score=self._optional_float(match.preference_score),
             penalties=self._float_or_zero(match.penalties),
             required_coverage=self._float_or_zero(match.required_coverage),
             preferred_coverage=self._float_or_zero(match.preferred_coverage),
@@ -236,6 +256,11 @@ class MatchService:
             is_hidden=match.is_hidden or False,
             created_at=safe_datetime_iso(match.created_at),
             calculated_at=safe_datetime_iso(match.calculated_at),
+            ranking_mode_used=expl.ranking_mode_used if expl else None,
+            dominant_reason_code=expl.dominant_reason_code if expl else None,
+            explanation_label=expl.explanation_label if expl else None,
+            balanced_primary_score=expl.balanced_primary_score if expl else None,
+            missing_scores=list(expl.missing_scores) if expl else [],
         )
     
     def _to_match_detail(self, match: JobMatch, penalty_details: Dict[str, Any]) -> MatchDetail:
@@ -244,7 +269,7 @@ class MatchService:
             match_id=str(match.id),
             resume_fingerprint=safe_str(match.resume_fingerprint),
             fit_score=safe_float(match.fit_score) if match.fit_score is not None else None,
-            overall_score=safe_float(match.overall_score),
+            preference_score=safe_float(match.preference_score) if match.preference_score is not None else None,
             fit_components=match.fit_components,
             fit_confidence=self._fit_confidence(match.fit_components),
             fit_explanation=self._fit_explanation(match.fit_components),

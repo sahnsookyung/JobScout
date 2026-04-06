@@ -63,7 +63,7 @@ def test_fake_semantic_fit_response_handles_keyword_mismatch_and_empty_evidence(
 
 def test_fake_service_extract_structured_data_supports_semantic_fit_schema():
     service = FakeLLMService()
-    payload = {
+    {
         "pairs": [
             {
                 "pair_id": "p1",

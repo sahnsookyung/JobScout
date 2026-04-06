@@ -2,7 +2,7 @@
 
 import pytest
 import threading
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 import redis
 
 
@@ -142,7 +142,7 @@ class TestReadStreamLoopExceptions:
         mock_client.xreadgroup.side_effect = xreadgroup_side_effect
 
         with patch("time.sleep"):
-            chunks = list(_read_stream_loop(
+            list(_read_stream_loop(
                 mock_client, "stream", "group", "consumer",
                 count=1, block=100, shutdown_event=shutdown, read_pending=False
             ))

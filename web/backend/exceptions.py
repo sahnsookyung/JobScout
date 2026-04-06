@@ -62,7 +62,7 @@ def service_exception_handler(
     elif isinstance(exc, (InvalidPolicyException, PipelineLockedException)):
         status_code = 400
     
-    return JSONResponse(
+    return JSONResponse(  # codeql[py/stack-trace-exposure] intentional: ServiceException messages are developer-controlled
         status_code=status_code,
         content={
             "success": False,

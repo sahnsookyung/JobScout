@@ -1,8 +1,6 @@
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Tuple, Optional, cast
-import time
 import logging
-import json
 import os
 import math
 from database.repository import JobRepository

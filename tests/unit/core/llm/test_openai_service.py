@@ -48,7 +48,7 @@ class TestUnwrapSchemaSpec:
     def test_wrapper_missing_strict_defaults_to_false(self):
         """Wrapper without strict key should default to False."""
         wrapped = {"name": "test", "schema": {"type": "object", "properties": {}}}
-        name, strict, raw_schema = _unwrap_schema_spec(wrapped)
+        name, strict, _ = _unwrap_schema_spec(wrapped)
 
         assert name == "test"
         assert strict is False
@@ -623,7 +623,7 @@ class TestUnloadModel:
     def test_sends_request_for_localhost_url(self):
         """Should POST to Ollama API when base_url contains localhost."""
         svc = OpenAIService(api_key="test", base_url="http://localhost:11434/v1")
-        with MagicMock() as mock_requests:
+        with MagicMock():
             import unittest.mock
             with unittest.mock.patch("core.llm.openai_service.requests.post") as mock_post:
                 svc.unload_model("llama3")

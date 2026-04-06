@@ -1,4 +1,7 @@
 // Generated from Pydantic models
+
+export type RankingMode = 'preference_first' | 'fit_first' | 'balanced';
+
 export interface MatchSummary {
     match_id: string;
     job_id: string | null;
@@ -7,8 +10,7 @@ export interface MatchSummary {
     location: string | null;
     is_remote: boolean | null;
     fit_score: number | null;
-    overall_score: number;
-    base_score: number;
+    preference_score: number | null;
     penalties: number;
     required_coverage: number;
     preferred_coverage: number;
@@ -16,6 +18,12 @@ export interface MatchSummary {
     is_hidden: boolean;
     created_at: string | null;
     calculated_at: string | null;
+    // Ranking explanation fields
+    ranking_mode_used: string | null;
+    dominant_reason_code: string | null;
+    explanation_label: string | null;
+    balanced_primary_score: number | null;
+    missing_scores: string[];
 }
 
 export interface RequirementDetail {
@@ -48,7 +56,7 @@ export interface MatchDetail {
     match_id: string;
     resume_fingerprint: string;
     fit_score: number | null;
-    overall_score: number;
+    preference_score: number | null;
     fit_components: Record<string, any> | null;
     fit_confidence: number | null;
     fit_explanation: Record<string, any> | null;
@@ -261,5 +269,4 @@ export interface PipelineStatusResponse {
 }
 
 export type MatchStatus = 'active' | 'stale' | 'all';
-export type SortBy = 'overall' | 'fit';
 export type PolicyPreset = 'strict' | 'balanced' | 'discovery';

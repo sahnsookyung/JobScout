@@ -1,7 +1,7 @@
 """Unit tests for database/repositories/match.py"""
 
 import pytest
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
 
 from database.repositories.match import MatchRepository
 from database.models import JobMatch

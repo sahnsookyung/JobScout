@@ -356,7 +356,7 @@ class TestExtractionLifespan:
         mock_ctx.aclose = AsyncMock()
 
         done_task = asyncio.create_task(asyncio.sleep(0))
-        await done_task
+        _ = await done_task
 
         def _stub_create_task(coro):
             if hasattr(coro, "close"):
@@ -381,7 +381,7 @@ class TestExtractionLifespan:
         mock_ctx.aclose = AsyncMock()
 
         done_task = asyncio.create_task(asyncio.sleep(0))
-        await done_task
+        _ = await done_task
 
         def _stub_create_task(coro):
             if hasattr(coro, "close"):
@@ -410,7 +410,7 @@ class TestExtractionLifespan:
         mock_ctx = MagicMock(spec=_SyncCtx)
 
         done_task = asyncio.create_task(asyncio.sleep(0))
-        await done_task
+        _ = await done_task
 
         def _stub_create_task(coro):
             if hasattr(coro, "close"):

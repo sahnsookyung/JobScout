@@ -38,6 +38,9 @@ def validate_uuid(match_id: str) -> str:
         )
 
 
+_VALID_RANKING_MODES = {"preference_first", "fit_first", "balanced"}
+
+
 @router.get(
     "",
     response_model=MatchesResponse,
@@ -50,16 +53,17 @@ def get_matches(
     top_k: Annotated[int | None, Query(ge=1, le=500, description="Maximum results to return")] = None,
     remote_only: Annotated[bool, Query(description="Filter to remote jobs only")] = False,
     show_hidden: Annotated[bool, Query(description="Include hidden matches in results")] = False,
+    ranking_mode: Annotated[str | None, Query(description="Ranking mode: preference_first, fit_first, or balanced")] = None,
 ):
     """
-    Get a list of job matches filtered by result policy.
-    
-    Uses the current policy settings by default (min_fit, top_k).
-    Both can be overridden via query parameters.
-    Returns matches sorted by overall score (highest first).
+    Get a list of job matches ranked by the declared mode.
+
+    Stage 1 retrieves a bounded candidate pool (fit_score DESC).
+    Stage 2 re-ranks using the requested mode with NULL-aware sort keys.
+    Stage 3 truncates to effective_top_k.
 
     Raises:
-        422: Invalid `status` value.
+        422: Invalid `status` or `ranking_mode` value.
     """
     _VALID_STATUSES = {"active", "stale", "all"}
     if status not in _VALID_STATUSES:
@@ -68,22 +72,28 @@ def get_matches(
             detail=f"Invalid status '{status}'. Valid values: {', '.join(sorted(_VALID_STATUSES))}"
         )
 
+    if ranking_mode is not None and ranking_mode not in _VALID_RANKING_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid ranking_mode '{ranking_mode}'. Valid values: {', '.join(sorted(_VALID_RANKING_MODES))}"
+        )
+
     policy_service = get_policy_service()
     current_policy = policy_service.get_current_policy()
-    
-    # Use policy defaults if not specified
+
     effective_min_fit = min_fit if min_fit is not None else current_policy.min_fit
     effective_top_k = top_k if top_k is not None else current_policy.top_k
-    
+
     service = MatchService(db)
     matches = service.get_matches(
         status=status,
         min_fit=effective_min_fit,
         top_k=effective_top_k,
         remote_only=remote_only,
-        show_hidden=show_hidden
+        show_hidden=show_hidden,
+        ranking_mode=ranking_mode,
     )
-    
+
     return MatchesResponse(
         success=True,
         count=len(matches),

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import math
 import re
 from typing import Any, Dict, List, Optional
 
@@ -11,7 +10,7 @@ from core.config_loader import PreferencesConfig
 from services.scorer_matcher.preference_semantics import (
     PreferenceAssessment,
     PreferenceProfile,
-    _job_work_mode,
+    job_work_mode,
     build_preference_judge,
     build_preference_parser,
     build_preference_semantic_reranker,
@@ -39,35 +38,6 @@ def _normalize_text(value: Any) -> str:
     if value is None:
         return ""
     return " ".join(str(value).strip().lower().split())
-
-
-def _fit_band(match: Any) -> int:
-    return int(math.floor(float(getattr(match, "fit_score", 0.0) or 0.0) / 5.0))
-
-
-def _preference_sort_key(match: Any) -> tuple[float, float, float, float, str]:
-    fit_components = dict(getattr(match, "fit_components", {}) or {})
-    return (
-        -float(_fit_band(match)),
-        -float(fit_components.get("preference_score", 0.0) or 0.0),
-        -float(getattr(match, "fit_score", 0.0) or 0.0),
-        -float(getattr(match, "job_similarity", 0.0) or 0.0),
-        str(getattr(getattr(match, "job", None), "id", "")),
-    )
-
-
-def _bounded_preference_overall_score(match: Any, preference_score: float) -> float:
-    fit_score = float(getattr(match, "fit_score", 0.0) or 0.0)
-    band_floor = math.floor(fit_score / 5.0) * 5.0
-    fit_within_band = max(0.0, fit_score - band_floor)
-    similarity = float(getattr(match, "job_similarity", 0.0) or 0.0)
-    within_band = min(
-        4.99,
-        (float(preference_score) * 4.0)
-        + ((fit_within_band / 5.0) * 0.9)
-        + (similarity * 0.09),
-    )
-    return round(min(100.0, band_floor + within_band), 2)
 
 
 def load_candidate_preferences(repo, owner_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -102,7 +72,7 @@ def _job_matches_remote_mode(job, remote_mode: str) -> bool:
     if remote_mode == "any":
         return True
 
-    job_mode = _job_work_mode(job)
+    job_mode = job_work_mode(job)
     if remote_mode == "remote":
         return job_mode == "remote"
     if remote_mode == "hybrid":
@@ -239,7 +209,11 @@ def _stored_preference_profile(preferences: Dict[str, Any]) -> Optional[Preferen
     try:
         return PreferenceProfile.model_validate(raw_profile)
     except Exception:
-        logger.warning("Ignoring invalid stored preference profile", exc_info=True)
+        logger.info(
+            "Stored preference profile failed validation and will be re-parsed from soft_preferences text. "
+            "Re-saving preferences will update the stored profile.",
+            exc_info=True,
+        )
         return None
 
 
@@ -280,6 +254,12 @@ def _resolve_requested_mode(
     allowed_modes = _allowed_preference_modes(config)
     effective = requested if requested in allowed_modes else config.default_mode
     if effective not in allowed_modes:
+        logger.warning(
+            "Preference default_mode '%s' is not in allowed_modes %s; falling back to '%s'",
+            config.default_mode,
+            allowed_modes,
+            allowed_modes[0],
+        )
         effective = allowed_modes[0]
     return requested, effective
 
@@ -295,8 +275,6 @@ def _fit_only_fallback(
         fit_components = dict(getattr(match, "fit_components", {}) or {})
         fit_components.update(
             {
-                "preference_score": 0.0,
-                "preference_confidence": 0.0,
                 "preference_reason_codes": ["fallback_fit_only"],
                 "preference_explanation": "Preference reranking unavailable for this run.",
                 "preference_mode_requested": requested_mode,
@@ -306,6 +284,7 @@ def _fit_only_fallback(
             }
         )
         match.fit_components = fit_components
+        match.preference_score = None  # NULL = evaluator did not run
     return scored_matches
 
 
@@ -339,7 +318,6 @@ def _apply_assessments(
 
         fit_components.update(
             {
-                "preference_score": preference_score,
                 "preference_confidence": preference_confidence,
                 "preference_reason_codes": reason_codes,
                 "preference_explanation": explanation,
@@ -349,9 +327,7 @@ def _apply_assessments(
             }
         )
         match.fit_components = fit_components
-        match.overall_score = _bounded_preference_overall_score(match, preference_score)
-
-    scored_matches.sort(key=_preference_sort_key)
+        match.preference_score = preference_score  # 0.0 = scored poor; None = not evaluated
     return scored_matches
 
 

@@ -24,16 +24,13 @@ Requirements:
 """
 
 import unittest
-import sys
 import os
-import json
 import time
 import uuid
 import pytest
 import numpy as np
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from unittest.mock import patch
 
 # Use testcontainers fixtures from conftest.py.  The test_database fixture sets
 # TEST_DATABASE_URL before setUpClass runs; the redis_container fixture sets
@@ -44,17 +41,17 @@ pytestmark = pytest.mark.usefixtures("test_database", "redis_container")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from database.models import Base, JobPost, JobRequirementUnit, JobMatch, DEFAULT_LEGACY_OWNER_ID
+from database.models import JobPost, JobRequirementUnit, JobMatch, DEFAULT_LEGACY_OWNER_ID
 from database.repository import JobRepository
 from core.matcher import MatcherService
-from etl.resume import ResumeProfiler, ResumeEvidenceUnit
+from etl.resume import ResumeProfiler
 from core.llm.schema_models import ResumeSchema
 from core.config_loader import MatcherConfig, ScorerConfig
 from core.llm.interfaces import LLMProvider
 from core.scorer import ScoringService, persistence
 from notification import NotificationService
 from notification.message_builder import (
-    NotificationMessageBuilder, JobNotificationContent, JobInfo, MatchInfo, RequirementsInfo
+    NotificationMessageBuilder
 )
 from etl.orchestrator import JobETLService
 
@@ -136,7 +133,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
         # Redis (optional — set by redis_container fixture)
         cls.redis_url = os.environ.get('TEST_REDIS_URL')
         if cls.redis_url:
-            print(f"Using test Redis: {cls.redis_url[:30]}...")
+            print(f"Using test Redis: {cls.redis_url[:30]}...")  # codeql[py/clear-text-logging-sensitive-data] no credentials in test redis_url
         else:
             print("⚠ TEST_REDIS_URL not set — notification tests will be skipped")
         
@@ -414,7 +411,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
         # Profile resume to save embeddings (required for two-stage matching)
         print("  Processing resume to create embeddings...")
         test_fingerprint = f"test-pipeline-{datetime.now().timestamp()}"
-        profile, evidence_units, _ = self.resume_profiler.profile_resume(self.resume_data, resume_fingerprint=test_fingerprint)
+        profile, _, _ = self.resume_profiler.profile_resume(self.resume_data, resume_fingerprint=test_fingerprint)
         
         self.assertIsNotNone(profile, "Resume profiling should return a profile")
         print(f"  ✓ Resume profiled successfully")
@@ -471,9 +468,6 @@ class TestFullPipelineIntegration(unittest.TestCase):
         
         if not hasattr(type(self), 'test_scored_matches'):
             self.skipTest("Scored matches not available")
-        
-        # Generate fingerprint
-        fingerprint = f"test-pipeline-{datetime.now().timestamp()}"
         
         # Save matches
         saved_count = 0

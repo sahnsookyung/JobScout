@@ -6,7 +6,6 @@ Stats endpoints - view match statistics.
 from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 
 from ..dependencies import get_db
 from ..services.policy_service import get_policy_service
@@ -47,16 +46,16 @@ def get_stats(db: Annotated[Session, Depends(get_db)]):
     
     # Score distribution
     score_dist = {
-        'excellent': base_query.filter(JobMatch.overall_score >= 80).count(),
+        'excellent': base_query.filter(JobMatch.fit_score >= 80).count(),
         'good': base_query.filter(
-            JobMatch.overall_score >= 60,
-            JobMatch.overall_score < 80
+            JobMatch.fit_score >= 60,
+            JobMatch.fit_score < 80
         ).count(),
         'average': base_query.filter(
-            JobMatch.overall_score >= 40,
-            JobMatch.overall_score < 60
+            JobMatch.fit_score >= 40,
+            JobMatch.fit_score < 60
         ).count(),
-        'poor': base_query.filter(JobMatch.overall_score < 40).count(),
+        'poor': base_query.filter(JobMatch.fit_score < 40).count(),
     }
     
     return StatsResponse(

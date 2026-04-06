@@ -6,7 +6,7 @@ Covers: web/backend/routers/matches.py
 
 import pytest
 import uuid
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -404,22 +404,22 @@ class TestMatchesRouterIntegration:
 
                 # Setup match service - mock returns instance when called
                 mock_match_service = Mock()
+                from web.backend.models.responses import MatchSummary
                 mock_match_service.get_matches.return_value = [
-                    {
-                        'match_id': str(uuid.uuid4()),
-                        'title': 'Senior Software Engineer',
-                        'company': 'Google',
-                        'location': 'Mountain View, CA',
-                        'is_remote': False,
-                        'overall_score': 92.5,
-                        'fit_score': 90.0,
-                        'required_coverage': 0.95,
-                        'preferred_coverage': 0.80,
-                        'match_type': 'requirements_only',
-                        'is_hidden': False,
-                        'base_score': 92.0,
-                        'penalties': 0.0,
-                    }
+                    MatchSummary(
+                        match_id=str(uuid.uuid4()),
+                        title='Senior Software Engineer',
+                        company='Google',
+                        location='Mountain View, CA',
+                        is_remote=False,
+                        fit_score=92.5,
+                        preference_score=None,
+                        required_coverage=0.95,
+                        preferred_coverage=0.80,
+                        match_type='requirements_only',
+                        is_hidden=False,
+                        penalties=0.0,
+                    )
                 ]
                 MockMatchService.return_value = mock_match_service
 
@@ -434,7 +434,7 @@ class TestMatchesRouterIntegration:
                 match = data['matches'][0]
                 assert match['title'] == 'Senior Software Engineer'
                 assert match['company'] == 'Google'
-                assert match['overall_score'] == 92.5
+                assert match['fit_score'] == 92.5
 
     def test_full_match_details_flow(self, client):
         """Test complete flow of getting match details."""

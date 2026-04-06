@@ -179,7 +179,7 @@ class NotificationMessageBuilder:
         )
         
         match_info = MatchInfo(
-            overall_score=float(getattr(job_match, 'overall_score', 0) or 0),
+            overall_score=float(getattr(job_match, 'fit_score', 0) or 0),
             fit_score=float(getattr(job_match, 'fit_score', 0) or 0),
             required_coverage=float(getattr(job_match, 'required_coverage', 0) or 0),
         )

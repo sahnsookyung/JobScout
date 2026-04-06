@@ -7,8 +7,7 @@ from core.llm.provider_factory import build_llm_provider, runtime_llm_config_fro
 from core.scraper.jobspy_client import JobSpyClient
 
 if TYPE_CHECKING:
-    from etl.orchestrator import JobETLService
-    from notification.service import NotificationService
+    pass
 
 
 @dataclass
