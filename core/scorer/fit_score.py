@@ -4,7 +4,7 @@ Fit Score (Can-do-the-job) v1.1
 
 Key behavior:
 - Required coverage: quality-weighted (similarity threshold) and depends on covered/total.
-- Preferred coverage: positive-only bonus, never a detractor.
+- Preferred coverage: reported as diagnostic-only metadata; never changes fit_score.
 - Missing required: explicit detractor (hybrid ratio + per-item), plus any external fit_penalties.
 - Defensive: clamps similarity inputs, clamps threshold, sanitizes misconfigured weights/penalties.
 - Supports missing items provided either as "match-like" or "requirement-like" objects.
@@ -30,9 +30,6 @@ DEFAULT_SIMILARITY_CLAMP = True          # clamp all similarities + job_similari
 # Core weights (unitless, must be >= 0)
 DEFAULT_WEIGHT_REQUIRED = 0.60 # Affects how much the resume/JD's REU,job_req similarity contribute to the score
 DEFAULT_JOB_SIMILARITY_WEIGHT = 0.325
-
-# Preferred bonus (fraction of 1; later multiplied by 100 into "points")
-DEFAULT_PREFERRED_BONUS_MAX_FRACTION = 0.15  # up to +15 points
 
 # Missing required explicit penalty (in "points")
 DEFAULT_MISSING_REQUIRED_PENALTY_MAX = 0.0  # ratio-based component
@@ -204,7 +201,6 @@ def calculate_fit_score(
 
     w_req = _cfg_float(config, "weight_required", DEFAULT_WEIGHT_REQUIRED)
     w_sim = _cfg_float(config, "job_similarity_weight", DEFAULT_JOB_SIMILARITY_WEIGHT)
-    preferred_bonus_max_fraction = _cfg_float(config, "preferred_bonus_max_fraction", DEFAULT_PREFERRED_BONUS_MAX_FRACTION)
 
     missing_required_penalty_max = _cfg_float(config, "missing_required_penalty_max", DEFAULT_MISSING_REQUIRED_PENALTY_MAX)
     per_missing_required_penalty = _cfg_float(config, "per_missing_required_penalty", DEFAULT_PER_MISSING_REQUIRED_PENALTY)
@@ -223,9 +219,6 @@ def calculate_fit_score(
 
     w_req = _nonneg("weight_required", w_req)
     w_sim = _nonneg("job_similarity_weight", w_sim)
-    preferred_bonus_max_fraction0 = preferred_bonus_max_fraction
-    preferred_bonus_max_fraction = _nonneg("preferred_bonus_max_fraction", preferred_bonus_max_fraction)
-    _warn_correct("preferred_bonus_max_fraction", preferred_bonus_max_fraction0, preferred_bonus_max_fraction)
 
     missing_required_penalty_max = _nonneg("missing_required_penalty_max", missing_required_penalty_max)
     per_missing_required_penalty = _nonneg("per_missing_required_penalty", per_missing_required_penalty)
@@ -249,10 +242,12 @@ def calculate_fit_score(
     matched_pref = [m for m in adapted_matched if m.requirement.req_type == "preferred"]
 
     missing_req = [m for m in adapted_missing if m.requirement.req_type == "required"]
-    # --- Totals (weight-aware; denominator includes missing, so missing reduces coverage) ---
-    total_required_weight = sum(m.requirement.weight for m in matched_req)
-    # Keep missing_req separate for explicit penalties only
-    total_preferred_weight = sum(m.requirement.weight for m in matched_pref)
+    missing_pref = [m for m in adapted_missing if m.requirement.req_type == "preferred"]
+
+    # Coverage denominators include matched and missing requirements so the
+    # reported coverage reflects the whole job, not only the matched subset.
+    total_required_weight = sum(m.requirement.weight for m in matched_req + missing_req)
+    total_preferred_weight = sum(m.requirement.weight for m in matched_pref + missing_pref)
 
     req_stats = _quality_weighted_coverage(matched_req, total_required_weight, threshold, clamp_similarity)
     pref_stats = _quality_weighted_coverage(matched_pref, total_preferred_weight, threshold, clamp_similarity)
@@ -267,9 +262,6 @@ def calculate_fit_score(
         core = 0.0
     else:
         core = (w_req * required_coverage + w_sim * job_similarity_f) / denom
-
-    # --- Preferred bonus (positive-only) ---
-    preferred_bonus_fraction = preferred_bonus_max_fraction * preferred_coverage  # 0..preferred_bonus_max_fraction
 
     # --- Missing required explicit penalty (optional) ---
     missing_required_count = len(missing_req)
@@ -293,7 +285,7 @@ def calculate_fit_score(
         logger.warning("Invalid fit_penalties=%r; defaulting to 0.0", fit_penalties)
         fit_penalties_f = 0.0
 
-    raw_score = 100.0 * (core + preferred_bonus_fraction) - missing_required_penalty - fit_penalties_f
+    raw_score = 100.0 * core - missing_required_penalty - fit_penalties_f
     fit_score = _clamp(raw_score, 0.0, 100.0)
 
     components: Dict[str, Any] = {
@@ -318,11 +310,6 @@ def calculate_fit_score(
         "w_sim": w_sim,
         "core": core,
 
-        # Preferred bonus (fractions + implied points)
-        "preferred_bonus_max_fraction": preferred_bonus_max_fraction,
-        "preferred_bonus_fraction": preferred_bonus_fraction,
-        "preferred_bonus_points": 100.0 * preferred_bonus_fraction,
-
         # Missing required
         "enable_explicit_missing_required_penalty": enable_missing_required_penalty,
         "missing_required_count": missing_required_count,
@@ -342,8 +329,8 @@ def calculate_fit_score(
     }
 
     logger.debug(
-        "Fit score %.1f (core=%.3f, pref_bonus_pts=%.1f, miss_req_pen=%.1f, fit_pen=%.1f)",
-        fit_score, core, components["preferred_bonus_points"], missing_required_penalty, fit_penalties_f
+        "Fit score %.1f (core=%.3f, miss_req_pen=%.1f, fit_pen=%.1f)",
+        fit_score, core, missing_required_penalty, fit_penalties_f
     )
 
     return fit_score, components

@@ -8,14 +8,14 @@
 
 ## Goal
 
-Replace the current facet-based `want_score` architecture with:
+Replace the current facet-based legacy preference-score architecture with:
 
 - explicit structured hard filters
 - fit-first hybrid retrieval
 - free-text soft-preference reranking on a shortlist
 
 This plan is designed to avoid the current half-shipped state while giving us an incremental path to the target architecture.
-It assumes a destructive replacement of the old `want_score` model rather than a long compatibility period.
+It assumes a destructive replacement of the old facet-based preference-score model rather than a long compatibility period.
 
 ## Success Criteria
 
@@ -23,7 +23,7 @@ It assumes a destructive replacement of the old `want_score` model rather than a
 - Matching applies hard constraints deterministically.
 - Ranking remains fit-dominant.
 - Free-text preferences can improve ordering among plausible jobs.
-- The old facet-based `want_score` is removed from production ranking, APIs, and UI.
+- The old facet-based preference score is removed from production ranking, APIs, and UI.
 - We can explain why a job was shown using fit evidence, matched filters, and preference rationale.
 
 ## Non-Goals
@@ -34,7 +34,7 @@ It assumes a destructive replacement of the old `want_score` model rather than a
 
 ## Current-State Problems To Fix
 
-- `want_score` is built around a brittle 7-facet ontology.
+- the legacy preference score is built around a brittle 7-facet ontology.
 - wants are loaded from a file path rather than from a real per-user profile.
 - preference logic is mixed with fields that should be hard filters.
 - the old ranking path is easy to misinterpret as a trustworthy personalized score.
@@ -61,8 +61,8 @@ Implement this in five phases:
 ### Tasks
 
 - Set production ranking to fit-only while the new system is being built.
-- Remove `want_score` from production ranking logic immediately.
-- Remove or zero `want_score` in API responses and UI surfaces during migration. Do not keep it as a live compatibility feature.
+- Remove the legacy preference score from production ranking logic immediately.
+- Remove or zero the legacy preference score in API responses and UI surfaces during migration. Do not keep it as a live compatibility feature.
 - Audit job metadata coverage for:
   - remote mode
   - visa sponsorship
@@ -277,7 +277,7 @@ Replace facet explanations with:
 
 ### Tasks
 
-- Remove `want_score` from persisted ranking flows, APIs, DTOs, UI, and sorting behavior.
+- Remove the legacy preference score from persisted ranking flows, APIs, DTOs, UI, and sorting behavior.
 - Remove `user_wants_file`-driven matching behavior.
 - Remove facet-based preference weighting from scoring configuration.
 - Remove old tables and code paths:

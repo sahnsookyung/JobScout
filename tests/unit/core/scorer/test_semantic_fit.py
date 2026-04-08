@@ -147,7 +147,7 @@ def test_threshold_semantic_fit_adds_structured_explanation():
     )
 
     assert result.fit_score > 0
-    assert result.fit_confidence == 0.86
+    assert result.fit_confidence == pytest.approx((0.46 + 0.8) / 2.0, abs=1e-4)
     assert result.fit_components["fit_scorer"]["name"] == "threshold_semantic_fit"
     assert result.fit_components["retrieval"] == {
         "mode": "dense",

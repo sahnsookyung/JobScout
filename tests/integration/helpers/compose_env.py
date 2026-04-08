@@ -18,18 +18,13 @@ def ensure_compose_env_file(project_root: Path | None = None) -> bool:
 
     root = project_root or DEFAULT_PROJECT_ROOT
     dotenv_path = root / ".env"
-    dotenv_example_path = root / ".env.example"
 
     if dotenv_path.exists():
         return False
 
-    if dotenv_example_path.exists():
-        dotenv_path.write_text(
-            dotenv_example_path.read_text(encoding="utf-8"),
-            encoding="utf-8",
-        )
-    else:
-        dotenv_path.write_text("", encoding="utf-8")
+    # Keep split-stack E2E deterministic. Copying .env.example can reintroduce
+    # live provider endpoints or credentials into local test runs.
+    dotenv_path.write_text("", encoding="utf-8")
     return True
 
 

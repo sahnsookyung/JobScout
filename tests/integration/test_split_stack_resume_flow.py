@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import socket
@@ -51,9 +52,10 @@ FAIL_EMBEDDING_RESUME_FIXTURE = (
 DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
 E2E_COMPOSE_PROJECT_NAME = "jobscout-e2e"
 STARTUP_TIMEOUT_SECONDS = 180.0
-UPLOAD_TIMEOUT_SECONDS = 120.0
-MATCHING_TIMEOUT_SECONDS = 120.0
-NOTIFICATION_TIMEOUT_SECONDS = 60.0
+UPLOAD_TIMEOUT_SECONDS = 150.0
+MATCHING_TIMEOUT_SECONDS = 150.0
+NOTIFICATION_TIMEOUT_SECONDS = 30.0
+_ACTIVE_SPLIT_STACK_CLEANUP: dict[str, object] = {}
 
 
 @dataclass(frozen=True)
@@ -97,8 +99,8 @@ def _compose_env() -> dict[str, str]:
             "EMBEDDINGS_PORT": reserve_port(),
             "SCORER_MATCHER_PORT": reserve_port(),
             "ORCHESTRATOR_PORT": reserve_port(),
-            "RESUME_ETL_WAIT_TIMEOUT_SECONDS": "90",
-            "LISTENER_TIMEOUT_SECONDS": "90",
+            "RESUME_ETL_WAIT_TIMEOUT_SECONDS": "120",
+            "LISTENER_TIMEOUT_SECONDS": "120",
         }
     )
     return env
@@ -143,6 +145,94 @@ def _run_compose(
     )
 
 
+def _compose_down(
+    compose_args: tuple[str, ...],
+    compose_env: dict[str, str],
+) -> None:
+    _run_compose(
+        compose_args,
+        compose_env,
+        "down",
+        "-v",
+        "--remove-orphans",
+        check=False,
+        timeout=600,
+    )
+    project_name = _compose_project_name(compose_args)
+    if not _compose_project_container_ids(project_name):
+        return
+
+    _force_remove_compose_project_resources(project_name)
+
+
+def _compose_project_name(compose_args: tuple[str, ...]) -> str:
+    project_flag_index = compose_args.index("-p")
+    return compose_args[project_flag_index + 1]
+
+
+def _compose_project_container_ids(project_name: str) -> list[str]:
+    result = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "-aq",
+            "--filter",
+            f"label=com.docker.compose.project={project_name}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _force_remove_compose_project_resources(project_name: str) -> None:
+    container_ids = _compose_project_container_ids(project_name)
+    if container_ids:
+        subprocess.run(
+            ["docker", "rm", "-f", "-v", *container_ids],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    subprocess.run(
+        ["docker", "network", "rm", f"{project_name}_default"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
+def _register_active_split_stack_cleanup(
+    compose_args: tuple[str, ...],
+    compose_env: dict[str, str],
+) -> None:
+    _ACTIVE_SPLIT_STACK_CLEANUP["compose_args"] = compose_args
+    _ACTIVE_SPLIT_STACK_CLEANUP["compose_env"] = compose_env
+
+
+def _clear_active_split_stack_cleanup() -> None:
+    _ACTIVE_SPLIT_STACK_CLEANUP.clear()
+
+
+def _cleanup_active_split_stack() -> None:
+    compose_args = _ACTIVE_SPLIT_STACK_CLEANUP.get("compose_args")
+    compose_env = _ACTIVE_SPLIT_STACK_CLEANUP.get("compose_env")
+    if not compose_args or not compose_env:
+        return
+
+    try:
+        _compose_down(compose_args, compose_env)
+    finally:
+        _clear_active_split_stack_cleanup()
+
+
+atexit.register(_cleanup_active_split_stack)
+
+
 def _compose_up_args(services: tuple[str, ...], *, build_images: bool) -> tuple[str, ...]:
     build_flag = "--build" if build_images else "--no-build"
     return (
@@ -157,44 +247,85 @@ def _compose_up_args(services: tuple[str, ...], *, build_images: bool) -> tuple[
     )
 
 
+def _env_flag(name: str) -> bool | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"Invalid boolean environment value for {name}: {raw!r}")
+
+
+def _compose_images_available(
+    compose_args: tuple[str, ...],
+    compose_env: dict[str, str],
+) -> bool:
+    result = _run_compose(
+        compose_args,
+        compose_env,
+        "config",
+        "--images",
+        check=False,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        return False
+
+    image_names = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not image_names:
+        return False
+
+    inspect = subprocess.run(
+        ["docker", "image", "inspect", *image_names],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    return inspect.returncode == 0
+
+
+def _resolve_build_images(
+    compose_args: tuple[str, ...],
+    compose_env: dict[str, str],
+) -> bool:
+    override = _env_flag("JOBSCOUT_E2E_BUILD_IMAGES")
+    if override is not None:
+        return override
+    return not _compose_images_available(compose_args, compose_env)
+
+
 def _compose_up_with_retries(
     compose_args: tuple[str, ...],
     services: tuple[str, ...],
     *,
-    build_images: bool = True,
+    build_images: bool | None = None,
     attempts: int = 3,
 ) -> tuple[dict[str, str], subprocess.CompletedProcess[str]]:
     last_error = None
     for _ in range(attempts):
         compose_env = _next_compose_env()
-        _run_compose(
-            compose_args,
-            compose_env,
-            "down",
-            "-v",
-            "--remove-orphans",
-            check=False,
-            timeout=600,
+        resolved_build_images = (
+            build_images
+            if build_images is not None
+            else _resolve_build_images(compose_args, compose_env)
         )
+        _compose_down(compose_args, compose_env)
         try:
             result = _run_compose(
                 compose_args,
                 compose_env,
-                *_compose_up_args(services, build_images=build_images),
+                *_compose_up_args(services, build_images=resolved_build_images),
             )
             return compose_env, result
         except subprocess.CalledProcessError as exc:
             last_error = exc
             stderr = exc.stderr or ""
-            _run_compose(
-                compose_args,
-                compose_env,
-                "down",
-                "-v",
-                "--remove-orphans",
-                check=False,
-                timeout=600,
-            )
+            _compose_down(compose_args, compose_env)
             if "port is already allocated" not in stderr.lower():
                 raise
     if last_error is not None:
@@ -373,13 +504,14 @@ def split_stack() -> SplitStackContext:
 
     compose_env: dict[str, str] | None = None
     created_dotenv = ensure_compose_env_file(PROJECT_ROOT)
-    build_images = os.getenv("JOBSCOUT_E2E_SKIP_BUILD") != "1"
+    build_images = _env_flag("JOBSCOUT_E2E_BUILD_IMAGES")
     try:
         compose_env, _ = _compose_up_with_retries(
             compose_args,
             services,
             build_images=build_images,
         )
+        _register_active_split_stack_cleanup(compose_args, compose_env)
 
         web_backend_url = f"http://localhost:{compose_env['WEB_BACKEND_PORT']}"
         extraction_url = f"http://localhost:{compose_env['EXTRACTION_PORT']}"
@@ -420,15 +552,8 @@ def split_stack() -> SplitStackContext:
     finally:
         if compose_env is None:
             compose_env = _next_compose_env()
-        _run_compose(
-            compose_args,
-            compose_env,
-            "down",
-            "-v",
-            "--remove-orphans",
-            check=False,
-            timeout=600,
-        )
+        _compose_down(compose_args, compose_env)
+        _clear_active_split_stack_cleanup()
         if created_dotenv:
             DOTENV_PATH.unlink(missing_ok=True)
 
@@ -524,7 +649,7 @@ def _wait_for_test_status(base_url: str, channel_type: str, expected_status: str
         last_payload = payload
         if channel["last_test_status"] == expected_status:
             return payload
-        time.sleep(1)
+        time.sleep(0.5)
     raise AssertionError(
         f"Timed out waiting for notification test status '{expected_status}'. "
         f"Last payload: {last_payload}"

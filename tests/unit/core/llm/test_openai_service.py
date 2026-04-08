@@ -14,6 +14,7 @@ import openai
 
 from core.llm.openai_service import (
     OpenAIService,
+    LLM_RATE_LIMIT_WAIT_CAP_SECONDS,
     _unwrap_schema_spec,
     _is_retryable,
     _parse_reset_duration,
@@ -226,10 +227,10 @@ class TestWaitRespectingRetryAfter:
         retry_state.next_action = None
 
         wait = _wait_respecting_retry_after(retry_state)
-        assert wait == 45.0
+        assert wait == min(45.0, LLM_RATE_LIMIT_WAIT_CAP_SECONDS)
 
     def test_caps_at_120_seconds(self):
-        """Should cap wait time at 120 seconds."""
+        """Should cap wait time at the configured ceiling."""
         from unittest.mock import MagicMock, PropertyMock
         exc = MagicMock(spec=openai.RateLimitError)
         type(exc).response = PropertyMock(return_value=MagicMock(headers={"retry-after": "500"}))
@@ -240,7 +241,7 @@ class TestWaitRespectingRetryAfter:
         retry_state.next_action = None
 
         wait = _wait_respecting_retry_after(retry_state)
-        assert wait == 120.0
+        assert wait == LLM_RATE_LIMIT_WAIT_CAP_SECONDS
 
 
 class TestExtractResumeData:
@@ -504,6 +505,19 @@ class TestWaitFromRateLimitHeadersEdgeCases:
 
 class TestOpenAIServiceConstructor:
     """Tests for OpenAIService __init__ with various configurations."""
+
+    def test_constructor_disables_sdk_retries(self, monkeypatch):
+        captured_kwargs = []
+
+        class FakeOpenAI:
+            def __init__(self, **kwargs):
+                captured_kwargs.append(kwargs)
+
+        monkeypatch.setattr("core.llm.openai_service.OpenAI", FakeOpenAI)
+
+        OpenAIService(api_key="sk-test")
+
+        assert captured_kwargs[0]["max_retries"] == 0
 
     def test_default_construction_with_api_key(self):
         svc = OpenAIService(api_key="sk-test")
