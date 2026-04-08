@@ -21,6 +21,7 @@ class ScoredJobMatch:
     preference_score: Optional[float] = None  # 0–1 or None (not evaluated)
 
     fit_components: Dict[str, Any] = field(default_factory=dict)
+    preference_components: Dict[str, Any] = field(default_factory=dict)
     fit_confidence: float = 0.0
     fit_explanation: Dict[str, Any] = field(default_factory=dict)
     fit_scorer: Dict[str, Any] = field(default_factory=dict)
@@ -28,7 +29,7 @@ class ScoredJobMatch:
     base_score: float = 0.0
     penalties: float = 0.0
     jd_required_coverage: float = 0.0
-    jd_preferences_coverage: float = 0.0
+    jd_preferred_requirement_coverage: float = 0.0
     job_similarity: float = 0.0
     penalty_details: List[Dict[str, Any]] = field(default_factory=list)
     matched_requirements: List['RequirementMatchResult'] = field(default_factory=list)

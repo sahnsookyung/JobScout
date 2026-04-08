@@ -61,12 +61,13 @@ class MatchResultDTO:
     fit_score: float
     job_similarity: float
     jd_required_coverage: float
-    jd_preferences_coverage: float
+    jd_preferred_requirement_coverage: float
     requirement_matches: List[RequirementMatchDTO]
     missing_requirements: List[RequirementMatchDTO]
     resume_fingerprint: str
     preference_score: Optional[float] = None  # None = evaluator did not run
     fit_components: dict = field(default_factory=dict)
+    preference_components: dict = field(default_factory=dict)
     base_score: float = 0.0
     penalties: float = 0.0
     penalty_details: dict = field(default_factory=dict)

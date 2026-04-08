@@ -749,11 +749,12 @@ def _convert_matches_to_dtos(scored_matches) -> List[MatchResultDTO]:
             preference_score=match.preference_score,
             job_similarity=match.job_similarity or 0.0,
             jd_required_coverage=match.jd_required_coverage,
-            jd_preferences_coverage=match.jd_preferences_coverage,
+            jd_preferred_requirement_coverage=match.jd_preferred_requirement_coverage,
             requirement_matches=[_matched_req_to_dto(r) for r in match.matched_requirements],
             missing_requirements=[_missing_req_to_dto(r) for r in match.missing_requirements],
             resume_fingerprint=match.resume_fingerprint,
             fit_components=match.fit_components,
+            preference_components=getattr(match, "preference_components", {}) or {},
             base_score=match.base_score,
             penalties=match.penalties,
             penalty_details=penalty_details_from_orm(

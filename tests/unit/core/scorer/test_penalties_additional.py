@@ -410,7 +410,7 @@ class TestScorePreliminaryMatch:
         assert scored is not None
         assert 0 < scored.fit_score <= 100
         assert scored.jd_required_coverage == pytest.approx(0.85, abs=0.01)
-        assert scored.jd_preferences_coverage == 0.0
+        assert scored.jd_preferred_requirement_coverage == 0.0
         assert scored.match_type == 'requirements_only'
         assert scored.resume_fingerprint == 'test-fp-123'
 

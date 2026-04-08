@@ -4,7 +4,7 @@ Tests for Match Service
 Covers: web/backend/services/match_service.py
 
 Key invariants verified:
-  - Stage 1: DB query is bounded by max_ranking_candidates (not top_k)
+  - Stage 1: DB query is scoped to the canonical resume, not a fit-biased SQL shortlist
   - Stage 2: rank_matches() is called on the full retrieved pool
   - Stage 3: top_k truncation happens AFTER ranking (pool[:effective_k])
   - ranking_mode parameter is forwarded to the ranking engine
@@ -29,7 +29,9 @@ def mock_db():
 @pytest.fixture
 def service(mock_db):
     from web.backend.services.match_service import MatchService
-    return MatchService(mock_db)
+    instance = MatchService(mock_db)
+    instance._resolve_canonical_resume_fingerprint = Mock(return_value="fp-123")
+    return instance
 
 
 def _make_match(
@@ -87,17 +89,17 @@ def _wire_query(mock_db, matches):
 class TestThreeStagePipeline:
     """
     The canonical correctness contract:
-      1. DB query is LIMIT max_ranking_candidates (config-driven), NOT top_k.
+      1. DB query scopes to the canonical resume and does not SQL-limit by fit.
       2. rank_matches() receives the FULL retrieved pool.
       3. Truncation to effective_top_k happens AFTER ranking.
     """
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
-    def test_db_limit_uses_max_ranking_candidates_not_top_k(
+    def test_db_query_does_not_limit_before_reranking(
         self, mock_store, mock_rank, mock_db, service
     ):
-        """query.limit() receives max_ranking_candidates (500), not top_k (5)."""
+        """The web read path should not reintroduce a fit-biased SQL shortlist."""
         from core.ranking.policy import RankingConfig
         cfg = RankingConfig(balanced_w_pref=0.6, balanced_w_fit=0.4, max_ranking_candidates=500)
         mock_store.return_value.get_current_config.return_value = cfg
@@ -107,7 +109,9 @@ class TestThreeStagePipeline:
 
         service.get_matches(top_k=5)
 
-        q.limit.assert_called_once_with(500)
+        q.limit.assert_not_called()
+        service._resolve_canonical_resume_fingerprint.assert_called_once_with()
+        assert q.filter.called
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
@@ -181,6 +185,20 @@ class TestThreeStagePipeline:
         results = service.get_matches()  # top_k=None
 
         assert len(results) == 3
+
+    @patch("web.backend.services.match_service.rank_matches")
+    @patch("web.backend.services.match_service.get_ranking_policy_store")
+    def test_missing_canonical_resume_returns_empty_list(
+        self, mock_store, mock_rank, mock_db, service
+    ):
+        from core.ranking.policy import RankingConfig
+        mock_store.return_value.get_current_config.return_value = RankingConfig(
+            balanced_w_pref=0.6, balanced_w_fit=0.4
+        )
+        service._resolve_canonical_resume_fingerprint.return_value = None
+
+        assert service.get_matches() == []
+        mock_rank.assert_not_called()
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
@@ -288,7 +306,7 @@ class TestGetMatchesFilters:
 
         service.get_matches(status="all")
 
-        assert q.order_by.called
+        assert not q.order_by.called
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
@@ -345,6 +363,7 @@ class TestToMatchSummary:
         m = _make_match(preference_score=None)
         result = service._to_match_summary(m)
         assert result.preference_score is None
+        assert result.preferred_requirement_coverage == pytest.approx(0.60)
 
     def test_preference_score_zero_preserved(self, service):
         """preference_score=0.0 (scored poorly) must remain 0.0, not collapsed to None."""
@@ -444,6 +463,10 @@ class TestGetMatchDetail:
             "fit_scorer": {"name": "threshold_semantic_fit", "version": "1"},
             "fit_explanation": {"summary": "8/10 covered."},
         }
+        m.preference_components = {
+            "preference_mode_used": "semantic_rerank",
+            "preference_reason_codes": ["tech_stack_match"],
+        }
         return m
 
     def test_success(self, service, mock_db):
@@ -469,8 +492,24 @@ class TestGetMatchDetail:
         assert result.success is True
         assert result.match.match_id == "match-1"
         assert result.match.fit_confidence == 0.78
+        assert result.match.preference_components["preference_mode_used"] == "semantic_rerank"
         assert result.job.title == "Developer"
         assert len(result.requirements) == 1
+
+    def test_legacy_preference_components_fallback(self, service):
+        match = self._make_full_match()
+        match.preference_components = None
+        match.fit_components.update(
+            {
+                "preference_mode_used": "semantic_rerank",
+                "preference_reason_codes": ["tech_stack_match"],
+            }
+        )
+
+        detail = service._to_match_detail(match, {})
+
+        assert detail.preference_components["preference_mode_used"] == "semantic_rerank"
+        assert "preference_mode_used" not in (detail.fit_components or {})
 
     def test_preference_score_nullable_in_detail(self, service, mock_db):
         """preference_score=None in the ORM model is preserved in MatchDetail."""

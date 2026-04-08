@@ -58,7 +58,7 @@ def get_matches(
     """
     Get a list of job matches ranked by the declared mode.
 
-    Stage 1 retrieves a bounded candidate pool (fit_score DESC).
+    Stage 1 retrieves the canonical resume's persisted match set.
     Stage 2 re-ranks using the requested mode with NULL-aware sort keys.
     Stage 3 truncates to effective_top_k.
 

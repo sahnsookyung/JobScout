@@ -370,7 +370,7 @@ class TestScoreEquivalence(unittest.TestCase):
         self.assertGreater(scored.fit_score, 0)
         self.assertLessEqual(scored.fit_score, 100)
         self.assertAlmostEqual(scored.jd_required_coverage, 0.85, places=2)
-        self.assertEqual(scored.jd_preferences_coverage, 0.0)
+        self.assertEqual(scored.jd_preferred_requirement_coverage, 0.0)
         self.assertEqual(scored.match_type, "requirements_only")
         self.assertEqual(scored.resume_fingerprint, "test-fp-123")
 

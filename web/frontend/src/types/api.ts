@@ -14,6 +14,7 @@ export interface MatchSummary {
     penalties: number;
     required_coverage: number;
     preferred_coverage: number;
+    preferred_requirement_coverage: number;
     match_type: string;
     is_hidden: boolean;
     created_at: string | null;
@@ -58,6 +59,7 @@ export interface MatchDetail {
     fit_score: number | null;
     preference_score: number | null;
     fit_components: Record<string, any> | null;
+    preference_components: Record<string, any> | null;
     fit_confidence: number | null;
     fit_explanation: Record<string, any> | null;
     fit_scorer: Record<string, any> | null;
@@ -65,6 +67,7 @@ export interface MatchDetail {
     penalties: number;
     required_coverage: number;
     preferred_coverage: number;
+    preferred_requirement_coverage: number;
     total_requirements: number;
     matched_requirements_count: number;
     match_type: string;

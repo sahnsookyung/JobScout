@@ -44,6 +44,7 @@ class JobMatch(Base):
     preference_score = Column(Numeric(5, 4), nullable=True)  # 0–1; NULL = not evaluated
 
     fit_components = Column(JSONB, default={})
+    preference_components = Column(JSONB, nullable=True, default={})
 
     base_score = Column(Numeric(5, 2))
     penalties = Column(Numeric(5, 2), default=0)

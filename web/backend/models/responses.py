@@ -40,6 +40,7 @@ class MatchSummary(BaseModel):
                 "penalties": 9.5,
                 "required_coverage": 0.9,
                 "preferred_coverage": 0.8,
+                "preferred_requirement_coverage": 0.8,
                 "match_type": "requirements_only",
                 "ranking_mode_used": "balanced",
                 "dominant_reason_code": "balanced_blend",
@@ -65,6 +66,7 @@ class MatchSummary(BaseModel):
     penalties: float = Field(ge=0)
     required_coverage: float = Field(ge=0, le=1)
     preferred_coverage: float = Field(ge=0, le=1)
+    preferred_requirement_coverage: float = Field(ge=0, le=1)
     match_type: str
     is_hidden: bool = False
     created_at: Optional[str] = None
@@ -116,6 +118,7 @@ class MatchDetail(BaseModel):
 
     # Score breakdowns
     fit_components: Optional[Dict[str, Any]] = None
+    preference_components: Optional[Dict[str, Any]] = None
     fit_confidence: Optional[float] = Field(default=None, ge=0, le=1)
     fit_explanation: Optional[Dict[str, Any]] = None
     fit_scorer: Optional[Dict[str, Any]] = None
@@ -125,6 +128,7 @@ class MatchDetail(BaseModel):
     penalties: float
     required_coverage: float
     preferred_coverage: float
+    preferred_requirement_coverage: float
     total_requirements: int
     matched_requirements_count: int
     match_type: str

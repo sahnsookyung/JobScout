@@ -23,6 +23,13 @@ from core.scorer.semantic_fit import (
 
 logger = logging.getLogger(__name__)
 
+def _rename_capability_component_keys(fit_components: Dict[str, Any]) -> Dict[str, Any]:
+    renamed = dict(fit_components)
+    preferred_coverage = renamed.pop("preferred_coverage", None)
+    if preferred_coverage is not None:
+        renamed["preferred_requirement_coverage"] = preferred_coverage
+    return renamed
+
 
 def _prefetch_resume_metadata(preliminary_matches: List[JobMatchPreliminary], db) -> Dict[str, Dict[str, Any]]:
     fps = {pm.resume_fingerprint for pm in preliminary_matches if pm.resume_fingerprint}
@@ -178,21 +185,26 @@ class ScoringService:
             config=self.config,
             owner_id=owner_id,
         )
+        fit_components = _rename_capability_component_keys(semantic_fit.fit_components)
 
         return ScoredJobMatch(
             job=job,
             fit_score=semantic_fit.fit_score,
-            fit_components=semantic_fit.fit_components,
+            fit_components=fit_components,
+            preference_components={},
             fit_confidence=semantic_fit.fit_confidence,
             fit_explanation=semantic_fit.fit_explanation,
             fit_scorer={
                 "name": semantic_fit.scorer_name,
                 "version": semantic_fit.scorer_version,
             },
-            base_score=semantic_fit.fit_components.get("core", 0.0) * 100.0,
+            base_score=fit_components.get("core", 0.0) * 100.0,
             penalties=fit_penalties,
-            jd_required_coverage=semantic_fit.fit_components["required_coverage"],
-            jd_preferences_coverage=semantic_fit.fit_components["preferred_coverage"],
+            jd_required_coverage=fit_components["required_coverage"],
+            jd_preferred_requirement_coverage=fit_components.get(
+                "preferred_requirement_coverage",
+                0.0,
+            ),
             job_similarity=preliminary.job_similarity,
             penalty_details=penalty_details,
             matched_requirements=semantic_fit.matched_requirements,

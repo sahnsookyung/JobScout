@@ -62,12 +62,13 @@ def make_dto(
         fit_score=70.0,
         job_similarity=0.8,
         jd_required_coverage=0.7,
-        jd_preferences_coverage=0.5,
+        jd_preferred_requirement_coverage=0.5,
         requirement_matches=matched_reqs,
         missing_requirements=missing_reqs,
         resume_fingerprint=fingerprint,
         preference_score=None,
         fit_components={"required": 0.7},
+        preference_components={"preference_mode_used": "semantic_rerank"},
         penalty_details={"details": [], "total": 0.0},
         base_score=72.0,
         penalties=2.0,
@@ -193,7 +194,8 @@ class TestExtractScores:
         assert scores["preference_score"] is None
         assert scores["job_similarity"] == 0.8
         assert scores["jd_required_coverage"] == 0.7
-        assert scores["jd_preferences_coverage"] == 0.5
+        assert scores["jd_preferred_requirement_coverage"] == 0.5
+        assert scores["preference_components"] == {"preference_mode_used": "semantic_rerank"}
         assert scores["base_score"] == 72.0
         assert scores["penalties"] == 2.0
         assert scores["match_type"] == "requirements_only"
@@ -208,11 +210,12 @@ class TestExtractScores:
             fit_score=55.0,
             job_similarity=0.6,
             jd_required_coverage=0.5,
-            jd_preferences_coverage=0.4,
+            jd_preferred_requirement_coverage=0.4,
             base_score=58.0,
             penalties=3.0,
             penalty_details=[{"reason": "remote"}],
             fit_components={"a": 1},
+            preference_components={"preference_mode_used": "semantic_rerank"},
             match_type="hybrid",
         )
         scores = _extract_scores(scored)

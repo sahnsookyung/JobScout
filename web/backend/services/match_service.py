@@ -8,10 +8,10 @@ import logging
 from typing import List, Optional, Dict, Any
 from core.redis_streams import _sanitize_log
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import desc
 
 from core.ranking import rank_matches, RankingContext, RankingMode, get_ranking_policy_store
 from database.models import JobMatch, JobPost, JobMatchRequirement
+from database.uow import job_uow
 from ..models.responses import (
     MatchSummary,
     MatchDetail,
@@ -23,6 +23,16 @@ from ..utils import safe_float, safe_int, safe_str, safe_datetime_iso
 from ..exceptions import MatchNotFoundException
 
 logger = logging.getLogger(__name__)
+
+_PREFERENCE_COMPONENT_KEYS = {
+    "preference_confidence",
+    "preference_reason_codes",
+    "preference_explanation",
+    "preference_mode_requested",
+    "preference_mode_effective",
+    "preference_mode_used",
+    "preference_fallback_reason",
+}
 
 
 class MatchService:
@@ -43,8 +53,8 @@ class MatchService:
         """
         Get filtered job matches, ranked by the requested mode.
 
-        Stage 1 — DB retrieve: ordered by fit_score DESC, bounded to
-            max_ranking_candidates (config-driven scaling policy).
+        Stage 1 — DB retrieve: scoped to the canonical resume's full persisted
+            match set after request filters are applied.
         Stage 2 — Python rank: rank_matches() applies the declared mode
             with NULL-aware sort keys; attaches RankingExplanation per item.
         Stage 3 — Truncate: [:effective_top_k] applied after ranking so
@@ -70,8 +80,13 @@ class MatchService:
         except ValueError:
             mode = RankingMode(ranking_config.active_default_mode)
 
-        # Stage 1: DB retrieve — fit_score DESC, bounded pool
+        resume_fingerprint = self._resolve_canonical_resume_fingerprint()
+        if not resume_fingerprint:
+            return []
+
+        # Stage 1: DB retrieve — full canonical resume pool
         query = self.db.query(JobMatch)
+        query = query.filter(JobMatch.resume_fingerprint == resume_fingerprint)
 
         if status != "all":
             query = query.filter(JobMatch.status == status)
@@ -85,12 +100,10 @@ class MatchService:
             query = query.filter(JobMatch.is_hidden.is_(False))
 
         query = query.options(joinedload(JobMatch.job_post))
-        query = query.order_by(desc(JobMatch.fit_score))
 
         if remote_only:
             query = query.join(JobPost).filter(JobPost.is_remote.is_(True))
 
-        query = query.limit(ranking_config.max_ranking_candidates)
         pool = query.all()
 
         # Stage 2: Python rank
@@ -102,6 +115,14 @@ class MatchService:
         ranked = pool[:effective_k]
 
         return [self._to_match_summary(m) for m in ranked]
+
+    def _resolve_canonical_resume_fingerprint(self) -> Optional[str]:
+        try:
+            with job_uow() as repo:
+                return repo.get_latest_ready_resume_fingerprint()
+        except Exception as exc:
+            logger.warning("Could not resolve canonical resume fingerprint: %s", exc)
+            return None
     
     def get_match_detail(self, match_id: str) -> MatchDetailResponse:
         """
@@ -240,6 +261,7 @@ class MatchService:
         job_fields = self._extract_summary_job_fields(match)
 
         expl = getattr(match, "ranking_explanation", None)
+        preferred_requirement_coverage = self._float_or_zero(match.preferred_coverage)
 
         return MatchSummary(
             match_id=str(match.id),
@@ -252,7 +274,8 @@ class MatchService:
             preference_score=self._optional_float(match.preference_score),
             penalties=self._float_or_zero(match.penalties),
             required_coverage=self._float_or_zero(match.required_coverage),
-            preferred_coverage=self._float_or_zero(match.preferred_coverage),
+            preferred_coverage=preferred_requirement_coverage,
+            preferred_requirement_coverage=preferred_requirement_coverage,
             match_type=safe_str(match.match_type, "unknown"),
             is_hidden=match.is_hidden or False,
             created_at=safe_datetime_iso(match.created_at),
@@ -266,19 +289,23 @@ class MatchService:
     
     def _to_match_detail(self, match: JobMatch, penalty_details: Dict[str, Any]) -> MatchDetail:
         """Convert ORM model to MatchDetail response model."""
+        fit_components = self._fit_components(match.fit_components)
+        preferred_requirement_coverage = safe_float(match.preferred_coverage)
         return MatchDetail(
             match_id=str(match.id),
             resume_fingerprint=safe_str(match.resume_fingerprint),
             fit_score=safe_float(match.fit_score) if match.fit_score is not None else None,
             preference_score=safe_float(match.preference_score) if match.preference_score is not None else None,
-            fit_components=match.fit_components,
-            fit_confidence=self._fit_confidence(match.fit_components),
-            fit_explanation=self._fit_explanation(match.fit_components),
-            fit_scorer=self._fit_scorer(match.fit_components),
+            fit_components=fit_components,
+            preference_components=self._preference_components(match),
+            fit_confidence=self._fit_confidence(fit_components),
+            fit_explanation=self._fit_explanation(fit_components),
+            fit_scorer=self._fit_scorer(fit_components),
             base_score=safe_float(match.base_score),
             penalties=safe_float(match.penalties),
             required_coverage=safe_float(match.required_coverage),
-            preferred_coverage=safe_float(match.preferred_coverage),
+            preferred_coverage=preferred_requirement_coverage,
+            preferred_requirement_coverage=preferred_requirement_coverage,
             total_requirements=safe_int(match.total_requirements),
             matched_requirements_count=safe_int(match.matched_requirements_count),
             match_type=safe_str(match.match_type, "unknown"),
@@ -311,6 +338,35 @@ class MatchService:
 
         scorer = fit_components.get("fit_scorer")
         return scorer if isinstance(scorer, dict) else None
+
+    @staticmethod
+    def _fit_components(fit_components: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(fit_components, dict):
+            return None
+
+        return {
+            key: value
+            for key, value in fit_components.items()
+            if key not in _PREFERENCE_COMPONENT_KEYS
+        }
+
+    @staticmethod
+    def _legacy_preference_components(fit_components: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(fit_components, dict):
+            return None
+
+        extracted = {
+            key: value
+            for key, value in fit_components.items()
+            if key in _PREFERENCE_COMPONENT_KEYS
+        }
+        return extracted or None
+
+    def _preference_components(self, match: JobMatch) -> Optional[Dict[str, Any]]:
+        preference_components = getattr(match, "preference_components", None)
+        if isinstance(preference_components, dict) and preference_components:
+            return preference_components
+        return self._legacy_preference_components(match.fit_components)
     
     def _to_job_details(self, job: Optional[JobPost]) -> JobDetails:
         """Convert ORM model to JobDetails response model."""

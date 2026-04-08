@@ -1004,12 +1004,12 @@ def test_candidate_preferences_round_trip_updates_matching_behavior(
         positive_match = next(
             match for match in matches if str(match.job_post_id) == seeded_jobs.positive_job_id
         )
-        fit_components = positive_match.fit_components or {}
+        preference_components = positive_match.preference_components or {}
         assert (positive_match.preference_score or 0) > 0, (
             f"Expected preference_score > 0, got {positive_match.preference_score}"
         )
-        assert fit_components.get("preference_mode_used") == "semantic_rerank"
-        assert "tech_stack_match" in (fit_components.get("preference_reason_codes") or [])
+        assert preference_components.get("preference_mode_used") == "semantic_rerank"
+        assert "tech_stack_match" in (preference_components.get("preference_reason_codes") or [])
     finally:
         session.close()
         engine.dispose()
@@ -1079,13 +1079,13 @@ def test_preference_cross_encoder_reranking_emits_detail_codes(split_stack: Spli
         positive_match = next(
             match for match in matches if str(match.job_post_id) == seeded_jobs.positive_job_id
         )
-        fit_components = positive_match.fit_components or {}
-        preference_reason_codes = fit_components.get("preference_reason_codes") or []
+        preference_components = positive_match.preference_components or {}
+        preference_reason_codes = preference_components.get("preference_reason_codes") or []
 
         assert (positive_match.preference_score or 0) > 0, (
-            f"Expected preference_score > 0, got {positive_match.preference_score}; fit_components={fit_components}"
+            f"Expected preference_score > 0, got {positive_match.preference_score}; preference_components={preference_components}"
         )
-        assert fit_components.get("preference_mode_used") == "semantic_rerank", fit_components
+        assert preference_components.get("preference_mode_used") == "semantic_rerank", preference_components
         assert "tech_stack_match" in preference_reason_codes, preference_reason_codes
         # CE path emits detail codes in "category:label|segment" format; LLM path does not.
         assert any("|" in code for code in preference_reason_codes), (
