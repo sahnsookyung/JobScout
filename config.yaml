@@ -155,9 +155,9 @@ matching:
       #   evidence_text_max_chars: 4000  # Raise if evidence is being truncated too aggressively
       #   # These are operating budgets, not hidden hard limits; truncation emits warnings/diagnostics.
 
-    # Coverage weights (used in Fit score calculation)
+    # Fit score is capability-only: required coverage blended with retrieval similarity.
     weight_required: 0.7
-    weight_preferred: 0.3
+    weight_preferred: 0.3         # Deprecated compatibility field; preferred reqs do not affect fit_score.
 
     # Capability penalty amounts (Fit score only)
     penalty_missing_required: 15.0

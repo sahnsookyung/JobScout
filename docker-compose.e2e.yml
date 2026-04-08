@@ -25,6 +25,8 @@ services:
       - DEV_BYPASS_NAME=JobScout Dev User
       - RESUME_ETL_WAIT_TIMEOUT_SECONDS=${RESUME_ETL_WAIT_TIMEOUT_SECONDS:-90}
       - ETL_LLM_PROVIDER=openai_compatible
+      - ETL_LLM_EXTRACTION_BASE_URL=http://mock-llm:8090/v1
+      - ETL_LLM_EXTRACTION_API_KEY=mock-key
       - ETL_LLM_BASE_URL=http://mock-llm:8090/v1
       - ETL_LLM_API_KEY=mock-key
       - ETL_EMBEDDING_BASE_URL=http://mock-llm:8090/v1
@@ -46,6 +48,8 @@ services:
     environment:
       - JOBSCOUT_ENV=test
       - ETL_LLM_PROVIDER=openai_compatible
+      - ETL_LLM_EXTRACTION_BASE_URL=http://mock-llm:8090/v1
+      - ETL_LLM_EXTRACTION_API_KEY=mock-key
       - ETL_LLM_BASE_URL=http://mock-llm:8090/v1
       - ETL_LLM_API_KEY=mock-key
 
@@ -56,6 +60,8 @@ services:
     environment:
       - JOBSCOUT_ENV=test
       - ETL_LLM_PROVIDER=openai_compatible
+      - ETL_LLM_EXTRACTION_BASE_URL=http://mock-llm:8090/v1
+      - ETL_LLM_EXTRACTION_API_KEY=mock-key
       - ETL_LLM_BASE_URL=http://mock-llm:8090/v1
       - ETL_LLM_API_KEY=mock-key
       - ETL_EMBEDDING_BASE_URL=http://mock-llm:8090/v1
@@ -68,6 +74,8 @@ services:
     environment:
       - JOBSCOUT_ENV=test
       - ETL_LLM_PROVIDER=openai_compatible
+      - ETL_LLM_EXTRACTION_BASE_URL=http://mock-llm:8090/v1
+      - ETL_LLM_EXTRACTION_API_KEY=mock-key
       - ETL_LLM_BASE_URL=http://mock-llm:8090/v1
       - ETL_LLM_API_KEY=mock-key
       - ETL_EMBEDDING_BASE_URL=http://mock-llm:8090/v1
@@ -98,5 +106,7 @@ services:
       - DISABLE_SCRAPER=1
       - LISTENER_TIMEOUT_SECONDS=${LISTENER_TIMEOUT_SECONDS:-90}
       - ETL_LLM_PROVIDER=openai_compatible
+      - ETL_LLM_EXTRACTION_BASE_URL=http://mock-llm:8090/v1
+      - ETL_LLM_EXTRACTION_API_KEY=mock-key
       - ETL_LLM_BASE_URL=http://mock-llm:8090/v1
       - ETL_LLM_API_KEY=mock-key

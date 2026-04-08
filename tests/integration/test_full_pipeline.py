@@ -455,9 +455,9 @@ class TestFullPipelineIntegration(unittest.TestCase):
         
         # Verify scores are reasonable
         for scored in scored_matches:
-            self.assertGreaterEqual(scored.overall_score, 0.0)
-            self.assertLessEqual(scored.overall_score, 100.0)
-            print(f"    - {scored.job.title} @ {scored.job.company}: {scored.overall_score:.1f}%")
+            self.assertGreaterEqual(scored.fit_score, 0.0)
+            self.assertLessEqual(scored.fit_score, 100.0)
+            print(f"    - {scored.job.title} @ {scored.job.company}: {scored.fit_score:.1f}%")
         
         # Store as class attribute to persist across test instances
         type(self).test_scored_matches = scored_matches
@@ -513,7 +513,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
         # Filter high-scoring matches
         high_score_matches = [
             m for m in self.test_scored_matches
-            if m.overall_score >= 70.0
+            if m.fit_score >= 70.0
         ]
         
         if not high_score_matches:
@@ -542,7 +542,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
                         if job_post:
                             content = NotificationMessageBuilder.build_notification_content(
                                 job_post=job_post,
-                                overall_score=float(scored_match.overall_score),
+                                overall_score=float(scored_match.fit_score),
                                 fit_score=float(scored_match.fit_score),
                                 required_coverage=float(scored_match.jd_required_coverage),
                                 apply_url=job_post.company_url_direct

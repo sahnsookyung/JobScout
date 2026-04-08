@@ -6,6 +6,7 @@ For standard test utilities, see tests/__init__.py
 """
 
 import os
+from urllib.parse import urlparse, urlunparse
 import pytest
 
 
@@ -116,9 +117,12 @@ def test_database():
         engine = create_engine(db_url)
         migrate_database(engine=engine)
         
-        from urllib.parse import urlparse
         _parsed = urlparse(db_url)
-        _safe = _parsed._replace(password="***").geturl() if _parsed.password else db_url
+        if _parsed.password:
+            safe_netloc = _parsed.netloc.replace(f":{_parsed.password}@", ":***@")
+            _safe = urlunparse(_parsed._replace(netloc=safe_netloc))
+        else:
+            _safe = db_url
         print(f"\n✓ Test database started: {_safe}")
         
         yield db_url

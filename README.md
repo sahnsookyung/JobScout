@@ -167,8 +167,8 @@ matching:
       cross_encoder:
         local:
           model_name: "BAAI/bge-reranker-v2-m3"
-    weight_required: 0.7              # weight for required requirements in fit score
-    weight_preferred: 0.3             # weight for preferred requirements
+    weight_required: 0.7              # blend required coverage with job similarity in fit score
+    weight_preferred: 0.3             # deprecated compatibility field; preferred reqs are non-scoring metadata
     penalty_missing_required: 15.0
     penalty_seniority_mismatch: 10.0
 ```
@@ -239,14 +239,14 @@ jobscout/
 │   ├── matcher/                 # Hybrid retrieval (pgvector + lexical)
 │   ├── scorer/                  # Fit scoring, cross-encoder, persistence
 │   ├── ranking/                 # Ranking pipeline (balanced/preference_first/fit_first)
-│   └── preferences/             # Preference parser and semantic reranker
+│   └── llm/                     # Shared provider abstractions and structured extraction
 ├── database/                    # SQLAlchemy models and repositories
 ├── etl/                         # ETL orchestrator, resume profiler, schemas
 ├── services/                    # Microservice entrypoints
 │   ├── orchestrator/            # Task scheduling and Redis stream coordination
 │   ├── extraction/              # LLM extraction service
 │   ├── embeddings/              # Embedding generation service
-│   └── scorer_matcher/          # Matching and scoring service
+│   └── scorer_matcher/          # Matching, preference parsing, and preference reranking
 ├── notification/                # Notification channels, worker, tracker
 ├── pipeline/                    # Matching pipeline
 ├── web/

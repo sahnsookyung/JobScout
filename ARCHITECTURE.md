@@ -19,7 +19,7 @@ Ranked by symbol count from the knowledge graph:
 | **Services** | 336 | 81% | Four FastAPI microservice entrypoints (orchestrator, extraction, embeddings, scorer-matcher) and their shared base logic |
 | **Notification** | 235 | 87% | Notification pipeline: deduplication, channel dispatch (Discord, Email, in-app), message building, RQ worker |
 | **Pipeline** | 135 | 74% | End-to-end matching runner: loads user wants, runs vector search, scores, saves results |
-| **Scorer** | 88 | 90% | Fit scoring, penalty calculation, want-score weighting, explainability |
+| **Scorer** | 88 | 90% | Fit scoring, penalty calculation, and explainability |
 | **Etl** | 80 | 83% | Job ETL service: upsert, fingerprinting, content hashing, facet extraction |
 | **Routers** | 61 | 91% | FastAPI route handlers for pipeline control, matches, notifications, policy |
 | **Repositories** | 59 | 91% | SQLAlchemy repository layer for all DB models |
@@ -181,7 +181,7 @@ core/scorer/service.py  score_matches()
                       └─ core/scorer/penalties.py  _extract_years_from_evidence()
 ```
 
-Each preliminary match is scored with a fit score (required/preferred coverage) plus optional want-score (facet alignment). Penalties are applied for experience gaps — the scorer walks resume evidence units to find the best matching years claim before computing the delta against the job's requirement.
+Each preliminary match is scored with a capability-oriented fit score (required coverage plus penalties). Preference semantics are applied afterward as a separate personalization signal for ranking. Penalties are applied for experience gaps — the scorer walks resume evidence units to find the best matching years claim before computing the delta against the job's requirement.
 
 ---
 
@@ -250,7 +250,7 @@ Completion events are published to Redis Pub/Sub channels (`extraction:completed
 All tunable parameters live in YAML config files loaded by `core/config_loader.py` (cohesion 100%):
 
 - `MatcherConfig` — similarity threshold, top-k candidates
-- `ScorerConfig` — required/preferred weights, remote preference
+- `ScorerConfig` — fit-stage weights and penalty settings
 - `FacetWeights` — per-facet importance multipliers
 - `ResultPolicy` — minimum score cutoffs, deduplication rules
 

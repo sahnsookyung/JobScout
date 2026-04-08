@@ -8,9 +8,9 @@
 JobScout currently distinguishes between:
 
 - `fit_score`: how well a candidate is qualified for a job
-- `want_score`: how well a job matches what the candidate wants
+- legacy facet-based preference score: how well a job matches what the candidate wants
 
-The current `want_score` design uses a fixed 7-facet taxonomy and compares user want embeddings against job facet embeddings. That approach has several problems:
+The legacy facet-based preference score uses a fixed 7-facet taxonomy and compares user want embeddings against job facet embeddings. That approach has several problems:
 
 - It forces candidate preferences into a brittle hand-authored schema.
 - Some "preferences" are actually hard constraints and should not be modeled as semantic similarity.
@@ -86,7 +86,7 @@ LLMs are not the primary online ranking primitive for broad candidate generation
 
 ## Alternatives Considered
 
-### Keep the existing 7-facet `want_score`
+### Keep the existing 7-facet legacy preference score
 
 Rejected.
 
@@ -134,7 +134,7 @@ Reasons:
 
 ## Implementation Notes
 
-- Do not persist the old facet-based `want_score` as part of the final ranking model.
+- Do not persist the old facet-based preference score as part of the final ranking model.
 - Frontend work should add first-class controls for hard constraints.
 - Backend ranking should treat preference as a bounded reranking modifier rather than a peer of fit.
 - If sufficient behavioral labels are collected later, learned-to-rank can be introduced on top of the same feature structure.
@@ -153,7 +153,7 @@ Expected follow-up work includes:
 
 All follow-up items are now complete:
 
-- **Candidate preference data model**: `CandidatePreferences` table and `CandidatePreferencesRepository` shipped; `PreferenceProfile` Pydantic model in `core/preference_semantics/`.
+- **Candidate preference data model**: `CandidatePreferences` table and `CandidatePreferencesRepository` shipped; `PreferenceProfile` Pydantic model in `services/scorer_matcher/preference_semantics.py`.
 - **Frontend hard-filter controls**: structured filter fields (remote, visa, salary, employment type) captured in frontend and enforced deterministically in retrieval.
 - **Hybrid retrieval**: dense ANN over job summary embeddings plus lexical retrieval over skills and titles.
 - **Shortlist reranking**: `LLMPreferenceSemanticReranker` and `LLMPreferenceJudge` implemented in `services/scorer_matcher/preference_semantics.py`. Both use `extract_structured_data` against named schema specs (`preference_semantic_rerank_v1`, `preference_llm_judge_v1`). E2E covered by `test_candidate_preferences_round_trip_updates_matching_behavior`.

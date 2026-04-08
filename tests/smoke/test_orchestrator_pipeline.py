@@ -33,6 +33,7 @@ EXTRACTION_PORT = os.environ.get("TEST_EXTRACTION_PORT", "18081")
 EMBEDDINGS_PORT = os.environ.get("TEST_EMBEDDINGS_PORT", "18082")
 MATCHER_PORT = os.environ.get("TEST_MATCHER_PORT", "18083")
 ORCHESTRATOR_PORT = os.environ.get("TEST_ORCHESTRATOR_PORT", "18084")
+MOCK_LLM_PORT = os.environ.get("TEST_MOCK_LLM_PORT", "18090")
 
 
 # Service URLs - use configured ports
@@ -44,6 +45,14 @@ EMBEDDINGS_URL = f"http://localhost:{EMBEDDINGS_PORT}"
 MATCHER_URL = f"http://localhost:{MATCHER_PORT}"
 ORCHESTRATOR_URL = f"http://localhost:{ORCHESTRATOR_PORT}"
 TEST_DB_IMAGE = "pgvector/pgvector:pg17"
+SERVICE_TEST_IMAGES = {
+    "extraction": "jobscout-extraction:latest",
+    "embeddings": "jobscout-embeddings:latest",
+    "matcher": "jobscout-scorer-matcher:latest",
+    "orchestrator": "jobscout-orchestrator:latest",
+    "mock_llm": "jobscout-mock-llm-test:latest",
+}
+MOCK_LLM_URL_DOCKER = "http://mock-llm-test:8090/v1"
 
 
 # Set environment for modules that import at load time
@@ -75,34 +84,49 @@ def run_docker_command(args, check=False, timeout=30):
 
 
 
-def build_service_images():
-    """Build service-specific Docker images if they don't exist.
+def build_service_images(project_root: pathlib.Path):
+    """Build service-specific Docker images when they are missing."""
+    dockerfiles = {
+        "extraction": project_root / "services" / "extraction" / "Dockerfile",
+        "embeddings": project_root / "services" / "embeddings" / "Dockerfile",
+        "matcher": project_root / "services" / "scorer_matcher" / "Dockerfile",
+        "orchestrator": project_root / "services" / "orchestrator" / "Dockerfile",
+        "mock_llm": project_root / "tests" / "services" / "mock_llm" / "Dockerfile",
+    }
 
-    Note: For now, we use jobscout-orchestrator:latest for all services
-    since it's the only image that exists. In the future, we should build
-    service-specific images.
-    """
-    pass  # Currently not building separate images
+    for service_name, image_name in SERVICE_TEST_IMAGES.items():
+        image_check = run_docker_command(["images", "-q", image_name])
+        if image_check.stdout.strip():
+            continue
+
+        dockerfile = dockerfiles[service_name]
+        print(f"  Building {image_name} from {dockerfile}...")
+        run_docker_command(
+            [
+                "build",
+                "-f",
+                str(dockerfile),
+                "-t",
+                image_name,
+                str(project_root),
+            ],
+            check=True,
+            timeout=1800,
+        )
 
 
 
 def start_test_infrastructure():
     """Start Redis and all microservices containers."""
+    project_root = pathlib.Path(__file__).parent.parent.parent
     # Check if Docker is available
     result = run_docker_command(["version"])
     if result.returncode != 0:
         pytest.skip("Docker not available - skipping integration tests")
         return
 
-
-    # Check if the required image exists
-    image_check = run_docker_command(["images", "-q", "jobscout-orchestrator:latest"])
-    if not image_check.stdout.strip():
-        pytest.skip("Docker image 'jobscout-orchestrator:latest' not found. Please build it first before running integration tests.")
-
-
     # Build service-specific images if needed
-    build_service_images()
+    build_service_images(project_root)
 
 
     print("\nStarting test infrastructure...")
@@ -110,7 +134,16 @@ def start_test_infrastructure():
 
     # FIX (Bug 2): Use 'docker rm -f' for cleanup - handles running/stopped containers
     # and containers with or without --rm in a single idempotent command.
-    for container in ["web-backend-test", "orchestrator-test", "matcher-test", "embeddings-test", "extraction-test", "postgres-test", "redis-test"]:
+    for container in [
+        "web-backend-test",
+        "orchestrator-test",
+        "matcher-test",
+        "embeddings-test",
+        "extraction-test",
+        "mock-llm-test",
+        "postgres-test",
+        "redis-test",
+    ]:
         run_docker_command(["rm", "-f", container])
 
 
@@ -160,6 +193,17 @@ def start_test_infrastructure():
         "python", "-m", "database.migrate"
     ], check=True)
 
+    print("  Starting Mock LLM...")
+    run_docker_command([
+        "run", "-d",
+        "--name", "mock-llm-test",
+        "--network", "test-network",
+        "-p", f"{MOCK_LLM_PORT}:8090",
+        "--rm",
+        SERVICE_TEST_IMAGES["mock_llm"],
+    ], check=True)
+    wait_for_service(f"localhost:{MOCK_LLM_PORT}", "health")
+
 
     # Start Extraction Service
     print("  Starting Extraction Service...")
@@ -168,13 +212,16 @@ def start_test_infrastructure():
         "--name", "extraction-test",
         "--network", "test-network",
         "-p", f"{EXTRACTION_PORT}:8081",
+        "-e", "DATABASE_URL=postgresql://user:password@postgres-test:5432/jobscout_test",
         "-e", f"REDIS_URL={REDIS_URL_DOCKER}",
         "-e", "EXTRACTION_CONSUMER_GROUP=extraction-service",
         "-e", "HOSTNAME=extraction-test",
+        "-e", "JOBSCOUT_ENV=test",
+        "-e", "ETL_LLM_PROVIDER=openai_compatible",
+        "-e", f"ETL_LLM_BASE_URL={MOCK_LLM_URL_DOCKER}",
+        "-e", "ETL_LLM_API_KEY=mock-key",
         "--rm",
-        "jobscout-orchestrator:latest",
-        "uv", "run", "uvicorn", "services.extraction.main:app",
-        "--host", "0.0.0.0", "--port", "8081"
+        SERVICE_TEST_IMAGES["extraction"],
     ], check=True)
 
     # Start Embeddings Service
@@ -184,13 +231,18 @@ def start_test_infrastructure():
         "--name", "embeddings-test",
         "--network", "test-network",
         "-p", f"{EMBEDDINGS_PORT}:8082",
+        "-e", "DATABASE_URL=postgresql://user:password@postgres-test:5432/jobscout_test",
         "-e", f"REDIS_URL={REDIS_URL_DOCKER}",
         "-e", "EMBEDDINGS_CONSUMER_GROUP=embeddings-service",
         "-e", "HOSTNAME=embeddings-test",
+        "-e", "JOBSCOUT_ENV=test",
+        "-e", "ETL_LLM_PROVIDER=openai_compatible",
+        "-e", f"ETL_LLM_BASE_URL={MOCK_LLM_URL_DOCKER}",
+        "-e", "ETL_LLM_API_KEY=mock-key",
+        "-e", f"ETL_EMBEDDING_BASE_URL={MOCK_LLM_URL_DOCKER}",
+        "-e", "ETL_EMBEDDING_API_KEY=mock-key",
         "--rm",
-        "jobscout-orchestrator:latest",
-        "uv", "run", "uvicorn", "services.embeddings.main:app",
-        "--host", "0.0.0.0", "--port", "8082"
+        SERVICE_TEST_IMAGES["embeddings"],
     ], check=True)
 
     # Start Scorer-Matcher Service
@@ -200,21 +252,39 @@ def start_test_infrastructure():
         "--name", "matcher-test",
         "--network", "test-network",
         "-p", f"{MATCHER_PORT}:8083",
+        "-e", "DATABASE_URL=postgresql://user:password@postgres-test:5432/jobscout_test",
         "-e", f"REDIS_URL={REDIS_URL_DOCKER}",
         "-e", "MATCHER_CONSUMER_GROUP=matcher-service",
         "-e", "HOSTNAME=matcher-test",
+        "-e", "JOBSCOUT_ENV=test",
+        "-e", "ETL_LLM_PROVIDER=openai_compatible",
+        "-e", f"ETL_LLM_BASE_URL={MOCK_LLM_URL_DOCKER}",
+        "-e", "ETL_LLM_API_KEY=mock-key",
+        "-e", f"ETL_EMBEDDING_BASE_URL={MOCK_LLM_URL_DOCKER}",
+        "-e", "ETL_EMBEDDING_API_KEY=mock-key",
+        "-e", "PREFERENCES_PARSER_PROVIDER=openai_compatible",
+        "-e", f"PREFERENCES_PARSER_BASE_URL={MOCK_LLM_URL_DOCKER}",
+        "-e", "PREFERENCES_PARSER_API_KEY=mock-key",
+        "-e", "PREFERENCES_SEMANTIC_RERANKER_PROVIDER=openai_compatible",
+        "-e", f"PREFERENCES_SEMANTIC_RERANKER_BASE_URL={MOCK_LLM_URL_DOCKER}",
+        "-e", "PREFERENCES_SEMANTIC_RERANKER_API_KEY=mock-key",
+        "-e", "PREFERENCES_LLM_JUDGE_PROVIDER=openai_compatible",
+        "-e", f"PREFERENCES_LLM_JUDGE_BASE_URL={MOCK_LLM_URL_DOCKER}",
+        "-e", "PREFERENCES_LLM_JUDGE_API_KEY=mock-key",
+        "-e", "FIT_LLM_PROVIDER=openai_compatible",
+        "-e", f"FIT_LLM_BASE_URL={MOCK_LLM_URL_DOCKER}",
+        "-e", "FIT_LLM_API_KEY=mock-key",
+        "-e", "PREFERENCES_RERANKER=cross_encoder",
+        "-e", "PREFERENCES_CROSS_ENCODER_ENABLED=true",
+        "-e", "PREFERENCES_CROSS_ENCODER_RUNTIME=heuristic",
         "--rm",
-        "jobscout-orchestrator:latest",
-        "uv", "run", "uvicorn", "services.scorer_matcher.main:app",
-        "--host", "0.0.0.0", "--port", "8083"
+        SERVICE_TEST_IMAGES["matcher"],
     ], check=True)
 
     # Start Orchestrator Service
     print("  Starting Orchestrator Service...")
 
     # Get project root for mounting resume file and config
-    import pathlib
-    project_root = pathlib.Path(__file__).parent.parent.parent
     resume_path = project_root / "resume.json"
     config_path = project_root / "config.yaml"
 
@@ -232,12 +302,17 @@ def start_test_infrastructure():
         "-e", "EXTRACTION_URL=http://extraction-test:8081",
         "-e", "EMBEDDINGS_URL=http://embeddings-test:8082",
         "-e", "SCORER_MATCHER_URL=http://matcher-test:8083",
+        "-e", "JOBSCOUT_ENV=test",
+        "-e", "AUTH_MODE=dev-bypass",
+        "-e", "DISABLE_SCRAPER=1",
+        "-e", "LISTENER_TIMEOUT_SECONDS=45",
+        "-e", "ETL_LLM_PROVIDER=openai_compatible",
+        "-e", f"ETL_LLM_BASE_URL={MOCK_LLM_URL_DOCKER}",
+        "-e", "ETL_LLM_API_KEY=mock-key",
         "-v", f"{resume_path}:/app/resume.json:ro",
         "-v", f"{config_path}:/app/config.yaml:ro",
         "--rm",
-        "jobscout-orchestrator:latest",
-        "uv", "run", "uvicorn", "services.orchestrator.main:app",
-        "--host", "0.0.0.0", "--port", "8084"
+        SERVICE_TEST_IMAGES["orchestrator"],
     ], check=True)
 
 
@@ -288,6 +363,26 @@ def start_web_backend_for_tests(project_root: pathlib.Path, resume_path: pathlib
         "-e", f"EMBEDDINGS_URL=http://embeddings-test:8082",
         "-e", f"SCORER_MATCHER_URL=http://matcher-test:8083",
         "-e", f"ORCHESTRATOR_URL=http://orchestrator-test:8084",
+        "-e", "JOBSCOUT_ENV=test",
+        "-e", "AUTH_MODE=dev-bypass",
+        "-e", "DEV_BYPASS_USER_ID=00000000-0000-0000-0000-000000000001",
+        "-e", "DEV_BYPASS_EMAIL=dev-user@jobscout.local",
+        "-e", "DEV_BYPASS_NAME=JobScout Dev User",
+        "-e", "RESUME_ETL_WAIT_TIMEOUT_SECONDS=45",
+        "-e", "ETL_LLM_PROVIDER=openai_compatible",
+        "-e", f"ETL_LLM_BASE_URL={MOCK_LLM_URL_DOCKER}",
+        "-e", "ETL_LLM_API_KEY=mock-key",
+        "-e", f"ETL_EMBEDDING_BASE_URL={MOCK_LLM_URL_DOCKER}",
+        "-e", "ETL_EMBEDDING_API_KEY=mock-key",
+        "-e", "PREFERENCES_PARSER_PROVIDER=openai_compatible",
+        "-e", f"PREFERENCES_PARSER_BASE_URL={MOCK_LLM_URL_DOCKER}",
+        "-e", "PREFERENCES_PARSER_API_KEY=mock-key",
+        "-e", "PREFERENCES_SEMANTIC_RERANKER_PROVIDER=openai_compatible",
+        "-e", f"PREFERENCES_SEMANTIC_RERANKER_BASE_URL={MOCK_LLM_URL_DOCKER}",
+        "-e", "PREFERENCES_SEMANTIC_RERANKER_API_KEY=mock-key",
+        "-e", "PREFERENCES_LLM_JUDGE_PROVIDER=openai_compatible",
+        "-e", f"PREFERENCES_LLM_JUDGE_BASE_URL={MOCK_LLM_URL_DOCKER}",
+        "-e", "PREFERENCES_LLM_JUDGE_API_KEY=mock-key",
         "-v", f"{config_path}:/app/config.yaml:ro",
         "-v", f"{resume_path}:/app/resume.json:ro",
         "--rm",
@@ -338,7 +433,16 @@ def stop_test_infrastructure():
     print("\nStopping test infrastructure...")
     # FIX (Bug 2): Use 'docker rm -f' — containers started with --rm are already
     # removed on stop, so a separate docker rm always fails. rm -f handles both cases.
-    for container in ["web-backend-test", "orchestrator-test", "matcher-test", "embeddings-test", "extraction-test", "postgres-test", "redis-test"]:
+    for container in [
+        "web-backend-test",
+        "orchestrator-test",
+        "matcher-test",
+        "embeddings-test",
+        "extraction-test",
+        "mock-llm-test",
+        "postgres-test",
+        "redis-test",
+    ]:
         run_docker_command(["rm", "-f", container])
     run_docker_command(["network", "rm", "test-network"])
     print("  Test infrastructure stopped")

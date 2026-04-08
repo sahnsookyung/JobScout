@@ -19,6 +19,7 @@ from core.matcher import (
     MatcherService, MatchResultDTO, JobMatchDTO, JobEvidenceDTO,
     RequirementMatchDTO, JobRequirementDTO, penalty_details_from_orm,
 )
+from core.ranking import RankingContext, RankingMode, get_ranking_policy_store, rank_matches
 from core.scorer import ScoringService
 from core.scorer.persistence import save_match_to_db
 from core.llm.interfaces import LLMProvider
@@ -479,7 +480,17 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event
 
 
 def _apply_final_result_policy(scored_matches, matching_config):
-    """Apply the final result truncation after semantic preference reranking."""
+    """Apply shared ranking before the final result truncation."""
+    if not scored_matches:
+        return scored_matches
+
+    ranking_config = get_ranking_policy_store().get_current_config()
+    try:
+        ranking_mode = RankingMode(ranking_config.active_default_mode)
+    except ValueError:
+        ranking_mode = RankingMode.BALANCED
+    rank_matches(scored_matches, RankingContext(mode=ranking_mode, config=ranking_config))
+
     result_policy = _resolve_result_policy(matching_config)
     if not result_policy:
         return scored_matches

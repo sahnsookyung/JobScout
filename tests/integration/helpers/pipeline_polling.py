@@ -13,7 +13,7 @@ def _wait_for_terminal_state(
     url: str,
     label: str,
     timeout_s: float,
-    poll_interval_s: float = 1.0,
+    poll_interval_s: float = 0.5,
     diagnostics: Optional[Callable[[], str]] = None,
 ) -> dict:
     deadline = time.time() + timeout_s
@@ -50,7 +50,7 @@ def wait_for_resume_terminal(
     task_id: str,
     *,
     timeout_s: float,
-    poll_interval_s: float = 1.0,
+    poll_interval_s: float = 0.5,
     diagnostics: Optional[Callable[[], str]] = None,
 ) -> dict:
     return _wait_for_terminal_state(
@@ -67,7 +67,7 @@ def wait_for_matching_terminal(
     task_id: str,
     *,
     timeout_s: float,
-    poll_interval_s: float = 1.0,
+    poll_interval_s: float = 0.5,
     diagnostics: Optional[Callable[[], str]] = None,
 ) -> dict:
     return _wait_for_terminal_state(

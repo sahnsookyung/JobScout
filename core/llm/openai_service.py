@@ -3,6 +3,7 @@ OpenAI Service - LLM implementation using OpenAI API.
 
 Provides structured data extraction and embedding generation.
 """
+import os
 from typing import Dict, Any, List, Optional, Tuple
 import json
 import logging
@@ -33,6 +34,17 @@ from core.llm.schema_models import (
 )
 
 logger = logging.getLogger(__name__)
+
+LLM_RETRY_MAX_ATTEMPTS = max(1, int(os.getenv("LLM_RETRY_MAX_ATTEMPTS", "4")))
+LLM_RETRY_EXPONENTIAL_MAX_SECONDS = max(
+    2,
+    float(os.getenv("LLM_RETRY_EXPONENTIAL_MAX_SECONDS", "8")),
+)
+LLM_RATE_LIMIT_WAIT_CAP_SECONDS = max(
+    1,
+    float(os.getenv("LLM_RATE_LIMIT_WAIT_CAP_SECONDS", "30")),
+)
+OPENAI_CLIENT_MAX_RETRIES = max(0, int(os.getenv("OPENAI_CLIENT_MAX_RETRIES", "0")))
 
 
 # ---------------------------------------------------------------------------
@@ -123,12 +135,12 @@ def _wait_respecting_retry_after(retry_state: RetryCallState) -> float:
     if isinstance(exc, openai.RateLimitError):
         wait = _wait_from_rate_limit_headers(exc)
         if wait > 0:
-            wait = min(wait, 120)  # safety cap at 2 min
+            wait = min(wait, LLM_RATE_LIMIT_WAIT_CAP_SECONDS)
             logger.info("Rate limit headers indicate %.1fs wait.", wait)
             return wait
 
-    # Fallback: exponential backoff 2 → 4 → 8 … capped at 60s
-    exp = wait_exponential(multiplier=1, min=2, max=60)
+    # Fallback: exponential backoff 2 -> 4 -> 8 ... capped for interactive flows.
+    exp = wait_exponential(multiplier=1, min=2, max=LLM_RETRY_EXPONENTIAL_MAX_SECONDS)
     return exp(retry_state)
 
 
@@ -142,7 +154,7 @@ def _llm_retry(**kwargs):
             openai.InternalServerError,
         )),
         wait=_wait_respecting_retry_after,
-        stop=stop_after_attempt(8),
+        stop=stop_after_attempt(LLM_RETRY_MAX_ATTEMPTS),
         before_sleep=_log_retry,
         reraise=True,
         **kwargs,
@@ -198,7 +210,7 @@ class OpenAIService(LLMProvider):
         embedding_headers: Optional[Dict[str, str]] = None
     ):
         # Build extraction client
-        client_kwargs = {}
+        client_kwargs = {"max_retries": OPENAI_CLIENT_MAX_RETRIES}
         if api_key:
             client_kwargs['api_key'] = api_key
         if base_url:
@@ -213,7 +225,7 @@ class OpenAIService(LLMProvider):
         
         # Build embedding client (separate if different endpoint or headers)
         if embedding_base_url or embedding_api_key or embedding_api_secret or embedding_headers:
-            embedding_client_kwargs = {}
+            embedding_client_kwargs = {"max_retries": OPENAI_CLIENT_MAX_RETRIES}
             if embedding_api_key:
                 embedding_client_kwargs['api_key'] = embedding_api_key
             if embedding_base_url:

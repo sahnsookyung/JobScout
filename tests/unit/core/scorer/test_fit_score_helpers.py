@@ -181,7 +181,6 @@ class TestCalculateFitScoreEdgeCases:
             job_similarity_weight=0.0,
             req_similarity_threshold=0.6,
             similarity_clamp=True,
-            preferred_bonus_max_fraction=0.0,
             missing_required_penalty_max=0.0,
             per_missing_required_penalty=0.0,
             missing_required_penalty_cap=0.0,
@@ -245,3 +244,57 @@ class TestCalculateFitScoreEdgeCases:
         )
         # Invalid fit_penalties treated as 0.0 → same score
         assert score_invalid == pytest.approx(score_zero)
+
+    def test_required_coverage_counts_missing_required_weight(self):
+        config = _default_config(enable_explicit_missing_required_penalty=False)
+        matched = [
+            SimpleNamespace(
+                requirement=SimpleNamespace(req_type="required", weight=1.0),
+                similarity=0.9,
+            )
+        ]
+        missing = [SimpleNamespace(req_type="required", weight=1.0)]
+
+        _, components = calculate_fit_score(
+            job_similarity=0.8,
+            matched_requirements=matched,
+            missing_requirements=missing,
+            fit_penalties=0.0,
+            config=config,
+        )
+
+        assert components["total_required_weight"] == pytest.approx(2.0)
+        assert components["required_coverage"] == pytest.approx(0.45)
+
+    def test_preferred_matches_do_not_increase_fit_score(self):
+        config = _default_config(enable_explicit_missing_required_penalty=False)
+        required_only = [
+            SimpleNamespace(
+                requirement=SimpleNamespace(req_type="required", weight=1.0),
+                similarity=0.9,
+            )
+        ]
+        with_preferred = required_only + [
+            SimpleNamespace(
+                requirement=SimpleNamespace(req_type="preferred", weight=1.0),
+                similarity=0.95,
+            )
+        ]
+
+        score_required_only, _ = calculate_fit_score(
+            job_similarity=0.8,
+            matched_requirements=required_only,
+            missing_requirements=[],
+            fit_penalties=0.0,
+            config=config,
+        )
+        score_with_preferred, components = calculate_fit_score(
+            job_similarity=0.8,
+            matched_requirements=with_preferred,
+            missing_requirements=[],
+            fit_penalties=0.0,
+            config=config,
+        )
+
+        assert score_with_preferred == pytest.approx(score_required_only)
+        assert components["preferred_coverage"] == pytest.approx(0.95)

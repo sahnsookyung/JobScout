@@ -1,7 +1,20 @@
 from pathlib import Path
 
+import pytest
+
 from tests.integration.helpers.compose_env import ensure_compose_env_file
-from tests.integration.test_split_stack_resume_flow import _compose_env, _compose_up_args
+from tests.integration.test_split_stack_resume_flow import (
+    _ACTIVE_SPLIT_STACK_CLEANUP,
+    _cleanup_active_split_stack,
+    _clear_active_split_stack_cleanup,
+    _compose_images_available,
+    _compose_down,
+    _compose_env,
+    _compose_up_args,
+    _env_flag,
+    _register_active_split_stack_cleanup,
+    _resolve_build_images,
+)
 
 
 def test_ensure_compose_env_file_uses_existing_env(tmp_path: Path) -> None:
@@ -14,14 +27,14 @@ def test_ensure_compose_env_file_uses_existing_env(tmp_path: Path) -> None:
     assert dotenv_path.read_text(encoding="utf-8") == "EXISTING=1\n"
 
 
-def test_ensure_compose_env_file_copies_example(tmp_path: Path) -> None:
+def test_ensure_compose_env_file_ignores_example_values_for_e2e(tmp_path: Path) -> None:
     dotenv_example_path = tmp_path / ".env.example"
     dotenv_example_path.write_text("FROM_EXAMPLE=1\n", encoding="utf-8")
 
     created = ensure_compose_env_file(tmp_path)
 
     assert created is True
-    assert (tmp_path / ".env").read_text(encoding="utf-8") == "FROM_EXAMPLE=1\n"
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == ""
 
 
 def test_ensure_compose_env_file_creates_empty_file_when_no_example(tmp_path: Path) -> None:
@@ -50,3 +63,107 @@ def test_compose_env_reserves_mailpit_ports() -> None:
 
     assert env["MAILPIT_SMTP_PORT"].isdigit()
     assert env["MAILPIT_UI_PORT"].isdigit()
+
+
+def test_env_flag_parses_bool_values(monkeypatch) -> None:
+    monkeypatch.setenv("JOBSCOUT_E2E_BUILD_IMAGES", "true")
+    assert _env_flag("JOBSCOUT_E2E_BUILD_IMAGES") is True
+
+    monkeypatch.setenv("JOBSCOUT_E2E_BUILD_IMAGES", "0")
+    assert _env_flag("JOBSCOUT_E2E_BUILD_IMAGES") is False
+
+
+def test_env_flag_rejects_invalid_values(monkeypatch) -> None:
+    monkeypatch.setenv("JOBSCOUT_E2E_BUILD_IMAGES", "maybe")
+
+    with pytest.raises(ValueError):
+        _env_flag("JOBSCOUT_E2E_BUILD_IMAGES")
+
+
+def test_compose_images_available_returns_true_when_all_images_exist(monkeypatch) -> None:
+    compose_args = ("docker", "compose", "-p", "jobscout-e2e")
+    compose_env = {"WEB_BACKEND_PORT": "12345"}
+
+    class _Result:
+        def __init__(self, *, returncode: int = 0, stdout: str = "") -> None:
+            self.returncode = returncode
+            self.stdout = stdout
+
+    monkeypatch.setattr(
+        "tests.integration.test_split_stack_resume_flow._run_compose",
+        lambda *args, **kwargs: _Result(stdout="svc-a:latest\nsvc-b:latest\n"),
+    )
+    monkeypatch.setattr(
+        "tests.integration.test_split_stack_resume_flow.subprocess.run",
+        lambda *args, **kwargs: _Result(returncode=0),
+    )
+
+    assert _compose_images_available(compose_args, compose_env) is True
+
+
+def test_resolve_build_images_prefers_cached_images(monkeypatch) -> None:
+    compose_args = ("docker", "compose", "-p", "jobscout-e2e")
+    compose_env = {"WEB_BACKEND_PORT": "12345"}
+    monkeypatch.delenv("JOBSCOUT_E2E_BUILD_IMAGES", raising=False)
+    monkeypatch.setattr(
+        "tests.integration.test_split_stack_resume_flow._compose_images_available",
+        lambda *args, **kwargs: True,
+    )
+
+    assert _resolve_build_images(compose_args, compose_env) is False
+
+
+def test_active_split_stack_cleanup_runs_down_and_clears_state(monkeypatch) -> None:
+    calls: list[tuple[tuple[str, ...], dict[str, str]]] = []
+    compose_args = ("docker", "compose", "-p", "jobscout-e2e")
+    compose_env = {"WEB_BACKEND_PORT": "12345"}
+
+    def fake_compose_down(args: tuple[str, ...], env: dict[str, str]) -> None:
+        calls.append((args, env))
+
+    monkeypatch.setattr(
+        "tests.integration.test_split_stack_resume_flow._compose_down",
+        fake_compose_down,
+    )
+    _clear_active_split_stack_cleanup()
+    _register_active_split_stack_cleanup(compose_args, compose_env)
+
+    _cleanup_active_split_stack()
+
+    assert calls == [(compose_args, compose_env)]
+    assert _ACTIVE_SPLIT_STACK_CLEANUP == {}
+
+
+def test_compose_down_force_removes_leftover_project_containers(monkeypatch) -> None:
+    compose_args = ("docker", "compose", "-p", "jobscout-e2e")
+    compose_env = {"WEB_BACKEND_PORT": "12345"}
+    commands: list[list[str]] = []
+
+    class _Result:
+        def __init__(self, returncode: int = 0) -> None:
+            self.returncode = returncode
+
+    monkeypatch.setattr(
+        "tests.integration.test_split_stack_resume_flow._run_compose",
+        lambda *args, **kwargs: _Result(),
+    )
+    monkeypatch.setattr(
+        "tests.integration.test_split_stack_resume_flow._compose_project_container_ids",
+        lambda project_name: ["abc123"] if not commands else [],
+    )
+
+    def fake_run(command: list[str], **kwargs) -> _Result:
+        commands.append(command)
+        return _Result()
+
+    monkeypatch.setattr(
+        "tests.integration.test_split_stack_resume_flow.subprocess.run",
+        fake_run,
+    )
+
+    _compose_down(compose_args, compose_env)
+
+    assert commands == [
+        ["docker", "rm", "-f", "-v", "abc123"],
+        ["docker", "network", "rm", "jobscout-e2e_default"],
+    ]

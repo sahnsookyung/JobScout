@@ -11,6 +11,7 @@ from services.scorer_matcher.candidate_preferences import (
     apply_candidate_preference_filters,
     apply_preference_semantic_reranking,
 )
+from core.config_loader import RankingConfig
 from services.scorer_matcher.pipeline import (
     _apply_final_result_policy,
     _convert_matches_to_dtos,
@@ -32,9 +33,22 @@ def _uow(repo):
     return manager
 
 
-def _dto(job_id: str = "job-1") -> SimpleNamespace:
+def _dto(
+    job_id: str = "job-1",
+    *,
+    match_id: str | None = None,
+    fit_score: float = 80.0,
+    preference_score: float | None = None,
+    job_similarity: float = 0.8,
+) -> SimpleNamespace:
     job = SimpleNamespace(id=job_id, title="Engineer", company="Acme", content_hash="hash-1")
-    return SimpleNamespace(job=job, fit_score=80.0, preference_score=None)
+    return SimpleNamespace(
+        id=match_id or f"match-{job_id}",
+        job=job,
+        fit_score=fit_score,
+        preference_score=preference_score,
+        job_similarity=job_similarity,
+    )
 
 
 def _preliminary(
@@ -147,15 +161,28 @@ class TestFinalResultPolicy:
         "services.scorer_matcher.pipeline.get_result_policy_store",
         return_value=SimpleNamespace(get_current_policy=lambda: SimpleNamespace(top_k=1)),
     )
-    def test_applies_top_k_after_preference_reranking(self, _mock_policy_store):
-        matches = [_dto("job-1"), _dto("job-2")]
+    @patch(
+        "services.scorer_matcher.pipeline.get_ranking_policy_store",
+        return_value=SimpleNamespace(
+            get_current_config=lambda: RankingConfig(
+                active_default_mode="balanced",
+                balanced_w_pref=0.7,
+                balanced_w_fit=0.3,
+            )
+        ),
+    )
+    def test_applies_ranking_before_top_k(self, _mock_ranking_store, _mock_policy_store):
+        matches = [
+            _dto("job-fit", fit_score=90.0, preference_score=0.1),
+            _dto("job-pref", fit_score=80.0, preference_score=0.95),
+        ]
 
         result = _apply_final_result_policy(
             matches,
             SimpleNamespace(result_policy=SimpleNamespace(top_k=1)),
         )
 
-        assert result == [matches[0]]
+        assert [match.job.id for match in result] == ["job-pref"]
 
 
 class TestCandidatePreferenceHelpers:
