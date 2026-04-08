@@ -128,3 +128,211 @@ Each case should capture:
 3. Create a small golden corpus for fast repeatable CI runs.
 4. Add a larger holdout corpus for deeper comparisons outside CI.
 5. Add a baseline-vs-candidate comparison report.
+
+## Fixture Schema
+
+Each replay fixture should be versioned and stored as a single case bundle.
+
+Required top-level fields:
+
+- `fixture_version`
+- `case_id`
+- `resume`
+- `candidate_preferences`
+- `job_corpus`
+- `labels`
+- `metadata`
+
+### `resume`
+
+- `resume_id`
+- `owner_id` or synthetic benchmark owner
+- `resume_text`
+- `resume_fingerprint`
+- optional `structured_resume`
+- optional `evidence_units`
+
+### `candidate_preferences`
+
+- `remote_mode`
+- `target_locations`
+- `visa_sponsorship_required`
+- `salary_min`
+- `employment_types`
+- `soft_preferences`
+- optional `preference_profile`
+- `preference_mode`
+
+### `job_corpus`
+
+An array of jobs with:
+
+- `job_id`
+- `title`
+- `company`
+- `location_text`
+- `is_remote`
+- `description`
+- optional structured requirement payloads
+- optional embeddings or retrieval-side cached artifacts when needed for deterministic replay
+
+### `labels`
+
+The gold labels should be split by evaluation layer:
+
+- `retrieval_labels`
+  - relevance grade per job
+  - whether the job should survive hard filters
+- `fit_labels`
+  - overall fit band
+  - required-requirement coverage judgments
+  - missing-required error flags
+- `ranking_labels`
+  - final usefulness grade
+  - pairwise ordering judgments for disputed top jobs
+  - shortlist membership labels such as top-3 and top-10
+
+### `metadata`
+
+- domain or persona tag
+- collection date
+- adjudication status
+- adjudicator ids or anonymized references
+- notes on ambiguity, drift risk, or known benchmark caveats
+
+## Run Metadata Schema
+
+Every benchmark run should emit a machine-readable run manifest.
+
+Required fields:
+
+- `run_id`
+- `timestamp`
+- `benchmark_version`
+- `fixture_set_version`
+- `baseline_ref`
+- `candidate_ref`
+- `repo_commit`
+- `config_digest`
+- `ranking_mode`
+- `provider_versions`
+- `environment`
+- `execution_flags`
+
+### `provider_versions`
+
+- embedding model or provider
+- semantic fit provider
+- preference reranker or judge provider
+- any fallback providers enabled
+
+### `environment`
+
+- Python version
+- OS / architecture
+- CPU descriptor
+- memory limit
+- Docker yes/no
+- cache warm or cold
+
+### `execution_flags`
+
+- mocks vs live providers
+- reranker enabled flags
+- fit mode flags
+- timeout settings
+- retry settings
+
+## Result Schema
+
+Results should be emitted per case and then aggregated.
+
+Required per-case fields:
+
+- `case_id`
+- `retrieval_result`
+- `fit_result`
+- `ranking_result`
+- `runtime_result`
+- `stability_result`
+- `errors`
+
+### `retrieval_result`
+
+- retrieved job ids in order
+- recall@20
+- recall@50
+- precision@k
+- nDCG@k
+- hard-filter false negatives
+
+### `fit_result`
+
+- fit scores by job
+- fit-band accuracy
+- requirement-level precision / recall / F1
+- missing-required false-positive count
+- calibration buckets
+
+### `ranking_result`
+
+- final ranked job ids
+- nDCG@10
+- pairwise ranking accuracy
+- top-3 usefulness hit
+- whether top-k membership changed relative to baseline
+
+### `runtime_result`
+
+- stage latency breakdown
+- total wall-clock time
+- CPU time
+- peak RSS
+- container memory if applicable
+- token counts
+- external call counts
+- retry counts
+- fallback counts
+
+### `stability_result`
+
+- repeated-run agreement metrics
+- warm-vs-cold deltas
+- rank swap counts in top-k
+
+## Baseline Comparison Rules
+
+Every candidate run should be compared against a frozen baseline on the same fixture set.
+
+Rules:
+
+- Never compare runs built from different fixture versions.
+- Never compare runs with different config digests unless the config change is the experiment.
+- Treat latency, quality, and cost as separate scorecards first; do not collapse them into one opaque number.
+- Use paired comparisons at the case level.
+- Report confidence intervals for primary metrics.
+- Flag regressions when the candidate loses on the declared primary metric or exceeds guardrail budgets.
+
+Suggested default guardrails:
+
+- no statistically meaningful drop in retrieval recall@20
+- no increase in missing-required false-positive rate
+- no regression in top-3 usefulness rate
+- no unacceptable increase in token cost or p95 latency
+
+## Initial Corpus Construction Plan
+
+Build the first benchmark in three passes:
+
+1. Use frontier LLMs to draft candidate labels and disagreement notes.
+2. Have humans adjudicate the gold labels and resolve disagreements.
+3. Freeze the first `golden-mini` corpus for repeatable branch comparisons.
+
+`golden-mini` should be small enough for local iteration but diverse enough to include:
+
+- high-fit / low-preference cases
+- low-fit / high-preference cases
+- hard-filter edge cases
+- duplicate-looking jobs with materially different requirements
+- retrieval-near-miss cases
+- ambiguous human-judgment cases that need explicit adjudication notes

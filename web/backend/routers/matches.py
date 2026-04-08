@@ -9,7 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from ..dependencies import get_db
+from ..dependencies import get_current_user, get_db
 from ..services.match_service import MatchService
 from ..services.policy_service import get_policy_service
 from ..models.responses import (
@@ -48,6 +48,7 @@ _VALID_RANKING_MODES = {"preference_first", "fit_first", "balanced"}
 )
 def get_matches(
     db: DbSession,
+    user: Annotated[object, Depends(get_current_user)],
     status: Annotated[str, Query(description="Match status: active, stale, or all")] = "active",
     min_fit: Annotated[float | None, Query(ge=0, le=100, description="Minimum fit score filter")] = None,
     top_k: Annotated[int | None, Query(ge=1, le=500, description="Maximum results to return")] = None,
@@ -86,6 +87,7 @@ def get_matches(
 
     service = MatchService(db)
     matches = service.get_matches(
+        owner_id=getattr(user, "id", None),
         status=status,
         min_fit=effective_min_fit,
         top_k=effective_top_k,

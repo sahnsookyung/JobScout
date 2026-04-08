@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from web.backend.dependencies import get_current_user
 from web.backend.routers.matches import router, validate_uuid
 
 
@@ -70,6 +71,7 @@ class TestMatchesRouter:
         """Create test FastAPI app with matches router."""
         app = FastAPI()
         app.include_router(router)
+        app.dependency_overrides[get_current_user] = lambda: Mock(id="user-123")
         return app
 
     @pytest.fixture
@@ -114,7 +116,6 @@ class TestMatchesRouter:
                 'is_remote': True,
                 'is_hidden': False,
                 'required_coverage': 0.85,
-                'preferred_coverage': 0.70,
                 'preferred_requirement_coverage': 0.70,
                 'match_type': 'requirements_only',
                 'base_score': 85.0,
@@ -130,6 +131,7 @@ class TestMatchesRouter:
         assert data['count'] == 1
         assert 'matches' in data
         mock_match_service.get_matches.assert_called_once()
+        assert mock_match_service.get_matches.call_args.kwargs["owner_id"] == "user-123"
 
     def test_get_matches_with_filters(self, client, mock_match_service, mock_policy_service):
         """Test get matches with query filters."""
@@ -150,6 +152,7 @@ class TestMatchesRouter:
         mock_match_service.get_matches.assert_called_once()
         call_kwargs = mock_match_service.get_matches.call_args[1]
         assert call_kwargs['status'] == 'active'
+        assert call_kwargs['owner_id'] == 'user-123'
         assert call_kwargs['min_fit'] == 70.0
         assert call_kwargs['top_k'] == 50
         assert call_kwargs['remote_only'] is True
@@ -242,7 +245,6 @@ class TestMatchesRouter:
                 'base_score': 85.0,
                 'penalties': 0.0,
                 'required_coverage': 0.85,
-                'preferred_coverage': 0.70,
                 'preferred_requirement_coverage': 0.70,
                 'total_requirements': 10,
                 'matched_requirements_count': 8,
@@ -385,6 +387,7 @@ class TestMatchesRouterIntegration:
         """Create test FastAPI app with matches router."""
         app = FastAPI()
         app.include_router(router)
+        app.dependency_overrides[get_current_user] = lambda: Mock(id="user-123")
         return app
 
     @pytest.fixture
@@ -417,7 +420,6 @@ class TestMatchesRouterIntegration:
                         fit_score=92.5,
                         preference_score=None,
                         required_coverage=0.95,
-                        preferred_coverage=0.80,
                         preferred_requirement_coverage=0.80,
                         match_type='requirements_only',
                         is_hidden=False,
@@ -455,7 +457,6 @@ class TestMatchesRouterIntegration:
                     'base_score': 85.0,
                     'penalties': 0.0,
                     'required_coverage': 0.85,
-                    'preferred_coverage': 0.70,
                     'preferred_requirement_coverage': 0.70,
                     'total_requirements': 10,
                     'matched_requirements_count': 8,

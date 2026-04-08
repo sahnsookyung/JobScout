@@ -253,7 +253,7 @@ def calculate_fit_score(
     pref_stats = _quality_weighted_coverage(matched_pref, total_preferred_weight, threshold, clamp_similarity)
 
     required_coverage = req_stats["coverage"]    # 0..1
-    preferred_coverage = pref_stats["coverage"]  # 0..1
+    preferred_requirement_coverage = pref_stats["coverage"]  # 0..1
 
     # --- Core (normalize) ---
     denom = (w_req + w_sim)
@@ -300,7 +300,7 @@ def calculate_fit_score(
         "required_covered_weight": req_stats["covered_weight"],
         "total_required_weight": total_required_weight,
 
-        "preferred_coverage": preferred_coverage,
+        "preferred_requirement_coverage": preferred_requirement_coverage,
         "preferred_quality_sum": pref_stats["quality_sum"],
         "preferred_covered_weight": pref_stats["covered_weight"],
         "total_preferred_weight": total_preferred_weight,

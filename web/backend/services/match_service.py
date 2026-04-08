@@ -43,6 +43,7 @@ class MatchService:
     
     def get_matches(
         self,
+        owner_id: Optional[Any] = None,
         status: str = "active",
         min_fit: Optional[float] = None,
         top_k: Optional[int] = None,
@@ -80,7 +81,7 @@ class MatchService:
         except ValueError:
             mode = RankingMode(ranking_config.active_default_mode)
 
-        resume_fingerprint = self._resolve_canonical_resume_fingerprint()
+        resume_fingerprint = self._resolve_canonical_resume_fingerprint(owner_id=owner_id)
         if not resume_fingerprint:
             return []
 
@@ -116,9 +117,27 @@ class MatchService:
 
         return [self._to_match_summary(m) for m in ranked]
 
-    def _resolve_canonical_resume_fingerprint(self) -> Optional[str]:
+    def _resolve_canonical_resume_fingerprint(
+        self,
+        owner_id: Optional[Any] = None,
+    ) -> Optional[str]:
         try:
             with job_uow() as repo:
+                if owner_id is not None:
+                    latest_ready = repo.resume.get_latest_ready_resume_upload(owner_id)
+                    if latest_ready and repo.match.resume_has_persisted_matches(
+                        latest_ready.resume_fingerprint
+                    ):
+                        return latest_ready.resume_fingerprint
+
+                    for upload in repo.resume.get_ready_resume_uploads(owner_id):
+                        if repo.match.resume_has_persisted_matches(upload.resume_fingerprint):
+                            return upload.resume_fingerprint
+
+                    if latest_ready:
+                        return latest_ready.resume_fingerprint
+
+                    return None
                 return repo.get_latest_ready_resume_fingerprint()
         except Exception as exc:
             logger.warning("Could not resolve canonical resume fingerprint: %s", exc)
@@ -274,7 +293,6 @@ class MatchService:
             preference_score=self._optional_float(match.preference_score),
             penalties=self._float_or_zero(match.penalties),
             required_coverage=self._float_or_zero(match.required_coverage),
-            preferred_coverage=preferred_requirement_coverage,
             preferred_requirement_coverage=preferred_requirement_coverage,
             match_type=safe_str(match.match_type, "unknown"),
             is_hidden=match.is_hidden or False,
@@ -304,7 +322,6 @@ class MatchService:
             base_score=safe_float(match.base_score),
             penalties=safe_float(match.penalties),
             required_coverage=safe_float(match.required_coverage),
-            preferred_coverage=preferred_requirement_coverage,
             preferred_requirement_coverage=preferred_requirement_coverage,
             total_requirements=safe_int(match.total_requirements),
             matched_requirements_count=safe_int(match.matched_requirements_count),
@@ -350,23 +367,11 @@ class MatchService:
             if key not in _PREFERENCE_COMPONENT_KEYS
         }
 
-    @staticmethod
-    def _legacy_preference_components(fit_components: Any) -> Optional[Dict[str, Any]]:
-        if not isinstance(fit_components, dict):
-            return None
-
-        extracted = {
-            key: value
-            for key, value in fit_components.items()
-            if key in _PREFERENCE_COMPONENT_KEYS
-        }
-        return extracted or None
-
     def _preference_components(self, match: JobMatch) -> Optional[Dict[str, Any]]:
         preference_components = getattr(match, "preference_components", None)
         if isinstance(preference_components, dict) and preference_components:
             return preference_components
-        return self._legacy_preference_components(match.fit_components)
+        return None
     
     def _to_job_details(self, job: Optional[JobPost]) -> JobDetails:
         """Convert ORM model to JobDetails response model."""

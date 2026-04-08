@@ -94,6 +94,26 @@ class ResumeRepository(BaseRepository):
         ).limit(1)
         return self.db.execute(stmt).scalar_one_or_none()
 
+    def get_ready_resume_uploads(self, owner_id: Any) -> List[ResumeUpload]:
+        stmt = select(ResumeUpload).where(
+            ResumeUpload.owner_id == owner_id,
+            ResumeUpload.status == RESUME_UPLOAD_READY,
+        ).order_by(
+            ResumeUpload.created_at.desc(),
+            ResumeUpload.id.desc(),
+        )
+        return list(self.db.execute(stmt).scalars().all())
+
+    def get_latest_ready_resume_upload(self, owner_id: Any) -> Optional[ResumeUpload]:
+        stmt = select(ResumeUpload).where(
+            ResumeUpload.owner_id == owner_id,
+            ResumeUpload.status == RESUME_UPLOAD_READY,
+        ).order_by(
+            ResumeUpload.created_at.desc(),
+            ResumeUpload.id.desc(),
+        ).limit(1)
+        return self.db.execute(stmt).scalar_one_or_none()
+
     def get_latest_resume_upload_for_hash(
         self,
         owner_id: Any,

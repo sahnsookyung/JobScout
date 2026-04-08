@@ -282,7 +282,7 @@ def _build_fit_explanation(
     verdicts: List[Dict[str, Any]],
     *,
     required_coverage: float,
-    preferred_coverage: float,
+    preferred_requirement_coverage: float,
     fit_confidence: float,
     job_similarity: float,
     scorer_name: str,
@@ -297,7 +297,7 @@ def _build_fit_explanation(
         "gaps": _top_gaps(verdicts),
         "requirement_verdicts": verdicts,
         "required_coverage": required_coverage,
-        "preferred_coverage": preferred_coverage,
+        "preferred_requirement_coverage": preferred_requirement_coverage,
         "fit_confidence": fit_confidence,
         "job_similarity": float(job_similarity or 0.0),
         "fit_scorer": {"name": scorer_name, "version": scorer_version},
@@ -419,7 +419,9 @@ def _build_threshold_result(
         for requirement_match in preliminary.requirement_matches + preliminary.missing_requirements
     ]
     required_coverage = float(fit_components.get("required_coverage", 0.0))
-    preferred_coverage = float(fit_components.get("preferred_coverage", 0.0))
+    preferred_requirement_coverage = float(
+        fit_components.get("preferred_requirement_coverage", 0.0)
+    )
     fit_confidence = _fit_confidence(required_coverage, preliminary.job_similarity)
     retrieval_diagnostics = _build_retrieval_diagnostics(preliminary)
     scorer_diagnostics = {
@@ -443,7 +445,7 @@ def _build_threshold_result(
     fit_explanation = _build_fit_explanation(
         verdicts,
         required_coverage=required_coverage,
-        preferred_coverage=preferred_coverage,
+        preferred_requirement_coverage=preferred_requirement_coverage,
         fit_confidence=fit_confidence,
         job_similarity=preliminary.job_similarity,
         scorer_name=scorer_name,
@@ -1262,7 +1264,9 @@ def _score_with_assessments(
         config=config,
     )
     required_coverage = float(fit_components.get("required_coverage", 0.0))
-    preferred_coverage = float(fit_components.get("preferred_coverage", 0.0))
+    preferred_requirement_coverage = float(
+        fit_components.get("preferred_requirement_coverage", 0.0)
+    )
     confidence_values = [verdict["confidence"] for verdict in verdicts if verdict["confidence"] > 0]
     base_confidence = (sum(confidence_values) / len(confidence_values)) if confidence_values else 0.0
     fit_confidence = round(max(base_confidence, _fit_confidence(required_coverage, preliminary.job_similarity)), 4)
@@ -1283,7 +1287,7 @@ def _score_with_assessments(
     fit_explanation = _build_fit_explanation(
         verdicts,
         required_coverage=required_coverage,
-        preferred_coverage=preferred_coverage,
+        preferred_requirement_coverage=preferred_requirement_coverage,
         fit_confidence=fit_confidence,
         job_similarity=preliminary.job_similarity,
         scorer_name=metadata.scorer_name,

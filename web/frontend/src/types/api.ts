@@ -13,7 +13,6 @@ export interface MatchSummary {
     preference_score: number | null;
     penalties: number;
     required_coverage: number;
-    preferred_coverage: number;
     preferred_requirement_coverage: number;
     match_type: string;
     is_hidden: boolean;
@@ -66,7 +65,6 @@ export interface MatchDetail {
     base_score: number;
     penalties: number;
     required_coverage: number;
-    preferred_coverage: number;
     preferred_requirement_coverage: number;
     total_requirements: number;
     matched_requirements_count: number;

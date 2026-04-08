@@ -34,6 +34,12 @@ def service(mock_db):
     return instance
 
 
+@pytest.fixture
+def real_service(mock_db):
+    from web.backend.services.match_service import MatchService
+    return MatchService(mock_db)
+
+
 def _make_match(
     match_id="match-1",
     fit_score=0.85,
@@ -110,7 +116,7 @@ class TestThreeStagePipeline:
         service.get_matches(top_k=5)
 
         q.limit.assert_not_called()
-        service._resolve_canonical_resume_fingerprint.assert_called_once_with()
+        service._resolve_canonical_resume_fingerprint.assert_called_once_with(owner_id=None)
         assert q.filter.called
 
     @patch("web.backend.services.match_service.rank_matches")
@@ -496,7 +502,7 @@ class TestGetMatchDetail:
         assert result.job.title == "Developer"
         assert len(result.requirements) == 1
 
-    def test_legacy_preference_components_fallback(self, service):
+    def test_preference_components_require_dedicated_field(self, service):
         match = self._make_full_match()
         match.preference_components = None
         match.fit_components.update(
@@ -508,8 +514,22 @@ class TestGetMatchDetail:
 
         detail = service._to_match_detail(match, {})
 
-        assert detail.preference_components["preference_mode_used"] == "semantic_rerank"
+        assert detail.preference_components is None
         assert "preference_mode_used" not in (detail.fit_components or {})
+
+    def test_fit_components_exclude_preference_payload(self, service):
+        match = self._make_full_match()
+        match.fit_components = {
+            "preferred_requirement_coverage": 0.42,
+            "fit_confidence": 0.78,
+            "preference_mode_used": "semantic_rerank",
+        }
+        match.preference_components = None
+
+        detail = service._to_match_detail(match, {})
+
+        assert detail.fit_components["preferred_requirement_coverage"] == pytest.approx(0.42)
+        assert "preference_mode_used" not in detail.fit_components
 
     def test_preference_score_nullable_in_detail(self, service, mock_db):
         """preference_score=None in the ORM model is preserved in MatchDetail."""
@@ -658,6 +678,72 @@ class TestFitComponentHelpers:
     def test_fit_scorer_returns_none_for_non_dict(self, service):
         from web.backend.services.match_service import MatchService
         assert MatchService._fit_scorer([]) is None
+
+    def test_fit_components_strip_preference_keys(self, service):
+        from web.backend.services.match_service import MatchService
+
+        normalized = MatchService._fit_components(
+            {
+                "preferred_requirement_coverage": 0.35,
+                "preference_mode_used": "semantic_rerank",
+            }
+        )
+
+        assert normalized["preferred_requirement_coverage"] == pytest.approx(0.35)
+        assert "preference_mode_used" not in normalized
+
+
+class TestCanonicalResumeResolution:
+    def test_prefers_latest_ready_resume_when_it_has_matches(self, real_service):
+        repo = Mock()
+        latest_ready = Mock(resume_fingerprint="fp-latest")
+        repo.resume.get_latest_ready_resume_upload.return_value = latest_ready
+        repo.resume.get_ready_resume_uploads.return_value = [latest_ready]
+        repo.match.resume_has_persisted_matches.side_effect = lambda fp: fp == "fp-latest"
+
+        job_uow_cm = MagicMock()
+        job_uow_cm.__enter__.return_value = repo
+        job_uow_cm.__exit__.return_value = False
+
+        with patch("web.backend.services.match_service.job_uow", return_value=job_uow_cm):
+            result = real_service._resolve_canonical_resume_fingerprint(owner_id="user-1")
+
+        assert result == "fp-latest"
+
+    def test_falls_back_to_latest_ready_resume_with_matches(self, real_service):
+        repo = Mock()
+        latest_ready = Mock(resume_fingerprint="fp-empty")
+        older_ready = Mock(resume_fingerprint="fp-with-matches")
+        repo.resume.get_latest_ready_resume_upload.return_value = latest_ready
+        repo.resume.get_ready_resume_uploads.return_value = [latest_ready, older_ready]
+        repo.match.resume_has_persisted_matches.side_effect = (
+            lambda fp: fp == "fp-with-matches"
+        )
+
+        job_uow_cm = MagicMock()
+        job_uow_cm.__enter__.return_value = repo
+        job_uow_cm.__exit__.return_value = False
+
+        with patch("web.backend.services.match_service.job_uow", return_value=job_uow_cm):
+            result = real_service._resolve_canonical_resume_fingerprint(owner_id="user-1")
+
+        assert result == "fp-with-matches"
+
+    def test_returns_latest_ready_resume_when_owner_has_no_persisted_matches(self, real_service):
+        repo = Mock()
+        latest_ready = Mock(resume_fingerprint="fp-ready")
+        repo.resume.get_latest_ready_resume_upload.return_value = latest_ready
+        repo.resume.get_ready_resume_uploads.return_value = [latest_ready]
+        repo.match.resume_has_persisted_matches.return_value = False
+
+        job_uow_cm = MagicMock()
+        job_uow_cm.__enter__.return_value = repo
+        job_uow_cm.__exit__.return_value = False
+
+        with patch("web.backend.services.match_service.job_uow", return_value=job_uow_cm):
+            result = real_service._resolve_canonical_resume_fingerprint(owner_id="user-1")
+
+        assert result == "fp-ready"
 
 
 class TestToJobDetails:

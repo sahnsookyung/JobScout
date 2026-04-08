@@ -10,6 +10,12 @@ logger = logging.getLogger(__name__)
 
 
 class MatchRepository(BaseRepository):
+    def resume_has_persisted_matches(self, resume_fingerprint: str) -> bool:
+        stmt = select(JobMatch.id).where(
+            JobMatch.resume_fingerprint == resume_fingerprint
+        ).limit(1)
+        return self.db.execute(stmt).scalar_one_or_none() is not None
+
     def _invalidate_matches(self, matches: List[JobMatch], reason: str) -> int:
         count = 0
         for match in matches:

@@ -382,7 +382,7 @@ function makeModalData(overrides: Record<string, any> = {}) {
             fit_scorer: null,
             fit_explanation: null,
             required_coverage: 0.95,
-            preferred_coverage: 0.85,
+            preferred_requirement_coverage: 0.85,
             matched_requirements_count: 9,
             total_requirements: 10,
             penalties: 0.5,
