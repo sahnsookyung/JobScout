@@ -209,7 +209,7 @@ Override per-request via `?ranking_mode=preference_first` on the matches API.
 ```yaml
 notifications:
   enabled: true
-  min_score_threshold: 70.0
+  min_fit_for_alerts: 70.0
   channels:
     discord:
       enabled: true

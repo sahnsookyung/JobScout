@@ -17,7 +17,7 @@ type EditableChannel = {
 
 type EditableSettings = {
     notifications_enabled: boolean;
-    min_score_threshold: number;
+    min_fit_for_alerts: number;
     notify_on_new_match: boolean;
     notify_on_batch_complete: boolean;
     channels: Record<string, EditableChannel>;
@@ -55,7 +55,7 @@ function toDraft(settings: NotificationSettings): EditableSettings {
     }
     return {
         notifications_enabled: settings.notifications_enabled,
-        min_score_threshold: settings.min_score_threshold,
+        min_fit_for_alerts: settings.min_fit_for_alerts,
         notify_on_new_match: settings.notify_on_new_match,
         notify_on_batch_complete: settings.notify_on_batch_complete,
         channels,
@@ -79,7 +79,7 @@ function buildPayload(draft: EditableSettings): NotificationSettingsUpdateReques
     }
     return {
         notifications_enabled: draft.notifications_enabled,
-        min_score_threshold: draft.min_score_threshold,
+        min_fit_for_alerts: draft.min_fit_for_alerts,
         notify_on_new_match: draft.notify_on_new_match,
         notify_on_batch_complete: draft.notify_on_batch_complete,
         channels,
@@ -216,8 +216,8 @@ export function NotificationSettingsPanel() {
                             onChange={(checked) => updateGlobal('notifications_enabled', checked)}
                         />
                         <ToggleRow
-                            label="Notify on new high-score matches"
-                            description="Highlights strong opportunities as soon as they are found."
+                            label="Notify on new saved matches"
+                            description="Alerts from your saved top matches after ranking, as long as they clear your minimum fit for alerts."
                             checked={draft.notify_on_new_match}
                             onChange={(checked) => updateGlobal('notify_on_new_match', checked)}
                         />
@@ -231,15 +231,15 @@ export function NotificationSettingsPanel() {
                 </div>
 
                 <div className="rounded-[1.75rem] border border-slate-200 bg-white px-5 py-5 shadow-sm">
-                    <div className="text-sm font-bold text-slate-900">Minimum score threshold</div>
+                    <div className="text-sm font-bold text-slate-900">Minimum fit for alerts</div>
                     <p className="mt-1 text-sm text-slate-500">
-                        Only matches at or above this score can trigger a notification.
+                        Alerts only consider your saved top matches, and jobs must also meet this minimum fit.
                     </p>
                     <div className="mt-5">
                         <div className="mb-3 flex items-end justify-between">
-                            <span className="text-4xl font-black text-slate-950">{draft.min_score_threshold}</span>
+                            <span className="text-4xl font-black text-slate-950">{draft.min_fit_for_alerts}</span>
                             <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">
-                                threshold
+                                fit floor
                             </span>
                         </div>
                         <input
@@ -247,9 +247,9 @@ export function NotificationSettingsPanel() {
                             type="range"
                             min={0}
                             max={100}
-                            value={draft.min_score_threshold}
-                            onChange={(event) => updateGlobal('min_score_threshold', Number(event.target.value))}
-                            aria-label="Minimum score threshold"
+                            value={draft.min_fit_for_alerts}
+                            onChange={(event) => updateGlobal('min_fit_for_alerts', Number(event.target.value))}
+                            aria-label="Minimum fit for alerts"
                         />
                         <div className="mt-3 flex justify-between text-xs font-semibold text-slate-400">
                             <span>0</span>

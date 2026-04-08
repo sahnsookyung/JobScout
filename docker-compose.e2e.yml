@@ -73,6 +73,10 @@ services:
         condition: service_healthy
     environment:
       - JOBSCOUT_ENV=test
+      - AUTH_MODE=dev-bypass
+      - DEV_BYPASS_USER_ID=00000000-0000-0000-0000-000000000001
+      - DEV_BYPASS_EMAIL=dev-user@jobscout.local
+      - DEV_BYPASS_NAME=JobScout Dev User
       - ETL_LLM_PROVIDER=openai_compatible
       - ETL_LLM_EXTRACTION_BASE_URL=http://mock-llm:8090/v1
       - ETL_LLM_EXTRACTION_API_KEY=mock-key
@@ -95,6 +99,14 @@ services:
       - PREFERENCES_RERANKER=cross_encoder
       - PREFERENCES_CROSS_ENCODER_ENABLED=true
       - PREFERENCES_CROSS_ENCODER_RUNTIME=heuristic
+
+  notification-worker:
+    environment:
+      - JOBSCOUT_ENV=test
+      - AUTH_MODE=dev-bypass
+      - DEV_BYPASS_USER_ID=00000000-0000-0000-0000-000000000001
+      - DEV_BYPASS_EMAIL=dev-user@jobscout.local
+      - DEV_BYPASS_NAME=JobScout Dev User
 
   orchestrator:
     depends_on:

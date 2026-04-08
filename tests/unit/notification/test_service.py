@@ -104,7 +104,7 @@ def job_content():
             location="San Francisco, CA", is_remote=True,
         ),
         match=MatchInfo(
-            overall_score=85.5, fit_score=80.0,
+            fit_score=80.0,
             required_coverage=0.85,
         ),
         requirements=RequirementsInfo(total=10, matched=8, key_matches=[]),
@@ -578,7 +578,7 @@ class TestNotificationService:
         mock_send.assert_called_once()
         kwargs = mock_send.call_args[1]
         assert kwargs['channel_type'] == 'email'
-        assert kwargs['event_type'] == 'new_high_score_match'
+        assert kwargs['event_type'] == 'new_match_alert'
         assert 'Python Developer' in kwargs['subject']
         assert kwargs['resolve_user_settings'] is False
 
@@ -791,7 +791,8 @@ class TestNotificationService:
         service.notify_batch_complete(
             user_id='user1',
             total_matches=4,
-            high_score_matches=2,
+            alert_eligible_matches=2,
+            min_fit_for_alerts=70,
             channels=['email'],
             task_id='task-123',
         )
@@ -800,26 +801,38 @@ class TestNotificationService:
         assert kwargs['recipient'] is None
         assert kwargs['metadata']['task_id'] == 'task-123'
         assert kwargs['metadata']['user_id'] == 'user1'
+        assert kwargs['metadata']['alert_eligible_matches'] == 2
+        assert kwargs['metadata']['min_fit_for_alerts'] == 70
         assert kwargs['allow_resend'] is True
         assert kwargs['resolve_user_settings'] is False
 
-    def test_get_user_notification_snapshot_delegates_to_settings_service(self, mock_repo):
+    @patch('notification.service.UserNotificationSettingsService')
+    @patch('notification.service.db_session_scope')
+    def test_get_user_notification_snapshot_delegates_to_fresh_settings_service(
+        self,
+        mock_db_scope,
+        mock_settings_service,
+        mock_repo,
+    ):
+        session = make_db_scope_mock(mock_db_scope)
         service = NotificationService(mock_repo, use_async_queue=False)
-        service.user_settings = Mock()
         expected_snapshot = Mock()
         user = Mock()
-        service.user_settings.get_settings_snapshot.return_value = expected_snapshot
+        user.id = uuid.uuid4()
+        session.get.return_value = user
+        mock_settings_service.return_value.get_settings_snapshot.return_value = expected_snapshot
 
         result = service.get_user_notification_snapshot(user)
 
         assert result is expected_snapshot
-        service.user_settings.get_settings_snapshot.assert_called_once_with(user)
+        session.get.assert_called_once()
+        mock_settings_service.return_value.get_settings_snapshot.assert_called_once_with(user)
 
-    def test_get_enabled_channels_for_user_filters_undeliverable_channels(self, mock_repo):
+    @patch('notification.service.NotificationService.get_user_notification_snapshot')
+    def test_get_enabled_channels_for_user_filters_undeliverable_channels(self, mock_get_snapshot, mock_repo):
         service = NotificationService(mock_repo, use_async_queue=False)
-        service.user_settings = Mock()
         user = Mock()
-        service.user_settings.get_settings_snapshot.return_value = SimpleNamespace(
+        mock_get_snapshot.return_value = SimpleNamespace(
             notifications_enabled=True,
             channels={
                 'email': SimpleNamespace(enabled=True, available=True, configured=True),
@@ -834,10 +847,10 @@ class TestNotificationService:
 
         assert result == ['email', 'in_app']
 
-    def test_get_enabled_channels_for_user_returns_empty_when_notifications_disabled(self, mock_repo):
+    @patch('notification.service.NotificationService.get_user_notification_snapshot')
+    def test_get_enabled_channels_for_user_returns_empty_when_notifications_disabled(self, mock_get_snapshot, mock_repo):
         service = NotificationService(mock_repo, use_async_queue=False)
-        service.user_settings = Mock()
-        service.user_settings.get_settings_snapshot.return_value = SimpleNamespace(
+        mock_get_snapshot.return_value = SimpleNamespace(
             notifications_enabled=False,
             channels={},
         )

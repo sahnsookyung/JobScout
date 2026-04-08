@@ -13,7 +13,6 @@ from core.scorer import ScoringService
 from core.scorer.service import (
     SemanticFitRouter,
     _prefetch_total_years,
-    _rename_capability_component_keys,
 )
 
 
@@ -172,13 +171,6 @@ scrapers: []
 
         self.assertIs(provider, sentinel)
         mock_build.assert_called_once()
-
-    def test_capability_component_rename_rewrites_to_new_field_name(self):
-        renamed = _rename_capability_component_keys({"preferred_coverage": 0.42})
-
-        self.assertEqual(renamed["preferred_requirement_coverage"], 0.42)
-        self.assertNotIn("preferred_coverage", renamed)
-
 
 class TestBatchPrefetch(unittest.TestCase):
     """Tests for batch prefetch behavior - verifies O(1) query pattern."""

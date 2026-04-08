@@ -13,6 +13,7 @@ from database.models import (
     RESUME_FINGERPRINT_VERSION,
     DEFAULT_LEGACY_OWNER_ID,
     RESUME_UPLOAD_PENDING,
+    RESUME_UPLOAD_READY,
 )
 from database.repositories.base import BaseRepository
 from core.utils import cosine_similarity_from_distance

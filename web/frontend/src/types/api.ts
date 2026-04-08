@@ -178,7 +178,7 @@ export interface NotificationChannelSettings {
 
 export interface NotificationSettings {
     notifications_enabled: boolean;
-    min_score_threshold: number;
+    min_fit_for_alerts: number;
     notify_on_new_match: boolean;
     notify_on_batch_complete: boolean;
     revision: number;
@@ -192,7 +192,7 @@ export interface NotificationChannelSettingsUpdate {
 
 export interface NotificationSettingsUpdateRequest {
     notifications_enabled: boolean;
-    min_score_threshold: number;
+    min_fit_for_alerts: number;
     notify_on_new_match: boolean;
     notify_on_batch_complete: boolean;
     channels: Record<string, NotificationChannelSettingsUpdate>;

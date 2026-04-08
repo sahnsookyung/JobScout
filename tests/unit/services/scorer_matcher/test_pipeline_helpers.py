@@ -286,7 +286,6 @@ class TestCandidatePreferenceHelpers:
                     work_from_home_type="remote",
                     raw_payload={},
                 ),
-                overall_score=82.0,
                 fit_score=82.0,
                 fit_components={},
             ),
@@ -303,7 +302,6 @@ class TestCandidatePreferenceHelpers:
                     work_from_home_type="remote",
                     raw_payload={},
                 ),
-                overall_score=81.0,
                 fit_score=81.0,
                 fit_components={},
             ),
@@ -405,7 +403,8 @@ class TestRunMatchingAndScoring:
             None,
             config=SimpleNamespace(),
         )
-        mock_apply_final_policy.assert_called_once_with(["reranked"], SimpleNamespace(scorer=scorer_config))
+        apply_policy_args = mock_apply_final_policy.call_args.args
+        assert apply_policy_args[:2] == (["reranked"], SimpleNamespace(scorer=scorer_config))
 
     @patch("services.scorer_matcher.pipeline._convert_matches_to_dtos", return_value=[_dto()])
     @patch("services.scorer_matcher.pipeline._apply_final_result_policy", return_value=["scored"])

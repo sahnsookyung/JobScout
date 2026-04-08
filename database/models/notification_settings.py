@@ -30,7 +30,7 @@ class UserNotificationSettings(Base):
         primary_key=True,
     )
     notifications_enabled = Column(Boolean, nullable=False, default=True, server_default=sql_text("TRUE"))
-    min_score_threshold = Column(Integer, nullable=False, default=70, server_default=sql_text("70"))
+    min_fit_for_alerts = Column(Integer, nullable=False, default=70, server_default=sql_text("70"))
     notify_on_new_match = Column(Boolean, nullable=False, default=True, server_default=sql_text("TRUE"))
     notify_on_batch_complete = Column(Boolean, nullable=False, default=True, server_default=sql_text("TRUE"))
     revision = Column(Integer, nullable=False, default=0, server_default=sql_text("0"))

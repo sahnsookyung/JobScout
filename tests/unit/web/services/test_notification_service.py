@@ -130,7 +130,7 @@ class TestNotificationServiceWrapper:
     ):
         snapshot = SimpleNamespace(
             notifications_enabled=True,
-            min_score_threshold=77,
+            min_fit_for_alerts=77,
             notify_on_new_match=True,
             notify_on_batch_complete=False,
             revision=6,
@@ -180,7 +180,7 @@ class TestNotificationServiceWrapper:
     ):
         snapshot = SimpleNamespace(
             notifications_enabled=False,
-            min_score_threshold=88,
+            min_fit_for_alerts=88,
             notify_on_new_match=False,
             notify_on_batch_complete=True,
             revision=7,
@@ -237,7 +237,7 @@ class TestNotificationServiceWrapper:
     ):
         snapshot = SimpleNamespace(
             notifications_enabled=True,
-            min_score_threshold=70,
+            min_fit_for_alerts=70,
             notify_on_new_match=True,
             notify_on_batch_complete=True,
             revision=3,
@@ -362,7 +362,7 @@ class TestNotificationServiceWrapper:
                 SimpleNamespace(id="user-123"),
                 {
                     "notifications_enabled": True,
-                    "min_score_threshold": 70,
+                    "min_fit_for_alerts": 70,
                     "notify_on_new_match": True,
                     "notify_on_batch_complete": True,
                     "channels": {

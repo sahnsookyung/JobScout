@@ -58,7 +58,7 @@ def _make_match(
     m.job_similarity = 0.7
     m.penalties = 0.05
     m.required_coverage = 0.90
-    m.preferred_coverage = 0.60
+    m.preferred_requirement_coverage = 0.60
     m.match_type = "requirements_only"
     m.is_hidden = False
     m.created_at = datetime.now(timezone.utc)
@@ -457,7 +457,7 @@ class TestGetMatchDetail:
         m.base_score = 0.70
         m.penalties = 0.05
         m.required_coverage = 0.90
-        m.preferred_coverage = 0.60
+        m.preferred_requirement_coverage = 0.60
         m.total_requirements = 10
         m.matched_requirements_count = 8
         m.match_type = "exact"
@@ -490,7 +490,8 @@ class TestGetMatchDetail:
             evidence_text="5y Python", evidence_section="skills",
             similarity_score=0.9, is_covered=True, req_type="required",
         )
-        mock_db.query.return_value.get.side_effect = [mock_match, mock_job]
+        service._get_match_for_owner = Mock(return_value=mock_match)
+        mock_db.query.return_value.get.return_value = mock_job
         mock_db.query.return_value.options.return_value.filter.return_value.all.return_value = [req]
 
         result = service.get_match_detail("match-1")
@@ -541,7 +542,8 @@ class TestGetMatchDetail:
             currency=None, min_years_experience=None, requires_degree=None,
             security_clearance=None, job_level=None,
         )
-        mock_db.query.return_value.get.side_effect = [mock_match, mock_job]
+        service._get_match_for_owner = Mock(return_value=mock_match)
+        mock_db.query.return_value.get.return_value = mock_job
         mock_db.query.return_value.options.return_value.filter.return_value.all.return_value = []
 
         result = service.get_match_detail("match-1")
@@ -550,20 +552,22 @@ class TestGetMatchDetail:
 
     def test_not_found_raises(self, service, mock_db):
         from web.backend.exceptions import MatchNotFoundException
-        mock_db.query.return_value.get.return_value = None
+        service._get_match_for_owner = Mock(side_effect=MatchNotFoundException("not found"))
         with pytest.raises(MatchNotFoundException, match="not found"):
             service.get_match_detail("nonexistent")
 
     def test_no_job_returns_null_job_fields(self, service, mock_db):
         mock_match = self._make_full_match()
-        mock_db.query.return_value.get.side_effect = [mock_match, None]
+        service._get_match_for_owner = Mock(return_value=mock_match)
+        mock_db.query.return_value.get.return_value = None
         mock_db.query.return_value.options.return_value.filter.return_value.all.return_value = []
         result = service.get_match_detail("match-1")
         assert result.job.job_id is None
 
     def test_db_error_is_reraised(self, service, mock_db):
         mock_match = self._make_full_match()
-        mock_db.query.return_value.get.side_effect = [mock_match, RuntimeError("DB gone")]
+        service._get_match_for_owner = Mock(return_value=mock_match)
+        mock_db.query.return_value.get.side_effect = RuntimeError("DB gone")
         with pytest.raises(RuntimeError, match="DB gone"):
             service.get_match_detail("match-1")
 
@@ -582,7 +586,7 @@ class TestToggleHidden:
             Repo.return_value = repo
             result = service.toggle_hidden("m-1")
         assert result is True
-        repo.update_hidden_status.assert_called_once_with("m-1", True)
+        assert mock_match.is_hidden is True
         mock_db.commit.assert_called_once()
 
     def test_hidden_to_unhidden(self, service, mock_db):
@@ -612,26 +616,26 @@ class TestGetMatchExplanation:
 
     def test_success(self, service, mock_db):
         m = Mock(id="m-1", fit_components={"fit_explanation": {"summary": "ok"}})
-        mock_db.query.return_value.get.return_value = m
+        service._get_match_for_owner = Mock(return_value=m)
         result = service.get_match_explanation("m-1")
         assert result["success"] is True
         assert result["explanation"] == {"summary": "ok"}
 
     def test_no_explanation_key(self, service, mock_db):
         m = Mock(id="m-1", fit_components={})
-        mock_db.query.return_value.get.return_value = m
+        service._get_match_for_owner = Mock(return_value=m)
         result = service.get_match_explanation("m-1")
         assert result["explanation"] is None
 
     def test_null_fit_components(self, service, mock_db):
         m = Mock(id="m-1", fit_components=None)
-        mock_db.query.return_value.get.return_value = m
+        service._get_match_for_owner = Mock(return_value=m)
         result = service.get_match_explanation("m-1")
         assert result["explanation"] is None
 
     def test_not_found_raises(self, service, mock_db):
         from web.backend.exceptions import MatchNotFoundException
-        mock_db.query.return_value.get.return_value = None
+        service._get_match_for_owner = Mock(side_effect=MatchNotFoundException("bad-id"))
         with pytest.raises(MatchNotFoundException):
             service.get_match_explanation("bad-id")
 

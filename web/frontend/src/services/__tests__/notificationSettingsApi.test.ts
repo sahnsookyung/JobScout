@@ -31,7 +31,7 @@ describe('notificationSettingsApi', () => {
     it('updateSettings calls PUT /v1/notification-settings with payload', async () => {
         const payload = {
             notifications_enabled: true,
-            min_score_threshold: 80,
+    min_fit_for_alerts: 80,
             notify_on_new_match: true,
             notify_on_batch_complete: false,
             channels: {

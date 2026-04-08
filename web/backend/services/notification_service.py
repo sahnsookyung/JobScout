@@ -170,7 +170,7 @@ class NotificationServiceWrapper:
             }
         return {
             "notifications_enabled": snapshot.notifications_enabled,
-            "min_score_threshold": snapshot.min_score_threshold,
+            "min_fit_for_alerts": snapshot.min_fit_for_alerts,
             "notify_on_new_match": snapshot.notify_on_new_match,
             "notify_on_batch_complete": snapshot.notify_on_batch_complete,
             "revision": snapshot.revision,

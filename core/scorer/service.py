@@ -23,13 +23,6 @@ from core.scorer.semantic_fit import (
 
 logger = logging.getLogger(__name__)
 
-def _rename_capability_component_keys(fit_components: Dict[str, Any]) -> Dict[str, Any]:
-    renamed = dict(fit_components)
-    preferred_coverage = renamed.pop("preferred_coverage", None)
-    if preferred_coverage is not None:
-        renamed["preferred_requirement_coverage"] = preferred_coverage
-    return renamed
-
 
 def _prefetch_resume_metadata(preliminary_matches: List[JobMatchPreliminary], db) -> Dict[str, Dict[str, Any]]:
     fps = {pm.resume_fingerprint for pm in preliminary_matches if pm.resume_fingerprint}
@@ -185,7 +178,7 @@ class ScoringService:
             config=self.config,
             owner_id=owner_id,
         )
-        fit_components = _rename_capability_component_keys(semantic_fit.fit_components)
+        fit_components = dict(semantic_fit.fit_components)
 
         return ScoredJobMatch(
             job=job,

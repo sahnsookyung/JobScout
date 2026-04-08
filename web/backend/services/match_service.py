@@ -10,7 +10,7 @@ from core.redis_streams import _sanitize_log
 from sqlalchemy.orm import Session, joinedload
 
 from core.ranking import rank_matches, RankingContext, RankingMode, get_ranking_policy_store
-from database.models import JobMatch, JobPost, JobMatchRequirement
+from database.models import JobMatch, JobPost, JobMatchRequirement, StructuredResume
 from database.uow import job_uow
 from ..models.responses import (
     MatchSummary,
@@ -93,9 +93,7 @@ class MatchService:
             query = query.filter(JobMatch.status == status)
 
         if min_fit is not None:
-            query = query.filter(
-                (JobMatch.fit_score >= min_fit) | (JobMatch.fit_score.is_(None))
-            )
+            query = query.filter(JobMatch.fit_score >= min_fit)
 
         if not show_hidden:
             query = query.filter(JobMatch.is_hidden.is_(False))
@@ -143,7 +141,28 @@ class MatchService:
             logger.warning("Could not resolve canonical resume fingerprint: %s", exc)
             return None
     
-    def get_match_detail(self, match_id: str) -> MatchDetailResponse:
+    def _get_match_for_owner(
+        self,
+        match_id: str,
+        owner_id: Optional[Any] = None,
+    ) -> JobMatch:
+        query = self.db.query(JobMatch)
+        if owner_id is not None:
+            query = query.join(
+                StructuredResume,
+                StructuredResume.resume_fingerprint == JobMatch.resume_fingerprint,
+            ).filter(StructuredResume.owner_id == owner_id)
+
+        match = query.filter(JobMatch.id == match_id).one_or_none()
+        if not match:
+            raise MatchNotFoundException(f"Match {match_id} not found")
+        return match
+
+    def get_match_detail(
+        self,
+        match_id: str,
+        owner_id: Optional[Any] = None,
+    ) -> MatchDetailResponse:
         """
         Get detailed information about a specific match.
 
@@ -157,9 +176,7 @@ class MatchService:
             MatchNotFoundException: If match is not found.
             Exception: If a database error occurs (maps to 500).
         """
-        match = self.db.query(JobMatch).get(match_id)
-        if not match:
-            raise MatchNotFoundException(f"Match {match_id} not found")
+        match = self._get_match_for_owner(match_id, owner_id=owner_id)
 
         try:
             job = self.db.query(JobPost).get(match.job_post_id)
@@ -183,7 +200,7 @@ class MatchService:
             logger.error("Database error fetching match details for %s: %s", _sanitize_log(match_id), e, exc_info=True)
             raise
     
-    def toggle_hidden(self, match_id: str) -> bool:
+    def toggle_hidden(self, match_id: str, owner_id: Optional[Any] = None) -> bool:
         """
         Toggle the hidden status of a match.
         
@@ -199,19 +216,27 @@ class MatchService:
         from database.repositories.match import MatchRepository
         
         repo = MatchRepository(self.db)
-        match = repo.get_match_by_id(match_id)
+        match = (
+            repo.get_match_by_id_for_owner(match_id, owner_id)
+            if owner_id is not None
+            else repo.get_match_by_id(match_id)
+        )
 
         if not match:
             raise MatchNotFoundException(f"Match {match_id} not found")
 
         is_currently_hidden = match.is_hidden or False
         new_status = not is_currently_hidden
-        repo.update_hidden_status(match_id, new_status)
+        match.is_hidden = new_status
         self.db.commit()
         
         return new_status
     
-    def get_match_explanation(self, match_id: str) -> Dict[str, Any]:
+    def get_match_explanation(
+        self,
+        match_id: str,
+        owner_id: Optional[Any] = None,
+    ) -> Dict[str, Any]:
         """
         Get explainability details for a specific match.
         
@@ -224,9 +249,7 @@ class MatchService:
         Raises:
             MatchNotFoundException: If match is not found.
         """
-        match = self.db.query(JobMatch).get(match_id)
-        if not match:
-            raise MatchNotFoundException(f"Match {match_id} not found")
+        match = self._get_match_for_owner(match_id, owner_id=owner_id)
 
         fit_components = match.fit_components if isinstance(match.fit_components, dict) else {}
         explanation = fit_components.get("fit_explanation")
@@ -280,7 +303,9 @@ class MatchService:
         job_fields = self._extract_summary_job_fields(match)
 
         expl = getattr(match, "ranking_explanation", None)
-        preferred_requirement_coverage = self._float_or_zero(match.preferred_coverage)
+        preferred_requirement_coverage = self._float_or_zero(
+            match.preferred_requirement_coverage
+        )
 
         return MatchSummary(
             match_id=str(match.id),
@@ -308,7 +333,9 @@ class MatchService:
     def _to_match_detail(self, match: JobMatch, penalty_details: Dict[str, Any]) -> MatchDetail:
         """Convert ORM model to MatchDetail response model."""
         fit_components = self._fit_components(match.fit_components)
-        preferred_requirement_coverage = safe_float(match.preferred_coverage)
+        preferred_requirement_coverage = safe_float(
+            match.preferred_requirement_coverage
+        )
         return MatchDetail(
             match_id=str(match.id),
             resume_fingerprint=safe_str(match.resume_fingerprint),

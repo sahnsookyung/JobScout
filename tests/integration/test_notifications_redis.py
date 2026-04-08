@@ -149,7 +149,7 @@ class TestNotificationsWithRedis(unittest.TestCase):
                 body='Test notification body',
                 user_id='test-user-123',
                 job_match_id='match-456',
-                event_type='new_high_score_match',
+                event_type='new_match_alert',
                 priority=NotificationPriority.HIGH
             )
 

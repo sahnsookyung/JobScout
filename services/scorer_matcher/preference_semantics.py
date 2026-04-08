@@ -634,7 +634,7 @@ class CrossEncoderPreferenceReranker(PreferenceSemanticReranker):
         top_k = 5
         top_indices = sorted(range(len(weighted)), key=lambda i, w=weighted: w[i], reverse=True)[:top_k]
         top_scores = [weighted[i] for i in top_indices]
-        overall_score = sum(top_scores) / len(top_scores) if top_scores else 0.0
+        aggregate_preference_score = sum(top_scores) / len(top_scores) if top_scores else 0.0
 
         # Emit reason codes for top-K pairs ordered by score.
         # The cut is > 0 only — CE scores are relatively ordered within a query
@@ -645,7 +645,7 @@ class CrossEncoderPreferenceReranker(PreferenceSemanticReranker):
         # _normalize_semantic_score, which runs sigmoid only when the raw score
         # falls outside [0, 1]. Models that output calibrated probabilities pass
         # through unchanged. The resulting neutral-pair score is model-dependent
-        # and should not be assumed to be 0.5. overall_score is relatively ordered
+        # and should not be assumed to be 0.5. The aggregate preference score is relatively ordered
         # within a query; absolute thresholds require per-model calibration.
         matched_categories: set[str] = set()
         detail_codes: List[str] = []
@@ -669,7 +669,7 @@ class CrossEncoderPreferenceReranker(PreferenceSemanticReranker):
 
         return PreferenceAssessment(
             job_id=job.job_id,
-            preference_score=round(min(1.0, max(0.0, overall_score)), 4),
+            preference_score=round(min(1.0, max(0.0, aggregate_preference_score)), 4),
             preference_confidence=round(min(1.0, confidence), 4),
             preference_reason_codes=reason_codes,
             preference_explanation=(

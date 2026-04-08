@@ -230,7 +230,7 @@ class TestNotificationsRouter:
     def test_get_notification_settings_success(self, client, mock_notification_service):
         mock_notification_service.get_settings.return_value = {
             "notifications_enabled": True,
-            "min_score_threshold": 80,
+            "min_fit_for_alerts": 80,
             "notify_on_new_match": True,
             "notify_on_batch_complete": False,
             "revision": 3,
@@ -257,7 +257,7 @@ class TestNotificationsRouter:
     def test_update_notification_settings_success(self, client, mock_notification_service):
         mock_notification_service.update_settings.return_value = {
             "notifications_enabled": True,
-            "min_score_threshold": 75,
+            "min_fit_for_alerts": 75,
             "notify_on_new_match": True,
             "notify_on_batch_complete": True,
             "revision": 4,
@@ -279,7 +279,7 @@ class TestNotificationsRouter:
             "/api/v1/notification-settings",
             json={
                 "notifications_enabled": True,
-                "min_score_threshold": 75,
+                "min_fit_for_alerts": 75,
                 "notify_on_new_match": True,
                 "notify_on_batch_complete": True,
                 "channels": {
@@ -299,7 +299,7 @@ class TestNotificationsRouter:
     def test_update_notification_settings_omits_secret_when_not_provided(self, client, mock_notification_service):
         mock_notification_service.update_settings.return_value = {
             "notifications_enabled": True,
-            "min_score_threshold": 70,
+            "min_fit_for_alerts": 70,
             "notify_on_new_match": True,
             "notify_on_batch_complete": True,
             "revision": 5,
@@ -310,7 +310,7 @@ class TestNotificationsRouter:
             "/api/v1/notification-settings",
             json={
                 "notifications_enabled": True,
-                "min_score_threshold": 70,
+                "min_fit_for_alerts": 70,
                 "notify_on_new_match": True,
                 "notify_on_batch_complete": True,
                 "channels": {
@@ -337,7 +337,7 @@ class TestNotificationsRouter:
             "/api/v1/notification-settings",
             json={
                 "notifications_enabled": True,
-                "min_score_threshold": 70,
+                "min_fit_for_alerts": 70,
                 "notify_on_new_match": True,
                 "notify_on_batch_complete": True,
                 "channels": {

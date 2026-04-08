@@ -223,7 +223,7 @@ notifications:
   # user_id: "your_user_id"
 
   # Only notify for matches above this score (0-100)
-  min_score_threshold: 70.0
+  min_fit_for_alerts: 70.0
 
   # Priority thresholds for notifications (score 0-100)
   priority:

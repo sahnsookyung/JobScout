@@ -88,12 +88,13 @@ curl "http://localhost:5000/api/matches?min_score=70&status=active&limit=10"
       "company": "TechCorp",
       "location": "Remote",
       "is_remote": true,
-      "overall_score": 85.5,
+      "fit_score": 85.5,
+      "preference_score": 0.74,
       "base_score": 95.0,
       "penalties": 9.5,
       "required_coverage": 0.9,
-      "preferred_coverage": 0.8,
-      "match_type": "with_preferences",
+      "preferred_requirement_coverage": 0.8,
+      "match_type": "requirements_only",
       "created_at": "2026-02-01T12:00:00",
       "calculated_at": "2026-02-01T12:00:00"
     }
@@ -120,19 +121,19 @@ curl "http://localhost:5000/api/matches/550e8400-e29b-41d4-a716-446655440000"
   "match": {
     "match_id": "550e8400-e29b-41d4-a716-446655440000",
     "resume_fingerprint": "abc123...",
-    "overall_score": 85.5,
+    "fit_score": 85.5,
+    "preference_score": 0.74,
     "base_score": 95.0,
     "penalties": 9.5,
     "required_coverage": 0.9,
-    "preferred_coverage": 0.8,
+    "preferred_requirement_coverage": 0.8,
     "total_requirements": 10,
     "matched_requirements_count": 8,
-    "match_type": "with_preferences",
+    "match_type": "requirements_only",
     "status": "active",
     "penalty_details": {
       "details": [...],
-      "total": 9.5,
-      "preferences_boost": 15.0
+      "total": 9.5
     }
   },
   "job": {
@@ -224,12 +225,13 @@ FastAPI uses Pydantic models for automatic validation and documentation:
 - `company`: Company name
 - `location`: Location text (optional)
 - `is_remote`: Boolean (optional)
-- `overall_score`: Float 0-100
+- `fit_score`: Float 0-100
+- `preference_score`: Float 0-1 or null when preference reranking did not run
 - `base_score`: Float 0-100
 - `penalties`: Float >= 0
 - `required_coverage`: Float 0-1
-- `preferred_coverage`: Float 0-1
-- `match_type`: String (e.g., "with_preferences")
+- `preferred_requirement_coverage`: Float 0-1
+- `match_type`: String (e.g., "requirements_only")
 - `created_at`: ISO timestamp (optional)
 - `calculated_at`: ISO timestamp (optional)
 
@@ -402,7 +404,7 @@ uvicorn.run(app, host="0.0.0.0", port=5001)
 
 Possible enhancements:
 - [ ] Export results to CSV/Excel
-- [ ] Email alerts for high-scoring matches
+- [ ] Email alerts for saved matches above the alert fit floor
 - [ ] Compare multiple resumes
 - [ ] Filter by company, location, salary
 - [ ] Time-series charts for match trends

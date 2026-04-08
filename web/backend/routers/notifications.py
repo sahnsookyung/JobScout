@@ -98,7 +98,7 @@ def update_notification_settings(
     """Persist per-user notification settings."""
     payload = {
         "notifications_enabled": request.notifications_enabled,
-        "min_score_threshold": request.min_score_threshold,
+        "min_fit_for_alerts": request.min_fit_for_alerts,
         "notify_on_new_match": request.notify_on_new_match,
         "notify_on_batch_complete": request.notify_on_batch_complete,
         "channels": {

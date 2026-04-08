@@ -143,7 +143,7 @@ describe('useMatchDetails', () => {
 
     it('fetches match details when matchId is provided', async () => {
         const { matchesApi } = await import('@/services/matchesApi');
-        const mockData = { id: 'match-1', overall_score: 85 };
+        const mockData = { id: 'match-1', fit_score: 85 };
         (matchesApi.getMatchDetails as any).mockResolvedValue({ data: mockData });
 
         const { result } = renderHook(() => useMatchDetails('match-1'), {

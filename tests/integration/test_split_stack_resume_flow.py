@@ -675,16 +675,13 @@ def _wait_for_automatic_notification_delivery(
                     NotificationTracker.channel_type == channel_type,
                     NotificationTracker.sent_successfully.is_(True),
                     NotificationTracker.event_type.in_(
-                        ["new_match", "new_high_score_match", "batch_complete"]
+                        ["new_match_alert", "batch_complete"]
                     ),
                 )
             ).scalars().all()
             last_event_types = [row.event_type for row in rows]
             has_batch_complete = "batch_complete" in last_event_types
-            has_match_notification = any(
-                event_type in {"new_match", "new_high_score_match"}
-                for event_type in last_event_types
-            )
+            has_match_notification = "new_match_alert" in last_event_types
             if has_batch_complete and has_match_notification:
                 return rows
         finally:
@@ -800,7 +797,7 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
         split_stack.base_url,
         {
             "notifications_enabled": True,
-            "min_score_threshold": 0,
+            "min_fit_for_alerts": 0,
             "notify_on_new_match": True,
             "notify_on_batch_complete": True,
             "channels": {
@@ -847,7 +844,7 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
     )
     delivered_event_types = {row.event_type for row in delivered_notifications}
     assert "batch_complete" in delivered_event_types
-    assert delivered_event_types & {"new_match", "new_high_score_match"}
+    assert "new_match_alert" in delivered_event_types
 
     engine, session = _session_for(split_stack.database_url)
     try:
@@ -1125,7 +1122,7 @@ def test_notification_settings_round_trip_and_email_test_delivery(split_stack: S
         split_stack.base_url,
         {
             "notifications_enabled": True,
-            "min_score_threshold": 88,
+            "min_fit_for_alerts": 88,
             "notify_on_new_match": False,
             "notify_on_batch_complete": True,
             "channels": {
@@ -1135,7 +1132,7 @@ def test_notification_settings_round_trip_and_email_test_delivery(split_stack: S
             },
         },
     )
-    assert updated_settings["min_score_threshold"] == 88
+    assert updated_settings["min_fit_for_alerts"] == 88
     assert updated_settings["notify_on_new_match"] is False
     assert updated_settings["channels"]["email"]["enabled"] is True
     assert updated_settings["revision"] >= initial_settings["revision"] + 1

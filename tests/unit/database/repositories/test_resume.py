@@ -30,6 +30,24 @@ class TestResumeUploads:
 
         assert result is upload
 
+    def test_get_ready_resume_uploads_executes_query(self):
+        repo, mock_db = make_repo()
+        uploads = [MagicMock(spec=ResumeUpload)]
+        mock_db.execute.return_value.scalars.return_value.all.return_value = uploads
+
+        result = repo.get_ready_resume_uploads("user-1")
+
+        assert result == uploads
+
+    def test_get_latest_ready_resume_upload_executes_query(self):
+        repo, mock_db = make_repo()
+        upload = MagicMock(spec=ResumeUpload)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = upload
+
+        result = repo.get_latest_ready_resume_upload("user-1")
+
+        assert result is upload
+
     def test_update_resume_upload_raises_when_missing(self):
         repo, mock_db = make_repo()
         mock_db.execute.return_value.scalar_one_or_none.return_value = None

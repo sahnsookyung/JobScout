@@ -10,7 +10,8 @@ import logging
 import threading
 from typing import List, Optional, Dict, Any, Callable
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 
 from core.app_context import AppContext
 from core.config_loader import PreferencesConfig
@@ -55,6 +56,16 @@ class MatchingPipelineResult:
     error: Optional[str] = None
     execution_time: float = 0.0
     cancelled: bool = False
+
+
+def _resolve_ranking_context() -> RankingContext:
+    """Resolve the ranking policy once so ranking and notifications share a snapshot."""
+    ranking_config = get_ranking_policy_store().get_current_config()
+    try:
+        ranking_mode = RankingMode(ranking_config.active_default_mode)
+    except ValueError:
+        ranking_mode = RankingMode.BALANCED
+    return RankingContext(mode=ranking_mode, config=ranking_config)
 
 
 def _load_resume_from_db(resume_fingerprint: str) -> Optional[dict]:
@@ -317,10 +328,13 @@ def run_matching_pipeline(
         if error_result:
             return error_result
 
+        ranking_context = _resolve_ranking_context()
+
         # Step 2: Run matching and scoring
         match_dtos = _run_matching_and_scoring(
             ctx, resume_data, resume_fingerprint, should_re_extract,
             matching_config, stop_event, status_callback, owner_id=owner_id,
+            ranking_context=ranking_context,
         )
         matching_result = _result_after_matching(match_dtos, stop_event)
         if matching_result:
@@ -354,15 +368,23 @@ def run_matching_pipeline(
 
         # Step 5: Send notifications
         notified_count = 0
+        if (
+            ctx.notification_service is None
+            and getattr(ctx.config, "notifications", None)
+            and ctx.config.notifications.enabled
+        ):
+            logger.info("Building notification service lazily for matching pipeline")
+            ctx.notification_service = AppContext._build_notification_service(ctx.config)
         if ctx.notification_service and not stop_event.is_set():
             if status_callback:
                 status_callback("notifying")
             notified_count = send_notifications(
                 ctx,
-                match_dtos,
-                saved_count,
-                resume_fingerprint,
-                stop_event,
+                saved_count=saved_count,
+                failed_count=save_batch_result.failed_count,
+                resume_fingerprint=resume_fingerprint,
+                stop_event=stop_event,
+                ranking_context=ranking_context,
                 owner_id=owner_id,
                 task_id=task_id,
             )
@@ -479,17 +501,18 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event
     )
 
 
-def _apply_final_result_policy(scored_matches, matching_config):
+def _apply_final_result_policy(
+    scored_matches,
+    matching_config,
+    ranking_context: RankingContext | None = None,
+):
     """Apply shared ranking before the final result truncation."""
     if not scored_matches:
         return scored_matches
 
-    ranking_config = get_ranking_policy_store().get_current_config()
-    try:
-        ranking_mode = RankingMode(ranking_config.active_default_mode)
-    except ValueError:
-        ranking_mode = RankingMode.BALANCED
-    rank_matches(scored_matches, RankingContext(mode=ranking_mode, config=ranking_config))
+    if ranking_context is None:
+        ranking_context = _resolve_ranking_context()
+    rank_matches(scored_matches, ranking_context)
 
     result_policy = _resolve_result_policy(matching_config)
     if not result_policy:
@@ -611,6 +634,7 @@ def _run_matching_and_scoring(
     matching_config,
     stop_event: threading.Event,
     status_callback: Optional[Callable[[str], None]],
+    ranking_context: RankingContext | None = None,
     owner_id: Optional[str] = None,
 ) -> List[MatchResultDTO]:
     """Run the matching and scoring pipeline within a UOW context."""
@@ -680,7 +704,13 @@ def _run_matching_and_scoring(
             time.time() - rerank_start,
             len(scored_matches),
         )
-        scored_matches = _apply_final_result_policy(scored_matches, matching_config)
+        if ranking_context is None:
+            ranking_context = _resolve_ranking_context()
+        scored_matches = _apply_final_result_policy(
+            scored_matches,
+            matching_config,
+            ranking_context,
+        )
 
         match_dtos = _convert_matches_to_dtos(scored_matches)
 
@@ -727,6 +757,13 @@ def _missing_req_to_dto(req) -> RequirementMatchDTO:
     )
 
 
+def _ranking_snapshot_from_match(match) -> dict:
+    explanation = getattr(match, "ranking_explanation", None)
+    if explanation is None:
+        return {}
+    return asdict(explanation)
+
+
 def _convert_matches_to_dtos(scored_matches) -> List[MatchResultDTO]:
     """Convert ORM match objects to DTOs.
 
@@ -755,6 +792,7 @@ def _convert_matches_to_dtos(scored_matches) -> List[MatchResultDTO]:
             resume_fingerprint=match.resume_fingerprint,
             fit_components=match.fit_components,
             preference_components=getattr(match, "preference_components", {}) or {},
+            ranking_snapshot=_ranking_snapshot_from_match(match),
             base_score=match.base_score,
             penalties=match.penalties,
             penalty_details=penalty_details_from_orm(
@@ -796,7 +834,30 @@ def _save_matches_batch(
                         continue
 
                     if not matching_config.recalculate_existing:
-                        logger.debug("Skipping existing match for job %s", dto.job.id)
+                        logger.debug("Refreshing existing active match snapshot for job %s", dto.job.id)
+                        existing.job_similarity = dto.job_similarity
+                        existing.fit_score = dto.fit_score
+                        existing.preference_score = dto.preference_score
+                        existing.fit_components = dto.fit_components
+                        existing.preference_components = dto.preference_components
+                        existing.ranking_snapshot = dto.ranking_snapshot
+                        existing.base_score = dto.base_score
+                        existing.penalties = dto.penalties
+                        existing.penalty_details = dto.penalty_details
+                        existing.required_coverage = dto.jd_required_coverage
+                        existing.preferred_requirement_coverage = (
+                            dto.jd_preferred_requirement_coverage
+                        )
+                        existing.total_requirements = (
+                            len(dto.requirement_matches) + len(dto.missing_requirements)
+                        )
+                        existing.matched_requirements_count = len(dto.requirement_matches)
+                        existing.match_type = dto.match_type
+                        existing.job_content_hash = dto.job.content_hash
+                        existing.calculated_at = datetime.now(timezone.utc)
+                        existing.status = 'active'
+                        repo.db.flush()
+                        saved_count += 1
                         active_job_ids.add(str(dto.job.id))
                         continue
 

@@ -226,7 +226,7 @@ class NotificationSettingsResponse(BaseModel):
     """Per-user notification settings response."""
 
     notifications_enabled: bool
-    min_score_threshold: int
+    min_fit_for_alerts: int
     notify_on_new_match: bool
     notify_on_batch_complete: bool
     revision: int

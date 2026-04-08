@@ -143,7 +143,7 @@ class TestConfigLoader(unittest.TestCase):
             "notifications": {
                 "enabled": True,
                 "user_id": "test_user_123",
-                "min_score_threshold": 75.0,
+                "min_fit_for_alerts": 75.0,
                 "notify_on_new_match": True,
                 "notify_on_batch_complete": False,
                 "channels": {
@@ -165,7 +165,7 @@ class TestConfigLoader(unittest.TestCase):
                 self.assertIsNotNone(config.notifications)
                 self.assertTrue(config.notifications.enabled)
                 self.assertEqual(config.notifications.user_id, "test_user_123")
-                self.assertEqual(config.notifications.min_score_threshold, 75.0)
+                self.assertEqual(config.notifications.min_fit_for_alerts, 75.0)
                 self.assertTrue(config.notifications.notify_on_new_match)
                 self.assertFalse(config.notifications.notify_on_batch_complete)
                 self.assertTrue(config.notifications.deduplication_enabled)
@@ -217,7 +217,7 @@ class TestConfigLoader(unittest.TestCase):
                 self.assertTrue(config.notifications.enabled)
                 self.assertEqual(config.notifications.user_id, "user456")
                 # Check defaults
-                self.assertEqual(config.notifications.min_score_threshold, 70.0)  # Default
+                self.assertEqual(config.notifications.min_fit_for_alerts, 70.0)  # Default
                 self.assertTrue(config.notifications.notify_on_new_match)  # Default
                 self.assertTrue(config.notifications.deduplication_enabled)  # Default
 

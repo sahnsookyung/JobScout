@@ -20,7 +20,7 @@ Usage:
         body="Details...",
         user_id="user123",
         job_match_id="match456",
-        event_type="new_high_score_match"
+        event_type="new_match_alert"
     )
 """
 
@@ -44,6 +44,7 @@ except ImportError:
     RQ_AVAILABLE = False
 
 from database.database import db_session_scope
+from database.models import User
 from database.repository import JobRepository
 from notification.channels import NotificationChannelFactory
 from notification.channels import RateLimitException
@@ -394,11 +395,18 @@ class NotificationService:
 
     def get_user_notification_snapshot(self, user) -> Any:
         """Return the effective per-user notification settings snapshot."""
-        return self.user_settings.get_settings_snapshot(user)
+        with db_session_scope() as session:
+            fresh_user = session.get(User, user.id)
+            if fresh_user is None:
+                raise NotificationConfigurationError(
+                    "Notification user does not exist or is inactive",
+                    failure_class="user_missing",
+                )
+            return UserNotificationSettingsService(session).get_settings_snapshot(fresh_user)
 
     def get_enabled_channels_for_user(self, user) -> list[str]:
         """Return channels that are enabled and deliverable for a user."""
-        snapshot = self.user_settings.get_settings_snapshot(user)
+        snapshot = self.get_user_notification_snapshot(user)
         if not snapshot.notifications_enabled:
             return []
         return [
@@ -435,11 +443,11 @@ class NotificationService:
         if channels is None:
             channels = ['email']
 
-        score = content.match.overall_score
+        fit_score = content.match.fit_score
 
-        if score >= self._priority_high:
+        if fit_score >= self._priority_high:
             priority = NotificationPriority.HIGH
-        elif score >= self._priority_normal:
+        elif fit_score >= self._priority_normal:
             priority = NotificationPriority.NORMAL
         else:
             priority = NotificationPriority.LOW
@@ -453,7 +461,10 @@ class NotificationService:
                 metadata = {
                     'job_title': content.job.title,
                     'company': content.job.company,
-                    'score': score,
+                    'fit_score': fit_score,
+                    'preference_score': content.match.preference_score,
+                    'ranking_mode_used': content.match.ranking_mode_used,
+                    'explanation_label': content.match.explanation_label,
                     'is_remote': content.job.is_remote,
                     'location': content.job.location,
                     'job_contents': [content.model_dump()],  # Serialize to plain dict for safe JSON/RQ serialization
@@ -470,7 +481,7 @@ class NotificationService:
                     body="",  # Rich content is in metadata
                     user_id=user_id,
                     job_match_id=match_id,
-                    event_type="new_high_score_match" if score >= self._priority_normal else "new_match",
+                    event_type="new_match_alert",
                     priority=priority,
                     metadata=metadata,
                     resolve_user_settings=self._should_resolve_user_settings(user_id),
@@ -488,20 +499,21 @@ class NotificationService:
         self,
         user_id: str,
         total_matches: int,
-        high_score_matches: int,
+        alert_eligible_matches: int,
+        min_fit_for_alerts: int,
         channels: Optional[list] = None,
         task_id: Optional[str] = None,
     ) -> Dict[str, Optional[str]]:
         """Send batch completion notification."""
         if channels is None:
             channels = ['email']
-        
-        subject = f"✅ Job matching complete: {high_score_matches} great matches found"
+
+        subject = f"✅ Job matching complete: {alert_eligible_matches} alert-eligible saved matches"
         body = f"""Your job matching batch is complete!
 
 Results Summary:
-- Total matches analyzed: {total_matches}
-- High-quality matches (70+ score): {high_score_matches}
+- Saved top matches: {total_matches}
+- Saved matches above your alert fit floor ({min_fit_for_alerts}%): {alert_eligible_matches}
 
 View all your matches at: {self.base_url}
 
@@ -524,7 +536,8 @@ JobScout
                     priority=NotificationPriority.NORMAL,
                     metadata={
                         'total_matches': total_matches,
-                        'high_score_matches': high_score_matches,
+                        'alert_eligible_matches': alert_eligible_matches,
+                        'min_fit_for_alerts': min_fit_for_alerts,
                         'task_id': task_id,
                         'user_id': user_id,
                     },

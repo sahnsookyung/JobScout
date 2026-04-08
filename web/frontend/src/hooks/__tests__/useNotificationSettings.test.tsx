@@ -29,7 +29,7 @@ const createWrapper = () => {
 describe('useNotificationSettings', () => {
     const settings = {
         notifications_enabled: true,
-        min_score_threshold: 70,
+        min_fit_for_alerts: 70,
         notify_on_new_match: true,
         notify_on_batch_complete: false,
         revision: 1,
@@ -71,7 +71,7 @@ describe('useNotificationSettings', () => {
 
         await result.current.saveSettings({
             notifications_enabled: false,
-            min_score_threshold: 82,
+        min_fit_for_alerts: 82,
             notify_on_new_match: false,
             notify_on_batch_complete: true,
             channels: {
@@ -81,7 +81,7 @@ describe('useNotificationSettings', () => {
 
         expect(notificationSettingsApi.updateSettings).toHaveBeenCalledWith({
             notifications_enabled: false,
-            min_score_threshold: 82,
+        min_fit_for_alerts: 82,
             notify_on_new_match: false,
             notify_on_batch_complete: true,
             channels: {

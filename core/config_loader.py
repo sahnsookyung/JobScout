@@ -445,7 +445,7 @@ class NotificationConfig(BaseModel):
     enabled: bool = False
     user_id: Optional[str] = None
     base_url: str = "http://localhost:8080"
-    min_score_threshold: float = 70.0
+    min_fit_for_alerts: float = 70.0
     notify_on_new_match: bool = True
     notify_on_batch_complete: bool = True
     channels: Dict[str, NotificationChannelConfig] = {}

@@ -1,9 +1,4 @@
-"""Add preference_components column and backfill legacy preference metadata.
-
-Preference metadata previously lived inside job_match.fit_components. This
-migration adds a dedicated JSONB column so fit-only diagnostics and
-preference-specific explanations can be stored separately.
-"""
+"""Add preference_components column and backfill legacy preference metadata."""
 
 from __future__ import annotations
 
@@ -95,6 +90,7 @@ def rollback(conn: Connection) -> None:
         WHERE preference_components IS NOT NULL
           AND preference_components <> '{}'::jsonb
     """))
+
     conn.execute(text("""
         UPDATE job_match
         SET fit_components = jsonb_set(
@@ -106,6 +102,7 @@ def rollback(conn: Connection) -> None:
           AND fit_components ? 'preferred_requirement_coverage'
           AND NOT fit_components ? 'preferred_coverage'
     """))
+
     conn.execute(text(
         "ALTER TABLE job_match "
         "DROP COLUMN IF EXISTS preference_components"

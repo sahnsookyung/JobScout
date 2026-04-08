@@ -7,15 +7,28 @@ Delegates actual delivery to NotificationService.
 import logging
 import time
 import threading
+from dataclasses import dataclass
 from typing import Any, List, Optional
 from uuid import UUID
 
+from core.ranking import RankingContext, rank_matches
 from database.models import User
 from database.uow import job_uow
 from notification.message_builder import NotificationMessageBuilder
 from notification.models import NotificationDeliveryPlan
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class NotificationCandidate:
+    """Plain ranking candidate detached from SQLAlchemy session lifecycle."""
+
+    id: str
+    fit_score: float | None
+    preference_score: float | None
+    job_similarity: float | None
+    ranking_explanation: Any = None
 
 
 def _notification_setting_value(
@@ -79,67 +92,97 @@ def _resolve_notification_plan(
     )
 
 
-def _high_score_matches_for_plan(
-    scored_match_dtos: List,
+def _alert_eligible_matches_for_plan(
+    persisted_matches: List,
     notification_config,
     delivery_plan: NotificationDeliveryPlan,
 ) -> List:
-    """Filter matches down to those that should trigger delivery."""
-    threshold = _notification_setting_value(
+    """Filter persisted matches down to those eligible for alerts."""
+    min_fit_for_alerts = _notification_setting_value(
         notification_config,
         delivery_plan.settings_snapshot,
-        "min_score_threshold",
+        "min_fit_for_alerts",
     )
     return [
-        dto for dto in scored_match_dtos
-        if dto.fit_score is not None and dto.fit_score >= threshold
+        match for match in persisted_matches
+        if match.fit_score is not None and float(match.fit_score) >= min_fit_for_alerts
     ]
+
+
+def _load_persisted_notification_matches(
+    resume_fingerprint: str,
+    ranking_context: RankingContext,
+) -> List:
+    """Load and rerank the canonical persisted active match set for this run."""
+    with job_uow() as repo:
+        matches = repo.match.get_visible_active_matches_for_resume(
+            resume_fingerprint,
+            load_job_post=False,
+        )
+        candidates = [
+            NotificationCandidate(
+                id=str(match.id),
+                fit_score=None if match.fit_score is None else float(match.fit_score),
+                preference_score=(
+                    None if match.preference_score is None else float(match.preference_score)
+                ),
+                job_similarity=(
+                    None if match.job_similarity is None else float(match.job_similarity)
+                ),
+            )
+            for match in matches
+        ]
+
+    rank_matches(candidates, ranking_context)
+    return candidates
 
 
 def _send_match_notification(
     ctx,
-    dto,
+    match_id: str,
     *,
-    resume_fingerprint: str,
     delivery_plan: NotificationDeliveryPlan,
     task_id: Optional[str],
 ) -> bool:
-    """Send a single match notification when a saved match record is available."""
+    """Send a single notification from a persisted active match row."""
     content = None
-    match_id = None
 
     with job_uow() as repo:
-        match_record = repo.get_existing_match(
-            dto.job.id, resume_fingerprint, load_job_post=True,
-        )
+        match_record = repo.match.get_match_by_id(match_id)
         if not match_record or not match_record.id:
-            logger.warning("No match record found for job %s, skipping", dto.job.id)
+            logger.warning("No match record found for match %s, skipping", match_id)
+            return False
+        if match_record.status != "active" or match_record.is_hidden:
+            logger.debug("Match %s is no longer active/visible, skipping", match_id)
             return False
         if match_record.notified:
-            logger.debug("Match already notified for job %s, skipping", dto.job.id)
+            logger.debug("Match already notified for %s, skipping", match_id)
             return False
 
-        match_id = match_record.id
         job_post = match_record.job_post
         if job_post:
-            content = NotificationMessageBuilder.build_notification_content(
-                job_post=job_post,
-                overall_score=float(dto.fit_score or 0.0),
-                fit_score=dto.fit_score,
-                required_coverage=dto.jd_required_coverage,
+            content = NotificationMessageBuilder.build_from_orm(
+                job_post,
+                match_record,
                 apply_url=job_post.company_url_direct,
             )
 
         if not content:
             return False
 
-        ctx.notification_service.notify_new_match(
+        results = ctx.notification_service.notify_new_match(
             user_id=delivery_plan.user_id,
             match_id=str(match_id),
             content=content,
             channels=delivery_plan.enabled_channels,
             task_id=task_id,
         )
+        if not any(results.values()):
+            logger.warning(
+                "No notification channels accepted delivery for match %s; leaving it eligible for retry",
+                match_id,
+            )
+            return False
         match_record.notified = True
         return True
 
@@ -149,14 +192,16 @@ def _send_batch_complete_notification(
     *,
     delivery_plan: NotificationDeliveryPlan,
     saved_count: int,
-    high_score_matches: List,
+    alert_eligible_matches: List,
+    min_fit_for_alerts: int,
     task_id: Optional[str],
 ) -> None:
     """Send the batch summary notification."""
     ctx.notification_service.notify_batch_complete(
         user_id=delivery_plan.user_id,
         total_matches=saved_count,
-        high_score_matches=len(high_score_matches),
+        alert_eligible_matches=len(alert_eligible_matches),
+        min_fit_for_alerts=min_fit_for_alerts,
         channels=delivery_plan.enabled_channels,
         task_id=task_id,
     )
@@ -164,54 +209,58 @@ def _send_batch_complete_notification(
 
 def _notify_per_match(
     ctx,
-    high_score_matches: List,
+    alert_eligible_matches: List,
     notification_config,
     delivery_plan: NotificationDeliveryPlan,
-    resume_fingerprint: str,
     task_id: Optional[str],
     stop_event: threading.Event,
 ) -> int:
-    """Send one notification per high-score match. Returns count sent."""
+    """Send one notification per alert-eligible persisted match. Returns count sent."""
     notify_on_new_match = _notification_setting_value(
         notification_config, delivery_plan.settings_snapshot, "notify_on_new_match",
     )
     notified_count = 0
-    for dto in high_score_matches:
+    for match in alert_eligible_matches:
         if stop_event.is_set():
             break
         if not notify_on_new_match:
             continue
         try:
             if _send_match_notification(
-                ctx, dto,
-                resume_fingerprint=resume_fingerprint,
+                ctx,
+                str(match.id),
                 delivery_plan=delivery_plan,
                 task_id=task_id,
             ):
                 notified_count += 1
         except Exception:
-            logger.exception("Failed to process notification for job_id=%s", dto.job.id)
+            logger.exception("Failed to process notification for match_id=%s", match.id)
     return notified_count
 
 
 def send_notifications(
     ctx,
-    scored_match_dtos: List,
+    *,
     saved_count: int,
+    failed_count: int,
     resume_fingerprint: str,
     stop_event: threading.Event,
+    ranking_context: RankingContext,
     owner_id: Optional[str] = None,
     task_id: Optional[str] = None,
 ) -> int:
-    """Send notifications for scored matches."""
+    """Send notifications for the persisted active match set for this run."""
     notification_config = ctx.config.notifications
 
     if not notification_config or not notification_config.enabled:
         logger.info("=== NOTIFICATION STEP: Skipped (disabled in config) ===")
         return 0
 
-    if saved_count == 0:
-        logger.info("=== NOTIFICATION STEP: Skipped (no matches to notify) ===")
+    if failed_count > 0:
+        logger.warning(
+            "=== NOTIFICATION STEP: Skipped (%d match saves failed; suppressing alerts for this run) ===",
+            failed_count,
+        )
         return 0
 
     step_start = time.time()
@@ -222,13 +271,36 @@ def send_notifications(
         if delivery_plan is None:
             return 0
 
-        high_score_matches = _high_score_matches_for_plan(
-            scored_match_dtos, notification_config, delivery_plan,
+        persisted_matches = _load_persisted_notification_matches(
+            resume_fingerprint,
+            ranking_context,
+        )
+        if not persisted_matches:
+            logger.info(
+                "=== NOTIFICATION STEP: Skipped (no persisted active matches for resume %s) ===",
+                resume_fingerprint[:16],
+            )
+            return 0
+        alert_eligible_matches = _alert_eligible_matches_for_plan(
+            persisted_matches,
+            notification_config,
+            delivery_plan,
+        )
+        min_fit_for_alerts = int(
+            _notification_setting_value(
+                notification_config,
+                delivery_plan.settings_snapshot,
+                "min_fit_for_alerts",
+            )
         )
 
         notified_count = _notify_per_match(
-            ctx, high_score_matches, notification_config, delivery_plan,
-            resume_fingerprint, task_id, stop_event,
+            ctx,
+            alert_eligible_matches,
+            notification_config,
+            delivery_plan,
+            task_id,
+            stop_event,
         )
 
         if _notification_setting_value(
@@ -238,8 +310,9 @@ def send_notifications(
                 _send_batch_complete_notification(
                     ctx,
                     delivery_plan=delivery_plan,
-                    saved_count=saved_count,
-                    high_score_matches=high_score_matches,
+                    saved_count=len(persisted_matches),
+                    alert_eligible_matches=alert_eligible_matches,
+                    min_fit_for_alerts=min_fit_for_alerts,
                     task_id=task_id,
                 )
             except Exception as e:
