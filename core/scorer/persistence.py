@@ -110,11 +110,13 @@ def _extract_scores(scored_match: ScoredMatch):
             'fit_score': scored_match.fit_score,
             'preference_score': scored_match.preference_score,
             'fit_components': scored_match.fit_components,
+            'preference_components': scored_match.preference_components,
+            'ranking_snapshot': scored_match.ranking_snapshot,
             'base_score': scored_match.base_score,
             'penalties': scored_match.penalties,
             'penalty_details': scored_match.penalty_details,
             'jd_required_coverage': scored_match.jd_required_coverage,
-            'jd_preferences_coverage': scored_match.jd_preferences_coverage,
+            'jd_preferred_requirement_coverage': scored_match.jd_preferred_requirement_coverage,
             'match_type': scored_match.match_type,
         }
     else:
@@ -123,6 +125,12 @@ def _extract_scores(scored_match: ScoredMatch):
             'fit_score': scored_match.fit_score,
             'preference_score': getattr(scored_match, 'preference_score', None),
             'fit_components': _to_native_types(getattr(scored_match, 'fit_components', {})),
+            'preference_components': _to_native_types(
+                getattr(scored_match, 'preference_components', {})
+            ),
+            'ranking_snapshot': _to_native_types(
+                getattr(scored_match, 'ranking_snapshot', {})
+            ),
             'base_score': scored_match.base_score,
             'penalties': scored_match.penalties,
             'penalty_details': {
@@ -130,7 +138,11 @@ def _extract_scores(scored_match: ScoredMatch):
                 'total': _to_float(scored_match.penalties),
             },
             'jd_required_coverage': scored_match.jd_required_coverage,
-            'jd_preferences_coverage': scored_match.jd_preferences_coverage,
+            'jd_preferred_requirement_coverage': getattr(
+                scored_match,
+                'jd_preferred_requirement_coverage',
+                0.0,
+            ),
             'match_type': scored_match.match_type,
         }
 
@@ -142,11 +154,13 @@ def _build_match_values(scores, matched_reqs, missing_reqs, job_content_hash):
         'fit_score': _to_float(scores['fit_score']),
         'preference_score': _to_optional_float(scores['preference_score']),
         'fit_components': _to_native_types(scores['fit_components']),
+        'preference_components': _to_native_types(scores['preference_components']),
+        'ranking_snapshot': _to_native_types(scores['ranking_snapshot']),
         'base_score': _to_float(scores['base_score']),
         'penalties': _to_float(scores['penalties']),
         'penalty_details': scores['penalty_details'],
         'required_coverage': _to_float(scores['jd_required_coverage']),
-        'preferred_coverage': _to_float(scores['jd_preferences_coverage']),
+        'preferred_requirement_coverage': _to_float(scores['jd_preferred_requirement_coverage']),
         'total_requirements': total_requirements,
         'matched_requirements_count': len(matched_reqs),
         'match_type': scores['match_type'],
@@ -160,11 +174,13 @@ def _apply_match_values(match_record: JobMatch, values) -> None:
     match_record.fit_score = values['fit_score']
     match_record.preference_score = values['preference_score']
     match_record.fit_components = values['fit_components']
+    match_record.preference_components = values['preference_components']
+    match_record.ranking_snapshot = values['ranking_snapshot']
     match_record.base_score = values['base_score']
     match_record.penalties = values['penalties']
     match_record.penalty_details = values['penalty_details']
     match_record.required_coverage = values['required_coverage']
-    match_record.preferred_coverage = values['preferred_coverage']
+    match_record.preferred_requirement_coverage = values['preferred_requirement_coverage']
     match_record.total_requirements = values['total_requirements']
     match_record.matched_requirements_count = values['matched_requirements_count']
     match_record.match_type = values['match_type']
@@ -201,11 +217,13 @@ def _create_match_record(scored_match: ScoredMatch, values, is_hidden: bool) -> 
         fit_score=values['fit_score'],
         preference_score=values['preference_score'],
         fit_components=values['fit_components'],
+        preference_components=values['preference_components'],
+        ranking_snapshot=values['ranking_snapshot'],
         base_score=values['base_score'],
         penalties=values['penalties'],
         penalty_details=values['penalty_details'],
         required_coverage=values['required_coverage'],
-        preferred_coverage=values['preferred_coverage'],
+        preferred_requirement_coverage=values['preferred_requirement_coverage'],
         total_requirements=values['total_requirements'],
         matched_requirements_count=values['matched_requirements_count'],
         match_type=values['match_type'],

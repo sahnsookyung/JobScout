@@ -19,11 +19,12 @@ from .resume import (
     RESUME_UPLOAD_FAILED_RETRYABLE,
     RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED,
     RESUME_FINGERPRINT_VERSION,
-    DEFAULT_LEGACY_OWNER_ID,
+    SYSTEM_OWNER_ID,
     generate_file_fingerprint,
     generate_resume_fingerprint,
 )
 from .match import JobMatch, JobMatchRequirement
+from .match_selection import MatchSelectionRun, MatchSelectionItem
 from .notification import NotificationTracker
 from .notification_settings import UserNotificationSettings, UserNotificationChannel
 from .settings import AppSettings
@@ -55,11 +56,13 @@ __all__ = [
     'RESUME_UPLOAD_FAILED_RETRYABLE',
     'RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED',
     'RESUME_FINGERPRINT_VERSION',
-    'DEFAULT_LEGACY_OWNER_ID',
+    'SYSTEM_OWNER_ID',
     'generate_file_fingerprint',
     'generate_resume_fingerprint',
     'JobMatch',
     'JobMatchRequirement',
+    'MatchSelectionRun',
+    'MatchSelectionItem',
     'NotificationTracker',
     'UserNotificationSettings',
     'UserNotificationChannel',

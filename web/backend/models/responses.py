@@ -39,7 +39,7 @@ class MatchSummary(BaseModel):
                 "preference_score": 0.74,
                 "penalties": 9.5,
                 "required_coverage": 0.9,
-                "preferred_coverage": 0.8,
+                "preferred_requirement_coverage": 0.8,
                 "match_type": "requirements_only",
                 "ranking_mode_used": "balanced",
                 "dominant_reason_code": "balanced_blend",
@@ -64,7 +64,7 @@ class MatchSummary(BaseModel):
 
     penalties: float = Field(ge=0)
     required_coverage: float = Field(ge=0, le=1)
-    preferred_coverage: float = Field(ge=0, le=1)
+    preferred_requirement_coverage: float = Field(ge=0, le=1)
     match_type: str
     is_hidden: bool = False
     created_at: Optional[str] = None
@@ -116,6 +116,7 @@ class MatchDetail(BaseModel):
 
     # Score breakdowns
     fit_components: Optional[Dict[str, Any]] = None
+    preference_components: Optional[Dict[str, Any]] = None
     fit_confidence: Optional[float] = Field(default=None, ge=0, le=1)
     fit_explanation: Optional[Dict[str, Any]] = None
     fit_scorer: Optional[Dict[str, Any]] = None
@@ -124,7 +125,7 @@ class MatchDetail(BaseModel):
     base_score: float
     penalties: float
     required_coverage: float
-    preferred_coverage: float
+    preferred_requirement_coverage: float
     total_requirements: int
     matched_requirements_count: int
     match_type: str
@@ -225,7 +226,7 @@ class NotificationSettingsResponse(BaseModel):
     """Per-user notification settings response."""
 
     notifications_enabled: bool
-    min_score_threshold: int
+    min_fit_for_alerts: int
     notify_on_new_match: bool
     notify_on_batch_complete: bool
     revision: int

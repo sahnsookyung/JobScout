@@ -41,7 +41,7 @@ pytestmark = pytest.mark.usefixtures("test_database", "redis_container")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from database.models import JobPost, JobRequirementUnit, JobMatch, DEFAULT_LEGACY_OWNER_ID
+from database.models import JobPost, JobRequirementUnit, JobMatch, SYSTEM_OWNER_ID
 from database.repository import JobRepository
 from core.matcher import MatcherService
 from etl.resume import ResumeProfiler
@@ -161,7 +161,6 @@ class TestFullPipelineIntegration(unittest.TestCase):
         
         cls.scorer_config = ScorerConfig(
             weight_required=0.7,
-            weight_preferred=0.3,
             wants_remote=True
         )
         cls.scorer = ScoringService(cls.repo, cls.scorer_config)
@@ -501,7 +500,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
         type(self).test_fingerprint = fingerprint
     
     def test_06_notification_triggering(self):
-        """Step 6: Trigger notifications for high-scoring matches."""
+        """Step 6: Trigger notifications for alert-eligible saved matches."""
         print("\n[Step 6] Notification Triggering...")
         
         if not self.redis_url or not self.notification_service:
@@ -510,18 +509,18 @@ class TestFullPipelineIntegration(unittest.TestCase):
         if not hasattr(type(self), 'test_scored_matches') or not hasattr(type(self), 'test_fingerprint'):
             self.skipTest("Previous steps not completed")
         
-        # Filter high-scoring matches
+    # Filter alert-eligible matches
         high_score_matches = [
             m for m in self.test_scored_matches
             if m.fit_score >= 70.0
         ]
         
         if not high_score_matches:
-            print("  ℹ No high-scoring matches to notify about")
+            print("  ℹ No alert-eligible saved matches to notify about")
             return
         
         # Get user ID from resume
-        user_id = DEFAULT_LEGACY_OWNER_ID
+        user_id = SYSTEM_OWNER_ID
         
         # Trigger notifications
         notification_count = 0
@@ -542,7 +541,6 @@ class TestFullPipelineIntegration(unittest.TestCase):
                         if job_post:
                             content = NotificationMessageBuilder.build_notification_content(
                                 job_post=job_post,
-                                overall_score=float(scored_match.fit_score),
                                 fit_score=float(scored_match.fit_score),
                                 required_coverage=float(scored_match.jd_required_coverage),
                                 apply_url=job_post.company_url_direct

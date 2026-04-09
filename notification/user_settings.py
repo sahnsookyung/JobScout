@@ -127,7 +127,7 @@ class ChannelSnapshot:
 class NotificationSettingsSnapshot:
     owner_id: UUID
     notifications_enabled: bool
-    min_score_threshold: int
+    min_fit_for_alerts: int
     notify_on_new_match: bool
     notify_on_batch_complete: bool
     revision: int
@@ -174,7 +174,7 @@ class UserNotificationSettingsService:
         return NotificationSettingsSnapshot(
             owner_id=user.id,
             notifications_enabled=self._root_value(settings, "notifications_enabled", True),
-            min_score_threshold=self._root_value(settings, "min_score_threshold", 70),
+            min_fit_for_alerts=self._root_value(settings, "min_fit_for_alerts", 70),
             notify_on_new_match=self._root_value(settings, "notify_on_new_match", True),
             notify_on_batch_complete=self._root_value(settings, "notify_on_batch_complete", True),
             revision=self._root_value(settings, "revision", 0),
@@ -184,7 +184,7 @@ class UserNotificationSettingsService:
     def update_settings(self, user: User, payload: dict[str, Any]) -> NotificationSettingsSnapshot:
         settings = self.repo.notification_settings.get_or_create_settings(user.id)
         settings.notifications_enabled = bool(payload["notifications_enabled"])
-        settings.min_score_threshold = int(payload["min_score_threshold"])
+        settings.min_fit_for_alerts = int(payload["min_fit_for_alerts"])
         settings.notify_on_new_match = bool(payload["notify_on_new_match"])
         settings.notify_on_batch_complete = bool(payload["notify_on_batch_complete"])
 

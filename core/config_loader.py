@@ -383,7 +383,6 @@ class ScorerConfig(BaseModel):
 
     enabled: bool = True
     weight_required: float = 0.7  # required coverage vs job_similarity blend
-    weight_preferred: float = 0.3  # deprecated compatibility field; not used in fit scoring
     semantic_fit: SemanticFitConfig = Field(default_factory=SemanticFitConfig)
     semantic_fit_enabled: Optional[bool] = None
     semantic_fit_fallback_to_threshold: Optional[bool] = None
@@ -445,7 +444,7 @@ class NotificationConfig(BaseModel):
     enabled: bool = False
     user_id: Optional[str] = None
     base_url: str = "http://localhost:8080"
-    min_score_threshold: float = 70.0
+    min_fit_for_alerts: float = 70.0
     notify_on_new_match: bool = True
     notify_on_batch_complete: bool = True
     channels: Dict[str, NotificationChannelConfig] = {}

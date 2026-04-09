@@ -10,7 +10,7 @@ import threading
 
 from core.app_context import AppContext
 from database.uow import job_uow
-from database.models import DEFAULT_LEGACY_OWNER_ID
+from database.models import SYSTEM_OWNER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,7 @@ def generate_resume_embedding(
     Returns:
         True if embedded, False if resume not found
     """
-    owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
+    owner_id = owner_id or SYSTEM_OWNER_ID
     logger.info(f"Generating embeddings for resume: {resume_fingerprint}")
 
     with job_uow() as repo:

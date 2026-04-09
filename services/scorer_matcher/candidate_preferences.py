@@ -272,8 +272,8 @@ def _fit_only_fallback(
     reason: str,
 ):
     for match in scored_matches:
-        fit_components = dict(getattr(match, "fit_components", {}) or {})
-        fit_components.update(
+        preference_components = dict(getattr(match, "preference_components", {}) or {})
+        preference_components.update(
             {
                 "preference_reason_codes": ["fallback_fit_only"],
                 "preference_explanation": "Preference reranking unavailable for this run.",
@@ -283,7 +283,7 @@ def _fit_only_fallback(
                 "preference_fallback_reason": reason,
             }
         )
-        match.fit_components = fit_components
+        match.preference_components = preference_components
         match.preference_score = None  # NULL = evaluator did not run
     return scored_matches
 
@@ -304,7 +304,7 @@ def _apply_assessments(
     by_job_id = _assessments_by_job_id(assessments)
     for match in scored_matches:
         assessment = by_job_id.get(str(getattr(match.job, "id")))
-        fit_components = dict(getattr(match, "fit_components", {}) or {})
+        preference_components = dict(getattr(match, "preference_components", {}) or {})
         if assessment is None:
             preference_score = 0.0
             preference_confidence = 0.0
@@ -316,7 +316,7 @@ def _apply_assessments(
             reason_codes = list(assessment.preference_reason_codes or [])
             explanation = assessment.preference_explanation
 
-        fit_components.update(
+        preference_components.update(
             {
                 "preference_confidence": preference_confidence,
                 "preference_reason_codes": reason_codes,
@@ -326,7 +326,7 @@ def _apply_assessments(
                 "preference_mode_used": effective_mode,
             }
         )
-        match.fit_components = fit_components
+        match.preference_components = preference_components
         match.preference_score = preference_score  # 0.0 = scored poor; None = not evaluated
     return scored_matches
 

@@ -31,7 +31,7 @@ from core.redis_streams import (
 )
 from services.base.extraction import run_job_extraction, extract_resume as extract_resume_file
 from database.init_db import init_db
-from database.models import DEFAULT_LEGACY_OWNER_ID
+from database.models import SYSTEM_OWNER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ class ExtractionConsumer(StreamConsumerWithCompletion):
         if not is_valid:
             logger.error("❌ Invalid extraction job: %s", error)
             return False, {"status": "failed", "error": error}
-        owner_id = msg.get("owner_id") or DEFAULT_LEGACY_OWNER_ID
+        owner_id = msg.get("owner_id") or SYSTEM_OWNER_ID
 
         # Validate resume path
         is_valid, result = _validate_resume_path(resume_file)
@@ -249,7 +249,7 @@ app = FastAPI(
 class ExtractResumeRequest(BaseModel):
     resume_file: str
     force_re_extraction: bool = False
-    owner_id: str = DEFAULT_LEGACY_OWNER_ID
+    owner_id: str = SYSTEM_OWNER_ID
 
 
 class ExtractResponse(BaseModel):

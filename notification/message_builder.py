@@ -23,9 +23,12 @@ class JobInfo(BaseModel):
 
 
 class MatchInfo(BaseModel):
-    overall_score: float
     fit_score: float
+    preference_score: Optional[float] = None
     required_coverage: float
+    ranking_mode_used: Optional[str] = None
+    explanation_label: Optional[str] = None
+    dominant_reason_code: Optional[str] = None
 
 
 class RequirementsInfo(BaseModel):
@@ -38,6 +41,26 @@ JobNotificationContent.model_rebuild()
 
 
 class NotificationMessageBuilder:
+    @staticmethod
+    def _safe_optional_float(value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _headline_for_match(match_info: "MatchInfo") -> str:
+        mode = (match_info.ranking_mode_used or "").strip().lower()
+        if mode == "fit_first":
+            return "Strong fit match"
+        if mode == "preference_first":
+            return "Matches your preferences"
+        if mode == "balanced":
+            return "Balanced fit and preference match"
+        return "Strong match"
+
     @staticmethod
     def build_apply_section(apply_url: Optional[str], job_post: JobPost) -> str:
         """Build apply link section."""
@@ -102,19 +125,26 @@ class NotificationMessageBuilder:
     @staticmethod
     def build_notification_content(
         job_post: JobPost,
-        overall_score: float,
         fit_score: float,
         required_coverage: float = 0,
-        apply_url: Optional[str] = None
+        apply_url: Optional[str] = None,
+        preference_score: Optional[float] = None,
+        ranking_snapshot: Optional[Dict[str, Any]] = None,
     ) -> JobNotificationContent:
         """Build notification content from individual parameters."""
 
         job_info = NotificationMessageBuilder._job_info_from_orm(job_post)
+        ranking_snapshot = ranking_snapshot or {}
         
         match_info = MatchInfo(
-            overall_score=float(overall_score),
             fit_score=float(fit_score),
+            preference_score=(
+                None if preference_score is None else float(preference_score)
+            ),
             required_coverage=float(required_coverage),
+            ranking_mode_used=ranking_snapshot.get("ranking_mode_used"),
+            explanation_label=ranking_snapshot.get("explanation_label"),
+            dominant_reason_code=ranking_snapshot.get("dominant_reason_code"),
         )
         
         return JobNotificationContent(
@@ -143,9 +173,12 @@ class NotificationMessageBuilder:
         )
         
         match_info = MatchInfo(
-            overall_score=match_data.get('overall_score', 0),
             fit_score=match_data.get('fit_score', 0),
+            preference_score=match_data.get('preference_score'),
             required_coverage=match_data.get('required_coverage', 0),
+            ranking_mode_used=match_data.get('ranking_mode_used'),
+            explanation_label=match_data.get('explanation_label'),
+            dominant_reason_code=match_data.get('dominant_reason_code'),
         )
         
         requirements_info = RequirementsInfo(
@@ -173,11 +206,20 @@ class NotificationMessageBuilder:
         handling Column types that need to be accessed via getattr.
         """
         job_info = NotificationMessageBuilder._job_info_from_orm(job_post)
+        ranking_snapshot = getattr(job_match, 'ranking_snapshot', {}) or {}
+        if not isinstance(ranking_snapshot, dict):
+            ranking_snapshot = {}
+        preference_score = NotificationMessageBuilder._safe_optional_float(
+            getattr(job_match, 'preference_score', None)
+        )
 
         match_info = MatchInfo(
-            overall_score=float(getattr(job_match, 'fit_score', 0) or 0),
             fit_score=float(getattr(job_match, 'fit_score', 0) or 0),
+            preference_score=preference_score,
             required_coverage=float(getattr(job_match, 'required_coverage', 0) or 0),
+            ranking_mode_used=ranking_snapshot.get('ranking_mode_used'),
+            explanation_label=ranking_snapshot.get('explanation_label'),
+            dominant_reason_code=ranking_snapshot.get('dominant_reason_code'),
         )
         
         return JobNotificationContent(
@@ -195,10 +237,12 @@ class NotificationMessageBuilder:
     def to_markdown(content: JobNotificationContent) -> str:
         """Convert notification content to markdown format."""
         lines = []
+        headline = NotificationMessageBuilder._headline_for_match(content.match)
         
-        lines.append(f"🎯 **{content.job.title}**")
+        lines.append(f"🎯 **{headline}**")
+        lines.append(f"**{content.job.title}**")
         lines.append(f"🏢 {content.job.company}")
-        lines.append(content.job.location)
+        lines.append(content.job.location or "📍 Location not specified")
         
         if content.job.salary:
             lines.append(f"💰 {content.job.salary}")
@@ -216,9 +260,17 @@ class NotificationMessageBuilder:
         lines.append("")
         
         coverage = content.match.required_coverage * 100
-        score_lines = [f"📊 **{content.match.overall_score:.0f}%** Match"]
-        score_lines.append(f"   Fit: {content.match.fit_score:.0f}% | Coverage: {coverage:.0f}%")
+        score_lines = [f"📊 Fit: **{content.match.fit_score:.0f}%**"]
+        if content.match.preference_score is not None:
+            score_lines.append(
+                f"💡 Preference alignment: **{content.match.preference_score * 100:.0f}%**"
+            )
+        score_lines.append(f"🧩 Required coverage: {coverage:.0f}%")
         lines.append("\n".join(score_lines))
+
+        if content.match.explanation_label:
+            lines.append("")
+            lines.append(f"Why it surfaced: {content.match.explanation_label}")
         
         lines.append("")
         req_matched = content.requirements.matched
@@ -280,10 +332,21 @@ class NotificationMessageBuilder:
             fields.append({"name": "📋 Type", "value": content.job.job_type, "inline": True})
         
         fields.extend([
-            {"name": "📊 Match Score", "value": f"**{content.match.overall_score:.0f}%**", "inline": True},
-            {"name": "🎯 Fit Score", "value": f"{content.match.fit_score:.0f}%", "inline": True},
-            {"name": "📈 Coverage", "value": f"{coverage:.0f}%", "inline": True},
+            {"name": "🎯 Fit Score", "value": f"**{content.match.fit_score:.0f}%**", "inline": True},
+            {"name": "📈 Required Coverage", "value": f"{coverage:.0f}%", "inline": True},
         ])
+        if content.match.preference_score is not None:
+            fields.append({
+                "name": "💡 Preference Alignment",
+                "value": f"{content.match.preference_score * 100:.0f}%",
+                "inline": True,
+            })
+        if content.match.explanation_label:
+            fields.append({
+                "name": "🧭 Ranking Reason",
+                "value": content.match.explanation_label,
+                "inline": False,
+            })
         
         req_matched = content.requirements.matched
         req_total = content.requirements.total
@@ -311,11 +374,11 @@ class NotificationMessageBuilder:
                 "inline": True
             })
         
-        color = NotificationMessageBuilder._get_score_color(content.match.overall_score)
+        color = NotificationMessageBuilder._get_score_color(content.match.fit_score)
         
         return {
-            "title": f"🎯 {content.job.title}",
-            "description": f"Match Score: **{content.match.overall_score:.0f}%**",
+            "title": f"🎯 {NotificationMessageBuilder._headline_for_match(content.match)}",
+            "description": f"{content.job.title} at {content.job.company}",
             "color": color,
             "fields": fields,
             "footer": {"text": "JobScout Notifications"},

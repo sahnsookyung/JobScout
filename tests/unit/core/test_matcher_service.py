@@ -79,7 +79,6 @@ matching:
   scorer:
     enabled: true
     weight_required: 0.8
-    weight_preferred: 0.2
     wants_remote: true
     min_salary: 50000
 

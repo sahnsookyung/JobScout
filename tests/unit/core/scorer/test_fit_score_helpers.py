@@ -297,4 +297,4 @@ class TestCalculateFitScoreEdgeCases:
         )
 
         assert score_with_preferred == pytest.approx(score_required_only)
-        assert components["preferred_coverage"] == pytest.approx(0.95)
+        assert "preferred_requirement_coverage" not in components

@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from web.backend.dependencies import get_current_user
 from web.backend.routers.matches import router, validate_uuid
 
 
@@ -70,6 +71,7 @@ class TestMatchesRouter:
         """Create test FastAPI app with matches router."""
         app = FastAPI()
         app.include_router(router)
+        app.dependency_overrides[get_current_user] = lambda: Mock(id="user-123")
         return app
 
     @pytest.fixture
@@ -109,12 +111,11 @@ class TestMatchesRouter:
                 'match_id': str(uuid.uuid4()),
                 'title': 'Software Engineer',
                 'company': 'Tech Corp',
-                'overall_score': 85.5,
                 'fit_score': 80.0,
                 'is_remote': True,
                 'is_hidden': False,
                 'required_coverage': 0.85,
-                'preferred_coverage': 0.70,
+                'preferred_requirement_coverage': 0.70,
                 'match_type': 'requirements_only',
                 'base_score': 85.0,
                 'penalties': 0.0,
@@ -129,6 +130,7 @@ class TestMatchesRouter:
         assert data['count'] == 1
         assert 'matches' in data
         mock_match_service.get_matches.assert_called_once()
+        assert mock_match_service.get_matches.call_args.kwargs["owner_id"] == "user-123"
 
     def test_get_matches_with_filters(self, client, mock_match_service, mock_policy_service):
         """Test get matches with query filters."""
@@ -149,19 +151,20 @@ class TestMatchesRouter:
         mock_match_service.get_matches.assert_called_once()
         call_kwargs = mock_match_service.get_matches.call_args[1]
         assert call_kwargs['status'] == 'active'
+        assert call_kwargs['owner_id'] == 'user-123'
         assert call_kwargs['min_fit'] == 70.0
         assert call_kwargs['top_k'] == 50
         assert call_kwargs['remote_only'] is True
         assert call_kwargs['show_hidden'] is True
 
-    def test_get_matches_uses_policy_defaults(self, client, mock_match_service, mock_policy_service):
-        """Test get matches uses policy defaults when not specified."""
+    def test_get_matches_uses_only_top_k_policy_default(self, client, mock_match_service, mock_policy_service):
+        """Test get matches only uses policy defaults for top_k when not specified."""
         mock_match_service.get_matches.return_value = []
 
         client.get('/api/matches')
 
         call_kwargs = mock_match_service.get_matches.call_args[1]
-        assert call_kwargs['min_fit'] == 50.0  # From policy
+        assert call_kwargs['min_fit'] is None
         assert call_kwargs['top_k'] == 100  # From policy
 
     def test_get_matches_invalid_status(self, client):
@@ -235,13 +238,11 @@ class TestMatchesRouter:
             'match': {
                 'match_id': str(uuid.uuid4()),
                 'resume_fingerprint': 'fp-123',
-                'overall_score': 85.5,
                 'fit_score': 82.0,
-                'is_hidden': False,
                 'base_score': 85.0,
                 'penalties': 0.0,
                 'required_coverage': 0.85,
-                'preferred_coverage': 0.70,
+                'preferred_requirement_coverage': 0.70,
                 'total_requirements': 10,
                 'matched_requirements_count': 8,
                 'match_type': 'requirements_only',
@@ -272,7 +273,7 @@ class TestMatchesRouter:
         assert response.status_code == 200
         data = response.json()
         assert data['success'] is True
-        mock_match_service.get_match_detail.assert_called_once_with(match_id)
+        mock_match_service.get_match_detail.assert_called_once_with(match_id, owner_id="user-123")
 
     def test_get_match_details_invalid_uuid(self, client):
         """Test get match details with invalid UUID."""
@@ -305,7 +306,7 @@ class TestMatchesRouter:
         assert data['success'] is True
         assert data['match_id'] == match_id
         assert data['is_hidden'] is True
-        mock_match_service.toggle_hidden.assert_called_once_with(match_id)
+        mock_match_service.toggle_hidden.assert_called_once_with(match_id, owner_id="user-123")
 
     def test_toggle_match_hidden_unhide(self, client, mock_match_service):
         """Test toggle match hidden to unhide."""
@@ -354,7 +355,7 @@ class TestMatchesRouter:
         data = response.json()
         assert data['success'] is True
         assert 'explanation' in data
-        mock_match_service.get_match_explanation.assert_called_once_with(match_id)
+        mock_match_service.get_match_explanation.assert_called_once_with(match_id, owner_id="user-123")
 
     def test_get_match_explanation_invalid_uuid(self, client):
         """Test get match explanation with invalid UUID."""
@@ -383,6 +384,7 @@ class TestMatchesRouterIntegration:
         """Create test FastAPI app with matches router."""
         app = FastAPI()
         app.include_router(router)
+        app.dependency_overrides[get_current_user] = lambda: Mock(id="user-123")
         return app
 
     @pytest.fixture
@@ -415,7 +417,7 @@ class TestMatchesRouterIntegration:
                         fit_score=92.5,
                         preference_score=None,
                         required_coverage=0.95,
-                        preferred_coverage=0.80,
+                        preferred_requirement_coverage=0.80,
                         match_type='requirements_only',
                         is_hidden=False,
                         penalties=0.0,
@@ -446,13 +448,11 @@ class TestMatchesRouterIntegration:
                 'match': {
                     'match_id': match_id,
                     'resume_fingerprint': 'fp-123',
-                    'overall_score': 85.5,
                     'fit_score': 82.0,
-                    'is_hidden': False,
                     'base_score': 85.0,
                     'penalties': 0.0,
                     'required_coverage': 0.85,
-                    'preferred_coverage': 0.70,
+                    'preferred_requirement_coverage': 0.70,
                     'total_requirements': 10,
                     'matched_requirements_count': 8,
                     'match_type': 'requirements_only',

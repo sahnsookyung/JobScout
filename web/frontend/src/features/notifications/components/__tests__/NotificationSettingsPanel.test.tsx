@@ -30,7 +30,7 @@ describe('NotificationSettingsPanel', () => {
         mockUseNotificationSettings.mockReturnValue({
             settings: {
                 notifications_enabled: true,
-                min_score_threshold: 70,
+                min_fit_for_alerts: 70,
                 notify_on_new_match: true,
                 notify_on_batch_complete: false,
                 revision: 2,
@@ -80,7 +80,7 @@ describe('NotificationSettingsPanel', () => {
     it('saves edited settings explicitly', async () => {
         render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
 
-        const threshold = screen.getByLabelText('Minimum score threshold');
+        const threshold = screen.getByLabelText('Minimum fit for alerts');
         fireEvent.change(threshold, { target: { value: '75' } });
 
         const passwordInput = screen.getByPlaceholderText(/paste discord destination/i);
@@ -91,7 +91,7 @@ describe('NotificationSettingsPanel', () => {
         await waitFor(() => {
             expect(saveSettings).toHaveBeenCalledWith({
                 notifications_enabled: true,
-                min_score_threshold: 75,
+                min_fit_for_alerts: 75,
                 notify_on_new_match: true,
                 notify_on_batch_complete: false,
                 channels: {
@@ -109,7 +109,7 @@ describe('NotificationSettingsPanel', () => {
     it('disables test actions while there are unsaved changes', async () => {
         render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
 
-        const threshold = screen.getByLabelText('Minimum score threshold');
+        const threshold = screen.getByLabelText('Minimum fit for alerts');
         fireEvent.change(threshold, { target: { value: '71' } });
 
         const testButtons = screen.getAllByRole('button', { name: /test/i });
@@ -138,7 +138,7 @@ describe('NotificationSettingsPanel', () => {
         await waitFor(() => {
             expect(saveSettings).toHaveBeenCalledWith({
                 notifications_enabled: true,
-                min_score_threshold: 70,
+                min_fit_for_alerts: 70,
                 notify_on_new_match: true,
                 notify_on_batch_complete: false,
                 channels: {
@@ -156,7 +156,7 @@ describe('NotificationSettingsPanel', () => {
         mockUseNotificationSettings.mockReturnValue({
             settings: {
                 notifications_enabled: true,
-                min_score_threshold: 70,
+                min_fit_for_alerts: 70,
                 notify_on_new_match: true,
                 notify_on_batch_complete: false,
                 revision: 2,

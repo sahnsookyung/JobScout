@@ -18,7 +18,7 @@ def make_match(job_post_id="job-1", fingerprint="fp-1", status="active", is_hidd
     m.resume_fingerprint = fingerprint
     m.status = status
     m.is_hidden = is_hidden
-    m.overall_score = 80.0
+    m.fit_score = 80.0
     return m
 
 

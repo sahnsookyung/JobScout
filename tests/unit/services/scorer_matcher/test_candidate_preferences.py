@@ -51,13 +51,21 @@ def _preliminary(job=None):
     return SimpleNamespace(job=job or _job())
 
 
-def _scored_match(job, *, fit_score=80.0, job_similarity=0.8, fit_components=None):
+def _scored_match(
+    job,
+    *,
+    fit_score=80.0,
+    job_similarity=0.8,
+    fit_components=None,
+    preference_components=None,
+):
     return SimpleNamespace(
         job=job,
         fit_score=fit_score,
         job_similarity=job_similarity,
         preference_score=None,
         fit_components=fit_components or {},
+        preference_components=preference_components or {},
     )
 
 
@@ -257,7 +265,7 @@ class TestApplyAssessments:
             requested_mode="semantic_rerank",
             effective_mode="semantic_rerank",
         )
-        assert result[0].fit_components["preference_reason_codes"] == ["no_preference_signal"]
+        assert result[0].preference_components["preference_reason_codes"] == ["no_preference_signal"]
         assert result[0].preference_score == pytest.approx(0.0)
 
 
@@ -277,9 +285,9 @@ class TestPreferenceSemanticReranking:
             config=_preferences_config(),
         )
 
-        assert reranked[0].fit_components["preference_mode_used"] == "fit_only_fallback"
-        assert reranked[0].fit_components["preference_mode_effective"] == "semantic_rerank"
-        assert reranked[0].fit_components["preference_fallback_reason"] == "preference_profile_unavailable"
+        assert reranked[0].preference_components["preference_mode_used"] == "fit_only_fallback"
+        assert reranked[0].preference_components["preference_mode_effective"] == "semantic_rerank"
+        assert reranked[0].preference_components["preference_fallback_reason"] == "preference_profile_unavailable"
 
     @patch("services.scorer_matcher.candidate_preferences.build_preference_semantic_reranker")
     def test_semantic_reranker_stores_scores_preserves_input_order(
@@ -339,7 +347,7 @@ class TestPreferenceSemanticReranking:
         # Scores written to both matches
         assert reranked[0].preference_score == pytest.approx(0.95)
         assert reranked[1].preference_score == pytest.approx(0.15)
-        assert reranked[0].fit_components["preference_mode_used"] == "semantic_rerank"
+        assert reranked[0].preference_components["preference_mode_used"] == "semantic_rerank"
 
     @patch("services.scorer_matcher.candidate_preferences.build_preference_judge")
     def test_llm_judge_mode_uses_judge_builder(self, mock_build_judge):
@@ -379,7 +387,7 @@ class TestPreferenceSemanticReranking:
             config=config,
         )
 
-        assert reranked[0].fit_components["preference_mode_used"] == "llm_judge"
+        assert reranked[0].preference_components["preference_mode_used"] == "llm_judge"
         assert reranked[0].preference_score == pytest.approx(0.8)
 
     def test_disallowed_requested_mode_resolves_to_allowed_mode_before_matching(self):
@@ -428,10 +436,10 @@ class TestPreferenceSemanticReranking:
             config=config,
         )
 
-        assert reranked[0].fit_components["preference_mode_requested"] == "llm_judge"
-        assert reranked[0].fit_components["preference_mode_used"] == "semantic_rerank"
-        assert reranked[0].fit_components["preference_mode_effective"] == "semantic_rerank"
-        assert "preference_fallback_reason" not in reranked[0].fit_components
+        assert reranked[0].preference_components["preference_mode_requested"] == "llm_judge"
+        assert reranked[0].preference_components["preference_mode_used"] == "semantic_rerank"
+        assert reranked[0].preference_components["preference_mode_effective"] == "semantic_rerank"
+        assert "preference_fallback_reason" not in reranked[0].preference_components
 
     def test_reranker_none_falls_back_to_fit_only(self):
         config = _preferences_config()
@@ -449,8 +457,8 @@ class TestPreferenceSemanticReranking:
                 {"soft_preferences": "Python", "preference_mode": "semantic_rerank"},
                 config=config,
             )
-        assert result[0].fit_components["preference_mode_used"] == "fit_only_fallback"
-        assert result[0].fit_components["preference_fallback_reason"] == "preference_reranker_unavailable"
+        assert result[0].preference_components["preference_mode_used"] == "fit_only_fallback"
+        assert result[0].preference_components["preference_fallback_reason"] == "preference_reranker_unavailable"
 
     def test_reranking_exception_falls_back_to_fit_only(self):
         config = _preferences_config()
@@ -468,8 +476,8 @@ class TestPreferenceSemanticReranking:
                 {"soft_preferences": "Python", "preference_mode": "semantic_rerank"},
                 config=config,
             )
-        assert result[0].fit_components["preference_mode_used"] == "fit_only_fallback"
-        assert result[0].fit_components["preference_fallback_reason"] == "preference_reranking_failed"
+        assert result[0].preference_components["preference_mode_used"] == "fit_only_fallback"
+        assert result[0].preference_components["preference_fallback_reason"] == "preference_reranking_failed"
 
     def test_empty_soft_preferences_returns_matches_unchanged(self):
         config = _preferences_config()
@@ -480,6 +488,7 @@ class TestPreferenceSemanticReranking:
             config=config,
         )
         assert result[0].fit_components == {}
+        assert result[0].preference_components == {}
 
     def test_apply_assessments_stores_scores_on_all_matches_with_equal_scores(self):
         """_apply_assessments writes preference_score to every match; no sorting."""
@@ -507,3 +516,31 @@ class TestPreferenceSemanticReranking:
         # Both scores written
         assert result[0].preference_score == pytest.approx(0.7)
         assert result[1].preference_score == pytest.approx(0.7)
+
+    def test_apply_assessments_exposes_full_preference_signal_independently_of_fit(self):
+        match = _scored_match(_job(id="job-1"), fit_components={"core": 0.8})
+        assessment = PreferenceAssessment(
+            job_id="job-1",
+            preference_score=0.83,
+            preference_confidence=0.74,
+            preference_reason_codes=["tech_stack_match", "team_culture_match"],
+            preference_explanation="Strong alignment with Python and mentorship preferences.",
+        )
+
+        result = _apply_assessments(
+            [match],
+            [assessment],
+            requested_mode="semantic_rerank",
+            effective_mode="semantic_rerank",
+        )
+
+        assert result[0].fit_components == {"core": 0.8}
+        assert result[0].preference_score == pytest.approx(0.83)
+        assert result[0].preference_components == {
+            "preference_confidence": 0.74,
+            "preference_reason_codes": ["tech_stack_match", "team_culture_match"],
+            "preference_explanation": "Strong alignment with Python and mentorship preferences.",
+            "preference_mode_requested": "semantic_rerank",
+            "preference_mode_effective": "semantic_rerank",
+            "preference_mode_used": "semantic_rerank",
+        }

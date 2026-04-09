@@ -9,7 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from ..dependencies import get_db
+from ..dependencies import get_current_user, get_db
 from ..services.match_service import MatchService
 from ..services.policy_service import get_policy_service
 from ..models.responses import (
@@ -48,6 +48,7 @@ _VALID_RANKING_MODES = {"preference_first", "fit_first", "balanced"}
 )
 def get_matches(
     db: DbSession,
+    user: Annotated[object, Depends(get_current_user)],
     status: Annotated[str, Query(description="Match status: active, stale, or all")] = "active",
     min_fit: Annotated[float | None, Query(ge=0, le=100, description="Minimum fit score filter")] = None,
     top_k: Annotated[int | None, Query(ge=1, le=500, description="Maximum results to return")] = None,
@@ -58,7 +59,7 @@ def get_matches(
     """
     Get a list of job matches ranked by the declared mode.
 
-    Stage 1 retrieves a bounded candidate pool (fit_score DESC).
+    Stage 1 retrieves the canonical resume's persisted match set.
     Stage 2 re-ranks using the requested mode with NULL-aware sort keys.
     Stage 3 truncates to effective_top_k.
 
@@ -81,13 +82,13 @@ def get_matches(
     policy_service = get_policy_service()
     current_policy = policy_service.get_current_policy()
 
-    effective_min_fit = min_fit if min_fit is not None else current_policy.min_fit
     effective_top_k = top_k if top_k is not None else current_policy.top_k
 
     service = MatchService(db)
     matches = service.get_matches(
+        owner_id=getattr(user, "id", None),
         status=status,
-        min_fit=effective_min_fit,
+        min_fit=min_fit,
         top_k=effective_top_k,
         remote_only=remote_only,
         show_hidden=show_hidden,
@@ -106,7 +107,11 @@ def get_matches(
     response_model=MatchDetailResponse,
     responses={400: {"description": "Invalid match ID"}},
 )
-def get_match_details(match_id: str, db: DbSession):
+def get_match_details(
+    match_id: str,
+    db: DbSession,
+    user: Annotated[object, Depends(get_current_user)],
+):
     """
     Get detailed information about a specific match.
     
@@ -114,7 +119,7 @@ def get_match_details(match_id: str, db: DbSession):
     """
     validate_uuid(match_id)
     service = MatchService(db)
-    return service.get_match_detail(match_id)
+    return service.get_match_detail(match_id, owner_id=getattr(user, "id", None))
 
 
 @router.post(
@@ -122,7 +127,11 @@ def get_match_details(match_id: str, db: DbSession):
     response_model=HideMatchResponse,
     responses={400: {"description": "Invalid match ID"}},
 )
-def toggle_match_hidden(match_id: str, db: DbSession):
+def toggle_match_hidden(
+    match_id: str,
+    db: DbSession,
+    user: Annotated[object, Depends(get_current_user)],
+):
     """
     Toggle the hidden status of a match.
     
@@ -130,7 +139,7 @@ def toggle_match_hidden(match_id: str, db: DbSession):
     """
     validate_uuid(match_id)
     service = MatchService(db)
-    new_status = service.toggle_hidden(match_id)
+    new_status = service.toggle_hidden(match_id, owner_id=getattr(user, "id", None))
     
     return HideMatchResponse(
         success=True,
@@ -144,7 +153,11 @@ def toggle_match_hidden(match_id: str, db: DbSession):
     response_model=MatchExplanationResponse,
     responses={400: {"description": "Invalid match ID"}},
 )
-def get_match_explanation(match_id: str, db: DbSession):
+def get_match_explanation(
+    match_id: str,
+    db: DbSession,
+    user: Annotated[object, Depends(get_current_user)],
+):
     """
     Get explainability details for a specific match.
 
@@ -152,6 +165,6 @@ def get_match_explanation(match_id: str, db: DbSession):
     """
     validate_uuid(match_id)
     service = MatchService(db)
-    result = service.get_match_explanation(match_id)
+    result = service.get_match_explanation(match_id, owner_id=getattr(user, "id", None))
     
     return MatchExplanationResponse(**result)

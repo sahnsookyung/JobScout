@@ -44,13 +44,15 @@ class JobMatch(Base):
     preference_score = Column(Numeric(5, 4), nullable=True)  # 0–1; NULL = not evaluated
 
     fit_components = Column(JSONB, default={})
+    preference_components = Column(JSONB, nullable=True, default={})
+    ranking_snapshot = Column(JSONB, nullable=True, default={})
 
     base_score = Column(Numeric(5, 2))
     penalties = Column(Numeric(5, 2), default=0)
     penalty_details = Column(JSONB, default={})
 
     required_coverage = Column(Numeric(3, 2))
-    preferred_coverage = Column(Numeric(3, 2))
+    preferred_requirement_coverage = Column(Numeric(3, 2))
     total_requirements = Column(Integer, default=0)
     matched_requirements_count = Column(Integer, default=0)
 

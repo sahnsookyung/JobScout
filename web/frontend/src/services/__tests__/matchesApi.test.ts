@@ -40,7 +40,7 @@ describe('matchesApi', () => {
     });
 
     it('getMatchDetails calls GET /matches/:id', async () => {
-        const mockDetail = { id: 'match-1', overall_score: 90 };
+const mockDetail = { id: 'match-1', fit_score: 90 };
         mockGet.mockResolvedValue({ data: mockDetail });
         const { matchesApi } = await import('../matchesApi');
 

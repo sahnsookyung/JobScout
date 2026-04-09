@@ -4,7 +4,7 @@ Tests for Match Service
 Covers: web/backend/services/match_service.py
 
 Key invariants verified:
-  - Stage 1: DB query is bounded by max_ranking_candidates (not top_k)
+  - Stage 1: DB query is scoped to the canonical resume, not a fit-biased SQL shortlist
   - Stage 2: rank_matches() is called on the full retrieved pool
   - Stage 3: top_k truncation happens AFTER ranking (pool[:effective_k])
   - ranking_mode parameter is forwarded to the ranking engine
@@ -15,6 +15,7 @@ import pytest
 from unittest.mock import Mock, MagicMock, patch
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 
 # ---------------------------------------------------------------------------
@@ -28,6 +29,20 @@ def mock_db():
 
 @pytest.fixture
 def service(mock_db):
+    from web.backend.services.match_service import MatchService
+    instance = MatchService(mock_db)
+    instance._resolve_canonical_selection = Mock(
+        return_value=SimpleNamespace(
+            resume_fingerprint="fp-123",
+            selection_run_id="run-1",
+        )
+    )
+    instance._load_rankable_pool = Mock(return_value=[])
+    return instance
+
+
+@pytest.fixture
+def real_service(mock_db):
     from web.backend.services.match_service import MatchService
     return MatchService(mock_db)
 
@@ -50,7 +65,7 @@ def _make_match(
     m.job_similarity = 0.7
     m.penalties = 0.05
     m.required_coverage = 0.90
-    m.preferred_coverage = 0.60
+    m.preferred_requirement_coverage = 0.60
     m.match_type = "requirements_only"
     m.is_hidden = False
     m.created_at = datetime.now(timezone.utc)
@@ -79,6 +94,9 @@ def _wire_query(mock_db, matches):
     q.all.return_value = list(matches)
     return q
 
+def _wire_rankable_pool(service, matches):
+    service._load_rankable_pool = Mock(return_value=list(matches))
+
 
 # ---------------------------------------------------------------------------
 # Three-stage pipeline correctness
@@ -87,27 +105,29 @@ def _wire_query(mock_db, matches):
 class TestThreeStagePipeline:
     """
     The canonical correctness contract:
-      1. DB query is LIMIT max_ranking_candidates (config-driven), NOT top_k.
+      1. DB query scopes to the canonical resume and does not SQL-limit by fit.
       2. rank_matches() receives the FULL retrieved pool.
       3. Truncation to effective_top_k happens AFTER ranking.
     """
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
-    def test_db_limit_uses_max_ranking_candidates_not_top_k(
+    def test_loads_selection_run_pool_before_reranking(
         self, mock_store, mock_rank, mock_db, service
     ):
-        """query.limit() receives max_ranking_candidates (500), not top_k (5)."""
+        """The web read path should use the selection-run pool, not a SQL shortlist."""
         from core.ranking.policy import RankingConfig
         cfg = RankingConfig(balanced_w_pref=0.6, balanced_w_fit=0.4, max_ranking_candidates=500)
         mock_store.return_value.get_current_config.return_value = cfg
 
-        q = _wire_query(mock_db, [])
+        _wire_rankable_pool(service, [])
         mock_rank.side_effect = lambda pool, ctx: pool  # passthrough
 
         service.get_matches(top_k=5)
 
-        q.limit.assert_called_once_with(500)
+        service._resolve_canonical_selection.assert_called_once_with(owner_id=None)
+        service._load_rankable_pool.assert_called_once()
+        mock_db.query.assert_not_called()
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
@@ -123,7 +143,7 @@ class TestThreeStagePipeline:
         mock_store.return_value.get_current_config.return_value = cfg
 
         pool = [_make_match(f"m{i}", fit_score=float(i)) for i in range(5)]
-        _wire_query(mock_db, pool)
+        _wire_rankable_pool(service, pool)
 
         captured_pool = []
 
@@ -154,7 +174,7 @@ class TestThreeStagePipeline:
         mock_store.return_value.get_current_config.return_value = cfg
 
         pool = [_make_match(f"m{i}") for i in range(10)]
-        _wire_query(mock_db, pool)
+        _wire_rankable_pool(service, pool)
         mock_rank.side_effect = lambda p, ctx: p
 
         results = service.get_matches(top_k=100)
@@ -175,12 +195,26 @@ class TestThreeStagePipeline:
         mock_store.return_value.get_current_config.return_value = cfg
 
         pool = [_make_match(f"m{i}") for i in range(8)]
-        _wire_query(mock_db, pool)
+        _wire_rankable_pool(service, pool)
         mock_rank.side_effect = lambda p, ctx: p
 
         results = service.get_matches()  # top_k=None
 
         assert len(results) == 3
+
+    @patch("web.backend.services.match_service.rank_matches")
+    @patch("web.backend.services.match_service.get_ranking_policy_store")
+    def test_missing_canonical_resume_returns_empty_list(
+        self, mock_store, mock_rank, mock_db, service
+    ):
+        from core.ranking.policy import RankingConfig
+        mock_store.return_value.get_current_config.return_value = RankingConfig(
+            balanced_w_pref=0.6, balanced_w_fit=0.4
+        )
+        service._resolve_canonical_selection.return_value = None
+
+        assert service.get_matches() == []
+        mock_rank.assert_not_called()
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
@@ -193,7 +227,7 @@ class TestThreeStagePipeline:
         cfg = RankingConfig(balanced_w_pref=0.6, balanced_w_fit=0.4)
         mock_store.return_value.get_current_config.return_value = cfg
 
-        _wire_query(mock_db, [])
+        _wire_rankable_pool(service, [])
         mock_rank.side_effect = lambda p, ctx: p
 
         service.get_matches(ranking_mode="preference_first")
@@ -215,7 +249,7 @@ class TestThreeStagePipeline:
         )
         mock_store.return_value.get_current_config.return_value = cfg
 
-        _wire_query(mock_db, [])
+        _wire_rankable_pool(service, [])
         mock_rank.side_effect = lambda p, ctx: p
 
         service.get_matches(ranking_mode="not_a_valid_mode")
@@ -233,13 +267,12 @@ class TestThreeStagePipeline:
         mock_store.return_value.get_current_config.return_value = RankingConfig(
             balanced_w_pref=0.6, balanced_w_fit=0.4
         )
-        q = _wire_query(mock_db, [])
+        _wire_rankable_pool(service, [])
         mock_rank.side_effect = lambda p, ctx: p
 
         service.get_matches(min_fit=50.0)
 
-        # filter must have been called (min_fit guard + hidden guard)
-        assert q.filter.called
+        assert service._load_rankable_pool.call_args.kwargs["min_fit"] == 50.0
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
@@ -250,10 +283,208 @@ class TestThreeStagePipeline:
         cfg = RankingConfig(balanced_w_pref=0.6, balanced_w_fit=0.4)
         mock_store.return_value.get_current_config.return_value = cfg
 
-        _wire_query(mock_db, [])
+        _wire_rankable_pool(service, [])
         mock_rank.side_effect = lambda p, ctx: p
 
         assert service.get_matches() == []
+
+    @patch("web.backend.services.match_service.rank_matches")
+    @patch("web.backend.services.match_service.get_ranking_policy_store")
+    @patch("web.backend.services.match_service.job_uow")
+    def test_selection_run_pool_uses_snapshot_scores_not_sql_query(
+        self,
+        mock_uow,
+        mock_store,
+        mock_rank,
+        mock_db,
+        real_service,
+    ):
+        from core.ranking.policy import RankingConfig
+
+        mock_store.return_value.get_current_config.return_value = RankingConfig(
+            balanced_w_pref=0.6, balanced_w_fit=0.4
+        )
+        real_service._resolve_canonical_selection = Mock(
+            return_value=SimpleNamespace(
+                resume_fingerprint="fp-123",
+                selection_run_id="run-1",
+            )
+        )
+        repo = MagicMock()
+        repo.match_selection.get_items_for_run.return_value = [
+            SimpleNamespace(
+                fit_score_at_selection=82.0,
+                preference_score_at_selection=0.7,
+                job_similarity_at_selection=0.8,
+                required_coverage_at_selection=0.9,
+                job_match=SimpleNamespace(
+                    id="match-1",
+                    job_post_id="job-1",
+                    penalties=0.0,
+                    preferred_requirement_coverage=0.5,
+                    match_type="requirements_only",
+                    is_hidden=False,
+                    created_at=datetime.now(timezone.utc),
+                    calculated_at=datetime.now(timezone.utc),
+                    status="active",
+                    job_post=SimpleNamespace(
+                        id="job-1",
+                        title="Engineer",
+                        company="Acme",
+                        location_text="Remote",
+                        is_remote=True,
+                    ),
+                ),
+            ),
+        ]
+        mock_uow.return_value = MagicMock(
+            __enter__=Mock(return_value=repo),
+            __exit__=Mock(return_value=False),
+        )
+        mock_rank.side_effect = lambda p, ctx: p
+
+        results = real_service.get_matches(owner_id="user-1")
+
+        assert len(results) == 1
+        assert results[0].fit_score == pytest.approx(82.0)
+        mock_db.query.assert_not_called()
+
+
+class TestRankablePoolHelpers:
+    @patch("web.backend.services.match_service.job_uow")
+    def test_resolve_canonical_selection_returns_none_when_resolution_fails(
+        self,
+        mock_uow,
+        real_service,
+    ):
+        mock_uow.side_effect = RuntimeError("database unavailable")
+
+        assert real_service._resolve_canonical_selection(owner_id="user-1") is None
+
+    @patch("web.backend.services.match_service.job_uow")
+    def test_load_rankable_pool_skips_items_that_do_not_pass_filters(
+        self,
+        mock_uow,
+        real_service,
+    ):
+        repo = MagicMock()
+        hidden_match = SimpleNamespace(
+            status="active",
+            is_hidden=True,
+            job_post=SimpleNamespace(is_remote=True),
+        )
+        repo.match_selection.get_items_for_run.return_value = [
+            SimpleNamespace(
+                fit_score_at_selection=90.0,
+                job_match=hidden_match,
+            ),
+        ]
+        mock_uow.return_value = MagicMock(
+            __enter__=Mock(return_value=repo),
+            __exit__=Mock(return_value=False),
+        )
+
+        assert real_service._load_rankable_pool(
+            SimpleNamespace(selection_run_id="run-1"),
+            status="active",
+            min_fit=None,
+            remote_only=False,
+            show_hidden=False,
+        ) == []
+
+    def test_selection_item_filter_rejects_status_min_fit_hidden_and_non_remote(self, real_service):
+        active_match = SimpleNamespace(status="active", is_hidden=False)
+        hidden_match = SimpleNamespace(status="active", is_hidden=True)
+        inactive_match = SimpleNamespace(status="stale", is_hidden=False)
+        remote_job = SimpleNamespace(is_remote=True)
+        onsite_job = SimpleNamespace(is_remote=False)
+
+        assert real_service._selection_item_passes_filters(
+            active_match,
+            remote_job,
+            80.0,
+            status="active",
+            min_fit=70.0,
+            remote_only=True,
+            show_hidden=False,
+        )
+        assert not real_service._selection_item_passes_filters(
+            inactive_match,
+            remote_job,
+            80.0,
+            status="active",
+            min_fit=None,
+            remote_only=False,
+            show_hidden=True,
+        )
+        assert not real_service._selection_item_passes_filters(
+            active_match,
+            remote_job,
+            None,
+            status="active",
+            min_fit=70.0,
+            remote_only=False,
+            show_hidden=True,
+        )
+        assert not real_service._selection_item_passes_filters(
+            hidden_match,
+            remote_job,
+            80.0,
+            status="active",
+            min_fit=None,
+            remote_only=False,
+            show_hidden=False,
+        )
+        assert not real_service._selection_item_passes_filters(
+            active_match,
+            onsite_job,
+            80.0,
+            status="all",
+            min_fit=None,
+            remote_only=True,
+            show_hidden=True,
+        )
+
+    def test_selection_item_to_summary_candidate_uses_unknown_job_fallbacks(self, real_service):
+        item = SimpleNamespace(
+            preference_score_at_selection=None,
+            job_similarity_at_selection=0.45,
+            required_coverage_at_selection=0.5,
+        )
+        match = SimpleNamespace(
+            id="match-1",
+            job_post_id="job-1",
+            penalties=None,
+            preferred_requirement_coverage=None,
+            match_type=None,
+            is_hidden=False,
+            created_at=datetime.now(timezone.utc),
+            calculated_at=datetime.now(timezone.utc),
+        )
+
+        candidate = real_service._selection_item_to_summary_candidate(
+            item,
+            match,
+            job=None,
+            fit_score=None,
+        )
+
+        assert candidate.title == "Unknown"
+        assert candidate.company == "Unknown"
+        assert candidate.fit_score is None
+        assert candidate.preference_score is None
+
+    def test_get_match_for_owner_raises_when_missing(self, real_service, mock_db):
+        query = _wire_query(mock_db, [])
+        query.one_or_none.return_value = None
+
+        from web.backend.services.match_service import MatchNotFoundException
+
+        with pytest.raises(MatchNotFoundException):
+            real_service._get_match_for_owner("missing-match", owner_id="user-1")
+
+    def test_fit_components_rejects_non_dict_payload(self, real_service):
+        assert real_service._fit_components(["not", "a", "dict"]) is None
 
 
 # ---------------------------------------------------------------------------
@@ -269,12 +500,12 @@ class TestGetMatchesFilters:
         mock_store.return_value.get_current_config.return_value = RankingConfig(
             balanced_w_pref=0.6, balanced_w_fit=0.4
         )
-        q = _wire_query(mock_db, [])
+        _wire_rankable_pool(service, [])
         mock_rank.side_effect = lambda p, ctx: p
 
         service.get_matches(status="active")
 
-        q.filter.assert_called()
+        assert service._load_rankable_pool.call_args.kwargs["status"] == "active"
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
@@ -283,12 +514,12 @@ class TestGetMatchesFilters:
         mock_store.return_value.get_current_config.return_value = RankingConfig(
             balanced_w_pref=0.6, balanced_w_fit=0.4
         )
-        q = _wire_query(mock_db, [])
+        _wire_rankable_pool(service, [])
         mock_rank.side_effect = lambda p, ctx: p
 
         service.get_matches(status="all")
 
-        assert q.order_by.called
+        assert service._load_rankable_pool.call_args.kwargs["status"] == "all"
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
@@ -297,12 +528,12 @@ class TestGetMatchesFilters:
         mock_store.return_value.get_current_config.return_value = RankingConfig(
             balanced_w_pref=0.6, balanced_w_fit=0.4
         )
-        q = _wire_query(mock_db, [])
+        _wire_rankable_pool(service, [])
         mock_rank.side_effect = lambda p, ctx: p
 
         service.get_matches(remote_only=True)
 
-        q.join.assert_called()
+        assert service._load_rankable_pool.call_args.kwargs["remote_only"] is True
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
@@ -311,12 +542,12 @@ class TestGetMatchesFilters:
         mock_store.return_value.get_current_config.return_value = RankingConfig(
             balanced_w_pref=0.6, balanced_w_fit=0.4
         )
-        q = _wire_query(mock_db, [])
+        _wire_rankable_pool(service, [])
         mock_rank.side_effect = lambda p, ctx: p
 
         service.get_matches(show_hidden=False)
 
-        q.filter.assert_called()
+        assert service._load_rankable_pool.call_args.kwargs["show_hidden"] is False
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
@@ -325,13 +556,12 @@ class TestGetMatchesFilters:
         mock_store.return_value.get_current_config.return_value = RankingConfig(
             balanced_w_pref=0.6, balanced_w_fit=0.4
         )
-        q = _wire_query(mock_db, [])
+        _wire_rankable_pool(service, [])
         mock_rank.side_effect = lambda p, ctx: p
 
         service.get_matches(show_hidden=True)
 
-        filter_calls = [str(c) for c in q.filter.call_args_list]
-        assert not any("is_hidden" in c for c in filter_calls)
+        assert service._load_rankable_pool.call_args.kwargs["show_hidden"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -345,6 +575,7 @@ class TestToMatchSummary:
         m = _make_match(preference_score=None)
         result = service._to_match_summary(m)
         assert result.preference_score is None
+        assert result.preferred_requirement_coverage == pytest.approx(0.60)
 
     def test_preference_score_zero_preserved(self, service):
         """preference_score=0.0 (scored poorly) must remain 0.0, not collapsed to None."""
@@ -432,7 +663,7 @@ class TestGetMatchDetail:
         m.base_score = 0.70
         m.penalties = 0.05
         m.required_coverage = 0.90
-        m.preferred_coverage = 0.60
+        m.preferred_requirement_coverage = 0.60
         m.total_requirements = 10
         m.matched_requirements_count = 8
         m.match_type = "exact"
@@ -443,6 +674,10 @@ class TestGetMatchDetail:
             "fit_confidence": 0.78,
             "fit_scorer": {"name": "threshold_semantic_fit", "version": "1"},
             "fit_explanation": {"summary": "8/10 covered."},
+        }
+        m.preference_components = {
+            "preference_mode_used": "semantic_rerank",
+            "preference_reason_codes": ["tech_stack_match"],
         }
         return m
 
@@ -461,7 +696,8 @@ class TestGetMatchDetail:
             evidence_text="5y Python", evidence_section="skills",
             similarity_score=0.9, is_covered=True, req_type="required",
         )
-        mock_db.query.return_value.get.side_effect = [mock_match, mock_job]
+        service._get_match_for_owner = Mock(return_value=mock_match)
+        mock_db.query.return_value.get.return_value = mock_job
         mock_db.query.return_value.options.return_value.filter.return_value.all.return_value = [req]
 
         result = service.get_match_detail("match-1")
@@ -469,8 +705,39 @@ class TestGetMatchDetail:
         assert result.success is True
         assert result.match.match_id == "match-1"
         assert result.match.fit_confidence == 0.78
+        assert result.match.preference_components["preference_mode_used"] == "semantic_rerank"
         assert result.job.title == "Developer"
         assert len(result.requirements) == 1
+
+    def test_preference_components_require_dedicated_field(self, service):
+        match = self._make_full_match()
+        match.preference_components = None
+        match.fit_components.update(
+            {
+                "preference_mode_used": "semantic_rerank",
+                "preference_reason_codes": ["tech_stack_match"],
+            }
+        )
+
+        detail = service._to_match_detail(match, {})
+
+        assert detail.preference_components is None
+        assert "preference_mode_used" not in (detail.fit_components or {})
+
+    def test_fit_components_exclude_preference_payload(self, service):
+        match = self._make_full_match()
+        match.fit_components = {
+            "fit_confidence": 0.78,
+            "preference_mode_used": "semantic_rerank",
+        }
+        match.preferred_requirement_coverage = 0.42
+        match.preference_components = None
+
+        detail = service._to_match_detail(match, {})
+
+        assert "preferred_requirement_coverage" not in detail.fit_components
+        assert detail.preferred_requirement_coverage == pytest.approx(0.42)
+        assert "preference_mode_used" not in detail.fit_components
 
     def test_preference_score_nullable_in_detail(self, service, mock_db):
         """preference_score=None in the ORM model is preserved in MatchDetail."""
@@ -482,7 +749,8 @@ class TestGetMatchDetail:
             currency=None, min_years_experience=None, requires_degree=None,
             security_clearance=None, job_level=None,
         )
-        mock_db.query.return_value.get.side_effect = [mock_match, mock_job]
+        service._get_match_for_owner = Mock(return_value=mock_match)
+        mock_db.query.return_value.get.return_value = mock_job
         mock_db.query.return_value.options.return_value.filter.return_value.all.return_value = []
 
         result = service.get_match_detail("match-1")
@@ -491,20 +759,22 @@ class TestGetMatchDetail:
 
     def test_not_found_raises(self, service, mock_db):
         from web.backend.exceptions import MatchNotFoundException
-        mock_db.query.return_value.get.return_value = None
+        service._get_match_for_owner = Mock(side_effect=MatchNotFoundException("not found"))
         with pytest.raises(MatchNotFoundException, match="not found"):
             service.get_match_detail("nonexistent")
 
     def test_no_job_returns_null_job_fields(self, service, mock_db):
         mock_match = self._make_full_match()
-        mock_db.query.return_value.get.side_effect = [mock_match, None]
+        service._get_match_for_owner = Mock(return_value=mock_match)
+        mock_db.query.return_value.get.return_value = None
         mock_db.query.return_value.options.return_value.filter.return_value.all.return_value = []
         result = service.get_match_detail("match-1")
         assert result.job.job_id is None
 
     def test_db_error_is_reraised(self, service, mock_db):
         mock_match = self._make_full_match()
-        mock_db.query.return_value.get.side_effect = [mock_match, RuntimeError("DB gone")]
+        service._get_match_for_owner = Mock(return_value=mock_match)
+        mock_db.query.return_value.get.side_effect = RuntimeError("DB gone")
         with pytest.raises(RuntimeError, match="DB gone"):
             service.get_match_detail("match-1")
 
@@ -523,7 +793,7 @@ class TestToggleHidden:
             Repo.return_value = repo
             result = service.toggle_hidden("m-1")
         assert result is True
-        repo.update_hidden_status.assert_called_once_with("m-1", True)
+        assert mock_match.is_hidden is True
         mock_db.commit.assert_called_once()
 
     def test_hidden_to_unhidden(self, service, mock_db):
@@ -553,26 +823,26 @@ class TestGetMatchExplanation:
 
     def test_success(self, service, mock_db):
         m = Mock(id="m-1", fit_components={"fit_explanation": {"summary": "ok"}})
-        mock_db.query.return_value.get.return_value = m
+        service._get_match_for_owner = Mock(return_value=m)
         result = service.get_match_explanation("m-1")
         assert result["success"] is True
         assert result["explanation"] == {"summary": "ok"}
 
     def test_no_explanation_key(self, service, mock_db):
         m = Mock(id="m-1", fit_components={})
-        mock_db.query.return_value.get.return_value = m
+        service._get_match_for_owner = Mock(return_value=m)
         result = service.get_match_explanation("m-1")
         assert result["explanation"] is None
 
     def test_null_fit_components(self, service, mock_db):
         m = Mock(id="m-1", fit_components=None)
-        mock_db.query.return_value.get.return_value = m
+        service._get_match_for_owner = Mock(return_value=m)
         result = service.get_match_explanation("m-1")
         assert result["explanation"] is None
 
     def test_not_found_raises(self, service, mock_db):
         from web.backend.exceptions import MatchNotFoundException
-        mock_db.query.return_value.get.return_value = None
+        service._get_match_for_owner = Mock(side_effect=MatchNotFoundException("bad-id"))
         with pytest.raises(MatchNotFoundException):
             service.get_match_explanation("bad-id")
 
@@ -619,6 +889,48 @@ class TestFitComponentHelpers:
     def test_fit_scorer_returns_none_for_non_dict(self, service):
         from web.backend.services.match_service import MatchService
         assert MatchService._fit_scorer([]) is None
+
+    def test_fit_components_strip_preference_keys(self, service):
+        from web.backend.services.match_service import MatchService
+
+        normalized = MatchService._fit_components(
+            {
+                "preferred_requirement_coverage": 0.35,
+                "preference_mode_used": "semantic_rerank",
+            }
+        )
+
+        assert normalized["preferred_requirement_coverage"] == pytest.approx(0.35)
+        assert "preference_mode_used" not in normalized
+
+
+class TestCanonicalResumeSelection:
+    def test_resolves_current_committed_selection_run(self, real_service):
+        repo = Mock()
+        repo.match_selection.get_latest_current_run_for_owner.return_value = Mock(
+            id="run-1",
+            resume_fingerprint="fp-current",
+        )
+
+        job_uow_cm = MagicMock()
+        job_uow_cm.__enter__.return_value = repo
+        job_uow_cm.__exit__.return_value = False
+
+        with patch("web.backend.services.match_service.job_uow", return_value=job_uow_cm):
+            result = real_service._resolve_canonical_selection(owner_id="user-1")
+
+        assert result.resume_fingerprint == "fp-current"
+        assert result.selection_run_id == "run-1"
+
+    def test_returns_none_without_committed_selection_run(self, real_service):
+        repo = Mock()
+        repo.match_selection.get_latest_current_run_for_owner.return_value = None
+        job_uow_cm = MagicMock()
+        job_uow_cm.__enter__.return_value = repo
+        job_uow_cm.__exit__.return_value = False
+
+        with patch("web.backend.services.match_service.job_uow", return_value=job_uow_cm):
+            assert real_service._resolve_canonical_selection(owner_id="user-1") is None
 
 
 class TestToJobDetails:

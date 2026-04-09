@@ -15,6 +15,8 @@ from database.models import (
     JobPost,
     JobRequirementUnit,
     JobRequirementUnitEmbedding,
+    MatchSelectionItem,
+    MatchSelectionRun,
     ResumeEvidenceUnitEmbedding,
     ResumeProcessingState,
     ResumeSectionEmbedding,
@@ -36,6 +38,8 @@ def reset_split_stack_state(database_url: str) -> None:
     session = session_local()
     try:
         session.query(CandidatePreferences).delete()
+        session.query(MatchSelectionItem).delete()
+        session.query(MatchSelectionRun).delete()
         session.query(JobMatchRequirement).delete()
         session.query(JobMatch).delete()
         session.query(JobRequirementUnitEmbedding).delete()

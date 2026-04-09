@@ -36,8 +36,8 @@ The reranker and judge described as follow-on phases in the Initial Implementati
 What landed:
 
 - `LLMPreferenceSemanticReranker` and `LLMPreferenceJudge` are implemented in `services/scorer_matcher/preference_semantics.py`, both backed by the same `_BaseLLMPreferenceScorer` contract.
-- `apply_preference_semantic_reranking` is wired into the scorer-matcher pipeline after fit scoring and before final `top_k` truncation, preserving fit-band ordering through a bounded overall-score recomputation.
-- Degraded runs (profile unavailable, reranker unavailable, exception) fall back to fit-only ordering and record `preference_mode_used: "fit_only_fallback"` plus a `preference_fallback_reason` in persisted `fit_components`.
+- `apply_preference_semantic_reranking` is wired into the scorer-matcher pipeline after fit scoring and before canonical match selection. Final ordering is applied by the shared ranking engine.
+- Degraded runs (profile unavailable, reranker unavailable, exception) use mode-neutral ranking metadata and persist preference-specific explanation fields in `preference_components`.
 - The split-stack E2E now validates `preference_score > 0`, `preference_mode_used: "semantic_rerank"`, and `tech_stack_match` in `preference_reason_codes` through real API calls and persisted match records.
 - `llm_judge` remains `enabled: false` by default; `semantic_rerank` is the production default mode.
 

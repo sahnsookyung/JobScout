@@ -3,13 +3,19 @@ from typing import List, Optional, Any
 from sqlalchemy import select, func
 from sqlalchemy.orm import joinedload
 
-from database.models import JobMatch
+from database.models import JobMatch, StructuredResume
 from database.repositories.base import BaseRepository
 
 logger = logging.getLogger(__name__)
 
 
 class MatchRepository(BaseRepository):
+    def resume_has_persisted_matches(self, resume_fingerprint: str) -> bool:
+        stmt = select(JobMatch.id).where(
+            JobMatch.resume_fingerprint == resume_fingerprint
+        ).limit(1)
+        return self.db.execute(stmt).scalar_one_or_none() is not None
+
     def _invalidate_matches(self, matches: List[JobMatch], reason: str) -> int:
         count = 0
         for match in matches:
@@ -47,6 +53,21 @@ class MatchRepository(BaseRepository):
             stmt = stmt.where(JobMatch.fit_score >= min_score)
 
         stmt = stmt.order_by(JobMatch.fit_score.desc())
+        return self.db.execute(stmt).scalars().all()
+
+    def get_visible_active_matches_for_resume(
+        self,
+        resume_fingerprint: str,
+        *,
+        load_job_post: bool = False,
+    ) -> List[JobMatch]:
+        stmt = select(JobMatch).where(
+            JobMatch.resume_fingerprint == resume_fingerprint,
+            JobMatch.status == 'active',
+            JobMatch.is_hidden.is_(False),
+        )
+        if load_job_post:
+            stmt = stmt.options(joinedload(JobMatch.job_post))
         return self.db.execute(stmt).scalars().all()
 
     def invalidate_matches_for_job(
@@ -138,6 +159,21 @@ class MatchRepository(BaseRepository):
     def get_match_by_id(self, match_id: Any) -> Optional[JobMatch]:
         """Get a match by its ID."""
         stmt = select(JobMatch).where(JobMatch.id == match_id)
+        return self.db.execute(stmt).scalar_one_or_none()
+
+    def get_match_by_id_for_owner(self, match_id: Any, owner_id: Any) -> Optional[JobMatch]:
+        """Get a match by ID only if it belongs to the given owner."""
+        stmt = (
+            select(JobMatch)
+            .join(
+                StructuredResume,
+                StructuredResume.resume_fingerprint == JobMatch.resume_fingerprint,
+            )
+            .where(
+                JobMatch.id == match_id,
+                StructuredResume.owner_id == owner_id,
+            )
+        )
         return self.db.execute(stmt).scalar_one_or_none()
 
     def update_hidden_status(self, match_id: Any, is_hidden: bool) -> Optional[JobMatch]:

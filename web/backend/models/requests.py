@@ -47,7 +47,7 @@ class NotificationSettingsUpdateRequest(BaseModel):
     """Per-user notification settings update request."""
 
     notifications_enabled: bool = Field(default=True)
-    min_score_threshold: int = Field(default=70, ge=0, le=100)
+    min_fit_for_alerts: int = Field(default=70, ge=0, le=100)
     notify_on_new_match: bool = Field(default=True)
     notify_on_batch_complete: bool = Field(default=True)
     channels: Dict[str, NotificationChannelSettingsUpdate] = Field(default_factory=dict)

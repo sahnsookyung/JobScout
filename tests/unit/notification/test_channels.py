@@ -416,7 +416,7 @@ class TestWebhookChannelRichContent:
                 'job_contents': [
                     {
                         'job': {'title': 'Developer', 'company': 'TechCorp'},
-                        'match': {'overall_score': 85},
+                        'match': {'fit_score': 85},
                         'requirements': {'total': 10, 'matched': 8}
                     }
                 ],
@@ -475,7 +475,6 @@ class TestDiscordChannelRichContent:
                             'description': 'We are hiring...'
                         },
                         'match': {
-                            'overall_score': 92,
                             'fit_score': 88,
                             'required_coverage': 0.9
                         },
@@ -498,7 +497,8 @@ class TestDiscordChannelRichContent:
         assert len(call_args['embeds']) >= 1
 
         embed = call_args['embeds'][0]
-        assert 'Senior Developer' in embed['title']
+        assert embed['title'] == '🎯 Strong match'
+        assert 'Senior Developer at TechCorp' == embed['description']
         assert embed['color'] == 0x28A745  # Green for high score
 
     @patch('notification.channels.requests.post')
@@ -552,7 +552,6 @@ class TestTelegramChannelRichContent:
                             'salary': '$120k+'
                         },
                         'match': {
-                            'overall_score': 88,
                             'fit_score': 85,
                             'required_coverage': 0.85
                         },
@@ -659,7 +658,6 @@ class TestEmailChannelRichContent:
                             'job_level': 'Senior'
                         },
                         'match': {
-                            'overall_score': 90,
                             'fit_score': 88,
                             'required_coverage': 0.9
                         },
@@ -916,7 +914,7 @@ class TestEmailChannelUncoveredPaths:
         job_contents = [
             {
                 'job': {'title': 'Dev', 'company': 'Corp'},  # no location/salary/type
-                'match': {'overall_score': 80, 'fit_score': 75},
+                'match': {'fit_score': 75},
                 'requirements': {'total': 5, 'matched': 4},
                 # no apply_url, no match_id
             }
@@ -930,7 +928,7 @@ class TestEmailChannelUncoveredPaths:
         channel = EmailChannel()
         job = {
             'job': {'title': 'Dev', 'company': 'Corp'},
-            'match': {'overall_score': 80, 'fit_score': 75},
+            'match': {'fit_score': 75},
             'requirements': {'total': 5, 'matched': 4},
         }
         html = channel._build_html_body('Subject', [job, job], {})
@@ -941,7 +939,7 @@ class TestEmailChannelUncoveredPaths:
         channel = EmailChannel()
         job_contents = [{
             'job': {'title': 'Dev', 'company': 'Corp'},
-            'match': {'overall_score': 80, 'fit_score': 75},
+            'match': {'fit_score': 75},
             'requirements': {'total': 5, 'matched': 4},
             'apply_url': 'javascript:alert(1)',  # invalid
         }]
@@ -1054,7 +1052,7 @@ class TestTelegramChannelUncoveredPaths:
         channel = TelegramChannel()
         job_contents = [{
             'job': {'title': 'Dev', 'company': 'Corp'},  # no location/salary/type/level
-            'match': {'overall_score': 80, 'fit_score': 75},
+            'match': {'fit_score': 75},
             'requirements': {'total': 5, 'matched': 4},
             # no apply_url, no match_id
         }]
@@ -1067,7 +1065,7 @@ class TestTelegramChannelUncoveredPaths:
         channel = TelegramChannel()
         job = {
             'job': {'title': 'Dev', 'company': 'Corp'},
-            'match': {'overall_score': 80, 'fit_score': 75},
+            'match': {'fit_score': 75},
             'requirements': {'total': 5, 'matched': 4},
         }
         msg = channel._build_rich_message('Alert', [job, job], {})

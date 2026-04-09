@@ -191,7 +191,11 @@ def test_run_matching_pipeline_uses_latest_ready_resume_and_reaches_save_boundar
             saved_count=0,
             failed_count=0,
             active_job_ids=frozenset(),
+            job_match_ids_by_job_id={},
         ),
+    ), patch(
+        "services.scorer_matcher.pipeline._publish_match_selection_run",
+        return_value="selection-run-1",
     ):
         result = run_matching_pipeline(ctx, status_callback=steps.append)
 
@@ -243,7 +247,11 @@ def test_run_matching_pipeline_materializes_ready_resume_before_uow_closes():
             saved_count=0,
             failed_count=0,
             active_job_ids=frozenset(),
+            job_match_ids_by_job_id={},
         ),
+    ), patch(
+        "services.scorer_matcher.pipeline._publish_match_selection_run",
+        return_value="selection-run-1",
     ):
         result = run_matching_pipeline(ctx)
 
@@ -349,7 +357,11 @@ def test_run_matching_pipeline_uses_default_recall_top_k_when_semantic_fit_confi
             saved_count=0,
             failed_count=0,
             active_job_ids=frozenset(),
+            job_match_ids_by_job_id={},
         ),
+    ), patch(
+        "services.scorer_matcher.pipeline._publish_match_selection_run",
+        return_value="selection-run-1",
     ):
         result = run_matching_pipeline(ctx)
 

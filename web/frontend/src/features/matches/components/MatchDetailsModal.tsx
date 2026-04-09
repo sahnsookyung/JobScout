@@ -247,7 +247,7 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
                 </div>
                 <div>
                     <div className="text-xs font-bold text-gray-600 uppercase tracking-wider mb-1">Preferred Coverage</div>
-                    <div className="text-2xl font-black text-gray-900">{formatScore(match.preferred_coverage * 100)}</div>
+                    <div className="text-2xl font-black text-gray-900">{formatScore(match.preferred_requirement_coverage * 100)}</div>
                 </div>
                 <div>
                     <div className="text-xs font-bold text-gray-600 uppercase tracking-wider mb-1">Matched Requirements</div>

@@ -61,7 +61,7 @@ def _make_settings(owner_id, **overrides):
     defaults = dict(
         owner_id=owner_id,
         notifications_enabled=True,
-        min_score_threshold=70,
+        min_fit_for_alerts=70,
         notify_on_new_match=True,
         notify_on_batch_complete=True,
         revision=0,
@@ -163,7 +163,7 @@ class TestUserNotificationSettingsService:
         snapshot = service.get_settings_snapshot(user)
 
         assert snapshot.notifications_enabled is True
-        assert snapshot.min_score_threshold == 70
+        assert snapshot.min_fit_for_alerts == 70
         assert snapshot.channels["email"].configured is True
         assert snapshot.channels["in_app"].masked_recipient == "In-app inbox"
 
@@ -212,7 +212,7 @@ class TestUserNotificationSettingsService:
             user,
             {
                 "notifications_enabled": False,
-                "min_score_threshold": 85,
+                "min_fit_for_alerts": 85,
                 "notify_on_new_match": False,
                 "notify_on_batch_complete": True,
                 "channels": {
@@ -226,7 +226,7 @@ class TestUserNotificationSettingsService:
 
         assert snapshot == "snapshot"
         assert settings.notifications_enabled is False
-        assert settings.min_score_threshold == 85
+        assert settings.min_fit_for_alerts == 85
         assert discord_channel.enabled is True
         assert discord_channel.secret_ciphertext == "enc:https://discord.com/api/webhooks/test"
         assert discord_channel.masked_recipient.endswith("/test")
@@ -244,7 +244,7 @@ class TestUserNotificationSettingsService:
                 user,
                 {
                     "notifications_enabled": True,
-                    "min_score_threshold": 70,
+                    "min_fit_for_alerts": 70,
                     "notify_on_new_match": True,
                     "notify_on_batch_complete": True,
                     "channels": {"discord": {"enabled": True}},
@@ -261,7 +261,7 @@ class TestUserNotificationSettingsService:
                 user,
                 {
                     "notifications_enabled": True,
-                    "min_score_threshold": 70,
+                    "min_fit_for_alerts": 70,
                     "notify_on_new_match": True,
                     "notify_on_batch_complete": True,
                     "channels": {"sms": {"enabled": False}},
@@ -284,7 +284,7 @@ class TestUserNotificationSettingsService:
                 user,
                 {
                     "notifications_enabled": True,
-                    "min_score_threshold": 70,
+                    "min_fit_for_alerts": 70,
                     "notify_on_new_match": True,
                     "notify_on_batch_complete": True,
                     "channels": {"discord": {"enabled": True}},

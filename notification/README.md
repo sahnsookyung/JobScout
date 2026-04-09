@@ -138,24 +138,21 @@ from notification import NotificationService
 
 notification_service = NotificationService(repo)
 
-# After scoring matches
-for scored_match in scored_matches:
-    if scored_match.overall_score >= 75:
-        notification_service.notify_new_match(
-            user_id="user123",
-            match_id=str(scored_match.job.id),
-            job_title=scored_match.job.title,
-            company=scored_match.job.company,
-            score=scored_match.overall_score,
-            location=scored_match.job.location_text,
-            is_remote=scored_match.job.is_remote
-        )
+# After the matching pipeline persists and refreshes the active match set
+content = NotificationMessageBuilder.build_from_orm(job_post, job_match)
+notification_service.notify_new_match(
+    user_id="user123",
+    match_id=str(job_match.id),
+    content=content,
+    channels=["email"],
+)
 
-# After batch completes
+# After batch completes successfully
 notification_service.notify_batch_complete(
     user_id="user123",
-    total_matches=len(scored_matches),
-    high_score_matches=len([m for m in scored_matches if m.overall_score >= 70])
+    total_matches=saved_count,
+    alert_eligible_matches=alert_eligible_count,
+    min_fit_for_alerts=70,
 )
 ```
 

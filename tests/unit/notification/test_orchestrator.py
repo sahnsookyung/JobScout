@@ -7,25 +7,23 @@ from unittest.mock import MagicMock, patch
 
 from notification.models import NotificationDeliveryPlan
 from notification.orchestrator import (
+    _alert_eligible_matches_for_plan,
+    _load_persisted_notification_matches,
     _notification_setting_value,
-    _high_score_matches_for_plan,
     _resolve_notification_plan,
-    _send_match_notification,
     _send_batch_complete_notification,
+    _send_match_notification,
+    resolve_notification_fit_floor,
     send_notifications,
 )
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _notif_config(**kwargs):
     defaults = dict(
         enabled=True,
         user_id=None,
         channels={},
-        min_score_threshold=70.0,
+        min_fit_for_alerts=70.0,
         notify_on_new_match=True,
         notify_on_batch_complete=False,
     )
@@ -40,13 +38,11 @@ def _ctx(notif_config=None):
     )
 
 
-def _dto(score):
-    job = SimpleNamespace(id="job-1", title="Eng", company="Acme")
+def _match(score, *, match_id="match-1"):
     return SimpleNamespace(
-        overall_score=score,
+        id=match_id,
         fit_score=score,
-        jd_required_coverage=1.0,
-        job=job,
+        notified=False,
     )
 
 
@@ -56,9 +52,12 @@ def _delivery_plan(**kwargs):
     return NotificationDeliveryPlan(**defaults)
 
 
-# ---------------------------------------------------------------------------
-# _notification_setting_value
-# ---------------------------------------------------------------------------
+def _uow(repo):
+    manager = MagicMock()
+    manager.__enter__.return_value = repo
+    manager.__exit__.return_value = False
+    return manager
+
 
 class TestNotificationSettingValue:
     def test_uses_config_when_no_snapshot(self):
@@ -76,151 +75,404 @@ class TestNotificationSettingValue:
         assert _notification_setting_value(config, snap, "threshold") == 0.0
 
 
-# ---------------------------------------------------------------------------
-# _high_score_matches_for_plan
-# ---------------------------------------------------------------------------
+class TestResolveNotificationFitFloor:
+    def test_no_notification_config_returns_zero(self):
+        ctx = SimpleNamespace(config=SimpleNamespace(), notification_service=None)
+        assert resolve_notification_fit_floor(ctx) == 0.0
 
-class TestHighScoreMatchesForPlan:
+    def test_no_notification_service_uses_static_config_floor(self):
+        ctx = _ctx(_notif_config(min_fit_for_alerts=81.0))
+        ctx.notification_service = None
+
+        assert resolve_notification_fit_floor(ctx) == 81.0
+
+    @patch("notification.orchestrator._resolve_notification_plan")
+    def test_missing_delivery_plan_uses_static_config_floor(self, mock_plan):
+        mock_plan.return_value = None
+        ctx = _ctx(_notif_config(min_fit_for_alerts=72.0))
+
+        assert resolve_notification_fit_floor(ctx, owner_id="user-1") == 72.0
+
+    @patch("notification.orchestrator._resolve_notification_plan")
+    def test_delivery_plan_snapshot_overrides_config_floor(self, mock_plan):
+        mock_plan.return_value = _delivery_plan(
+            settings_snapshot=SimpleNamespace(min_fit_for_alerts=64.0),
+        )
+        ctx = _ctx(_notif_config(min_fit_for_alerts=72.0))
+
+        assert resolve_notification_fit_floor(ctx, owner_id="user-1") == 64.0
+
+
+class TestAlertEligibleMatchesForPlan:
     def test_filters_below_threshold(self):
-        config = _notif_config(min_score_threshold=70.0)
+        config = _notif_config(min_fit_for_alerts=70.0)
         plan = _delivery_plan()
-        dtos = [_dto(50.0), _dto(70.0), _dto(90.0)]
-        result = _high_score_matches_for_plan(dtos, config, plan)
-        assert len(result) == 2
-        assert all(d.overall_score >= 70.0 for d in result)
+        matches = [_match(50.0, match_id="m1"), _match(70.0, match_id="m2"), _match(90.0, match_id="m3")]
+        result = _alert_eligible_matches_for_plan(matches, config, plan)
+        assert [match.id for match in result] == ["m2", "m3"]
 
     def test_empty_list(self):
-        config = _notif_config(min_score_threshold=70.0)
+        config = _notif_config(min_fit_for_alerts=70.0)
         plan = _delivery_plan()
-        assert _high_score_matches_for_plan([], config, plan) == []
+        assert _alert_eligible_matches_for_plan([], config, plan) == []
 
     def test_threshold_from_snapshot(self):
-        config = _notif_config(min_score_threshold=70.0)
-        snap = SimpleNamespace(min_score_threshold=50.0)
+        config = _notif_config(min_fit_for_alerts=70.0)
+        snap = SimpleNamespace(min_fit_for_alerts=50.0)
         plan = _delivery_plan(settings_snapshot=snap)
-        dtos = [_dto(55.0), _dto(45.0)]
-        result = _high_score_matches_for_plan(dtos, config, plan)
-        assert len(result) == 1
-        assert result[0].overall_score == 55.0
+        matches = [_match(55.0, match_id="m1"), _match(45.0, match_id="m2")]
+        result = _alert_eligible_matches_for_plan(matches, config, plan)
+        assert [match.id for match in result] == ["m1"]
 
     def test_none_score_excluded(self):
-        config = _notif_config(min_score_threshold=0.0)
+        config = _notif_config(min_fit_for_alerts=0.0)
         plan = _delivery_plan()
-        dto = _dto(None)
-        result = _high_score_matches_for_plan([dto], config, plan)
+        result = _alert_eligible_matches_for_plan([_match(None)], config, plan)
         assert result == []
 
-
-# ---------------------------------------------------------------------------
-# send_notifications
-# ---------------------------------------------------------------------------
 
 class TestSendNotifications:
     def test_disabled_config_returns_zero(self):
         ctx = _ctx(_notif_config(enabled=False))
-        count = send_notifications(ctx, [_dto(90.0)], 1, "fp", threading.Event())
+        count = send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp",
+            stop_event=threading.Event(),
+        )
         assert count == 0
         ctx.notification_service.notify_new_match.assert_not_called()
 
     def test_zero_saved_count_returns_zero(self):
         ctx = _ctx()
-        count = send_notifications(ctx, [_dto(90.0)], 0, "fp", threading.Event())
+        count = send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp",
+            stop_event=threading.Event(),
+        )
+        assert count == 0
+
+    def test_partial_save_failure_suppresses_notifications(self):
+        ctx = _ctx()
+        count = send_notifications(
+            ctx,
+            failed_count=1,
+            resume_fingerprint="fp",
+            stop_event=threading.Event(),
+        )
         assert count == 0
 
     def test_no_delivery_plan_returns_zero(self):
         ctx = _ctx(_notif_config(enabled=True, user_id=None, channels={}))
-        count = send_notifications(ctx, [_dto(90.0)], 1, "fp", threading.Event())
+        count = send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp",
+            stop_event=threading.Event(),
+        )
         assert count == 0
 
+    @patch("notification.orchestrator._resolve_notification_plan")
+    def test_missing_selection_run_returns_zero_after_delivery_plan_resolves(self, mock_plan):
+        mock_plan.return_value = _delivery_plan()
+        ctx = _ctx(_notif_config(enabled=True, user_id="user-1", channels={"email": {}}))
+
+        count = send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp",
+            stop_event=threading.Event(),
+            selection_run_id=None,
+        )
+
+        assert count == 0
+
+    @patch("notification.orchestrator._load_persisted_notification_matches")
+    @patch("notification.orchestrator._resolve_notification_plan")
+    def test_empty_persisted_selection_returns_zero(self, mock_plan, mock_load):
+        mock_plan.return_value = _delivery_plan()
+        mock_load.return_value = []
+        ctx = _ctx(_notif_config(enabled=True, user_id="user-1", channels={"email": {}}))
+
+        count = send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp",
+            stop_event=threading.Event(),
+            selection_run_id="run-1",
+        )
+
+        assert count == 0
+        mock_load.assert_called_once_with("run-1")
+
+    @patch("notification.orchestrator._load_persisted_notification_matches")
     @patch("notification.orchestrator._send_match_notification")
     @patch("notification.orchestrator._resolve_notification_plan")
-    def test_sends_per_high_score_match(self, mock_plan, mock_send):
+    def test_sends_per_alert_eligible_match(self, mock_plan, mock_send, mock_load):
         ctx = _ctx(_notif_config(
             enabled=True,
-            min_score_threshold=60.0,
+            min_fit_for_alerts=60.0,
             notify_on_new_match=True,
             notify_on_batch_complete=False,
         ))
         plan = _delivery_plan()
         mock_plan.return_value = plan
         mock_send.return_value = True
+        mock_load.return_value = [_match(80.0, match_id="m1"), _match(90.0, match_id="m2"), _match(40.0, match_id="m3")]
 
-        dtos = [_dto(80.0), _dto(90.0), _dto(40.0)]
-        count = send_notifications(ctx, dtos, 3, "fp-abc", threading.Event())
+        count = send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp-abc",
+            stop_event=threading.Event(),
+            selection_run_id="run-1",
+        )
         assert count == 2
         assert mock_send.call_count == 2
 
+    @patch("notification.orchestrator._load_persisted_notification_matches")
     @patch("notification.orchestrator._send_match_notification")
     @patch("notification.orchestrator._resolve_notification_plan")
-    def test_stop_event_halts_loop(self, mock_plan, mock_send):
-        ctx = _ctx(_notif_config(enabled=True, min_score_threshold=0.0, notify_on_new_match=True))
+    def test_stop_event_halts_loop(self, mock_plan, mock_send, mock_load):
+        ctx = _ctx(_notif_config(enabled=True, min_fit_for_alerts=0.0, notify_on_new_match=True))
         plan = _delivery_plan()
         mock_plan.return_value = plan
+        mock_load.return_value = [_match(90.0), _match(80.0, match_id="m2")]
 
         stop = threading.Event()
         stop.set()
 
-        dtos = [_dto(90.0), _dto(80.0)]
-        count = send_notifications(ctx, dtos, 2, "fp", stop)
+        count = send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp",
+            stop_event=stop,
+            selection_run_id="run-1",
+        )
         assert count == 0
         mock_send.assert_not_called()
 
+
+class TestPersistedNotificationHelpers:
+    @patch("notification.orchestrator.job_uow")
+    def test_send_match_notification_returns_false_when_record_missing(self, mock_uow):
+        repo = MagicMock()
+        repo.match.get_match_by_id.return_value = None
+        mock_uow.return_value = _uow(repo)
+
+        assert _send_match_notification(
+            _ctx(),
+            "missing-match",
+            delivery_plan=_delivery_plan(),
+            task_id="task-1",
+        ) is False
+
+    @patch("notification.orchestrator.job_uow")
+    def test_send_match_notification_skips_hidden_or_inactive_match(self, mock_uow):
+        repo = MagicMock()
+        repo.match.get_match_by_id.return_value = SimpleNamespace(
+            id="m1",
+            status="active",
+            is_hidden=True,
+        )
+        mock_uow.return_value = _uow(repo)
+
+        assert _send_match_notification(
+            _ctx(),
+            "m1",
+            delivery_plan=_delivery_plan(),
+            task_id="task-1",
+        ) is False
+
+    @patch("notification.orchestrator.job_uow")
+    def test_send_match_notification_skips_already_notified_match(self, mock_uow):
+        repo = MagicMock()
+        repo.match.get_match_by_id.return_value = SimpleNamespace(
+            id="m1",
+            status="active",
+            is_hidden=False,
+            notified=True,
+        )
+        mock_uow.return_value = _uow(repo)
+
+        assert _send_match_notification(
+            _ctx(),
+            "m1",
+            delivery_plan=_delivery_plan(),
+            task_id="task-1",
+        ) is False
+
+    @patch("notification.orchestrator.job_uow")
+    def test_load_persisted_notification_matches_uses_selection_run_order_without_rerank(
+        self,
+        mock_uow,
+    ):
+        repo = MagicMock()
+        repo.match_selection.get_items_for_run.return_value = [
+            SimpleNamespace(
+                job_match_id="m1",
+                fit_score_at_selection=80.0,
+                preference_score_at_selection=0.9,
+                job_similarity_at_selection=0.8,
+                alert_eligible=True,
+            ),
+            SimpleNamespace(
+                job_match_id="m2",
+                fit_score_at_selection=60.0,
+                preference_score_at_selection=0.1,
+                job_similarity_at_selection=0.5,
+                alert_eligible=False,
+            ),
+        ]
+        mock_uow.return_value = _uow(repo)
+
+        result = _load_persisted_notification_matches("run-1")
+
+        assert [candidate.id for candidate in result] == ["m1", "m2"]
+        assert [candidate.alert_eligible for candidate in result] == [True, False]
+
+    @patch("notification.orchestrator.NotificationMessageBuilder.build_from_orm")
+    @patch("notification.orchestrator.job_uow")
+    def test_send_match_notification_marks_match_notified_after_successful_delivery(
+        self,
+        mock_uow,
+        mock_build,
+    ):
+        match_record = SimpleNamespace(
+            id="m1",
+            status="active",
+            is_hidden=False,
+            notified=False,
+            job_post=SimpleNamespace(company_url_direct="https://example.com"),
+        )
+        repo = MagicMock()
+        repo.match.get_match_by_id.return_value = match_record
+        mock_uow.return_value = _uow(repo)
+        mock_build.return_value = {"subject": "hi"}
+        ctx = _ctx()
+        ctx.notification_service.notify_new_match.return_value = {"email": True}
+
+        sent = _send_match_notification(
+            ctx,
+            "m1",
+            delivery_plan=_delivery_plan(),
+            task_id="task-1",
+        )
+
+        assert sent is True
+        assert match_record.notified is True
+
+    @patch("notification.orchestrator.NotificationMessageBuilder.build_from_orm")
+    @patch("notification.orchestrator.job_uow")
+    def test_send_match_notification_keeps_match_retryable_when_no_channel_accepts(
+        self,
+        mock_uow,
+        mock_build,
+    ):
+        match_record = SimpleNamespace(
+            id="m1",
+            status="active",
+            is_hidden=False,
+            notified=False,
+            job_post=SimpleNamespace(company_url_direct="https://example.com"),
+        )
+        repo = MagicMock()
+        repo.match.get_match_by_id.return_value = match_record
+        mock_uow.return_value = _uow(repo)
+        mock_build.return_value = {"subject": "hi"}
+        ctx = _ctx()
+        ctx.notification_service.notify_new_match.return_value = {"email": False}
+
+        sent = _send_match_notification(
+            ctx,
+            "m1",
+            delivery_plan=_delivery_plan(),
+            task_id="task-1",
+        )
+
+        assert sent is False
+        assert match_record.notified is False
+
+    @patch("notification.orchestrator._load_persisted_notification_matches")
     @patch("notification.orchestrator._send_batch_complete_notification")
     @patch("notification.orchestrator._send_match_notification")
     @patch("notification.orchestrator._resolve_notification_plan")
-    def test_batch_complete_sent_when_enabled(self, mock_plan, mock_send, mock_batch):
+    def test_batch_complete_sent_when_enabled(self, mock_plan, mock_send, mock_batch, mock_load):
         ctx = _ctx(_notif_config(
             enabled=True,
-            min_score_threshold=0.0,
+            min_fit_for_alerts=0.0,
             notify_on_new_match=True,
             notify_on_batch_complete=True,
         ))
         plan = _delivery_plan()
         mock_plan.return_value = plan
         mock_send.return_value = True
+        mock_load.return_value = [_match(80.0)]
 
-        dtos = [_dto(80.0)]
-        send_notifications(ctx, dtos, 1, "fp", threading.Event())
+        send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp",
+            stop_event=threading.Event(),
+            selection_run_id="run-1",
+        )
         mock_batch.assert_called_once()
 
+    @patch("notification.orchestrator._load_persisted_notification_matches")
     @patch("notification.orchestrator._send_batch_complete_notification")
     @patch("notification.orchestrator._send_match_notification")
     @patch("notification.orchestrator._resolve_notification_plan")
-    def test_batch_complete_skipped_when_disabled(self, mock_plan, mock_send, mock_batch):
+    def test_batch_complete_skipped_when_disabled(self, mock_plan, mock_send, mock_batch, mock_load):
         ctx = _ctx(_notif_config(
             enabled=True,
-            min_score_threshold=0.0,
+            min_fit_for_alerts=0.0,
             notify_on_new_match=True,
             notify_on_batch_complete=False,
         ))
         plan = _delivery_plan()
         mock_plan.return_value = plan
         mock_send.return_value = True
+        mock_load.return_value = [_match(80.0)]
 
-        dtos = [_dto(80.0)]
-        send_notifications(ctx, dtos, 1, "fp", threading.Event())
+        send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp",
+            stop_event=threading.Event(),
+            selection_run_id="run-1",
+        )
         mock_batch.assert_not_called()
 
+    @patch("notification.orchestrator._load_persisted_notification_matches")
     @patch("notification.orchestrator._send_match_notification")
     @patch("notification.orchestrator._resolve_notification_plan")
-    def test_exception_in_send_is_caught(self, mock_plan, mock_send):
+    def test_exception_in_send_is_caught(self, mock_plan, mock_send, mock_load):
         ctx = _ctx(_notif_config(
-            enabled=True, min_score_threshold=0.0, notify_on_new_match=True,
+            enabled=True, min_fit_for_alerts=0.0, notify_on_new_match=True,
         ))
         plan = _delivery_plan()
         mock_plan.return_value = plan
         mock_send.side_effect = RuntimeError("boom")
+        mock_load.return_value = [_match(90.0)]
 
-        count = send_notifications(ctx, [_dto(90.0)], 1, "fp", threading.Event())
+        count = send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp",
+            stop_event=threading.Event(),
+            selection_run_id="run-1",
+        )
         assert count == 0
 
+    @patch("notification.orchestrator._load_persisted_notification_matches")
     @patch("notification.orchestrator._send_batch_complete_notification")
     @patch("notification.orchestrator._send_match_notification")
     @patch("notification.orchestrator._resolve_notification_plan")
-    def test_batch_complete_exception_is_caught(self, mock_plan, mock_send, mock_batch):
+    def test_batch_complete_exception_is_caught(self, mock_plan, mock_send, mock_batch, mock_load):
         ctx = _ctx(_notif_config(
             enabled=True,
-            min_score_threshold=0.0,
+            min_fit_for_alerts=0.0,
             notify_on_new_match=True,
             notify_on_batch_complete=True,
         ))
@@ -228,253 +480,51 @@ class TestSendNotifications:
         mock_plan.return_value = plan
         mock_send.return_value = True
         mock_batch.side_effect = RuntimeError("batch error")
+        mock_load.return_value = [_match(80.0)]
 
-        # Should not raise; exception is caught and logged
-        count = send_notifications(ctx, [_dto(80.0)], 1, "fp", threading.Event())
-        assert count == 1  # match notification succeeded; batch error was swallowed
+        count = send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp",
+            stop_event=threading.Event(),
+            selection_run_id="run-1",
+        )
+        assert count == 1
         mock_batch.assert_called_once()
 
     @patch("notification.orchestrator._resolve_notification_plan")
     def test_top_level_exception_returns_zero(self, mock_plan):
-        ctx = _ctx(_notif_config(enabled=True, min_score_threshold=0.0, notify_on_new_match=True))
+        ctx = _ctx(_notif_config(enabled=True, min_fit_for_alerts=0.0, notify_on_new_match=True))
         mock_plan.side_effect = RuntimeError("unexpected")
 
-        count = send_notifications(ctx, [_dto(90.0)], 1, "fp", threading.Event())
+        count = send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp",
+            stop_event=threading.Event(),
+        )
         assert count == 0
 
+    @patch("notification.orchestrator._load_persisted_notification_matches")
     @patch("notification.orchestrator._send_match_notification")
     @patch("notification.orchestrator._resolve_notification_plan")
-    def test_notify_on_new_match_false_skips_all(self, mock_plan, mock_send):
+    def test_notify_on_new_match_false_skips_all(self, mock_plan, mock_send, mock_load):
         ctx = _ctx(_notif_config(
             enabled=True,
-            min_score_threshold=0.0,
+            min_fit_for_alerts=0.0,
             notify_on_new_match=False,
             notify_on_batch_complete=False,
         ))
         plan = _delivery_plan()
         mock_plan.return_value = plan
+        mock_load.return_value = [_match(90.0)]
 
-        count = send_notifications(ctx, [_dto(90.0)], 1, "fp", threading.Event())
+        count = send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp",
+            stop_event=threading.Event(),
+            selection_run_id="run-1",
+        )
         assert count == 0
         mock_send.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# _resolve_notification_plan
-# ---------------------------------------------------------------------------
-
-def _uow(repo):
-    m = MagicMock()
-    m.__enter__.return_value = repo
-    m.__exit__.return_value = False
-    return m
-
-
-class TestResolveNotificationPlan:
-    def test_no_user_id_returns_none(self):
-        ctx = _ctx(_notif_config(user_id=None))
-        result = _resolve_notification_plan(ctx, owner_id=None)
-        assert result is None
-
-    def test_non_uuid_user_id_no_channels_returns_none(self):
-        config = _notif_config(
-            user_id="legacy-user",
-            channels={"email": SimpleNamespace(enabled=False)},
-        )
-        ctx = _ctx(config)
-        result = _resolve_notification_plan(ctx, owner_id=None)
-        assert result is None
-
-    def test_non_uuid_user_id_with_enabled_channel(self):
-        config = _notif_config(
-            user_id="legacy-user",
-            channels={
-                "email": SimpleNamespace(enabled=True),
-                "slack": SimpleNamespace(enabled=False),
-            },
-        )
-        ctx = _ctx(config)
-        result = _resolve_notification_plan(ctx, owner_id=None)
-        assert result is not None
-        assert result.user_id == "legacy-user"
-        assert result.enabled_channels == ["email"]
-
-    def test_owner_id_overrides_config_user_id(self):
-        config = _notif_config(
-            user_id="config-user",
-            channels={"email": SimpleNamespace(enabled=True)},
-        )
-        ctx = _ctx(config)
-        result = _resolve_notification_plan(ctx, owner_id="owner-user")
-        assert result is not None
-        assert result.user_id == "owner-user"
-
-    @patch("notification.orchestrator.job_uow")
-    def test_uuid_user_not_found_returns_none(self, mock_uow):
-        repo = MagicMock()
-        repo.db.get.return_value = None
-        mock_uow.return_value = _uow(repo)
-
-        config = _notif_config(user_id=None)
-        ctx = _ctx(config)
-        uuid_id = "00000000-0000-0000-0000-000000000001"
-        result = _resolve_notification_plan(ctx, owner_id=uuid_id)
-        assert result is None
-
-    @patch("notification.orchestrator.job_uow")
-    def test_uuid_notifications_disabled_returns_none(self, mock_uow):
-        repo = MagicMock()
-        user = MagicMock()
-        repo.db.get.return_value = user
-        snap = SimpleNamespace(notifications_enabled=False)
-        ctx = _ctx(_notif_config(user_id=None))
-        ctx.notification_service.get_user_notification_snapshot.return_value = snap
-        ctx.notification_service.get_enabled_channels_for_user.return_value = ["email"]
-        mock_uow.return_value = _uow(repo)
-
-        uuid_id = "00000000-0000-0000-0000-000000000002"
-        result = _resolve_notification_plan(ctx, owner_id=uuid_id)
-        assert result is None
-
-    @patch("notification.orchestrator.job_uow")
-    def test_uuid_no_enabled_channels_returns_none(self, mock_uow):
-        repo = MagicMock()
-        user = MagicMock()
-        repo.db.get.return_value = user
-        snap = SimpleNamespace(notifications_enabled=True)
-        ctx = _ctx(_notif_config(user_id=None))
-        ctx.notification_service.get_user_notification_snapshot.return_value = snap
-        ctx.notification_service.get_enabled_channels_for_user.return_value = []
-        mock_uow.return_value = _uow(repo)
-
-        uuid_id = "00000000-0000-0000-0000-000000000003"
-        result = _resolve_notification_plan(ctx, owner_id=uuid_id)
-        assert result is None
-
-    @patch("notification.orchestrator.job_uow")
-    def test_uuid_valid_returns_plan(self, mock_uow):
-        repo = MagicMock()
-        user = MagicMock()
-        repo.db.get.return_value = user
-        snap = SimpleNamespace(notifications_enabled=True)
-        ctx = _ctx(_notif_config(user_id=None))
-        ctx.notification_service.get_user_notification_snapshot.return_value = snap
-        ctx.notification_service.get_enabled_channels_for_user.return_value = ["email", "discord"]
-        mock_uow.return_value = _uow(repo)
-
-        uuid_id = "00000000-0000-0000-0000-000000000004"
-        result = _resolve_notification_plan(ctx, owner_id=uuid_id)
-        assert result is not None
-        assert result.user_id == uuid_id
-        assert result.enabled_channels == ["email", "discord"]
-        assert result.settings_snapshot is snap
-
-
-# ---------------------------------------------------------------------------
-# _send_match_notification
-# ---------------------------------------------------------------------------
-
-class TestSendMatchNotification:
-    def _dto_for_job(self, job_id="job-1"):
-        return SimpleNamespace(
-            job=SimpleNamespace(id=job_id),
-            overall_score=85.0,
-            fit_score=80.0,
-            jd_required_coverage=0.9,
-        )
-
-    @patch("notification.orchestrator.job_uow")
-    def test_no_match_record_returns_false(self, mock_uow):
-        repo = MagicMock()
-        repo.get_existing_match.return_value = None
-        mock_uow.return_value = _uow(repo)
-
-        ctx = _ctx()
-        plan = _delivery_plan()
-        result = _send_match_notification(
-            ctx, self._dto_for_job(), resume_fingerprint="fp", delivery_plan=plan, task_id=None
-        )
-        assert result is False
-
-    @patch("notification.orchestrator.job_uow")
-    def test_already_notified_returns_false(self, mock_uow):
-        repo = MagicMock()
-        match = MagicMock()
-        match.id = "m-1"
-        match.notified = True
-        repo.get_existing_match.return_value = match
-        mock_uow.return_value = _uow(repo)
-
-        ctx = _ctx()
-        plan = _delivery_plan()
-        result = _send_match_notification(
-            ctx, self._dto_for_job(), resume_fingerprint="fp", delivery_plan=plan, task_id=None
-        )
-        assert result is False
-
-    @patch("notification.orchestrator.job_uow")
-    def test_no_job_post_returns_false(self, mock_uow):
-        repo = MagicMock()
-        match = MagicMock()
-        match.id = "m-1"
-        match.notified = False
-        match.job_post = None
-        repo.get_existing_match.return_value = match
-        mock_uow.return_value = _uow(repo)
-
-        ctx = _ctx()
-        plan = _delivery_plan()
-        result = _send_match_notification(
-            ctx, self._dto_for_job(), resume_fingerprint="fp", delivery_plan=plan, task_id=None
-        )
-        assert result is False
-
-    @patch("notification.orchestrator.NotificationMessageBuilder")
-    @patch("notification.orchestrator.job_uow")
-    def test_success_returns_true(self, mock_uow, mock_builder):
-        repo = MagicMock()
-        match = MagicMock()
-        match.id = "m-1"
-        match.notified = False
-        job_post = MagicMock()
-        job_post.company_url_direct = "https://example.com/apply"
-        match.job_post = job_post
-        repo.get_existing_match.return_value = match
-        mock_uow.return_value = _uow(repo)
-        mock_builder.build_notification_content.return_value = MagicMock()
-
-        ctx = _ctx()
-        plan = _delivery_plan()
-        result = _send_match_notification(
-            ctx, self._dto_for_job(), resume_fingerprint="fp", delivery_plan=plan, task_id="t-1"
-        )
-        assert result is True
-        ctx.notification_service.notify_new_match.assert_called_once()
-        assert match.notified is True
-
-
-# ---------------------------------------------------------------------------
-# _send_batch_complete_notification
-# ---------------------------------------------------------------------------
-
-class TestSendBatchCompleteNotification:
-    def test_calls_notify_batch_complete(self):
-        ctx = _ctx()
-        plan = _delivery_plan(user_id="u-1", enabled_channels=["email"])
-        matches = [_dto(80.0), _dto(90.0)]
-
-        _send_batch_complete_notification(
-            ctx,
-            delivery_plan=plan,
-            saved_count=5,
-            high_score_matches=matches,
-            task_id="task-abc",
-        )
-
-        ctx.notification_service.notify_batch_complete.assert_called_once_with(
-            user_id="u-1",
-            total_matches=5,
-            high_score_matches=2,
-            channels=["email"],
-            task_id="task-abc",
-        )
