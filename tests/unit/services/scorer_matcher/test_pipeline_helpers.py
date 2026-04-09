@@ -18,11 +18,16 @@ from services.scorer_matcher.pipeline import (
     _convert_matches_to_dtos,
     _finish_pipeline_result,
     _load_resume_from_db,
+    _ranking_snapshot_from_match,
     _result_after_matching,
     _result_after_saving,
+    _resolve_ranking_context,
     PreparedSelectionResult,
+    _save_matches_batch,
+    _save_results_and_publish_selection,
     _run_matching_and_scoring,
     _run_scorer_service,
+    _send_run_notifications,
     SaveMatchesBatchResult,
     _publish_match_selection_run,
     run_matching_pipeline,
@@ -53,6 +58,23 @@ def _dto(
         job_similarity=job_similarity,
         jd_required_coverage=0.75,
     )
+
+
+def _persistable_dto(job_id: str = "job-1", *, content_hash: str = "hash-1"):
+    dto = _dto(job_id=job_id)
+    dto.job.content_hash = content_hash
+    dto.fit_components = {"fit": "only"}
+    dto.preference_components = {"preference": "only"}
+    dto.ranking_snapshot = {"ranking_mode_used": "balanced"}
+    dto.base_score = 90.0
+    dto.penalties = 1.0
+    dto.penalty_details = []
+    dto.jd_required_coverage = 0.8
+    dto.jd_preferred_requirement_coverage = 0.3
+    dto.requirement_matches = [SimpleNamespace()]
+    dto.missing_requirements = [SimpleNamespace()]
+    dto.match_type = "requirements_only"
+    return dto
 
 
 def _prepared_selection_result(*dtos) -> PreparedSelectionResult:
@@ -119,6 +141,16 @@ class TestLoadResumeFromDb:
 
 
 class TestPipelineResults:
+    @patch("services.scorer_matcher.pipeline.get_ranking_policy_store")
+    def test_resolve_ranking_context_invalid_mode_falls_back_to_balanced(self, mock_store):
+        mock_store.return_value.get_current_config.return_value = SimpleNamespace(
+            active_default_mode="not-a-mode",
+        )
+
+        context = _resolve_ranking_context()
+
+        assert context.mode.value == "balanced"
+
     def test_result_after_matching_cancelled_with_matches(self):
         stop = threading.Event()
         stop.set()
@@ -774,6 +806,219 @@ class TestRunMatchingPipeline:
         mock_refresh.assert_called_once_with("fp-123", active_job_ids=frozenset({"job-1"}))
         mock_publish.assert_called_once()
         assert mock_notify.call_args.kwargs["selection_run_id"] == "selection-run-123"
+
+
+class TestPipelineNotificationAndPublicationHelpers:
+    def test_send_run_notifications_skips_when_no_service_or_enabled_config(self):
+        ctx = SimpleNamespace(
+            notification_service=None,
+            config=SimpleNamespace(notifications=SimpleNamespace(enabled=False)),
+        )
+
+        count = _send_run_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp-123",
+            stop_event=threading.Event(),
+            status_callback=MagicMock(),
+            selection_run_id="run-1",
+            owner_id="user-1",
+            task_id="task-1",
+        )
+
+        assert count == 0
+
+    @patch("services.scorer_matcher.pipeline.send_notifications", return_value=2)
+    def test_send_run_notifications_invokes_status_callback_and_delegates(self, mock_send):
+        status_callback = MagicMock()
+        ctx = SimpleNamespace(
+            notification_service=MagicMock(),
+            config=SimpleNamespace(notifications=SimpleNamespace(enabled=True)),
+        )
+
+        count = _send_run_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp-123",
+            stop_event=threading.Event(),
+            status_callback=status_callback,
+            selection_run_id="run-1",
+            owner_id="user-1",
+            task_id="task-1",
+        )
+
+        assert count == 2
+        status_callback.assert_called_once_with("notifying")
+        assert mock_send.call_args.kwargs["selection_run_id"] == "run-1"
+
+    @patch("services.scorer_matcher.pipeline._publish_match_selection_run", return_value="run-1")
+    @patch("services.scorer_matcher.pipeline._refresh_resume_match_set")
+    @patch("services.scorer_matcher.pipeline._save_matches_batch")
+    def test_save_results_and_publish_selection_refreshes_then_publishes(
+        self,
+        mock_save,
+        mock_refresh,
+        mock_publish,
+    ):
+        mock_save.return_value = SaveMatchesBatchResult(
+            saved_count=1,
+            failed_count=0,
+            active_job_ids=frozenset({"job-1"}),
+            job_match_ids_by_job_id={"job-1": "match-1"},
+        )
+
+        save_result, selection_run_id = _save_results_and_publish_selection(
+            match_dtos=[_dto()],
+            resume_fingerprint="fp-123",
+            matching_config=SimpleNamespace(),
+            prepared_selection=_prepared_selection_result(_dto()),
+            owner_id="user-1",
+            task_id="task-1",
+        )
+
+        assert save_result.saved_count == 1
+        assert selection_run_id == "run-1"
+        mock_refresh.assert_called_once_with("fp-123", active_job_ids=frozenset({"job-1"}))
+        mock_publish.assert_called_once()
+
+    @patch("services.scorer_matcher.pipeline._publish_match_selection_run")
+    @patch("services.scorer_matcher.pipeline._refresh_resume_match_set")
+    @patch("services.scorer_matcher.pipeline._save_matches_batch")
+    def test_save_results_and_publish_selection_skips_publication_on_save_failure(
+        self,
+        mock_save,
+        mock_refresh,
+        mock_publish,
+    ):
+        mock_save.return_value = SaveMatchesBatchResult(
+            saved_count=0,
+            failed_count=1,
+            active_job_ids=frozenset(),
+            job_match_ids_by_job_id={},
+        )
+
+        save_result, selection_run_id = _save_results_and_publish_selection(
+            match_dtos=[_dto()],
+            resume_fingerprint="fp-123",
+            matching_config=SimpleNamespace(),
+            prepared_selection=_prepared_selection_result(_dto()),
+            owner_id="user-1",
+            task_id="task-1",
+        )
+
+        assert save_result.failed_count == 1
+        assert selection_run_id is None
+        mock_refresh.assert_not_called()
+        mock_publish.assert_not_called()
+
+
+class TestDtoRankingSnapshot:
+    def test_ranking_snapshot_from_match_without_explanation_is_empty(self):
+        assert _ranking_snapshot_from_match(SimpleNamespace(ranking_explanation=None)) == {}
+
+    def test_ranking_snapshot_from_match_serializes_explanation_dataclass(self):
+        from core.ranking.engine import RankingExplanation
+
+        explanation = RankingExplanation(
+            ranking_mode_used="balanced",
+            config_version="cfg-1",
+            preference_score=0.7,
+            fit_score=0.8,
+            similarity_score=0.6,
+            explanation_label="Balanced fit and preference",
+            dominant_reason_code="balanced_blend",
+            missing_scores=[],
+        )
+
+        assert _ranking_snapshot_from_match(SimpleNamespace(ranking_explanation=explanation)) == {
+            "ranking_mode_used": "balanced",
+            "config_version": "cfg-1",
+            "preference_score": 0.7,
+            "fit_score": 0.8,
+            "similarity_score": 0.6,
+            "balanced_primary_score": None,
+            "explanation_label": "Balanced fit and preference",
+            "dominant_reason_code": "balanced_blend",
+            "missing_scores": [],
+        }
+
+
+class TestSaveMatchesBatch:
+    @patch("services.scorer_matcher.pipeline.save_match_to_db")
+    @patch("services.scorer_matcher.pipeline.job_uow")
+    def test_save_matches_batch_refreshes_existing_active_snapshot(self, mock_uow, mock_save):
+        existing = SimpleNamespace(
+            id="existing-match-1",
+            status="active",
+            job_content_hash="hash-1",
+        )
+        repo = SimpleNamespace(
+            db=MagicMock(),
+            get_existing_match=MagicMock(return_value=existing),
+        )
+        mock_uow.return_value = _uow(repo)
+
+        result = _save_matches_batch(
+            [_persistable_dto()],
+            "fp-123",
+            SimpleNamespace(recalculate_existing=False),
+        )
+
+        assert result.saved_count == 1
+        assert result.job_match_ids_by_job_id == {"job-1": "existing-match-1"}
+        assert existing.preference_components == {"preference": "only"}
+        assert existing.preferred_requirement_coverage == 0.3
+        repo.db.flush.assert_called_once()
+        mock_save.assert_not_called()
+
+    @patch("services.scorer_matcher.pipeline.save_match_to_db")
+    @patch("services.scorer_matcher.pipeline.job_uow")
+    def test_save_matches_batch_creates_stale_replacement_when_content_changed(
+        self,
+        mock_uow,
+        mock_save,
+    ):
+        existing = SimpleNamespace(
+            id="old-match-1",
+            status="active",
+            job_content_hash="old-hash",
+            invalidated_reason=None,
+        )
+        repo = SimpleNamespace(
+            get_existing_match=MagicMock(return_value=existing),
+        )
+        mock_uow.return_value = _uow(repo)
+        mock_save.return_value = SimpleNamespace(id="new-match-1")
+
+        result = _save_matches_batch(
+            [_persistable_dto(content_hash="new-hash")],
+            "fp-123",
+            SimpleNamespace(recalculate_existing=False),
+        )
+
+        assert result.saved_count == 1
+        assert existing.status == "stale"
+        assert existing.invalidated_reason == "Job content updated"
+        assert result.job_match_ids_by_job_id == {"job-1": "new-match-1"}
+        mock_save.assert_called_once()
+
+    @patch("services.scorer_matcher.pipeline.save_match_to_db")
+    @patch("services.scorer_matcher.pipeline.job_uow")
+    def test_save_matches_batch_saves_new_match(self, mock_uow, mock_save):
+        repo = SimpleNamespace(get_existing_match=MagicMock(return_value=None))
+        mock_uow.return_value = _uow(repo)
+        mock_save.return_value = SimpleNamespace(id="match-1")
+
+        result = _save_matches_batch(
+            [_persistable_dto()],
+            "fp-123",
+            SimpleNamespace(recalculate_existing=False),
+        )
+
+        assert result.saved_count == 1
+        assert result.failed_count == 0
+        assert result.active_job_ids == frozenset({"job-1"})
+        assert result.job_match_ids_by_job_id == {"job-1": "match-1"}
 
 
 class TestPublishMatchSelectionRun:

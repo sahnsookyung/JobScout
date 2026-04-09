@@ -27,12 +27,7 @@ def select_matches(
     eligible = [
         match
         for match in matches
-        if (float(getattr(match, "fit_score", 0.0) or 0.0) >= fit_floor_used)
-        and (
-            required_coverage_floor_used is None
-            or float(getattr(match, "jd_required_coverage", 0.0) or 0.0)
-            >= required_coverage_floor_used
-        )
+        if _passes_selection_floors(match, fit_floor_used, required_coverage_floor_used)
     ]
 
     candidate_pool_size = len(eligible)
@@ -42,34 +37,11 @@ def select_matches(
     selected_matches = eligible[:top_k_used] if top_k_used > 0 else []
     item_snapshots: list[MatchSelectionItemSnapshot] = []
     for index, match in enumerate(selected_matches, start=1):
-        fit_score = float(getattr(match, "fit_score", 0.0) or 0.0)
-        preference_score = getattr(match, "preference_score", None)
-        job_similarity = float(getattr(match, "job_similarity", 0.0) or 0.0)
-        required_coverage = float(getattr(match, "jd_required_coverage", 0.0) or 0.0)
-        explanation = getattr(match, "ranking_explanation", None)
-        ranking_snapshot = asdict(explanation) if explanation is not None else {}
         item_snapshots.append(
-            MatchSelectionItemSnapshot(
-                job_id=str(match.job.id),
+            _item_snapshot_from_match(
+                match,
                 rank_position=index,
-                fit_score_at_selection=fit_score,
-                preference_score_at_selection=(
-                    None if preference_score is None else float(preference_score)
-                ),
-                job_similarity_at_selection=job_similarity,
-                required_coverage_at_selection=required_coverage,
-                alert_eligible=fit_score >= notification_fit_floor_used,
-                dominant_reason_code=(
-                    ranking_snapshot.get("dominant_reason_code")
-                    if ranking_snapshot
-                    else None
-                ),
-                explanation_label=(
-                    ranking_snapshot.get("explanation_label")
-                    if ranking_snapshot
-                    else None
-                ),
-                ranking_snapshot=ranking_snapshot,
+                notification_fit_floor_used=notification_fit_floor_used,
             )
         )
 
@@ -89,4 +61,53 @@ def select_matches(
         selected_matches=selected_matches,
         item_snapshots=item_snapshots,
         policy_snapshot=policy_snapshot,
+    )
+
+
+def _score(match: Any, attribute: str) -> float:
+    return float(getattr(match, attribute, 0.0) or 0.0)
+
+
+def _passes_selection_floors(
+    match: Any,
+    fit_floor_used: float,
+    required_coverage_floor_used: Optional[float],
+) -> bool:
+    if _score(match, "fit_score") < fit_floor_used:
+        return False
+    return (
+        required_coverage_floor_used is None
+        or _score(match, "jd_required_coverage") >= required_coverage_floor_used
+    )
+
+
+def _ranking_snapshot(match: Any) -> dict[str, Any]:
+    explanation = getattr(match, "ranking_explanation", None)
+    return asdict(explanation) if explanation is not None else {}
+
+
+def _preference_score(match: Any) -> Optional[float]:
+    value = getattr(match, "preference_score", None)
+    return None if value is None else float(value)
+
+
+def _item_snapshot_from_match(
+    match: Any,
+    *,
+    rank_position: int,
+    notification_fit_floor_used: float,
+) -> MatchSelectionItemSnapshot:
+    fit_score = _score(match, "fit_score")
+    ranking_snapshot = _ranking_snapshot(match)
+    return MatchSelectionItemSnapshot(
+        job_id=str(match.job.id),
+        rank_position=rank_position,
+        fit_score_at_selection=fit_score,
+        preference_score_at_selection=_preference_score(match),
+        job_similarity_at_selection=_score(match, "job_similarity"),
+        required_coverage_at_selection=_score(match, "jd_required_coverage"),
+        alert_eligible=fit_score >= notification_fit_floor_used,
+        dominant_reason_code=ranking_snapshot.get("dominant_reason_code"),
+        explanation_label=ranking_snapshot.get("explanation_label"),
+        ranking_snapshot=ranking_snapshot,
     )

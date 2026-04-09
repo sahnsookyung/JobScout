@@ -79,6 +79,18 @@ def _content(**kwargs) -> JobNotificationContent:
     )
 
 
+def _content_with_ranking(**kwargs) -> JobNotificationContent:
+    match = MatchInfo(
+        fit_score=kwargs.pop("fit_score", 82.0),
+        preference_score=kwargs.pop("preference_score", 0.74),
+        required_coverage=kwargs.pop("required_coverage", 0.88),
+        ranking_mode_used=kwargs.pop("ranking_mode_used", "preference_first"),
+        explanation_label=kwargs.pop("explanation_label", "Preference alignment led this ranking"),
+        dominant_reason_code=kwargs.pop("dominant_reason_code", "preference_alignment"),
+    )
+    return _content(match=match, **kwargs)
+
+
 class TestJobNotificationContent:
     def test_creation(self):
         content = _content()
@@ -115,6 +127,13 @@ class TestMarkdownFormatting:
         )
         assert "⚠️ **0/0** requirements matched" in markdown
 
+    def test_to_markdown_includes_preference_and_ranking_reason(self):
+        markdown = NotificationMessageBuilder.to_markdown(_content_with_ranking())
+
+        assert "🎯 **Matches your preferences**" in markdown
+        assert "💡 Preference alignment: **74%**" in markdown
+        assert "Why it surfaced: Preference alignment led this ranking" in markdown
+
 
 class TestHtmlFormatting:
     def test_to_html_basic(self):
@@ -122,6 +141,11 @@ class TestHtmlFormatting:
         assert "<b>" in html
         assert "Python Developer" in html
         assert "<hr/>" in html
+
+    def test_to_html_converts_score_and_link_sections(self):
+        html = NotificationMessageBuilder.to_html(_content_with_ranking())
+        assert "<br/>📊 Fit: <b>82%</b>" in html
+        assert "<br/>🔗 [Apply Here]" in html
 
 
 class TestDiscordEmbedFormatting:
@@ -138,6 +162,14 @@ class TestDiscordEmbedFormatting:
     def test_to_discord_embed_medium_color(self):
         embed = NotificationMessageBuilder.to_discord_embed(_content(fit_score=65.0))
         assert embed["color"] == 0xFFC107
+
+    def test_to_discord_embed_includes_preference_and_ranking_reason(self):
+        embed = NotificationMessageBuilder.to_discord_embed(_content_with_ranking())
+        fields = {field["name"]: field["value"] for field in embed["fields"]}
+
+        assert embed["title"] == "🎯 Matches your preferences"
+        assert fields["💡 Preference Alignment"] == "74%"
+        assert fields["🧭 Ranking Reason"] == "Preference alignment led this ranking"
 
     def test_to_discord_embed_low_color(self):
         embed = NotificationMessageBuilder.to_discord_embed(_content(fit_score=35.0))

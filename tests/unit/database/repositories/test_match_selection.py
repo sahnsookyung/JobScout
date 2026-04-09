@@ -85,3 +85,63 @@ def test_publish_selection_run_marks_prior_current_run_superseded():
     created_run = session.add.call_args_list[0].args[0]
     assert created_run.lifecycle_status == "committed"
     assert created_run.is_current is True
+
+
+def test_get_current_run_for_resume_executes_current_committed_query():
+    session = MagicMock()
+    expected = SimpleNamespace(id="run-1")
+    session.execute.return_value.scalar_one_or_none.return_value = expected
+    repo = MatchSelectionRepository(session)
+
+    result = repo.get_current_run_for_resume("fp-1")
+
+    assert result is expected
+    assert "match_selection_run" in str(session.execute.call_args.args[0])
+
+
+def test_get_latest_current_run_for_owner_executes_current_committed_query():
+    session = MagicMock()
+    expected = SimpleNamespace(id="run-1")
+    session.execute.return_value.scalar_one_or_none.return_value = expected
+    repo = MatchSelectionRepository(session)
+
+    assert repo.get_latest_current_run_for_owner("user-1") is expected
+
+
+def test_get_committed_run_for_task_executes_task_scoped_query():
+    session = MagicMock()
+    expected = SimpleNamespace(id="run-1")
+    session.execute.return_value.scalar_one_or_none.return_value = expected
+    repo = MatchSelectionRepository(session)
+
+    assert repo.get_committed_run_for_task(
+        resume_fingerprint="fp-1",
+        task_id="task-1",
+    ) is expected
+
+
+def test_get_items_for_run_returns_ordered_items():
+    session = MagicMock()
+    items = [SimpleNamespace(id="item-1")]
+    session.execute.return_value.scalars.return_value.all.return_value = items
+    repo = MatchSelectionRepository(session)
+
+    assert repo.get_items_for_run("run-1") == items
+
+
+def test_publish_selection_run_requires_saved_job_match_for_each_selected_item():
+    session = MagicMock()
+    repo = MatchSelectionRepository(session)
+
+    try:
+        repo.publish_selection_run(
+            owner_id="user-1",
+            resume_fingerprint="fp-1",
+            policy_snapshot=_policy_snapshot(),
+            item_snapshots=[_item_snapshot("job-without-saved-match")],
+            job_match_ids_by_job_id={},
+        )
+    except ValueError as exc:
+        assert "Missing saved job_match_id" in str(exc)
+    else:
+        raise AssertionError("expected missing job_match_id to fail publication")

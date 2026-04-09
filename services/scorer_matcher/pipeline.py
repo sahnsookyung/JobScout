@@ -394,27 +394,15 @@ def run_matching_pipeline(
         # Step 4: Save matches
         if status_callback:
             status_callback("saving_results")
-        save_batch_result = _save_matches_batch(match_dtos, resume_fingerprint, matching_config)
+        save_batch_result, selection_run_id = _save_results_and_publish_selection(
+            match_dtos=match_dtos,
+            resume_fingerprint=resume_fingerprint,
+            matching_config=matching_config,
+            prepared_selection=prepared_selection,
+            owner_id=owner_id,
+            task_id=task_id,
+        )
         saved_count = save_batch_result.saved_count
-        if save_batch_result.failed_count == 0:
-            _refresh_resume_match_set(
-                resume_fingerprint,
-                active_job_ids=save_batch_result.active_job_ids,
-            )
-            selection_run_id = _publish_match_selection_run(
-                owner_id=owner_id,
-                resume_fingerprint=resume_fingerprint,
-                task_id=task_id,
-                prepared_selection=prepared_selection,
-                save_batch_result=save_batch_result,
-            )
-        else:
-            selection_run_id = None
-            logger.warning(
-                "Skipping active-match refresh for %s because %d match saves failed",
-                resume_fingerprint[:16],
-                save_batch_result.failed_count,
-            )
 
         save_result = _result_after_saving(
             match_dtos,
@@ -426,27 +414,16 @@ def run_matching_pipeline(
             return save_result
 
         # Step 5: Send notifications
-        notified_count = 0
-        if (
-            ctx.notification_service is None
-            and getattr(ctx.config, "notifications", None)
-            and ctx.config.notifications.enabled
-        ):
-            logger.info("Building notification service lazily for matching pipeline")
-            ctx.notification_service = AppContext._build_notification_service(ctx.config)
-        if ctx.notification_service and not stop_event.is_set():
-            if status_callback:
-                status_callback("notifying")
-            notified_count = send_notifications(
-                ctx,
-                saved_count=saved_count,
-                failed_count=save_batch_result.failed_count,
-                resume_fingerprint=resume_fingerprint,
-                stop_event=stop_event,
-                selection_run_id=selection_run_id,
-                owner_id=prepared_selection.owner_id,
-                task_id=task_id,
-            )
+        notified_count = _send_run_notifications(
+            ctx,
+            failed_count=save_batch_result.failed_count,
+            resume_fingerprint=resume_fingerprint,
+            stop_event=stop_event,
+            status_callback=status_callback,
+            selection_run_id=selection_run_id,
+            owner_id=prepared_selection.owner_id,
+            task_id=task_id,
+        )
 
         return _finish_pipeline_result(
             match_dtos,
@@ -463,6 +440,80 @@ def run_matching_pipeline(
             success=False, matches_count=0, saved_count=0, notified_count=0,
             error=str(e), execution_time=execution_time,
         )
+
+
+def _save_results_and_publish_selection(
+    *,
+    match_dtos: List[MatchResultDTO],
+    resume_fingerprint: str,
+    matching_config,
+    prepared_selection: PreparedSelectionResult,
+    owner_id: Optional[str],
+    task_id: Optional[str],
+) -> tuple[SaveMatchesBatchResult, Optional[str]]:
+    """Persist the selected match set and publish its immutable run artifact."""
+    save_batch_result = _save_matches_batch(match_dtos, resume_fingerprint, matching_config)
+    if save_batch_result.failed_count > 0:
+        logger.warning(
+            "Skipping active-match refresh for %s because %d match saves failed",
+            resume_fingerprint[:16],
+            save_batch_result.failed_count,
+        )
+        return save_batch_result, None
+
+    _refresh_resume_match_set(
+        resume_fingerprint,
+        active_job_ids=save_batch_result.active_job_ids,
+    )
+    selection_run_id = _publish_match_selection_run(
+        owner_id=owner_id,
+        resume_fingerprint=resume_fingerprint,
+        task_id=task_id,
+        prepared_selection=prepared_selection,
+        save_batch_result=save_batch_result,
+    )
+    return save_batch_result, selection_run_id
+
+
+def _ensure_notification_service(ctx: AppContext) -> None:
+    """Create the notification service lazily when notifications are enabled."""
+    if ctx.notification_service is not None:
+        return
+    notification_config = getattr(ctx.config, "notifications", None)
+    if not notification_config or not notification_config.enabled:
+        return
+
+    logger.info("Building notification service lazily for matching pipeline")
+    ctx.notification_service = AppContext._build_notification_service(ctx.config)
+
+
+def _send_run_notifications(
+    ctx: AppContext,
+    *,
+    failed_count: int,
+    resume_fingerprint: str,
+    stop_event: threading.Event,
+    status_callback: Optional[Callable[[str], None]],
+    selection_run_id: Optional[str],
+    owner_id: Optional[str],
+    task_id: Optional[str],
+) -> int:
+    """Send notifications for the committed selection run, if available."""
+    _ensure_notification_service(ctx)
+    if ctx.notification_service is None or stop_event.is_set():
+        return 0
+
+    if status_callback:
+        status_callback("notifying")
+    return send_notifications(
+        ctx,
+        failed_count=failed_count,
+        resume_fingerprint=resume_fingerprint,
+        stop_event=stop_event,
+        selection_run_id=selection_run_id,
+        owner_id=owner_id,
+        task_id=task_id,
+    )
 
 # ---------------------------------------------------------------------------
 # Matching & scoring internals

@@ -350,6 +350,143 @@ class TestThreeStagePipeline:
         mock_db.query.assert_not_called()
 
 
+class TestRankablePoolHelpers:
+    @patch("web.backend.services.match_service.job_uow")
+    def test_resolve_canonical_selection_returns_none_when_resolution_fails(
+        self,
+        mock_uow,
+        real_service,
+    ):
+        mock_uow.side_effect = RuntimeError("database unavailable")
+
+        assert real_service._resolve_canonical_selection(owner_id="user-1") is None
+
+    @patch("web.backend.services.match_service.job_uow")
+    def test_load_rankable_pool_skips_items_that_do_not_pass_filters(
+        self,
+        mock_uow,
+        real_service,
+    ):
+        repo = MagicMock()
+        hidden_match = SimpleNamespace(
+            status="active",
+            is_hidden=True,
+            job_post=SimpleNamespace(is_remote=True),
+        )
+        repo.match_selection.get_items_for_run.return_value = [
+            SimpleNamespace(
+                fit_score_at_selection=90.0,
+                job_match=hidden_match,
+            ),
+        ]
+        mock_uow.return_value = MagicMock(
+            __enter__=Mock(return_value=repo),
+            __exit__=Mock(return_value=False),
+        )
+
+        assert real_service._load_rankable_pool(
+            SimpleNamespace(selection_run_id="run-1"),
+            status="active",
+            min_fit=None,
+            remote_only=False,
+            show_hidden=False,
+        ) == []
+
+    def test_selection_item_filter_rejects_status_min_fit_hidden_and_non_remote(self, real_service):
+        active_match = SimpleNamespace(status="active", is_hidden=False)
+        hidden_match = SimpleNamespace(status="active", is_hidden=True)
+        inactive_match = SimpleNamespace(status="stale", is_hidden=False)
+        remote_job = SimpleNamespace(is_remote=True)
+        onsite_job = SimpleNamespace(is_remote=False)
+
+        assert real_service._selection_item_passes_filters(
+            active_match,
+            remote_job,
+            80.0,
+            status="active",
+            min_fit=70.0,
+            remote_only=True,
+            show_hidden=False,
+        )
+        assert not real_service._selection_item_passes_filters(
+            inactive_match,
+            remote_job,
+            80.0,
+            status="active",
+            min_fit=None,
+            remote_only=False,
+            show_hidden=True,
+        )
+        assert not real_service._selection_item_passes_filters(
+            active_match,
+            remote_job,
+            None,
+            status="active",
+            min_fit=70.0,
+            remote_only=False,
+            show_hidden=True,
+        )
+        assert not real_service._selection_item_passes_filters(
+            hidden_match,
+            remote_job,
+            80.0,
+            status="active",
+            min_fit=None,
+            remote_only=False,
+            show_hidden=False,
+        )
+        assert not real_service._selection_item_passes_filters(
+            active_match,
+            onsite_job,
+            80.0,
+            status="all",
+            min_fit=None,
+            remote_only=True,
+            show_hidden=True,
+        )
+
+    def test_selection_item_to_summary_candidate_uses_unknown_job_fallbacks(self, real_service):
+        item = SimpleNamespace(
+            preference_score_at_selection=None,
+            job_similarity_at_selection=0.45,
+            required_coverage_at_selection=0.5,
+        )
+        match = SimpleNamespace(
+            id="match-1",
+            job_post_id="job-1",
+            penalties=None,
+            preferred_requirement_coverage=None,
+            match_type=None,
+            is_hidden=False,
+            created_at=datetime.now(timezone.utc),
+            calculated_at=datetime.now(timezone.utc),
+        )
+
+        candidate = real_service._selection_item_to_summary_candidate(
+            item,
+            match,
+            job=None,
+            fit_score=None,
+        )
+
+        assert candidate.title == "Unknown"
+        assert candidate.company == "Unknown"
+        assert candidate.fit_score is None
+        assert candidate.preference_score is None
+
+    def test_get_match_for_owner_raises_when_missing(self, real_service, mock_db):
+        query = _wire_query(mock_db, [])
+        query.one_or_none.return_value = None
+
+        from web.backend.services.match_service import MatchNotFoundException
+
+        with pytest.raises(MatchNotFoundException):
+            real_service._get_match_for_owner("missing-match", owner_id="user-1")
+
+    def test_fit_components_rejects_non_dict_payload(self, real_service):
+        assert real_service._fit_components(["not", "a", "dict"]) is None
+
+
 # ---------------------------------------------------------------------------
 # Filter wiring
 # ---------------------------------------------------------------------------

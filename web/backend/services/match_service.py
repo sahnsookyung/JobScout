@@ -157,54 +157,75 @@ class MatchService:
             for item in items:
                 match = item.job_match
                 job = getattr(match, "job_post", None)
-                fit_score = (
-                    None
-                    if item.fit_score_at_selection is None
-                    else float(item.fit_score_at_selection)
-                )
-                if status != "all" and match.status != status:
+                fit_score = self._item_fit_score(item)
+                if not self._selection_item_passes_filters(
+                    match,
+                    job,
+                    fit_score,
+                    status=status,
+                    min_fit=min_fit,
+                    remote_only=remote_only,
+                    show_hidden=show_hidden,
+                ):
                     continue
-                if min_fit is not None and (fit_score is None or fit_score < min_fit):
-                    continue
-                if not show_hidden and bool(match.is_hidden):
-                    continue
-                if remote_only and not bool(getattr(job, "is_remote", False)):
-                    continue
-                pool.append(
-                    MatchSummaryCandidate(
-                        id=str(match.id),
-                        job_id=str(match.job_post_id),
-                        title=job.title if job and hasattr(job, "title") else "Unknown",
-                        company=job.company if job and hasattr(job, "company") else "Unknown",
-                        location=(
-                            job.location_text
-                            if job and hasattr(job, "location_text")
-                            else None
-                        ),
-                        is_remote=bool(getattr(job, "is_remote", False)),
-                        fit_score=fit_score,
-                        preference_score=(
-                            None
-                            if item.preference_score_at_selection is None
-                            else float(item.preference_score_at_selection)
-                        ),
-                        job_similarity=float(item.job_similarity_at_selection),
-                        penalties=(
-                            None if match.penalties is None else safe_float(match.penalties)
-                        ),
-                        required_coverage=float(item.required_coverage_at_selection),
-                        preferred_requirement_coverage=(
-                            None
-                            if match.preferred_requirement_coverage is None
-                            else safe_float(match.preferred_requirement_coverage)
-                        ),
-                        match_type=safe_str(match.match_type, "unknown"),
-                        is_hidden=bool(match.is_hidden),
-                        created_at=match.created_at,
-                        calculated_at=match.calculated_at,
-                    )
-                )
+                pool.append(self._selection_item_to_summary_candidate(item, match, job, fit_score))
             return pool
+
+    @staticmethod
+    def _item_fit_score(item) -> Optional[float]:
+        return (
+            None
+            if item.fit_score_at_selection is None
+            else float(item.fit_score_at_selection)
+        )
+
+    @staticmethod
+    def _selection_item_passes_filters(
+        match,
+        job,
+        fit_score: Optional[float],
+        *,
+        status: str,
+        min_fit: Optional[float],
+        remote_only: bool,
+        show_hidden: bool,
+    ) -> bool:
+        if status != "all" and match.status != status:
+            return False
+        if min_fit is not None and (fit_score is None or fit_score < min_fit):
+            return False
+        if not show_hidden and bool(match.is_hidden):
+            return False
+        return not (remote_only and not bool(getattr(job, "is_remote", False)))
+
+    @staticmethod
+    def _selection_item_to_summary_candidate(item, match, job, fit_score) -> MatchSummaryCandidate:
+        return MatchSummaryCandidate(
+            id=str(match.id),
+            job_id=str(match.job_post_id),
+            title=job.title if job and hasattr(job, "title") else "Unknown",
+            company=job.company if job and hasattr(job, "company") else "Unknown",
+            location=job.location_text if job and hasattr(job, "location_text") else None,
+            is_remote=bool(getattr(job, "is_remote", False)),
+            fit_score=fit_score,
+            preference_score=(
+                None
+                if item.preference_score_at_selection is None
+                else float(item.preference_score_at_selection)
+            ),
+            job_similarity=float(item.job_similarity_at_selection),
+            penalties=None if match.penalties is None else safe_float(match.penalties),
+            required_coverage=float(item.required_coverage_at_selection),
+            preferred_requirement_coverage=(
+                None
+                if match.preferred_requirement_coverage is None
+                else safe_float(match.preferred_requirement_coverage)
+            ),
+            match_type=safe_str(match.match_type, "unknown"),
+            is_hidden=bool(match.is_hidden),
+            created_at=match.created_at,
+            calculated_at=match.calculated_at,
+        )
     
     def _get_match_for_owner(
         self,

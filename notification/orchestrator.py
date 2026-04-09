@@ -263,7 +263,6 @@ def _notify_per_match(
 def send_notifications(
     ctx,
     *,
-    saved_count: int,
     failed_count: int,
     resume_fingerprint: str,
     stop_event: threading.Event,

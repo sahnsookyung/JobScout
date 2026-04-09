@@ -13,6 +13,7 @@ from notification.orchestrator import (
     _resolve_notification_plan,
     _send_batch_complete_notification,
     _send_match_notification,
+    resolve_notification_fit_floor,
     send_notifications,
 )
 
@@ -74,6 +75,34 @@ class TestNotificationSettingValue:
         assert _notification_setting_value(config, snap, "threshold") == 0.0
 
 
+class TestResolveNotificationFitFloor:
+    def test_no_notification_config_returns_zero(self):
+        ctx = SimpleNamespace(config=SimpleNamespace(), notification_service=None)
+        assert resolve_notification_fit_floor(ctx) == 0.0
+
+    def test_no_notification_service_uses_static_config_floor(self):
+        ctx = _ctx(_notif_config(min_fit_for_alerts=81.0))
+        ctx.notification_service = None
+
+        assert resolve_notification_fit_floor(ctx) == 81.0
+
+    @patch("notification.orchestrator._resolve_notification_plan")
+    def test_missing_delivery_plan_uses_static_config_floor(self, mock_plan):
+        mock_plan.return_value = None
+        ctx = _ctx(_notif_config(min_fit_for_alerts=72.0))
+
+        assert resolve_notification_fit_floor(ctx, owner_id="user-1") == 72.0
+
+    @patch("notification.orchestrator._resolve_notification_plan")
+    def test_delivery_plan_snapshot_overrides_config_floor(self, mock_plan):
+        mock_plan.return_value = _delivery_plan(
+            settings_snapshot=SimpleNamespace(min_fit_for_alerts=64.0),
+        )
+        ctx = _ctx(_notif_config(min_fit_for_alerts=72.0))
+
+        assert resolve_notification_fit_floor(ctx, owner_id="user-1") == 64.0
+
+
 class TestAlertEligibleMatchesForPlan:
     def test_filters_below_threshold(self):
         config = _notif_config(min_fit_for_alerts=70.0)
@@ -107,7 +136,6 @@ class TestSendNotifications:
         ctx = _ctx(_notif_config(enabled=False))
         count = send_notifications(
             ctx,
-            saved_count=1,
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
@@ -119,7 +147,6 @@ class TestSendNotifications:
         ctx = _ctx()
         count = send_notifications(
             ctx,
-            saved_count=0,
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
@@ -130,7 +157,6 @@ class TestSendNotifications:
         ctx = _ctx()
         count = send_notifications(
             ctx,
-            saved_count=2,
             failed_count=1,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
@@ -141,12 +167,44 @@ class TestSendNotifications:
         ctx = _ctx(_notif_config(enabled=True, user_id=None, channels={}))
         count = send_notifications(
             ctx,
-            saved_count=1,
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
         )
         assert count == 0
+
+    @patch("notification.orchestrator._resolve_notification_plan")
+    def test_missing_selection_run_returns_zero_after_delivery_plan_resolves(self, mock_plan):
+        mock_plan.return_value = _delivery_plan()
+        ctx = _ctx(_notif_config(enabled=True, user_id="user-1", channels={"email": {}}))
+
+        count = send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp",
+            stop_event=threading.Event(),
+            selection_run_id=None,
+        )
+
+        assert count == 0
+
+    @patch("notification.orchestrator._load_persisted_notification_matches")
+    @patch("notification.orchestrator._resolve_notification_plan")
+    def test_empty_persisted_selection_returns_zero(self, mock_plan, mock_load):
+        mock_plan.return_value = _delivery_plan()
+        mock_load.return_value = []
+        ctx = _ctx(_notif_config(enabled=True, user_id="user-1", channels={"email": {}}))
+
+        count = send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp",
+            stop_event=threading.Event(),
+            selection_run_id="run-1",
+        )
+
+        assert count == 0
+        mock_load.assert_called_once_with("run-1")
 
     @patch("notification.orchestrator._load_persisted_notification_matches")
     @patch("notification.orchestrator._send_match_notification")
@@ -165,7 +223,6 @@ class TestSendNotifications:
 
         count = send_notifications(
             ctx,
-            saved_count=3,
             failed_count=0,
             resume_fingerprint="fp-abc",
             stop_event=threading.Event(),
@@ -188,7 +245,6 @@ class TestSendNotifications:
 
         count = send_notifications(
             ctx,
-            saved_count=2,
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=stop,
@@ -199,6 +255,54 @@ class TestSendNotifications:
 
 
 class TestPersistedNotificationHelpers:
+    @patch("notification.orchestrator.job_uow")
+    def test_send_match_notification_returns_false_when_record_missing(self, mock_uow):
+        repo = MagicMock()
+        repo.match.get_match_by_id.return_value = None
+        mock_uow.return_value = _uow(repo)
+
+        assert _send_match_notification(
+            _ctx(),
+            "missing-match",
+            delivery_plan=_delivery_plan(),
+            task_id="task-1",
+        ) is False
+
+    @patch("notification.orchestrator.job_uow")
+    def test_send_match_notification_skips_hidden_or_inactive_match(self, mock_uow):
+        repo = MagicMock()
+        repo.match.get_match_by_id.return_value = SimpleNamespace(
+            id="m1",
+            status="active",
+            is_hidden=True,
+        )
+        mock_uow.return_value = _uow(repo)
+
+        assert _send_match_notification(
+            _ctx(),
+            "m1",
+            delivery_plan=_delivery_plan(),
+            task_id="task-1",
+        ) is False
+
+    @patch("notification.orchestrator.job_uow")
+    def test_send_match_notification_skips_already_notified_match(self, mock_uow):
+        repo = MagicMock()
+        repo.match.get_match_by_id.return_value = SimpleNamespace(
+            id="m1",
+            status="active",
+            is_hidden=False,
+            notified=True,
+        )
+        mock_uow.return_value = _uow(repo)
+
+        assert _send_match_notification(
+            _ctx(),
+            "m1",
+            delivery_plan=_delivery_plan(),
+            task_id="task-1",
+        ) is False
+
     @patch("notification.orchestrator.job_uow")
     def test_load_persisted_notification_matches_uses_selection_run_order_without_rerank(
         self,
@@ -308,7 +412,6 @@ class TestPersistedNotificationHelpers:
 
         send_notifications(
             ctx,
-            saved_count=1,
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
@@ -334,7 +437,6 @@ class TestPersistedNotificationHelpers:
 
         send_notifications(
             ctx,
-            saved_count=1,
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
@@ -356,7 +458,6 @@ class TestPersistedNotificationHelpers:
 
         count = send_notifications(
             ctx,
-            saved_count=1,
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
@@ -383,7 +484,6 @@ class TestPersistedNotificationHelpers:
 
         count = send_notifications(
             ctx,
-            saved_count=1,
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
@@ -399,7 +499,6 @@ class TestPersistedNotificationHelpers:
 
         count = send_notifications(
             ctx,
-            saved_count=1,
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
@@ -422,7 +521,6 @@ class TestPersistedNotificationHelpers:
 
         count = send_notifications(
             ctx,
-            saved_count=1,
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
