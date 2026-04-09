@@ -140,7 +140,6 @@ class ScoringService:
             scored.append(self.score_preliminary_match(
                 preliminary=pm,
                 match_type=match_type,
-                candidate_total_years=(metadata_by_fp.get(pm.resume_fingerprint) or {}).get("total_years"),
                 owner_id=pm.owner_id or (metadata_by_fp.get(pm.resume_fingerprint) or {}).get("owner_id"),
             ))
 
@@ -159,11 +158,8 @@ class ScoringService:
         self,
         preliminary: JobMatchPreliminary,
         match_type: str = "requirements_only",
-        candidate_total_years: Optional[float] = None,
         owner_id: Optional[Any] = None,
     ) -> ScoredJobMatch:
-        del candidate_total_years  # Deprecated no-op retained for backwards compatibility.
-
         job = preliminary.job
 
         fit_penalties, penalty_details = penalty_calculations.calculate_fit_penalties(

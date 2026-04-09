@@ -20,6 +20,8 @@ from sqlalchemy.orm import sessionmaker
 from database.models import (
     CandidatePreferences,
     JobMatch,
+    MatchSelectionItem,
+    MatchSelectionRun,
     NotificationTracker,
     ResumeEvidenceUnitEmbedding,
     ResumeSectionEmbedding,
@@ -611,10 +613,33 @@ def _update_candidate_preferences(base_url: str, payload: dict) -> dict:
     return response.json()
 
 
-def _get_matches(base_url: str, *, status: str = "active") -> dict:
+def _get_matches(
+    base_url: str,
+    *,
+    status: str = "active",
+    ranking_mode: str | None = None,
+    show_hidden: bool = False,
+    min_fit: float | None = None,
+) -> dict:
+    params: dict[str, object] = {
+        "status": status,
+        "show_hidden": str(show_hidden).lower(),
+    }
+    if ranking_mode is not None:
+        params["ranking_mode"] = ranking_mode
+    if min_fit is not None:
+        params["min_fit"] = min_fit
     response = requests.get(
         f"{base_url}/api/matches",
-        params={"status": status},
+        params=params,
+        timeout=15,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+def _toggle_match_hidden(base_url: str, match_id: str) -> dict:
+    response = requests.post(
+        f"{base_url}/api/matches/{match_id}/hide",
         timeout=15,
     )
     assert response.status_code == 200, response.text
@@ -783,6 +808,31 @@ def test_resume_upload_completes_then_matching_completes(split_stack: SplitStack
         assert matches, "Expected at least one persisted match"
         matched_job_ids = {str(match.job_post_id) for match in matches}
         assert seeded_jobs.positive_job_id in matched_job_ids
+
+        active_matches = [match for match in matches if match.status == "active"]
+        selection_run = session.execute(
+            select(MatchSelectionRun).where(
+                MatchSelectionRun.resume_fingerprint == fingerprint,
+                MatchSelectionRun.lifecycle_status == "committed",
+                MatchSelectionRun.is_current.is_(True),
+            )
+        ).scalar_one()
+        selection_items = session.execute(
+            select(MatchSelectionItem).where(
+                MatchSelectionItem.selection_run_id == selection_run.id
+            )
+        ).scalars().all()
+
+        assert selection_run.policy_snapshot_json
+        assert selection_run.selected_count == len(selection_items)
+        assert selection_run.candidate_pool_size >= selection_run.selected_count
+        assert selection_run.alert_candidate_count <= selection_run.selected_count
+        assert [item.rank_position for item in selection_items] == list(
+            range(1, len(selection_items) + 1)
+        )
+        assert {str(item.job_match_id) for item in selection_items} == {
+            str(match.id) for match in active_matches
+        }
     finally:
         session.close()
         engine.dispose()
@@ -852,6 +902,27 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
         assert matches, "Expected persisted matches after matching completed"
         assert any(match.notified for match in matches)
         active_match = next(match for match in matches if match.status == "active")
+        selection_run = session.execute(
+            select(MatchSelectionRun).where(
+                MatchSelectionRun.resume_fingerprint == active_match.resume_fingerprint,
+                MatchSelectionRun.lifecycle_status == "committed",
+                MatchSelectionRun.is_current.is_(True),
+            )
+        ).scalar_one()
+        selection_items = session.execute(
+            select(MatchSelectionItem).where(
+                MatchSelectionItem.selection_run_id == selection_run.id
+            )
+        ).scalars().all()
+        selection_match_ids = {str(item.job_match_id) for item in selection_items}
+
+        notified_match_ids = {
+            str(row.job_match_id)
+            for row in delivered_notifications
+            if row.event_type == "new_match_alert" and row.job_match_id is not None
+        }
+        assert notified_match_ids
+        assert notified_match_ids.issubset(selection_match_ids)
     finally:
         session.close()
         engine.dispose()
@@ -869,6 +940,47 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
     assert explanation["diagnostics"]["effective_fit_mode"] in {"cross_encoder", "threshold"}
     assert explanation["diagnostics"]["provider_route"] in {"local", "local_heuristic", "remote", "threshold"}
     assert explanation["retrieval"]["mode"] in {"dense", "hybrid"}
+
+    fit_first_payload = _get_matches(split_stack.base_url, ranking_mode="fit_first")
+    balanced_payload = _get_matches(split_stack.base_url, ranking_mode="balanced")
+    preference_first_payload = _get_matches(
+        split_stack.base_url,
+        ranking_mode="preference_first",
+    )
+    active_ids = {
+        match["match_id"] for match in matches_payload["matches"]
+    }
+    assert {match["match_id"] for match in fit_first_payload["matches"]} == active_ids
+    assert {match["match_id"] for match in balanced_payload["matches"]} == active_ids
+    assert {match["match_id"] for match in preference_first_payload["matches"]} == active_ids
+
+    hide_payload = _toggle_match_hidden(split_stack.base_url, str(active_match.id))
+    assert hide_payload["success"] is True, hide_payload
+    assert hide_payload["is_hidden"] is True, hide_payload
+
+    hidden_default_payload = _get_matches(split_stack.base_url)
+    assert all(
+        match["match_id"] != str(active_match.id)
+        for match in hidden_default_payload["matches"]
+    )
+
+    hidden_included_payload = _get_matches(split_stack.base_url, show_hidden=True)
+    assert any(
+        match["match_id"] == str(active_match.id)
+        for match in hidden_included_payload["matches"]
+    )
+
+    engine, session = _session_for(split_stack.database_url)
+    try:
+        current_selection_items = session.execute(
+            select(MatchSelectionItem).where(
+                MatchSelectionItem.selection_run_id == selection_run.id
+            )
+        ).scalars().all()
+        assert any(str(item.job_match_id) == str(active_match.id) for item in current_selection_items)
+    finally:
+        session.close()
+        engine.dispose()
 
 
 def test_candidate_preferences_round_trip_updates_matching_behavior(

@@ -1,11 +1,12 @@
 from typing import List, Optional, Any, Tuple
 from sqlalchemy.orm import Session
 
-from database.models import JobPost, JobMatch, DEFAULT_LEGACY_OWNER_ID
+from database.models import JobPost, JobMatch, SYSTEM_OWNER_ID
 
 from database.repositories.job_post import JobPostRepository
 from database.repositories.resume import ResumeRepository
 from database.repositories.match import MatchRepository
+from database.repositories.match_selection import MatchSelectionRepository
 from database.repositories.embedding import EmbeddingRepository
 from database.repositories.candidate_preferences import CandidatePreferencesRepository
 from database.repositories.notification_settings import NotificationSettingsRepository
@@ -21,6 +22,7 @@ class JobRepository:
         self._candidate_preferences_repo: Optional[CandidatePreferencesRepository] = None
         self._notification_settings_repo: Optional[NotificationSettingsRepository] = None
         self._user_feature_capability_repo: Optional[UserFeatureCapabilityRepository] = None
+        self._match_selection_repo: Optional[MatchSelectionRepository] = None
 
     @property
     def job_post(self) -> JobPostRepository:
@@ -51,6 +53,12 @@ class JobRepository:
         if self._candidate_preferences_repo is None:
             self._candidate_preferences_repo = CandidatePreferencesRepository(self.db)
         return self._candidate_preferences_repo
+
+    @property
+    def match_selection(self) -> MatchSelectionRepository:
+        if self._match_selection_repo is None:
+            self._match_selection_repo = MatchSelectionRepository(self.db)
+        return self._match_selection_repo
 
     @property
     def notification_settings(self) -> NotificationSettingsRepository:
@@ -260,7 +268,7 @@ class JobRepository:
         retryable: Optional[bool] = None,
         user_safe_message: Optional[str] = None,
     ) -> Any:
-        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
+        owner_id = owner_id or SYSTEM_OWNER_ID
         return self.resume.set_resume_processing_state(
             owner_id=owner_id,
             resume_fingerprint=resume_fingerprint,
@@ -295,7 +303,7 @@ class JobRepository:
         extraction_warnings: Optional[list] = None,
         fingerprint_version: int = 1,
     ) -> Any:
-        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
+        owner_id = owner_id or SYSTEM_OWNER_ID
         return self.resume.save_structured_resume(
             owner_id=owner_id,
             resume_fingerprint=resume_fingerprint,
@@ -314,7 +322,7 @@ class JobRepository:
         owner_id: Any = None,
         fingerprint_version: int = 1,
     ) -> list:
-        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
+        owner_id = owner_id or SYSTEM_OWNER_ID
         return self.resume.save_resume_section_embeddings(
             resume_fingerprint=resume_fingerprint,
             sections=sections,
@@ -420,7 +428,7 @@ class JobRepository:
         owner_id: Any = None,
         fingerprint_version: int = 1,
     ) -> list:
-        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
+        owner_id = owner_id or SYSTEM_OWNER_ID
         return self.resume.save_evidence_unit_embeddings(
             resume_fingerprint=resume_fingerprint,
             evidence_units=evidence_units,

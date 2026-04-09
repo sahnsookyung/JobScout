@@ -21,9 +21,9 @@ from etl.resume import ResumeProfiler, ResumeParser
 from etl.resume.embedding_store import JobRepositoryAdapter
 
 logger = logging.getLogger(__name__)
-DEFAULT_LEGACY_OWNER_ID = "00000000-0000-0000-0000-000000000001"
+SYSTEM_OWNER_ID = "00000000-0000-0000-0000-000000000001"
 def _effective_owner_id(owner_id: Optional[Any]) -> Any:
-    return owner_id or DEFAULT_LEGACY_OWNER_ID
+    return owner_id or SYSTEM_OWNER_ID
 
 
 def _validate_embedding_vector(vector: List[float], context: str) -> List[float]:

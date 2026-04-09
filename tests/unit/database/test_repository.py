@@ -5,7 +5,7 @@ Tests lazy-loading properties and delegation methods of JobRepository.
 
 from unittest.mock import MagicMock
 
-from database.models import DEFAULT_LEGACY_OWNER_ID
+from database.models import SYSTEM_OWNER_ID
 from database.repository import JobRepository
 from database.repositories.job_post import JobPostRepository
 from database.repositories.resume import ResumeRepository
@@ -320,7 +320,7 @@ class TestResumeDelegation:
         result = repo.save_structured_resume("fp-1", {"name": "Alice"})
         assert result == "resume-record"
         repo.resume.save_structured_resume.assert_called_once_with(
-            owner_id=DEFAULT_LEGACY_OWNER_ID,
+            owner_id=SYSTEM_OWNER_ID,
             resume_fingerprint="fp-1",
             extracted_data={"name": "Alice"},
             total_experience_years=None,
@@ -336,7 +336,7 @@ class TestResumeDelegation:
         repo.resume.save_resume_section_embeddings.assert_called_once_with(
             resume_fingerprint="fp-1",
             sections=[],
-            owner_id=DEFAULT_LEGACY_OWNER_ID,
+            owner_id=SYSTEM_OWNER_ID,
             fingerprint_version=1,
         )
         assert result == []
@@ -355,7 +355,7 @@ class TestResumeDelegation:
         repo.resume.save_evidence_unit_embeddings.assert_called_once_with(
             resume_fingerprint="fp-1",
             evidence_units=[],
-            owner_id=DEFAULT_LEGACY_OWNER_ID,
+            owner_id=SYSTEM_OWNER_ID,
             fingerprint_version=1,
         )
         assert result == []

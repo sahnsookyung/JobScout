@@ -5,13 +5,16 @@ Match service - business logic for job match operations.
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import List, Optional, Dict, Any
 from core.redis_streams import _sanitize_log
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
+from core.match_selection import resolve_canonical_resume_selection
 from core.ranking import rank_matches, RankingContext, RankingMode, get_ranking_policy_store
 from database.models import JobMatch, JobPost, JobMatchRequirement, StructuredResume
 from database.uow import job_uow
+from sqlalchemy.orm import joinedload
 from ..models.responses import (
     MatchSummary,
     MatchDetail,
@@ -33,6 +36,29 @@ _PREFERENCE_COMPONENT_KEYS = {
     "preference_mode_used",
     "preference_fallback_reason",
 }
+
+
+@dataclass
+class MatchSummaryCandidate:
+    """Selection-run backed candidate used for read-time presentation reranking."""
+
+    id: str
+    job_id: str
+    title: str
+    company: str
+    location: Optional[str]
+    is_remote: bool
+    fit_score: Optional[float]
+    preference_score: Optional[float]
+    job_similarity: Optional[float]
+    penalties: Optional[float]
+    required_coverage: Optional[float]
+    preferred_requirement_coverage: Optional[float]
+    match_type: str
+    is_hidden: bool
+    created_at: Any
+    calculated_at: Any
+    ranking_explanation: Any = None
 
 
 class MatchService:
@@ -81,29 +107,17 @@ class MatchService:
         except ValueError:
             mode = RankingMode(ranking_config.active_default_mode)
 
-        resume_fingerprint = self._resolve_canonical_resume_fingerprint(owner_id=owner_id)
-        if not resume_fingerprint:
+        canonical_selection = self._resolve_canonical_selection(owner_id=owner_id)
+        if canonical_selection is None:
             return []
 
-        # Stage 1: DB retrieve — full canonical resume pool
-        query = self.db.query(JobMatch)
-        query = query.filter(JobMatch.resume_fingerprint == resume_fingerprint)
-
-        if status != "all":
-            query = query.filter(JobMatch.status == status)
-
-        if min_fit is not None:
-            query = query.filter(JobMatch.fit_score >= min_fit)
-
-        if not show_hidden:
-            query = query.filter(JobMatch.is_hidden.is_(False))
-
-        query = query.options(joinedload(JobMatch.job_post))
-
-        if remote_only:
-            query = query.join(JobPost).filter(JobPost.is_remote.is_(True))
-
-        pool = query.all()
+        pool = self._load_rankable_pool(
+            canonical_selection,
+            status=status,
+            min_fit=min_fit,
+            remote_only=remote_only,
+            show_hidden=show_hidden,
+        )
 
         # Stage 2: Python rank
         ctx = RankingContext(mode=mode, config=ranking_config)
@@ -115,31 +129,82 @@ class MatchService:
 
         return [self._to_match_summary(m) for m in ranked]
 
-    def _resolve_canonical_resume_fingerprint(
+    def _resolve_canonical_selection(
         self,
         owner_id: Optional[Any] = None,
-    ) -> Optional[str]:
+    ):
         try:
             with job_uow() as repo:
-                if owner_id is not None:
-                    latest_ready = repo.resume.get_latest_ready_resume_upload(owner_id)
-                    if latest_ready and repo.match.resume_has_persisted_matches(
-                        latest_ready.resume_fingerprint
-                    ):
-                        return latest_ready.resume_fingerprint
-
-                    for upload in repo.resume.get_ready_resume_uploads(owner_id):
-                        if repo.match.resume_has_persisted_matches(upload.resume_fingerprint):
-                            return upload.resume_fingerprint
-
-                    if latest_ready:
-                        return latest_ready.resume_fingerprint
-
-                    return None
-                return repo.get_latest_ready_resume_fingerprint()
+                return resolve_canonical_resume_selection(repo, owner_id)
         except Exception as exc:
             logger.warning("Could not resolve canonical resume fingerprint: %s", exc)
             return None
+
+    def _load_rankable_pool(
+        self,
+        canonical_selection,
+        *,
+        status: str,
+        min_fit: Optional[float],
+        remote_only: bool,
+        show_hidden: bool,
+    ) -> List[Any]:
+        with job_uow() as repo:
+            items = repo.match_selection.get_items_for_run(
+                canonical_selection.selection_run_id
+            )
+            pool: List[Any] = []
+            for item in items:
+                match = item.job_match
+                job = getattr(match, "job_post", None)
+                fit_score = (
+                    None
+                    if item.fit_score_at_selection is None
+                    else float(item.fit_score_at_selection)
+                )
+                if status != "all" and match.status != status:
+                    continue
+                if min_fit is not None and (fit_score is None or fit_score < min_fit):
+                    continue
+                if not show_hidden and bool(match.is_hidden):
+                    continue
+                if remote_only and not bool(getattr(job, "is_remote", False)):
+                    continue
+                pool.append(
+                    MatchSummaryCandidate(
+                        id=str(match.id),
+                        job_id=str(match.job_post_id),
+                        title=job.title if job and hasattr(job, "title") else "Unknown",
+                        company=job.company if job and hasattr(job, "company") else "Unknown",
+                        location=(
+                            job.location_text
+                            if job and hasattr(job, "location_text")
+                            else None
+                        ),
+                        is_remote=bool(getattr(job, "is_remote", False)),
+                        fit_score=fit_score,
+                        preference_score=(
+                            None
+                            if item.preference_score_at_selection is None
+                            else float(item.preference_score_at_selection)
+                        ),
+                        job_similarity=float(item.job_similarity_at_selection),
+                        penalties=(
+                            None if match.penalties is None else safe_float(match.penalties)
+                        ),
+                        required_coverage=float(item.required_coverage_at_selection),
+                        preferred_requirement_coverage=(
+                            None
+                            if match.preferred_requirement_coverage is None
+                            else safe_float(match.preferred_requirement_coverage)
+                        ),
+                        match_type=safe_str(match.match_type, "unknown"),
+                        is_hidden=bool(match.is_hidden),
+                        created_at=match.created_at,
+                        calculated_at=match.calculated_at,
+                    )
+                )
+            return pool
     
     def _get_match_for_owner(
         self,
@@ -270,6 +335,15 @@ class MatchService:
     # Private helper methods
 
     def _extract_summary_job_fields(self, match: JobMatch) -> Dict[str, Any]:
+        if isinstance(match, MatchSummaryCandidate):
+            return {
+                "job_id": match.job_id,
+                "title": match.title,
+                "company": match.company,
+                "location": match.location,
+                "is_remote": match.is_remote,
+            }
+
         job = match.job_post
 
         try:

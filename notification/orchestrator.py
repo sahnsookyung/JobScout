@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from typing import Any, List, Optional
 from uuid import UUID
 
-from core.ranking import RankingContext, rank_matches
 from database.models import User
 from database.uow import job_uow
 from notification.message_builder import NotificationMessageBuilder
@@ -28,6 +27,7 @@ class NotificationCandidate:
     fit_score: float | None
     preference_score: float | None
     job_similarity: float | None
+    alert_eligible: bool | None = None
     ranking_explanation: Any = None
 
 
@@ -98,6 +98,9 @@ def _alert_eligible_matches_for_plan(
     delivery_plan: NotificationDeliveryPlan,
 ) -> List:
     """Filter persisted matches down to those eligible for alerts."""
+    if all(getattr(match, "alert_eligible", None) is not None for match in persisted_matches):
+        return [match for match in persisted_matches if bool(match.alert_eligible)]
+
     min_fit_for_alerts = _notification_setting_value(
         notification_config,
         delivery_plan.settings_snapshot,
@@ -110,31 +113,50 @@ def _alert_eligible_matches_for_plan(
 
 
 def _load_persisted_notification_matches(
-    resume_fingerprint: str,
-    ranking_context: RankingContext,
+    selection_run_id: str,
 ) -> List:
-    """Load and rerank the canonical persisted active match set for this run."""
+    """Load canonical persisted notification candidates for this run."""
     with job_uow() as repo:
-        matches = repo.match.get_visible_active_matches_for_resume(
-            resume_fingerprint,
-            load_job_post=False,
-        )
-        candidates = [
+        items = repo.match_selection.get_items_for_run(selection_run_id)
+        return [
             NotificationCandidate(
-                id=str(match.id),
-                fit_score=None if match.fit_score is None else float(match.fit_score),
+                id=str(item.job_match_id),
+                fit_score=float(item.fit_score_at_selection),
                 preference_score=(
-                    None if match.preference_score is None else float(match.preference_score)
+                    None
+                    if item.preference_score_at_selection is None
+                    else float(item.preference_score_at_selection)
                 ),
-                job_similarity=(
-                    None if match.job_similarity is None else float(match.job_similarity)
-                ),
+                job_similarity=float(item.job_similarity_at_selection),
+                alert_eligible=bool(item.alert_eligible),
             )
-            for match in matches
+            for item in items
         ]
 
-    rank_matches(candidates, ranking_context)
-    return candidates
+
+def resolve_notification_fit_floor(
+    ctx,
+    *,
+    owner_id: Optional[str] = None,
+) -> float:
+    """Resolve the notification fit floor that should be captured in selection snapshots."""
+    notification_config = getattr(getattr(ctx, "config", None), "notifications", None)
+    if notification_config is None:
+        return 0.0
+    if getattr(ctx, "notification_service", None) is None:
+        return float(getattr(notification_config, "min_fit_for_alerts", 0.0) or 0.0)
+
+    delivery_plan = _resolve_notification_plan(ctx, owner_id)
+    if delivery_plan is None:
+        return float(getattr(notification_config, "min_fit_for_alerts", 0.0) or 0.0)
+
+    return float(
+        _notification_setting_value(
+            notification_config,
+            delivery_plan.settings_snapshot,
+            "min_fit_for_alerts",
+        )
+    )
 
 
 def _send_match_notification(
@@ -245,7 +267,7 @@ def send_notifications(
     failed_count: int,
     resume_fingerprint: str,
     stop_event: threading.Event,
-    ranking_context: RankingContext,
+    selection_run_id: Optional[str] = None,
     owner_id: Optional[str] = None,
     task_id: Optional[str] = None,
 ) -> int:
@@ -271,10 +293,14 @@ def send_notifications(
         if delivery_plan is None:
             return 0
 
-        persisted_matches = _load_persisted_notification_matches(
-            resume_fingerprint,
-            ranking_context,
-        )
+        if not selection_run_id:
+            logger.warning(
+                "=== NOTIFICATION STEP: Skipped (no committed selection run for resume %s) ===",
+                resume_fingerprint[:16],
+            )
+            return 0
+
+        persisted_matches = _load_persisted_notification_matches(selection_run_id)
         if not persisted_matches:
             logger.info(
                 "=== NOTIFICATION STEP: Skipped (no persisted active matches for resume %s) ===",

@@ -383,7 +383,6 @@ class ScorerConfig(BaseModel):
 
     enabled: bool = True
     weight_required: float = 0.7  # required coverage vs job_similarity blend
-    weight_preferred: float = 0.3  # deprecated compatibility field; not used in fit scoring
     semantic_fit: SemanticFitConfig = Field(default_factory=SemanticFitConfig)
     semantic_fit_enabled: Optional[bool] = None
     semantic_fit_fallback_to_threshold: Optional[bool] = None

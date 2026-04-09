@@ -15,20 +15,26 @@ from datetime import datetime, timezone
 
 from core.app_context import AppContext
 from core.config_loader import PreferencesConfig
+from core.match_selection import (
+    MatchSelectionItemSnapshot,
+    MatchSelectionPolicySnapshot,
+    select_matches,
+)
 from core.policy import get_result_policy_store
 from core.matcher import (
     MatcherService, MatchResultDTO, JobMatchDTO, JobEvidenceDTO,
     RequirementMatchDTO, JobRequirementDTO, penalty_details_from_orm,
 )
-from core.ranking import RankingContext, RankingMode, get_ranking_policy_store, rank_matches
+from core.ranking import RankingContext, RankingMode, get_ranking_policy_store
 from core.scorer import ScoringService
 from core.scorer.persistence import save_match_to_db
 from core.llm.interfaces import LLMProvider
 from core.llm.schema_models import ResumeSchema
+from database.models import SYSTEM_OWNER_ID
 from etl.resume import ResumeProfiler
 from etl.resume.embedding_store import JobRepositoryAdapter
 from database.uow import job_uow
-from notification.orchestrator import send_notifications
+from notification.orchestrator import resolve_notification_fit_floor, send_notifications
 from services.scorer_matcher.candidate_preferences import (
     apply_candidate_preference_filters,
     apply_preference_semantic_reranking,
@@ -44,6 +50,43 @@ class SaveMatchesBatchResult:
     saved_count: int
     failed_count: int
     active_job_ids: frozenset[str]
+    job_match_ids_by_job_id: dict[str, str]
+
+
+@dataclass(frozen=True)
+class PreparedSelectionResult:
+    match_dtos: List[MatchResultDTO]
+    item_snapshots: List[MatchSelectionItemSnapshot]
+    policy_snapshot: MatchSelectionPolicySnapshot
+    owner_id: Optional[str]
+
+
+def _cancelled_prepared_selection_result(
+    *,
+    owner_id: Optional[object],
+    ranking_context: RankingContext,
+    resume_resolution_reason: str,
+    task_id: Optional[str],
+) -> PreparedSelectionResult:
+    """Return the declared pipeline envelope for an already-cancelled run."""
+    policy_snapshot = MatchSelectionPolicySnapshot.from_ranking_context(
+        ranking_context=ranking_context,
+        fit_floor_used=0.0,
+        required_coverage_floor_used=None,
+        notification_fit_floor_used=0.0,
+        top_k_used=0,
+        candidate_pool_size=0,
+        selected_count=0,
+        alert_candidate_count=0,
+        resume_resolution_reason=resume_resolution_reason,
+        task_id=task_id,
+    )
+    return PreparedSelectionResult(
+        match_dtos=[],
+        item_snapshots=[],
+        policy_snapshot=policy_snapshot,
+        owner_id=(str(owner_id) if owner_id is not None else None),
+    )
 
 
 @dataclass
@@ -312,6 +355,7 @@ def run_matching_pipeline(
     logger.info("=" * 60)
 
     pipeline_start_time = time.time()
+    requested_resume_fingerprint = resume_fingerprint
 
     matching_config = ctx.config.matching
     if not matching_config or not matching_config.enabled:
@@ -331,11 +375,18 @@ def run_matching_pipeline(
         ranking_context = _resolve_ranking_context()
 
         # Step 2: Run matching and scoring
-        match_dtos = _run_matching_and_scoring(
+        prepared_selection = _run_matching_and_scoring(
             ctx, resume_data, resume_fingerprint, should_re_extract,
             matching_config, stop_event, status_callback, owner_id=owner_id,
             ranking_context=ranking_context,
+            task_id=task_id,
+            resume_resolution_reason=(
+                "requested_resume_fingerprint"
+                if requested_resume_fingerprint
+                else "latest_ready_resume"
+            ),
         )
+        match_dtos = prepared_selection.match_dtos
         matching_result = _result_after_matching(match_dtos, stop_event)
         if matching_result:
             return matching_result
@@ -350,7 +401,15 @@ def run_matching_pipeline(
                 resume_fingerprint,
                 active_job_ids=save_batch_result.active_job_ids,
             )
+            selection_run_id = _publish_match_selection_run(
+                owner_id=owner_id,
+                resume_fingerprint=resume_fingerprint,
+                task_id=task_id,
+                prepared_selection=prepared_selection,
+                save_batch_result=save_batch_result,
+            )
         else:
+            selection_run_id = None
             logger.warning(
                 "Skipping active-match refresh for %s because %d match saves failed",
                 resume_fingerprint[:16],
@@ -384,8 +443,8 @@ def run_matching_pipeline(
                 failed_count=save_batch_result.failed_count,
                 resume_fingerprint=resume_fingerprint,
                 stop_event=stop_event,
-                ranking_context=ranking_context,
-                owner_id=owner_id,
+                selection_run_id=selection_run_id,
+                owner_id=prepared_selection.owner_id,
                 task_id=task_id,
             )
 
@@ -489,7 +548,7 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event
                 result_policy.top_k = widened_top_k
             except Exception:
                 # Mutation failed — clear the policy so scorer returns all matches;
-                # _apply_final_result_policy will re-apply the original limit afterward.
+                # the canonical selection stage will re-apply the original limit afterward.
                 logger.warning("Could not widen result policy top_k prior to preference reranking; passing all matches to reranker", exc_info=True)
                 result_policy = None
 
@@ -501,26 +560,36 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event
     )
 
 
-def _apply_final_result_policy(
+def _prepare_selection_result(
     scored_matches,
+    *,
+    ctx: AppContext,
+    owner_id: Optional[str],
+    ranking_context: RankingContext,
     matching_config,
-    ranking_context: RankingContext | None = None,
+    resume_resolution_reason: str,
+    task_id: Optional[str],
 ):
-    """Apply shared ranking before the final result truncation."""
-    if not scored_matches:
-        return scored_matches
-
-    if ranking_context is None:
-        ranking_context = _resolve_ranking_context()
-    rank_matches(scored_matches, ranking_context)
-
+    """Apply the canonical selection contract and return committed-run snapshots."""
     result_policy = _resolve_result_policy(matching_config)
-    if not result_policy:
-        return scored_matches
-    top_k = int(getattr(result_policy, "top_k", len(scored_matches)) or len(scored_matches))
-    if top_k <= 0:
-        return []
-    return scored_matches[:top_k]
+    fit_floor_used = float(getattr(result_policy, "min_fit", 0.0) or 0.0)
+    required_coverage_floor_used = getattr(
+        result_policy,
+        "min_jd_required_coverage",
+        None,
+    )
+    top_k_used = int(getattr(result_policy, "top_k", len(scored_matches)) or len(scored_matches))
+    notification_fit_floor_used = float(resolve_notification_fit_floor(ctx, owner_id=owner_id))
+    return select_matches(
+        scored_matches,
+        ranking_context=ranking_context,
+        fit_floor_used=fit_floor_used,
+        required_coverage_floor_used=required_coverage_floor_used,
+        top_k_used=max(top_k_used, 0),
+        notification_fit_floor_used=notification_fit_floor_used,
+        resume_resolution_reason=resume_resolution_reason,
+        task_id=task_id,
+    )
 
 
 def _resolve_pipeline_ai_service(ctx: AppContext) -> Optional[LLMProvider]:
@@ -636,15 +705,22 @@ def _run_matching_and_scoring(
     status_callback: Optional[Callable[[str], None]],
     ranking_context: RankingContext | None = None,
     owner_id: Optional[str] = None,
-) -> List[MatchResultDTO]:
+    task_id: Optional[str] = None,
+    resume_resolution_reason: str = "latest_ready_resume",
+) -> PreparedSelectionResult:
     """Run the matching and scoring pipeline within a UOW context."""
+    if ranking_context is None:
+        ranking_context = _resolve_ranking_context()
+
     if status_callback:
         status_callback("loading_resume")
 
     preparation_start = time.time()
     logger.info("=== RESUME ETL STEP 1: Prepare Resume & Compare Fingerprint ===")
 
-    match_dtos = []
+    match_dtos: List[MatchResultDTO] = []
+    item_snapshots: List[MatchSelectionItemSnapshot] = []
+    policy_snapshot: Optional[MatchSelectionPolicySnapshot] = None
 
     with job_uow() as repo:
         structured_resume, matcher = _prepare_matching_run(
@@ -654,13 +730,19 @@ def _run_matching_and_scoring(
             resume_fingerprint,
             should_re_extract,
         )
-        candidate_preferences = load_candidate_preferences(repo, owner_id)
+        resolved_owner_id = getattr(structured_resume, "owner_id", None) or owner_id
+        candidate_preferences = load_candidate_preferences(repo, resolved_owner_id)
 
         step_elapsed = time.time() - preparation_start
         logger.info("RESUME ETL Step 1 completed: Resume prepared in %.2fs", step_elapsed)
 
         if stop_event.is_set():
-            return []
+            return _cancelled_prepared_selection_result(
+                owner_id=resolved_owner_id,
+                ranking_context=ranking_context,
+                resume_resolution_reason=resume_resolution_reason,
+                task_id=task_id,
+            )
 
         preliminary_matches = _run_preliminary_matching(
             matcher,
@@ -671,7 +753,7 @@ def _run_matching_and_scoring(
             structured_resume,
             should_re_extract,
             resume_fingerprint,
-            owner_id=getattr(structured_resume, "owner_id", None) or owner_id,
+            owner_id=resolved_owner_id,
         )
         preliminary_matches = apply_candidate_preference_filters(
             preliminary_matches,
@@ -679,7 +761,12 @@ def _run_matching_and_scoring(
         )
 
         if stop_event.is_set():
-            return []
+            return _cancelled_prepared_selection_result(
+                owner_id=resolved_owner_id,
+                ranking_context=ranking_context,
+                resume_resolution_reason=resume_resolution_reason,
+                task_id=task_id,
+            )
 
         scoring_start = time.time()
 
@@ -704,20 +791,31 @@ def _run_matching_and_scoring(
             time.time() - rerank_start,
             len(scored_matches),
         )
-        if ranking_context is None:
-            ranking_context = _resolve_ranking_context()
-        scored_matches = _apply_final_result_policy(
+        selection_result = _prepare_selection_result(
             scored_matches,
-            matching_config,
-            ranking_context,
+            ctx=ctx,
+            owner_id=resolved_owner_id,
+            ranking_context=ranking_context,
+            matching_config=matching_config,
+            resume_resolution_reason=resume_resolution_reason,
+            task_id=task_id,
         )
+        policy_snapshot = selection_result.policy_snapshot
+        item_snapshots = selection_result.item_snapshots
 
-        match_dtos = _convert_matches_to_dtos(scored_matches)
+        match_dtos = _convert_matches_to_dtos(selection_result.selected_matches)
 
     step_elapsed = time.time() - scoring_start
     logger.info("MATCHING Step 2 completed: Scored %d matches in %.2fs", len(match_dtos), step_elapsed)
     _log_match_results(match_dtos)
-    return match_dtos
+    if policy_snapshot is None:
+        raise RuntimeError("Selection policy snapshot was not created")
+    return PreparedSelectionResult(
+        match_dtos=match_dtos,
+        item_snapshots=item_snapshots,
+        policy_snapshot=policy_snapshot,
+        owner_id=(str(resolved_owner_id) if resolved_owner_id is not None else None),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -818,6 +916,7 @@ def _save_matches_batch(
     saved_count = 0
     failed_count = 0
     active_job_ids: set[str] = set()
+    job_match_ids_by_job_id: dict[str, str] = {}
     for dto in scored_match_dtos:
         try:
             with job_uow() as repo:
@@ -828,9 +927,14 @@ def _save_matches_batch(
                         existing.status = 'stale'
                         existing.invalidated_reason = "Job content updated"
                         logger.info("Invalidated match for job %s due to content change", dto.job.id)
-                        save_match_to_db(scored_match=dto, repo=repo, is_stale_replacement=True)
+                        match_record = save_match_to_db(
+                            scored_match=dto,
+                            repo=repo,
+                            is_stale_replacement=True,
+                        )
                         saved_count += 1
                         active_job_ids.add(str(dto.job.id))
+                        job_match_ids_by_job_id[str(dto.job.id)] = str(match_record.id)
                         continue
 
                     if not matching_config.recalculate_existing:
@@ -859,11 +963,17 @@ def _save_matches_batch(
                         repo.db.flush()
                         saved_count += 1
                         active_job_ids.add(str(dto.job.id))
+                        job_match_ids_by_job_id[str(dto.job.id)] = str(existing.id)
                         continue
 
-                save_match_to_db(scored_match=dto, repo=repo, is_stale_replacement=False)
+                match_record = save_match_to_db(
+                    scored_match=dto,
+                    repo=repo,
+                    is_stale_replacement=False,
+                )
                 saved_count += 1
                 active_job_ids.add(str(dto.job.id))
+                job_match_ids_by_job_id[str(dto.job.id)] = str(match_record.id)
         except Exception:
             logger.exception("Failed saving match job_id=%s", dto.job.id)
             failed_count += 1
@@ -872,7 +982,29 @@ def _save_matches_batch(
         saved_count=saved_count,
         failed_count=failed_count,
         active_job_ids=frozenset(active_job_ids),
+        job_match_ids_by_job_id=job_match_ids_by_job_id,
     )
+
+
+def _publish_match_selection_run(
+    *,
+    owner_id: Optional[str],
+    resume_fingerprint: str,
+    task_id: Optional[str],
+    prepared_selection: PreparedSelectionResult,
+    save_batch_result: SaveMatchesBatchResult,
+) -> Optional[str]:
+    """Publish the committed selection run that defines canonical membership."""
+    with job_uow() as repo:
+        selection_run = repo.match_selection.publish_selection_run(
+            owner_id=owner_id or SYSTEM_OWNER_ID,
+            resume_fingerprint=resume_fingerprint,
+            policy_snapshot=prepared_selection.policy_snapshot,
+            item_snapshots=prepared_selection.item_snapshots,
+            job_match_ids_by_job_id=save_batch_result.job_match_ids_by_job_id,
+            task_id=task_id,
+        )
+        return str(selection_run.id)
 
 
 def _refresh_resume_match_set(

@@ -111,7 +111,6 @@ class TestSendNotifications:
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
-            ranking_context=SimpleNamespace(),
         )
         assert count == 0
         ctx.notification_service.notify_new_match.assert_not_called()
@@ -124,7 +123,6 @@ class TestSendNotifications:
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
-            ranking_context=SimpleNamespace(),
         )
         assert count == 0
 
@@ -136,7 +134,6 @@ class TestSendNotifications:
             failed_count=1,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
-            ranking_context=SimpleNamespace(),
         )
         assert count == 0
 
@@ -148,7 +145,6 @@ class TestSendNotifications:
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
-            ranking_context=SimpleNamespace(),
         )
         assert count == 0
 
@@ -173,7 +169,7 @@ class TestSendNotifications:
             failed_count=0,
             resume_fingerprint="fp-abc",
             stop_event=threading.Event(),
-            ranking_context=SimpleNamespace(),
+            selection_run_id="run-1",
         )
         assert count == 2
         assert mock_send.call_count == 2
@@ -196,34 +192,41 @@ class TestSendNotifications:
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=stop,
-            ranking_context=SimpleNamespace(),
+            selection_run_id="run-1",
         )
         assert count == 0
         mock_send.assert_not_called()
 
 
 class TestPersistedNotificationHelpers:
-    @patch("notification.orchestrator.rank_matches")
     @patch("notification.orchestrator.job_uow")
-    def test_load_persisted_notification_matches_detaches_candidates_before_ranking(
+    def test_load_persisted_notification_matches_uses_selection_run_order_without_rerank(
         self,
         mock_uow,
-        mock_rank,
     ):
         repo = MagicMock()
-        repo.match.get_visible_active_matches_for_resume.return_value = [
-            SimpleNamespace(id="m1", fit_score=80.0, preference_score=0.4, job_similarity=0.7),
-            SimpleNamespace(id="m2", fit_score=70.0, preference_score=None, job_similarity=0.6),
+        repo.match_selection.get_items_for_run.return_value = [
+            SimpleNamespace(
+                job_match_id="m1",
+                fit_score_at_selection=80.0,
+                preference_score_at_selection=0.9,
+                job_similarity_at_selection=0.8,
+                alert_eligible=True,
+            ),
+            SimpleNamespace(
+                job_match_id="m2",
+                fit_score_at_selection=60.0,
+                preference_score_at_selection=0.1,
+                job_similarity_at_selection=0.5,
+                alert_eligible=False,
+            ),
         ]
         mock_uow.return_value = _uow(repo)
 
-        result = _load_persisted_notification_matches("fp-1", ranking_context=SimpleNamespace())
+        result = _load_persisted_notification_matches("run-1")
 
         assert [candidate.id for candidate in result] == ["m1", "m2"]
-        mock_rank.assert_called_once()
-        ranked = mock_rank.call_args.args[0]
-        assert ranked[0].id == "m1"
-        assert ranked[1].preference_score is None
+        assert [candidate.alert_eligible for candidate in result] == [True, False]
 
     @patch("notification.orchestrator.NotificationMessageBuilder.build_from_orm")
     @patch("notification.orchestrator.job_uow")
@@ -309,7 +312,7 @@ class TestPersistedNotificationHelpers:
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
-            ranking_context=SimpleNamespace(),
+            selection_run_id="run-1",
         )
         mock_batch.assert_called_once()
 
@@ -335,7 +338,7 @@ class TestPersistedNotificationHelpers:
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
-            ranking_context=SimpleNamespace(),
+            selection_run_id="run-1",
         )
         mock_batch.assert_not_called()
 
@@ -357,7 +360,7 @@ class TestPersistedNotificationHelpers:
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
-            ranking_context=SimpleNamespace(),
+            selection_run_id="run-1",
         )
         assert count == 0
 
@@ -384,7 +387,7 @@ class TestPersistedNotificationHelpers:
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
-            ranking_context=SimpleNamespace(),
+            selection_run_id="run-1",
         )
         assert count == 1
         mock_batch.assert_called_once()
@@ -400,7 +403,6 @@ class TestPersistedNotificationHelpers:
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
-            ranking_context=SimpleNamespace(),
         )
         assert count == 0
 
@@ -424,7 +426,7 @@ class TestPersistedNotificationHelpers:
             failed_count=0,
             resume_fingerprint="fp",
             stop_event=threading.Event(),
-            ranking_context=SimpleNamespace(),
+            selection_run_id="run-1",
         )
         assert count == 0
         mock_send.assert_not_called()

@@ -168,7 +168,6 @@ matching:
         local:
           model_name: "BAAI/bge-reranker-v2-m3"
     weight_required: 0.7              # blend required coverage with job similarity in fit score
-    weight_preferred: 0.3             # deprecated compatibility field; preferred reqs are non-scoring metadata
     penalty_missing_required: 15.0
     penalty_seniority_mismatch: 10.0
 ```

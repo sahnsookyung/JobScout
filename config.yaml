@@ -157,7 +157,6 @@ matching:
 
     # Fit score is capability-only: required coverage blended with retrieval similarity.
     weight_required: 0.7
-    weight_preferred: 0.3         # Deprecated compatibility field; preferred reqs do not affect fit_score.
 
     # Capability penalty amounts (Fit score only)
     penalty_missing_required: 15.0

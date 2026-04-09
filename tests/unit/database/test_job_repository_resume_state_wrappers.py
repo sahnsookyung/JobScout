@@ -4,7 +4,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from database.models import DEFAULT_LEGACY_OWNER_ID
+from database.models import SYSTEM_OWNER_ID
 from database.repository import JobRepository
 
 
@@ -40,7 +40,7 @@ def test_job_repository_forwards_resume_state_methods():
     repo._resume_repo.get_resume_processing_state.assert_called_once_with("fp-1")
     repo._resume_repo.get_latest_resume_processing_state.assert_called_once_with()
     repo._resume_repo.set_resume_processing_state.assert_called_once_with(
-        owner_id=DEFAULT_LEGACY_OWNER_ID,
+            owner_id=SYSTEM_OWNER_ID,
         resume_fingerprint="fp-1",
         status="ready",
         error=None,

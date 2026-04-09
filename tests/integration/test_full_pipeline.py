@@ -41,7 +41,7 @@ pytestmark = pytest.mark.usefixtures("test_database", "redis_container")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from database.models import JobPost, JobRequirementUnit, JobMatch, DEFAULT_LEGACY_OWNER_ID
+from database.models import JobPost, JobRequirementUnit, JobMatch, SYSTEM_OWNER_ID
 from database.repository import JobRepository
 from core.matcher import MatcherService
 from etl.resume import ResumeProfiler
@@ -161,7 +161,6 @@ class TestFullPipelineIntegration(unittest.TestCase):
         
         cls.scorer_config = ScorerConfig(
             weight_required=0.7,
-            weight_preferred=0.3,
             wants_remote=True
         )
         cls.scorer = ScoringService(cls.repo, cls.scorer_config)
@@ -521,7 +520,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
             return
         
         # Get user ID from resume
-        user_id = DEFAULT_LEGACY_OWNER_ID
+        user_id = SYSTEM_OWNER_ID
         
         # Trigger notifications
         notification_count = 0

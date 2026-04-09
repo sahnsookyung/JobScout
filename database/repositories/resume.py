@@ -11,7 +11,7 @@ from database.models import (
     ResumeUpload,
     RESUME_PROCESSING_READY,
     RESUME_FINGERPRINT_VERSION,
-    DEFAULT_LEGACY_OWNER_ID,
+    SYSTEM_OWNER_ID,
     RESUME_UPLOAD_PENDING,
     RESUME_UPLOAD_READY,
 )
@@ -179,7 +179,7 @@ class ResumeRepository(BaseRepository):
         resume_fingerprint: str,
         status: str,
         *,
-        owner_id: Any = DEFAULT_LEGACY_OWNER_ID,
+        owner_id: Any = SYSTEM_OWNER_ID,
         error: Optional[str] = None,
         extraction_completed_at: Optional[Any] = None,
         embedding_completed_at: Optional[Any] = None,
@@ -189,7 +189,7 @@ class ResumeRepository(BaseRepository):
         retryable: Optional[bool] = None,
         user_safe_message: Optional[str] = None,
     ) -> ResumeProcessingState:
-        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
+        owner_id = owner_id or SYSTEM_OWNER_ID
         state = self.get_resume_processing_state(resume_fingerprint)
         if state is None:
             state = ResumeProcessingState(
@@ -263,13 +263,13 @@ class ResumeRepository(BaseRepository):
         resume_fingerprint: str,
         extracted_data: Dict[str, Any],
         *,
-        owner_id: Any = DEFAULT_LEGACY_OWNER_ID,
+        owner_id: Any = SYSTEM_OWNER_ID,
         total_experience_years: Optional[float] = None,
         extraction_confidence: Optional[float] = None,
         extraction_warnings: Optional[List[str]] = None,
         fingerprint_version: int = RESUME_FINGERPRINT_VERSION,
     ) -> StructuredResume:
-        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
+        owner_id = owner_id or SYSTEM_OWNER_ID
         stmt = select(StructuredResume).where(
             StructuredResume.resume_fingerprint == resume_fingerprint
         )
@@ -303,10 +303,10 @@ class ResumeRepository(BaseRepository):
         resume_fingerprint: str,
         sections: List[Dict[str, Any]],
         *,
-        owner_id: Any = DEFAULT_LEGACY_OWNER_ID,
+        owner_id: Any = SYSTEM_OWNER_ID,
         fingerprint_version: int = RESUME_FINGERPRINT_VERSION,
     ) -> List[ResumeSectionEmbedding]:
-        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
+        owner_id = owner_id or SYSTEM_OWNER_ID
         self.db.execute(
             delete(ResumeSectionEmbedding).where(
                 ResumeSectionEmbedding.resume_fingerprint == resume_fingerprint
@@ -364,10 +364,10 @@ class ResumeRepository(BaseRepository):
         resume_fingerprint: str,
         evidence_units: List[Dict[str, Any]],
         *,
-        owner_id: Any = DEFAULT_LEGACY_OWNER_ID,
+        owner_id: Any = SYSTEM_OWNER_ID,
         fingerprint_version: int = RESUME_FINGERPRINT_VERSION,
     ) -> List[ResumeEvidenceUnitEmbedding]:
-        owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
+        owner_id = owner_id or SYSTEM_OWNER_ID
         self.db.execute(
             delete(ResumeEvidenceUnitEmbedding).where(
                 ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint

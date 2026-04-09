@@ -12,7 +12,7 @@ from typing import Optional
 from core.app_context import AppContext
 from database.uow import job_uow
 from etl.resume.loader import load_resume_with_parser
-from database.models import DEFAULT_LEGACY_OWNER_ID, generate_file_fingerprint
+from database.models import SYSTEM_OWNER_ID, generate_file_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +216,7 @@ def extract_resume(
         Tuple of (extracted: bool, fingerprint: Optional[str])
     """
     logger.info(f"Extracting resume: {resume_file}")
-    owner_id = owner_id or DEFAULT_LEGACY_OWNER_ID
+    owner_id = owner_id or SYSTEM_OWNER_ID
 
     with job_uow() as repo:
         if force_re_extraction:

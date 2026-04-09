@@ -24,7 +24,6 @@ class TestScorerService(unittest.TestCase):
         self.mock_repo = MagicMock()
         self.scorer_config = ScorerConfig(
             weight_required=0.7,
-            weight_preferred=0.3,
             wants_remote=True,
             min_salary=5000000
         )
@@ -54,7 +53,6 @@ matching:
   scorer:
     enabled: true
     weight_required: 0.8
-    weight_preferred: 0.2
     wants_remote: true
     min_salary: 50000
 
@@ -73,12 +71,10 @@ scrapers: []
 
             self.assertTrue(config.matching.scorer.enabled)
             self.assertEqual(config.matching.scorer.weight_required, 0.8)
-            self.assertEqual(config.matching.scorer.weight_preferred, 0.2)
             self.assertEqual(config.matching.scorer.wants_remote, True)
 
             print(f"  ✓ Scorer config loaded successfully")
             print(f"  ✓ Weight required: {config.matching.scorer.weight_required}")
-            print(f"  ✓ Weight preferred: {config.matching.scorer.weight_preferred}")
 
         finally:
             os.unlink(config_path)
@@ -89,12 +85,10 @@ scrapers: []
 
         self.assertIsNotNone(self.scorer)
         self.assertEqual(self.scorer.config.weight_required, 0.7)
-        self.assertEqual(self.scorer.config.weight_preferred, 0.3)
         self.assertIsNotNone(self.scorer.repo)
 
         print(f"  ✓ Scorer initialized successfully")
         print(f"  ✓ Weight required: {self.scorer.config.weight_required}")
-        print(f"  ✓ Weight preferred: {self.scorer.config.weight_preferred}")
 
     def test_03_scorer_complete_scoring(self):
         """Test complete scoring pipeline."""
@@ -336,18 +330,11 @@ class TestScoreEquivalence(unittest.TestCase):
         """Verify scoring produces consistent results regardless of total years data presence."""
         print("\n✓ Test: Score consistency with/without total years data")
 
-        preliminary, candidate_total_years = self._create_test_data()
+        preliminary, _candidate_total_years = self._create_test_data()
         scorer = ScoringService(self.mock_repo, self.scorer_config)
 
-        scored_with_data = scorer.score_preliminary_match(
-            preliminary,
-            candidate_total_years=candidate_total_years
-        )
-
-        scored_without_data = scorer.score_preliminary_match(
-            preliminary,
-            candidate_total_years=None
-        )
+        scored_with_data = scorer.score_preliminary_match(preliminary)
+        scored_without_data = scorer.score_preliminary_match(preliminary)
 
         self.assertIsNotNone(scored_with_data)
         self.assertIsNotNone(scored_without_data)
@@ -361,13 +348,10 @@ class TestScoreEquivalence(unittest.TestCase):
         """Verify scores match expected values with total years data."""
         print("\n✓ Test: Score matches expected values with total years")
 
-        preliminary, candidate_total_years = self._create_test_data()
+        preliminary, _candidate_total_years = self._create_test_data()
         scorer = ScoringService(self.mock_repo, self.scorer_config)
 
-        scored = scorer.score_preliminary_match(
-            preliminary,
-            candidate_total_years=candidate_total_years
-        )
+        scored = scorer.score_preliminary_match(preliminary)
 
         self.assertIsNotNone(scored)
         self.assertGreater(scored.fit_score, 0)

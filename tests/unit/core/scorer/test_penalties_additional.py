@@ -75,7 +75,6 @@ def _make_preliminary(
 def scorer_config():
     return ScorerConfig(
         weight_required=0.7,
-        weight_preferred=0.3,
         wants_remote=True,
         min_salary=5_000_000,
     )
@@ -365,18 +364,14 @@ class TestScorerConfigLoading:
     def test_scorer_config_stores_custom_weights(self):
         config = ScorerConfig(
             weight_required=0.8,
-            weight_preferred=0.2,
             wants_remote=True,
         )
         assert config.weight_required == pytest.approx(0.8)
-        assert config.weight_preferred == pytest.approx(0.2)
         assert config.wants_remote is True
 
     def test_scorer_config_defaults_are_valid(self):
         config = ScorerConfig()
         assert 0.0 < config.weight_required <= 1.0
-        assert 0.0 < config.weight_preferred <= 1.0
-        assert pytest.approx(config.weight_required + config.weight_preferred, abs=0.01) == 1.0
 
 
 
@@ -388,7 +383,6 @@ class TestScoringServiceInit:
 
     def test_stores_config_and_repo_on_construction(self, scorer, scorer_config, mock_repo):
         assert scorer.config.weight_required == 0.7
-        assert scorer.config.weight_preferred == 0.3
         assert scorer.repo is mock_repo
 
 
@@ -417,18 +411,6 @@ class TestScorePreliminaryMatch:
     def test_fit_score_bounded_0_to_100(self, scorer):
         scored = scorer.score_preliminary_match(_make_preliminary())
         assert 0 <= scored.fit_score <= 100
-
-    def test_candidate_total_years_is_no_op(self, scorer):
-        """candidate_total_years is deprecated — scores must be identical either way."""
-        preliminary = _make_preliminary(
-            req_matches=[_make_req_match(similarity=0.85)]
-        )
-        with_years = scorer.score_preliminary_match(preliminary, candidate_total_years=6.0)
-        without_years = scorer.score_preliminary_match(preliminary, candidate_total_years=None)
-
-        assert with_years.jd_required_coverage == without_years.jd_required_coverage
-        assert with_years.base_score == without_years.base_score
-
 
 # ---------------------------------------------------------------------------
 # _prefetch_total_years

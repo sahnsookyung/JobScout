@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import Mock
 
 from database.repository import JobRepository
-from database.models import DEFAULT_LEGACY_OWNER_ID, JobRequirementUnit
+from database.models import SYSTEM_OWNER_ID, JobRequirementUnit
 from core.llm.openai_service import OpenAIService
 
 
@@ -259,7 +259,7 @@ class TestMultiEmbeddingMatching:
         result = repo.save_resume_section_embeddings(
             resume_fingerprint="resume-123",
             sections=sections,
-            owner_id=DEFAULT_LEGACY_OWNER_ID,
+            owner_id=SYSTEM_OWNER_ID,
         )
         
         # Verify save was called

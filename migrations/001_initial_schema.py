@@ -13,7 +13,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from database.database import DATABASE_URL
-from database.models import DEFAULT_LEGACY_OWNER_ID
+from database.models import SYSTEM_OWNER_ID
 
 DEFAULT_DEV_USER_EMAIL = "dev-user@jobscout.local"
 DEFAULT_DEV_USER_NAME = "JobScout Dev User"
@@ -92,7 +92,7 @@ DDL_STATEMENTS = [
     f"""
     INSERT INTO users (id, email, display_name, is_active)
     VALUES (
-        '{DEFAULT_LEGACY_OWNER_ID}'::UUID,
+                '{SYSTEM_OWNER_ID}'::UUID,
         '{DEFAULT_DEV_USER_EMAIL}',
         '{DEFAULT_DEV_USER_NAME}',
         TRUE
@@ -111,7 +111,7 @@ DDL_STATEMENTS = [
     )
     VALUES (
         '11111111-1111-1111-1111-111111111111'::UUID,
-        '{DEFAULT_LEGACY_OWNER_ID}'::UUID,
+                '{SYSTEM_OWNER_ID}'::UUID,
         'password',
         'dev-bypass:{DEFAULT_DEV_USER_EMAIL}',
         '{DEFAULT_DEV_USER_EMAIL}',
