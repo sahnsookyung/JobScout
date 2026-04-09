@@ -77,12 +77,12 @@ def _persistable_dto(job_id: str = "job-1", *, content_hash: str = "hash-1"):
     return dto
 
 
-def _prepared_selection_result(*dtos) -> PreparedSelectionResult:
+def _prepared_selection_result(*dtos, owner_id: str | None = "user-1") -> PreparedSelectionResult:
     return PreparedSelectionResult(
         match_dtos=list(dtos),
         item_snapshots=[],
         policy_snapshot=SimpleNamespace(),
-        owner_id="user-1",
+        owner_id=owner_id,
     )
 
 
@@ -872,7 +872,6 @@ class TestPipelineNotificationAndPublicationHelpers:
             resume_fingerprint="fp-123",
             matching_config=SimpleNamespace(),
             prepared_selection=_prepared_selection_result(_dto()),
-            owner_id="user-1",
             task_id="task-1",
         )
 
@@ -880,6 +879,34 @@ class TestPipelineNotificationAndPublicationHelpers:
         assert selection_run_id == "run-1"
         mock_refresh.assert_called_once_with("fp-123", active_job_ids=frozenset({"job-1"}))
         mock_publish.assert_called_once()
+        assert mock_publish.call_args.kwargs["owner_id"] == "user-1"
+
+    @patch("services.scorer_matcher.pipeline._publish_match_selection_run", return_value="run-1")
+    @patch("services.scorer_matcher.pipeline._refresh_resume_match_set")
+    @patch("services.scorer_matcher.pipeline._save_matches_batch")
+    def test_save_results_and_publish_selection_uses_resolved_resume_owner(
+        self,
+        mock_save,
+        _mock_refresh,
+        mock_publish,
+    ):
+        mock_save.return_value = SaveMatchesBatchResult(
+            saved_count=1,
+            failed_count=0,
+            active_job_ids=frozenset({"job-1"}),
+            job_match_ids_by_job_id={"job-1": "match-1"},
+        )
+        prepared_selection = _prepared_selection_result(_dto(), owner_id="resume-owner-1")
+
+        _save_results_and_publish_selection(
+            match_dtos=[_dto()],
+            resume_fingerprint="fp-123",
+            matching_config=SimpleNamespace(),
+            prepared_selection=prepared_selection,
+            task_id="task-1",
+        )
+
+        assert mock_publish.call_args.kwargs["owner_id"] == "resume-owner-1"
 
     @patch("services.scorer_matcher.pipeline._publish_match_selection_run")
     @patch("services.scorer_matcher.pipeline._refresh_resume_match_set")
@@ -902,7 +929,6 @@ class TestPipelineNotificationAndPublicationHelpers:
             resume_fingerprint="fp-123",
             matching_config=SimpleNamespace(),
             prepared_selection=_prepared_selection_result(_dto()),
-            owner_id="user-1",
             task_id="task-1",
         )
 

@@ -50,12 +50,14 @@ class MatchSelectionRepository(BaseRepository):
     def get_committed_run_for_task(
         self,
         *,
+        owner_id: Any,
         resume_fingerprint: str,
         task_id: str,
     ) -> Optional[MatchSelectionRun]:
         stmt = (
             select(MatchSelectionRun)
             .where(
+                MatchSelectionRun.owner_id == owner_id,
                 MatchSelectionRun.resume_fingerprint == resume_fingerprint,
                 MatchSelectionRun.task_id == task_id,
                 MatchSelectionRun.lifecycle_status == "committed",
@@ -91,6 +93,7 @@ class MatchSelectionRepository(BaseRepository):
     ) -> MatchSelectionRun:
         if task_id:
             existing_for_task = self.get_committed_run_for_task(
+                owner_id=owner_id,
                 resume_fingerprint=resume_fingerprint,
                 task_id=task_id,
             )
@@ -141,6 +144,7 @@ class MatchSelectionRepository(BaseRepository):
         self.db.execute(
             update(MatchSelectionRun)
             .where(
+                MatchSelectionRun.owner_id == owner_id,
                 MatchSelectionRun.resume_fingerprint == resume_fingerprint,
                 MatchSelectionRun.lifecycle_status == "committed",
                 MatchSelectionRun.is_current.is_(True),

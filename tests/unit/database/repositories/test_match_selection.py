@@ -60,7 +60,11 @@ def test_publish_selection_run_is_idempotent_for_task_id():
         )
 
     assert result is existing
-    mock_get_existing.assert_called_once()
+    mock_get_existing.assert_called_once_with(
+        owner_id="user-1",
+        resume_fingerprint="fp-1",
+        task_id="task-1",
+    )
     session.add.assert_not_called()
 
 
@@ -81,7 +85,9 @@ def test_publish_selection_run_marks_prior_current_run_superseded():
     assert session.add.call_count == 2
     assert session.execute.call_count == 1
     update_stmt = session.execute.call_args.args[0]
-    assert "match_selection_run" in str(update_stmt)
+    update_sql = str(update_stmt)
+    assert "match_selection_run" in update_sql
+    assert "owner_id" in update_sql
     created_run = session.add.call_args_list[0].args[0]
     assert created_run.lifecycle_status == "committed"
     assert created_run.is_current is True
@@ -115,6 +121,7 @@ def test_get_committed_run_for_task_executes_task_scoped_query():
     repo = MatchSelectionRepository(session)
 
     assert repo.get_committed_run_for_task(
+        owner_id="user-1",
         resume_fingerprint="fp-1",
         task_id="task-1",
     ) is expected

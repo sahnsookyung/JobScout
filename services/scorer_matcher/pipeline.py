@@ -399,7 +399,6 @@ def run_matching_pipeline(
             resume_fingerprint=resume_fingerprint,
             matching_config=matching_config,
             prepared_selection=prepared_selection,
-            owner_id=owner_id,
             task_id=task_id,
         )
         saved_count = save_batch_result.saved_count
@@ -448,7 +447,6 @@ def _save_results_and_publish_selection(
     resume_fingerprint: str,
     matching_config,
     prepared_selection: PreparedSelectionResult,
-    owner_id: Optional[str],
     task_id: Optional[str],
 ) -> tuple[SaveMatchesBatchResult, Optional[str]]:
     """Persist the selected match set and publish its immutable run artifact."""
@@ -466,7 +464,7 @@ def _save_results_and_publish_selection(
         active_job_ids=save_batch_result.active_job_ids,
     )
     selection_run_id = _publish_match_selection_run(
-        owner_id=owner_id,
+        owner_id=prepared_selection.owner_id,
         resume_fingerprint=resume_fingerprint,
         task_id=task_id,
         prepared_selection=prepared_selection,
