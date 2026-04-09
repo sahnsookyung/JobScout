@@ -521,15 +521,16 @@ class TestGetMatchDetail:
     def test_fit_components_exclude_preference_payload(self, service):
         match = self._make_full_match()
         match.fit_components = {
-            "preferred_requirement_coverage": 0.42,
             "fit_confidence": 0.78,
             "preference_mode_used": "semantic_rerank",
         }
+        match.preferred_requirement_coverage = 0.42
         match.preference_components = None
 
         detail = service._to_match_detail(match, {})
 
-        assert detail.fit_components["preferred_requirement_coverage"] == pytest.approx(0.42)
+        assert "preferred_requirement_coverage" not in detail.fit_components
+        assert detail.preferred_requirement_coverage == pytest.approx(0.42)
         assert "preference_mode_used" not in detail.fit_components
 
     def test_preference_score_nullable_in_detail(self, service, mock_db):

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 from notification.models import NotificationDeliveryPlan
 from notification.orchestrator import (
     _alert_eligible_matches_for_plan,
+    _load_persisted_notification_matches,
     _notification_setting_value,
     _resolve_notification_plan,
     _send_batch_complete_notification,
@@ -48,6 +49,13 @@ def _delivery_plan(**kwargs):
     defaults = dict(user_id="user-42", enabled_channels=["email"])
     defaults.update(kwargs)
     return NotificationDeliveryPlan(**defaults)
+
+
+def _uow(repo):
+    manager = MagicMock()
+    manager.__enter__.return_value = repo
+    manager.__exit__.return_value = False
+    return manager
 
 
 class TestNotificationSettingValue:
@@ -192,6 +200,92 @@ class TestSendNotifications:
         )
         assert count == 0
         mock_send.assert_not_called()
+
+
+class TestPersistedNotificationHelpers:
+    @patch("notification.orchestrator.rank_matches")
+    @patch("notification.orchestrator.job_uow")
+    def test_load_persisted_notification_matches_detaches_candidates_before_ranking(
+        self,
+        mock_uow,
+        mock_rank,
+    ):
+        repo = MagicMock()
+        repo.match.get_visible_active_matches_for_resume.return_value = [
+            SimpleNamespace(id="m1", fit_score=80.0, preference_score=0.4, job_similarity=0.7),
+            SimpleNamespace(id="m2", fit_score=70.0, preference_score=None, job_similarity=0.6),
+        ]
+        mock_uow.return_value = _uow(repo)
+
+        result = _load_persisted_notification_matches("fp-1", ranking_context=SimpleNamespace())
+
+        assert [candidate.id for candidate in result] == ["m1", "m2"]
+        mock_rank.assert_called_once()
+        ranked = mock_rank.call_args.args[0]
+        assert ranked[0].id == "m1"
+        assert ranked[1].preference_score is None
+
+    @patch("notification.orchestrator.NotificationMessageBuilder.build_from_orm")
+    @patch("notification.orchestrator.job_uow")
+    def test_send_match_notification_marks_match_notified_after_successful_delivery(
+        self,
+        mock_uow,
+        mock_build,
+    ):
+        match_record = SimpleNamespace(
+            id="m1",
+            status="active",
+            is_hidden=False,
+            notified=False,
+            job_post=SimpleNamespace(company_url_direct="https://example.com"),
+        )
+        repo = MagicMock()
+        repo.match.get_match_by_id.return_value = match_record
+        mock_uow.return_value = _uow(repo)
+        mock_build.return_value = {"subject": "hi"}
+        ctx = _ctx()
+        ctx.notification_service.notify_new_match.return_value = {"email": True}
+
+        sent = _send_match_notification(
+            ctx,
+            "m1",
+            delivery_plan=_delivery_plan(),
+            task_id="task-1",
+        )
+
+        assert sent is True
+        assert match_record.notified is True
+
+    @patch("notification.orchestrator.NotificationMessageBuilder.build_from_orm")
+    @patch("notification.orchestrator.job_uow")
+    def test_send_match_notification_keeps_match_retryable_when_no_channel_accepts(
+        self,
+        mock_uow,
+        mock_build,
+    ):
+        match_record = SimpleNamespace(
+            id="m1",
+            status="active",
+            is_hidden=False,
+            notified=False,
+            job_post=SimpleNamespace(company_url_direct="https://example.com"),
+        )
+        repo = MagicMock()
+        repo.match.get_match_by_id.return_value = match_record
+        mock_uow.return_value = _uow(repo)
+        mock_build.return_value = {"subject": "hi"}
+        ctx = _ctx()
+        ctx.notification_service.notify_new_match.return_value = {"email": False}
+
+        sent = _send_match_notification(
+            ctx,
+            "m1",
+            delivery_plan=_delivery_plan(),
+            task_id="task-1",
+        )
+
+        assert sent is False
+        assert match_record.notified is False
 
     @patch("notification.orchestrator._load_persisted_notification_matches")
     @patch("notification.orchestrator._send_batch_complete_notification")

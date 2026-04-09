@@ -516,3 +516,31 @@ class TestPreferenceSemanticReranking:
         # Both scores written
         assert result[0].preference_score == pytest.approx(0.7)
         assert result[1].preference_score == pytest.approx(0.7)
+
+    def test_apply_assessments_exposes_full_preference_signal_independently_of_fit(self):
+        match = _scored_match(_job(id="job-1"), fit_components={"core": 0.8})
+        assessment = PreferenceAssessment(
+            job_id="job-1",
+            preference_score=0.83,
+            preference_confidence=0.74,
+            preference_reason_codes=["tech_stack_match", "team_culture_match"],
+            preference_explanation="Strong alignment with Python and mentorship preferences.",
+        )
+
+        result = _apply_assessments(
+            [match],
+            [assessment],
+            requested_mode="semantic_rerank",
+            effective_mode="semantic_rerank",
+        )
+
+        assert result[0].fit_components == {"core": 0.8}
+        assert result[0].preference_score == pytest.approx(0.83)
+        assert result[0].preference_components == {
+            "preference_confidence": 0.74,
+            "preference_reason_codes": ["tech_stack_match", "team_culture_match"],
+            "preference_explanation": "Strong alignment with Python and mentorship preferences.",
+            "preference_mode_requested": "semantic_rerank",
+            "preference_mode_effective": "semantic_rerank",
+            "preference_mode_used": "semantic_rerank",
+        }

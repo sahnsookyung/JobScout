@@ -22,7 +22,7 @@ $$
 
 The denominator includes matched and missing required requirements, so uncovered required items reduce coverage directly.
 
-Preferred coverage may still be reported as diagnostics metadata, but it does not change the fit score.
+Preferred requirement coverage is computed separately as a capability diagnostic, and it does not change the fit score.
 
 ## Aggregation
 

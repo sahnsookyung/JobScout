@@ -135,6 +135,7 @@ scrapers: []
         self.assertIsNotNone(scored)
         self.assertGreater(scored.fit_score, 0)
         self.assertAlmostEqual(scored.jd_required_coverage, 0.8, places=2)
+        self.assertNotIn("preferred_requirement_coverage", scored.fit_components)
         self.assertIn("fit_explanation", scored.fit_components)
         self.assertGreater(scored.fit_confidence, 0)
         self.assertEqual(scored.fit_scorer["name"], "cross_encoder_semantic_fit")

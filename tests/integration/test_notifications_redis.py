@@ -56,6 +56,8 @@ class TestNotificationsWithRedis(unittest.TestCase):
                 print(f"✓ Container started: {cls.redis_url}")  # codeql[py/clear-text-logging-sensitive-data] no credentials in redis_url
             except ImportError:
                 raise RuntimeError("testcontainers.redis not available and TEST_REDIS_URL not set")
+            except Exception as exc:
+                raise unittest.SkipTest(f"Docker-backed Redis testcontainer unavailable: {exc}")
 
         cls.redis_conn = Redis.from_url(cls.redis_url)
         cls._verify_connection()

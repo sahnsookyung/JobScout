@@ -9,6 +9,7 @@ from core.config_loader import ScorerConfig, ResultPolicy
 from core.llm.interfaces import LLMProvider
 from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_fit
 from core.matcher import JobMatchPreliminary
+from core.scorer.coverage import calculate_requirement_coverage
 from core.scorer.models import ScoredJobMatch
 from core.scorer import penalties as penalty_calculations
 from core.scorer.semantic_fit import (
@@ -179,6 +180,13 @@ class ScoringService:
             owner_id=owner_id,
         )
         fit_components = dict(semantic_fit.fit_components)
+        preferred_requirement_coverage = calculate_requirement_coverage(
+            semantic_fit.matched_requirements,
+            semantic_fit.missing_requirements,
+            req_type="preferred",
+            threshold=float(fit_components.get("threshold", 0.0)),
+            clamp_similarity=bool(fit_components.get("similarity_clamp", True)),
+        )["coverage"]
 
         return ScoredJobMatch(
             job=job,
@@ -194,10 +202,7 @@ class ScoringService:
             base_score=fit_components.get("core", 0.0) * 100.0,
             penalties=fit_penalties,
             jd_required_coverage=fit_components["required_coverage"],
-            jd_preferred_requirement_coverage=fit_components.get(
-                "preferred_requirement_coverage",
-                0.0,
-            ),
+            jd_preferred_requirement_coverage=preferred_requirement_coverage,
             job_similarity=preliminary.job_similarity,
             penalty_details=penalty_details,
             matched_requirements=semantic_fit.matched_requirements,
