@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from database.models import SYSTEM_OWNER_ID
+
 
 @dataclass(frozen=True)
 class CanonicalResumeSelection:
@@ -17,7 +19,8 @@ def resolve_canonical_resume_selection(
     repo,
     owner_id: Optional[Any],
 ) -> Optional[CanonicalResumeSelection]:
-    current_run = repo.match_selection.get_latest_current_run_for_owner(owner_id)
+    selection_owner_id = owner_id or SYSTEM_OWNER_ID
+    current_run = repo.match_selection.get_latest_current_run_for_owner(selection_owner_id)
     if current_run is None:
         return None
 
