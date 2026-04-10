@@ -203,6 +203,44 @@ describe('useAuth', () => {
             expect(stored.expires_at).toBe(exp * 1000);
         });
 
+        it('derives expiry from a JWT exp number when expires_at is missing', async () => {
+            const exp = Math.floor(Date.now() / 1000) + 180;
+            mockCurrentUser({ email: 'jwt-number@example.com', name: 'JWT Number User' });
+            localStorage.setItem(
+                STORAGE_KEY,
+                JSON.stringify({
+                    user: { email: 'jwt-number@example.com', name: 'JWT Number User' },
+                    token: makeJwt({ exp }),
+                })
+            );
+
+            const { result } = renderHook(() => useAuth());
+            await flushAuthEffects();
+
+            const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+            expect(result.current.token).toBeTruthy();
+            expect(stored.expires_at).toBe(exp * 1000);
+        });
+
+        it('falls back to a conservative expiry when a JWT exp claim is malformed', async () => {
+            vi.setSystemTime(new Date('2026-04-10T10:00:00.000Z'));
+            mockCurrentUser({ email: 'jwt-bad@example.com', name: 'JWT Bad User' });
+            localStorage.setItem(
+                STORAGE_KEY,
+                JSON.stringify({
+                    user: { email: 'jwt-bad@example.com', name: 'JWT Bad User' },
+                    token: makeJwt({ exp: 'soon' }),
+                })
+            );
+
+            const { result } = renderHook(() => useAuth());
+            await flushAuthEffects();
+
+            const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+            expect(result.current.token).toBeTruthy();
+            expect(stored.expires_at).toBe(Date.now() + 55 * 60 * 1000);
+        });
+
         it('returns empty auth when the stored session is missing a user', () => {
             localStorage.setItem(
                 STORAGE_KEY,
@@ -416,6 +454,23 @@ describe('useAuth', () => {
             expect(first.result.current.user).toBeNull();
             expect(first.result.current.token).toBeNull();
         });
+
+        it('clears auth state even when localStorage becomes unavailable before logout', () => {
+            const { result } = renderHook(() => useAuth());
+
+            act(() => {
+                result.current.login({ email: 'a@b.com', name: 'A' }, 'tok');
+            });
+
+            vi.stubGlobal('localStorage', undefined);
+
+            act(() => {
+                result.current.logout();
+            });
+
+            expect(result.current.user).toBeNull();
+            expect(result.current.token).toBeNull();
+        });
     });
 
     describe('callback stability', () => {
@@ -478,6 +533,30 @@ describe('useAuth', () => {
             expect(result.current.user?.email).toBe('stale@example.com');
             expect(result.current.token).toBe('valid-app-token');
             expect(result.current.isReady).toBe(false);
+        });
+
+        it('marks a freshly logged-in session as pending when bootstrap later hits a transient error', async () => {
+            vi.mocked(cloudAuthApi.getCurrentUser).mockRejectedValue({
+                response: { status: 503 },
+            } as never);
+
+            const initial = renderHook(() => useAuth());
+
+            act(() => {
+                initial.result.current.login(
+                    { email: 'fresh@example.com', name: 'Fresh User' },
+                    'fresh-token'
+                );
+            });
+
+            const mirrored = renderHook(() => useAuth());
+            await flushAuthEffects();
+
+            expect(cloudAuthApi.getCurrentUser).toHaveBeenCalledTimes(1);
+            expect(initial.result.current.user?.email).toBe('fresh@example.com');
+            expect(mirrored.result.current.user?.email).toBe('fresh@example.com');
+            expect(initial.result.current.isReady).toBe(false);
+            expect(mirrored.result.current.isReady).toBe(false);
         });
 
         it('retries bootstrap after a transient error and restores readiness on success', async () => {
@@ -611,6 +690,56 @@ describe('useAuth', () => {
 
             expect(result.current.user?.email).toBe('refresh@example.com');
 
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(2_000);
+            });
+
+            expect(result.current.user?.email).toBe('refresh@example.com');
+            expect(result.current.token).toBe('old-app-token');
+        });
+
+        it('does not log out when refresh fails without a response object', async () => {
+            storeAuthSession({
+                user: { email: 'refresh@example.com', name: 'Refresh User' },
+                token: 'old-app-token',
+                expires_at: Date.now() + 61_000,
+            });
+            mockCurrentUser({
+                email: 'refresh@example.com',
+                name: 'Refresh User',
+            });
+            vi.mocked(cloudAuthApi.refreshSession).mockRejectedValue(
+                new Error('offline')
+            );
+
+            const { result } = renderHook(() => useAuth());
+
+            await flushAuthEffects();
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(2_000);
+            });
+
+            expect(result.current.user?.email).toBe('refresh@example.com');
+            expect(result.current.token).toBe('old-app-token');
+        });
+
+        it('does not log out when refresh fails with a non-numeric status', async () => {
+            storeAuthSession({
+                user: { email: 'refresh@example.com', name: 'Refresh User' },
+                token: 'old-app-token',
+                expires_at: Date.now() + 61_000,
+            });
+            mockCurrentUser({
+                email: 'refresh@example.com',
+                name: 'Refresh User',
+            });
+            vi.mocked(cloudAuthApi.refreshSession).mockRejectedValue({
+                response: { status: 'temporarily_unavailable' },
+            } as never);
+
+            const { result } = renderHook(() => useAuth());
+
+            await flushAuthEffects();
             await act(async () => {
                 await vi.advanceTimersByTimeAsync(2_000);
             });

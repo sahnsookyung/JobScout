@@ -330,6 +330,19 @@ describe('apiClient', () => {
             });
         });
 
+        it('should fall back to the original error when validation detail has no record entries', () => {
+            const mockError = createMockError({
+                message: 'Validation error',
+                status: 422,
+                data: {
+                    detail: [null, 'body.email'],
+                },
+            });
+            return testErrorInterceptor(mockError, 'Validation error', {
+                code: 'common.http.422',
+            });
+        });
+
         it('should use original message when no detail', () => {
             const mockError = createMockError({
                 message: 'Network error',

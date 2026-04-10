@@ -18,17 +18,17 @@ vi.mock('@/services/cloudAuthApi', () => ({
     },
 }));
 
-describe('GoogleLoginScreen', () => {
-    function createDeferred<T>() {
-        let resolve!: (value: T) => void;
-        let reject!: (reason?: unknown) => void;
-        const promise = new Promise<T>((res, rej) => {
-            resolve = res;
-            reject = rej;
-        });
-        return { promise, resolve, reject };
-    }
+function createDeferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
+}
 
+describe('GoogleLoginScreen', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         vi.stubEnv('VITE_GOOGLE_CLIENT_ID', 'test-client-id-abc');
@@ -135,7 +135,16 @@ describe('GoogleLoginScreen', () => {
 
     describe('login callback', () => {
         /** Mount the screen with a captured Google callback and a fresh mockLogin. */
-        function setupLoginCallback() {
+        function setupLoginCallback(
+            exchangeUserOverrides: Partial<{
+                id: string;
+                email: string;
+                name: string;
+                picture?: string;
+                provider: string;
+                token_kind: string;
+            }> = {}
+        ) {
             const mockLogin = vi.fn();
             vi.mocked(cloudAuthApi.exchangeGoogleCredential).mockResolvedValue({
                 data: {
@@ -148,6 +157,7 @@ describe('GoogleLoginScreen', () => {
                         picture: 'https://img/p.jpg',
                         provider: 'google',
                         token_kind: 'google_id_token',
+                        ...exchangeUserOverrides,
                     },
                 },
             } as never);
@@ -201,6 +211,19 @@ describe('GoogleLoginScreen', () => {
 
             expect(mockLogin).toHaveBeenCalledWith(
                 expect.objectContaining({ picture: 'https://img/p.jpg' }),
+                'app-token-123'
+            );
+        });
+
+        it('passes through an undefined picture when the backend omits it', async () => {
+            const { mockLogin, fire } = setupLoginCallback({ picture: undefined });
+
+            await act(async () => {
+                await fire('header.payload.sig');
+            });
+
+            expect(mockLogin).toHaveBeenCalledWith(
+                expect.objectContaining({ picture: undefined }),
                 'app-token-123'
             );
         });
