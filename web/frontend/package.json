@@ -14,7 +14,7 @@
     },
     "dependencies": {
         "@tanstack/react-query": "^5.96.2",
-        "axios": "^1.14.0",
+        "axios": "^1.15.0",
         "clsx": "^2.1.1",
         "lucide-react": "^1.7.0",
         "react": "^19.1.1",
@@ -24,11 +24,12 @@
         "xxhash-wasm": "^1.1.0"
     },
     "devDependencies": {
+        "@tailwindcss/postcss": "^4.2.2",
         "@testing-library/jest-dom": "^6.6.3",
         "@testing-library/react": "^16.3.0",
         "@testing-library/user-event": "^14.6.1",
         "@types/node": "^25.5.2",
-        "@types/react": "^19.0.0",
+        "@types/react": "^19.2.14",
         "@types/react-dom": "^19.0.0",
         "@typescript-eslint/eslint-plugin": "^8.58.0",
         "@typescript-eslint/parser": "^8.58.0",
@@ -36,9 +37,9 @@
         "@vitest/coverage-v8": "^4.1.2",
         "autoprefixer": "^10.4.27",
         "eslint": "^10.2.0",
-        "jsdom": "^26.1.0",
+        "jsdom": "^29.0.2",
         "postcss": "^8.5.8",
-        "tailwindcss": "^3.4.1",
+        "tailwindcss": "^4.2.2",
         "typescript": "^6.0.2",
         "vite": "^8.0.5",
         "vitest": "^4.1.2"

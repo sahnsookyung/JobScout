@@ -210,10 +210,10 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
     }
     const retrievalSources = Array.isArray(retrieval?.sources) ? retrieval.sources.join(' + ') : null;
     const fitMode = typeof diagnostics?.effective_fit_mode === 'string'
-        ? diagnostics.effective_fit_mode.replaceAll('_', ' ')
+        ? diagnostics.effective_fit_mode.replace(/_/g, ' ')
         : null;
     const providerRoute = typeof diagnostics?.provider_route === 'string'
-        ? diagnostics.provider_route.replaceAll('_', ' ')
+        ? diagnostics.provider_route.replace(/_/g, ' ')
         : null;
     let fallbackMessage: string | null = null;
     if (typeof fitExplanation?.message === 'string') {
