@@ -22,11 +22,14 @@ interface GoogleCredentialResponse {
 export function GoogleLoginScreen() {
     const { login } = useAuth();
     const buttonRef = useRef<HTMLDivElement>(null);
+    const exchangeAttemptRef = useRef(0);
+    const isMountedRef = useRef(false);
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string;
     const [isSigningIn, setIsSigningIn] = useState(false);
     const [authError, setAuthError] = useState<string | null>(null);
 
     useEffect(() => {
+        isMountedRef.current = true;
         const scriptId = 'google-gsi';
         if (!document.getElementById(scriptId)) {
             const script = document.createElement('script');
@@ -42,12 +45,20 @@ export function GoogleLoginScreen() {
             globalThis.google.accounts.id.initialize({
                 client_id: clientId,
                 callback: async (response: GoogleCredentialResponse) => {
+                    if (!isMountedRef.current) {
+                        return;
+                    }
+                    const attemptId = exchangeAttemptRef.current + 1;
+                    exchangeAttemptRef.current = attemptId;
                     setIsSigningIn(true);
                     setAuthError(null);
                     try {
                         const exchange = await cloudAuthApi.exchangeGoogleCredential(
                             response.credential
                         );
+                        if (!isMountedRef.current || attemptId !== exchangeAttemptRef.current) {
+                            return;
+                        }
                         const { user, access_token: accessToken } = exchange.data;
                         login(
                             {
@@ -58,9 +69,14 @@ export function GoogleLoginScreen() {
                             accessToken
                         );
                     } catch {
+                        if (!isMountedRef.current || attemptId !== exchangeAttemptRef.current) {
+                            return;
+                        }
                         setAuthError('Sign-in failed. Please try again.');
                     } finally {
-                        setIsSigningIn(false);
+                        if (isMountedRef.current && attemptId === exchangeAttemptRef.current) {
+                            setIsSigningIn(false);
+                        }
                     }
                 },
             });
@@ -80,7 +96,11 @@ export function GoogleLoginScreen() {
             }
         }, 100);
 
-        return () => clearInterval(interval);
+        return () => {
+            isMountedRef.current = false;
+            exchangeAttemptRef.current += 1;
+            clearInterval(interval);
+        };
     }, [clientId, login]);
 
     return (

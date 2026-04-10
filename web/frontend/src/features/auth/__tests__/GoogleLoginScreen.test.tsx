@@ -31,6 +31,7 @@ function createDeferred<T>() {
 describe('GoogleLoginScreen', () => {
     beforeEach(() => {
         vi.useFakeTimers();
+        vi.clearAllMocks();
         vi.stubEnv('VITE_GOOGLE_CLIENT_ID', 'test-client-id-abc');
         document.getElementById('google-gsi')?.remove();
         delete (globalThis as any).google;
@@ -176,10 +177,11 @@ describe('GoogleLoginScreen', () => {
                     },
                 },
             };
-            render(<GoogleLoginScreen />);
+            const { unmount } = render(<GoogleLoginScreen />);
             act(() => { vi.advanceTimersByTime(200); });
             return {
                 mockLogin,
+                unmount,
                 fire: async (jwt: string) => {
                     await Promise.resolve(capturedCallback?.({ credential: jwt }));
                 },
@@ -305,6 +307,153 @@ describe('GoogleLoginScreen', () => {
             });
 
             expect(screen.queryByText('Finishing sign-in...')).not.toBeInTheDocument();
+        });
+
+        it('ignores stale exchange responses when a newer sign-in attempt finishes first', async () => {
+            const firstExchange = createDeferred<{
+                data: {
+                    access_token: string;
+                    token_type: string;
+                    user: {
+                        id: string;
+                        email: string;
+                        name: string;
+                        picture?: string;
+                        provider: string;
+                        token_kind: string;
+                    };
+                };
+            }>();
+            const secondExchange = createDeferred<{
+                data: {
+                    access_token: string;
+                    token_type: string;
+                    user: {
+                        id: string;
+                        email: string;
+                        name: string;
+                        picture?: string;
+                        provider: string;
+                        token_kind: string;
+                    };
+                };
+            }>();
+
+            const { fire, mockLogin } = setupLoginCallback();
+            vi.mocked(cloudAuthApi.exchangeGoogleCredential)
+                .mockReturnValueOnce(firstExchange.promise as never)
+                .mockReturnValueOnce(secondExchange.promise as never);
+
+            await act(async () => {
+                void fire('first.jwt.token');
+                await Promise.resolve();
+            });
+            await act(async () => {
+                void fire('second.jwt.token');
+                await Promise.resolve();
+            });
+
+            await act(async () => {
+                secondExchange.resolve({
+                    data: {
+                        access_token: 'newer-app-token',
+                        token_type: 'Bearer',
+                        user: {
+                            id: 'user-2',
+                            email: 'newer@test.com',
+                            name: 'Newer User',
+                            provider: 'google',
+                            token_kind: 'google_id_token',
+                        },
+                    },
+                });
+                await Promise.resolve();
+            });
+
+            await act(async () => {
+                firstExchange.resolve({
+                    data: {
+                        access_token: 'stale-app-token',
+                        token_type: 'Bearer',
+                        user: {
+                            id: 'user-1',
+                            email: 'stale@test.com',
+                            name: 'Stale User',
+                            provider: 'google',
+                            token_kind: 'google_id_token',
+                        },
+                    },
+                });
+                await Promise.resolve();
+            });
+
+            expect(mockLogin).toHaveBeenCalledTimes(1);
+            expect(mockLogin).toHaveBeenCalledWith(
+                expect.objectContaining({ email: 'newer@test.com', name: 'Newer User' }),
+                'newer-app-token'
+            );
+            expect(screen.queryByText('Finishing sign-in...')).not.toBeInTheDocument();
+        });
+
+        it('ignores exchange completions after the screen unmounts', async () => {
+            const exchange = createDeferred<{
+                data: {
+                    access_token: string;
+                    token_type: string;
+                    user: {
+                        id: string;
+                        email: string;
+                        name: string;
+                        picture?: string;
+                        provider: string;
+                        token_kind: string;
+                    };
+                };
+            }>();
+            const { fire, mockLogin, unmount } = setupLoginCallback();
+            vi.mocked(cloudAuthApi.exchangeGoogleCredential).mockReturnValueOnce(
+                exchange.promise as never
+            );
+
+            await act(async () => {
+                void fire('header.payload.sig');
+                await Promise.resolve();
+            });
+
+            unmount();
+
+            await act(async () => {
+                exchange.resolve({
+                    data: {
+                        access_token: 'app-token-123',
+                        token_type: 'Bearer',
+                        user: {
+                            id: 'user-1',
+                            email: 'user@test.com',
+                            name: 'Test User',
+                            picture: 'https://img/p.jpg',
+                            provider: 'google',
+                            token_kind: 'google_id_token',
+                        },
+                    },
+                });
+                await Promise.resolve();
+            });
+
+            expect(mockLogin).not.toHaveBeenCalled();
+        });
+
+        it('ignores Google callbacks that arrive after unmount', async () => {
+            const { fire, mockLogin, unmount } = setupLoginCallback();
+
+            unmount();
+
+            await act(async () => {
+                await fire('post-unmount.jwt.token');
+            });
+
+            expect(cloudAuthApi.exchangeGoogleCredential).not.toHaveBeenCalled();
+            expect(mockLogin).not.toHaveBeenCalled();
         });
     });
 });

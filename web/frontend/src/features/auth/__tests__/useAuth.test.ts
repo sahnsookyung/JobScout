@@ -48,6 +48,11 @@ function makeJwt(payload: Record<string, unknown>): string {
     return `header.${btoa(JSON.stringify(payload))}.sig`;
 }
 
+function makeBase64UrlJwt(payload: Record<string, unknown>): string {
+    const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+    return `header.${encoded}.sig`;
+}
+
 type RefreshSessionResponse = {
     data: {
         access_token: string;
@@ -272,6 +277,25 @@ describe('useAuth', () => {
                 JSON.stringify({
                     user: { email: 'jwt@example.com', name: 'JWT User' },
                     token: makeJwt({ exp: String(exp) }),
+                })
+            );
+
+            const { result } = renderHook(() => useAuth());
+            await flushAuthEffects();
+
+            const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+            expect(result.current.token).toBeTruthy();
+            expect(stored.expires_at).toBe(exp * 1000);
+        });
+
+        it('derives expiry from a base64url-encoded JWT payload', async () => {
+            const exp = Math.floor(Date.now() / 1000) + 240;
+            mockCurrentUser({ email: 'jwt-url@example.com', name: 'JWT Url User' });
+            localStorage.setItem(
+                STORAGE_KEY,
+                JSON.stringify({
+                    user: { email: 'jwt-url@example.com', name: 'JWT Url User' },
+                    token: makeBase64UrlJwt({ exp, tag: '???' }),
                 })
             );
 
@@ -667,6 +691,32 @@ describe('useAuth', () => {
             expect(result.current.user?.email).toBe('retry@example.com');
         });
 
+        it('surfaces a recovery state after repeated bootstrap failures', async () => {
+            storeAuthSession({
+                user: { email: 'retry@example.com', name: 'Retry User' },
+                token: VALID_APP_TOKEN,
+            });
+            vi.mocked(cloudAuthApi.getCurrentUser).mockRejectedValue({
+                response: { status: 503 },
+            } as never);
+
+            const { result } = renderHook(() => useAuth());
+
+            await flushAuthEffects();
+            expect(result.current.isReady).toBe(false);
+            expect(result.current.restoreError).toBeNull();
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(15_000);
+            });
+
+            expect(cloudAuthApi.getCurrentUser).toHaveBeenCalledTimes(2);
+            expect(result.current.isReady).toBe(true);
+            expect(result.current.restoreError).toBe(
+                'We could not restore your session. Please try again or sign out.'
+            );
+        });
+
         it('cancels a scheduled bootstrap retry when the session changes', async () => {
             storeAuthSession({
                 user: { email: 'retry@example.com', name: 'Retry User' },
@@ -692,6 +742,79 @@ describe('useAuth', () => {
 
             expect(cloudAuthApi.getCurrentUser).toHaveBeenCalledTimes(1);
             expect(result.current.user?.email).toBe('fresh@example.com');
+        });
+
+        it('lets users retry session restore manually after repeated failures', async () => {
+            storeAuthSession({
+                user: { email: 'retry@example.com', name: 'Retry User' },
+                token: VALID_APP_TOKEN,
+            });
+            vi.mocked(cloudAuthApi.getCurrentUser)
+                .mockRejectedValueOnce({ response: { status: 503 } } as never)
+                .mockRejectedValueOnce({ response: { status: 503 } } as never)
+                .mockResolvedValueOnce({
+                    data: buildCloudUser({
+                        email: 'retry@example.com',
+                        name: 'Retry User',
+                    }),
+                } as never);
+
+            const { result } = renderHook(() => useAuth());
+
+            await flushAuthEffects();
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(15_000);
+            });
+
+            expect(result.current.restoreError).toBeTruthy();
+
+            act(() => {
+                result.current.retrySession();
+            });
+            await flushAuthEffects();
+
+            expect(cloudAuthApi.getCurrentUser).toHaveBeenCalledTimes(3);
+            expect(result.current.isReady).toBe(true);
+            expect(result.current.restoreError).toBeNull();
+            expect(result.current.user?.email).toBe('retry@example.com');
+        });
+
+        it('treats manual retry as a new session boundary for stale refresh responses', async () => {
+            const refresh = createRefreshDeferred();
+            seedRefreshableSession();
+            vi.mocked(cloudAuthApi.refreshSession).mockReturnValue(refresh.promise as never);
+
+            const { result } = renderHook(() => useAuth());
+
+            await flushAuthEffects();
+            await advanceRefreshWindow();
+
+            vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValueOnce({
+                data: buildCloudUser(REFRESH_USER),
+            } as never);
+
+            act(() => {
+                result.current.retrySession();
+            });
+            await flushAuthEffects();
+
+            await act(async () => {
+                refresh.resolve({
+                    data: {
+                        access_token: 'stale-refresh-token',
+                        token_type: 'Bearer',
+                        user: buildCloudUser({
+                            email: 'old@example.com',
+                            name: 'Old User',
+                        }),
+                    },
+                });
+                await Promise.resolve();
+            });
+
+            expect(result.current.user?.email).toBe(REFRESH_USER.email);
+            expect(result.current.token).toBe(OLD_APP_TOKEN);
+            expect(result.current.restoreError).toBeNull();
         });
 
         it('clears the stored session when bootstrap is unauthorized', async () => {

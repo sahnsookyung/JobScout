@@ -13,6 +13,7 @@ interface AuthState {
     token: string | null;
     expires_at?: number | null;
     is_ready: boolean;
+    restore_error: string | null;
 }
 
 const STORAGE_KEY = 'jobscout_auth';
@@ -20,11 +21,15 @@ const TOKEN_REFRESH_SKEW_MS = 60_000;
 const FALLBACK_TOKEN_TTL_MS = 55 * 60 * 1000;
 const BOOTSTRAP_RETRY_DELAY_MS = 15_000;
 const REFRESH_RETRY_DELAY_MS = 15_000;
+const MAX_BOOTSTRAP_RETRIES = 2;
+const RESTORE_SESSION_ERROR =
+    'We could not restore your session. Please try again or sign out.';
 const EMPTY_AUTH_STATE: AuthState = {
     user: null,
     token: null,
     expires_at: null,
     is_ready: true,
+    restore_error: null,
 };
 
 let authState: AuthState | null = null;
@@ -33,8 +38,15 @@ let bootstrapRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let refreshInFlight: Promise<void> | null = null;
 let bootstrapInFlight: Promise<void> | null = null;
 let hasBootstrappedStoredSession = false;
+let bootstrapRetryCount = 0;
 let authVersion = 0;
 const listeners = new Set<() => void>();
+
+function decodeBase64Url(value: string): string {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    return atob(padded);
+}
 
 function decodeTokenExpiry(token: string): number {
     try {
@@ -43,7 +55,7 @@ function decodeTokenExpiry(token: string): number {
             return Date.now() + FALLBACK_TOKEN_TTL_MS;
         }
 
-        const claims = JSON.parse(atob(payload)) as { exp?: unknown };
+        const claims = JSON.parse(decodeBase64Url(payload)) as { exp?: unknown };
         if (typeof claims.exp === 'number') {
             return claims.exp * 1000;
         }
@@ -68,6 +80,7 @@ function createAuthState(
         token,
         expires_at: expiresAt ?? decodeTokenExpiry(token),
         is_ready: isReady,
+        restore_error: null,
     };
 }
 
@@ -115,6 +128,7 @@ function persistAuthState(next: AuthState): void {
 
 function applyAuthState(next: AuthState): void {
     clearBootstrapRetryTimer();
+    bootstrapRetryCount = 0;
     authState = next;
     authVersion += 1;
     persistAuthState(next);
@@ -135,6 +149,7 @@ function updateAuthReadiness(isReady: boolean): void {
 function clearAuthState(): void {
     clearRefreshTimer();
     clearBootstrapRetryTimer();
+    bootstrapRetryCount = 0;
     authState = EMPTY_AUTH_STATE;
     authVersion += 1;
     if (typeof localStorage !== 'undefined') {
@@ -175,6 +190,7 @@ function loadStoredAuth(): AuthState {
                     ? parsed.expires_at
                     : decodeTokenExpiry(parsed.token),
             is_ready: false,
+            restore_error: null,
         };
     } catch {
         return EMPTY_AUTH_STATE;
@@ -209,6 +225,16 @@ function scheduleBootstrapRetry(expectedVersion: number, expectedToken: string):
         hasBootstrappedStoredSession = false;
         void bootstrapStoredSession();
     }, BOOTSTRAP_RETRY_DELAY_MS);
+}
+
+function setRestoreErrorState(): void {
+    const currentAuth = getAuthState();
+    authState = {
+        ...currentAuth,
+        is_ready: true,
+        restore_error: RESTORE_SESSION_ERROR,
+    };
+    emitChange();
 }
 
 async function refreshAuthSession(): Promise<void> {
@@ -317,6 +343,11 @@ async function bootstrapStoredSession(): Promise<void> {
             }
 
             updateAuthReadiness(false);
+            bootstrapRetryCount += 1;
+            if (bootstrapRetryCount >= MAX_BOOTSTRAP_RETRIES) {
+                setRestoreErrorState();
+                return;
+            }
             scheduleBootstrapRetry(expectedVersion, expectedToken);
         } finally {
             bootstrapInFlight = null;
@@ -339,6 +370,24 @@ export function useAuth() {
         clearAuthState();
     }, []);
 
+    const retrySession = useCallback(() => {
+        const currentAuth = getAuthState();
+        if (!currentAuth.token) {
+            return;
+        }
+        clearBootstrapRetryTimer();
+        bootstrapRetryCount = 0;
+        hasBootstrappedStoredSession = false;
+        authVersion += 1;
+        authState = {
+            ...currentAuth,
+            is_ready: false,
+            restore_error: null,
+        };
+        emitChange();
+        void bootstrapStoredSession();
+    }, []);
+
     useEffect(() => {
         scheduleTokenRefresh();
         void bootstrapStoredSession();
@@ -348,8 +397,10 @@ export function useAuth() {
         user: auth.user,
         token: auth.token,
         isReady: auth.is_ready,
+        restoreError: auth.restore_error,
         login,
         logout,
+        retrySession,
     };
 }
 
@@ -359,6 +410,7 @@ export function __resetAuthForTests(): void {
     refreshInFlight = null;
     bootstrapInFlight = null;
     hasBootstrappedStoredSession = false;
+    bootstrapRetryCount = 0;
     authVersion = 0;
     authState = null;
 }
