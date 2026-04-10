@@ -85,6 +85,7 @@ function makeQueryWrapper() {
 function makeMatch(overrides: Record<string, any> = {}) {
     return {
         match_id: 'match-1',
+        job_id: null,
         title: 'Senior Engineer',
         company: 'TechCorp',
         location: 'San Francisco, CA',
@@ -92,8 +93,12 @@ function makeMatch(overrides: Record<string, any> = {}) {
         is_hidden: false,
         fit_score: 85,
         preference_score: null,
+        penalties: 0,
         required_coverage: 0.9,
+        preferred_requirement_coverage: 0,
         match_type: 'vector_match',
+        created_at: null,
+        calculated_at: null,
         ranking_mode_used: null,
         dominant_reason_code: null,
         explanation_label: null,
@@ -428,14 +433,14 @@ describe('MatchDetailsModal', () => {
         mockUseMatchDetails.mockReturnValue({ data: undefined, isLoading: true });
         const onClose = vi.fn();
         render(<MatchDetailsModal matchId="match-1" onClose={onClose} />);
-        fireEvent.keyDown(globalThis as Window, { key: 'Escape' });
+        fireEvent.keyDown(globalThis as unknown as Window, { key: 'Escape' });
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 
     it('does not listen for Escape when matchId is null', () => {
         const onClose = vi.fn();
         render(<MatchDetailsModal matchId={null} onClose={onClose} />);
-        fireEvent.keyDown(globalThis as Window, { key: 'Escape' });
+        fireEvent.keyDown(globalThis as unknown as Window, { key: 'Escape' });
         expect(onClose).not.toHaveBeenCalled();
     });
 
