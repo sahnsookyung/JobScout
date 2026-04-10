@@ -10,8 +10,6 @@ from notification.orchestrator import (
     _alert_eligible_matches_for_plan,
     _load_persisted_notification_matches,
     _notification_setting_value,
-    _resolve_notification_plan,
-    _send_batch_complete_notification,
     _send_match_notification,
     resolve_notification_fit_floor,
     send_notifications,

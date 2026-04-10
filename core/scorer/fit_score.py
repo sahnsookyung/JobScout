@@ -14,8 +14,6 @@ from typing import Any, Dict, List, Tuple
 
 from core.config_loader import ScorerConfig
 from core.scorer.coverage import (
-    as_match as _as_match,
-    as_requirement as _as_requirement,
     calculate_requirement_coverage,
     clamp as _clamp,
     clamp01 as _clamp01,

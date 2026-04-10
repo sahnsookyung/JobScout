@@ -3,12 +3,11 @@
 import pytest
 from types import SimpleNamespace
 
+from core.scorer.coverage import as_match, as_requirement
 from core.scorer.fit_score import (
     _warn_correct,
     _cfg_float,
     _cfg_bool,
-    _as_requirement,
-    _as_match,
     calculate_fit_score,
 )
 from core.config_loader import ScorerConfig
@@ -104,29 +103,29 @@ class TestCfgBool:
 class TestAsRequirement:
     def test_unscored_req_type_returns_weight_zero(self):
         req = SimpleNamespace(req_type="responsibility", weight=1.0)
-        result = _as_requirement(req)
+        result = as_requirement(req)
         assert result.req_type == "responsibility"
         assert result.weight == pytest.approx(0.0)
 
     def test_constraint_req_type_returns_weight_zero(self):
         req = SimpleNamespace(req_type="constraint", weight=2.0)
-        result = _as_requirement(req)
+        result = as_requirement(req)
         assert result.weight == pytest.approx(0.0)
 
     def test_invalid_weight_defaults_to_one(self):
         req = SimpleNamespace(req_type="required", weight="not_a_number")
-        result = _as_requirement(req)
+        result = as_requirement(req)
         assert result.weight == pytest.approx(1.0)
 
     def test_negative_weight_clamped_to_zero(self):
         req = SimpleNamespace(req_type="required", weight=-2.0)
-        result = _as_requirement(req)
+        result = as_requirement(req)
         assert result.weight == pytest.approx(0.0)
 
     def test_match_like_object_uses_requirement_field(self):
         inner = SimpleNamespace(req_type="preferred", weight=0.5)
         match_obj = SimpleNamespace(requirement=inner, similarity=0.8)
-        result = _as_requirement(match_obj)
+        result = as_requirement(match_obj)
         assert result.req_type == "preferred"
         assert result.weight == pytest.approx(0.5)
 
@@ -138,17 +137,17 @@ class TestAsRequirement:
 class TestAsMatch:
     def test_object_without_similarity_uses_default(self):
         req = SimpleNamespace(req_type="required", weight=1.0)  # no .similarity
-        result = _as_match(req, default_similarity=0.5)
+        result = as_match(req, default_similarity=0.5)
         assert result.similarity == pytest.approx(0.5)
 
     def test_invalid_similarity_defaults_to_zero(self):
         obj = SimpleNamespace(req_type="required", weight=1.0, similarity="invalid")
-        result = _as_match(obj, default_similarity=0.0)
+        result = as_match(obj, default_similarity=0.0)
         assert result.similarity == pytest.approx(0.0)
 
     def test_valid_similarity_used(self):
         obj = SimpleNamespace(req_type="required", weight=1.0, similarity=0.75)
-        result = _as_match(obj)
+        result = as_match(obj)
         assert result.similarity == pytest.approx(0.75)
 
 
