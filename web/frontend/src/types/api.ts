@@ -245,6 +245,21 @@ export interface ApiErrorResponse {
     fields?: ApiFieldError[];
 }
 
+export interface CloudUser {
+    id: string;
+    email: string;
+    name: string;
+    picture?: string | null;
+    provider: string;
+    token_kind: string;
+}
+
+export interface CloudAuthExchangeResponse {
+    access_token: string;
+    token_type: string;
+    user: CloudUser;
+}
+
 export interface PipelineStatusResponse {
     task_id: string;
     status:
