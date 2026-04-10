@@ -19,6 +19,16 @@ vi.mock('@/services/cloudAuthApi', () => ({
 }));
 
 describe('GoogleLoginScreen', () => {
+    function createDeferred<T>() {
+        let resolve!: (value: T) => void;
+        let reject!: (reason?: unknown) => void;
+        const promise = new Promise<T>((res, rej) => {
+            resolve = res;
+            reject = rej;
+        });
+        return { promise, resolve, reject };
+    }
+
     beforeEach(() => {
         vi.useFakeTimers();
         vi.stubEnv('VITE_GOOGLE_CLIENT_ID', 'test-client-id-abc');
@@ -223,6 +233,55 @@ describe('GoogleLoginScreen', () => {
                 'Sign-in failed. Please try again.'
             );
             expect(mockLogin).not.toHaveBeenCalled();
+        });
+
+        it('shows a pending message while the credential exchange is in flight', async () => {
+            const exchange = createDeferred<{
+                data: {
+                    access_token: string;
+                    token_type: string;
+                    user: {
+                        id: string;
+                        email: string;
+                        name: string;
+                        picture?: string;
+                        provider: string;
+                        token_kind: string;
+                    };
+                };
+            }>();
+            vi.mocked(cloudAuthApi.exchangeGoogleCredential).mockReturnValueOnce(
+                exchange.promise as never
+            );
+
+            const { fire } = setupLoginCallback();
+
+            await act(async () => {
+                void fire('header.payload.sig');
+                await Promise.resolve();
+            });
+
+            expect(screen.getByText('Finishing sign-in...')).toBeInTheDocument();
+
+            await act(async () => {
+                exchange.resolve({
+                    data: {
+                        access_token: 'app-token-123',
+                        token_type: 'Bearer',
+                        user: {
+                            id: 'user-1',
+                            email: 'user@test.com',
+                            name: 'Test User',
+                            picture: 'https://img/p.jpg',
+                            provider: 'google',
+                            token_kind: 'google_id_token',
+                        },
+                    },
+                });
+                await Promise.resolve();
+            });
+
+            expect(screen.queryByText('Finishing sign-in...')).not.toBeInTheDocument();
         });
     });
 });

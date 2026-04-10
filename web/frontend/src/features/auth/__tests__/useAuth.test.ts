@@ -44,6 +44,10 @@ function createDeferred<T>() {
     return { promise, resolve, reject };
 }
 
+function makeJwt(payload: Record<string, unknown>): string {
+    return `header.${btoa(JSON.stringify(payload))}.sig`;
+}
+
 function storeAuthSession(overrides: Partial<{
     user: { email: string; name: string; picture?: string };
     token: string;
@@ -104,6 +108,7 @@ afterAll(() => {
 
 describe('useAuth', () => {
     beforeEach(() => {
+        vi.stubGlobal('localStorage', storageMock);
         storageMock.clear();
         __resetAuthForTests();
         vi.clearAllMocks();
@@ -178,6 +183,65 @@ describe('useAuth', () => {
             expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
             expect(result.current.isReady).toBe(true);
         });
+
+        it('derives expiry from a JWT exp string when expires_at is missing', async () => {
+            const exp = Math.floor(Date.now() / 1000) + 120;
+            mockCurrentUser({ email: 'jwt@example.com', name: 'JWT User' });
+            localStorage.setItem(
+                STORAGE_KEY,
+                JSON.stringify({
+                    user: { email: 'jwt@example.com', name: 'JWT User' },
+                    token: makeJwt({ exp: String(exp) }),
+                })
+            );
+
+            const { result } = renderHook(() => useAuth());
+            await flushAuthEffects();
+
+            const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+            expect(result.current.token).toBeTruthy();
+            expect(stored.expires_at).toBe(exp * 1000);
+        });
+
+        it('returns empty auth when the stored session is missing a user', () => {
+            localStorage.setItem(
+                STORAGE_KEY,
+                JSON.stringify({
+                    token: 'stored-token',
+                    expires_at: Date.now() + 120_000,
+                })
+            );
+
+            const { result } = renderHook(() => useAuth());
+
+            expect(result.current.user).toBeNull();
+            expect(result.current.token).toBeNull();
+        });
+
+        it('returns empty auth when the stored session is missing a token', () => {
+            localStorage.setItem(
+                STORAGE_KEY,
+                JSON.stringify({
+                    user: { email: 'missing@example.com', name: 'Missing Token' },
+                    expires_at: Date.now() + 120_000,
+                })
+            );
+
+            const { result } = renderHook(() => useAuth());
+
+            expect(result.current.user).toBeNull();
+            expect(result.current.token).toBeNull();
+        });
+
+        it('returns empty auth when localStorage is unavailable', () => {
+            vi.stubGlobal('localStorage', undefined);
+
+            const { result } = renderHook(() => useAuth());
+
+            expect(result.current.user).toBeNull();
+            expect(result.current.token).toBeNull();
+            expect(result.current.isReady).toBe(true);
+        });
     });
 
     describe('login', () => {
@@ -249,6 +313,23 @@ describe('useAuth', () => {
 
             expect(result.current.user?.email).toBe('second@example.com');
             expect(result.current.token).toBe('tok-2');
+        });
+
+        it('falls back to a conservative expiry for opaque login tokens', () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date('2026-04-10T10:00:00.000Z'));
+            const { result } = renderHook(() => useAuth());
+
+            act(() => {
+                result.current.login(
+                    { email: 'opaque@example.com', name: 'Opaque User' },
+                    'opaque-token'
+                );
+            });
+
+            const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+            expect(stored.expires_at).toBe(Date.now() + 55 * 60 * 1000);
+            vi.useRealTimers();
         });
 
         it('synchronizes login state across multiple hook instances', () => {
@@ -399,6 +480,78 @@ describe('useAuth', () => {
             expect(result.current.isReady).toBe(false);
         });
 
+        it('retries bootstrap after a transient error and restores readiness on success', async () => {
+            storeAuthSession({
+                user: { email: 'retry@example.com', name: 'Retry User' },
+                token: 'valid-app-token',
+            });
+            vi.mocked(cloudAuthApi.getCurrentUser)
+                .mockRejectedValueOnce({ response: { status: 503 } } as never)
+                .mockResolvedValueOnce({
+                    data: buildCloudUser({
+                        email: 'retry@example.com',
+                        name: 'Retry User',
+                    }),
+                } as never);
+
+            const { result } = renderHook(() => useAuth());
+
+            await flushAuthEffects();
+            expect(result.current.isReady).toBe(false);
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(15_000);
+            });
+
+            expect(cloudAuthApi.getCurrentUser).toHaveBeenCalledTimes(2);
+            expect(result.current.isReady).toBe(true);
+            expect(result.current.user?.email).toBe('retry@example.com');
+        });
+
+        it('cancels a scheduled bootstrap retry when the session changes', async () => {
+            storeAuthSession({
+                user: { email: 'retry@example.com', name: 'Retry User' },
+                token: 'valid-app-token',
+            });
+            vi.mocked(cloudAuthApi.getCurrentUser).mockRejectedValue({
+                response: { status: 503 },
+            } as never);
+
+            const { result } = renderHook(() => useAuth());
+
+            await flushAuthEffects();
+            act(() => {
+                result.current.login(
+                    { email: 'fresh@example.com', name: 'Fresh User' },
+                    'fresh-token'
+                );
+            });
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(15_000);
+            });
+
+            expect(cloudAuthApi.getCurrentUser).toHaveBeenCalledTimes(1);
+            expect(result.current.user?.email).toBe('fresh@example.com');
+        });
+
+        it('clears the stored session when bootstrap is unauthorized', async () => {
+            storeAuthSession({
+                user: { email: 'stale@example.com', name: 'Stale User' },
+                token: 'valid-app-token',
+            });
+            vi.mocked(cloudAuthApi.getCurrentUser).mockRejectedValue({
+                response: { status: 403 },
+            } as never);
+
+            const { result } = renderHook(() => useAuth());
+            await flushAuthEffects();
+
+            expect(result.current.user).toBeNull();
+            expect(result.current.token).toBeNull();
+            expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+        });
+
         it('refreshes the token before expiry', async () => {
             storeAuthSession({
                 user: { email: 'refresh@example.com', name: 'Refresh User' },
@@ -523,6 +676,62 @@ describe('useAuth', () => {
             expect(result.current.token).toBeNull();
         });
 
+        it('does not let a stale bootstrap error clear a newer login', async () => {
+            const bootstrap = createDeferred<{ data: ReturnType<typeof buildCloudUser> }>();
+            storeAuthSession({
+                user: { email: 'stale@example.com', name: 'Stale User' },
+                token: 'valid-app-token',
+            });
+            vi.mocked(cloudAuthApi.getCurrentUser).mockReturnValue(
+                bootstrap.promise as never
+            );
+
+            const { result } = renderHook(() => useAuth());
+
+            act(() => {
+                result.current.login(
+                    { email: 'fresh@example.com', name: 'Fresh User' },
+                    'fresh-token'
+                );
+            });
+
+            await act(async () => {
+                bootstrap.reject({ response: { status: 503 } });
+                await Promise.resolve();
+            });
+
+            expect(result.current.user?.email).toBe('fresh@example.com');
+            expect(result.current.token).toBe('fresh-token');
+        });
+
+        it('deduplicates concurrent bootstrap requests across hook instances', async () => {
+            const bootstrap = createDeferred<{ data: ReturnType<typeof buildCloudUser> }>();
+            storeAuthSession({
+                user: { email: 'stale@example.com', name: 'Stale User' },
+                token: 'valid-app-token',
+            });
+            vi.mocked(cloudAuthApi.getCurrentUser).mockReturnValue(
+                bootstrap.promise as never
+            );
+
+            renderHook(() => useAuth());
+            await flushAuthEffects();
+            renderHook(() => useAuth());
+            await flushAuthEffects();
+
+            expect(cloudAuthApi.getCurrentUser).toHaveBeenCalledTimes(1);
+
+            await act(async () => {
+                bootstrap.resolve({
+                    data: buildCloudUser({
+                        email: 'stale@example.com',
+                        name: 'Stale User',
+                    }),
+                });
+                await Promise.resolve();
+            });
+        });
+
         it('does not let a stale refresh response overwrite a newer login', async () => {
             const refresh = createDeferred<{
                 data: {
@@ -572,6 +781,97 @@ describe('useAuth', () => {
 
             expect(result.current.user?.email).toBe('new@example.com');
             expect(result.current.token).toBe('brand-new-token');
+        });
+
+        it('does not let a stale refresh rejection clear a newer login', async () => {
+            const refresh = createDeferred<{
+                data: {
+                    access_token: string;
+                    token_type: string;
+                    user: ReturnType<typeof buildCloudUser>;
+                };
+            }>();
+            storeAuthSession({
+                user: { email: 'refresh@example.com', name: 'Refresh User' },
+                token: 'old-app-token',
+                expires_at: Date.now() + 61_000,
+            });
+            mockCurrentUser({
+                email: 'refresh@example.com',
+                name: 'Refresh User',
+            });
+            vi.mocked(cloudAuthApi.refreshSession).mockReturnValue(refresh.promise as never);
+
+            const { result } = renderHook(() => useAuth());
+
+            await flushAuthEffects();
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(2_000);
+            });
+
+            act(() => {
+                result.current.login(
+                    { email: 'new@example.com', name: 'New User' },
+                    'brand-new-token'
+                );
+            });
+
+            await act(async () => {
+                refresh.reject({ response: { status: 503 } });
+                await Promise.resolve();
+            });
+
+            expect(result.current.user?.email).toBe('new@example.com');
+            expect(result.current.token).toBe('brand-new-token');
+        });
+
+        it('ignores a second refresh trigger while one is already in flight', async () => {
+            const refresh = createDeferred<{
+                data: {
+                    access_token: string;
+                    token_type: string;
+                    user: ReturnType<typeof buildCloudUser>;
+                };
+            }>();
+            storeAuthSession({
+                user: { email: 'refresh@example.com', name: 'Refresh User' },
+                token: 'old-app-token',
+                expires_at: Date.now() + 61_000,
+            });
+            mockCurrentUser({
+                email: 'refresh@example.com',
+                name: 'Refresh User',
+            });
+            vi.mocked(cloudAuthApi.refreshSession).mockReturnValue(refresh.promise as never);
+
+            renderHook(() => useAuth());
+            await flushAuthEffects();
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(2_000);
+            });
+
+            renderHook(() => useAuth());
+            await flushAuthEffects();
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(0);
+            });
+
+            expect(cloudAuthApi.refreshSession).toHaveBeenCalledTimes(1);
+
+            await act(async () => {
+                refresh.resolve({
+                    data: {
+                        access_token: 'new-app-token',
+                        token_type: 'Bearer',
+                        user: buildCloudUser({
+                            email: 'refresh@example.com',
+                            name: 'Refresh User',
+                        }),
+                    },
+                });
+                await Promise.resolve();
+            });
         });
     });
 });

@@ -14,7 +14,7 @@ export const apiClient = axios.create({
 });
 
 function readStoredToken(): string | null {
-    if (typeof globalThis.window === 'undefined') {
+    if (globalThis.window === undefined) {
         return null;
     }
 
