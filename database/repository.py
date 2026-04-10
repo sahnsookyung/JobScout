@@ -78,14 +78,28 @@ class JobRepository:
     def rollback(self) -> None:
         self.db.rollback()
 
-    def get_by_fingerprint(self, fingerprint: str) -> Optional[JobPost]:
-        return self.job_post.get_by_fingerprint(fingerprint)
+    def get_by_fingerprint(self, fingerprint: str, tenant_id: Optional[Any] = None) -> Optional[JobPost]:
+        return self.job_post.get_by_fingerprint(fingerprint, tenant_id=tenant_id)
+
+    def get_by_source(self, site_name: str, job_url: str) -> Optional[JobPost]:
+        return self.job_post.get_by_source(site_name, job_url)
 
     def get_by_id(self, job_post_id: Any) -> JobPost:
         return self.job_post.get_by_id(job_post_id)
 
-    def create_job_post(self, job_data: dict, fingerprint: str, location_text: str) -> JobPost:
-        return self.job_post.create_job_post(job_data, fingerprint, location_text)
+    def create_job_post(
+        self,
+        job_data: dict,
+        fingerprint: str,
+        location_text: str,
+        tenant_id: Optional[Any] = None,
+    ) -> JobPost:
+        return self.job_post.create_job_post(
+            job_data,
+            fingerprint,
+            location_text,
+            tenant_id=tenant_id,
+        )
 
     def get_or_create_source(self, job_post_id: Any, site_name: str, job_data: dict) -> None:
         return self.job_post.get_or_create_source(job_post_id, site_name, job_data)
@@ -98,6 +112,9 @@ class JobRepository:
 
     def update_timestamp(self, job_post: JobPost) -> None:
         return self.job_post.update_timestamp(job_post)
+
+    def deactivate_missing_sources(self, site_name: str, seen_job_urls: List[str]) -> int:
+        return self.job_post.deactivate_missing_sources(site_name, seen_job_urls)
 
     def get_unextracted_jobs(self, limit: int = 100) -> List[JobPost]:
         return self.job_post.get_unextracted_jobs(limit)

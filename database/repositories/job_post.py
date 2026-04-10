@@ -3,7 +3,7 @@ import json
 import hashlib
 import re
 from typing import List, Optional, Dict, Any, Tuple
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 
 from sqlalchemy import select, delete, func, update
 from sqlalchemy import and_, or_
@@ -29,17 +29,38 @@ class JobPostRepository(BaseRepository):
         delay_seconds = schedule[min(max(attempts - 1, 0), len(schedule) - 1)]
         return datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
 
-    def get_by_fingerprint(self, fingerprint: str) -> Optional[JobPost]:
-        stmt = select(JobPost).where(JobPost.canonical_fingerprint == fingerprint)
+    def get_by_fingerprint(self, fingerprint: str, tenant_id: Any | None = None) -> Optional[JobPost]:
+        stmt = select(JobPost).where(
+            JobPost.canonical_fingerprint == fingerprint,
+            JobPost.tenant_id.is_(None) if tenant_id is None else JobPost.tenant_id == tenant_id,
+        )
+        return self.db.execute(stmt).scalar_one_or_none()
+
+    def get_by_source(self, site_name: str, job_url: str) -> Optional[JobPost]:
+        stmt = (
+            select(JobPost)
+            .join(JobPostSource, JobPostSource.job_post_id == JobPost.id)
+            .where(
+                JobPostSource.site == site_name,
+                JobPostSource.job_url == job_url,
+            )
+        )
         return self.db.execute(stmt).scalar_one_or_none()
 
     def get_by_id(self, job_post_id: Any) -> JobPost:
         stmt = select(JobPost).where(JobPost.id == job_post_id)
         return self.db.execute(stmt).scalar_one()
 
-    def create_job_post(self, job_data: dict, fingerprint: str, location_text: str) -> JobPost:
+    def create_job_post(
+        self,
+        job_data: dict,
+        fingerprint: str,
+        location_text: str,
+        tenant_id: Any | None = None,
+    ) -> JobPost:
         now = datetime.now(timezone.utc)
         job_post = JobPost(
+            tenant_id=tenant_id,
             title=job_data['title'],
             company=job_data['company_name'],
             location_text=location_text,
@@ -69,16 +90,46 @@ class JobPostRepository(BaseRepository):
                 site=site_name,
                 job_url=job_url,
                 job_url_direct=job_data.get('job_url_direct'),
-                date_posted=None,
+                source_job_id=job_data.get('source_job_id'),
+                date_posted=self._coerce_date(job_data.get('date_posted')),
             )
             self.db.add(new_source)
+            return
+
+        existing_source.job_post_id = job_post_id
+        existing_source.job_url_direct = job_data.get('job_url_direct')
+        existing_source.source_job_id = job_data.get('source_job_id')
+        existing_source.date_posted = self._coerce_date(job_data.get('date_posted'))
+        existing_source.last_seen_at = datetime.now(timezone.utc)
+        existing_source.is_active = True
+
+    @staticmethod
+    def _coerce_date(value: Any) -> date | None:
+        if value is None:
+            return None
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if not cleaned:
+                return None
+            try:
+                return datetime.fromisoformat(cleaned.replace("Z", "+00:00")).date()
+            except ValueError:
+                return None
+        return None
 
     def _calculate_content_hash(self, job_data: Dict[str, Any]) -> str:
         content_parts = [
             job_data.get('description', ''),
             json.dumps(job_data.get('skills', []), sort_keys=True),
             job_data.get('title', ''),
-            job_data.get('company_name', '')
+            job_data.get('company_name', ''),
+            job_data.get('location', ''),
+            job_data.get('employment_type', ''),
+            json.dumps(job_data.get('compensation', {}), sort_keys=True),
+            job_data.get('job_url_direct', ''),
+            job_data.get('source_job_id', ''),
         ]
         content_str = '|'.join(str(part) for part in content_parts)
         return hashlib.sha256(content_str.encode('utf-8')).hexdigest()[:32]
@@ -125,6 +176,30 @@ class JobPostRepository(BaseRepository):
 
     def update_timestamp(self, job_post: JobPost) -> None:
         job_post.last_seen_at = func.now()
+        job_post.status = 'active'
+
+    def deactivate_missing_sources(self, site_name: str, seen_job_urls: List[str]) -> int:
+        stale_sources = self.db.execute(
+            select(JobPostSource).where(JobPostSource.site == site_name)
+        ).scalars().all()
+        seen = set(seen_job_urls)
+        deactivated = 0
+
+        for source in stale_sources:
+            if source.job_url in seen:
+                source.is_active = True
+                continue
+
+            if source.is_active:
+                deactivated += 1
+            source.is_active = False
+            source.last_seen_at = datetime.now(timezone.utc)
+            if source.job_post is not None and not any(
+                sibling.is_active and sibling.id != source.id for sibling in source.job_post.sources
+            ):
+                source.job_post.status = 'inactive'
+
+        return deactivated
 
     def get_unextracted_jobs(self, limit: int = 100) -> List[JobPost]:
         now = datetime.now(timezone.utc)
