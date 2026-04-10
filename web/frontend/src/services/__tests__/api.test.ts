@@ -98,6 +98,30 @@ describe('apiClient', () => {
             consoleSpy.mockRestore();
         });
 
+        it('should attach bearer token when auth is stored', () => {
+            Object.defineProperty(window, 'localStorage', {
+                value: {
+                    getItem: vi.fn(() =>
+                        JSON.stringify({
+                            user: { email: 'user@example.com', name: 'User' },
+                            token: 'google-id-token-123',
+                        })
+                    ),
+                },
+                configurable: true,
+            });
+            const mockConfig = {
+                method: 'get',
+                url: '/test',
+                headers: {} as Record<string, string>,
+            };
+
+            const { requestHandler } = getMockHandlers();
+            const result = requestHandler.fulfilled(mockConfig);
+
+            expect(result.headers.Authorization).toBe('Bearer google-id-token-123');
+        });
+
         it('should pass config through', () => {
             const mockConfig = { method: 'post', url: '/api', headers: {} };
             const { requestHandler } = getMockHandlers();

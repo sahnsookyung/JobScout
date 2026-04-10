@@ -2,7 +2,13 @@ import { render, screen } from '@testing-library/react';
 import { AuthGate } from '../AuthGate';
 
 vi.mock('../useAuth', () => ({
-    useAuth: vi.fn(() => ({ user: null, token: null, login: vi.fn(), logout: vi.fn() })),
+    useAuth: vi.fn(() => ({
+        user: null,
+        token: null,
+        isReady: true,
+        login: vi.fn(),
+        logout: vi.fn(),
+    })),
 }));
 
 vi.mock('../GoogleLoginScreen', () => ({
@@ -60,6 +66,7 @@ describe('AuthGate', () => {
             vi.mocked(useAuth).mockReturnValue({
                 user: null,
                 token: null,
+                isReady: true,
                 login: vi.fn(),
                 logout: vi.fn(),
             });
@@ -76,6 +83,7 @@ describe('AuthGate', () => {
             vi.mocked(useAuth).mockReturnValue({
                 user: { email: 'user@example.com', name: 'User' },
                 token: 'jwt-token-xyz',
+                isReady: true,
                 login: vi.fn(),
                 logout: vi.fn(),
             });
@@ -92,6 +100,7 @@ describe('AuthGate', () => {
             vi.mocked(useAuth).mockReturnValue({
                 user: null,
                 token: 'dangling-token',
+                isReady: true,
                 login: vi.fn(),
                 logout: vi.fn(),
             });
@@ -99,6 +108,25 @@ describe('AuthGate', () => {
                 <AuthGate>
                     <div data-testid="child-content">App</div>
                 </AuthGate>
+            );
+            expect(screen.queryByTestId('child-content')).not.toBeInTheDocument();
+        });
+
+        it('waits for stored-session validation before rendering children', () => {
+            vi.mocked(useAuth).mockReturnValue({
+                user: { email: 'user@example.com', name: 'User' },
+                token: 'jwt-token-xyz',
+                isReady: false,
+                login: vi.fn(),
+                logout: vi.fn(),
+            });
+            render(
+                <AuthGate>
+                    <div data-testid="child-content">App</div>
+                </AuthGate>
+            );
+            expect(screen.getByRole('status')).toHaveTextContent(
+                'Restoring your session...'
             );
             expect(screen.queryByTestId('child-content')).not.toBeInTheDocument();
         });

@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Briefcase } from 'lucide-react';
-import { useAuth, type AuthUser } from './useAuth';
+import { cloudAuthApi } from '@/services/cloudAuthApi';
+import { useAuth } from './useAuth';
 
 declare global {
     // eslint-disable-next-line no-var
@@ -18,18 +19,12 @@ interface GoogleCredentialResponse {
     credential: string;
 }
 
-function parseJwt(token: string): Record<string, string> {
-    try {
-        return JSON.parse(atob(token.split('.')[1]));
-    } catch {
-        return {};
-    }
-}
-
 export function GoogleLoginScreen() {
     const { login } = useAuth();
     const buttonRef = useRef<HTMLDivElement>(null);
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string;
+    const [isSigningIn, setIsSigningIn] = useState(false);
+    const [authError, setAuthError] = useState<string | null>(null);
 
     useEffect(() => {
         const scriptId = 'google-gsi';
@@ -46,14 +41,27 @@ export function GoogleLoginScreen() {
             if (!globalThis.google || !buttonRef.current) return;
             globalThis.google.accounts.id.initialize({
                 client_id: clientId,
-                callback: (response: GoogleCredentialResponse) => {
-                    const payload = parseJwt(response.credential);
-                    const user: AuthUser = {
-                        email: payload.email ?? '',
-                        name: payload.name ?? payload.email ?? '',
-                        picture: payload.picture,
-                    };
-                    login(user, response.credential);
+                callback: async (response: GoogleCredentialResponse) => {
+                    setIsSigningIn(true);
+                    setAuthError(null);
+                    try {
+                        const exchange = await cloudAuthApi.exchangeGoogleCredential(
+                            response.credential
+                        );
+                        const { user, access_token: accessToken } = exchange.data;
+                        login(
+                            {
+                                email: user.email,
+                                name: user.name,
+                                picture: user.picture ?? undefined,
+                            },
+                            accessToken
+                        );
+                    } catch {
+                        setAuthError('Sign-in failed. Please try again.');
+                    } finally {
+                        setIsSigningIn(false);
+                    }
                 },
             });
             globalThis.google.accounts.id.renderButton(buttonRef.current, {
@@ -83,9 +91,19 @@ export function GoogleLoginScreen() {
                 </div>
                 <div className="text-center">
                     <h1 className="text-2xl font-bold text-gray-900">JobScout</h1>
-                    <p className="text-sm text-gray-500 mt-1">Sign in to continue</p>
+                    <p className="text-sm text-gray-500 mt-1">
+                        Continue with Google to create an account or sign in
+                    </p>
                 </div>
                 <div ref={buttonRef} />
+                {isSigningIn ? (
+                    <p className="text-sm text-blue-600">Finishing sign-in...</p>
+                ) : null}
+                {authError ? (
+                    <p className="text-sm text-red-600" role="alert">
+                        {authError}
+                    </p>
+                ) : null}
             </div>
         </div>
     );

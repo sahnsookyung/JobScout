@@ -25,7 +25,17 @@ export function AuthGate({ children }: AuthGateProps) {
 }
 
 function AuthGateInner({ children }: AuthGateProps) {
-    const { user } = useAuth();
+    const { user, isReady } = useAuth();
+
+    if (!isReady) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                <p className="text-sm text-gray-600" role="status">
+                    Restoring your session...
+                </p>
+            </div>
+        );
+    }
 
     if (!user) {
         return <GoogleLoginScreen />;

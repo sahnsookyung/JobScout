@@ -2,6 +2,8 @@ import axios, { type AxiosError } from 'axios';
 
 import type { ApiErrorResponse, ApiFieldError } from '@/types/api';
 
+const AUTH_STORAGE_KEY = 'jobscout_auth';
+
 export const apiClient = axios.create({
     baseURL: import.meta.env.VITE_API_URL || '/api',
     timeout: 30000,
@@ -11,9 +13,34 @@ export const apiClient = axios.create({
     },
 });
 
+function readStoredToken(): string | null {
+    if (typeof window === 'undefined') {
+        return null;
+    }
+
+    try {
+        const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+        if (!raw) {
+            return null;
+        }
+
+        const parsed = JSON.parse(raw) as { token?: unknown };
+        return typeof parsed.token === 'string' && parsed.token.length > 0
+            ? parsed.token
+            : null;
+    } catch {
+        return null;
+    }
+}
+
 // Request interceptor for logging
 apiClient.interceptors.request.use(
     (config) => {
+        const token = readStoredToken();
+        if (token) {
+            config.headers = config.headers ?? {};
+            config.headers.Authorization = `Bearer ${token}`;
+        }
         console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`);
         return config;
     },
