@@ -90,9 +90,7 @@ function clearBootstrapRetryTimer(): void {
 }
 
 function getAuthState(): AuthState {
-    if (authState === null) {
-        authState = loadStoredAuth();
-    }
+    authState ??= loadStoredAuth();
     return authState;
 }
 

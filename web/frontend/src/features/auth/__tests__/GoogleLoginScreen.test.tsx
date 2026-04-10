@@ -1,4 +1,4 @@
-import { render, screen, act, waitFor } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 import { GoogleLoginScreen } from '../GoogleLoginScreen';
 import { useAuth } from '../useAuth';
 import { cloudAuthApi } from '@/services/cloudAuthApi';
@@ -161,7 +161,7 @@ describe('GoogleLoginScreen', () => {
             return {
                 mockLogin,
                 fire: async (jwt: string) => {
-                    await capturedCallback?.({ credential: jwt });
+                    await Promise.resolve(capturedCallback?.({ credential: jwt }));
                 },
             };
         }

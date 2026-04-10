@@ -30,9 +30,13 @@ function AuthGateInner({ children }: AuthGateProps) {
     if (!isReady) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-50">
-                <p className="text-sm text-gray-600" role="status">
+                <output
+                    className="text-sm text-gray-600"
+                    aria-live="polite"
+                    aria-label="Restoring your session"
+                >
                     Restoring your session...
-                </p>
+                </output>
             </div>
         );
     }

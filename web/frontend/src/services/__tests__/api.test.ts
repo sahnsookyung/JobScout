@@ -99,12 +99,12 @@ describe('apiClient', () => {
         });
 
         it('should attach bearer token when auth is stored', () => {
-            Object.defineProperty(window, 'localStorage', {
+            Object.defineProperty(globalThis, 'localStorage', {
                 value: {
                     getItem: vi.fn(() =>
                         JSON.stringify({
                             user: { email: 'user@example.com', name: 'User' },
-                            token: 'google-id-token-123',
+                            token: 'test-session-token',
                         })
                     ),
                 },
@@ -119,7 +119,7 @@ describe('apiClient', () => {
             const { requestHandler } = getMockHandlers();
             const result = requestHandler.fulfilled(mockConfig);
 
-            expect(result.headers.Authorization).toBe('Bearer google-id-token-123');
+            expect(result.headers.Authorization).toBe('Bearer test-session-token');
         });
 
         it('should pass config through', () => {

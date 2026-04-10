@@ -14,12 +14,12 @@ export const apiClient = axios.create({
 });
 
 function readStoredToken(): string | null {
-    if (typeof window === 'undefined') {
+    if (typeof globalThis.window === 'undefined') {
         return null;
     }
 
     try {
-        const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+        const raw = globalThis.localStorage.getItem(AUTH_STORAGE_KEY);
         if (!raw) {
             return null;
         }

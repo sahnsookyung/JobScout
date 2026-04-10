@@ -1,4 +1,4 @@
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 
 vi.mock('@/services/cloudAuthApi', () => ({
     cloudAuthApi: {
@@ -42,6 +42,36 @@ function createDeferred<T>() {
         reject = rej;
     });
     return { promise, resolve, reject };
+}
+
+function storeAuthSession(overrides: Partial<{
+    user: { email: string; name: string; picture?: string };
+    token: string;
+    expires_at: number;
+}> = {}): void {
+    localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+            user:
+                overrides.user ?? {
+                    email: 'stored@example.com',
+                    name: 'Stored User',
+                },
+            token: overrides.token ?? 'stored-token',
+            expires_at: overrides.expires_at ?? Date.now() + 120_000,
+        })
+    );
+}
+
+function mockCurrentUser(overrides: Partial<{
+    id: string;
+    email: string;
+    name: string;
+    picture?: string;
+}> = {}): void {
+    vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValue({
+        data: buildCloudUser(overrides),
+    } as never);
 }
 
 const storageMock = (() => {
@@ -88,20 +118,11 @@ describe('useAuth', () => {
         });
 
         it('loads stored user and token from localStorage on mount', async () => {
-            vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValue({
-                data: buildCloudUser({
-                    email: 'alice@example.com',
-                    name: 'Alice',
-                }),
-            } as never);
-            localStorage.setItem(
-                STORAGE_KEY,
-                JSON.stringify({
-                    user: { email: 'alice@example.com', name: 'Alice' },
-                    token: 'stored-token-123',
-                    expires_at: Date.now() + 120_000,
-                })
-            );
+            mockCurrentUser({ email: 'alice@example.com', name: 'Alice' });
+            storeAuthSession({
+                user: { email: 'alice@example.com', name: 'Alice' },
+                token: 'stored-token-123',
+            });
 
             const { result } = renderHook(() => useAuth());
             await flushAuthEffects();
@@ -112,25 +133,19 @@ describe('useAuth', () => {
         });
 
         it('loads stored user with picture field', async () => {
-            vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValue({
-                data: buildCloudUser({
+            mockCurrentUser({
+                email: 'bob@example.com',
+                name: 'Bob',
+                picture: 'https://example.com/pic.jpg',
+            });
+            storeAuthSession({
+                user: {
                     email: 'bob@example.com',
                     name: 'Bob',
                     picture: 'https://example.com/pic.jpg',
-                }),
-            } as never);
-            localStorage.setItem(
-                STORAGE_KEY,
-                JSON.stringify({
-                    user: {
-                        email: 'bob@example.com',
-                        name: 'Bob',
-                        picture: 'https://example.com/pic.jpg',
-                    },
-                    token: 'tok-bob',
-                    expires_at: Date.now() + 120_000,
-                })
-            );
+                },
+                token: 'tok-bob',
+            });
 
             const { result } = renderHook(() => useAuth());
             await flushAuthEffects();
@@ -150,14 +165,11 @@ describe('useAuth', () => {
         });
 
         it('clears expired stored auth on initialization', () => {
-            localStorage.setItem(
-                STORAGE_KEY,
-                JSON.stringify({
-                    user: { email: 'expired@example.com', name: 'Expired User' },
-                    token: 'expired-token',
-                    expires_at: Date.now() - 1000,
-                })
-            );
+            storeAuthSession({
+                user: { email: 'expired@example.com', name: 'Expired User' },
+                token: 'expired-token',
+                expires_at: Date.now() - 1000,
+            });
 
             const { result } = renderHook(() => useAuth());
 
@@ -352,23 +364,11 @@ describe('useAuth', () => {
         });
 
         it('bootstraps the current user from a stored valid token', async () => {
-            localStorage.setItem(
-                STORAGE_KEY,
-                JSON.stringify({
-                    user: { email: 'stale@example.com', name: 'Stale User' },
-                    token: 'valid-app-token',
-                    expires_at: Date.now() + 120_000,
-                })
-            );
-            vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValue({
-                data: {
-                    id: 'user-1',
-                    email: 'fresh@example.com',
-                    name: 'Fresh User',
-                    provider: 'google',
-                    token_kind: 'app_jwt',
-                },
-            } as never);
+            storeAuthSession({
+                user: { email: 'stale@example.com', name: 'Stale User' },
+                token: 'valid-app-token',
+            });
+            mockCurrentUser({ email: 'fresh@example.com', name: 'Fresh User' });
 
             const { result } = renderHook(() => useAuth());
 
@@ -381,14 +381,10 @@ describe('useAuth', () => {
         });
 
         it('keeps the stored session pending when bootstrap hits a transient error', async () => {
-            localStorage.setItem(
-                STORAGE_KEY,
-                JSON.stringify({
-                    user: { email: 'stale@example.com', name: 'Stale User' },
-                    token: 'valid-app-token',
-                    expires_at: Date.now() + 120_000,
-                })
-            );
+            storeAuthSession({
+                user: { email: 'stale@example.com', name: 'Stale User' },
+                token: 'valid-app-token',
+            });
             vi.mocked(cloudAuthApi.getCurrentUser).mockRejectedValue({
                 response: { status: 503 },
             } as never);
@@ -404,23 +400,15 @@ describe('useAuth', () => {
         });
 
         it('refreshes the token before expiry', async () => {
-            localStorage.setItem(
-                STORAGE_KEY,
-                JSON.stringify({
-                    user: { email: 'refresh@example.com', name: 'Refresh User' },
-                    token: 'old-app-token',
-                    expires_at: Date.now() + 61_000,
-                })
-            );
-            vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValue({
-                data: {
-                    id: 'user-1',
-                    email: 'refresh@example.com',
-                    name: 'Refresh User',
-                    provider: 'google',
-                    token_kind: 'app_jwt',
-                },
-            } as never);
+            storeAuthSession({
+                user: { email: 'refresh@example.com', name: 'Refresh User' },
+                token: 'old-app-token',
+                expires_at: Date.now() + 61_000,
+            });
+            mockCurrentUser({
+                email: 'refresh@example.com',
+                name: 'Refresh User',
+            });
             vi.mocked(cloudAuthApi.refreshSession).mockResolvedValue({
                 data: {
                     access_token: 'new-app-token',
@@ -451,23 +439,15 @@ describe('useAuth', () => {
         });
 
         it('does not log out when refresh hits a transient error', async () => {
-            localStorage.setItem(
-                STORAGE_KEY,
-                JSON.stringify({
-                    user: { email: 'refresh@example.com', name: 'Refresh User' },
-                    token: 'old-app-token',
-                    expires_at: Date.now() + 61_000,
-                })
-            );
-            vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValue({
-                data: {
-                    id: 'user-1',
-                    email: 'refresh@example.com',
-                    name: 'Refresh User',
-                    provider: 'google',
-                    token_kind: 'app_jwt',
-                },
-            } as never);
+            storeAuthSession({
+                user: { email: 'refresh@example.com', name: 'Refresh User' },
+                token: 'old-app-token',
+                expires_at: Date.now() + 61_000,
+            });
+            mockCurrentUser({
+                email: 'refresh@example.com',
+                name: 'Refresh User',
+            });
             vi.mocked(cloudAuthApi.refreshSession).mockRejectedValue(
                 { response: { status: 503 } } as never
             );
@@ -487,23 +467,15 @@ describe('useAuth', () => {
         });
 
         it('logs out when refresh is unauthorized', async () => {
-            localStorage.setItem(
-                STORAGE_KEY,
-                JSON.stringify({
-                    user: { email: 'refresh@example.com', name: 'Refresh User' },
-                    token: 'old-app-token',
-                    expires_at: Date.now() + 61_000,
-                })
-            );
-            vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValue({
-                data: {
-                    id: 'user-1',
-                    email: 'refresh@example.com',
-                    name: 'Refresh User',
-                    provider: 'google',
-                    token_kind: 'app_jwt',
-                },
-            } as never);
+            storeAuthSession({
+                user: { email: 'refresh@example.com', name: 'Refresh User' },
+                token: 'old-app-token',
+                expires_at: Date.now() + 61_000,
+            });
+            mockCurrentUser({
+                email: 'refresh@example.com',
+                name: 'Refresh User',
+            });
             vi.mocked(cloudAuthApi.refreshSession).mockRejectedValue({
                 response: { status: 401 },
             } as never);
@@ -523,14 +495,10 @@ describe('useAuth', () => {
 
         it('does not let a stale bootstrap response restore a logged-out session', async () => {
             const bootstrap = createDeferred<{ data: ReturnType<typeof buildCloudUser> }>();
-            localStorage.setItem(
-                STORAGE_KEY,
-                JSON.stringify({
-                    user: { email: 'stale@example.com', name: 'Stale User' },
-                    token: 'valid-app-token',
-                    expires_at: Date.now() + 120_000,
-                })
-            );
+            storeAuthSession({
+                user: { email: 'stale@example.com', name: 'Stale User' },
+                token: 'valid-app-token',
+            });
             vi.mocked(cloudAuthApi.getCurrentUser).mockReturnValue(
                 bootstrap.promise as never
             );
@@ -563,20 +531,15 @@ describe('useAuth', () => {
                     user: ReturnType<typeof buildCloudUser>;
                 };
             }>();
-            localStorage.setItem(
-                STORAGE_KEY,
-                JSON.stringify({
-                    user: { email: 'refresh@example.com', name: 'Refresh User' },
-                    token: 'old-app-token',
-                    expires_at: Date.now() + 61_000,
-                })
-            );
-            vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValue({
-                data: buildCloudUser({
-                    email: 'refresh@example.com',
-                    name: 'Refresh User',
-                }),
-            } as never);
+            storeAuthSession({
+                user: { email: 'refresh@example.com', name: 'Refresh User' },
+                token: 'old-app-token',
+                expires_at: Date.now() + 61_000,
+            });
+            mockCurrentUser({
+                email: 'refresh@example.com',
+                name: 'Refresh User',
+            });
             vi.mocked(cloudAuthApi.refreshSession).mockReturnValue(refresh.promise as never);
 
             const { result } = renderHook(() => useAuth());
