@@ -60,6 +60,10 @@ class TestGetBySource:
 
         assert result is mock_job
 
+        executed_stmt = mock_db.execute.call_args.args[0]
+        compiled = str(executed_stmt)
+        assert "job_post.tenant_id =" not in compiled
+
 
 def test_job_post_source_unique_constraint_is_scoped_to_job_post() -> None:
     constraints = [

@@ -37,13 +37,13 @@ class JobPostRepository(BaseRepository):
         return self.db.execute(stmt).scalar_one_or_none()
 
     def get_by_source(self, site_name: str, job_url: str, tenant_id: Any | None = None) -> Optional[JobPost]:
+        del tenant_id
         stmt = (
             select(JobPost)
             .join(JobPostSource, JobPostSource.job_post_id == JobPost.id)
             .where(
                 JobPostSource.site == site_name,
                 JobPostSource.job_url == job_url,
-                JobPost.tenant_id.is_(None) if tenant_id is None else JobPost.tenant_id == tenant_id,
             )
         )
         return self.db.execute(stmt).scalar_one_or_none()
@@ -82,15 +82,13 @@ class JobPostRepository(BaseRepository):
         job_data: Dict[str, Any],
         tenant_id: Any | None = None,
     ) -> None:
+        del tenant_id
         job_url = job_data.get('job_url')
 
         existing_source = self.db.execute(
-            select(JobPostSource)
-            .join(JobPost, JobPost.id == JobPostSource.job_post_id)
-            .where(
+            select(JobPostSource).where(
                 JobPostSource.site == site_name,
                 JobPostSource.job_url == job_url,
-                JobPost.tenant_id.is_(None) if tenant_id is None else JobPost.tenant_id == tenant_id,
             )
         ).scalar_one_or_none()
 
