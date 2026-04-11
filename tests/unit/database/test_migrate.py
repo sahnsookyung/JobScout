@@ -108,3 +108,31 @@ def test_check_fails_on_checksum_mismatch(tmp_path: Path) -> None:
     ):
         with pytest.raises(migrate_module.DatabaseSchemaError, match="checksum mismatch"):
             migrate_module.check_database_schema(engine=engine, migrations_dir=tmp_path)
+
+
+def test_migrate_rolls_back_before_unlocking_on_failure(tmp_path: Path) -> None:
+    _write_migration(
+        tmp_path,
+        "def migrate(conn):\n"
+        "    raise RuntimeError('boom')\n",
+    )
+
+    import database.migrate as migrate_module
+
+    engine, conn = _mock_engine_with_connection()
+    with (
+        patch.object(migrate_module, "_schema_migrations_exists", return_value=False),
+        patch.object(migrate_module, "_app_tables_present", return_value=set()),
+    ):
+        with pytest.raises(RuntimeError, match="boom"):
+            migrate_module.migrate_database(engine=engine, migrations_dir=tmp_path)
+
+    rollback_index = next(
+        i for i, call in enumerate(conn.method_calls) if call[0] == "rollback"
+    )
+    unlock_index = next(
+        i
+        for i, call in enumerate(conn.method_calls)
+        if call[0] == "execute" and "SELECT pg_advisory_unlock" in str(call[1][0])
+    )
+    assert rollback_index < unlock_index

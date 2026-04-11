@@ -2,7 +2,7 @@
 
 from datetime import date
 from types import SimpleNamespace
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Index
 
 import pytest
 from unittest.mock import MagicMock
@@ -62,20 +62,22 @@ class TestGetBySource:
 
         executed_stmt = mock_db.execute.call_args.args[0]
         compiled = str(executed_stmt)
-        assert "job_post.tenant_id =" not in compiled
+        assert "job_post_source.tenant_id =" in compiled
 
 
-def test_job_post_source_unique_constraint_is_scoped_to_job_post() -> None:
-    constraints = [
-        constraint
-        for constraint in JobPostSource.__table__.constraints
-        if isinstance(constraint, UniqueConstraint)
-    ]
+def test_job_post_source_uniqueness_is_scoped_by_tenant_when_present() -> None:
+    indexes = {index.name: index for index in JobPostSource.__table__.indexes if isinstance(index, Index)}
 
-    assert any(
-        constraint.name == "uq_job_post_source_site_url"
-        and tuple(column.name for column in constraint.columns) == ("site", "job_url")
-        for constraint in constraints
+    assert "uq_job_post_source_tenant_site_url" in indexes
+    assert tuple(column.name for column in indexes["uq_job_post_source_tenant_site_url"].columns) == (
+        "tenant_id",
+        "site",
+        "job_url",
+    )
+    assert "uq_job_post_source_global_site_url" in indexes
+    assert tuple(column.name for column in indexes["uq_job_post_source_global_site_url"].columns) == (
+        "site",
+        "job_url",
     )
 
 
@@ -138,21 +140,26 @@ class TestGetOrCreateSource:
         repo, mock_db = make_repo()
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
-        repo.get_or_create_source("job-id", "linkedin", {"job_url": "http://example.com"})
+        repo.get_or_create_source("job-id", "linkedin", {"job_url": "http://example.com"}, tenant_id="tenant-1")
 
         mock_db.add.assert_called_once()
         added = mock_db.add.call_args[0][0]
         assert isinstance(added, JobPostSource)
         assert added.site == "linkedin"
         assert added.job_url == "http://example.com"
+        assert added.tenant_id == "tenant-1"
+        compiled = str(mock_db.execute.call_args.args[0])
+        assert "job_post_source.tenant_id =" in compiled
 
     def test_skips_creation_when_source_exists(self):
         repo, mock_db = make_repo()
         mock_db.execute.return_value.scalar_one_or_none.return_value = MagicMock(spec=JobPostSource)
 
-        repo.get_or_create_source("job-id", "linkedin", {"job_url": "http://example.com"})
+        repo.get_or_create_source("job-id", "linkedin", {"job_url": "http://example.com"}, tenant_id="tenant-1")
 
         mock_db.add.assert_not_called()
+        compiled = str(mock_db.execute.call_args.args[0])
+        assert "job_post_source.tenant_id =" in compiled
 
     def test_sets_job_url_direct_if_provided(self):
         repo, mock_db = make_repo()
@@ -160,10 +167,12 @@ class TestGetOrCreateSource:
 
         repo.get_or_create_source(
             "job-id", "indeed",
-            {"job_url": "http://x.com", "job_url_direct": "http://y.com"}
+            {"job_url": "http://x.com", "job_url_direct": "http://y.com"},
+            tenant_id="tenant-1",
         )
 
         added = mock_db.add.call_args[0][0]
+        assert added.tenant_id == "tenant-1"
         assert added.job_url_direct == "http://y.com"
 
 

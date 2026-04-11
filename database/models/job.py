@@ -127,6 +127,7 @@ class JobPostSource(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_post_id = Column(UUID(as_uuid=True), ForeignKey(JOB_POST_ID_FK, ondelete='CASCADE'), nullable=False)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey(TENANT_TABLE + '.id', ondelete='CASCADE'), nullable=True)
     
     site = Column(Text, nullable=False)
     job_url = Column(Text, nullable=False)
@@ -141,9 +142,24 @@ class JobPostSource(Base):
     job_post = relationship("JobPost", back_populates="sources")
 
     __table_args__ = (
-        UniqueConstraint('site', 'job_url', name='uq_job_post_source_site_url'),
         Index('idx_job_post_source_job', 'job_post_id'),
+        Index('idx_job_post_source_tenant', 'tenant_id'),
         Index('idx_job_post_source_seen', 'last_seen_at'),
+        Index(
+            'uq_job_post_source_tenant_site_url',
+            'tenant_id',
+            'site',
+            'job_url',
+            unique=True,
+            postgresql_where=sql_text('tenant_id IS NOT NULL'),
+        ),
+        Index(
+            'uq_job_post_source_global_site_url',
+            'site',
+            'job_url',
+            unique=True,
+            postgresql_where=sql_text('tenant_id IS NULL'),
+        ),
     )
 
 class JobRequirementUnit(Base):

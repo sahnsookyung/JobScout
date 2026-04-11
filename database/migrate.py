@@ -65,6 +65,13 @@ def _ensure_schema_migrations_table(conn: Connection) -> None:
     )
 
 
+def _release_migration_lock(conn: Connection) -> None:
+    """Release the advisory lock from a clean transaction state."""
+    conn.rollback()
+    conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": MIGRATION_LOCK_KEY})
+    conn.commit()
+
+
 def _applied_migrations(conn: Connection) -> dict[str, str]:
     if not _schema_migrations_exists(conn):
         return {}
@@ -187,10 +194,7 @@ def check_database_schema(
                     raise _missing_schema_error()
                 _validate_schema_state(conn, migration_paths)
             finally:
-                conn.execute(
-                    text("SELECT pg_advisory_unlock(:key)"),
-                    {"key": MIGRATION_LOCK_KEY},
-                )
+                _release_migration_lock(conn)
     finally:
         if created_engine:
             db_engine.dispose()
@@ -250,11 +254,7 @@ def migrate_database(
 
                 return applied_now
             finally:
-                conn.execute(
-                    text("SELECT pg_advisory_unlock(:key)"),
-                    {"key": MIGRATION_LOCK_KEY},
-                )
-                conn.commit()
+                _release_migration_lock(conn)
     finally:
         if created_engine:
             db_engine.dispose()
