@@ -119,7 +119,7 @@ class TestJobPostDelegation:
         repo, _ = make_repo()
         repo.job_post.get_by_fingerprint = MagicMock(return_value="job-1")
         result = repo.get_by_fingerprint("fp-abc")
-        repo.job_post.get_by_fingerprint.assert_called_once_with("fp-abc")
+        repo.job_post.get_by_fingerprint.assert_called_once_with("fp-abc", tenant_id=None)
         assert result == "job-1"
 
     def test_get_by_id(self):
@@ -133,7 +133,12 @@ class TestJobPostDelegation:
         repo, _ = make_repo()
         repo.job_post.create_job_post = MagicMock(return_value="new-job")
         result = repo.create_job_post({"title": "Dev"}, "fp-1", "Remote")
-        repo.job_post.create_job_post.assert_called_once_with({"title": "Dev"}, "fp-1", "Remote")
+        repo.job_post.create_job_post.assert_called_once_with(
+            {"title": "Dev"},
+            "fp-1",
+            "Remote",
+            tenant_id=None,
+        )
         assert result == "new-job"
 
     def test_get_or_create_source(self):
