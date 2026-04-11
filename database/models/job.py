@@ -141,7 +141,7 @@ class JobPostSource(Base):
     job_post = relationship("JobPost", back_populates="sources")
 
     __table_args__ = (
-        UniqueConstraint('job_post_id', 'site', 'job_url', name='uq_job_post_source_job_site_url'),
+        UniqueConstraint('site', 'job_url', name='uq_job_post_source_site_url'),
         Index('idx_job_post_source_job', 'job_post_id'),
         Index('idx_job_post_source_seen', 'last_seen_at'),
     )

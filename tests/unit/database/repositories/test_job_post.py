@@ -69,8 +69,8 @@ def test_job_post_source_unique_constraint_is_scoped_to_job_post() -> None:
     ]
 
     assert any(
-        constraint.name == "uq_job_post_source_job_site_url"
-        and tuple(column.name for column in constraint.columns) == ("job_post_id", "site", "job_url")
+        constraint.name == "uq_job_post_source_site_url"
+        and tuple(column.name for column in constraint.columns) == ("site", "job_url")
         for constraint in constraints
     )
 
