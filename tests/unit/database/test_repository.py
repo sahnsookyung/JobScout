@@ -75,6 +75,14 @@ class TestJobRepositoryProperties:
         second = repo.candidate_preferences
         assert first is second
 
+    def test_match_selection_returns_match_selection_repository(self):
+        repo, _ = make_repo()
+        assert repo.match_selection is not None
+
+    def test_notification_settings_returns_notification_settings_repository(self):
+        repo, _ = make_repo()
+        assert repo.notification_settings is not None
+
     def test_user_feature_capability_returns_repository(self):
         repo, _ = make_repo()
         assert isinstance(repo.user_feature_capability, UserFeatureCapabilityRepository)
@@ -129,6 +137,16 @@ class TestJobPostDelegation:
         repo.job_post.get_by_id.assert_called_once_with("id-1")
         assert result == "job-obj"
 
+    def test_get_by_source(self):
+        repo, _ = make_repo()
+        repo.job_post.get_by_source = MagicMock(return_value="job-from-source")
+        result = repo.get_by_source("greenhouse", "https://example.com/jobs/1")
+        repo.job_post.get_by_source.assert_called_once_with(
+            "greenhouse",
+            "https://example.com/jobs/1",
+        )
+        assert result == "job-from-source"
+
     def test_create_job_post(self):
         repo, _ = make_repo()
         repo.job_post.create_job_post = MagicMock(return_value="new-job")
@@ -159,6 +177,23 @@ class TestJobPostDelegation:
         mock_job = MagicMock()
         repo.update_timestamp(mock_job)
         repo.job_post.update_timestamp.assert_called_once_with(mock_job)
+
+    def test_calculate_content_hash(self):
+        repo, _ = make_repo()
+        repo.job_post._calculate_content_hash = MagicMock(return_value="hash-123")
+        result = repo._calculate_content_hash({"title": "Platform Engineer"})
+        repo.job_post._calculate_content_hash.assert_called_once_with({"title": "Platform Engineer"})
+        assert result == "hash-123"
+
+    def test_deactivate_missing_sources(self):
+        repo, _ = make_repo()
+        repo.job_post.deactivate_missing_sources = MagicMock(return_value=2)
+        result = repo.deactivate_missing_sources("greenhouse", ["https://example.com/jobs/1"])
+        repo.job_post.deactivate_missing_sources.assert_called_once_with(
+            "greenhouse",
+            ["https://example.com/jobs/1"],
+        )
+        assert result == 2
 
     def test_get_unextracted_jobs(self):
         repo, _ = make_repo()
@@ -191,6 +226,13 @@ class TestJobPostDelegation:
         repo.job_post.mark_extraction_failed = MagicMock()
         repo.mark_extraction_failed("job-id", "error msg")
         repo.job_post.mark_extraction_failed.assert_called_once_with("job-id", "error msg")
+
+    def test_extract_years_from_requirement(self):
+        repo, _ = make_repo()
+        repo.job_post._extract_years_from_requirement = MagicMock(return_value=(5, "5 years"))
+        result = repo._extract_years_from_requirement("5 years of Python")
+        repo.job_post._extract_years_from_requirement.assert_called_once_with("5 years of Python")
+        assert result == (5, "5 years")
 
     def test_save_requirements(self):
         repo, _ = make_repo()
@@ -306,6 +348,13 @@ class TestJobPostDelegation:
         )
         assert result == [("job", 0.5, 0.8)]
 
+    def test_quarantine_null_description_jobs(self):
+        repo, _ = make_repo()
+        repo.job_post.quarantine_null_description_jobs = MagicMock(return_value=4)
+        result = repo.quarantine_null_description_jobs(older_than_days=14)
+        repo.job_post.quarantine_null_description_jobs.assert_called_once_with(14)
+        assert result == 4
+
 
 # ---------------------------------------------------------------------------
 # resume delegation
@@ -334,6 +383,42 @@ class TestResumeDelegation:
             fingerprint_version=1,
         )
 
+    def test_get_resume_upload(self):
+        repo, _ = make_repo()
+        repo.resume.get_resume_upload = MagicMock(return_value="upload")
+        result = repo.get_resume_upload("upload-1", owner_id="owner-1")
+        repo.resume.get_resume_upload.assert_called_once_with("upload-1", "owner-1")
+        assert result == "upload"
+
+    def test_get_latest_resume_upload_for_hash(self):
+        repo, _ = make_repo()
+        repo.resume.get_latest_resume_upload_for_hash = MagicMock(return_value="upload")
+        result = repo.get_latest_resume_upload_for_hash("owner-1", "hash-1")
+        repo.resume.get_latest_resume_upload_for_hash.assert_called_once_with("owner-1", "hash-1")
+        assert result == "upload"
+
+    def test_update_resume_upload(self):
+        repo, _ = make_repo()
+        repo.resume.update_resume_upload = MagicMock(return_value="updated")
+        result = repo.update_resume_upload(
+            "upload-1",
+            status="failed",
+            last_error="timeout",
+            failure_debug_context={"stage": "parse"},
+        )
+        repo.resume.update_resume_upload.assert_called_once_with(
+            "upload-1",
+            status="failed",
+            last_error="timeout",
+            processing_task_id=None,
+            failure_stage=None,
+            failure_class=None,
+            retryable=None,
+            user_safe_message=None,
+            failure_debug_context={"stage": "parse"},
+        )
+        assert result == "updated"
+
     def test_save_resume_section_embeddings(self):
         repo, _ = make_repo()
         repo.resume.save_resume_section_embeddings = MagicMock(return_value=[])
@@ -352,6 +437,13 @@ class TestResumeDelegation:
         result = repo.get_resume_section_embeddings("fp-1", section_type="summary")
         repo.resume.get_resume_section_embeddings.assert_called_once_with("fp-1", "summary")
         assert result == ["sec-1"]
+
+    def test_get_structured_resume_by_fingerprint(self):
+        repo, _ = make_repo()
+        repo.resume.get_structured_resume_by_fingerprint = MagicMock(return_value={"name": "Alice"})
+        result = repo.get_structured_resume_by_fingerprint("fp-1")
+        repo.resume.get_structured_resume_by_fingerprint.assert_called_once_with("fp-1")
+        assert result == {"name": "Alice"}
 
     def test_save_evidence_unit_embeddings(self):
         repo, _ = make_repo()
