@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -366,9 +367,11 @@ def _compose_up_with_retries(
                 diagnostics = compose_failure_diagnostics(compose_env)
             _compose_down(compose_args, compose_env)
             if "port is already allocated" not in stderr.lower():
+                rendered = stderr
                 if diagnostics:
-                    exc.stderr = f"{stderr}\n\n{diagnostics}"
-                raise
+                    rendered = f"{stderr}\n\n{diagnostics}".strip()
+                    print(rendered, file=sys.stderr, flush=True)
+                raise AssertionError(rendered or str(exc)) from exc
     if last_error is not None:
         raise last_error
     raise AssertionError("Failed to bring up compose stack")

@@ -198,7 +198,7 @@ def test_compose_down_force_removes_leftover_project_containers(monkeypatch) -> 
     ]
 
 
-def test_compose_up_with_retries_appends_diagnostics_before_raising(monkeypatch) -> None:
+def test_compose_up_with_retries_prints_diagnostics_before_raising(monkeypatch, capsys) -> None:
     compose_args = ("docker", "compose", "-p", "jobscout-e2e")
     compose_env = {"WEB_BACKEND_PORT": "12345"}
     seen_commands: list[tuple[str, ...]] = []
@@ -247,7 +247,7 @@ def test_compose_up_with_retries_appends_diagnostics_before_raising(monkeypatch)
         lambda args, env: compose_down_calls.append(env),
     )
 
-    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+    with pytest.raises(AssertionError) as exc_info:
         _compose_up_with_retries(
             compose_args,
             ("db-migrate",),
@@ -255,8 +255,10 @@ def test_compose_up_with_retries_appends_diagnostics_before_raising(monkeypatch)
             attempts=1,
         )
 
-    assert "=== compose ps ===" in exc_info.value.stderr
-    assert "Traceback: boom" in exc_info.value.stderr
+    captured = capsys.readouterr()
+    assert "=== compose ps ===" in captured.err
+    assert "Traceback: boom" in captured.err
+    assert "service \"db-migrate\" didn't complete successfully" in str(exc_info.value)
     assert compose_down_calls == [compose_env, compose_env]
     assert ("ps", "-a", "--format", "json") in seen_commands
     assert ("logs", "--no-color", "db-migrate", "postgres") in seen_commands
