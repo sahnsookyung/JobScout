@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.utils import JobFingerprinter
+
 
 def _fallback_external_id(payload: dict[str, Any]) -> str:
     for key in ("source_job_id", "job_id", "id", "job_url", "job_url_direct"):
@@ -48,6 +50,10 @@ class NormalizedJobRecord:
     compensation: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     raw_payload: dict[str, Any] = field(default_factory=dict)
+
+    def canonical_dedupe_fingerprint(self) -> str:
+        location_text = JobFingerprinter.normalize_location(self.location)
+        return JobFingerprinter.calculate(self.company_name, self.title, location_text)
 
     @classmethod
     def from_scraper_payload(

@@ -2,6 +2,7 @@
 
 from datetime import date
 from types import SimpleNamespace
+from sqlalchemy import UniqueConstraint
 
 import pytest
 from unittest.mock import MagicMock
@@ -55,9 +56,23 @@ class TestGetBySource:
         mock_job = MagicMock(spec=JobPost)
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_job
 
-        result = repo.get_by_source("greenhouse", "https://example.com/jobs/1")
+        result = repo.get_by_source("greenhouse", "https://example.com/jobs/1", tenant_id="tenant-1")
 
         assert result is mock_job
+
+
+def test_job_post_source_unique_constraint_is_scoped_to_job_post() -> None:
+    constraints = [
+        constraint
+        for constraint in JobPostSource.__table__.constraints
+        if isinstance(constraint, UniqueConstraint)
+    ]
+
+    assert any(
+        constraint.name == "uq_job_post_source_job_site_url"
+        and tuple(column.name for column in constraint.columns) == ("job_post_id", "site", "job_url")
+        for constraint in constraints
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +313,7 @@ class TestDeactivateMissingSources:
         )
         mock_db.execute.return_value.scalars.return_value.all.return_value = [seen_source]
 
-        deactivated = repo.deactivate_missing_sources("greenhouse", [seen_source.job_url])
+        deactivated = repo.deactivate_missing_sources("greenhouse", [seen_source.job_url], tenant_id="tenant-1")
 
         assert deactivated == 0
         assert seen_source.is_active is True
@@ -318,7 +333,7 @@ class TestDeactivateMissingSources:
         stale_source.job_post = parent_job
         mock_db.execute.return_value.scalars.return_value.all.return_value = [stale_source]
 
-        deactivated = repo.deactivate_missing_sources("greenhouse", [])
+        deactivated = repo.deactivate_missing_sources("greenhouse", [], tenant_id="tenant-1")
 
         assert deactivated == 1
         assert stale_source.is_active is False

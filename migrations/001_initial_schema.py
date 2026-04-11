@@ -417,7 +417,7 @@ DDL_STATEMENTS = [
         first_seen_at TIMESTAMPTZ NOT NULL DEFAULT timezone('UTC', now()),
         last_seen_at TIMESTAMPTZ NOT NULL DEFAULT timezone('UTC', now()),
         is_active BOOLEAN NOT NULL,
-        CONSTRAINT uq_job_post_source_site_url UNIQUE (site, job_url)
+        CONSTRAINT uq_job_post_source_job_site_url UNIQUE (job_post_id, site, job_url)
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_job_post_source_seen ON job_post_source (last_seen_at)",

@@ -79,12 +79,20 @@ class JobETLService:
 
         # 1. Fingerprint & Normalization
         location_text = JobFingerprinter.normalize_location(job_data.get('location'))
-        fingerprint = JobFingerprinter.calculate(company, title, location_text)
+        fingerprint = record.canonical_dedupe_fingerprint()
         source_job_url = str(job_data.get("job_url") or "")
 
         # 2. Duplicate Check
         source_match = False
-        job_post = repo.get_by_source(record.source.site_name, source_job_url) if source_job_url else None
+        job_post = (
+            repo.get_by_source(
+                record.source.site_name,
+                source_job_url,
+                tenant_id=record.tenant_id,
+            )
+            if source_job_url
+            else None
+        )
         if job_post:
             source_match = True
             logger.info("Found existing job by source identity: %s", source_job_url)
@@ -106,7 +114,12 @@ class JobETLService:
         logger.info(f"Duplicate found for {title}. ID: {job_post.id}")
 
         # 3. Create Source & Content
-        repo.get_or_create_source(job_post.id, record.source.site_name, job_data)
+        repo.get_or_create_source(
+            job_post.id,
+            record.source.site_name,
+            job_data,
+            tenant_id=record.tenant_id,
+        )
         repo.save_job_content(job_post.id, job_data)
 
     def extract_one(self, repo: JobRepository, job) -> None:

@@ -140,10 +140,11 @@ class TestJobPostDelegation:
     def test_get_by_source(self):
         repo, _ = make_repo()
         repo.job_post.get_by_source = MagicMock(return_value="job-from-source")
-        result = repo.get_by_source("greenhouse", "https://example.com/jobs/1")
+        result = repo.get_by_source("greenhouse", "https://example.com/jobs/1", tenant_id="tenant-1")
         repo.job_post.get_by_source.assert_called_once_with(
             "greenhouse",
             "https://example.com/jobs/1",
+            tenant_id="tenant-1",
         )
         assert result == "job-from-source"
 
@@ -162,8 +163,13 @@ class TestJobPostDelegation:
     def test_get_or_create_source(self):
         repo, _ = make_repo()
         repo.job_post.get_or_create_source = MagicMock(return_value=None)
-        repo.get_or_create_source("job-id", "linkedin", {"url": "x"})
-        repo.job_post.get_or_create_source.assert_called_once_with("job-id", "linkedin", {"url": "x"})
+        repo.get_or_create_source("job-id", "linkedin", {"url": "x"}, tenant_id="tenant-1")
+        repo.job_post.get_or_create_source.assert_called_once_with(
+            "job-id",
+            "linkedin",
+            {"url": "x"},
+            tenant_id="tenant-1",
+        )
 
     def test_save_job_content(self):
         repo, _ = make_repo()
@@ -188,10 +194,15 @@ class TestJobPostDelegation:
     def test_deactivate_missing_sources(self):
         repo, _ = make_repo()
         repo.job_post.deactivate_missing_sources = MagicMock(return_value=2)
-        result = repo.deactivate_missing_sources("greenhouse", ["https://example.com/jobs/1"])
+        result = repo.deactivate_missing_sources(
+            "greenhouse",
+            ["https://example.com/jobs/1"],
+            tenant_id="tenant-1",
+        )
         repo.job_post.deactivate_missing_sources.assert_called_once_with(
             "greenhouse",
             ["https://example.com/jobs/1"],
+            tenant_id="tenant-1",
         )
         assert result == 2
 

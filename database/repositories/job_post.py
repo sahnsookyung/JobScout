@@ -36,13 +36,14 @@ class JobPostRepository(BaseRepository):
         )
         return self.db.execute(stmt).scalar_one_or_none()
 
-    def get_by_source(self, site_name: str, job_url: str) -> Optional[JobPost]:
+    def get_by_source(self, site_name: str, job_url: str, tenant_id: Any | None = None) -> Optional[JobPost]:
         stmt = (
             select(JobPost)
             .join(JobPostSource, JobPostSource.job_post_id == JobPost.id)
             .where(
                 JobPostSource.site == site_name,
                 JobPostSource.job_url == job_url,
+                JobPost.tenant_id.is_(None) if tenant_id is None else JobPost.tenant_id == tenant_id,
             )
         )
         return self.db.execute(stmt).scalar_one_or_none()
@@ -74,13 +75,22 @@ class JobPostRepository(BaseRepository):
         self.db.flush()
         return job_post
 
-    def get_or_create_source(self, job_post_id: Any, site_name: str, job_data: Dict[str, Any]) -> None:
+    def get_or_create_source(
+        self,
+        job_post_id: Any,
+        site_name: str,
+        job_data: Dict[str, Any],
+        tenant_id: Any | None = None,
+    ) -> None:
         job_url = job_data.get('job_url')
 
         existing_source = self.db.execute(
-            select(JobPostSource).where(
+            select(JobPostSource)
+            .join(JobPost, JobPost.id == JobPostSource.job_post_id)
+            .where(
                 JobPostSource.site == site_name,
-                JobPostSource.job_url == job_url
+                JobPostSource.job_url == job_url,
+                JobPost.tenant_id.is_(None) if tenant_id is None else JobPost.tenant_id == tenant_id,
             )
         ).scalar_one_or_none()
 
@@ -178,9 +188,19 @@ class JobPostRepository(BaseRepository):
         job_post.last_seen_at = func.now()
         job_post.status = 'active'
 
-    def deactivate_missing_sources(self, site_name: str, seen_job_urls: List[str]) -> int:
+    def deactivate_missing_sources(
+        self,
+        site_name: str,
+        seen_job_urls: List[str],
+        tenant_id: Any | None = None,
+    ) -> int:
         stale_sources = self.db.execute(
-            select(JobPostSource).where(JobPostSource.site == site_name)
+            select(JobPostSource)
+            .join(JobPost, JobPost.id == JobPostSource.job_post_id)
+            .where(
+                JobPostSource.site == site_name,
+                JobPost.tenant_id.is_(None) if tenant_id is None else JobPost.tenant_id == tenant_id,
+            )
         ).scalars().all()
         seen = set(seen_job_urls)
         deactivated = 0
