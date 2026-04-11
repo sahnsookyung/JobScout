@@ -105,12 +105,39 @@ def test_resolve_build_images_prefers_cached_images(monkeypatch) -> None:
     compose_args = ("docker", "compose", "-p", "jobscout-e2e")
     compose_env = {"WEB_BACKEND_PORT": "12345"}
     monkeypatch.delenv("JOBSCOUT_E2E_BUILD_IMAGES", raising=False)
+    monkeypatch.delenv("JOBSCOUT_E2E_SKIP_BUILD", raising=False)
     monkeypatch.setattr(
         "tests.integration.test_split_stack_resume_flow._compose_images_available",
         lambda *args, **kwargs: True,
     )
 
     assert _resolve_build_images(compose_args, compose_env) is False
+
+
+def test_resolve_build_images_honors_skip_build_env(monkeypatch) -> None:
+    compose_args = ("docker", "compose", "-p", "jobscout-e2e")
+    compose_env = {"WEB_BACKEND_PORT": "12345"}
+    monkeypatch.delenv("JOBSCOUT_E2E_BUILD_IMAGES", raising=False)
+    monkeypatch.setenv("JOBSCOUT_E2E_SKIP_BUILD", "1")
+    monkeypatch.setattr(
+        "tests.integration.test_split_stack_resume_flow._compose_images_available",
+        lambda *args, **kwargs: False,
+    )
+
+    assert _resolve_build_images(compose_args, compose_env) is False
+
+
+def test_resolve_build_images_prefers_explicit_build_override(monkeypatch) -> None:
+    compose_args = ("docker", "compose", "-p", "jobscout-e2e")
+    compose_env = {"WEB_BACKEND_PORT": "12345"}
+    monkeypatch.setenv("JOBSCOUT_E2E_BUILD_IMAGES", "1")
+    monkeypatch.setenv("JOBSCOUT_E2E_SKIP_BUILD", "1")
+    monkeypatch.setattr(
+        "tests.integration.test_split_stack_resume_flow._compose_images_available",
+        lambda *args, **kwargs: True,
+    )
+
+    assert _resolve_build_images(compose_args, compose_env) is True
 
 
 def test_active_split_stack_cleanup_runs_down_and_clears_state(monkeypatch) -> None:
