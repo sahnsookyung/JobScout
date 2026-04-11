@@ -311,6 +311,37 @@ def _compose_up_with_retries(
     build_images: bool | None = None,
     attempts: int = 3,
 ) -> tuple[dict[str, str], subprocess.CompletedProcess[str]]:
+    def compose_failure_diagnostics(compose_env: dict[str, str]) -> str:
+        ps = _run_compose(
+            compose_args,
+            compose_env,
+            "ps",
+            "-a",
+            "--format",
+            "json",
+            check=False,
+            timeout=120,
+        )
+        logs = _run_compose(
+            compose_args,
+            compose_env,
+            "logs",
+            "--no-color",
+            "db-migrate",
+            "postgres",
+            check=False,
+            timeout=120,
+        )
+        return "\n".join(
+            [
+                "=== compose ps ===",
+                ps.stdout.strip(),
+                "=== compose logs ===",
+                logs.stdout.strip(),
+                logs.stderr.strip(),
+            ]
+        ).strip()
+
     last_error = None
     for _ in range(attempts):
         compose_env = _next_compose_env()
@@ -330,8 +361,13 @@ def _compose_up_with_retries(
         except subprocess.CalledProcessError as exc:
             last_error = exc
             stderr = exc.stderr or ""
+            diagnostics = ""
+            if "port is already allocated" not in stderr.lower():
+                diagnostics = compose_failure_diagnostics(compose_env)
             _compose_down(compose_args, compose_env)
             if "port is already allocated" not in stderr.lower():
+                if diagnostics:
+                    exc.stderr = f"{stderr}\n\n{diagnostics}"
                 raise
     if last_error is not None:
         raise last_error

@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from tests.integration.test_split_stack_resume_flow import (
     _clear_active_split_stack_cleanup,
     _compose_images_available,
     _compose_down,
+    _compose_up_with_retries,
     _compose_env,
     _compose_up_args,
     _env_flag,
@@ -194,3 +196,67 @@ def test_compose_down_force_removes_leftover_project_containers(monkeypatch) -> 
         ["docker", "rm", "-f", "-v", "abc123"],
         ["docker", "network", "rm", "jobscout-e2e_default"],
     ]
+
+
+def test_compose_up_with_retries_appends_diagnostics_before_raising(monkeypatch) -> None:
+    compose_args = ("docker", "compose", "-p", "jobscout-e2e")
+    compose_env = {"WEB_BACKEND_PORT": "12345"}
+    seen_commands: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(
+        "tests.integration.test_split_stack_resume_flow._next_compose_env",
+        lambda: compose_env,
+    )
+
+    def fake_run_compose(
+        args: tuple[str, ...],
+        env: dict[str, str],
+        *command: str,
+        **kwargs,
+    ):
+        del args, env, kwargs
+        seen_commands.append(tuple(command))
+        if command[:3] == ("ps", "-a", "--format"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout='{"Name":"jobscout-e2e-db-migrate-1","State":"exited","ExitCode":1}\n',
+                stderr="",
+            )
+        if command[:2] == ("logs", "--no-color"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="db-migrate | Traceback: boom\n",
+                stderr="",
+            )
+        raise subprocess.CalledProcessError(
+            1,
+            command,
+            output="",
+            stderr='service "db-migrate" didn\'t complete successfully: exit 1',
+        )
+
+    compose_down_calls: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        "tests.integration.test_split_stack_resume_flow._run_compose",
+        fake_run_compose,
+    )
+    monkeypatch.setattr(
+        "tests.integration.test_split_stack_resume_flow._compose_down",
+        lambda args, env: compose_down_calls.append(env),
+    )
+
+    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+        _compose_up_with_retries(
+            compose_args,
+            ("db-migrate",),
+            build_images=False,
+            attempts=1,
+        )
+
+    assert "=== compose ps ===" in exc_info.value.stderr
+    assert "Traceback: boom" in exc_info.value.stderr
+    assert compose_down_calls == [compose_env, compose_env]
+    assert ("ps", "-a", "--format", "json") in seen_commands
+    assert ("logs", "--no-color", "db-migrate", "postgres") in seen_commands
