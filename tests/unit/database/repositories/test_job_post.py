@@ -81,6 +81,22 @@ def test_job_post_source_uniqueness_is_scoped_by_tenant_when_present() -> None:
     )
 
 
+def test_job_post_fingerprint_uniqueness_supports_tenant_and_global_rows() -> None:
+    indexes = {index.name: index for index in JobPost.__table__.indexes if isinstance(index, Index)}
+
+    assert "uq_job_post_tenant_fingerprint" in indexes
+    assert tuple(column.name for column in indexes["uq_job_post_tenant_fingerprint"].columns) == (
+        "tenant_id",
+        "fingerprint_version",
+        "canonical_fingerprint",
+    )
+    assert "uq_job_post_global_fingerprint" in indexes
+    assert tuple(column.name for column in indexes["uq_job_post_global_fingerprint"].columns) == (
+        "fingerprint_version",
+        "canonical_fingerprint",
+    )
+
+
 # ---------------------------------------------------------------------------
 # get_by_id
 # ---------------------------------------------------------------------------

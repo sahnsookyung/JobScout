@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, Integer, Text, TIMESTAMP, ForeignKey, Boolean, Date, Numeric, UniqueConstraint, Index
+from sqlalchemy import Column, Integer, Text, TIMESTAMP, ForeignKey, Boolean, Date, Numeric, Index
 from sqlalchemy.sql import text as sql_text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -110,7 +110,21 @@ class JobPost(Base):
     matches = relationship("JobMatch", back_populates="job_post", cascade=CASCADE_DELETE_ORPHAN)
 
     __table_args__ = (
-        UniqueConstraint('tenant_id', 'fingerprint_version', 'canonical_fingerprint', name='uq_job_post_fingerprint'),
+        Index(
+            'uq_job_post_tenant_fingerprint',
+            'tenant_id',
+            'fingerprint_version',
+            'canonical_fingerprint',
+            unique=True,
+            postgresql_where=sql_text('tenant_id IS NOT NULL'),
+        ),
+        Index(
+            'uq_job_post_global_fingerprint',
+            'fingerprint_version',
+            'canonical_fingerprint',
+            unique=True,
+            postgresql_where=sql_text('tenant_id IS NULL'),
+        ),
         Index('idx_job_post_last_seen', 'last_seen_at'),
         Index('idx_job_post_company', 'company'),
         Index('idx_job_post_remote', 'is_remote'),

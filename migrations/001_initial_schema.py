@@ -303,9 +303,18 @@ DDL_STATEMENTS = [
         company_reviews_count INTEGER,
         vacancy_count INTEGER,
         work_from_home_type TEXT,
-        summary_embedding VECTOR(1024),
-        CONSTRAINT uq_job_post_fingerprint UNIQUE (tenant_id, fingerprint_version, canonical_fingerprint)
+        summary_embedding VECTOR(1024)
     )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_job_post_tenant_fingerprint
+    ON job_post (tenant_id, fingerprint_version, canonical_fingerprint)
+    WHERE tenant_id IS NOT NULL
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_job_post_global_fingerprint
+    ON job_post (fingerprint_version, canonical_fingerprint)
+    WHERE tenant_id IS NULL
     """,
     "CREATE INDEX IF NOT EXISTS idx_job_post_company ON job_post (company)",
     "CREATE INDEX IF NOT EXISTS idx_job_post_tenant ON job_post (tenant_id)",
