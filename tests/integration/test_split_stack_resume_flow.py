@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -298,6 +299,9 @@ def _resolve_build_images(
     override = _env_flag("JOBSCOUT_E2E_BUILD_IMAGES")
     if override is not None:
         return override
+    skip_build = _env_flag("JOBSCOUT_E2E_SKIP_BUILD")
+    if skip_build is not None:
+        return not skip_build
     return not _compose_images_available(compose_args, compose_env)
 
 
@@ -308,6 +312,37 @@ def _compose_up_with_retries(
     build_images: bool | None = None,
     attempts: int = 3,
 ) -> tuple[dict[str, str], subprocess.CompletedProcess[str]]:
+    def compose_failure_diagnostics(compose_env: dict[str, str]) -> str:
+        ps = _run_compose(
+            compose_args,
+            compose_env,
+            "ps",
+            "-a",
+            "--format",
+            "json",
+            check=False,
+            timeout=120,
+        )
+        logs = _run_compose(
+            compose_args,
+            compose_env,
+            "logs",
+            "--no-color",
+            "db-migrate",
+            "postgres",
+            check=False,
+            timeout=120,
+        )
+        return "\n".join(
+            [
+                "=== compose ps ===",
+                ps.stdout.strip(),
+                "=== compose logs ===",
+                logs.stdout.strip(),
+                logs.stderr.strip(),
+            ]
+        ).strip()
+
     last_error = None
     for _ in range(attempts):
         compose_env = _next_compose_env()
@@ -327,9 +362,16 @@ def _compose_up_with_retries(
         except subprocess.CalledProcessError as exc:
             last_error = exc
             stderr = exc.stderr or ""
+            diagnostics = ""
+            if "port is already allocated" not in stderr.lower():
+                diagnostics = compose_failure_diagnostics(compose_env)
             _compose_down(compose_args, compose_env)
             if "port is already allocated" not in stderr.lower():
-                raise
+                rendered = stderr
+                if diagnostics:
+                    rendered = f"{stderr}\n\n{diagnostics}".strip()
+                    print(rendered, file=sys.stderr, flush=True)
+                raise AssertionError(rendered or str(exc)) from exc
     if last_error is not None:
         raise last_error
     raise AssertionError("Failed to bring up compose stack")

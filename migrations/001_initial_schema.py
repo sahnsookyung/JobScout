@@ -303,9 +303,18 @@ DDL_STATEMENTS = [
         company_reviews_count INTEGER,
         vacancy_count INTEGER,
         work_from_home_type TEXT,
-        summary_embedding VECTOR(1024),
-        CONSTRAINT uq_job_post_fingerprint UNIQUE (tenant_id, fingerprint_version, canonical_fingerprint)
+        summary_embedding VECTOR(1024)
     )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_job_post_tenant_fingerprint
+    ON job_post (tenant_id, fingerprint_version, canonical_fingerprint)
+    WHERE tenant_id IS NOT NULL
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_job_post_global_fingerprint
+    ON job_post (fingerprint_version, canonical_fingerprint)
+    WHERE tenant_id IS NULL
     """,
     "CREATE INDEX IF NOT EXISTS idx_job_post_company ON job_post (company)",
     "CREATE INDEX IF NOT EXISTS idx_job_post_tenant ON job_post (tenant_id)",
@@ -409,6 +418,7 @@ DDL_STATEMENTS = [
     CREATE TABLE IF NOT EXISTS job_post_source (
         id UUID PRIMARY KEY,
         job_post_id UUID NOT NULL REFERENCES job_post (id) ON DELETE CASCADE,
+        tenant_id UUID REFERENCES tenant (id) ON DELETE CASCADE,
         site TEXT NOT NULL,
         job_url TEXT NOT NULL,
         job_url_direct TEXT,
@@ -416,12 +426,22 @@ DDL_STATEMENTS = [
         date_posted DATE,
         first_seen_at TIMESTAMPTZ NOT NULL DEFAULT timezone('UTC', now()),
         last_seen_at TIMESTAMPTZ NOT NULL DEFAULT timezone('UTC', now()),
-        is_active BOOLEAN NOT NULL,
-        CONSTRAINT uq_job_post_source_site_url UNIQUE (site, job_url)
+        is_active BOOLEAN NOT NULL
     )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_job_post_source_tenant_site_url
+    ON job_post_source (tenant_id, site, job_url)
+    WHERE tenant_id IS NOT NULL
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_job_post_source_global_site_url
+    ON job_post_source (site, job_url)
+    WHERE tenant_id IS NULL
     """,
     "CREATE INDEX IF NOT EXISTS idx_job_post_source_seen ON job_post_source (last_seen_at)",
     "CREATE INDEX IF NOT EXISTS idx_job_post_source_job ON job_post_source (job_post_id)",
+    "CREATE INDEX IF NOT EXISTS idx_job_post_source_tenant ON job_post_source (tenant_id)",
     """
     CREATE TABLE IF NOT EXISTS job_requirement_unit (
         id UUID PRIMARY KEY,

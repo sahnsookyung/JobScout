@@ -17,6 +17,7 @@ from database.models import (
     generate_file_fingerprint,
 )
 from etl.canonical_summary import CanonicalJobSummaryGenerator
+from etl.import_models import NormalizedJobRecord
 from etl.resume import ResumeProfiler, ResumeParser
 from etl.resume.embedding_store import JobRepositoryAdapter
 
@@ -59,13 +60,17 @@ class JobETLService:
         self.canonical_summary_generator = CanonicalJobSummaryGenerator()
 
     def ingest_one(self, repo: JobRepository, job_data: Dict[str, Any], site_name: str) -> None:
+        record = NormalizedJobRecord.from_scraper_payload(job_data, site_name)
+        self.import_record(repo, record)
+
+    def import_record(self, repo: JobRepository, record: NormalizedJobRecord) -> None:
         """Ingest a single raw job from scrapers.
 
         Args:
             repo: JobRepository instance (provided by UoW)
-            job_data: Raw job data from scraper
-            site_name: Name of the site that scraped the job
+            record: Provider-neutral normalized job record
         """
+        job_data = record.as_job_data()
         title = job_data.get('title')
         company = job_data.get('company_name')
         if not title or not company:
@@ -74,19 +79,47 @@ class JobETLService:
 
         # 1. Fingerprint & Normalization
         location_text = JobFingerprinter.normalize_location(job_data.get('location'))
-        fingerprint = JobFingerprinter.calculate(company, title, location_text)
+        fingerprint = record.canonical_dedupe_fingerprint()
+        source_job_url = str(job_data.get("job_url") or "")
 
         # 2. Duplicate Check
-        job_post = repo.get_by_fingerprint(fingerprint)
+        source_match = False
+        job_post = (
+            repo.get_by_source(
+                record.source.site_name,
+                source_job_url,
+                tenant_id=record.tenant_id,
+            )
+            if source_job_url
+            else None
+        )
         if job_post:
-            logger.info(f"Duplicate found for {title}. ID: {job_post.id}")
+            source_match = True
+            logger.info("Found existing job by source identity: %s", source_job_url)
             repo.update_timestamp(job_post)
         else:
+            job_post = repo.get_by_fingerprint(fingerprint, tenant_id=record.tenant_id)
+
+        if not job_post:
             logger.info(f"New job found: {title} at {company}")
-            job_post = repo.create_job_post(job_data, fingerprint, location_text)
+            job_post = repo.create_job_post(
+                job_data,
+                fingerprint,
+                location_text,
+                tenant_id=record.tenant_id,
+            )
+        elif not source_match:
+            repo.update_timestamp(job_post)
+
+        logger.info(f"Duplicate found for {title}. ID: {job_post.id}")
 
         # 3. Create Source & Content
-        repo.get_or_create_source(job_post.id, site_name, job_data)
+        repo.get_or_create_source(
+            job_post.id,
+            record.source.site_name,
+            job_data,
+            tenant_id=record.tenant_id,
+        )
         repo.save_job_content(job_post.id, job_data)
 
     def extract_one(self, repo: JobRepository, job) -> None:

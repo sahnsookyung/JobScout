@@ -1,5 +1,9 @@
 """Unit tests for database/repositories/job_post.py"""
 
+from datetime import date
+from types import SimpleNamespace
+from sqlalchemy import Index
+
 import pytest
 from unittest.mock import MagicMock
 from database.repositories.job_post import JobPostRepository
@@ -44,6 +48,53 @@ class TestGetByFingerprint:
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
         result = repo.get_by_fingerprint("fp-missing")
         assert result is None
+
+
+class TestGetBySource:
+    def test_returns_job_when_source_exists(self):
+        repo, mock_db = make_repo()
+        mock_job = MagicMock(spec=JobPost)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_job
+
+        result = repo.get_by_source("greenhouse", "https://example.com/jobs/1", tenant_id="tenant-1")
+
+        assert result is mock_job
+
+        executed_stmt = mock_db.execute.call_args.args[0]
+        compiled = str(executed_stmt)
+        assert "job_post_source.tenant_id =" in compiled
+
+
+def test_job_post_source_uniqueness_is_scoped_by_tenant_when_present() -> None:
+    indexes = {index.name: index for index in JobPostSource.__table__.indexes if isinstance(index, Index)}
+
+    assert "uq_job_post_source_tenant_site_url" in indexes
+    assert tuple(column.name for column in indexes["uq_job_post_source_tenant_site_url"].columns) == (
+        "tenant_id",
+        "site",
+        "job_url",
+    )
+    assert "uq_job_post_source_global_site_url" in indexes
+    assert tuple(column.name for column in indexes["uq_job_post_source_global_site_url"].columns) == (
+        "site",
+        "job_url",
+    )
+
+
+def test_job_post_fingerprint_uniqueness_supports_tenant_and_global_rows() -> None:
+    indexes = {index.name: index for index in JobPost.__table__.indexes if isinstance(index, Index)}
+
+    assert "uq_job_post_tenant_fingerprint" in indexes
+    assert tuple(column.name for column in indexes["uq_job_post_tenant_fingerprint"].columns) == (
+        "tenant_id",
+        "fingerprint_version",
+        "canonical_fingerprint",
+    )
+    assert "uq_job_post_global_fingerprint" in indexes
+    assert tuple(column.name for column in indexes["uq_job_post_global_fingerprint"].columns) == (
+        "fingerprint_version",
+        "canonical_fingerprint",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -105,21 +156,26 @@ class TestGetOrCreateSource:
         repo, mock_db = make_repo()
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
-        repo.get_or_create_source("job-id", "linkedin", {"job_url": "http://example.com"})
+        repo.get_or_create_source("job-id", "linkedin", {"job_url": "http://example.com"}, tenant_id="tenant-1")
 
         mock_db.add.assert_called_once()
         added = mock_db.add.call_args[0][0]
         assert isinstance(added, JobPostSource)
         assert added.site == "linkedin"
         assert added.job_url == "http://example.com"
+        assert added.tenant_id == "tenant-1"
+        compiled = str(mock_db.execute.call_args.args[0])
+        assert "job_post_source.tenant_id =" in compiled
 
     def test_skips_creation_when_source_exists(self):
         repo, mock_db = make_repo()
         mock_db.execute.return_value.scalar_one_or_none.return_value = MagicMock(spec=JobPostSource)
 
-        repo.get_or_create_source("job-id", "linkedin", {"job_url": "http://example.com"})
+        repo.get_or_create_source("job-id", "linkedin", {"job_url": "http://example.com"}, tenant_id="tenant-1")
 
         mock_db.add.assert_not_called()
+        compiled = str(mock_db.execute.call_args.args[0])
+        assert "job_post_source.tenant_id =" in compiled
 
     def test_sets_job_url_direct_if_provided(self):
         repo, mock_db = make_repo()
@@ -127,11 +183,31 @@ class TestGetOrCreateSource:
 
         repo.get_or_create_source(
             "job-id", "indeed",
-            {"job_url": "http://x.com", "job_url_direct": "http://y.com"}
+            {"job_url": "http://x.com", "job_url_direct": "http://y.com"},
+            tenant_id="tenant-1",
         )
 
         added = mock_db.add.call_args[0][0]
+        assert added.tenant_id == "tenant-1"
         assert added.job_url_direct == "http://y.com"
+
+
+class TestCoerceDate:
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (date(2026, 4, 11), date(2026, 4, 11)),
+            ("2026-04-11", date(2026, 4, 11)),
+            ("2026-04-11T12:30:00Z", date(2026, 4, 11)),
+            ("  ", None),
+            ("not-a-date", None),
+            (123, None),
+        ],
+    )
+    def test_coerces_supported_values(self, value, expected):
+        repo, _ = make_repo()
+
+        assert repo._coerce_date(value) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +328,46 @@ class TestUpdateTimestamp:
         repo.update_timestamp(mock_job)
         # last_seen_at is set to func.now() - just verify assignment happened
         assert mock_job.last_seen_at is not None
+
+
+class TestDeactivateMissingSources:
+    def test_keeps_seen_sources_active(self):
+        repo, mock_db = make_repo()
+        seen_source = SimpleNamespace(
+            id="source-seen",
+            job_url="https://example.com/jobs/seen",
+            is_active=False,
+            last_seen_at=None,
+            job_post=None,
+        )
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [seen_source]
+
+        deactivated = repo.deactivate_missing_sources("greenhouse", [seen_source.job_url], tenant_id="tenant-1")
+
+        assert deactivated == 0
+        assert seen_source.is_active is True
+        assert seen_source.last_seen_at is None
+
+    def test_deactivates_missing_source_and_parent_job_without_active_siblings(self):
+        repo, mock_db = make_repo()
+        stale_source = SimpleNamespace(
+            id="source-stale",
+            job_url="https://example.com/jobs/stale",
+            is_active=True,
+            last_seen_at=None,
+            job_post=None,
+        )
+        inactive_sibling = SimpleNamespace(id="source-sibling", is_active=False)
+        parent_job = SimpleNamespace(status="active", sources=[stale_source, inactive_sibling])
+        stale_source.job_post = parent_job
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [stale_source]
+
+        deactivated = repo.deactivate_missing_sources("greenhouse", [], tenant_id="tenant-1")
+
+        assert deactivated == 1
+        assert stale_source.is_active is False
+        assert stale_source.last_seen_at is not None
+        assert parent_job.status == "inactive"
 
 
 # ---------------------------------------------------------------------------
