@@ -4,7 +4,6 @@
 # =============================================================================
 # Usage:
 #   ./logs.sh                    Show all logs
-#   ./logs.sh --split            Show split topology logs
 #   ./logs.sh -f                 Follow all logs in real-time
 #   ./logs.sh web-backend        Show web backend log
 #   ./logs.sh web-ui             Show web UI log
@@ -75,7 +74,6 @@ main() {
     local follow=false
     local clear=false
     local service=""
-    local topology=""  # "split" or "" (auto-detect)
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -85,10 +83,6 @@ main() {
                 ;;
             -c|--clear)
                 clear=true
-                shift
-                ;;
-            --split)
-                topology="split"
                 shift
                 ;;
             -h|--help)
@@ -106,17 +100,6 @@ main() {
                 ;;
         esac
     done
-
-    # Resolve LOGS_DIR based on topology flag or auto-detect
-    if [[ "$topology" == "split" ]]; then
-        LOGS_DIR="${SCRIPT_DIR}/logs/split"
-    else
-        # Auto-detect: prefer split subdir if it contains log files
-        if compgen -G "${SCRIPT_DIR}/logs/split/*.log" > /dev/null 2>&1; then
-            LOGS_DIR="${SCRIPT_DIR}/logs/split"
-        fi
-        # else keep flat logs/ as fallback
-    fi
 
     if [[ ! -d "${LOGS_DIR}" ]]; then
         echo -e "${YELLOW}Logs directory not found: ${LOGS_DIR}${NC}"

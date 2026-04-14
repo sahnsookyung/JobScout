@@ -1,8 +1,10 @@
 # Pipeline Microservices
-# Run: docker compose -f docker-compose.yml -f docker-compose.microservices.yml up -d
+# Run: docker compose -f docker-compose.yml -f docker-compose.microservices.yml -f docker-compose.web.yml --profile web up -d
 #
 # This file contains all pipeline microservices (extraction, embeddings, scorer-matcher, orchestrator).
 # It depends on docker-compose.yml which includes docker-compose.base.yml for infrastructure.
+# Microservices have no profile restriction, but --profile web is still required to activate
+# db-migrate (which all microservices depend on via condition: service_completed_successfully).
 
 x-service-common: &service-common
   depends_on:
@@ -36,7 +38,6 @@ include:
 services:
   extraction:
     <<: *service-common
-    profiles: ["split"]
     build:
       context: .
       dockerfile: services/extraction/Dockerfile
@@ -53,7 +54,6 @@ services:
 
   embeddings:
     <<: *service-common
-    profiles: ["split"]
     build:
       context: .
       dockerfile: services/embeddings/Dockerfile
@@ -68,7 +68,6 @@ services:
 
   scorer-matcher:
     <<: *service-common
-    profiles: ["split"]
     build:
       context: .
       dockerfile: services/scorer_matcher/Dockerfile
@@ -83,14 +82,12 @@ services:
 
   notification-worker:
     <<: *service-common
-    profiles: ["split"]
     build:
       context: .
       dockerfile: services/notification_worker/Dockerfile
 
   orchestrator:
     <<: *service-common
-    profiles: ["split"]
     depends_on:
       db-migrate:
         condition: service_completed_successfully

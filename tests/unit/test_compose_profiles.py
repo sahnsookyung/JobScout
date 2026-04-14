@@ -17,12 +17,12 @@ def test_root_compose_uses_standardized_project_name() -> None:
     assert compose["name"] == "${COMPOSE_PROJECT_NAME:-jobscout}"
 
 
-def test_microservices_have_split_profile() -> None:
+def test_microservices_have_no_profiles() -> None:
     compose = _load_compose("docker-compose.microservices.yml")
     services = compose["services"]
 
-    for service_name in ("extraction", "embeddings", "scorer-matcher", "orchestrator"):
-        assert "split" in services[service_name]["profiles"]
+    for service_name in ("extraction", "embeddings", "scorer-matcher", "orchestrator", "notification-worker"):
+        assert "profiles" not in services[service_name]
 
 
 def test_orchestrator_has_downstream_service_urls() -> None:
@@ -45,14 +45,13 @@ def test_microservices_all_depend_on_redis_healthy() -> None:
         )
 
 
-def test_web_services_support_split_profile() -> None:
+def test_web_services_support_web_profile() -> None:
     compose = _load_compose("docker-compose.web.yml")
     services = compose["services"]
 
     for service_name in ("web-backend", "web-frontend"):
         profiles = services[service_name]["profiles"]
         assert "web" in profiles
-        assert "split" in profiles
 
 
 def test_dev_overlay_only_overrides_existing_services() -> None:

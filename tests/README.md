@@ -22,9 +22,9 @@ uv run python -m pytest \
   tests/integration/services/test_services_lifespan.py \
   -v
 
-# Split-stack E2E resume flow (real Docker services, fake deterministic AI)
+# Microservices E2E resume flow (real Docker services, fake deterministic AI)
 uv run python -m pytest \
-  tests/integration/test_split_stack_resume_flow.py \
+  tests/integration/test_microservices_resume_flow.py \
   -v
 
 # Frontend component/hook tests
@@ -55,7 +55,7 @@ uv run python -m pytest tests/integration/test_resume_pipeline_lifecycle.py -v
 - `tests/integration/test_full_pipeline.py`: repository-backed end-to-end pipeline coverage
 - `tests/integration/test_resume_pipeline_lifecycle.py`: latest-upload eligibility and stale-result lifecycle rules
 - `tests/integration/services/test_services_lifespan.py`: microservice startup/shutdown behavior
-- `tests/integration/test_split_stack_resume_flow.py`: real Dockerized upload -> extract/embed -> matching happy/failure flow wired to an external OpenAI-compatible mock LLM service
+- `tests/integration/test_microservices_resume_flow.py`: real Dockerized upload -> extract/embed -> matching happy/failure flow wired to an external OpenAI-compatible mock LLM service
 
 ## Smoke Tests
 
@@ -69,5 +69,5 @@ SMOKE_TESTS=1 uv run python -m pytest tests/smoke/ -v
 
 - Unit tests are required on every PR.
 - The CI-safe integration slice is also required on every PR in a separate job.
-- The split-stack resume E2E flow is required in CI to catch service image, shared volume, and async handoff regressions.
+- The microservices resume E2E flow is required in CI to catch service image, shared volume, and async handoff regressions.
 - `AUTH_MODE=dev-bypass` safety is enforced by tests and startup checks; production-like environments must not boot with dev bypass enabled.

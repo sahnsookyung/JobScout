@@ -1,8 +1,8 @@
 """
 Embeddings module - handles vector generation.
 
-This module provides embedding functionality for the split embeddings
-service and shared embedding helpers used by the current runtime.
+This module provides embedding functionality for the embeddings
+microservice and shared embedding helpers used by the current runtime.
 """
 
 import logging

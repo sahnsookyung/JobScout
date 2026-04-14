@@ -14,7 +14,7 @@ AI-powered job matching pipeline that scrapes, analyzes, and ranks jobs against 
 
 ## Architecture
 
-JobScout runs as a split microservice stack:
+JobScout runs as a microservice stack:
 
 | Service | Role |
 |---------|------|
@@ -52,16 +52,16 @@ cp .env.example .env
 
 ### Start Everything
 
-**Split stack (recommended):**
+**Start the full stack:**
 
 ```bash
-./scripts/setup_local_env/start.sh --split
+./scripts/setup_local_env/start.sh
 ```
 
 **With local hot reload for backend and frontend:**
 
 ```bash
-WEB_DEV=true ./scripts/setup_local_env/start.sh --split --web-app --web-ui
+WEB_DEV=true ./scripts/setup_local_env/start.sh --web-app --web-ui
 ```
 
 **Access the app:**
@@ -86,7 +86,7 @@ docker compose \
   -f docker-compose.yml \
   -f docker-compose.microservices.yml \
   -f docker-compose.web.yml \
-  --profile split up -d
+  --profile web up -d
 
 # Run Ollama natively if your config points at localhost:11434
 ollama serve

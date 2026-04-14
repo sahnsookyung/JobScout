@@ -1,8 +1,8 @@
 """
 Extraction module - handles job and resume ETL.
 
-This module provides extraction functionality for the split extraction
-service and shared extraction helpers used by the current runtime.
+This module provides extraction functionality for the extraction
+microservice and shared extraction helpers used by the current runtime.
 """
 
 import logging

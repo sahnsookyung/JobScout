@@ -74,7 +74,7 @@ cleanup_log_capture_pids() {
     local pid_file
     local pid
 
-    for log_root in "${DEFAULT_LOGS_DIR}" "${DEFAULT_LOGS_DIR}/split"; do
+    for log_root in "${DEFAULT_LOGS_DIR}"; do
         pid_dir="${log_root}/.pids"
         [[ -d "${pid_dir}" ]] || continue
 
@@ -254,7 +254,7 @@ stop_docker() {
             docker compose "${COMPOSE_ARGS[@]}" stop ${SERVICES_TO_STOP} 2>/dev/null || true
         else
             # Include active profiles so profile-bound services remain visible to compose.
-            local ALL_PROFILES=(--profile split --profile web)
+            local ALL_PROFILES=(--profile web)
             docker compose "${COMPOSE_ARGS[@]}" "${ALL_PROFILES[@]}" stop 2>/dev/null || true
             docker compose "${COMPOSE_ARGS[@]}" "${ALL_PROFILES[@]}" rm -f 2>/dev/null || true
         fi
@@ -456,9 +456,7 @@ main() {
         else
             # Stop pipeline services via docker compose
             build_compose_args
-            # Include split so profile-bound pipeline services are visible to compose.
             docker compose "${COMPOSE_ARGS[@]}" \
-                --profile split \
                 stop extraction embeddings scorer-matcher notification-worker orchestrator 2>/dev/null || true
             log_success "Microservices stopped"
         fi

@@ -45,7 +45,7 @@ services:
       <<: *redis-healthcheck
 
   mailpit:
-    profiles: ["web", "split"]
+    profiles: ["web"]
     image: axllent/mailpit:latest
     ports:
       - "${MAILPIT_SMTP_PORT:-1025}:1025"
@@ -64,7 +64,7 @@ services:
       start_period: 10s
 
   db-migrate:
-    profiles: ["web", "split"]
+    profiles: ["web"]
     build:
       context: .
       dockerfile: Dockerfile

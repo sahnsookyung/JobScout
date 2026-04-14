@@ -1,4 +1,4 @@
-"""Deterministic job corpus seeding for split-stack E2E tests."""
+"""Deterministic job corpus seeding for E2E tests."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ class SeededJobCorpus:
     negative_job_id: str
 
 
-def reset_split_stack_state(database_url: str) -> None:
+def reset_microservices_state(database_url: str) -> None:
     """Clear matching and resume state so each E2E case starts isolated."""
     engine = create_engine(database_url)
     session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)

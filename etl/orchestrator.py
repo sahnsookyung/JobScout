@@ -738,7 +738,7 @@ class JobETLService:
         *,
         owner_id: Optional[Any] = None,
     ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
-        """Named stage wrapper for split-service extraction."""
+        """Named stage wrapper for microservice extraction."""
         return self.extract_resume(
             repo,
             resume_file,
@@ -753,7 +753,7 @@ class JobETLService:
         *,
         owner_id: Optional[Any] = None,
     ) -> Tuple[bool, str]:
-        """Named stage wrapper for split-service embedding."""
+        """Named stage wrapper for microservice embedding."""
         return self.embed_resume(
             repo,
             resume_fingerprint,

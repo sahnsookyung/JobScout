@@ -1,4 +1,4 @@
-"""Polling helpers for split-stack pipeline E2E tests."""
+"""Polling helpers for microservices pipeline E2E tests."""
 
 from __future__ import annotations
 

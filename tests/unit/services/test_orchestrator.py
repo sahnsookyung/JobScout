@@ -4553,7 +4553,7 @@ class TestRunBatchStage:
     """Tests for run_batch_stage dispatcher."""
 
     @pytest.mark.asyncio
-    async def test_split_mode_dispatches_to_queue(self):
+    async def test_dispatches_to_queue(self):
         from services.orchestrator.main import run_batch_stage
         with patch(
             "services.orchestrator.main._run_batch_stage_via_queue",

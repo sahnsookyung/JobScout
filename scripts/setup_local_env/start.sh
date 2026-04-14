@@ -8,7 +8,6 @@
 #   ./start.sh --web-app                    Web API only
 #   ./start.sh --web-ui                     Frontend UI only
 #   ./start.sh --microservices              Pipeline microservices only
-#   ./start.sh --split                      Split topology (infra + web + microservices)
 #   ./logs.sh -f                            Tail all logs in real-time
 #
 # Options:
@@ -18,7 +17,6 @@
 #   -a, --web-app       Start FastAPI web application server (port 8080)
 #   -u, --web-ui        Start Vite frontend UI dev server (port 5173)
 #   -m, --microservices Start pipeline microservices (extraction, embeddings, scorer-matcher, orchestrator)
-#      --split          Start split topology (infra + web + microservices)
 #   -c, --clean         Stop existing services first
 #      --build          Rebuild images before starting (default: use cached images)
 #      --dev            Mount source code and enable hot reload on all services
@@ -30,7 +28,6 @@
 #
 # Examples:
 #   ./start.sh                           Full stack (everything)
-#   ./start.sh --split                   Microservices topology
 #   ./start.sh --web-app --web-ui        API + UI only (use existing DB + microservices)
 #   ./start.sh --infra --microservices   DB + microservices (no web UI)
 #   ./start.sh --clean --web-app         Clean start with web app only
@@ -161,7 +158,6 @@ parse_args() {
     DATABASE=false
     REDIS=false
     ALL=false
-    SPLIT=false
     BUILD=false
     DEV=false
     local option
@@ -172,10 +168,6 @@ parse_args() {
             # Start everything (all services including microservices)
             --all)
                 ALL=true
-                shift
-                ;;
-            --split)
-                SPLIT=true
                 shift
                 ;;
             # Infrastructure (new names)
@@ -268,17 +260,9 @@ parse_args() {
 
     # Default: start common dev stack (infra + web-app + web-ui + microservices) if nothing specified
     # This ensures the frontend has data to display and all services are available
-    if [[ "$SPLIT" == true ]]; then
-        INFRA=true
-        WEB_APP=true
-        WEB_UI=true
-        MICROSERVICES=true
-    fi
-
     if [[ "$INFRA" == false ]] && [[ "$DATABASE" == false ]] && [[ "$REDIS" == false ]] && \
        [[ "$WEB_APP" == false ]] && [[ "$WEB_UI" == false ]] && \
-       [[ "$MICROSERVICES" == false ]] && [[ "$ALL" == false ]] && \
-       [[ "$SPLIT" == false ]]; then
+       [[ "$MICROSERVICES" == false ]] && [[ "$ALL" == false ]]; then
         INFRA=true
         WEB_APP=true
         WEB_UI=true
@@ -344,7 +328,7 @@ start_docker() {
             log_info "Starting Redis only..."
         fi
     elif [[ "$MICROSERVICES" == true ]]; then
-        log_info "Starting split topology (infra + microservices)..."
+        log_info "Starting infrastructure + microservices..."
         INFRA=true
         SERVICES_TO_START="postgres redis mailpit jobspy db-migrate extraction embeddings scorer-matcher notification-worker orchestrator"
     elif [[ "$INFRA" == true ]]; then
@@ -573,7 +557,7 @@ print_summary() {
     echo "============================================================================="
     echo ""
     if [[ "$MICROSERVICES" == true ]]; then
-        printf "  ${GREEN}Topology${NC}:    split (microservices)\n"
+        printf "  ${GREEN}Topology${NC}:    microservices\n"
     fi
     if [[ "$WEB_UI" == true ]]; then
         printf "  ${GREEN}Web UI${NC}:      http://localhost:${FRONTEND_PORT}\n"
@@ -615,11 +599,7 @@ print_summary() {
     fi
     echo ""
     echo "  To view logs in real-time:"
-    if [[ "$SPLIT" == true ]] || [[ "$MICROSERVICES" == true ]]; then
-        printf "    ${YELLOW}./scripts/setup_local_env/logs.sh --split -f${NC}\n"
-    else
-        printf "    ${YELLOW}./scripts/setup_local_env/logs.sh -f${NC}\n"
-    fi
+    printf "    ${YELLOW}./scripts/setup_local_env/logs.sh -f${NC}\n"
     echo ""
     echo "  Or tail individual files:"
     printf "    ${YELLOW}tail -f ${LOGS_DIR}/*.log${NC}\n"
@@ -638,11 +618,6 @@ print_summary() {
 # Main function
 main() {
     parse_args "$@"
-
-    # Set topology-specific log directory
-    if [[ "$SPLIT" == true ]] || [[ "$MICROSERVICES" == true ]]; then
-        LOGS_DIR="${SCRIPT_DIR}/logs/split"
-    fi
 
     ensure_logs_dir
 

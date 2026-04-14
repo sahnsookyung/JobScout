@@ -6,7 +6,7 @@
 
 ## Overview
 
-JobScout is an AI-powered job matching platform that scrapes job postings, extracts structured requirements via LLM, embeds them into vector space, and scores them against a candidate's resume. The supported runtime is the split microservice topology launched from `docker-compose.microservices.yml`, with Redis Streams coordinating extraction, embedding, orchestration, and matching.
+JobScout is an AI-powered job matching platform that scrapes job postings, extracts structured requirements via LLM, embeds them into vector space, and scores them against a candidate's resume. The supported runtime is the microservice topology launched from `docker-compose.microservices.yml`, with Redis Streams coordinating extraction, embedding, orchestration, and matching.
 
 ---
 

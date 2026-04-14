@@ -199,7 +199,7 @@ jobs:
       - name: Ensure compose env file
         run: uv run python -m tests.integration.helpers.compose_env
 
-      - name: Prebuild split-stack E2E images
+      - name: Prebuild E2E images
         run: |
           compose_args=(
             docker compose
@@ -208,7 +208,6 @@ jobs:
             -f docker-compose.microservices.yml
             -f docker-compose.web.yml
             -f docker-compose.e2e.yml
-            --profile split
             --profile web
           )
           services=(
@@ -227,10 +226,10 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: Run split-stack resume flow E2E
+      - name: Run E2E resume flow
         run: |
           uv run python -m pytest \
-            tests/integration/test_split_stack_resume_flow.py \
+            tests/integration/test_microservices_resume_flow.py \
             -q
 
       - name: E2E compose diagnostics
@@ -243,7 +242,6 @@ jobs:
             -f docker-compose.microservices.yml
             -f docker-compose.web.yml
             -f docker-compose.e2e.yml
-            --profile split
             --profile web
           )
           "${compose_args[@]}" ps --format json || true

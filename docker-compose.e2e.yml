@@ -1,8 +1,8 @@
-# Compose overrides for deterministic split-stack E2E tests.
+# Compose overrides for deterministic E2E tests.
 
 services:
   mock-llm:
-    profiles: ["split", "web"]
+    profiles: ["web"]
     build:
       context: .
       dockerfile: tests/services/mock_llm/Dockerfile

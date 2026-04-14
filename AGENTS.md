@@ -50,8 +50,8 @@ export SKIP_DB_TESTS=true
 
 ### Running the Application
 ```bash
-# Start the supported split stack locally
-./scripts/setup_local_env/start.sh --split
+# Start the microservices stack locally
+./scripts/setup_local_env/start.sh
 
 # Run with full stack
 docker-compose up -d

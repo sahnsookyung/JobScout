@@ -37,7 +37,7 @@ from tests.integration.helpers.pipeline_polling import (
     wait_for_resume_terminal,
 )
 from tests.integration.helpers.seed_matching_jobs import (
-    reset_split_stack_state,
+    reset_microservices_state,
     seed_matcher_ready_jobs,
 )
 
@@ -58,11 +58,11 @@ STARTUP_TIMEOUT_SECONDS = 180.0
 UPLOAD_TIMEOUT_SECONDS = 150.0
 MATCHING_TIMEOUT_SECONDS = 150.0
 NOTIFICATION_TIMEOUT_SECONDS = 30.0
-_ACTIVE_SPLIT_STACK_CLEANUP: dict[str, object] = {}
+_ACTIVE_E2E_CLEANUP: dict[str, object] = {}
 
 
 @dataclass(frozen=True)
-class SplitStackContext:
+class MicroservicesContext:
     base_url: str
     database_url: str
     service_urls: dict[str, str]
@@ -209,38 +209,36 @@ def _force_remove_compose_project_resources(project_name: str) -> None:
     )
 
 
-def _register_active_split_stack_cleanup(
+def _register_active_e2e_cleanup(
     compose_args: tuple[str, ...],
     compose_env: dict[str, str],
 ) -> None:
-    _ACTIVE_SPLIT_STACK_CLEANUP["compose_args"] = compose_args
-    _ACTIVE_SPLIT_STACK_CLEANUP["compose_env"] = compose_env
+    _ACTIVE_E2E_CLEANUP["compose_args"] = compose_args
+    _ACTIVE_E2E_CLEANUP["compose_env"] = compose_env
 
 
-def _clear_active_split_stack_cleanup() -> None:
-    _ACTIVE_SPLIT_STACK_CLEANUP.clear()
+def _clear_active_e2e_cleanup() -> None:
+    _ACTIVE_E2E_CLEANUP.clear()
 
 
-def _cleanup_active_split_stack() -> None:
-    compose_args = _ACTIVE_SPLIT_STACK_CLEANUP.get("compose_args")
-    compose_env = _ACTIVE_SPLIT_STACK_CLEANUP.get("compose_env")
+def _cleanup_active_e2e() -> None:
+    compose_args = _ACTIVE_E2E_CLEANUP.get("compose_args")
+    compose_env = _ACTIVE_E2E_CLEANUP.get("compose_env")
     if not compose_args or not compose_env:
         return
 
     try:
         _compose_down(compose_args, compose_env)
     finally:
-        _clear_active_split_stack_cleanup()
+        _clear_active_e2e_cleanup()
 
 
-atexit.register(_cleanup_active_split_stack)
+atexit.register(_cleanup_active_e2e)
 
 
 def _compose_up_args(services: tuple[str, ...], *, build_images: bool) -> tuple[str, ...]:
     build_flag = "--build" if build_images else "--no-build"
     return (
-        "--profile",
-        "split",
         "--profile",
         "web",
         "up",
@@ -472,7 +470,7 @@ def _assert_shared_upload_dir_writable(
     assert result.returncode == 0, result.stderr
 
 
-def _stack_diagnostics(context: SplitStackContext) -> str:
+def _stack_diagnostics(context: MicroservicesContext) -> str:
     ps = _run_compose(
         context.compose_args,
         context.compose_env,
@@ -526,9 +524,9 @@ def _stack_diagnostics(context: SplitStackContext) -> str:
 
 
 @pytest.fixture(scope="module")
-def split_stack() -> SplitStackContext:
+def microservices_stack() -> MicroservicesContext:
     if not _docker_available():
-        pytest.skip("Docker is not available for split-stack E2E tests")
+        pytest.skip("Docker is not available for microservices E2E tests")
 
     project_name = E2E_COMPOSE_PROJECT_NAME
     compose_args = _compose_args(project_name)
@@ -555,7 +553,7 @@ def split_stack() -> SplitStackContext:
             services,
             build_images=build_images,
         )
-        _register_active_split_stack_cleanup(compose_args, compose_env)
+        _register_active_e2e_cleanup(compose_args, compose_env)
 
         web_backend_url = f"http://localhost:{compose_env['WEB_BACKEND_PORT']}"
         extraction_url = f"http://localhost:{compose_env['EXTRACTION_PORT']}"
@@ -578,7 +576,7 @@ def split_stack() -> SplitStackContext:
         _assert_db_migrate_succeeded(compose_args, compose_env)
         _assert_shared_upload_dir_writable(compose_args, compose_env)
 
-        yield SplitStackContext(
+        yield MicroservicesContext(
             base_url=web_backend_url,
             database_url=(
                 f"postgresql://user:password@localhost:{compose_env['POSTGRES_PORT']}/jobscout"
@@ -597,7 +595,7 @@ def split_stack() -> SplitStackContext:
         if compose_env is None:
             compose_env = _next_compose_env()
         _compose_down(compose_args, compose_env)
-        _clear_active_split_stack_cleanup()
+        _clear_active_e2e_cleanup()
         if created_dotenv:
             DOTENV_PATH.unlink(missing_ok=True)
 
@@ -777,14 +775,14 @@ def _reset_notification_state(database_url: str) -> None:
         engine.dispose()
 
 
-def test_resume_upload_completes_then_matching_completes(split_stack: SplitStackContext):
-    reset_split_stack_state(split_stack.database_url)
-    seeded_jobs = seed_matcher_ready_jobs(split_stack.database_url)
+def test_resume_upload_completes_then_matching_completes(microservices_stack: MicroservicesContext):
+    reset_microservices_state(microservices_stack.database_url)
+    seeded_jobs = seed_matcher_ready_jobs(microservices_stack.database_url)
 
-    upload_payload = _upload_resume(split_stack.base_url, VALID_RESUME_FIXTURE)
-    diagnostics = lambda: _stack_diagnostics(split_stack)
+    upload_payload = _upload_resume(microservices_stack.base_url, VALID_RESUME_FIXTURE)
+    diagnostics = lambda: _stack_diagnostics(microservices_stack)
     resume_state = wait_for_resume_terminal(
-        split_stack.base_url,
+        microservices_stack.base_url,
         upload_payload["task_id"],
         timeout_s=UPLOAD_TIMEOUT_SECONDS,
         diagnostics=diagnostics,
@@ -793,14 +791,14 @@ def test_resume_upload_completes_then_matching_completes(split_stack: SplitStack
     assert resume_state["status"] == "completed", resume_state
 
     eligibility = requests.get(
-        f"{split_stack.base_url}/api/pipeline/resume-eligibility",
+        f"{microservices_stack.base_url}/api/pipeline/resume-eligibility",
         timeout=15,
     )
     assert eligibility.status_code == 200, eligibility.text
     eligibility_payload = eligibility.json()
     assert eligibility_payload["can_run"] is True, eligibility_payload
 
-    engine, session = _session_for(split_stack.database_url)
+    engine, session = _session_for(microservices_stack.database_url)
     try:
         upload = session.execute(
             select(ResumeUpload).where(ResumeUpload.id == upload_payload["upload_id"])
@@ -825,7 +823,7 @@ def test_resume_upload_completes_then_matching_completes(split_stack: SplitStack
         engine.dispose()
 
     run_response = requests.post(
-        f"{split_stack.base_url}/api/pipeline/run-matching",
+        f"{microservices_stack.base_url}/api/pipeline/run-matching",
         timeout=30,
     )
     assert run_response.status_code == 200, run_response.text
@@ -834,7 +832,7 @@ def test_resume_upload_completes_then_matching_completes(split_stack: SplitStack
     assert run_payload["task_id"], run_payload
 
     matching_state = wait_for_matching_terminal(
-        split_stack.base_url,
+        microservices_stack.base_url,
         run_payload["task_id"],
         timeout_s=MATCHING_TIMEOUT_SECONDS,
         diagnostics=diagnostics,
@@ -842,7 +840,7 @@ def test_resume_upload_completes_then_matching_completes(split_stack: SplitStack
     assert matching_state["status"] == "completed", matching_state
     assert (matching_state.get("saved_count") or 0) >= 1, matching_state
 
-    engine, session = _session_for(split_stack.database_url)
+    engine, session = _session_for(microservices_stack.database_url)
     try:
         matches = session.execute(
             select(JobMatch).where(JobMatch.resume_fingerprint == fingerprint)
@@ -880,13 +878,13 @@ def test_resume_upload_completes_then_matching_completes(split_stack: SplitStack
         engine.dispose()
 
 
-def test_matching_flow_triggers_email_notifications(split_stack: SplitStackContext):
-    reset_split_stack_state(split_stack.database_url)
-    _reset_notification_state(split_stack.database_url)
-    seed_matcher_ready_jobs(split_stack.database_url)
+def test_matching_flow_triggers_email_notifications(microservices_stack: MicroservicesContext):
+    reset_microservices_state(microservices_stack.database_url)
+    _reset_notification_state(microservices_stack.database_url)
+    seed_matcher_ready_jobs(microservices_stack.database_url)
 
     updated_settings = _update_notification_settings(
-        split_stack.base_url,
+        microservices_stack.base_url,
         {
             "notifications_enabled": True,
             "min_fit_for_alerts": 0,
@@ -901,10 +899,10 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
     )
     assert updated_settings["channels"]["email"]["enabled"] is True
 
-    upload_payload = _upload_resume(split_stack.base_url, VALID_RESUME_FIXTURE)
-    diagnostics = lambda: _stack_diagnostics(split_stack)
+    upload_payload = _upload_resume(microservices_stack.base_url, VALID_RESUME_FIXTURE)
+    diagnostics = lambda: _stack_diagnostics(microservices_stack)
     resume_state = wait_for_resume_terminal(
-        split_stack.base_url,
+        microservices_stack.base_url,
         upload_payload["task_id"],
         timeout_s=UPLOAD_TIMEOUT_SECONDS,
         diagnostics=diagnostics,
@@ -912,7 +910,7 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
     assert resume_state["status"] == "completed", resume_state
 
     run_response = requests.post(
-        f"{split_stack.base_url}/api/pipeline/run-matching",
+        f"{microservices_stack.base_url}/api/pipeline/run-matching",
         timeout=30,
     )
     assert run_response.status_code == 200, run_response.text
@@ -920,7 +918,7 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
     assert run_payload["success"] is True, run_payload
 
     matching_state = wait_for_matching_terminal(
-        split_stack.base_url,
+        microservices_stack.base_url,
         run_payload["task_id"],
         timeout_s=MATCHING_TIMEOUT_SECONDS,
         diagnostics=diagnostics,
@@ -930,7 +928,7 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
     assert (matching_state.get("notified_count") or 0) >= 1, matching_state
 
     delivered_notifications = _wait_for_automatic_notification_delivery(
-        split_stack.database_url,
+        microservices_stack.database_url,
         owner_id=DEV_USER_ID,
         channel_type="email",
     )
@@ -938,7 +936,7 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
     assert "batch_complete" in delivered_event_types
     assert "new_match_alert" in delivered_event_types
 
-    engine, session = _session_for(split_stack.database_url)
+    engine, session = _session_for(microservices_stack.database_url)
     try:
         matches = session.execute(select(JobMatch)).scalars().all()
         assert matches, "Expected persisted matches after matching completed"
@@ -969,12 +967,12 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
         session.close()
         engine.dispose()
 
-    matches_payload = _get_matches(split_stack.base_url)
+    matches_payload = _get_matches(microservices_stack.base_url)
     assert matches_payload["success"] is True, matches_payload
     assert matches_payload["count"] >= 1, matches_payload
     assert any(match["match_id"] == str(active_match.id) for match in matches_payload["matches"])
 
-    explanation_payload = _get_match_explanation(split_stack.base_url, str(active_match.id))
+    explanation_payload = _get_match_explanation(microservices_stack.base_url, str(active_match.id))
     assert explanation_payload["success"] is True, explanation_payload
     explanation = explanation_payload["explanation"]
     assert explanation is not None
@@ -983,10 +981,10 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
     assert explanation["diagnostics"]["provider_route"] in {"local", "local_heuristic", "remote", "threshold"}
     assert explanation["retrieval"]["mode"] in {"dense", "hybrid"}
 
-    fit_first_payload = _get_matches(split_stack.base_url, ranking_mode="fit_first")
-    balanced_payload = _get_matches(split_stack.base_url, ranking_mode="balanced")
+    fit_first_payload = _get_matches(microservices_stack.base_url, ranking_mode="fit_first")
+    balanced_payload = _get_matches(microservices_stack.base_url, ranking_mode="balanced")
     preference_first_payload = _get_matches(
-        split_stack.base_url,
+        microservices_stack.base_url,
         ranking_mode="preference_first",
     )
     active_ids = {
@@ -996,23 +994,23 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
     assert {match["match_id"] for match in balanced_payload["matches"]} == active_ids
     assert {match["match_id"] for match in preference_first_payload["matches"]} == active_ids
 
-    hide_payload = _toggle_match_hidden(split_stack.base_url, str(active_match.id))
+    hide_payload = _toggle_match_hidden(microservices_stack.base_url, str(active_match.id))
     assert hide_payload["success"] is True, hide_payload
     assert hide_payload["is_hidden"] is True, hide_payload
 
-    hidden_default_payload = _get_matches(split_stack.base_url)
+    hidden_default_payload = _get_matches(microservices_stack.base_url)
     assert all(
         match["match_id"] != str(active_match.id)
         for match in hidden_default_payload["matches"]
     )
 
-    hidden_included_payload = _get_matches(split_stack.base_url, show_hidden=True)
+    hidden_included_payload = _get_matches(microservices_stack.base_url, show_hidden=True)
     assert any(
         match["match_id"] == str(active_match.id)
         for match in hidden_included_payload["matches"]
     )
 
-    engine, session = _session_for(split_stack.database_url)
+    engine, session = _session_for(microservices_stack.database_url)
     try:
         current_selection_items = session.execute(
             select(MatchSelectionItem).where(
@@ -1026,17 +1024,17 @@ def test_matching_flow_triggers_email_notifications(split_stack: SplitStackConte
 
 
 def test_candidate_preferences_round_trip_updates_matching_behavior(
-    split_stack: SplitStackContext,
+    microservices_stack: MicroservicesContext,
 ):
-    reset_split_stack_state(split_stack.database_url)
-    seeded_jobs = seed_matcher_ready_jobs(split_stack.database_url)
+    reset_microservices_state(microservices_stack.database_url)
+    seeded_jobs = seed_matcher_ready_jobs(microservices_stack.database_url)
 
-    initial_preferences = _get_candidate_preferences(split_stack.base_url)
+    initial_preferences = _get_candidate_preferences(microservices_stack.base_url)
     assert initial_preferences["remote_mode"] == "any"
     assert initial_preferences["revision"] >= 0
 
     onsite_preferences = _update_candidate_preferences(
-        split_stack.base_url,
+        microservices_stack.base_url,
         {
             "remote_mode": "onsite",
             "target_locations": ["On-site"],
@@ -1050,10 +1048,10 @@ def test_candidate_preferences_round_trip_updates_matching_behavior(
     assert onsite_preferences["target_locations"] == ["On-site"]
     assert onsite_preferences["revision"] >= initial_preferences["revision"] + 1
 
-    diagnostics = lambda: _stack_diagnostics(split_stack)
-    upload_payload = _upload_resume(split_stack.base_url, VALID_RESUME_FIXTURE)
+    diagnostics = lambda: _stack_diagnostics(microservices_stack)
+    upload_payload = _upload_resume(microservices_stack.base_url, VALID_RESUME_FIXTURE)
     resume_state = wait_for_resume_terminal(
-        split_stack.base_url,
+        microservices_stack.base_url,
         upload_payload["task_id"],
         timeout_s=UPLOAD_TIMEOUT_SECONDS,
         diagnostics=diagnostics,
@@ -1061,7 +1059,7 @@ def test_candidate_preferences_round_trip_updates_matching_behavior(
     assert resume_state["status"] == "completed", resume_state
 
     run_response = requests.post(
-        f"{split_stack.base_url}/api/pipeline/run-matching",
+        f"{microservices_stack.base_url}/api/pipeline/run-matching",
         timeout=30,
     )
     assert run_response.status_code == 200, run_response.text
@@ -1069,14 +1067,14 @@ def test_candidate_preferences_round_trip_updates_matching_behavior(
     assert run_payload["success"] is True, run_payload
 
     matching_state = wait_for_matching_terminal(
-        split_stack.base_url,
+        microservices_stack.base_url,
         run_payload["task_id"],
         timeout_s=MATCHING_TIMEOUT_SECONDS,
         diagnostics=diagnostics,
     )
     assert matching_state["status"] == "completed", matching_state
 
-    engine, session = _session_for(split_stack.database_url)
+    engine, session = _session_for(microservices_stack.database_url)
     try:
         upload = session.execute(
             select(ResumeUpload).where(ResumeUpload.id == upload_payload["upload_id"])
@@ -1104,7 +1102,7 @@ def test_candidate_preferences_round_trip_updates_matching_behavior(
         engine.dispose()
 
     remote_preferences = _update_candidate_preferences(
-        split_stack.base_url,
+        microservices_stack.base_url,
         {
             "remote_mode": "remote",
             "target_locations": ["Remote"],
@@ -1122,7 +1120,7 @@ def test_candidate_preferences_round_trip_updates_matching_behavior(
     assert remote_preferences["revision"] >= onsite_preferences["revision"] + 1
 
     rerun_response = requests.post(
-        f"{split_stack.base_url}/api/pipeline/run-matching",
+        f"{microservices_stack.base_url}/api/pipeline/run-matching",
         timeout=30,
     )
     assert rerun_response.status_code == 200, rerun_response.text
@@ -1130,7 +1128,7 @@ def test_candidate_preferences_round_trip_updates_matching_behavior(
     assert rerun_payload["success"] is True, rerun_payload
 
     rerun_state = wait_for_matching_terminal(
-        split_stack.base_url,
+        microservices_stack.base_url,
         rerun_payload["task_id"],
         timeout_s=MATCHING_TIMEOUT_SECONDS,
         diagnostics=diagnostics,
@@ -1138,7 +1136,7 @@ def test_candidate_preferences_round_trip_updates_matching_behavior(
     assert rerun_state["status"] == "completed", rerun_state
     assert (rerun_state.get("saved_count") or 0) >= 1, rerun_state
 
-    engine, session = _session_for(split_stack.database_url)
+    engine, session = _session_for(microservices_stack.database_url)
     try:
         matches = session.execute(
             select(JobMatch).where(
@@ -1166,12 +1164,12 @@ def test_candidate_preferences_round_trip_updates_matching_behavior(
         engine.dispose()
 
 
-def test_preference_cross_encoder_reranking_emits_detail_codes(split_stack: SplitStackContext):
-    reset_split_stack_state(split_stack.database_url)
-    seeded_jobs = seed_matcher_ready_jobs(split_stack.database_url)
+def test_preference_cross_encoder_reranking_emits_detail_codes(microservices_stack: MicroservicesContext):
+    reset_microservices_state(microservices_stack.database_url)
+    seeded_jobs = seed_matcher_ready_jobs(microservices_stack.database_url)
 
     _update_candidate_preferences(
-        split_stack.base_url,
+        microservices_stack.base_url,
         {
             "remote_mode": "remote",
             "target_locations": ["Remote"],
@@ -1182,10 +1180,10 @@ def test_preference_cross_encoder_reranking_emits_detail_codes(split_stack: Spli
         },
     )
 
-    diagnostics = lambda: _stack_diagnostics(split_stack)
-    upload_payload = _upload_resume(split_stack.base_url, VALID_RESUME_FIXTURE)
+    diagnostics = lambda: _stack_diagnostics(microservices_stack)
+    upload_payload = _upload_resume(microservices_stack.base_url, VALID_RESUME_FIXTURE)
     resume_state = wait_for_resume_terminal(
-        split_stack.base_url,
+        microservices_stack.base_url,
         upload_payload["task_id"],
         timeout_s=UPLOAD_TIMEOUT_SECONDS,
         diagnostics=diagnostics,
@@ -1193,7 +1191,7 @@ def test_preference_cross_encoder_reranking_emits_detail_codes(split_stack: Spli
     assert resume_state["status"] == "completed", resume_state
 
     run_response = requests.post(
-        f"{split_stack.base_url}/api/pipeline/run-matching",
+        f"{microservices_stack.base_url}/api/pipeline/run-matching",
         timeout=30,
     )
     assert run_response.status_code == 200, run_response.text
@@ -1201,7 +1199,7 @@ def test_preference_cross_encoder_reranking_emits_detail_codes(split_stack: Spli
     assert run_payload["success"] is True, run_payload
 
     matching_state = wait_for_matching_terminal(
-        split_stack.base_url,
+        microservices_stack.base_url,
         run_payload["task_id"],
         timeout_s=MATCHING_TIMEOUT_SECONDS,
         diagnostics=diagnostics,
@@ -1209,7 +1207,7 @@ def test_preference_cross_encoder_reranking_emits_detail_codes(split_stack: Spli
     assert matching_state["status"] == "completed", matching_state
     assert (matching_state.get("saved_count") or 0) >= 1, matching_state
 
-    engine, session = _session_for(split_stack.database_url)
+    engine, session = _session_for(microservices_stack.database_url)
     try:
         upload = session.execute(
             select(ResumeUpload).where(ResumeUpload.id == upload_payload["upload_id"])
@@ -1247,13 +1245,13 @@ def test_preference_cross_encoder_reranking_emits_detail_codes(split_stack: Spli
         engine.dispose()
 
 
-def test_resume_upload_failure_becomes_terminal_not_infinite_poll(split_stack: SplitStackContext):
-    reset_split_stack_state(split_stack.database_url)
+def test_resume_upload_failure_becomes_terminal_not_infinite_poll(microservices_stack: MicroservicesContext):
+    reset_microservices_state(microservices_stack.database_url)
 
-    upload_payload = _upload_resume(split_stack.base_url, FAIL_EMBEDDING_RESUME_FIXTURE)
-    diagnostics = lambda: _stack_diagnostics(split_stack)
+    upload_payload = _upload_resume(microservices_stack.base_url, FAIL_EMBEDDING_RESUME_FIXTURE)
+    diagnostics = lambda: _stack_diagnostics(microservices_stack)
     resume_state = wait_for_resume_terminal(
-        split_stack.base_url,
+        microservices_stack.base_url,
         upload_payload["task_id"],
         timeout_s=UPLOAD_TIMEOUT_SECONDS,
         diagnostics=diagnostics,
@@ -1263,17 +1261,17 @@ def test_resume_upload_failure_becomes_terminal_not_infinite_poll(split_stack: S
     assert resume_state.get("error"), resume_state
 
 
-def test_notification_settings_round_trip_and_email_test_delivery(split_stack: SplitStackContext):
-    reset_split_stack_state(split_stack.database_url)
-    _reset_notification_state(split_stack.database_url)
+def test_notification_settings_round_trip_and_email_test_delivery(microservices_stack: MicroservicesContext):
+    reset_microservices_state(microservices_stack.database_url)
+    _reset_notification_state(microservices_stack.database_url)
 
-    initial_settings = _get_notification_settings(split_stack.base_url)
+    initial_settings = _get_notification_settings(microservices_stack.base_url)
     assert initial_settings["notifications_enabled"] is True
     assert initial_settings["channels"]["email"]["configured"] is True
     assert initial_settings["channels"]["email"]["enabled"] is False
 
     updated_settings = _update_notification_settings(
-        split_stack.base_url,
+        microservices_stack.base_url,
         {
             "notifications_enabled": True,
             "min_fit_for_alerts": 88,
@@ -1291,17 +1289,17 @@ def test_notification_settings_round_trip_and_email_test_delivery(split_stack: S
     assert updated_settings["channels"]["email"]["enabled"] is True
     assert updated_settings["revision"] >= initial_settings["revision"] + 1
 
-    test_payload = _send_notification_settings_test(split_stack.base_url, "email")
+    test_payload = _send_notification_settings_test(microservices_stack.base_url, "email")
     assert test_payload["success"] is True
     assert test_payload["notification_id"]
 
-    terminal_settings = _wait_for_test_status(split_stack.base_url, "email", "sent")
+    terminal_settings = _wait_for_test_status(microservices_stack.base_url, "email", "sent")
     email_channel = terminal_settings["channels"]["email"]
     assert email_channel["last_test_status"] == "sent"
     assert email_channel["last_tested_at"] is not None
     assert email_channel["last_test_error"] is None
 
-    engine, session = _session_for(split_stack.database_url)
+    engine, session = _session_for(microservices_stack.database_url)
     try:
         settings_channel = session.execute(
             select(UserNotificationChannel).where(

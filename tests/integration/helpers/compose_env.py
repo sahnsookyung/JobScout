@@ -22,7 +22,7 @@ def ensure_compose_env_file(project_root: Path | None = None) -> bool:
     if dotenv_path.exists():
         return False
 
-    # Keep split-stack E2E deterministic. Copying .env.example can reintroduce
+    # Keep E2E tests deterministic. Copying .env.example can reintroduce
     # live provider endpoints or credentials into local test runs.
     dotenv_path.write_text("", encoding="utf-8")
     return True

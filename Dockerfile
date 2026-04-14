@@ -44,4 +44,4 @@ ENV PYTHONPATH=/app
 
 USER appuser
 
-CMD ["python", "-c", "raise SystemExit('Use a service-specific Dockerfile or ./scripts/setup_local_env/start.sh --split; the root monolithic image is no longer runnable.')"]
+CMD ["python", "-c", "raise SystemExit('Use a service-specific Dockerfile or ./scripts/setup_local_env/start.sh; the root monolithic image is no longer runnable.')"]

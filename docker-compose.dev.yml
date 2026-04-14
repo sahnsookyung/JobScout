@@ -1,6 +1,6 @@
 # Development overlay for Dockerized hot reload
-# Use via: ./scripts/setup_local_env/start.sh --split --dev
-# Or manually: docker compose -f docker-compose.yml -f docker-compose.microservices.yml -f docker-compose.web.yml -f docker-compose.dev.yml --profile split --profile web up -d
+# Use via: ./scripts/setup_local_env/start.sh --dev
+# Or manually: docker compose -f docker-compose.yml -f docker-compose.microservices.yml -f docker-compose.web.yml -f docker-compose.dev.yml --profile web up -d
 
 services:
   extraction:

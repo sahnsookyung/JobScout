@@ -1,1 +1,1 @@
-"""Helpers for split-stack integration and E2E tests."""
+"""Helpers for microservices integration and E2E tests."""

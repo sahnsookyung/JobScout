@@ -1,8 +1,8 @@
 """Legacy monolithic helpers.
 
-The supported runtime is the split microservice topology started via Docker
-Compose and the web backend. This module remains only as a compatibility
-surface for a few internal imports while the last legacy callers are removed.
+The supported runtime is the microservice topology started via Docker Compose
+and the web backend. This module remains only as a compatibility surface for
+a few internal imports while the last legacy callers are removed.
 Running it directly as a CLI is intentionally unsupported.
 """
 
@@ -417,8 +417,8 @@ def _cleanup_jobspy_client(ctx: AppContext) -> None:
 def main():
     raise SystemExit(
         "The monolithic `python main.py` runtime has been removed. "
-        "Start JobScout with the split microservice stack instead, for example "
-        "`./scripts/setup_local_env/start.sh --split`."
+        "Start JobScout with the microservice stack: "
+        "`./scripts/setup_local_env/start.sh`"
     )
 
 
