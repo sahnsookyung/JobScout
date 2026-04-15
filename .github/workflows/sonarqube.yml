@@ -114,6 +114,7 @@ jobs:
             --cov-report=xml:coverage.xml \
             --cov-report=html:htmlcov \
             --cov-report=term \
+            -m "not integration and not slow" \
             -v --tb=short
         env:
           PYTHONPATH: ${{ github.workspace }}

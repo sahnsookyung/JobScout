@@ -127,6 +127,8 @@ def _compose_args(project_name: str) -> tuple[str, ...]:
         str(PROJECT_ROOT / "docker-compose.web.yml"),
         "-f",
         str(PROJECT_ROOT / "docker-compose.e2e.yml"),
+        "--profile",
+        "web",
     )
 
 
@@ -239,8 +241,6 @@ atexit.register(_cleanup_active_e2e)
 def _compose_up_args(services: tuple[str, ...], *, build_images: bool) -> tuple[str, ...]:
     build_flag = "--build" if build_images else "--no-build"
     return (
-        "--profile",
-        "web",
         "up",
         "-d",
         build_flag,
