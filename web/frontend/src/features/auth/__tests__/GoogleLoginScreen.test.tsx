@@ -8,7 +8,10 @@ vi.mock('../useAuth', () => ({
         login: vi.fn(),
         user: null,
         token: null,
+        isReady: true,
+        restoreError: null,
         logout: vi.fn(),
+        retrySession: vi.fn(),
     })),
 }));
 
@@ -166,7 +169,10 @@ describe('GoogleLoginScreen', () => {
                 login: mockLogin,
                 user: null,
                 token: null,
+                isReady: true,
+                restoreError: null,
                 logout: vi.fn(),
+                retrySession: vi.fn(),
             });
             let capturedCallback: ((resp: { credential: string }) => void) | undefined;
             (globalThis as any).google = {

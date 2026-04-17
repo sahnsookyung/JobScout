@@ -32,7 +32,7 @@ function AppContent() {
                 </div>
 
                 {/* Two Column Layout: Matches + Sidebar */}
-                <div className="grid grid-cols-1 xl:grid-cols-main-sidebar gap-6">
+                <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
                     {/* Panels: show first on small screens, right column on xl+ */}
                     <aside className="order-first xl:order-last space-y-6">
                         <PolicyPanel />
