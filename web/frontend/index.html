@@ -3,9 +3,28 @@
 
 <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>JobScout Dashboard</title>
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#F2EEE5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#15130F" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" />
+    <title>JobScout</title>
+    <script>
+        // Apply saved theme before paint to avoid flash
+        (function () {
+            try {
+                var saved = localStorage.getItem('jobscout-theme');
+                var prefersDark = globalThis.matchMedia &&
+                    globalThis.matchMedia('(prefers-color-scheme: dark)').matches;
+                var theme = saved || (prefersDark ? 'dark' : 'light');
+                document.documentElement.setAttribute('data-theme', theme);
+            } catch (_) { }
+        })();
+    </script>
 </head>
 
 <body>

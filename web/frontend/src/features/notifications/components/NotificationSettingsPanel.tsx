@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Mail, MessageSquare, Send, ShieldCheck } from 'lucide-react';
+import { Mail, MessageSquare, Send } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/Button';
@@ -43,6 +43,35 @@ const CHANNEL_ICONS: Record<string, typeof Mail> = {
 
 const SECRET_CHANNELS = new Set(['discord', 'telegram']);
 const CHANNEL_ORDER = ['email', 'discord', 'telegram'] as const;
+
+const inputClasses =
+    'w-full rounded-md border border-rule bg-surface px-3 py-2.5 text-[14px] text-ink placeholder:text-ink-muted transition-colors focus:border-accent focus:outline-none';
+
+function emailStatusText(channel: NotificationSettings['channels'][string]): string {
+    switch (channel.override_status) {
+        case 'verified':
+            return 'Verified override';
+        case 'pending':
+            return 'Pending — check your inbox';
+        case 'expired':
+            return 'Expired — resend';
+        default:
+            return 'Using account email';
+    }
+}
+
+function emailHelpText(channel: NotificationSettings['channels'][string]): string {
+    switch (channel.override_status) {
+        case 'verified':
+            return 'Notifications go to your verified override address.';
+        case 'pending':
+            return 'Verification is required before the override will receive notifications.';
+        case 'expired':
+            return 'Your last verification link expired. Send a fresh one to continue.';
+        default:
+            return 'Sends to the email address on your account unless you verify an override.';
+    }
+}
 
 function toDraft(settings: NotificationSettings): EditableSettings {
     const channels: Record<string, EditableChannel> = {};
@@ -98,50 +127,60 @@ function ToggleRow({
     onChange: (checked: boolean) => void;
 }>) {
     return (
-        <label className="flex items-start justify-between gap-4 rounded-[1.5rem] border border-slate-200 bg-white px-4 py-4 shadow-sm">
+        <label className="flex items-start justify-between gap-4 border-b border-rule py-4 last:border-b-0">
             <div>
-                <div className="text-sm font-bold text-slate-900">{label}</div>
-                <div className="mt-1 text-sm text-slate-500">{description}</div>
+                <div className="text-[14px] font-medium text-ink">{label}</div>
+                <div className="mt-1 text-[13px] text-ink-soft">{description}</div>
             </div>
             <input
                 type="checkbox"
                 checked={checked}
                 onChange={(event) => onChange(event.target.checked)}
                 aria-label={label}
-                className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                className="mt-1 h-4 w-4 rounded-sm border-rule accent-accent"
             />
         </label>
     );
 }
 
 export function NotificationSettingsPanel() {
-    const { settings, isLoading, isSaving, isTesting, saveSettings, sendTest } = useNotificationSettings();
+    const {
+        settings,
+        isLoading,
+        isSaving,
+        isTesting,
+        isSendingEmailVerification,
+        isClearingEmailOverride,
+        saveSettings,
+        sendTest,
+        sendEmailOverrideVerification,
+        clearEmailOverride,
+    } = useNotificationSettings();
     const [draft, setDraft] = useState<EditableSettings | null>(null);
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+    const [emailOverrideAddress, setEmailOverrideAddress] = useState('');
 
     useEffect(() => {
         if (settings) {
             setDraft(toDraft(settings));
             setHasUnsavedChanges(false);
+            setEmailOverrideAddress(settings.channels.email?.override_address || '');
         }
     }, [settings]);
 
     const orderedChannels = useMemo(() => {
-        if (!settings) {
-            return [];
-        }
-
-        return CHANNEL_ORDER.flatMap((channelType) => (
+        if (!settings) return [];
+        return CHANNEL_ORDER.flatMap((channelType) =>
             settings.channels[channelType] ? [[channelType, settings.channels[channelType]] as const] : []
-        ));
+        );
     }, [settings]);
 
     if (isLoading || !draft || !settings) {
         return (
-            <div className="space-y-4">
-                <div className="h-28 animate-pulse rounded-[1.75rem] bg-slate-200" />
-                <div className="h-40 animate-pulse rounded-[1.75rem] bg-slate-200" />
-                <div className="h-64 animate-pulse rounded-[1.75rem] bg-slate-200" />
+            <div className="space-y-3">
+                <div className="h-28 animate-pulse border border-rule bg-surface-sunk" />
+                <div className="h-40 animate-pulse border border-rule bg-surface-sunk" />
+                <div className="h-64 animate-pulse border border-rule bg-surface-sunk" />
             </div>
         );
     }
@@ -153,10 +192,7 @@ export function NotificationSettingsPanel() {
 
     const updateChannel = (channelType: string, patch: Partial<EditableChannel>) => {
         setDraft((current) => {
-            if (!current) {
-                return current;
-            }
-
+            if (!current) return current;
             return {
                 ...current,
                 channels: {
@@ -174,10 +210,10 @@ export function NotificationSettingsPanel() {
     const handleSave = async () => {
         try {
             await saveSettings(buildPayload(draft));
-            toast.success('Notification settings saved');
+            toast.success('Notification settings saved.');
             setHasUnsavedChanges(false);
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to save notification settings';
+            const message = error instanceof Error ? error.message : 'Couldn’t save notification settings.';
             toast.error(message);
         }
     };
@@ -187,7 +223,7 @@ export function NotificationSettingsPanel() {
             const response = await sendTest({ channel_type: channelType });
             toast.success(response.data.message);
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to send test notification';
+            const message = error instanceof Error ? error.message : 'Test notification didn’t go through.';
             toast.error(message);
         }
     };
@@ -195,20 +231,13 @@ export function NotificationSettingsPanel() {
     return (
         <div className="space-y-6">
             <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-                <div className="rounded-[1.75rem] border border-slate-200 bg-white px-5 py-5 shadow-sm">
-                    <div className="flex items-center gap-3">
-                        <div className="rounded-2xl bg-gradient-to-br from-slate-950 to-blue-700 p-3 text-white shadow-lg">
-                            <ShieldCheck className="h-5 w-5" />
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-black text-slate-950">Alert rules</h3>
-                            <p className="text-sm text-slate-500">
-                                Control when JobScout reaches out and how selective it should be.
-                            </p>
-                        </div>
+                <div className="border border-rule bg-surface">
+                    <div className="border-b border-rule px-5 py-4">
+                        <p className="caption">Alert rules</p>
+                        <h3 className="mt-1 text-[15px] font-medium text-ink">When to reach out</h3>
                     </div>
 
-                    <div className="mt-5 grid gap-3">
+                    <div className="px-5">
                         <ToggleRow
                             label="Enable notifications"
                             description="Master switch for match and batch notifications."
@@ -217,33 +246,36 @@ export function NotificationSettingsPanel() {
                         />
                         <ToggleRow
                             label="Notify on new saved matches"
-                            description="Alerts from your saved top matches after ranking, as long as they clear your minimum fit for alerts."
+                            description="Alerts from your saved top matches that clear your minimum fit."
                             checked={draft.notify_on_new_match}
                             onChange={(checked) => updateGlobal('notify_on_new_match', checked)}
                         />
                         <ToggleRow
                             label="Notify when a batch finishes"
-                            description="Useful when running a full matching pass and waiting on completion."
+                            description="Useful when running a full pass and waiting on completion."
                             checked={draft.notify_on_batch_complete}
                             onChange={(checked) => updateGlobal('notify_on_batch_complete', checked)}
                         />
                     </div>
                 </div>
 
-                <div className="rounded-[1.75rem] border border-slate-200 bg-white px-5 py-5 shadow-sm">
-                    <div className="text-sm font-bold text-slate-900">Minimum fit for alerts</div>
-                    <p className="mt-1 text-sm text-slate-500">
-                        Alerts only consider your saved top matches, and jobs must also meet this minimum fit.
-                    </p>
-                    <div className="mt-5">
-                        <div className="mb-3 flex items-end justify-between">
-                            <span className="text-4xl font-black text-slate-950">{draft.min_fit_for_alerts}</span>
-                            <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">
-                                fit floor
+                <div className="border border-rule bg-surface">
+                    <div className="border-b border-rule px-5 py-4">
+                        <p className="caption">Minimum fit</p>
+                        <h3 className="mt-1 text-[15px] font-medium text-ink">Alert floor</h3>
+                        <p className="mt-1 text-[13px] text-ink-soft">
+                            Jobs must meet this fit score to ever page you.
+                        </p>
+                    </div>
+                    <div className="px-5 py-5">
+                        <div className="mb-3 flex items-baseline justify-between">
+                            <span className="display-numeral text-[40px] text-ink tabular-nums">
+                                {draft.min_fit_for_alerts}
                             </span>
+                            <span className="caption">fit floor</span>
                         </div>
                         <input
-                            className="w-full accent-blue-600"
+                            className="wm-slider w-full"
                             type="range"
                             min={0}
                             max={100}
@@ -251,7 +283,7 @@ export function NotificationSettingsPanel() {
                             onChange={(event) => updateGlobal('min_fit_for_alerts', Number(event.target.value))}
                             aria-label="Minimum fit for alerts"
                         />
-                        <div className="mt-3 flex justify-between text-xs font-semibold text-slate-400">
+                        <div className="mt-2 flex justify-between text-[11px] text-ink-muted tabular-nums">
                             <span>0</span>
                             <span>50</span>
                             <span>100</span>
@@ -260,20 +292,19 @@ export function NotificationSettingsPanel() {
                 </div>
             </section>
 
-            <section className="rounded-[1.75rem] border border-slate-200 bg-white px-5 py-5 shadow-sm">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <section className="border border-rule bg-surface">
+                <div className="flex flex-col gap-2 border-b border-rule px-5 py-4 sm:flex-row sm:items-end sm:justify-between">
                     <div>
-                        <h3 className="text-lg font-black text-slate-950">Delivery channels</h3>
-                        <p className="text-sm text-slate-500">
+                        <p className="caption">Delivery</p>
+                        <h3 className="mt-1 text-[15px] font-medium text-ink">Channels</h3>
+                        <p className="mt-1 text-[13px] text-ink-soft">
                             Save destinations explicitly, then test once your changes are stored.
                         </p>
                     </div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
-                        Revision {settings.revision}
-                    </div>
+                    <p className="caption tabular-nums">Revision {settings.revision}</p>
                 </div>
 
-                <div className="mt-5 space-y-4">
+                <div className="divide-y divide-rule">
                     {orderedChannels.map(([channelType, channel]) => {
                         const editableChannel = draft.channels[channelType];
                         const canEnable = channel.available || editableChannel.enabled;
@@ -281,33 +312,127 @@ export function NotificationSettingsPanel() {
                         const Icon = CHANNEL_ICONS[channelType] ?? Mail;
                         const channelLabel = CHANNEL_LABELS[channelType] ?? channelType;
 
-                        return (
-                            <article
-                                key={channelType}
-                                className="rounded-[1.5rem] border border-slate-200 bg-slate-50/80 p-4"
-                            >
-                                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                    <div className="flex gap-3">
-                                        <div className="rounded-2xl bg-white p-3 text-slate-700 shadow-sm">
-                                            <Icon className="h-5 w-5" />
+                        if (channelType === 'email') {
+                            return (
+                                <article key={channelType} className="px-5 py-5">
+                                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                        <div className="flex items-start gap-3">
+                                            <Icon className="mt-0.5 h-4 w-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />
+                                            <div className="space-y-1">
+                                                <div className="text-[14px] font-medium text-ink">{channelLabel}</div>
+                                                <div className="text-[13px] text-ink-soft">
+                                                    {channel.effective_recipient || channel.masked_recipient || 'No email configured'}
+                                                </div>
+                                                <div className="text-[12px] text-ink-muted">
+                                                    {emailHelpText(channel)}
+                                                </div>
+                                                <p className="caption">{emailStatusText(channel)}</p>
+                                                {!channel.available && channel.availability_reason && (
+                                                    <p className="inline-block border border-warn/40 bg-warn-soft px-2 py-0.5 text-[12px] text-ink">
+                                                        {channel.availability_reason}
+                                                    </p>
+                                                )}
+                                            </div>
                                         </div>
+
+                                        <label className="flex items-center gap-2 self-start border border-rule bg-surface px-3 py-1.5 text-[12px] text-ink-soft">
+                                            <span>Enabled</span>
+                                            <input
+                                                type="checkbox"
+                                                checked={editableChannel.enabled}
+                                                disabled={!canEnable}
+                                                onChange={(event) => updateChannel(channelType, { enabled: event.target.checked })}
+                                                aria-label={`Enable ${channelLabel}`}
+                                                className="h-4 w-4 rounded-sm border-rule accent-accent"
+                                            />
+                                        </label>
+                                    </div>
+
+                                    <div className="mt-4 border-t border-rule pt-4">
+                                        <label className="block">
+                                            <span className="caption">Override email</span>
+                                            <input
+                                                className={`${inputClasses} mt-2`}
+                                                type="email"
+                                                placeholder="name@example.com"
+                                                value={emailOverrideAddress}
+                                                onChange={(event) => setEmailOverrideAddress(event.target.value)}
+                                            />
+                                        </label>
+                                        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                            <span className="text-[12px] text-ink-muted">
+                                                Ignored until verified.
+                                            </span>
+                                            <div className="flex flex-wrap gap-2">
+                                                <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    variant="secondary"
+                                                    disabled={!emailOverrideAddress.trim() || isSendingEmailVerification}
+                                                    onClick={() => void sendEmailOverrideVerification({ address: emailOverrideAddress.trim() })
+                                                        .then((response) => toast.success(response.data.message))
+                                                        .catch((error) => toast.error(error instanceof Error ? error.message : 'Verification didn’t send.'))}
+                                                >
+                                                    Send verification
+                                                </Button>
+                                                {channel.override_address && (
+                                                    <Button
+                                                        type="button"
+                                                        size="sm"
+                                                        variant="ghost"
+                                                        disabled={isClearingEmailOverride}
+                                                        onClick={() => void clearEmailOverride()
+                                                            .then((response) => toast.success(response.data.message))
+                                                            .catch((error) => toast.error(error instanceof Error ? error.message : 'Couldn’t clear the override.'))}
+                                                    >
+                                                        Clear override
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-4 flex flex-col gap-3 border-t border-rule pt-4 sm:flex-row sm:items-center sm:justify-between">
+                                        <span className="caption">
+                                            Last test: <span className="text-ink-soft">{channel.last_test_status || 'Never'}</span>
+                                        </span>
+                                        <Button
+                                            type="button"
+                                            size="sm"
+                                            variant="secondary"
+                                            disabled={!canTest}
+                                            onClick={() => void handleTest(channelType)}
+                                        >
+                                            <Send className="h-3.5 w-3.5" aria-hidden="true" />
+                                            Test
+                                        </Button>
+                                    </div>
+                                </article>
+                            );
+                        }
+
+                        return (
+                            <article key={channelType} className="px-5 py-5">
+                                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                    <div className="flex items-start gap-3">
+                                        <Icon className="mt-0.5 h-4 w-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />
                                         <div className="space-y-1">
-                                            <div className="text-sm font-black text-slate-950">{channelLabel}</div>
-                                            <div className="text-sm text-slate-500">
+                                            <div className="text-[14px] font-medium text-ink">{channelLabel}</div>
+                                            <div className="text-[13px] text-ink-soft">
                                                 {channel.masked_recipient || (channel.configured ? 'Configured' : 'Not configured')}
                                             </div>
-                                            <div className="text-xs text-slate-400">
+                                            <div className="text-[12px] text-ink-muted">
                                                 {CHANNEL_HELP[channelType] ?? 'Saved destination for notifications.'}
                                             </div>
                                             {!channel.available && channel.availability_reason && (
-                                                <div className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
+                                                <p className="inline-block border border-warn/40 bg-warn-soft px-2 py-0.5 text-[12px] text-ink">
                                                     {channel.availability_reason}
-                                                </div>
+                                                </p>
                                             )}
                                         </div>
                                     </div>
 
-                                    <label className="flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs font-bold uppercase tracking-[0.2em] text-slate-500 shadow-sm">
+                                    <label className="flex items-center gap-2 self-start border border-rule bg-surface px-3 py-1.5 text-[12px] text-ink-soft">
                                         <span>Enabled</span>
                                         <input
                                             type="checkbox"
@@ -315,25 +440,28 @@ export function NotificationSettingsPanel() {
                                             disabled={!canEnable}
                                             onChange={(event) => updateChannel(channelType, { enabled: event.target.checked })}
                                             aria-label={`Enable ${channelLabel}`}
-                                            className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                            className="h-4 w-4 rounded-sm border-rule accent-accent"
                                         />
                                     </label>
                                 </div>
 
                                 {SECRET_CHANNELS.has(channelType) && (
-                                    <div className="mt-4 rounded-[1.25rem] border border-slate-200 bg-white px-4 py-4">
-                                        <input
-                                            className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm"
-                                            type="password"
-                                            placeholder={`Paste ${channelLabel} destination`}
-                                            value={editableChannel.secret_value || ''}
-                                            onChange={(event) => updateChannel(channelType, {
-                                                secret_value: event.target.value,
-                                                clear_secret: false,
-                                            })}
-                                        />
+                                    <div className="mt-4 border-t border-rule pt-4">
+                                        <label className="block">
+                                            <span className="caption">Destination</span>
+                                            <input
+                                                className={`${inputClasses} mt-2`}
+                                                type="password"
+                                                placeholder={`Paste ${channelLabel} destination`}
+                                                value={editableChannel.secret_value || ''}
+                                                onChange={(event) => updateChannel(channelType, {
+                                                    secret_value: event.target.value,
+                                                    clear_secret: false,
+                                                })}
+                                            />
+                                        </label>
                                         <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                            <span className="text-xs text-slate-500">
+                                            <span className="text-[12px] text-ink-muted">
                                                 Leave blank to keep the saved destination.
                                             </span>
                                             <Button
@@ -352,10 +480,10 @@ export function NotificationSettingsPanel() {
                                     </div>
                                 )}
 
-                                <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                                    <div className="text-xs font-medium text-slate-500">
-                                        Last test: {channel.last_test_status || 'Never'}
-                                    </div>
+                                <div className="mt-4 flex flex-col gap-3 border-t border-rule pt-4 sm:flex-row sm:items-center sm:justify-between">
+                                    <span className="caption">
+                                        Last test: <span className="text-ink-soft">{channel.last_test_status || 'Never'}</span>
+                                    </span>
                                     <Button
                                         type="button"
                                         size="sm"
@@ -363,7 +491,7 @@ export function NotificationSettingsPanel() {
                                         disabled={!canTest}
                                         onClick={() => void handleTest(channelType)}
                                     >
-                                        <Send className="mr-2 h-4 w-4" />
+                                        <Send className="h-3.5 w-3.5" aria-hidden="true" />
                                         Test
                                     </Button>
                                 </div>
@@ -373,22 +501,23 @@ export function NotificationSettingsPanel() {
                 </div>
             </section>
 
-            <section className="flex flex-col gap-4 rounded-[1.75rem] border border-slate-200 bg-slate-950 px-5 py-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+            <section className="flex flex-col gap-4 border border-rule bg-surface-raised px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                    <div className="text-sm font-bold">
+                    <p className="text-[14px] text-ink">
                         {hasUnsavedChanges
-                            ? 'You have unsaved changes. Save before sending a test notification.'
-                            : 'Preferences are up to date.'}
-                    </div>
-                    <div className="mt-1 text-sm text-slate-300">
+                            ? 'You have unsaved changes. Save before sending a test.'
+                            : 'Your notification settings are up to date.'}
+                    </p>
+                    <p className="mt-0.5 caption">
                         Tests always use your currently saved configuration.
-                    </div>
+                    </p>
                 </div>
                 <Button
                     type="button"
+                    variant="primary"
                     onClick={() => void handleSave()}
                     isLoading={isSaving}
-                    className="rounded-2xl bg-white text-slate-950 hover:bg-slate-100"
+                    disabled={!hasUnsavedChanges}
                 >
                     Save settings
                 </Button>

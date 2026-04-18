@@ -10,6 +10,9 @@ vi.mock('@/services/notificationSettingsApi', () => ({
         getSettings: vi.fn(),
         updateSettings: vi.fn(),
         sendTest: vi.fn(),
+        sendEmailOverrideVerification: vi.fn(),
+        verifyEmailOverride: vi.fn(),
+        clearEmailOverride: vi.fn(),
     },
 }));
 
@@ -53,6 +56,15 @@ describe('useNotificationSettings', () => {
         vi.mocked(notificationSettingsApi.updateSettings).mockResolvedValue({ data: settings } as never);
         vi.mocked(notificationSettingsApi.sendTest).mockResolvedValue({
             data: { success: true, notification_id: 'notif-1', message: 'Queued test notification' },
+        } as never);
+        vi.mocked(notificationSettingsApi.sendEmailOverrideVerification).mockResolvedValue({
+            data: { success: true, message: 'Verification email sent' },
+        } as never);
+        vi.mocked(notificationSettingsApi.verifyEmailOverride).mockResolvedValue({
+            data: { success: true, message: 'Email override verified' },
+        } as never);
+        vi.mocked(notificationSettingsApi.clearEmailOverride).mockResolvedValue({
+            data: { success: true, message: 'Email override cleared' },
         } as never);
     });
 

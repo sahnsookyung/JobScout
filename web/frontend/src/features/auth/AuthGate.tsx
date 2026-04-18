@@ -6,21 +6,13 @@ interface AuthGateProps {
     readonly children: ReactNode;
 }
 
-/**
- * AuthGate — transparent in OSS mode; shows Google login in SaaS mode.
- *
- * If VITE_GOOGLE_CLIENT_ID is not set, renders children directly with no
- * login requirement. Set it to enable Google OAuth authentication.
- */
 export function AuthGate({ children }: AuthGateProps) {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
-    // OSS mode: no client ID configured — pass through immediately
     if (!clientId) {
         return <>{children}</>;
     }
 
-    // SaaS mode: require authentication
     return <AuthGateInner>{children}</AuthGateInner>;
 }
 
@@ -29,12 +21,16 @@ function AuthGateInner({ children }: AuthGateProps) {
 
     if (!isReady) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50">
+            <div className="flex min-h-screen items-center justify-center bg-canvas text-ink">
                 <output
-                    className="text-sm text-gray-600"
+                    className="flex items-center gap-3 text-[13px] text-ink-soft"
                     aria-live="polite"
                     aria-label="Restoring your session"
                 >
+                    <span className="relative flex h-2 w-2">
+                        <span className="ember absolute inset-0 rounded-full bg-accent opacity-40" aria-hidden="true" />
+                        <span className="relative m-auto h-1 w-1 rounded-full bg-accent" />
+                    </span>
                     Restoring your session...
                 </output>
             </div>
@@ -43,29 +39,32 @@ function AuthGateInner({ children }: AuthGateProps) {
 
     if (restoreError) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-                <div className="max-w-md w-full rounded-2xl bg-white shadow-lg p-8 text-center space-y-4">
-                    <h1 className="text-xl font-semibold text-gray-900">
-                        Session restore failed
-                    </h1>
-                    <p className="text-sm text-gray-600" role="alert">
-                        {restoreError}
-                    </p>
-                    <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                        <button
-                            type="button"
-                            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white"
-                            onClick={retrySession}
-                        >
-                            Try again
-                        </button>
-                        <button
-                            type="button"
-                            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
-                            onClick={logout}
-                        >
-                            Sign out
-                        </button>
+            <div className="flex min-h-screen items-center justify-center bg-canvas px-4 text-ink">
+                <div className="w-full max-w-md border border-rule bg-surface enter">
+                    <div className="border-b border-rule px-7 py-5">
+                        <p className="caption">Session</p>
+                        <h1 className="mt-1 text-[18px] font-medium text-ink">Restore didn’t complete</h1>
+                    </div>
+                    <div className="px-7 py-6">
+                        <p className="border border-warn/40 bg-warn-soft px-3 py-2 text-[13px] text-ink" role="alert">
+                            {restoreError}
+                        </p>
+                        <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+                            <button
+                                type="button"
+                                className="btn-accent inline-flex h-10 flex-1 items-center justify-center rounded-md text-[13px] font-medium"
+                                onClick={retrySession}
+                            >
+                                Try again
+                            </button>
+                            <button
+                                type="button"
+                                className="inline-flex h-10 flex-1 items-center justify-center rounded-md border border-rule bg-surface px-4 text-[13px] font-medium text-ink-soft transition-colors hover:border-rule-strong hover:text-ink"
+                                onClick={logout}
+                            >
+                                Sign out
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

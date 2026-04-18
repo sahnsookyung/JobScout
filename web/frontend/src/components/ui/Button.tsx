@@ -1,8 +1,9 @@
 import React from 'react';
 import { clsx } from 'clsx';
+import { twMerge } from 'tailwind-merge';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-    variant?: 'primary' | 'secondary' | 'ghost';
+    variant?: 'primary' | 'secondary' | 'ghost' | 'quiet';
     size?: 'sm' | 'md' | 'lg';
     isLoading?: boolean;
 }
@@ -18,41 +19,42 @@ export const Button: React.FC<ButtonProps> = ({
 }) => {
     return (
         <button
-            className={clsx(
-                'inline-flex items-center justify-center rounded-xl font-medium transition-all duration-200',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+            className={twMerge(clsx(
+                'inline-flex items-center justify-center gap-2 rounded-md font-medium whitespace-nowrap',
+                'transition-[background-color,border-color,color,opacity] duration-200 ease-out',
                 'disabled:pointer-events-none disabled:opacity-50',
                 {
-                    'bg-blue-600 text-white hover:bg-blue-700 hover:shadow-lg': variant === 'primary',
-                    'bg-gray-200 text-gray-900 hover:bg-gray-300 hover:shadow-md': variant === 'secondary',
-                    'hover:bg-gray-100 text-gray-700': variant === 'ghost',
-                    'px-3 py-1.5 text-sm': size === 'sm',
-                    'px-4 py-2 text-base': size === 'md',
-                    'px-6 py-3 text-lg': size === 'lg',
+                    // Primary — the only place terracotta appears on type
+                    'bg-accent text-[#FFF] border border-accent hover:bg-accent-hover hover:border-accent-hover':
+                        variant === 'primary',
+                    // Secondary — quiet confidence, hairline rule
+                    'bg-surface text-ink border border-rule hover:border-rule-strong':
+                        variant === 'secondary',
+                    // Ghost — nothing until hovered
+                    'bg-transparent text-ink-soft border border-transparent hover:bg-surface hover:text-ink':
+                        variant === 'ghost',
+                    // Quiet — inverse of ghost for dark CTAs on light surfaces
+                    'bg-ink text-canvas border border-ink hover:bg-ink-soft hover:border-ink-soft':
+                        variant === 'quiet',
+                    'px-3 py-1.5 text-[13px] leading-tight': size === 'sm',
+                    'px-4 py-2 text-[14px]': size === 'md',
+                    'px-5 py-2.5 text-[15px]': size === 'lg',
                 },
-                className
-            )}
+                className,
+            ))}
             disabled={disabled || isLoading}
             aria-busy={isLoading}
-            aria-label={isLoading ? 'Loading...' : undefined}
             {...props}
         >
             {isLoading && (
                 <svg
-                    className="animate-spin -ml-1 mr-2 h-4 w-4"
+                    className="h-3.5 w-3.5 animate-spin"
                     xmlns="http://www.w3.org/2000/svg"
                     fill="none"
                     viewBox="0 0 24 24"
                     aria-hidden="true"
                 >
-                    <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                    />
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
                     <path
                         className="opacity-75"
                         fill="currentColor"

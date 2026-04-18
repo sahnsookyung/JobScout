@@ -5,23 +5,32 @@ export interface ScoreBarProps {
     range: string;
     value: number;
     total: number;
-    gradient: string;
+    tone?: 'accent' | 'ink-soft' | 'ink-muted' | 'ink-faint';
 }
 
-export const CompactScoreBar: React.FC<ScoreBarProps> = ({ label, range, value, total, gradient }) => {
+const TONE_BG: Record<NonNullable<ScoreBarProps['tone']>, string> = {
+    accent: 'bg-accent',
+    'ink-soft': 'bg-ink-soft',
+    'ink-muted': 'bg-ink-muted',
+    'ink-faint': 'bg-ink-faint',
+};
+
+export const CompactScoreBar: React.FC<ScoreBarProps> = ({ label, range, value, total, tone = 'ink-soft' }) => {
     const percentage = total > 0 ? (value / total) * 100 : 0;
     return (
         <div>
-            <div className="flex items-center justify-between mb-1.5">
-                <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-gradient-to-r ${gradient}`} />
-                    <span className="text-xs sm:text-sm font-black text-gray-900">{label}</span>
-                    <span className="text-[10px] sm:text-xs text-gray-500 font-semibold">({range})</span>
+            <div className="flex items-baseline justify-between gap-3 text-[12px]">
+                <div className="flex items-baseline gap-2">
+                    <span className="text-ink">{label}</span>
+                    <span className="caption">{range}</span>
                 </div>
-                <span className="text-sm sm:text-base font-black text-gray-900">{value}</span>
+                <span className="num tabular-nums text-ink-soft">{value}</span>
             </div>
-            <div className="h-1.5 sm:h-2 bg-gray-200 rounded-full overflow-hidden">
-                <div className={`h-full bg-gradient-to-r ${gradient} transition-all duration-500 ease-out rounded-full`} style={{ width: `${percentage}%` }} />
+            <div className="mt-1 h-px bg-rule">
+                <div
+                    className={`h-full ${TONE_BG[tone]} transition-[width] duration-700 ease-out`}
+                    style={{ width: `${percentage}%`, height: '2px', marginTop: '-1px' }}
+                />
             </div>
         </div>
     );

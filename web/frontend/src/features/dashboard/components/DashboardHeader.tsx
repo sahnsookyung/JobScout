@@ -1,17 +1,20 @@
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
-import {
-    Bell,
-    Briefcase,
-    LogOut,
-    SlidersHorizontal,
-    UserCircle2,
-    X,
-} from 'lucide-react';
+import { Bell, LogOut, SlidersHorizontal, UserCircle2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/Button';
+import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { useAuth } from '@/features/auth/useAuth';
 import { CandidatePreferencesPanel } from '@/features/preferences/components/CandidatePreferencesPanel';
 import { NotificationSettingsPanel } from '@/features/notifications/components/NotificationSettingsPanel';
+
+const FOCUSABLE_SELECTOR = [
+    'button:not([disabled])',
+    '[href]',
+    'input:not([disabled])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])',
+].join(', ');
 
 function useDismissOnOutsideClick(
     ref: RefObject<HTMLElement | null>,
@@ -19,161 +22,167 @@ function useDismissOnOutsideClick(
     onDismiss: () => void,
 ) {
     useEffect(() => {
-        if (!enabled) {
-            return;
-        }
-
-        const handlePointerDown = (event: MouseEvent) => {
+        if (!enabled) return;
+        const handler = (event: MouseEvent) => {
             if (ref.current && !ref.current.contains(event.target as Node)) {
                 onDismiss();
             }
         };
-
-        document.addEventListener('mousedown', handlePointerDown);
-        return () => document.removeEventListener('mousedown', handlePointerDown);
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
     }, [enabled, onDismiss, ref]);
 }
 
 function useEscapeDismiss(enabled: boolean, onDismiss: () => void) {
     useEffect(() => {
-        if (!enabled) {
-            return;
-        }
+        if (!enabled) return;
+        const handler = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') onDismiss();
+        };
+        document.addEventListener('keydown', handler);
+        return () => document.removeEventListener('keydown', handler);
+    }, [enabled, onDismiss]);
+}
+
+function useModalFocusTrap(
+    ref: RefObject<HTMLElement | null>,
+    enabled: boolean,
+    onDismiss: () => void,
+) {
+    const previousFocusRef = useRef<HTMLElement | null>(null);
+
+    useEffect(() => {
+        if (!enabled) return;
+
+        const modalElement = ref.current;
+        if (!modalElement) return;
+
+        previousFocusRef.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+        const focusableElements = () =>
+            Array.from(modalElement.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+                (element) => !element.hasAttribute('disabled') && element.tabIndex !== -1,
+            );
+
+        const frameId = requestAnimationFrame(() => {
+            const [firstFocusable] = focusableElements();
+            (firstFocusable ?? modalElement).focus();
+        });
 
         const handleKeyDown = (event: KeyboardEvent) => {
             if (event.key === 'Escape') {
+                event.preventDefault();
                 onDismiss();
+                return;
+            }
+
+            if (event.key !== 'Tab') {
+                return;
+            }
+
+            const focusables = focusableElements();
+            if (focusables.length === 0) {
+                event.preventDefault();
+                modalElement.focus();
+                return;
+            }
+
+            const firstFocusable = focusables[0];
+            const lastFocusable = focusables[focusables.length - 1];
+            const activeElement =
+                document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+            if (!event.shiftKey && activeElement === lastFocusable) {
+                event.preventDefault();
+                firstFocusable.focus();
+            }
+
+            if (event.shiftKey && activeElement === firstFocusable) {
+                event.preventDefault();
+                lastFocusable.focus();
             }
         };
 
         document.addEventListener('keydown', handleKeyDown);
-        return () => document.removeEventListener('keydown', handleKeyDown);
-    }, [enabled, onDismiss]);
+
+        return () => {
+            cancelAnimationFrame(frameId);
+            document.removeEventListener('keydown', handleKeyDown);
+            previousFocusRef.current?.focus();
+        };
+    }, [enabled, onDismiss, ref]);
 }
 
-function NotificationSettingsModal({
+function ModalShell({
     isOpen,
     onClose,
+    titleId,
+    eyebrow,
+    title,
+    description,
+    closeLabel = 'Close',
+    maxWidth = 'max-w-4xl',
+    children,
 }: Readonly<{
     isOpen: boolean;
     onClose: () => void;
+    titleId: string;
+    eyebrow: string;
+    title: string;
+    description?: string;
+    closeLabel?: string;
+    maxWidth?: string;
+    children: React.ReactNode;
 }>) {
-    useEscapeDismiss(isOpen, onClose);
+    const dialogRef = useRef<HTMLDialogElement>(null);
 
-    if (!isOpen) {
-        return null;
-    }
+    useModalFocusTrap(dialogRef, isOpen, onClose);
+
+    if (!isOpen) return null;
 
     return (
         <dialog
+            ref={dialogRef}
             open
-            aria-labelledby="notification-settings-title"
-            className="fixed inset-0 z-50 m-0 h-full max-h-none w-full max-w-none overflow-y-auto border-0 bg-transparent p-0 backdrop:bg-slate-950/55 backdrop:backdrop-blur-sm"
+            aria-labelledby={titleId}
+            aria-modal="true"
+            tabIndex={-1}
+            className="fixed inset-0 z-50 m-0 h-full max-h-none w-full max-w-none overflow-y-auto border-0 bg-transparent p-0 backdrop:bg-[rgba(23,20,15,0.58)]"
         >
             <button
                 type="button"
                 className="fixed inset-0"
-                aria-label="Close notification settings"
+                aria-label={closeLabel}
+                tabIndex={-1}
                 onClick={onClose}
             />
-            <div className="pointer-events-none flex min-h-full items-center justify-center p-4 sm:p-6">
-                <div className="pointer-events-auto relative w-full max-w-4xl overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-2xl">
-                    <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-r from-slate-950 via-blue-950 to-slate-900 px-6 py-6 sm:px-8">
-                        <div className="absolute inset-y-0 right-0 w-56 bg-[radial-gradient(circle_at_top_right,_rgba(96,165,250,0.32),_transparent_70%)]" />
-                        <div className="relative flex items-start justify-between gap-4">
-                            <div>
-                                <p className="text-xs font-semibold uppercase tracking-[0.32em] text-sky-200">
-                                    Delivery Settings
-                                </p>
-                                <h2
-                                    id="notification-settings-title"
-                                    className="mt-2 text-2xl font-black text-white sm:text-3xl"
-                                >
-                                    Notification preferences
-                                </h2>
-                                <p className="mt-2 max-w-2xl text-sm text-slate-200">
-                                    Decide which alerts matter, where they should land, and when to test them.
-                                </p>
-                            </div>
-
-                            <button
-                                type="button"
-                                onClick={onClose}
-                                className="rounded-2xl border border-white/20 bg-white/10 p-2 text-white transition hover:bg-white/20"
-                                aria-label="Close notification settings"
-                            >
-                                <X className="h-5 w-5" />
-                            </button>
+            <div className="pointer-events-none flex min-h-full items-start justify-center px-4 py-12 sm:py-16">
+                <div
+                    className={`pointer-events-auto relative w-full ${maxWidth} overflow-hidden rounded-md border border-rule bg-surface enter`}
+                >
+                    <header className="flex items-start justify-between gap-6 border-b border-rule bg-surface-raised px-7 py-6 sm:px-9">
+                        <div>
+                            <p className="caption">{eyebrow}</p>
+                            <h2 id={titleId} className="mt-2 text-[22px] font-medium tracking-tight text-ink">
+                                {title}
+                            </h2>
+                            {description && (
+                                <p className="mt-2 max-w-xl text-[14px] text-ink-soft">{description}</p>
+                            )}
                         </div>
-                    </div>
-
-                    <div className="max-h-[78vh] overflow-y-auto bg-gradient-to-b from-slate-50 via-white to-sky-50 px-6 py-6 sm:px-8">
-                        <NotificationSettingsPanel />
-                    </div>
-                </div>
-            </div>
-        </dialog>
-    );
-}
-
-function CandidatePreferencesModal({
-    isOpen,
-    onClose,
-}: Readonly<{
-    isOpen: boolean;
-    onClose: () => void;
-}>) {
-    useEscapeDismiss(isOpen, onClose);
-
-    if (!isOpen) {
-        return null;
-    }
-
-    return (
-        <dialog
-            open
-            aria-labelledby="candidate-preferences-title"
-            className="fixed inset-0 z-50 m-0 h-full max-h-none w-full max-w-none overflow-y-auto border-0 bg-transparent p-0 backdrop:bg-slate-950/55 backdrop:backdrop-blur-sm"
-        >
-            <button
-                type="button"
-                className="fixed inset-0"
-                aria-label="Close candidate preferences"
-                onClick={onClose}
-            />
-            <div className="pointer-events-none flex min-h-full items-center justify-center p-4 sm:p-6">
-                <div className="pointer-events-auto relative w-full max-w-5xl overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-2xl">
-                    <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-r from-slate-950 via-sky-950 to-blue-900 px-6 py-6 sm:px-8">
-                        <div className="absolute inset-y-0 right-0 w-56 bg-[radial-gradient(circle_at_top_right,_rgba(56,189,248,0.28),_transparent_70%)]" />
-                        <div className="relative flex items-start justify-between gap-4">
-                            <div>
-                                <p className="text-xs font-semibold uppercase tracking-[0.32em] text-sky-200">
-                                    Match Inputs
-                                </p>
-                                <h2
-                                    id="candidate-preferences-title"
-                                    className="mt-2 text-2xl font-black text-white sm:text-3xl"
-                                >
-                                    Candidate preferences
-                                </h2>
-                                <p className="mt-2 max-w-2xl text-sm text-slate-200">
-                                    Define your hard constraints and what matters in your next role.
-                                </p>
-                            </div>
-
-                            <button
-                                type="button"
-                                onClick={onClose}
-                                className="rounded-2xl border border-white/20 bg-white/10 p-2 text-white transition hover:bg-white/20"
-                                aria-label="Close candidate preferences"
-                            >
-                                <X className="h-5 w-5" />
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="max-h-[78vh] overflow-y-auto bg-gradient-to-b from-slate-50 via-white to-sky-50 px-6 py-6 sm:px-8">
-                        <CandidatePreferencesPanel />
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="rounded-sm p-1 text-ink-muted transition-colors hover:bg-surface-sunk hover:text-ink"
+                            aria-label={closeLabel}
+                            data-autofocus="true"
+                        >
+                            <X className="h-4 w-4" />
+                        </button>
+                    </header>
+                    <div className="max-h-[76vh] overflow-y-auto bg-canvas px-7 py-7 sm:px-9">
+                        {children}
                     </div>
                 </div>
             </div>
@@ -189,7 +198,6 @@ function initialsFor(name: string, email: string) {
         .join('')
         .slice(0, 2)
         .toUpperCase();
-
     return letters || 'JS';
 }
 
@@ -209,15 +217,14 @@ export function DashboardHeader() {
                 name: user.name,
                 email: user.email,
                 picture: user.picture,
-                subtitle: 'Authenticated session',
+                subtitle: 'Signed in',
             };
         }
-
         return {
-            name: 'Local workspace',
-            email: 'Frontend auth is not enabled in this environment',
+            name: 'Workshop',
+            email: 'Local session',
             picture: undefined,
-            subtitle: 'Backend dev-bypass identity may still be active',
+            subtitle: 'No account signed in',
         };
     }, [user]);
 
@@ -228,13 +235,11 @@ export function DashboardHeader() {
         setIsPreferencesModalOpen(false);
         setIsNotificationModalOpen(true);
     };
-
     const openPreferences = () => {
         setIsProfileOpen(false);
         setIsNotificationModalOpen(false);
         setIsPreferencesModalOpen(true);
     };
-
     const toggleProfile = () => {
         setIsNotificationModalOpen(false);
         setIsPreferencesModalOpen(false);
@@ -243,127 +248,119 @@ export function DashboardHeader() {
 
     return (
         <>
-            <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 shadow-sm backdrop-blur-xl">
-                <div className="mx-auto flex max-w-[1800px] flex-col gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
-                    <div className="flex items-center gap-3">
-                        <div className="rounded-2xl bg-gradient-to-br from-blue-600 to-sky-500 p-3 shadow-lg shadow-blue-200/80">
-                            <Briefcase className="h-6 w-6 text-white" />
-                        </div>
-                        <div>
-                            <h1 className="text-2xl font-black tracking-tight text-slate-950">
-                                JobScout Dashboard
-                            </h1>
-                            <p className="text-sm font-medium text-slate-500">
-                                AI-guided matching with a calmer control surface
-                            </p>
-                        </div>
-                    </div>
+            <header className="sticky top-0 z-40 border-b border-rule bg-canvas/85 backdrop-blur-md">
+                <div className="mx-auto flex max-w-[var(--container-content)] items-center justify-between gap-6 px-5 py-4 sm:px-8 lg:px-10">
+                    <a href="/" className="group flex items-center gap-3" aria-label="JobScout home">
+                        <span className="jobscout-mark" aria-hidden="true" />
+                        <span className="flex items-baseline gap-2">
+                            <span className="text-[17px] font-medium tracking-tight text-ink">
+                                JobScout
+                            </span>
+                            <span className="caption hidden sm:inline">Workshop</span>
+                        </span>
+                    </a>
 
-                    <div className="flex items-center justify-end gap-3">
+                    <div className="flex items-center gap-2">
+                        <ThemeToggle />
                         <button
                             type="button"
                             onClick={openPreferences}
-                            className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-sky-200 hover:text-sky-600 hover:shadow-md"
-                            aria-label="Open candidate preferences"
+                            className="inline-flex h-9 items-center gap-2 rounded-md border border-rule bg-surface px-3 text-[13px] text-ink-soft transition-colors hover:border-rule-strong hover:text-ink"
+                            aria-label="Preferences"
                         >
-                            <SlidersHorizontal className="h-5 w-5" />
+                            <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+                            <span className="hidden sm:inline">Preferences</span>
                         </button>
                         <button
                             type="button"
                             onClick={openNotifications}
-                            className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-sky-200 hover:text-sky-600 hover:shadow-md"
+                            className="inline-flex h-9 items-center gap-2 rounded-md border border-rule bg-surface px-3 text-[13px] text-ink-soft transition-colors hover:border-rule-strong hover:text-ink"
                             aria-label="Open notification settings"
                         >
-                            <Bell className="h-5 w-5" />
+                            <Bell className="h-4 w-4" aria-hidden="true" />
+                            <span className="hidden sm:inline">Notifications</span>
                         </button>
 
                         <div className="relative" ref={profilePanelRef}>
                             <button
                                 type="button"
                                 onClick={toggleProfile}
-                                className="inline-flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
-                                aria-haspopup="menu"
+                                className="inline-flex h-9 items-center gap-2 rounded-md border border-rule bg-surface pl-1.5 pr-3 text-left transition-colors hover:border-rule-strong"
                                 aria-expanded={isProfileOpen}
+                                aria-controls="profile-panel"
                                 aria-label="Open profile menu"
                             >
                                 {identity.picture ? (
                                     <img
                                         src={identity.picture}
                                         alt=""
-                                        className="h-10 w-10 rounded-xl object-cover"
+                                        className="h-6 w-6 rounded-sm object-cover"
                                     />
                                 ) : (
-                                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-slate-950 to-blue-700 text-sm font-black text-white">
+                                    <span className="flex h-6 w-6 items-center justify-center rounded-sm bg-ink text-[10px] font-medium text-canvas">
                                         {avatarInitials}
-                                    </div>
+                                    </span>
                                 )}
-                                <div className="hidden min-w-0 sm:block">
-                                    <div className="truncate text-sm font-bold text-slate-900">
+                                <span className="hidden min-w-0 sm:block">
+                                    <span className="block truncate text-[13px] font-medium text-ink">
                                         {identity.name}
-                                    </div>
-                                    <div className="truncate text-xs text-slate-500">
-                                        {user ? identity.email : 'Profile details'}
-                                    </div>
-                                </div>
+                                    </span>
+                                </span>
                             </button>
 
                             {isProfileOpen && (
                                 <div
-                                    role="menu"
-                                    className="absolute right-0 top-full mt-3 w-[22rem] overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-2xl"
+                                    id="profile-panel"
+                                    aria-label="Profile panel"
+                                    className="absolute right-0 top-full mt-2 w-[20rem] overflow-hidden rounded-md border border-rule bg-surface-raised shadow-lg enter-fade"
                                 >
-                                    <div className="bg-gradient-to-r from-slate-950 via-blue-950 to-slate-900 px-5 py-5 text-white">
+                                    <div className="border-b border-rule px-5 py-4">
                                         <div className="flex items-center gap-3">
                                             {identity.picture ? (
                                                 <img
                                                     src={identity.picture}
                                                     alt=""
-                                                    className="h-14 w-14 rounded-2xl object-cover ring-2 ring-white/20"
+                                                    className="h-10 w-10 rounded-sm object-cover"
                                                 />
                                             ) : (
-                                                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/12 text-lg font-black">
+                                                <span className="flex h-10 w-10 items-center justify-center rounded-sm bg-ink text-[13px] font-medium text-canvas">
                                                     {avatarInitials}
-                                                </div>
+                                                </span>
                                             )}
                                             <div className="min-w-0">
-                                                <div className="truncate text-lg font-black">
+                                                <div className="truncate text-[14px] font-medium text-ink">
                                                     {identity.name}
                                                 </div>
-                                                <div className="truncate text-sm text-slate-200">
+                                                <div className="truncate text-[13px] text-ink-muted">
                                                     {identity.email}
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
 
-                                    <div className="space-y-4 px-5 py-5">
-                                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
-                                                Session
-                                            </p>
-                                            <p className="mt-2 text-sm font-semibold text-slate-900">
-                                                {identity.subtitle}
-                                            </p>
+                                    <div className="space-y-3 px-5 py-4">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <p className="caption">Session</p>
+                                            <p className="text-[13px] text-ink-soft">{identity.subtitle}</p>
                                         </div>
-
                                         {user ? (
                                             <Button
                                                 type="button"
                                                 variant="secondary"
                                                 size="sm"
-                                                className="w-full justify-center rounded-2xl"
+                                                className="w-full justify-center"
                                                 onClick={() => {
                                                     logout();
                                                     setIsProfileOpen(false);
                                                 }}
                                             >
-                                                <LogOut className="mr-2 h-4 w-4" />
+                                                <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
                                                 Sign out
                                             </Button>
                                         ) : (
-                                            <div className="flex items-center gap-2 rounded-2xl border border-dashed border-slate-200 px-4 py-3 text-sm text-slate-500">
-                                                <UserCircle2 className="h-4 w-4" />
-                                                Google sign-in is disabled for this local session.
+                                            <div className="flex items-center gap-2 rounded-sm border border-dashed border-rule px-3 py-2.5 text-[13px] text-ink-muted">
+                                                <UserCircle2 className="h-4 w-4" aria-hidden="true" />
+                                                Google sign-in is off in this session.
                                             </div>
                                         )}
                                     </div>
@@ -374,14 +371,31 @@ export function DashboardHeader() {
                 </div>
             </header>
 
-            <NotificationSettingsModal
+            <ModalShell
                 isOpen={isNotificationModalOpen}
                 onClose={() => setIsNotificationModalOpen(false)}
-            />
-            <CandidatePreferencesModal
+                titleId="notification-settings-title"
+                eyebrow="Delivery"
+                title="Notification preferences"
+                description="Decide which alerts matter and where they should land."
+                closeLabel="Close notification settings"
+                maxWidth="max-w-4xl"
+            >
+                <NotificationSettingsPanel />
+            </ModalShell>
+
+            <ModalShell
                 isOpen={isPreferencesModalOpen}
                 onClose={() => setIsPreferencesModalOpen(false)}
-            />
+                titleId="candidate-preferences-title"
+                eyebrow="Inputs"
+                title="Candidate preferences"
+                description="Your hard constraints and what matters in your next role."
+                closeLabel="Close candidate preferences"
+                maxWidth="max-w-5xl"
+            >
+                <CandidatePreferencesPanel />
+            </ModalShell>
         </>
     );
 }

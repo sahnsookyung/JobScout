@@ -1,48 +1,25 @@
-/**
- * Tests for Dashboard Components
- * Covers: web/frontend/src/features/dashboard/components/
- */
-
 import { render, screen } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Import components
+import { ActionButton, type ActionButtonProps } from '../ActionButton';
+import { CompactScoreBar, type ScoreBarProps } from '../CompactScoreBar';
 import { DashboardWrapper } from '../DashboardWrapper';
 import { ResumeUploadSection, type ResumeUploadSectionProps } from '../ResumeUploadSection';
-import { StatusBanner, type StatusBannerProps } from '../StatusBanner';
 import { SegmentedCircle, type CircleChartProps } from '../SegmentedCircle';
 import { StatsPanel, type StatsPanelProps } from '../StatsPanel';
-import { CompactScoreBar, type ScoreBarProps } from '../CompactScoreBar';
-import { ActionButton, type ActionButtonProps } from '../ActionButton';
+import { StatusBanner, type StatusBannerProps } from '../StatusBanner';
 
-// Mock lucide-react icons
 vi.mock('lucide-react', () => ({
-    FileUp: ({ className, ...props }: any) => <div data-testid="file-up-icon" className={className} {...props} />,
-    Zap: ({ className, ...props }: any) => <div data-testid="zap-icon" className={className} {...props} />,
-    Loader: ({ className, ...props }: any) => <div data-testid="loader-icon" className={className} {...props} />,
-    CheckCircle: ({ className, ...props }: any) => <div data-testid="check-circle-icon" className={className} {...props} />,
-    XCircle: ({ className, ...props }: any) => <div data-testid="x-circle-icon" className={className} {...props} />,
-    TrendingUp: ({ className, ...props }: any) => <div data-testid="trending-up-icon" className={className} {...props} />,
-    Award: ({ className, ...props }: any) => <div data-testid="award-icon" className={className} {...props} />,
-    MapPin: ({ className, ...props }: any) => <div data-testid="map-pin-icon" className={className} {...props} />,
-    Building2: ({ className, ...props }: any) => <div data-testid="building2-icon" className={className} {...props} />,
-    Laptop: ({ className, ...props }: any) => <div data-testid="laptop-icon" className={className} {...props} />,
-    Eye: ({ className, ...props }: any) => <div data-testid="eye-icon" className={className} {...props} />,
-    EyeOff: ({ className, ...props }: any) => <div data-testid="eye-off-icon" className={className} {...props} />,
-    ArrowUpRight: ({ className, ...props }: any) => <div data-testid="arrow-up-right-icon" className={className} {...props} />,
-    Sparkles: ({ className, ...props }: any) => <div data-testid="sparkles-icon" className={className} {...props} />,
+    FileText: ({ className, ...props }: any) => <div data-testid="file-text-icon" className={className} {...props} />,
+    Loader2: ({ className, ...props }: any) => <div data-testid="loader2-icon" className={className} {...props} />,
+    Upload: ({ className, ...props }: any) => <div data-testid="upload-icon" className={className} {...props} />,
+    CheckCircle2: ({ className, ...props }: any) => <div data-testid="check-circle2-icon" className={className} {...props} />,
+    CircleSlash: ({ className, ...props }: any) => <div data-testid="circle-slash-icon" className={className} {...props} />,
+    TriangleAlert: ({ className, ...props }: any) => <div data-testid="triangle-alert-icon" className={className} {...props} />,
+    Play: ({ className, ...props }: any) => <div data-testid="play-icon" className={className} {...props} />,
+    Square: ({ className, ...props }: any) => <div data-testid="square-icon" className={className} {...props} />,
 }));
 
-// Mock Badge component
-vi.mock('@/components/ui/Badge', () => ({
-    Badge: ({ children, variant }: any) => (
-        <span data-testid="badge" data-variant={variant} className={`badge-${variant}`}>
-            {children}
-        </span>
-    ),
-}));
-
-// Mock RESUME_MAX_SIZE_MB constant
 vi.mock('@shared/constants', () => ({
     RESUME_MAX_SIZE_MB: 5,
 }));
@@ -59,7 +36,7 @@ describe('DashboardWrapper', () => {
         expect(screen.getByText('Test Content')).toBeInTheDocument();
     });
 
-    it('applies correct styling classes', () => {
+    it('applies the redesigned shell classes', () => {
         const { container } = render(
             <DashboardWrapper>
                 <div>Content</div>
@@ -67,21 +44,8 @@ describe('DashboardWrapper', () => {
         );
 
         const wrapper = container.firstChild as HTMLElement;
-        expect(wrapper).toHaveClass('bg-gradient-to-br');
-        expect(wrapper).toHaveClass('from-slate-50');
-        expect(wrapper).toHaveClass('rounded-3xl');
-    });
-
-    it('renders decorative blur elements', () => {
-        const { container } = render(
-            <DashboardWrapper>
-                <div>Content</div>
-            </DashboardWrapper>
-        );
-
-        // Should have decorative blur circles
-        const blurElements = container.querySelectorAll('.blur-3xl');
-        expect(blurElements.length).toBe(2);
+        expect(wrapper).toHaveClass('border', 'border-rule', 'bg-surface');
+        expect(container.querySelector('.p-5.sm\\:p-7')).toBeInTheDocument();
     });
 });
 
@@ -98,68 +62,43 @@ describe('ResumeUploadSection', () => {
         vi.clearAllMocks();
     });
 
-    it('displays "Upload Resume" when no filename', () => {
+    it('displays "Upload resume" when no filename', () => {
         render(<ResumeUploadSection {...defaultProps} />);
-
-        expect(screen.getByText('Upload Resume')).toBeInTheDocument();
+        expect(screen.getByText('Upload resume')).toBeInTheDocument();
     });
 
-    it('displays "Update Resume" with filename', () => {
+    it('displays "Replace resume" with filename', () => {
         render(<ResumeUploadSection {...defaultProps} filename="resume.pdf" />);
-
-        expect(screen.getByText('Update Resume')).toBeInTheDocument();
-        // Use queryAllByText and check that at least one exists, since there are multiple displays of the filename
-        const filenameElements = screen.getAllByText('resume.pdf');
-        expect(filenameElements.length).toBeGreaterThan(0);
+        expect(screen.getByText('Replace resume')).toBeInTheDocument();
+        expect(screen.getByText('resume.pdf')).toBeInTheDocument();
     });
 
-    it('shows file size limit in tooltip', () => {
+    it('shows the file size limit in the button title', () => {
         render(<ResumeUploadSection {...defaultProps} />);
-
-        // Tooltip should mention max size
-        expect(screen.getByText(/max.*MB/i)).toBeInTheDocument();
+        expect(screen.getByRole('button')).toHaveAttribute('title', 'Upload resume (max 5MB)');
     });
 
     it('has hidden file input with correct accept attribute', () => {
         render(<ResumeUploadSection {...defaultProps} />);
-
         const fileInput = screen.getByTestId('resume-file-input');
         expect(fileInput).toHaveClass('hidden');
         expect(fileInput).toHaveAttribute('accept', '.json,.yaml,.yml,.txt,.docx,.pdf');
     });
 
-    it('calls onUpload when file is selected', async () => {
+    it('calls onUpload when file is selected', () => {
         const mockOnUpload = vi.fn();
         render(<ResumeUploadSection {...defaultProps} onUpload={mockOnUpload} />);
-
-        const fileInput = screen.getByTestId('resume-file-input');
-
-        await vi.waitFor(() => {
-            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-        });
-
-        expect(mockOnUpload).toHaveBeenCalled();
+        screen.getByTestId('resume-file-input').dispatchEvent(new Event('change', { bubbles: true }));
+        expect(mockOnUpload).toHaveBeenCalledTimes(1);
     });
 
-    it('disables button when isUploading', () => {
-        render(<ResumeUploadSection {...defaultProps} isUploading />);
+    it('disables the button when uploading or running', () => {
+        const { rerender } = render(<ResumeUploadSection {...defaultProps} isUploading />);
+        expect(screen.getByRole('button')).toBeDisabled();
+        expect(screen.getByText('Uploading')).toBeInTheDocument();
 
-        const button = screen.getByRole('button');
-        expect(button).toBeDisabled();
-    });
-
-    it('disables button when isRunning', () => {
-        render(<ResumeUploadSection {...defaultProps} isRunning />);
-
-        const button = screen.getByRole('button');
-        expect(button).toBeDisabled();
-    });
-
-    it('shows loading state when uploading', () => {
-        render(<ResumeUploadSection {...defaultProps} isUploading />);
-
-        const button = screen.getByRole('button');
-        expect(button).toHaveAttribute('disabled');
+        rerender(<ResumeUploadSection {...defaultProps} isRunning />);
+        expect(screen.getByRole('button')).toBeDisabled();
     });
 });
 
@@ -171,30 +110,25 @@ describe('StatusBanner', () => {
 
     it('renders pending status with initializing copy', () => {
         render(<StatusBanner status="pending" step="initializing" />);
-
-        expect(screen.getByTestId('loader-icon')).toBeInTheDocument();
-        expect(screen.getByTestId('badge')).toHaveAttribute('data-variant', 'info');
-        expect(screen.getByText('PENDING')).toBeInTheDocument();
-        expect(screen.getByText('Starting your matching run...')).toBeInTheDocument();
+        expect(screen.getByText('Active')).toBeInTheDocument();
+        expect(screen.getByText('Starting up')).toBeInTheDocument();
+        expect(screen.getByText('Starting your match run.')).toBeInTheDocument();
     });
 
-    it('renders running status with spinner', () => {
+    it('renders running status copy', () => {
         render(<StatusBanner {...defaultProps} />);
-
-        expect(screen.getByTestId('loader-icon')).toBeInTheDocument();
-        expect(screen.getByTestId('badge')).toHaveAttribute('data-variant', 'info');
-        expect(screen.getByText('RUNNING')).toBeInTheDocument();
+        expect(screen.getByText('Active')).toBeInTheDocument();
+        expect(screen.getByText('Loading resume')).toBeInTheDocument();
+        expect(screen.getByText('Working through your feed.')).toBeInTheDocument();
     });
 
-    it('renders completed status with checkmark', () => {
+    it('renders completed status summary', () => {
         render(<StatusBanner status="completed" matches_count={10} saved_count={8} execution_time={45.5} />);
-
-        expect(screen.getByTestId('check-circle-icon')).toBeInTheDocument();
-        expect(screen.getByTestId('badge')).toHaveAttribute('data-variant', 'success');
-        expect(screen.getByText('Pipeline completed!')).toBeInTheDocument();
-        expect(screen.getByText('Found: 10')).toBeInTheDocument();
-        expect(screen.getByText('Saved: 8')).toBeInTheDocument();
-        expect(screen.getByText('Time: 45.50s')).toBeInTheDocument();
+        expect(screen.getByTestId('check-circle2-icon')).toBeInTheDocument();
+        expect(screen.getByText('Complete')).toBeInTheDocument();
+        expect(screen.getByText((_, node) => node?.textContent === 'Found 10')).toBeInTheDocument();
+        expect(screen.getByText((_, node) => node?.textContent === 'Saved 8')).toBeInTheDocument();
+        expect(screen.getByText('45.5s')).toBeInTheDocument();
     });
 
     it('renders stale-result warning when a newer upload exists', () => {
@@ -213,74 +147,56 @@ describe('StatusBanner', () => {
         ).toBeInTheDocument();
     });
 
-    it('renders failed status with error message', () => {
-        render(<StatusBanner status="failed" error="Database connection failed" />);
-
-        expect(screen.getByTestId('x-circle-icon')).toBeInTheDocument();
-        expect(screen.getByTestId('badge')).toHaveAttribute('data-variant', 'error');
-        expect(screen.getByText('Pipeline failed')).toBeInTheDocument();
+    it('renders failed and cancelled states', () => {
+        const { rerender } = render(<StatusBanner status="failed" error="Database connection failed" />);
+        expect(screen.getByTestId('triangle-alert-icon')).toBeInTheDocument();
+        expect(screen.getByText('Failed')).toBeInTheDocument();
+        expect(screen.getByText("This run didn't finish.")).toBeInTheDocument();
         expect(screen.getByText('Database connection failed')).toBeInTheDocument();
+
+        rerender(<StatusBanner status="cancelled" step="scoring" />);
+        expect(screen.getByTestId('circle-slash-icon')).toBeInTheDocument();
+        expect(screen.getByText('Stopped')).toBeInTheDocument();
     });
 
-    it('renders cancelled status', () => {
-        render(<StatusBanner status="cancelled" step="scoring" />);
+    it('renders cancellation requested and persisting warnings', () => {
+        const { rerender, container } = render(
+            <StatusBanner status="cancellation_requested" step="scoring" />
+        );
+        expect(screen.getByText('Stopping')).toBeInTheDocument();
+        expect(screen.getByText('Stopping as soon as it is safe to.')).toBeInTheDocument();
+        expect(container.querySelector('.ember')).toBeInTheDocument();
 
-        expect(screen.getByTestId('x-circle-icon')).toBeInTheDocument();
-        expect(screen.getByTestId('badge')).toHaveAttribute('data-variant', 'default');
-        expect(screen.getByText('Pipeline cancelled')).toBeInTheDocument();
+        rerender(<StatusBanner status="persisting" step="saving_results" />);
+        expect(screen.getByText('Finishing')).toBeInTheDocument();
+        expect(screen.getByText('Past the save boundary — finishing safely.')).toBeInTheDocument();
     });
 
-    it('renders cancellation requested warning state', () => {
-        render(<StatusBanner status="cancellation_requested" step="scoring" />);
-
-        expect(screen.getByText('Stopping as soon as it is safe')).toBeInTheDocument();
-        expect(screen.getByText('Cancellation was requested. The worker is still winding down.')).toBeInTheDocument();
-        expect(screen.getByTestId('badge')).toHaveAttribute('data-variant', 'warning');
-    });
-
-    it('renders persisting warning state', () => {
-        render(<StatusBanner status="persisting" step="saving_results" />);
-
-        expect(screen.getByText('Finishing writes')).toBeInTheDocument();
-        expect(screen.getByText('The pipeline crossed the save boundary and is finishing safely.')).toBeInTheDocument();
-        expect(screen.getByTestId('badge')).toHaveAttribute('data-variant', 'warning');
-    });
-
-    it('shows current step when running', () => {
+    it('shows the current step for running states', () => {
         const { rerender } = render(<StatusBanner status="running" step="loading_resume" />);
-        expect(screen.getByText('Loading Resume')).toBeInTheDocument();
+        expect(screen.getByText('Loading resume')).toBeInTheDocument();
 
         rerender(<StatusBanner status="running" step="vector_matching" />);
-        expect(screen.getByText('Finding Matches')).toBeInTheDocument();
+        expect(screen.getByText('Finding candidates')).toBeInTheDocument();
 
         rerender(<StatusBanner status="running" step="scoring" />);
-        expect(screen.getByText('Scoring Candidates')).toBeInTheDocument();
+        expect(screen.getByText('Scoring')).toBeInTheDocument();
 
         rerender(<StatusBanner status="running" step="saving_results" />);
-        expect(screen.getByText('Saving Results')).toBeInTheDocument();
+        expect(screen.getByText('Saving')).toBeInTheDocument();
 
         rerender(<StatusBanner status="running" step="notifying" />);
         expect(screen.getByText('Notifying')).toBeInTheDocument();
     });
 
-    it('shows pulsing indicator when running', () => {
-        render(<StatusBanner {...defaultProps} />);
-
-        // Should have pulsing animation element
-        const pulsingElement = screen.getByTestId('loader-icon').parentElement;
-        expect(pulsingElement).toBeInTheDocument();
-    });
-
-    it('handles undefined optional props gracefully', () => {
+    it('handles missing optional props gracefully', () => {
         render(<StatusBanner status="running" />);
-
-        expect(screen.getByText('Processing your matches...')).toBeInTheDocument();
+        expect(screen.getByText('Working through your feed.')).toBeInTheDocument();
     });
 
-    it('formats execution time with 2 decimal places', () => {
+    it('formats execution time with one decimal place', () => {
         render(<StatusBanner status="completed" execution_time={12.345} />);
-
-        expect(screen.getByText('Time: 12.35s')).toBeInTheDocument();
+        expect(screen.getByText('12.3s')).toBeInTheDocument();
     });
 });
 
@@ -294,54 +210,28 @@ describe('SegmentedCircle', () => {
         radius: 36,
     };
 
-    it('renders SVG circle chart', () => {
-        render(<SegmentedCircle {...defaultProps} />);
-
-        // Query for svg element directly since it doesn't have role="img"
-        const svg = document.querySelector('svg');
-        expect(svg).toBeInTheDocument();
+    it('renders SVG circle chart with four circles', () => {
+        const { container } = render(<SegmentedCircle {...defaultProps} />);
+        expect(container.querySelector('svg')).toBeInTheDocument();
+        expect(container.querySelectorAll('circle')).toHaveLength(4);
     });
 
-    it('displays active matches count in center', () => {
+    it('displays active matches count in the center', () => {
         render(<SegmentedCircle {...defaultProps} />);
-
         expect(screen.getByText('5')).toBeInTheDocument();
-        expect(screen.getByText('Fits')).toBeInTheDocument();
+        expect(screen.getByText('fit')).toBeInTheDocument();
     });
 
-    it('renders three segment circles', () => {
+    it('uses the accent stroke for the active segment', () => {
         const { container } = render(<SegmentedCircle {...defaultProps} />);
-
-        const circles = container.querySelectorAll('circle');
-        expect(circles.length).toBe(4); // 1 background + 3 segments
+        const segments = container.querySelectorAll('circle');
+        expect(segments[1]).toHaveAttribute('stroke', 'var(--accent)');
     });
 
-    it('applies gradient to active segment', () => {
+    it('stays responsive across breakpoints', () => {
         const { container } = render(<SegmentedCircle {...defaultProps} />);
-
-        // Should have gradient definition
-        expect(container.querySelector('linearGradient')).toBeInTheDocument();
-        expect(container.querySelector('#gradient-active')).toBeInTheDocument();
-    });
-
-    it('calculates correct stroke-dasharray for segments', () => {
-        render(<SegmentedCircle {...defaultProps} />);
-
-        const { container } = render(<SegmentedCircle {...defaultProps} />);
-        const segments = container.querySelectorAll('circle:not(:first-child)');
-
-        // Each segment should have stroke-dasharray style
-        segments.forEach(segment => {
-            expect(segment).toHaveAttribute('style');
-        });
-    });
-
-    it('is responsive with different screen sizes', () => {
-        const { container } = render(<SegmentedCircle {...defaultProps} />);
-
         const svgContainer = container.firstChild as HTMLElement;
-        expect(svgContainer).toHaveClass('sm:w-32');
-        expect(svgContainer).toHaveClass('lg:w-36');
+        expect(svgContainer).toHaveClass('h-24', 'w-24', 'sm:h-28', 'sm:w-28');
     });
 });
 
@@ -369,77 +259,42 @@ describe('StatsPanel', () => {
         radius: 36,
     };
 
-    it('renders total matches card', () => {
+    it('renders the total card, match breakdown, and score distribution', () => {
         render(<StatsPanel {...defaultProps} />);
-
+        expect(screen.getByText('Total')).toBeInTheDocument();
         expect(screen.getByText('100')).toBeInTheDocument();
-        expect(screen.getByText('Total Matches')).toBeInTheDocument();
-        expect(screen.getByTestId('trending-up-icon')).toBeInTheDocument();
-    });
-
-    it('renders segmented circle with match breakdown', () => {
-        render(<StatsPanel {...defaultProps} />);
-
-        expect(screen.getByText('45 Fit')).toBeInTheDocument();
-        expect(screen.getByText('25 Misfit')).toBeInTheDocument();
-        expect(screen.getByText('30 Hidden')).toBeInTheDocument();
-    });
-
-    it('renders score distribution section', () => {
-        render(<StatsPanel {...defaultProps} />);
-
-        expect(screen.getByTestId('award-icon')).toBeInTheDocument();
-        expect(screen.getByText('Score Distribution')).toBeInTheDocument();
-        expect(screen.getByText('Excellent')).toBeInTheDocument();
+        expect(screen.getByText('matches this run')).toBeInTheDocument();
+        expect(screen.getByText('Fit')).toBeInTheDocument();
+        expect(screen.getByText('Below threshold')).toBeInTheDocument();
+        expect(screen.getByText('Hidden')).toBeInTheDocument();
+        expect(screen.getByText('Score distribution')).toBeInTheDocument();
+        expect(screen.getByText('Strong')).toBeInTheDocument();
         expect(screen.getByText('Good')).toBeInTheDocument();
-        expect(screen.getByText('Average')).toBeInTheDocument();
-        expect(screen.getByText('Poor')).toBeInTheDocument();
+        expect(screen.getByText('Fair')).toBeInTheDocument();
+        expect(screen.getByText('Low')).toBeInTheDocument();
     });
 
-    it('handles null stats gracefully', () => {
-        render(<StatsPanel {...defaultProps} stats={null} />);
+    it('handles null and undefined stats gracefully', () => {
+        const { rerender } = render(<StatsPanel {...defaultProps} stats={null} />);
+        expect(screen.getAllByText('0').length).toBeGreaterThan(0);
 
-        // Should show 0 for Total Matches - look for the text with gradient styling
-        const totalMatchesElement = screen.getByText('Total Matches');
-        expect(totalMatchesElement).toBeInTheDocument();
-        // The 0 value should be before the "Total Matches" label
-        const zeroElement = totalMatchesElement.previousElementSibling;
-        expect(zeroElement).toHaveTextContent('0');
+        rerender(<StatsPanel {...defaultProps} stats={undefined} />);
+        expect(screen.getAllByText('0').length).toBeGreaterThan(0);
     });
 
-    it('handles undefined stats gracefully', () => {
-        render(<StatsPanel {...defaultProps} stats={undefined} />);
+    it('renders partial distributions and expected widths', () => {
+        const { container } = render(
+            <StatsPanel
+                {...defaultProps}
+                stats={{
+                    ...defaultStats,
+                    score_distribution: { excellent: 10, good: 0, average: 0, poor: 0 },
+                }}
+            />
+        );
 
-        // Should show 0 for Total Matches - look for the text with gradient styling
-        const totalMatchesElement = screen.getByText('Total Matches');
-        expect(totalMatchesElement).toBeInTheDocument();
-        // The 0 value should be before the "Total Matches" label
-        const zeroElement = totalMatchesElement.previousElementSibling;
-        expect(zeroElement).toHaveTextContent('0');
-    });
-
-    it('handles partial score distribution', () => {
-        const partialStats = {
-            ...defaultStats,
-            score_distribution: {
-                excellent: 10,
-                good: 0,
-                average: 0,
-                poor: 0,
-            },
-        };
-
-        render(<StatsPanel {...defaultProps} stats={partialStats} />);
-
-        expect(screen.getByText('Excellent')).toBeInTheDocument();
-    });
-
-    it('calculates correct percentages for score bars', () => {
-        render(<StatsPanel {...defaultProps} />);
-
-        // Score bars should be rendered - look for the progress bar elements
-        const scoreBars = document.querySelectorAll('.bg-gradient-to-r.from-blue-500');
-        expect(scoreBars.length).toBeGreaterThanOrEqual(1);
+        expect(screen.getByText('Strong')).toBeInTheDocument();
+        expect(container.querySelector('div[style*="width: 10%"]')).toBeInTheDocument();
     });
 });
 
@@ -449,59 +304,30 @@ describe('CompactScoreBar', () => {
         range: '0-100',
         value: 75,
         total: 100,
-        gradient: 'from-blue-500 to-indigo-600',
+        tone: 'accent',
     };
 
-    it('renders label and range', () => {
+    it('renders label, range, and value', () => {
         render(<CompactScoreBar {...defaultProps} />);
-
         expect(screen.getByText('Test Label')).toBeInTheDocument();
-        expect(screen.getByText('(0-100)')).toBeInTheDocument();
-    });
-
-    it('renders value', () => {
-        render(<CompactScoreBar {...defaultProps} />);
-
+        expect(screen.getByText('0-100')).toBeInTheDocument();
         expect(screen.getByText('75')).toBeInTheDocument();
     });
 
-    it('calculates correct percentage width', () => {
+    it('calculates widths for normal, overflow, and zero-total cases', () => {
+        const { container, rerender } = render(<CompactScoreBar {...defaultProps} />);
+        expect(container.querySelector('div[style*="width: 75%"]')).toBeInTheDocument();
+
+        rerender(<CompactScoreBar {...defaultProps} value={150} total={100} />);
+        expect(container.querySelector('div[style*="width: 150%"]')).toBeInTheDocument();
+
+        rerender(<CompactScoreBar {...defaultProps} value={50} total={0} />);
+        expect(container.querySelector('div[style*="width: 0%"]')).toBeInTheDocument();
+    });
+
+    it('applies the selected tone class', () => {
         const { container } = render(<CompactScoreBar {...defaultProps} />);
-
-        // Find the progress bar element with inline style
-        const progressBar = container.querySelector('div[style*="width: 75%"]');
-        expect(progressBar).toBeInTheDocument();
-    });
-
-    it('handles value greater than total', () => {
-        const { container } = render(<CompactScoreBar {...defaultProps} value={150} total={100} />);
-
-        // When value > total, percentage should be 150% (not capped)
-        const progressBar = container.querySelector('div[style*="width: 150%"]');
-        expect(progressBar).toBeInTheDocument();
-    });
-
-    it('handles zero total', () => {
-        const { container } = render(<CompactScoreBar {...defaultProps} value={50} total={0} />);
-
-        // When total is 0, percentage should be 0%
-        const progressBar = container.querySelector('div[style*="width: 0%"]');
-        expect(progressBar).toBeInTheDocument();
-    });
-
-    it('applies gradient colors', () => {
-        const { container } = render(<CompactScoreBar {...defaultProps} />);
-
-        const indicator = container.querySelector('.rounded-full.bg-gradient-to-r');
-        expect(indicator).toHaveClass('from-blue-500');
-        expect(indicator).toHaveClass('to-indigo-600');
-    });
-
-    it('is responsive', () => {
-        render(<CompactScoreBar {...defaultProps} />);
-
-        // Should have responsive text sizes
-        expect(screen.getByText('Test Label')).toHaveClass('text-xs', 'sm:text-sm');
+        expect(container.querySelector('.bg-accent')).toBeInTheDocument();
     });
 });
 
@@ -520,104 +346,56 @@ describe('ActionButton', () => {
         vi.clearAllMocks();
     });
 
-    it('displays "Run Matching" when not running', () => {
-        render(<ActionButton {...defaultProps} />);
+    it('renders run and stop variants', () => {
+        const { rerender, container } = render(<ActionButton {...defaultProps} />);
+        expect(screen.getByText('Run matching')).toBeInTheDocument();
+        expect(screen.getByTestId('play-icon')).toBeInTheDocument();
+        expect(container.querySelector('button')).toHaveClass('bg-accent', 'border-accent');
 
-        expect(screen.getByText('Run Matching')).toBeInTheDocument();
-    });
-
-    it('displays "Stop" when running', () => {
-        render(<ActionButton {...defaultProps} canStop />);
-
+        rerender(<ActionButton {...defaultProps} canStop />);
         expect(screen.getByText('Stop')).toBeInTheDocument();
+        expect(screen.getByTestId('square-icon')).toBeInTheDocument();
+        expect(container.querySelector('button')).toHaveClass('bg-surface', 'border-rule-strong');
     });
 
-    it('calls onRun when clicked (not running)', () => {
-        const mockOnRun = vi.fn();
-        render(<ActionButton {...defaultProps} onRun={mockOnRun} />);
+    it('calls onRun or onStop on click', () => {
+        const onRun = vi.fn();
+        const onStop = vi.fn();
+        const { rerender } = render(<ActionButton {...defaultProps} onRun={onRun} onStop={onStop} />);
 
-        const button = screen.getByRole('button');
-        button.click();
+        screen.getByRole('button').click();
+        expect(onRun).toHaveBeenCalledTimes(1);
 
-        expect(mockOnRun).toHaveBeenCalledTimes(1);
-        expect(mockOnRun).toHaveBeenCalled();
+        rerender(<ActionButton {...defaultProps} canStop onRun={onRun} onStop={onStop} />);
+        screen.getByRole('button').click();
+        expect(onStop).toHaveBeenCalledTimes(1);
     });
 
-    it('calls onStop when clicked (running)', () => {
-        const mockOnStop = vi.fn();
-        render(<ActionButton {...defaultProps} canStop onStop={mockOnStop} />);
+    it('disables processing states', () => {
+        const { rerender } = render(<ActionButton {...defaultProps} isRunning />);
+        expect(screen.getByRole('button')).toBeDisabled();
 
-        const button = screen.getByRole('button');
-        button.click();
-
-        expect(mockOnStop).toHaveBeenCalledTimes(1);
+        rerender(<ActionButton {...defaultProps} canStop isStopping />);
+        expect(screen.getByRole('button')).toBeDisabled();
     });
 
-    it('is disabled when processing', () => {
-        render(<ActionButton {...defaultProps} isRunning />);
+    it('renders persisting and cancellation labels', () => {
+        const { rerender, container } = render(<ActionButton {...defaultProps} isPersistingStatus />);
+        expect(screen.getByText('Finishing')).toBeInTheDocument();
+        expect(container.querySelector('button')).toHaveClass('bg-warn-soft', 'border-warn');
 
-        const button = screen.getByRole('button');
-        expect(button).toBeDisabled();
+        rerender(<ActionButton {...defaultProps} isCancellationRequested />);
+        expect(screen.getByText('Stopping')).toBeInTheDocument();
     });
 
-    it('is disabled when stopping', () => {
-        render(<ActionButton {...defaultProps} canStop isStopping />);
+    it('renders resume processing labels', () => {
+        const { rerender } = render(
+            <ActionButton {...defaultProps} isProcessingResume processingStep="extracting" />
+        );
+        expect(screen.getByText('Parsing resume')).toBeInTheDocument();
+        expect(screen.getByTestId('loader2-icon')).toBeInTheDocument();
 
-        const button = screen.getByRole('button');
-        expect(button).toBeDisabled();
-    });
-
-    it('shows Zap icon when not running', () => {
-        render(<ActionButton {...defaultProps} />);
-
-        expect(screen.getByTestId('zap-icon')).toBeInTheDocument();
-    });
-
-    it('does not show Zap icon when running', () => {
-        render(<ActionButton {...defaultProps} canStop />);
-
-        expect(screen.queryByTestId('zap-icon')).not.toBeInTheDocument();
-    });
-
-    it('has gradient background when not running', () => {
-        const { container } = render(<ActionButton {...defaultProps} />);
-
-        const button = container.querySelector('button');
-        expect(button).toHaveClass('from-blue-600');
-        expect(button).toHaveClass('to-indigo-600');
-    });
-
-    it('has red background when running', () => {
-        const { container } = render(<ActionButton {...defaultProps} canStop />);
-
-        const button = container.querySelector('button');
-        expect(button).toHaveClass('bg-red-500');
-    });
-
-    it('shows persisting label and amber styling', () => {
-        const { container } = render(<ActionButton {...defaultProps} isPersistingStatus />);
-
-        expect(screen.getByText('Finishing...')).toBeInTheDocument();
-        const button = container.querySelector('button');
-        expect(button).toHaveClass('bg-amber-500');
-    });
-
-    it('shows cancellation requested label', () => {
-        render(<ActionButton {...defaultProps} isCancellationRequested />);
-
-        expect(screen.getByText('Stopping...')).toBeInTheDocument();
-    });
-
-    it('shows resume processing label for known extracting step', () => {
-        render(<ActionButton {...defaultProps} isProcessingResume processingStep="extracting" />);
-
-        expect(screen.getByText('Parsing resume...')).toBeInTheDocument();
-        expect(screen.getByTestId('loader-icon')).toBeInTheDocument();
-    });
-
-    it('falls back to generic preparing label for unknown processing step', () => {
-        render(<ActionButton {...defaultProps} isProcessingResume processingStep="unknown-step" />);
-
-        expect(screen.getByText('Preparing...')).toBeInTheDocument();
+        rerender(<ActionButton {...defaultProps} isProcessingResume processingStep="unknown-step" />);
+        expect(screen.getByText('Preparing')).toBeInTheDocument();
     });
 });

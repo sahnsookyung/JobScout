@@ -16,19 +16,25 @@ describe('Button', () => {
     it('defaults to primary variant', () => {
         const { container } = render(<Button>Primary</Button>);
         const btn = container.querySelector('button')!;
-        expect(btn).toHaveClass('bg-blue-600');
+        expect(btn).toHaveClass('bg-accent');
     });
 
     it('applies secondary variant classes', () => {
         const { container } = render(<Button variant="secondary">Sec</Button>);
         const btn = container.querySelector('button')!;
-        expect(btn).toHaveClass('bg-gray-200');
+        expect(btn).toHaveClass('bg-surface', 'border-rule');
     });
 
     it('applies ghost variant classes', () => {
         const { container } = render(<Button variant="ghost">Ghost</Button>);
         const btn = container.querySelector('button')!;
-        expect(btn).toHaveClass('hover:bg-gray-100');
+        expect(btn).toHaveClass('bg-transparent');
+    });
+
+    it('applies quiet variant classes', () => {
+        const { container } = render(<Button variant="quiet">Quiet</Button>);
+        const btn = container.querySelector('button')!;
+        expect(btn).toHaveClass('bg-ink', 'text-canvas');
     });
 
     it('defaults to md size', () => {
@@ -40,13 +46,13 @@ describe('Button', () => {
     it('applies sm size classes', () => {
         const { container } = render(<Button size="sm">Sm</Button>);
         const btn = container.querySelector('button')!;
-        expect(btn).toHaveClass('px-3', 'py-1.5', 'text-sm');
+        expect(btn).toHaveClass('px-3', 'py-1.5');
     });
 
     it('applies lg size classes', () => {
         const { container } = render(<Button size="lg">Lg</Button>);
         const btn = container.querySelector('button')!;
-        expect(btn).toHaveClass('px-6', 'py-3', 'text-lg');
+        expect(btn).toHaveClass('px-5', 'py-2.5');
     });
 
     it('shows spinner SVG when isLoading', () => {
@@ -77,16 +83,6 @@ describe('Button', () => {
     it('does not set aria-busy when not loading', () => {
         render(<Button>Normal</Button>);
         expect(screen.getByRole('button')).toHaveAttribute('aria-busy', 'false');
-    });
-
-    it('sets aria-label to Loading... when isLoading', () => {
-        render(<Button isLoading>Loading</Button>);
-        expect(screen.getByRole('button')).toHaveAttribute('aria-label', 'Loading...');
-    });
-
-    it('does not set aria-label when not loading', () => {
-        render(<Button>Normal</Button>);
-        expect(screen.getByRole('button')).not.toHaveAttribute('aria-label');
     });
 
     it('merges custom className', () => {

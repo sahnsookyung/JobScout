@@ -45,12 +45,22 @@ describe('DashboardHeader', () => {
 
         await userEvent.click(screen.getByRole('button', { name: /open profile menu/i }));
 
-        const menu = screen.getByRole('menu');
+        const panel = screen.getByLabelText('Profile panel');
 
-        expect(menu).toBeInTheDocument();
-        expect(within(menu).getByText('Ada Lovelace')).toBeInTheDocument();
-        expect(within(menu).getByText('ada@example.com')).toBeInTheDocument();
-        expect(within(menu).getByRole('button', { name: /sign out/i })).toBeInTheDocument();
+        expect(panel).toBeInTheDocument();
+        expect(within(panel).getByText('Ada Lovelace')).toBeInTheDocument();
+        expect(within(panel).getByText('ada@example.com')).toBeInTheDocument();
+        expect(within(panel).getByRole('button', { name: /sign out/i })).toBeInTheDocument();
+    });
+
+    it('returns focus to the notification trigger after closing the modal', async () => {
+        render(<DashboardHeader />);
+
+        const notificationButton = screen.getByRole('button', { name: /open notification settings/i });
+        await userEvent.click(notificationButton);
+        await userEvent.click(screen.getAllByRole('button', { name: /close notification settings/i })[0]);
+
+        expect(notificationButton).toHaveFocus();
     });
 
     it('renders the notification button before the profile button', () => {

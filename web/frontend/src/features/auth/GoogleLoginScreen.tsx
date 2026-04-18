@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Briefcase } from 'lucide-react';
 import { cloudAuthApi } from '@/services/cloudAuthApi';
 import { useAuth } from './useAuth';
 
 declare global {
-    // eslint-disable-next-line no-var
     var google: {
         accounts: {
             id: {
@@ -45,9 +43,7 @@ export function GoogleLoginScreen() {
             globalThis.google.accounts.id.initialize({
                 client_id: clientId,
                 callback: async (response: GoogleCredentialResponse) => {
-                    if (!isMountedRef.current) {
-                        return;
-                    }
+                    if (!isMountedRef.current) return;
                     const attemptId = exchangeAttemptRef.current + 1;
                     exchangeAttemptRef.current = attemptId;
                     setIsSigningIn(true);
@@ -56,9 +52,7 @@ export function GoogleLoginScreen() {
                         const exchange = await cloudAuthApi.exchangeGoogleCredential(
                             response.credential
                         );
-                        if (!isMountedRef.current || attemptId !== exchangeAttemptRef.current) {
-                            return;
-                        }
+                        if (!isMountedRef.current || attemptId !== exchangeAttemptRef.current) return;
                         const { user, access_token: accessToken } = exchange.data;
                         login(
                             {
@@ -69,10 +63,8 @@ export function GoogleLoginScreen() {
                             accessToken
                         );
                     } catch {
-                        if (!isMountedRef.current || attemptId !== exchangeAttemptRef.current) {
-                            return;
-                        }
-                        setAuthError('Sign-in failed. Please try again.');
+                        if (!isMountedRef.current || attemptId !== exchangeAttemptRef.current) return;
+                        setAuthError('Sign-in didn’t go through. Please try once more.');
                     } finally {
                         if (isMountedRef.current && attemptId === exchangeAttemptRef.current) {
                             setIsSigningIn(false);
@@ -88,7 +80,6 @@ export function GoogleLoginScreen() {
             });
         }
 
-        // Poll until Google SDK is ready
         const interval = setInterval(() => {
             if (globalThis.google) {
                 clearInterval(interval);
@@ -104,27 +95,50 @@ export function GoogleLoginScreen() {
     }, [clientId, login]);
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-gray-50 flex items-center justify-center">
-            <div className="bg-white rounded-2xl shadow-lg p-10 flex flex-col items-center gap-6 max-w-sm w-full mx-4">
-                <div className="p-3 bg-blue-600 rounded-xl">
-                    <Briefcase className="w-8 h-8 text-white" />
+        <main className="flex min-h-screen items-center justify-center bg-canvas px-4 py-12 text-ink">
+            <div className="w-full max-w-md border border-rule bg-surface enter">
+                <div className="flex items-center gap-3 border-b border-rule px-8 py-6">
+                    <span className="jobscout-mark" aria-hidden="true" />
+                    <span className="flex items-baseline gap-2">
+                        <span className="text-[17px] font-medium tracking-tight text-ink">JobScout</span>
+                        <span className="caption">Workshop</span>
+                    </span>
                 </div>
-                <div className="text-center">
-                    <h1 className="text-2xl font-bold text-gray-900">JobScout</h1>
-                    <p className="text-sm text-gray-500 mt-1">
-                        Continue with Google to create an account or sign in
+
+                <div className="px-8 py-8">
+                    <p className="caption">Welcome back</p>
+                    <h1 className="mt-2 text-[26px] font-medium leading-tight tracking-tight text-ink">
+                        A quiet place to find your next role.
+                    </h1>
+                    <p className="mt-3 max-w-sm text-[14px] leading-relaxed text-ink-soft">
+                        Sign in with Google to keep your resume, preferences, and shortlist in one place.
+                        Take the time you need.
                     </p>
+
+                    <div className="mt-6 flex justify-center">
+                        <div ref={buttonRef} />
+                    </div>
+
+                    {isSigningIn && (
+                        <p className="mt-4 flex items-center justify-center gap-2 text-[13px] text-ink-soft" aria-live="polite">
+                            <span className="relative flex h-2 w-2">
+                                <span className="ember absolute inset-0 rounded-full bg-accent opacity-40" aria-hidden="true" />
+                                <span className="relative m-auto h-1 w-1 rounded-full bg-accent" />
+                            </span>
+                            Finishing sign-in
+                        </p>
+                    )}
+                    {authError && (
+                        <p className="mt-4 border border-warn/40 bg-warn-soft px-3 py-2 text-[13px] text-ink" role="alert">
+                            {authError}
+                        </p>
+                    )}
                 </div>
-                <div ref={buttonRef} />
-                {isSigningIn ? (
-                    <p className="text-sm text-blue-600">Finishing sign-in...</p>
-                ) : null}
-                {authError ? (
-                    <p className="text-sm text-red-600" role="alert">
-                        {authError}
-                    </p>
-                ) : null}
+
+                <div className="border-t border-rule px-8 py-4 text-[12px] text-ink-muted">
+                    We only store what you explicitly share. No tracking pixels. No cold emails.
+                </div>
             </div>
-        </div>
+        </main>
     );
 }
