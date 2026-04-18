@@ -1,27 +1,36 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 export type Theme = 'light' | 'dark';
 
 const STORAGE_KEY = 'jobscout-theme';
 
-function readInitialTheme(): Theme {
-    if (typeof document === 'undefined') return 'light';
-    const attr = document.documentElement.getAttribute('data-theme');
-    if (attr === 'dark' || attr === 'light') return attr;
+function readStoredTheme(): Theme | null {
     try {
         const saved = localStorage.getItem(STORAGE_KEY);
-        if (saved === 'dark' || saved === 'light') return saved;
+        return saved === 'dark' || saved === 'light' ? saved : null;
     } catch {
-        /* ignore */
+        return null;
     }
+}
+
+function readInitialTheme(): Theme {
+    if (typeof document === 'undefined') return 'light';
+    const savedTheme = readStoredTheme();
+    if (savedTheme) return savedTheme;
+    const attr = document.documentElement.dataset.theme;
+    if (attr === 'dark' || attr === 'light') return attr;
     return globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
 export function useTheme() {
-    const [theme, setThemeState] = useState<Theme>(readInitialTheme);
+    const [theme, setTheme] = useState<Theme>(readInitialTheme);
+    const hasExplicitPreferenceRef = useRef(readStoredTheme() !== null);
 
     useEffect(() => {
-        document.documentElement.setAttribute('data-theme', theme);
+        document.documentElement.dataset.theme = theme;
+        if (!hasExplicitPreferenceRef.current) {
+            return;
+        }
         try {
             localStorage.setItem(STORAGE_KEY, theme);
         } catch {
@@ -34,24 +43,24 @@ export function useTheme() {
         const mq = globalThis.matchMedia?.('(prefers-color-scheme: dark)');
         if (!mq) return;
         const handler = (event: MediaQueryListEvent) => {
-            try {
-                if (localStorage.getItem(STORAGE_KEY)) return;
-            } catch {
-                /* ignore */
+            if (hasExplicitPreferenceRef.current) {
+                return;
             }
-            setThemeState(event.matches ? 'dark' : 'light');
+            setTheme(event.matches ? 'dark' : 'light');
         };
         mq.addEventListener('change', handler);
         return () => mq.removeEventListener('change', handler);
     }, []);
 
-    const setTheme = useCallback((next: Theme) => {
-        setThemeState(next);
+    const setExplicitTheme = useCallback((next: Theme) => {
+        hasExplicitPreferenceRef.current = true;
+        setTheme(next);
     }, []);
 
     const toggle = useCallback(() => {
-        setThemeState((current) => (current === 'dark' ? 'light' : 'dark'));
+        hasExplicitPreferenceRef.current = true;
+        setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
     }, []);
 
-    return { theme, setTheme, toggle };
+    return { theme, setTheme: setExplicitTheme, toggle };
 }

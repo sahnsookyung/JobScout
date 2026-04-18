@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from 'react';
-import { X, MapPin, Building2, Laptop } from 'lucide-react';
+import React from 'react';
+import { MapPin, Building2, Laptop } from 'lucide-react';
+import { ModalShell } from '@/components/ui/ModalShell';
 import { useMatchDetails } from '@/hooks/useMatchDetails';
 import { Badge } from '@/components/ui/Badge';
 import { formatScore, formatSalary } from '@/utils/formatters';
@@ -30,15 +31,6 @@ type FitDiagnosticsExplanation = Readonly<{
     fallback_reason?: string;
 }>;
 
-const FOCUSABLE_SELECTOR = [
-    'button:not([disabled])',
-    '[href]',
-    'input:not([disabled])',
-    'select:not([disabled])',
-    'textarea:not([disabled])',
-    '[tabindex]:not([tabindex="-1"])',
-].join(', ');
-
 function evidenceToneLabel(score: number | null | undefined): string {
     if (typeof score !== 'number') return 'unscored';
     if (score >= 0.7) return 'strong';
@@ -46,134 +38,6 @@ function evidenceToneLabel(score: number | null | undefined): string {
     return 'weak';
 }
 
-function useModalFocusTrap(
-    ref: React.RefObject<HTMLElement | null>,
-    onClose: () => void,
-    enabled: boolean,
-) {
-    const previousFocusRef = useRef<HTMLElement | null>(null);
-
-    useEffect(() => {
-        if (!enabled) return;
-
-        const modalElement = ref.current;
-        if (!modalElement) return;
-
-        previousFocusRef.current =
-            document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-        const focusableElements = () =>
-            Array.from(modalElement.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-                (element) => !element.hasAttribute('disabled') && element.tabIndex !== -1,
-            );
-
-        const frameId = requestAnimationFrame(() => {
-            const [firstFocusable] = focusableElements();
-            (firstFocusable ?? modalElement).focus();
-        });
-
-        const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                onClose();
-                return;
-            }
-
-            if (event.key !== 'Tab') {
-                return;
-            }
-
-            const focusables = focusableElements();
-            if (focusables.length === 0) {
-                event.preventDefault();
-                modalElement.focus();
-                return;
-            }
-
-            const firstFocusable = focusables[0];
-            const lastFocusable = focusables[focusables.length - 1];
-            const activeElement =
-                document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-            if (!event.shiftKey && activeElement === lastFocusable) {
-                event.preventDefault();
-                firstFocusable.focus();
-            }
-
-            if (event.shiftKey && activeElement === firstFocusable) {
-                event.preventDefault();
-                lastFocusable.focus();
-            }
-        };
-
-        document.addEventListener('keydown', handleKeyDown);
-
-        return () => {
-            cancelAnimationFrame(frameId);
-            document.removeEventListener('keydown', handleKeyDown);
-            previousFocusRef.current?.focus();
-        };
-    }, [enabled, onClose, ref]);
-}
-
-function ModalShell({
-    title,
-    eyebrow,
-    onClose,
-    children,
-}: Readonly<{
-    title: string;
-    eyebrow: string;
-    onClose: () => void;
-    children: React.ReactNode;
-}>) {
-    const modalRef = useRef<HTMLDivElement>(null);
-
-    useModalFocusTrap(modalRef, onClose, true);
-
-    return (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
-            <button
-                type="button"
-                className="fixed inset-0 bg-[rgba(23,20,15,0.58)]"
-                onClick={onClose}
-                aria-label="Close match details"
-                tabIndex={-1}
-            />
-            <div className="pointer-events-none flex min-h-full items-start justify-center p-4 py-12 sm:py-16">
-                <div
-                    ref={modalRef}
-                    role="dialog"
-                    aria-modal="true"
-                    aria-labelledby="match-details-title"
-                    tabIndex={-1}
-                    className="pointer-events-auto relative w-full max-w-5xl overflow-hidden rounded-md border border-rule bg-surface enter"
-                >
-                    <header className="flex items-start justify-between gap-6 border-b border-rule bg-surface-raised px-7 py-6 sm:px-9">
-                        <div>
-                            <p className="caption">{eyebrow}</p>
-                            <h2 id="match-details-title" className="mt-2 text-[22px] font-medium tracking-tight text-ink">
-                                {title}
-                            </h2>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            className="rounded-sm p-1 text-ink-muted transition-colors hover:bg-surface-sunk hover:text-ink"
-                            aria-label="Close match details"
-                            data-autofocus="true"
-                        >
-                            <X className="h-4 w-4" />
-                        </button>
-                    </header>
-                    <div className="max-h-[76vh] overflow-y-auto bg-canvas px-7 py-8 sm:px-9">
-                        {children}
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-}
 
 function LoadingState() {
     return (
@@ -544,7 +408,15 @@ export const MatchDetailsModal: React.FC<MatchDetailsModalProps> = ({ matchId, o
     if (!isOpen) return null;
 
     return (
-        <ModalShell title="Match details" eyebrow="Review" onClose={onClose}>
+        <ModalShell
+            isOpen={isOpen}
+            onClose={onClose}
+            titleId="match-details-title"
+            eyebrow="Review"
+            title="Match details"
+            closeLabel="Close match details"
+            maxWidth="max-w-5xl"
+        >
             <ModalBody isLoading={isLoading} data={data} />
         </ModalShell>
     );

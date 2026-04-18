@@ -1,8 +1,9 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi } from 'vitest';
 
 import { DashboardHeader } from '../DashboardHeader';
+import { useAuth } from '@/features/auth/useAuth';
 
 vi.mock('@/features/auth/useAuth', () => ({
     useAuth: vi.fn(() => ({
@@ -19,7 +20,34 @@ vi.mock('@/features/notifications/components/NotificationSettingsPanel', () => (
     NotificationSettingsPanel: () => <div>Notification settings content</div>,
 }));
 
+vi.mock('@/features/preferences/components/CandidatePreferencesPanel', () => ({
+    CandidatePreferencesPanel: () => <div>Candidate preferences content</div>,
+}));
+
+const mockUseAuth = vi.mocked(useAuth);
+
+function makeAuthState(overrides: Partial<ReturnType<typeof useAuth>> = {}) {
+    return {
+        user: {
+            name: 'Ada Lovelace',
+            email: 'ada@example.com',
+            picture: 'https://example.com/ada.png',
+        },
+        token: 'token-123',
+        isReady: true,
+        restoreError: null,
+        login: vi.fn(),
+        logout: vi.fn(),
+        retrySession: vi.fn(),
+        ...overrides,
+    };
+}
+
 describe('DashboardHeader', () => {
+    beforeEach(() => {
+        mockUseAuth.mockReturnValue(makeAuthState());
+    });
+
     it('opens notification settings from the top bar', async () => {
         render(<DashboardHeader />);
 
@@ -70,5 +98,33 @@ describe('DashboardHeader', () => {
         const profileButton = screen.getByRole('button', { name: /open profile menu/i });
 
         expect(notificationButton.compareDocumentPosition(profileButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('opens candidate preferences from the top bar and closes on escape', async () => {
+        render(<DashboardHeader />);
+
+        await userEvent.click(screen.getByRole('button', { name: /preferences/i }));
+        expect(screen.getByRole('dialog', { name: /candidate preferences/i })).toBeInTheDocument();
+        expect(screen.getByText('Candidate preferences content')).toBeInTheDocument();
+
+        fireEvent.keyDown(document, { key: 'Escape' });
+
+        await waitFor(() => {
+            expect(
+                screen.queryByRole('dialog', { name: /candidate preferences/i }),
+            ).not.toBeInTheDocument();
+        });
+    });
+
+    it('signs out from the profile panel', async () => {
+        const logout = vi.fn();
+        mockUseAuth.mockReturnValue(makeAuthState({ logout }));
+
+        render(<DashboardHeader />);
+
+        await userEvent.click(screen.getByRole('button', { name: /open profile menu/i }));
+        await userEvent.click(screen.getByRole('button', { name: /sign out/i }));
+
+        expect(logout).toHaveBeenCalledTimes(1);
     });
 });

@@ -30,11 +30,12 @@ export function EmailVerificationPage() {
             });
     }, [verifyEmailOverride]);
 
-    const heading = state === 'success'
-        ? 'Email verified'
-        : state === 'error'
-            ? 'Verification didn’t complete'
-            : 'Verifying';
+    let heading = 'Verifying';
+    if (state === 'success') {
+        heading = 'Email verified';
+    } else if (state === 'error') {
+        heading = 'Verification didn’t complete';
+    }
 
     return (
         <main className="flex min-h-screen items-center justify-center bg-canvas px-4 py-12 text-ink">
