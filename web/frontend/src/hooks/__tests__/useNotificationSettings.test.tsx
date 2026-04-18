@@ -83,7 +83,7 @@ describe('useNotificationSettings', () => {
 
         await result.current.saveSettings({
             notifications_enabled: false,
-        min_fit_for_alerts: 82,
+            min_fit_for_alerts: 82,
             notify_on_new_match: false,
             notify_on_batch_complete: true,
             channels: {
@@ -93,7 +93,7 @@ describe('useNotificationSettings', () => {
 
         expect(notificationSettingsApi.updateSettings).toHaveBeenCalledWith({
             notifications_enabled: false,
-        min_fit_for_alerts: 82,
+            min_fit_for_alerts: 82,
             notify_on_new_match: false,
             notify_on_batch_complete: true,
             channels: {
@@ -122,7 +122,9 @@ describe('useNotificationSettings', () => {
         expect(notificationSettingsApi.sendEmailOverrideVerification).toHaveBeenCalledWith({
             address: 'ada@example.com',
         });
-        expect(notificationSettingsApi.verifyEmailOverride).toHaveBeenCalledWith('token-123');
+        expect(notificationSettingsApi.verifyEmailOverride).toHaveBeenCalledWith({
+            token: 'token-123',
+        });
         expect(notificationSettingsApi.clearEmailOverride).toHaveBeenCalledTimes(1);
     });
 });

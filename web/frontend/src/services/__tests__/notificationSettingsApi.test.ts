@@ -33,7 +33,7 @@ describe('notificationSettingsApi', () => {
     it('updateSettings calls PUT /v1/notification-settings with payload', async () => {
         const payload = {
             notifications_enabled: true,
-    min_fit_for_alerts: 80,
+            min_fit_for_alerts: 80,
             notify_on_new_match: true,
             notify_on_batch_complete: false,
             channels: {
@@ -63,23 +63,25 @@ describe('notificationSettingsApi', () => {
     });
 
     it('email override endpoints use the expected routes', async () => {
-        const verificationPayload = { address: 'ada@example.com' };
+        const overridePayload = { address: 'ada@example.com' };
+        const verificationPayload = { token: 'token-123' };
         mockPost.mockResolvedValueOnce({ data: { success: true, message: 'Sent' } });
-        mockGet.mockResolvedValueOnce({ data: { success: true, message: 'Verified' } });
+        mockPost.mockResolvedValueOnce({ data: { success: true, message: 'Verified' } });
         mockDelete.mockResolvedValueOnce({ data: { success: true, message: 'Cleared' } });
         const { notificationSettingsApi } = await import('../notificationSettingsApi');
 
-        await notificationSettingsApi.sendEmailOverrideVerification(verificationPayload as never);
-        await notificationSettingsApi.verifyEmailOverride('token-123');
+        await notificationSettingsApi.sendEmailOverrideVerification(overridePayload as never);
+        await notificationSettingsApi.verifyEmailOverride(verificationPayload as never);
         await notificationSettingsApi.clearEmailOverride();
 
         expect(mockPost).toHaveBeenCalledWith(
             '/v1/notification-settings/email/override',
+            overridePayload,
+        );
+        expect(mockPost).toHaveBeenCalledWith(
+            '/v1/notification-settings/email/verify',
             verificationPayload,
         );
-        expect(mockGet).toHaveBeenCalledWith('/v1/notification-settings/email/verify', {
-            params: { token: 'token-123' },
-        });
         expect(mockDelete).toHaveBeenCalledWith('/v1/notification-settings/email/override');
     });
 });

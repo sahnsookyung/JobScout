@@ -2,13 +2,15 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { vi } from 'vitest';
 
 import { EmailVerificationPage } from '../EmailVerificationPage';
-import { useNotificationSettings } from '@/hooks/useNotificationSettings';
+import { notificationSettingsApi } from '@/services/notificationSettingsApi';
 
-vi.mock('@/hooks/useNotificationSettings', () => ({
-    useNotificationSettings: vi.fn(),
+vi.mock('@/services/notificationSettingsApi', () => ({
+    notificationSettingsApi: {
+        verifyEmailOverride: vi.fn(),
+    },
 }));
 
-const mockUseNotificationSettings = vi.mocked(useNotificationSettings);
+const mockNotificationSettingsApi = vi.mocked(notificationSettingsApi);
 
 describe('EmailVerificationPage', () => {
     beforeEach(() => {
@@ -17,10 +19,6 @@ describe('EmailVerificationPage', () => {
     });
 
     it('shows a missing-token error immediately', () => {
-        mockUseNotificationSettings.mockReturnValue({
-            verifyEmailOverride: vi.fn(),
-        } as never);
-
         render(<EmailVerificationPage />);
 
         expect(screen.getByRole('alert')).toHaveTextContent('Verification token is missing.');
@@ -28,12 +26,9 @@ describe('EmailVerificationPage', () => {
     });
 
     it('renders a success message after verifying the token', async () => {
-        window.history.replaceState({}, '', '/verify-email?token=abc123');
-        const verifyEmailOverride = vi.fn().mockResolvedValue({
-            data: { message: 'Email override verified.' },
-        });
-        mockUseNotificationSettings.mockReturnValue({
-            verifyEmailOverride,
+        window.history.replaceState({}, '', '/verify-email#token=abc123');
+        mockNotificationSettingsApi.verifyEmailOverride.mockResolvedValue({
+            data: { success: true, message: 'Email override verified.' },
         } as never);
 
         render(<EmailVerificationPage />);
@@ -42,16 +37,15 @@ describe('EmailVerificationPage', () => {
             expect(screen.getByText('Email override verified.')).toBeInTheDocument();
         });
 
-        expect(verifyEmailOverride).toHaveBeenCalledWith('abc123');
+        expect(mockNotificationSettingsApi.verifyEmailOverride).toHaveBeenCalledWith({
+            token: 'abc123',
+        });
         expect(screen.getByRole('heading', { name: /email verified/i })).toBeInTheDocument();
     });
 
     it('surfaces verification failures from the API', async () => {
-        window.history.replaceState({}, '', '/verify-email?token=expired');
-        const verifyEmailOverride = vi.fn().mockRejectedValue(new Error('Link expired.'));
-        mockUseNotificationSettings.mockReturnValue({
-            verifyEmailOverride,
-        } as never);
+        window.history.replaceState({}, '', '/verify-email#token=expired');
+        mockNotificationSettingsApi.verifyEmailOverride.mockRejectedValue(new Error('Link expired.'));
 
         render(<EmailVerificationPage />);
 
