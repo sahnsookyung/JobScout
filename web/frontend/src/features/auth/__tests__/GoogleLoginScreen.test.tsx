@@ -8,7 +8,10 @@ vi.mock('../useAuth', () => ({
         login: vi.fn(),
         user: null,
         token: null,
+        isReady: true,
+        restoreError: null,
         logout: vi.fn(),
+        retrySession: vi.fn(),
     })),
 }));
 
@@ -54,7 +57,7 @@ describe('GoogleLoginScreen', () => {
         it('renders the sign-in sub-text', () => {
             render(<GoogleLoginScreen />);
             expect(
-                screen.getByText('Continue with Google to create an account or sign in')
+                screen.getByText(/Sign in with Google to keep your resume/i)
             ).toBeInTheDocument();
         });
 
@@ -166,7 +169,10 @@ describe('GoogleLoginScreen', () => {
                 login: mockLogin,
                 user: null,
                 token: null,
+                isReady: true,
+                restoreError: null,
                 logout: vi.fn(),
+                retrySession: vi.fn(),
             });
             let capturedCallback: ((resp: { credential: string }) => void) | undefined;
             (globalThis as any).google = {
@@ -255,7 +261,7 @@ describe('GoogleLoginScreen', () => {
             });
 
             expect(screen.getByRole('alert')).toHaveTextContent(
-                'Sign-in failed. Please try again.'
+                'Sign-in didn’t go through. Please try once more.'
             );
             expect(mockLogin).not.toHaveBeenCalled();
         });
@@ -286,7 +292,7 @@ describe('GoogleLoginScreen', () => {
                 await Promise.resolve();
             });
 
-            expect(screen.getByText('Finishing sign-in...')).toBeInTheDocument();
+            expect(screen.getByText('Finishing sign-in')).toBeInTheDocument();
 
             await act(async () => {
                 exchange.resolve({
@@ -306,7 +312,7 @@ describe('GoogleLoginScreen', () => {
                 await Promise.resolve();
             });
 
-            expect(screen.queryByText('Finishing sign-in...')).not.toBeInTheDocument();
+            expect(screen.queryByText('Finishing sign-in')).not.toBeInTheDocument();
         });
 
         it('ignores stale exchange responses when a newer sign-in attempt finishes first', async () => {

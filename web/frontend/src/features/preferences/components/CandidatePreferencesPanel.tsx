@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { Compass, MapPinned, Banknote, BriefcaseBusiness, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/Button';
@@ -44,6 +43,9 @@ const PREFERENCE_MODE_OPTIONS = {
 const VISA_SPONSORSHIP_FIELD_ID = 'candidate-visa-sponsorship-required';
 const VISA_SPONSORSHIP_HELP_ID = 'candidate-visa-sponsorship-required-help';
 
+const inputClasses =
+    'w-full rounded-md border border-rule bg-surface px-3 py-2.5 text-[14px] text-ink placeholder:text-ink-muted transition-colors focus:border-accent focus:outline-none';
+
 export function CandidatePreferencesPanel() {
     const { preferences, isLoading, isSaving, savePreferences } = useCandidatePreferences();
     const [draft, setDraft] = useState<DraftPreferences | null>(null);
@@ -61,10 +63,10 @@ export function CandidatePreferencesPanel() {
 
     if (isLoading || !draft || !preferences) {
         return (
-            <div className="space-y-4">
-                <div className="h-28 animate-pulse rounded-[1.75rem] bg-slate-200" />
-                <div className="h-40 animate-pulse rounded-[1.75rem] bg-slate-200" />
-                <div className="h-56 animate-pulse rounded-[1.75rem] bg-slate-200" />
+            <div className="space-y-3">
+                <div className="h-28 animate-pulse border border-rule bg-surface-sunk" />
+                <div className="h-40 animate-pulse border border-rule bg-surface-sunk" />
+                <div className="h-56 animate-pulse border border-rule bg-surface-sunk" />
             </div>
         );
     }
@@ -81,39 +83,31 @@ export function CandidatePreferencesPanel() {
                 target_locations: draft.target_locations,
                 employment_types: draft.employment_types,
             });
-            toast.success('Candidate preferences saved');
+            toast.success('Preferences saved.');
             setHasUnsavedChanges(false);
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to save candidate preferences';
+            const message = error instanceof Error ? error.message : 'Couldn’t save your preferences.';
             toast.error(message);
         }
     };
 
     return (
         <div className="space-y-6">
-            <section className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
-                <div className="rounded-[1.75rem] border border-slate-200 bg-white px-5 py-5 shadow-sm">
-                    <div className="flex items-center gap-3">
-                        <div className="rounded-2xl bg-gradient-to-br from-slate-950 to-sky-700 p-3 text-white shadow-lg">
-                            <Compass className="h-5 w-5" />
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-black text-slate-950">Hard filters</h3>
-                            <p className="text-sm text-slate-500">
-                                Must-haves that should trim the job pool before ranking.
-                            </p>
-                        </div>
+            <section className="grid gap-4 lg:grid-cols-2">
+                <div className="border border-rule bg-surface">
+                    <div className="border-b border-rule px-5 py-4">
+                        <p className="caption">Hard filters</p>
+                        <h3 className="mt-1 text-[15px] font-medium text-ink">Must-haves</h3>
+                        <p className="mt-1 text-[13px] text-ink-soft">Trim the pool before ranking.</p>
                     </div>
 
-                    <div className="mt-5 space-y-4">
+                    <div className="space-y-5 px-5 py-5">
                         <label className="block">
-                            <div className="mb-2 text-xs font-black uppercase tracking-[0.22em] text-slate-500">
-                                Remote mode
-                            </div>
+                            <span className="caption">Remote mode</span>
                             <select
                                 value={draft.remote_mode}
                                 onChange={(event) => updateDraft('remote_mode', event.target.value as DraftPreferences['remote_mode'])}
-                                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900"
+                                className={`${inputClasses} mt-2`}
                             >
                                 {REMOTE_OPTIONS.map((option) => (
                                     <option key={option.value} value={option.value}>
@@ -124,10 +118,7 @@ export function CandidatePreferencesPanel() {
                         </label>
 
                         <label className="block">
-                            <div className="mb-2 flex items-center gap-2 text-xs font-black uppercase tracking-[0.22em] text-slate-500">
-                                <MapPinned className="h-4 w-4" />
-                                Target locations
-                            </div>
+                            <span className="caption">Target locations</span>
                             <input
                                 type="text"
                                 value={draft.target_locations.join(', ')}
@@ -138,15 +129,12 @@ export function CandidatePreferencesPanel() {
                                     )
                                 }
                                 placeholder="Tokyo, Remote Japan, Berlin"
-                                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm"
+                                className={`${inputClasses} mt-2`}
                             />
                         </label>
 
                         <label className="block">
-                            <div className="mb-2 flex items-center gap-2 text-xs font-black uppercase tracking-[0.22em] text-slate-500">
-                                <Banknote className="h-4 w-4" />
-                                Minimum salary
-                            </div>
+                            <span className="caption">Minimum salary</span>
                             <input
                                 type="number"
                                 min={0}
@@ -158,15 +146,12 @@ export function CandidatePreferencesPanel() {
                                     )
                                 }
                                 placeholder="Leave blank if flexible"
-                                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm"
+                                className={`${inputClasses} mt-2`}
                             />
                         </label>
 
                         <label className="block">
-                            <div className="mb-2 flex items-center gap-2 text-xs font-black uppercase tracking-[0.22em] text-slate-500">
-                                <BriefcaseBusiness className="h-4 w-4" />
-                                Employment types
-                            </div>
+                            <span className="caption">Employment types</span>
                             <input
                                 type="text"
                                 value={draft.employment_types.join(', ')}
@@ -177,19 +162,19 @@ export function CandidatePreferencesPanel() {
                                     )
                                 }
                                 placeholder="Full-time, Contract"
-                                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm"
+                                className={`${inputClasses} mt-2`}
                             />
                         </label>
 
-                        <div className="flex items-start justify-between gap-4 rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 shadow-sm">
+                        <div className="flex items-start justify-between gap-4 border-t border-rule pt-4">
                             <label htmlFor={VISA_SPONSORSHIP_FIELD_ID} className="block">
-                                <div className="text-sm font-bold text-slate-900">Visa sponsorship required</div>
-                                <div
+                                <span className="text-[14px] font-medium text-ink">Visa sponsorship required</span>
+                                <span
                                     id={VISA_SPONSORSHIP_HELP_ID}
-                                    className="mt-1 text-sm text-slate-500"
+                                    className="mt-1 block text-[13px] text-ink-soft"
                                 >
-                                    Only surface roles that explicitly satisfy sponsorship needs.
-                                </div>
+                                    Only show roles that explicitly satisfy sponsorship needs.
+                                </span>
                             </label>
                             <input
                                 id={VISA_SPONSORSHIP_FIELD_ID}
@@ -197,30 +182,22 @@ export function CandidatePreferencesPanel() {
                                 checked={draft.visa_sponsorship_required}
                                 onChange={(event) => updateDraft('visa_sponsorship_required', event.target.checked)}
                                 aria-describedby={VISA_SPONSORSHIP_HELP_ID}
-                                className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                className="mt-1 h-4 w-4 rounded-sm border-rule accent-accent"
                             />
                         </div>
                     </div>
                 </div>
 
-                <div className="rounded-[1.75rem] border border-slate-200 bg-white px-5 py-5 shadow-sm">
-                    <div className="flex items-center gap-3">
-                        <div className="rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 p-3 text-white shadow-lg">
-                            <Sparkles className="h-5 w-5" />
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-black text-slate-950">Soft preferences</h3>
-                            <p className="text-sm text-slate-500">
-                                Free-text guidance for reranking among already strong-fit jobs.
-                            </p>
-                        </div>
+                <div className="border border-rule bg-surface">
+                    <div className="border-b border-rule px-5 py-4">
+                        <p className="caption">Soft preferences</p>
+                        <h3 className="mt-1 text-[15px] font-medium text-ink">What matters to you</h3>
+                        <p className="mt-1 text-[13px] text-ink-soft">Free-text guidance used after fit passes.</p>
                     </div>
 
-                    <div className="mt-5">
+                    <div className="space-y-5 px-5 py-5">
                         <label className="block">
-                            <div className="mb-2 text-xs font-black uppercase tracking-[0.22em] text-slate-500">
-                                Preference mode
-                            </div>
+                            <span className="caption">Preference mode</span>
                             <select
                                 value={draft.preference_mode}
                                 onChange={(event) =>
@@ -229,7 +206,7 @@ export function CandidatePreferencesPanel() {
                                         event.target.value as DraftPreferences['preference_mode'],
                                     )
                                 }
-                                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900"
+                                className={`${inputClasses} mt-2`}
                             >
                                 {preferences.allowed_preference_modes.map((mode) => (
                                     <option key={mode} value={mode}>
@@ -237,43 +214,44 @@ export function CandidatePreferencesPanel() {
                                     </option>
                                 ))}
                             </select>
-                            <p className="mt-2 text-sm text-slate-500">
+                            <p className="mt-2 text-[13px] text-ink-soft">
                                 {PREFERENCE_MODE_OPTIONS[draft.preference_mode].description}
                             </p>
                         </label>
 
-                        <textarea
-                            value={draft.soft_preferences}
-                            onChange={(event) => updateDraft('soft_preferences', event.target.value)}
-                            placeholder="I prefer fast-moving product teams, mentorship, and modern Python backend work with room to grow."
-                            rows={12}
-                            className="mt-4 w-full rounded-[1.5rem] border border-slate-300 px-4 py-4 text-sm leading-6 text-slate-900"
-                        />
-                        {preferences.soft_preference_summary ? (
-                            <p className="mt-3 text-sm text-slate-500">
-                                Summary: {preferences.soft_preference_summary}
+                        <label className="block">
+                            <span className="caption">Guidance</span>
+                            <textarea
+                                value={draft.soft_preferences}
+                                onChange={(event) => updateDraft('soft_preferences', event.target.value)}
+                                placeholder="I prefer small product teams, mentorship, and Python backend work with room to grow."
+                                rows={10}
+                                className={`${inputClasses} mt-2 leading-relaxed`}
+                            />
+                        </label>
+                        {preferences.soft_preference_summary && (
+                            <p className="border-l-2 border-rule pl-3 text-[13px] text-ink-soft">
+                                <span className="caption mr-1">Summary</span>
+                                {preferences.soft_preference_summary}
                             </p>
-                        ) : null}
+                        )}
                     </div>
                 </div>
             </section>
 
-            <section className="flex flex-col gap-4 rounded-[1.75rem] border border-slate-200 bg-slate-950 px-5 py-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+            <section className="flex flex-col gap-4 border border-rule bg-surface-raised px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                    <div className="text-sm font-bold">
-                        {hasUnsavedChanges
-                            ? 'You have unsaved preference changes.'
-                            : 'Preference settings are up to date.'}
-                    </div>
-                    <div className="mt-1 text-sm text-slate-300">
-                        Revision {preferences.revision}
-                    </div>
+                    <p className="text-[14px] text-ink">
+                        {hasUnsavedChanges ? 'You have unsaved changes.' : 'Your preferences are up to date.'}
+                    </p>
+                    <p className="mt-0.5 caption tabular-nums">Revision {preferences.revision}</p>
                 </div>
                 <Button
                     type="button"
+                    variant="primary"
                     onClick={() => void handleSave()}
                     isLoading={isSaving}
-                    className="rounded-2xl bg-white text-slate-950 hover:bg-slate-100"
+                    disabled={!hasUnsavedChanges}
                 >
                     Save preferences
                 </Button>

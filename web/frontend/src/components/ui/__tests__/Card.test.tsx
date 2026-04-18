@@ -22,7 +22,17 @@ describe('Card', () => {
 
     it('applies base styling classes', () => {
         const { element } = renderCard();
-        expect(element).toHaveClass('bg-white', 'rounded-xl', 'shadow-md');
+        expect(element).toHaveClass('border', 'border-rule', 'bg-surface');
+    });
+
+    it('applies sunk variant background', () => {
+        const { element } = renderCard({ children: 'Sunk', variant: 'sunk' });
+        expect(element).toHaveClass('bg-surface-sunk');
+    });
+
+    it('applies raised variant background', () => {
+        const { element } = renderCard({ children: 'Raised', variant: 'raised' });
+        expect(element).toHaveClass('bg-surface-raised');
     });
 
     it('merges custom className', () => {

@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mockGet = vi.fn();
 const mockPut = vi.fn();
 const mockPost = vi.fn();
+const mockDelete = vi.fn();
 
 vi.mock('@/services/api', () => ({
     apiClient: {
         get: mockGet,
         put: mockPut,
         post: mockPost,
+        delete: mockDelete,
     },
 }));
 
@@ -58,5 +60,26 @@ describe('notificationSettingsApi', () => {
 
         expect(mockPost).toHaveBeenCalledWith('/v1/notification-settings/test', payload);
         expect(result).toEqual(expected);
+    });
+
+    it('email override endpoints use the expected routes', async () => {
+        const verificationPayload = { address: 'ada@example.com' };
+        mockPost.mockResolvedValueOnce({ data: { success: true, message: 'Sent' } });
+        mockGet.mockResolvedValueOnce({ data: { success: true, message: 'Verified' } });
+        mockDelete.mockResolvedValueOnce({ data: { success: true, message: 'Cleared' } });
+        const { notificationSettingsApi } = await import('../notificationSettingsApi');
+
+        await notificationSettingsApi.sendEmailOverrideVerification(verificationPayload as never);
+        await notificationSettingsApi.verifyEmailOverride('token-123');
+        await notificationSettingsApi.clearEmailOverride();
+
+        expect(mockPost).toHaveBeenCalledWith(
+            '/v1/notification-settings/email/override',
+            verificationPayload,
+        );
+        expect(mockGet).toHaveBeenCalledWith('/v1/notification-settings/email/verify', {
+            params: { token: 'token-123' },
+        });
+        expect(mockDelete).toHaveBeenCalledWith('/v1/notification-settings/email/override');
     });
 });

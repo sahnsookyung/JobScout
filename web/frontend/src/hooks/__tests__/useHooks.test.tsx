@@ -22,7 +22,15 @@ vi.mock('@/services/configApi', () => ({
     },
 }));
 
+vi.mock('@/services/candidatePreferencesApi', () => ({
+    candidatePreferencesApi: {
+        getPreferences: vi.fn(),
+        updatePreferences: vi.fn(),
+    },
+}));
+
 import { useDebounce } from '../useDebounce';
+import { useCandidatePreferences } from '../useCandidatePreferences';
 import { useMatchDetails } from '../useMatchDetails';
 import { useMatches } from '../useMatches';
 import { usePolicy } from '../usePolicy';
@@ -300,5 +308,95 @@ describe('usePolicy', () => {
 
         await waitFor(() => expect(result.current.isLoading).toBe(false));
         expect(result.current.policy).toBeUndefined();
+    });
+});
+
+describe('useCandidatePreferences', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('loads candidate preferences on mount', async () => {
+        const { candidatePreferencesApi } = await import('@/services/candidatePreferencesApi');
+        const mockPreferences = {
+            remote_mode: 'remote',
+            target_locations: ['Remote'],
+            visa_sponsorship_required: false,
+            salary_min: null,
+            employment_types: [],
+            soft_preferences: 'FastAPI',
+            revision: 3,
+        };
+        vi.mocked(candidatePreferencesApi.getPreferences).mockResolvedValue({
+            data: mockPreferences,
+        } as never);
+
+        const { result } = renderHook(() => useCandidatePreferences(), {
+            wrapper: createWrapper(),
+        });
+
+        await waitFor(() => expect(result.current.isLoading).toBe(false));
+        expect(result.current.preferences).toEqual(mockPreferences);
+        expect(candidatePreferencesApi.getPreferences).toHaveBeenCalledTimes(1);
+    });
+
+    it('saves preferences and updates query state', async () => {
+        const { candidatePreferencesApi } = await import('@/services/candidatePreferencesApi');
+        const initialPreferences = {
+            remote_mode: 'any',
+            target_locations: [],
+            visa_sponsorship_required: false,
+            salary_min: null,
+            employment_types: [],
+            soft_preferences: '',
+            revision: 1,
+        };
+        const updatedPreferences = {
+            ...initialPreferences,
+            remote_mode: 'remote',
+            target_locations: ['Remote'],
+            soft_preferences: 'Platform work',
+            revision: 2,
+        };
+        vi.mocked(candidatePreferencesApi.getPreferences)
+            .mockResolvedValueOnce({
+                data: initialPreferences,
+            } as never)
+            .mockResolvedValueOnce({
+                data: updatedPreferences,
+            } as never);
+        vi.mocked(candidatePreferencesApi.updatePreferences).mockResolvedValue({
+            data: updatedPreferences,
+        } as never);
+
+        const { result } = renderHook(() => useCandidatePreferences(), {
+            wrapper: createWrapper(),
+        });
+
+        await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+        await act(async () => {
+            await result.current.savePreferences({
+                remote_mode: 'remote',
+                target_locations: ['Remote'],
+                visa_sponsorship_required: false,
+                salary_min: null,
+                employment_types: [],
+                soft_preferences: 'Platform work',
+                preference_mode: 'semantic_rerank',
+            });
+        });
+
+        expect(candidatePreferencesApi.updatePreferences).toHaveBeenCalledWith({
+            remote_mode: 'remote',
+            target_locations: ['Remote'],
+            visa_sponsorship_required: false,
+            salary_min: null,
+            employment_types: [],
+            soft_preferences: 'Platform work',
+            preference_mode: 'semantic_rerank',
+        });
+
+        await waitFor(() => expect(result.current.preferences).toEqual(updatedPreferences));
     });
 });

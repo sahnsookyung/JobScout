@@ -15,6 +15,7 @@ export interface GetMatchesParams {
     remote_only?: boolean;
     show_hidden?: boolean;
     ranking_mode?: RankingMode;
+    tier?: 'primary' | 'all';
 }
 
 export const matchesApi = {

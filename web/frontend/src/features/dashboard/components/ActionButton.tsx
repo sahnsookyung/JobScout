@@ -1,9 +1,9 @@
 import React from 'react';
-import { Loader, Zap } from 'lucide-react';
+import { Loader2, Play, Square } from 'lucide-react';
 
 const RESUME_STEP_LABELS: Record<string, string> = {
-    extracting: 'Parsing resume...',
-    embedding: 'Generating vectors...',
+    extracting: 'Parsing resume',
+    embedding: 'Building vectors',
 };
 
 export interface ActionButtonProps {
@@ -16,7 +16,7 @@ export interface ActionButtonProps {
     processingStep?: string | null;
     onRun: () => void;
     onStop: () => void;
-};
+}
 
 export const ActionButton: React.FC<ActionButtonProps> = ({
     canStop,
@@ -31,41 +31,42 @@ export const ActionButton: React.FC<ActionButtonProps> = ({
 }) => {
     const isProcessing = (canStop ? isStopping : isRunning) || (isProcessingResume ?? false);
     const preparingLabel = processingStep
-        ? (RESUME_STEP_LABELS[processingStep] ?? 'Preparing...')
-        : 'Preparing...';
-    let buttonClassName = 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white';
-    let overlayClassName = 'bg-gradient-to-r from-blue-400 to-indigo-400';
-    if (canStop || isCancellationRequested) {
-        buttonClassName = 'bg-red-500 text-white hover:bg-red-600';
-        overlayClassName = 'bg-red-400';
-    } else if (isPersistingStatus) {
-        buttonClassName = 'bg-amber-500 text-white hover:bg-amber-600';
-        overlayClassName = 'bg-amber-400';
-    }
-    let buttonText = 'Run Matching';
+        ? (RESUME_STEP_LABELS[processingStep] ?? 'Preparing')
+        : 'Preparing';
+
+    let label = 'Run matching';
+    let Icon: typeof Play = Play;
+    let variantClasses = 'bg-accent border-accent text-[#FFF] hover:bg-accent-hover hover:border-accent-hover';
+
     if (isPersistingStatus) {
-        buttonText = 'Finishing...';
+        label = 'Finishing';
+        Icon = Loader2;
+        variantClasses = 'bg-warn-soft border-warn text-ink';
     } else if (isCancellationRequested) {
-        buttonText = 'Stopping...';
+        label = 'Stopping';
+        Icon = Loader2;
+        variantClasses = 'bg-surface-sunk border-rule-strong text-ink-soft';
     } else if (canStop) {
-        buttonText = 'Stop';
+        label = 'Stop';
+        Icon = Square;
+        variantClasses = 'bg-surface border-rule-strong text-ink hover:border-ink-soft';
     } else if (isProcessingResume) {
-        buttonText = preparingLabel;
+        label = preparingLabel;
+        Icon = Loader2;
+        variantClasses = 'bg-surface border-rule text-ink-soft';
     }
+
+    const iconSpin = Icon === Loader2;
 
     return (
         <button
+            type="button"
             onClick={canStop ? onStop : onRun}
             disabled={isProcessing || isCancellationRequested || isPersistingStatus}
-            // Standardized to px-6 py-4, font-semibold, rounded-xl, and flex-col to match Upload button exactly
-            className={`w-full lg:w-auto group relative px-6 py-4 font-semibold rounded-xl shadow-lg hover:shadow-2xl hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-50 overflow-hidden flex flex-col items-center justify-center ${buttonClassName}`}
+            className={`inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border text-[14px] font-medium transition-colors duration-200 disabled:opacity-60 disabled:cursor-not-allowed ${variantClasses}`}
         >
-            <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none ${overlayClassName}`} />
-            <span className="relative flex items-center justify-center gap-2 text-base">
-                {!canStop && !isCancellationRequested && !isPersistingStatus && isProcessingResume && <Loader className="w-5 h-5 sm:w-6 sm:h-6 shrink-0 animate-spin" />}
-                {!canStop && !isCancellationRequested && !isPersistingStatus && !isProcessingResume && <Zap className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />}
-                <span>{buttonText}</span>
-            </span>
+            <Icon className={`h-3.5 w-3.5 ${iconSpin ? 'animate-spin' : ''}`} aria-hidden="true" />
+            <span>{label}</span>
         </button>
     );
 };

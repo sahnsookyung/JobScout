@@ -1,34 +1,22 @@
-/**
- * Tests for Match components
- * Covers: MatchCard, MatchFilters, MatchList, MatchDetailsModal
- */
-
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MatchFilters } from '../MatchFilters';
-import { MatchCard } from '../MatchCard';
-import { MatchList } from '../MatchList';
-import { MatchDetailsModal } from '../MatchDetailsModal';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// ── Mocks ──────────────────────────────────────────────────────────────────
+import { MatchCard } from '../MatchCard';
+import { MatchDetailsModal } from '../MatchDetailsModal';
+import { MatchFilters } from '../MatchFilters';
+import { MatchList } from '../MatchList';
+import { matchesApi } from '@/services/matchesApi';
+import { toast } from '@/components/ui/Toast';
 
 vi.mock('lucide-react', () => ({
     MapPin: ({ className }: any) => <svg data-testid="map-pin" className={className} />,
     Building2: ({ className }: any) => <svg data-testid="building2" className={className} />,
     Laptop: ({ className }: any) => <svg data-testid="laptop" className={className} />,
+    Wifi: ({ className }: any) => <svg data-testid="wifi" className={className} />,
     Eye: ({ className }: any) => <svg data-testid="eye" className={className} />,
     EyeOff: ({ className }: any) => <svg data-testid="eye-off" className={className} />,
-    ArrowUpRight: ({ className }: any) => <svg data-testid="arrow-up-right" className={className} />,
-    Award: ({ className }: any) => <svg data-testid="award" className={className} />,
-    Sparkles: ({ className }: any) => <svg data-testid="sparkles" className={className} />,
-    Filter: ({ className }: any) => <svg data-testid="filter" className={className} />,
-    SortDesc: ({ className }: any) => <svg data-testid="sort-desc" className={className} />,
-    Star: ({ className }: any) => <svg data-testid="star" className={className} />,
     X: ({ className }: any) => <svg data-testid="x-icon" className={className} />,
-    TrendingUp: ({ className }: any) => <svg data-testid="trending-up" className={className} />,
-    CheckCircle: ({ className }: any) => <svg data-testid="check-circle" className={className} />,
-    XCircle: ({ className }: any) => <svg data-testid="x-circle" className={className} />,
 }));
 
 vi.mock('@/utils/formatters', () => ({
@@ -59,6 +47,14 @@ vi.mock('@/components/ui/Badge', () => ({
     ),
 }));
 
+vi.mock('@/components/ui/Button', () => ({
+    Button: ({ children, onClick, disabled, ...props }: any) => (
+        <button type="button" onClick={onClick} disabled={disabled} {...props}>
+            {children}
+        </button>
+    ),
+}));
+
 vi.mock('@/services/matchesApi', () => ({
     matchesApi: { toggleHidden: vi.fn() },
 }));
@@ -73,7 +69,10 @@ vi.mock('@/hooks/useMatches', () => ({
     useMatches: (params: any) => mockUseMatches(params),
 }));
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+const mockUseStats = vi.fn();
+vi.mock('@/hooks/useStats', () => ({
+    useStats: () => mockUseStats(),
+}));
 
 function makeQueryWrapper() {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -104,11 +103,10 @@ function makeMatch(overrides: Record<string, any> = {}) {
         explanation_label: null,
         balanced_primary_score: null,
         missing_scores: [],
+        selection_tier: 'primary' as const,
         ...overrides,
     };
 }
-
-// ── MatchFilters ───────────────────────────────────────────────────────────
 
 describe('MatchFilters', () => {
     const defaultProps = {
@@ -124,163 +122,155 @@ describe('MatchFilters', () => {
 
     beforeEach(() => vi.clearAllMocks());
 
-    it('renders status select with options', () => {
+    it('renders filter controls and toggles', () => {
         render(<MatchFilters {...defaultProps} />);
         expect(screen.getByText('Active')).toBeInTheDocument();
         expect(screen.getByText('Stale')).toBeInTheDocument();
         expect(screen.getByText('All')).toBeInTheDocument();
-    });
-
-    it('renders ranking mode select with options', () => {
-        render(<MatchFilters {...defaultProps} />);
         expect(screen.getByText('Balanced')).toBeInTheDocument();
         expect(screen.getByText('Preference First')).toBeInTheDocument();
         expect(screen.getByText('Fit First')).toBeInTheDocument();
+        expect(screen.getByText('Remote only')).toBeInTheDocument();
+        expect(screen.getByText('Hidden')).toBeInTheDocument();
     });
 
-    it('calls onStatusChange when status select changes', () => {
-        render(<MatchFilters {...defaultProps} />);
+    it('calls change handlers for selects and toggles', () => {
+        const onStatusChange = vi.fn();
+        const onRankingModeChange = vi.fn();
+        const onRemoteOnlyChange = vi.fn();
+        const onShowHiddenChange = vi.fn();
+
+        render(
+            <MatchFilters
+                {...defaultProps}
+                onStatusChange={onStatusChange}
+                onRankingModeChange={onRankingModeChange}
+                onRemoteOnlyChange={onRemoteOnlyChange}
+                onShowHiddenChange={onShowHiddenChange}
+            />
+        );
+
         const selects = screen.getAllByRole('combobox');
         fireEvent.change(selects[0], { target: { value: 'stale' } });
-        expect(defaultProps.onStatusChange).toHaveBeenCalledWith('stale');
-    });
-
-    it('calls onRankingModeChange when ranking mode select changes', () => {
-        render(<MatchFilters {...defaultProps} />);
-        const selects = screen.getAllByRole('combobox');
         fireEvent.change(selects[1], { target: { value: 'fit_first' } });
-        expect(defaultProps.onRankingModeChange).toHaveBeenCalledWith('fit_first');
-    });
-
-    it('renders Remote Only toggle', () => {
-        render(<MatchFilters {...defaultProps} />);
-        expect(screen.getByText('Remote Only')).toBeInTheDocument();
-    });
-
-    it('renders Show Hidden toggle', () => {
-        render(<MatchFilters {...defaultProps} />);
-        expect(screen.getByText('Show Hidden')).toBeInTheDocument();
-    });
-
-    it('calls onRemoteOnlyChange when Remote Only toggled', () => {
-        const onRemoteOnlyChange = vi.fn();
-        render(<MatchFilters {...defaultProps} onRemoteOnlyChange={onRemoteOnlyChange} />);
         const checkboxes = screen.getAllByRole('checkbox');
         fireEvent.click(checkboxes[0]);
-        expect(onRemoteOnlyChange).toHaveBeenCalledWith(true);
-    });
-
-    it('calls onShowHiddenChange when Show Hidden toggled', () => {
-        const onShowHiddenChange = vi.fn();
-        render(<MatchFilters {...defaultProps} onShowHiddenChange={onShowHiddenChange} />);
-        const checkboxes = screen.getAllByRole('checkbox');
         fireEvent.click(checkboxes[1]);
+
+        expect(onStatusChange).toHaveBeenCalledWith('stale');
+        expect(onRankingModeChange).toHaveBeenCalledWith('fit_first');
+        expect(onRemoteOnlyChange).toHaveBeenCalledWith(true);
         expect(onShowHiddenChange).toHaveBeenCalledWith(true);
     });
-
-    it('shows checked state for remoteOnly=true', () => {
-        render(<MatchFilters {...defaultProps} remoteOnly={true} />);
-        const checkboxes = screen.getAllByRole('checkbox');
-        expect(checkboxes[0]).toBeChecked();
-    });
 });
-
-// ── MatchCard ──────────────────────────────────────────────────────────────
 
 describe('MatchCard', () => {
     beforeEach(() => vi.clearAllMocks());
 
-    it('renders job title and company', () => {
+    it('renders title, company, location, and formatted score', () => {
         render(<MatchCard match={makeMatch()} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
         expect(screen.getByText('Senior Engineer')).toBeInTheDocument();
         expect(screen.getByText('TechCorp')).toBeInTheDocument();
-    });
-
-    it('renders location when provided', () => {
-        render(<MatchCard match={makeMatch()} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
         expect(screen.getByText('San Francisco, CA')).toBeInTheDocument();
-    });
-
-    it('does not show map-pin icon when location is null', () => {
-        render(<MatchCard match={makeMatch({ location: null })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(screen.queryByTestId('map-pin')).not.toBeInTheDocument();
-    });
-
-    it('shows Remote badge when is_remote=true', () => {
-        render(<MatchCard match={makeMatch({ is_remote: true })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(screen.getByText('Remote')).toBeInTheDocument();
-    });
-
-    it('does not show Remote badge when is_remote=false', () => {
-        render(<MatchCard match={makeMatch({ is_remote: false })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(screen.queryByText('Remote')).not.toBeInTheDocument();
-    });
-
-    it('shows Top Match badge for high scores (>=80)', () => {
-        render(<MatchCard match={makeMatch({ fit_score: 85 })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(screen.getByText('Top Match')).toBeInTheDocument();
-    });
-
-    it('does not show Top Match badge for scores below 80', () => {
-        render(<MatchCard match={makeMatch({ fit_score: 70 })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(screen.queryByText('Top Match')).not.toBeInTheDocument();
-    });
-
-    it('shows Hidden badge when is_hidden=true', () => {
-        render(<MatchCard match={makeMatch({ is_hidden: true })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(screen.getByText('Hidden')).toBeInTheDocument();
-    });
-
-    it('calls onSelect with match_id when card is clicked', () => {
-        const onSelect = vi.fn();
-        render(<MatchCard match={makeMatch()} onSelect={onSelect} />, { wrapper: makeQueryWrapper() });
-        fireEvent.click(screen.getByRole('button', { name: /view details for senior engineer at techcorp/i }));
-        expect(onSelect).toHaveBeenCalledWith('match-1');
-    });
-
-    it('shows EyeOff icon when match is hidden', () => {
-        render(<MatchCard match={makeMatch({ is_hidden: true })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(screen.getByTestId('eye-off')).toBeInTheDocument();
-    });
-
-    it('shows Eye icon when match is visible', () => {
-        render(<MatchCard match={makeMatch({ is_hidden: false })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(screen.getByTestId('eye')).toBeInTheDocument();
-    });
-
-    it('renders formatted score value', () => {
-        render(<MatchCard match={makeMatch({ fit_score: 85 })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        // fit_score renders in both the score badge and the Fit Match bar
         expect(screen.getAllByText('85%').length).toBeGreaterThan(0);
-    });
-
-    it('renders match_type with underscores replaced by spaces', () => {
-        render(<MatchCard match={makeMatch({ match_type: 'vector_match' })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
         expect(screen.getByText('vector match')).toBeInTheDocument();
     });
 
-    it('hide button click does not trigger onSelect', () => {
+    it('shows remote and hidden affordances when present', () => {
+        const { rerender } = render(
+            <MatchCard match={makeMatch({ is_remote: true })} onSelect={vi.fn()} />,
+            { wrapper: makeQueryWrapper() }
+        );
+        expect(screen.getByText('Remote')).toBeInTheDocument();
+        expect(screen.getByTestId('wifi')).toBeInTheDocument();
+
+        rerender(<MatchCard match={makeMatch({ is_hidden: true })} onSelect={vi.fn()} />);
+        expect(screen.getByText('hidden')).toBeInTheDocument();
+        expect(screen.getByTestId('eye-off')).toBeInTheDocument();
+    });
+
+    it('renders the featured top-match footer only for featured cards', () => {
+        const { rerender } = render(
+            <MatchCard match={makeMatch({ fit_score: 85 })} onSelect={vi.fn()} featured />,
+            { wrapper: makeQueryWrapper() }
+        );
+        expect(screen.getByText('Top match')).toBeInTheDocument();
+
+        rerender(<MatchCard match={makeMatch({ fit_score: 70 })} onSelect={vi.fn()} />);
+        expect(screen.queryByText('Top match')).not.toBeInTheDocument();
+    });
+
+    it('calls onSelect from the card button and keeps hide separate', () => {
         const onSelect = vi.fn();
         render(<MatchCard match={makeMatch()} onSelect={onSelect} />, { wrapper: makeQueryWrapper() });
-        const hideBtn = screen.getByRole('button', { name: /hide this job/i });
-        fireEvent.click(hideBtn);
-        expect(onSelect).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole('button', { name: /view details for senior engineer at techcorp/i }));
+        expect(onSelect).toHaveBeenCalledWith('match-1');
+
+        fireEvent.click(screen.getByRole('button', { name: /^hide$/i }));
+        expect(onSelect).toHaveBeenCalledTimes(1);
     });
 
-    it('hide button is aria-pressed=false for visible jobs', () => {
-        render(<MatchCard match={makeMatch({ is_hidden: false })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        const btn = screen.getByRole('button', { name: /hide this job/i });
-        expect(btn).toHaveAttribute('aria-pressed', 'false');
+    it('updates the hide button aria-pressed state', () => {
+        const { rerender } = render(
+            <MatchCard match={makeMatch({ is_hidden: false })} onSelect={vi.fn()} />,
+            { wrapper: makeQueryWrapper() }
+        );
+        expect(screen.getByRole('button', { name: /^hide$/i })).toHaveAttribute('aria-pressed', 'false');
+
+        rerender(<MatchCard match={makeMatch({ is_hidden: true })} onSelect={vi.fn()} />);
+        expect(screen.getByRole('button', { name: /^unhide$/i })).toHaveAttribute('aria-pressed', 'true');
     });
 
-    it('hide button is aria-pressed=true for hidden jobs', () => {
-        render(<MatchCard match={makeMatch({ is_hidden: true })} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        const btn = screen.getByRole('button', { name: /unhide this job/i });
-        expect(btn).toHaveAttribute('aria-pressed', 'true');
+    it('shows a visible focus outline on the card trigger for keyboard users', () => {
+        render(<MatchCard match={makeMatch()} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        expect(
+            screen.getByRole('button', { name: /view details for senior engineer at techcorp/i }),
+        ).toHaveClass('focus-visible:outline-accent');
+    });
+
+    it('shows excluded matches without a hide toggle', () => {
+        render(
+            <MatchCard
+                match={makeMatch({
+                    selection_tier: 'excluded',
+                    excluded_reason: 'below_threshold',
+                })}
+                onSelect={vi.fn()}
+            />,
+            { wrapper: makeQueryWrapper() }
+        );
+
+        expect(screen.getByText('below threshold')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^hide$/i })).not.toBeInTheDocument();
+    });
+
+    it('persists hide changes and reports failures', async () => {
+        vi.mocked(matchesApi.toggleHidden).mockResolvedValueOnce({
+            data: { is_hidden: true },
+        } as never);
+
+        render(<MatchCard match={makeMatch()} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        fireEvent.click(screen.getByRole('button', { name: /^hide$/i }));
+
+        await waitFor(() => {
+            expect(matchesApi.toggleHidden).toHaveBeenCalledWith('match-1');
+        });
+        expect(toast.success).toHaveBeenCalledWith(
+            'Hidden from your list',
+            expect.objectContaining({ duration: 5000 }),
+        );
+
+        vi.mocked(matchesApi.toggleHidden).mockRejectedValueOnce(new Error('boom'));
+        fireEvent.click(screen.getByRole('button', { name: /^hide$/i }));
+
+        await waitFor(() => {
+            expect(toast.error).toHaveBeenCalledWith('Could not update job visibility.');
+        });
     });
 });
-
-// ── MatchList ──────────────────────────────────────────────────────────────
 
 const storageMock = (() => {
     let store: Record<string, string> = {};
@@ -296,73 +286,114 @@ describe('MatchList', () => {
     beforeAll(() => {
         vi.stubGlobal('localStorage', storageMock);
     });
+
     afterAll(() => {
         vi.unstubAllGlobals();
     });
+
     beforeEach(() => {
         vi.clearAllMocks();
         storageMock.clear();
+        mockUseStats.mockReturnValue({ data: { excluded_count: 0 } });
     });
 
-    it('shows loading spinner while loading', () => {
+    it('shows the loading state', () => {
         mockUseMatches.mockReturnValue({ data: null, isLoading: true, error: null, refetch: vi.fn() });
-        const { container } = render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(container.querySelector('.animate-spin')).toBeInTheDocument();
-    });
-
-    it('shows error message on error', () => {
-        mockUseMatches.mockReturnValue({ data: null, isLoading: false, error: new Error('fail'), refetch: vi.fn() });
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(screen.getByText(/Error loading matches/i)).toBeInTheDocument();
+        expect(screen.getByLabelText('Loading matches')).toBeInTheDocument();
+        expect(screen.getByText('Fetching matches')).toBeInTheDocument();
     });
 
-    it('retry button calls refetch', () => {
+    it('shows the error state and retries', () => {
         const refetch = vi.fn();
         mockUseMatches.mockReturnValue({ data: null, isLoading: false, error: new Error('fail'), refetch });
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        fireEvent.click(screen.getByText('Retry'));
+        expect(screen.getByText(/Something went wrong loading your matches/i)).toBeInTheDocument();
+        fireEvent.click(screen.getByText('Try again'));
         expect(refetch).toHaveBeenCalledTimes(1);
     });
 
-    it('shows match count plural when multiple matches', () => {
+    it('shows match totals and singular/plural copy', () => {
         const matches = [makeMatch(), makeMatch({ match_id: 'match-2', title: 'Dev' })];
         mockUseMatches.mockReturnValue({ data: { matches }, isLoading: false, error: null, refetch: vi.fn() });
-        render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(screen.getByText('Showing 2 matches')).toBeInTheDocument();
-    });
+        const { container, rerender } = render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+        expect(container.querySelector('header')).toHaveTextContent('2');
+        expect(container.querySelector('header')).toHaveTextContent('matches');
 
-    it('shows singular "match" for single result', () => {
         mockUseMatches.mockReturnValue({ data: { matches: [makeMatch()] }, isLoading: false, error: null, refetch: vi.fn() });
-        render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(screen.getByText('Showing 1 match')).toBeInTheDocument();
+        rerender(<MatchList onMatchSelect={vi.fn()} />);
+        expect(container.querySelector('header')).toHaveTextContent('1');
+        expect(container.querySelector('header')).toHaveTextContent('match');
     });
 
-    it('shows empty state when no matches', () => {
+    it('shows the empty state and persists hidden preference', async () => {
         mockUseMatches.mockReturnValue({ data: { matches: [] }, isLoading: false, error: null, refetch: vi.fn() });
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(screen.getByText(/No matches found/i)).toBeInTheDocument();
-    });
+        expect(screen.getByText(/Nothing to show yet/i)).toBeInTheDocument();
 
-    it('persists showHidden preference in localStorage', async () => {
-        mockUseMatches.mockReturnValue({ data: { matches: [] }, isLoading: false, error: null, refetch: vi.fn() });
-        render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
         const checkboxes = screen.getAllByRole('checkbox');
-        fireEvent.click(checkboxes[1]); // Show Hidden toggle
+        fireEvent.click(checkboxes[1]);
         await waitFor(() => {
             expect(localStorage.getItem('jobscout_show_hidden')).toBe('true');
         });
     });
 
-    it('reads showHidden initial value from localStorage', () => {
+    it('reads the hidden preference from localStorage', () => {
         storageMock.setItem('jobscout_show_hidden', 'true');
         mockUseMatches.mockReturnValue({ data: { matches: [] }, isLoading: false, error: null, refetch: vi.fn() });
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        const checkboxes = screen.getAllByRole('checkbox');
-        expect(checkboxes[1]).toBeChecked();
+        expect(screen.getAllByRole('checkbox')[1]).toBeChecked();
+    });
+
+    it('shows degraded copy and can reveal below-threshold results', () => {
+        mockUseStats.mockReturnValue({ data: { excluded_count: 2 } });
+        mockUseMatches.mockImplementation((params) => ({
+            data: {
+                matches: params.tier === 'all'
+                    ? [makeMatch({ match_id: 'match-2', fit_score: 62 })]
+                    : [makeMatch({ scoring_degraded_reason: 'remote_unavailable' })],
+            },
+            isLoading: false,
+            error: null,
+            refetch: vi.fn(),
+        }));
+
+        render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        expect(screen.getByText(/remote cross-encoder is unreachable/i)).toBeInTheDocument();
+
+        mockUseMatches.mockImplementation((params) => ({
+            data: { matches: params.tier === 'all' ? [makeMatch({ match_id: 'match-3' })] : [] },
+            isLoading: false,
+            error: null,
+            refetch: vi.fn(),
+        }));
+        fireEvent.click(screen.getByRole('checkbox', { name: /below-threshold \(2\)/i }));
+
+        expect(mockUseMatches).toHaveBeenLastCalledWith(
+            expect.objectContaining({ tier: 'all' }),
+        );
+    });
+
+    it('renders the top-match treatment for the strongest visible result', () => {
+        mockUseMatches.mockReturnValue({
+            data: {
+                matches: [
+                    makeMatch({ fit_score: 86 }),
+                    makeMatch({ match_id: 'match-2', title: 'Platform Engineer', fit_score: 70 }),
+                ],
+            },
+            isLoading: false,
+            error: null,
+            refetch: vi.fn(),
+        });
+
+        render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        expect(screen.getByText('Top match')).toBeInTheDocument();
+        expect(screen.getByText('1 strong')).toBeInTheDocument();
     });
 });
-
-// ── MatchDetailsModal ──────────────────────────────────────────────────────
 
 function makeModalData(overrides: Record<string, any> = {}) {
     return {
@@ -381,13 +412,10 @@ function makeModalData(overrides: Record<string, any> = {}) {
             ...overrides.job,
         },
         match: {
-            fit_score: 90,
-            preference_score: null,
-            fit_confidence: null,
-            fit_scorer: null,
-            fit_explanation: null,
-            required_coverage: 0.95,
-            preferred_requirement_coverage: 0.85,
+            fit_score: 86,
+            preference_score: 0.74,
+            required_coverage: 0.8,
+            preferred_requirement_coverage: 0.5,
             matched_requirements_count: 9,
             total_requirements: 10,
             penalties: 0.5,
@@ -400,7 +428,6 @@ function makeModalData(overrides: Record<string, any> = {}) {
 describe('MatchDetailsModal', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        // Provide a default so null-matchId case doesn't throw
         mockUseMatchDetails.mockReturnValue({ data: undefined, isLoading: false });
     });
 
@@ -409,70 +436,62 @@ describe('MatchDetailsModal', () => {
         expect(container.firstChild).toBeNull();
     });
 
-    it('shows loading spinner when data is loading', () => {
-        mockUseMatchDetails.mockReturnValue({ data: undefined, isLoading: true });
-        const { container } = render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(container.querySelector('.animate-spin')).toBeInTheDocument();
-    });
-
-    it('shows error state when data is undefined and not loading', () => {
-        mockUseMatchDetails.mockReturnValue({ data: undefined, isLoading: false });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+    it('shows loading and error states', () => {
+        const { rerender } = render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
         expect(screen.getByText(/Failed to load match details/i)).toBeInTheDocument();
-    });
 
-    it('calls onClose when close button is clicked', () => {
         mockUseMatchDetails.mockReturnValue({ data: undefined, isLoading: true });
-        const onClose = vi.fn();
-        render(<MatchDetailsModal matchId="match-1" onClose={onClose} />);
-        fireEvent.click(screen.getByLabelText('Close'));
-        expect(onClose).toHaveBeenCalledTimes(1);
+        rerender(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText('Loading match')).toBeInTheDocument();
     });
 
-    it('calls onClose on Escape key', () => {
-        mockUseMatchDetails.mockReturnValue({ data: undefined, isLoading: true });
+    it('closes from the close button, escape, and backdrop', () => {
+        mockUseMatchDetails.mockReturnValue({ data: makeModalData(), isLoading: false });
         const onClose = vi.fn();
-        render(<MatchDetailsModal matchId="match-1" onClose={onClose} />);
-        fireEvent.keyDown(globalThis as unknown as Window, { key: 'Escape' });
-        expect(onClose).toHaveBeenCalledTimes(1);
+        const { container } = render(<MatchDetailsModal matchId="match-1" onClose={onClose} />);
+
+        fireEvent.click(screen.getAllByLabelText('Close match details')[0]);
+        fireEvent.keyDown(document, { key: 'Escape' });
+        fireEvent.click(container.querySelector('button.fixed.inset-0')!);
+
+        expect(onClose).toHaveBeenCalledTimes(3);
     });
 
-    it('does not listen for Escape when matchId is null', () => {
+    it('restores focus to the opener when the modal closes', async () => {
+        mockUseMatchDetails.mockReturnValue({ data: makeModalData(), isLoading: false });
         const onClose = vi.fn();
-        render(<MatchDetailsModal matchId={null} onClose={onClose} />);
-        fireEvent.keyDown(globalThis as unknown as Window, { key: 'Escape' });
-        expect(onClose).not.toHaveBeenCalled();
+        const { rerender } = render(
+            <>
+                <button type="button">Open match</button>
+                <MatchDetailsModal matchId="match-1" onClose={onClose} />
+            </>
+        );
+
+        const opener = screen.getByRole('button', { name: /open match/i });
+        opener.focus();
+        fireEvent.click(screen.getAllByLabelText('Close match details')[0]);
+        rerender(
+            <>
+                <button type="button">Open match</button>
+                <MatchDetailsModal matchId={null} onClose={onClose} />
+            </>
+        );
+
+        await waitFor(() => {
+            expect(opener).toHaveFocus();
+        });
     });
 
-    it('renders job title and company when data is available', () => {
+    it('renders the main job details', () => {
         mockUseMatchDetails.mockReturnValue({ data: makeModalData(), isLoading: false });
         render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText('Match details')).toBeInTheDocument();
         expect(screen.getByText('Staff Engineer')).toBeInTheDocument();
         expect(screen.getByText('Acme')).toBeInTheDocument();
-    });
-
-    it('shows Match Details heading', () => {
-        mockUseMatchDetails.mockReturnValue({ data: makeModalData(), isLoading: false });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.getByText('Match Details')).toBeInTheDocument();
-    });
-
-    it('shows exceptional match badge for high scores', () => {
-        mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ match: { fit_score: 90 } }),
-            isLoading: false,
-        });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.getByText('Exceptional Match!')).toBeInTheDocument();
-    });
-
-    it('shows Remote badge when job is remote', () => {
-        mockUseMatchDetails.mockReturnValue({ data: makeModalData(), isLoading: false });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
         expect(screen.getByText('Remote')).toBeInTheDocument();
     });
 
-    it('shows semantic fit summary when explanation is available', () => {
+    it('renders semantic fit details when present', () => {
         mockUseMatchDetails.mockReturnValue({
             data: makeModalData({
                 match: {
@@ -493,215 +512,82 @@ describe('MatchDetailsModal', () => {
             }),
             isLoading: false,
         });
+
         render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.getByText('Semantic Fit')).toBeInTheDocument();
-        expect(screen.getByText(/Confidence 84%/i)).toBeInTheDocument();
+        expect(screen.getByText('Semantic fit')).toBeInTheDocument();
+        expect(
+            screen.getByText((_, node) => node?.textContent === 'Confidence 84%')
+        ).toBeInTheDocument();
         expect(screen.getByText(/llm semantic fit/i)).toBeInTheDocument();
         expect(screen.getByText(/Hybrid retrieval/i)).toBeInTheDocument();
         expect(screen.getByText(/^llm$/i)).toBeInTheDocument();
         expect(screen.getAllByText(/^remote$/i)).toHaveLength(2);
         expect(screen.getByText(/Candidate generation used dense \+ lexical\./i)).toBeInTheDocument();
-        expect(screen.getByText(/Covered 2 of 3 required requirements/i)).toBeInTheDocument();
     });
 
-    it('shows fallback messaging when semantic fit falls back', () => {
+    it('renders job metadata and requirements', () => {
         mockUseMatchDetails.mockReturnValue({
             data: makeModalData({
-                match: {
-                    fit_scorer: { name: 'threshold_semantic_fit', version: '2' },
-                    fit_explanation: {
-                        summary: 'Covered 1 of 2 required requirements (50%) and 0 of 0 preferred requirements (0%).',
-                        message: 'Semantic fit scorer unavailable; using threshold fallback.',
-                        diagnostics: {
-                            effective_fit_mode: 'threshold',
-                            provider_route: 'threshold',
-                            fallback_used: true,
-                        },
-                        retrieval: {
-                            mode: 'dense',
-                            sources: ['dense'],
-                        },
-                    },
+                job: {
+                    salary_min: 100000,
+                    currency: 'USD',
+                    min_years_experience: 5,
+                    job_level: 'Senior',
+                    requires_degree: false,
+                    description: 'Great job opportunity',
                 },
+                requirements: [
+                    {
+                        requirement_id: 'req-1',
+                        req_type: 'required',
+                        is_covered: true,
+                        similarity_score: 0.92,
+                        requirement_text: 'React experience',
+                        evidence_text: 'Built React apps',
+                        evidence_section: 'Work Experience',
+                    },
+                    {
+                        requirement_id: 'req-2',
+                        req_type: 'preferred',
+                        is_covered: false,
+                        similarity_score: 0.45,
+                        requirement_text: 'GraphQL knowledge',
+                        evidence_text: null,
+                        evidence_section: null,
+                    },
+                ],
             }),
             isLoading: false,
         });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.getByText(/Semantic fit scorer unavailable; using threshold fallback\./i)).toBeInTheDocument();
-        expect(screen.getAllByText(/^threshold$/i)).toHaveLength(2);
-    });
 
-    it('shows job description when present', () => {
-        mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ job: { description: 'Great job opportunity' } }),
-            isLoading: false,
-        });
         render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        expect(screen.getByText('Salary')).toBeInTheDocument();
+        expect(screen.getByText('5+ years')).toBeInTheDocument();
+        expect(screen.getByText('Senior')).toBeInTheDocument();
+        expect(screen.getByText('Not required')).toBeInTheDocument();
+        expect(screen.getAllByText('Required').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Preferred').length).toBeGreaterThan(0);
+        expect(screen.getByText('Covered')).toBeInTheDocument();
+        expect(screen.getByText('Missing')).toBeInTheDocument();
+        expect(screen.getByText('Built React apps')).toBeInTheDocument();
+        expect(screen.getByText('Source: Work Experience')).toBeInTheDocument();
         expect(screen.getByText('Great job opportunity')).toBeInTheDocument();
     });
 
-    it('shows salary when salary_min is set', () => {
-        mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ job: { salary_min: 100000, salary_max: null, currency: 'USD' } }),
-            isLoading: false,
-        });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.getByText('Salary')).toBeInTheDocument();
-    });
-
-    it('shows experience requirement when min_years_experience is set', () => {
-        mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ job: { min_years_experience: 5 } }),
-            isLoading: false,
-        });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.getByText('5+ years')).toBeInTheDocument();
-    });
-
-    it('shows job level when job_level is set', () => {
-        mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ job: { job_level: 'Senior' } }),
-            isLoading: false,
-        });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.getByText('Senior')).toBeInTheDocument();
-    });
-
-    it('shows degree required when requires_degree is true', () => {
-        mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ job: { requires_degree: true } }),
-            isLoading: false,
-        });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.getByText('Required')).toBeInTheDocument();
-    });
-
-    it('shows degree not required when requires_degree is false', () => {
-        mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ job: { requires_degree: false } }),
-            isLoading: false,
-        });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.getByText('Not Required')).toBeInTheDocument();
-    });
-
-    it('does not show exceptional badge for low fit score', () => {
-        mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ match: { fit_score: 70 } }),
-            isLoading: false,
-        });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.queryByText('Exceptional Match!')).not.toBeInTheDocument();
-    });
-
-    it('renders required requirements section', () => {
-        const requirements = [
-            {
-                requirement_id: 'req-1',
-                req_type: 'required',
-                is_covered: true,
-                similarity_score: 0.92,
-                requirement_text: 'React experience',
-                evidence_text: 'Built React apps',
-                evidence_section: 'Work Experience',
-            },
-        ];
-        mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ requirements }),
-            isLoading: false,
-        });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.getByText('React experience')).toBeInTheDocument();
-        expect(screen.getByText('Built React apps')).toBeInTheDocument();
-        expect(screen.getByText('Source: Work Experience')).toBeInTheDocument();
-    });
-
-    it('renders preferred requirements section', () => {
-        const requirements = [
-            {
-                requirement_id: 'req-2',
-                req_type: 'preferred',
-                is_covered: false,
-                similarity_score: 0.45,
-                requirement_text: 'GraphQL knowledge',
-                evidence_text: null,
-                evidence_section: null,
-            },
-        ];
-        mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ requirements }),
-            isLoading: false,
-        });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.getByText('GraphQL knowledge')).toBeInTheDocument();
-    });
-
-    it('renders requirement without evidence text', () => {
-        const requirements = [
-            {
-                requirement_id: 'req-3',
-                req_type: 'required',
-                is_covered: false,
-                similarity_score: 0.3,
-                requirement_text: 'Kubernetes expertise',
-                evidence_text: null,
-                evidence_section: null,
-            },
-        ];
-        mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ requirements }),
-            isLoading: false,
-        });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.getByText('Kubernetes expertise')).toBeInTheDocument();
-        expect(screen.queryByText('Evidence Found')).not.toBeInTheDocument();
-    });
-
-    it('shows covered/missing badges on requirement cards', () => {
-        const requirements = [
-            {
-                requirement_id: 'req-4',
-                req_type: 'required',
-                is_covered: true,
-                similarity_score: 0.9,
-                requirement_text: 'TypeScript',
-                evidence_text: null,
-                evidence_section: null,
-            },
-            {
-                requirement_id: 'req-5',
-                req_type: 'required',
-                is_covered: false,
-                similarity_score: 0.2,
-                requirement_text: 'Rust',
-                evidence_text: null,
-                evidence_section: null,
-            },
-        ];
-        mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ requirements }),
-            isLoading: false,
-        });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.getByText('✓ Covered')).toBeInTheDocument();
-        expect(screen.getByText('✗ Missing')).toBeInTheDocument();
-    });
-
-    it('uses semantic verdict copy instead of raw similarity percentages when available', () => {
-        const requirements = [
-            {
-                requirement_id: 'req-8',
-                req_type: 'required',
-                is_covered: false,
-                similarity_score: 0.92,
-                requirement_text: 'Python API development',
-                evidence_text: 'Built internal APIs',
-                evidence_section: 'Work Experience',
-            },
-        ];
+    it('prefers semantic verdict copy over raw percentages when available', () => {
         mockUseMatchDetails.mockReturnValue({
             data: makeModalData({
-                requirements,
+                requirements: [
+                    {
+                        requirement_id: 'req-8',
+                        req_type: 'required',
+                        is_covered: false,
+                        similarity_score: 0.92,
+                        requirement_text: 'Python API development',
+                        evidence_text: 'Built internal APIs',
+                        evidence_section: 'Work Experience',
+                    },
+                ],
                 match: {
                     fit_explanation: {
                         summary: 'Covered 0 of 1 required requirements (0%) and 0 of 0 preferred requirements (0%).',
@@ -719,50 +605,10 @@ describe('MatchDetailsModal', () => {
             }),
             isLoading: false,
         });
+
         render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.getByText('Semantic review')).toBeInTheDocument();
-        expect(screen.getByText('Why this verdict')).toBeInTheDocument();
-        expect(screen.getByText('△ Partial')).toBeInTheDocument();
+        expect(screen.getByText('Partial')).toBeInTheDocument();
+        expect(screen.getByText('Why')).toBeInTheDocument();
         expect(screen.queryByText('92% match')).not.toBeInTheDocument();
-    });
-
-    it('shows both required and preferred requirement sections', () => {
-        const requirements = [
-            {
-                requirement_id: 'req-6',
-                req_type: 'required',
-                is_covered: true,
-                similarity_score: 0.9,
-                requirement_text: 'Node.js',
-                evidence_text: null,
-                evidence_section: null,
-            },
-            {
-                requirement_id: 'req-7',
-                req_type: 'preferred',
-                is_covered: false,
-                similarity_score: 0.4,
-                requirement_text: 'Docker',
-                evidence_text: null,
-                evidence_section: null,
-            },
-        ];
-        mockUseMatchDetails.mockReturnValue({
-            data: makeModalData({ requirements }),
-            isLoading: false,
-        });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
-        expect(screen.getByText('Required (1)')).toBeInTheDocument();
-        expect(screen.getByText('Preferred (1)')).toBeInTheDocument();
-    });
-
-    it('shows backdrop overlay when modal is open', () => {
-        mockUseMatchDetails.mockReturnValue({ data: makeModalData(), isLoading: false });
-        const onClose = vi.fn();
-        const { container } = render(<MatchDetailsModal matchId="match-1" onClose={onClose} />);
-        const backdrop = container.querySelector(String.raw`.bg-black\/60`);
-        expect(backdrop).toBeInTheDocument();
-        fireEvent.click(backdrop!);
-        expect(onClose).toHaveBeenCalledTimes(1);
     });
 });

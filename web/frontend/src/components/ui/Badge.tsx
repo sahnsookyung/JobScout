@@ -3,7 +3,7 @@ import { clsx } from 'clsx';
 
 interface BadgeProps {
     children: React.ReactNode;
-    variant?: 'default' | 'success' | 'error' | 'info' | 'warning';
+    variant?: 'default' | 'success' | 'error' | 'info' | 'warning' | 'accent';
     className?: string;
 }
 
@@ -15,15 +15,16 @@ export const Badge: React.FC<BadgeProps> = ({
     return (
         <span
             className={clsx(
-                'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
+                'inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 caption',
                 {
-                    'bg-gray-100 text-gray-700': variant === 'default',
-                    'bg-blue-100 text-blue-800': variant === 'success',
-                    'bg-red-50 text-red-700': variant === 'error',
-                    'bg-blue-50 text-blue-700': variant === 'info',
-                    'bg-amber-100 text-amber-800': variant === 'warning',
+                    'bg-surface-sunk text-ink-soft border border-rule': variant === 'default',
+                    'bg-affirm-soft text-affirm border border-affirm/40': variant === 'success',
+                    // No red anywhere — errors read as clay/ochre
+                    'bg-warn-soft text-warn border border-warn/40': variant === 'error' || variant === 'warning',
+                    'bg-surface-sunk text-ink border border-rule-strong': variant === 'info',
+                    'bg-accent-soft text-accent-ink border border-accent/40': variant === 'accent',
                 },
-                className
+                className,
             )}
         >
             {children}

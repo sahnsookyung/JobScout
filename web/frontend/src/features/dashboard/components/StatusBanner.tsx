@@ -1,6 +1,5 @@
 import React from 'react';
-import { Loader, CheckCircle, XCircle } from 'lucide-react';
-import { Badge } from '@/components/ui/Badge';
+import { CheckCircle2, CircleSlash, TriangleAlert } from 'lucide-react';
 
 export interface StatusBannerProps {
     status: string;
@@ -13,6 +12,18 @@ export interface StatusBannerProps {
     stale_message?: string;
 }
 
+const STEP_LABELS: Record<string, string> = {
+    loading_resume: 'Loading resume',
+    vector_matching: 'Finding candidates',
+    scoring: 'Scoring',
+    saving_results: 'Saving',
+    notifying: 'Notifying',
+    initializing: 'Starting up',
+    matching: 'Finding candidates',
+    extracting: 'Parsing resume',
+    embedding: 'Embedding resume',
+};
+
 export const StatusBanner: React.FC<StatusBannerProps> = ({
     status,
     step,
@@ -23,118 +34,86 @@ export const StatusBanner: React.FC<StatusBannerProps> = ({
     stale_due_to_newer_upload,
     stale_message,
 }) => {
-    const isPendingStatus = status === 'pending';
-    const isRunningStatus = status === 'running';
+    const isPending = status === 'pending';
+    const isRunning = status === 'running';
     const isCancellationRequested = status === 'cancellation_requested';
-    const isPersistingStatus = status === 'persisting';
-    const isCompletedStatus = status === 'completed';
-    const isFailedStatus = status === 'failed';
-    const isCancelledStatus = status === 'cancelled';
+    const isPersisting = status === 'persisting';
+    const isCompleted = status === 'completed';
+    const isFailed = status === 'failed';
+    const isCancelled = status === 'cancelled';
+    const isActive = isPending || isRunning || isCancellationRequested || isPersisting;
 
-    const getStepLabel = (step?: string): string => {
-        const labels: Record<string, string> = {
-            loading_resume: 'Loading Resume',
-            vector_matching: 'Finding Matches',
-            scoring: 'Scoring Candidates',
-            saving_results: 'Saving Results',
-            notifying: 'Notifying',
-            initializing: 'Initializing',
-            matching: 'Finding Matches',
-            extracting: 'Extracting Resume',
-            embedding: 'Embedding Resume',
-        };
-        return step ? labels[step] || 'Processing' : 'Initializing';
-    };
+    const stepLabel = step ? (STEP_LABELS[step] ?? 'Processing') : 'Starting up';
 
-    const formatTime = (time?: number): string => (time ?? 0).toFixed(2);
-    const isActiveStatus = isPendingStatus || isRunningStatus;
-    let iconBackground = 'bg-slate-100';
-    if (isActiveStatus) {
-        iconBackground = 'bg-blue-100';
-    } else if (isCancellationRequested) {
-        iconBackground = 'bg-orange-100';
-    } else if (isPersistingStatus) {
-        iconBackground = 'bg-amber-100';
-    } else if (isCompletedStatus) {
-        iconBackground = 'bg-green-100';
-    } else if (isFailedStatus) {
-        iconBackground = 'bg-red-100';
-    }
+    let statusLabel = 'Active';
+    let statusTone = 'text-accent';
+    if (isCompleted) { statusLabel = 'Complete'; statusTone = 'text-affirm'; }
+    else if (isFailed) { statusLabel = 'Failed'; statusTone = 'text-warn'; }
+    else if (isCancelled) { statusLabel = 'Stopped'; statusTone = 'text-ink-muted'; }
+    else if (isCancellationRequested) { statusLabel = 'Stopping'; statusTone = 'text-ink-soft'; }
+    else if (isPersisting) { statusLabel = 'Finishing'; statusTone = 'text-ink-soft'; }
 
-    let badgeVariant: 'info' | 'success' | 'error' | 'warning' | 'default' = 'default';
-    if (isActiveStatus) {
-        badgeVariant = 'info';
-    } else if (isCancellationRequested || isPersistingStatus) {
-        badgeVariant = 'warning';
-    } else if (isCompletedStatus) {
-        badgeVariant = 'success';
-    } else if (isFailedStatus) {
-        badgeVariant = 'error';
-    }
+    let Icon: typeof CheckCircle2 = CheckCircle2;
+    if (isFailed) Icon = TriangleAlert;
+    else if (isCancelled) Icon = CircleSlash;
 
     return (
-        <div className="mt-6 bg-white/60 backdrop-blur-sm rounded-2xl p-6 border border-white/50">
-            <div className="flex items-start gap-4">
-                <div className={`p-3 rounded-xl ${iconBackground}`}>
-                    {isActiveStatus && <Loader className="w-6 h-6 animate-spin text-blue-600" />}
-                    {isCancellationRequested && <Loader className="w-6 h-6 animate-spin text-orange-600" />}
-                    {isPersistingStatus && <Loader className="w-6 h-6 animate-spin text-amber-600" />}
-                    {isCompletedStatus && <CheckCircle className="w-6 h-6 text-green-600" />}
-                    {(isFailedStatus || isCancelledStatus) && (
-                        <XCircle className={`w-6 h-6 ${isFailedStatus ? 'text-red-600' : 'text-slate-600'}`} />
-                    )}
+        <div className="mt-6 flex items-start gap-4 border-t border-rule pt-6">
+            {isActive ? (
+                <span className="relative mt-0.5 flex h-3 w-3 flex-shrink-0">
+                    <span className="ember absolute inset-0 rounded-full bg-accent opacity-40" aria-hidden="true" />
+                    <span className="relative m-auto h-1.5 w-1.5 rounded-full bg-accent" />
+                </span>
+            ) : (
+                <Icon className={`mt-0.5 h-4 w-4 flex-shrink-0 ${statusTone}`} aria-hidden="true" />
+            )}
+            <div className="flex-1">
+                <div className="flex items-baseline gap-3">
+                    <span className={`caption ${statusTone}`}>{statusLabel}</span>
+                    {isActive && <span className="text-[13px] text-ink">{stepLabel}</span>}
                 </div>
-                <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                        <Badge variant={badgeVariant}>
-                            {status?.toUpperCase()}
-                        </Badge>
-                        {isActiveStatus && (
-                            <div className="flex items-center gap-2">
-                                <div className="relative w-2 h-2">
-                                    <div className="absolute inset-0 bg-blue-500 rounded-full animate-ping" />
-                                    <div className="relative bg-blue-600 rounded-full w-2 h-2" />
-                                </div>
-                                <span className="text-sm font-bold text-blue-900">{getStepLabel(step)}</span>
-                            </div>
-                        )}
-                        {isCancellationRequested && <span className="text-sm font-bold text-orange-900">Stopping as soon as it is safe</span>}
-                        {isPersistingStatus && <span className="text-sm font-bold text-amber-900">Finishing writes</span>}
+
+                {isPending && <p className="mt-1 text-[13px] text-ink-soft">Starting your match run.</p>}
+                {isRunning && <p className="mt-1 text-[13px] text-ink-soft">Working through your feed.</p>}
+                {isCancellationRequested && (
+                    <p className="mt-1 text-[13px] text-ink-soft">Stopping as soon as it is safe to.</p>
+                )}
+                {isPersisting && (
+                    <p className="mt-1 text-[13px] text-ink-soft">Past the save boundary — finishing safely.</p>
+                )}
+                {isCompleted && (
+                    <div className="mt-1 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-ink-soft">
+                        <span>
+                            Found <span className="num text-ink tabular-nums">{matches_count ?? 0}</span>
+                        </span>
+                        <span>
+                            Saved <span className="num text-ink tabular-nums">{saved_count ?? 0}</span>
+                        </span>
+                        <span>
+                            <span className="num text-ink tabular-nums">{(execution_time ?? 0).toFixed(1)}s</span>
+                        </span>
                     </div>
-                    {isPendingStatus && <p className="text-sm text-gray-600 mt-1">Starting your matching run...</p>}
-                    {isRunningStatus && <p className="text-sm text-gray-600 mt-1">Processing your matches...</p>}
-                    {isCancellationRequested && <p className="text-sm text-gray-600 mt-1">Cancellation was requested. The worker is still winding down.</p>}
-                    {isPersistingStatus && <p className="text-sm text-gray-600 mt-1">The pipeline crossed the save boundary and is finishing safely.</p>}
-                    {isCompletedStatus && (
-                        <div>
-                            <p className="font-bold text-gray-900 mb-1">Pipeline completed!</p>
-                            <div className="flex gap-4 text-sm text-gray-700">
-                                <span className="font-semibold">Found: {matches_count ?? 0}</span>
-                                <span className="font-semibold">Saved: {saved_count ?? 0}</span>
-                                <span className="font-semibold">Time: {formatTime(execution_time)}s</span>
-                            </div>
-                            {stale_due_to_newer_upload && stale_message && (
-                                <p className="mt-3 text-sm text-amber-800 bg-amber-50 p-3 rounded-lg border border-amber-200">
-                                    {stale_message}
-                                </p>
-                            )}
-                        </div>
-                    )}
-                    {isFailedStatus && (
-                        <div>
-                            <p className="font-bold text-red-700 mb-2">Pipeline failed</p>
-                            {error && (
-                                <p className="text-sm text-gray-700 bg-red-50 p-3 rounded-lg border border-red-200">{error}</p>
-                            )}
-                        </div>
-                    )}
-                    {isCancelledStatus && (
-                        <div>
-                            <p className="font-bold text-slate-800 mb-1">Pipeline cancelled</p>
-                            <p className="text-sm text-gray-600">You can start another matching run whenever you’re ready.</p>
-                        </div>
-                    )}
-                </div>
+                )}
+                {isCompleted && stale_due_to_newer_upload && stale_message && (
+                    <p className="mt-3 border border-warn/40 bg-warn-soft px-3 py-2 text-[13px] text-ink">
+                        {stale_message}
+                    </p>
+                )}
+                {isFailed && (
+                    <div>
+                        <p className="mt-1 text-[13px] text-ink">This run didn't finish.</p>
+                        {error && (
+                            <p className="mt-2 border border-warn/40 bg-warn-soft px-3 py-2 text-[13px] text-ink-soft">
+                                {error}
+                            </p>
+                        )}
+                    </div>
+                )}
+                {isCancelled && (
+                    <p className="mt-1 text-[13px] text-ink-soft">
+                        You can start another run whenever you're ready.
+                    </p>
+                )}
             </div>
         </div>
     );
