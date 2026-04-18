@@ -5,8 +5,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" content="#F2EEE5" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#15130F" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#F2EEE5" data-theme-color="true" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>JobScout</title>
     <script>
@@ -18,6 +17,10 @@
                     globalThis.matchMedia('(prefers-color-scheme: dark)').matches;
                 var theme = saved || (prefersDark ? 'dark' : 'light');
                 document.documentElement.dataset.theme = theme;
+                var themeColor = document.querySelector('meta[name="theme-color"][data-theme-color]');
+                if (themeColor) {
+                    themeColor.setAttribute('content', theme === 'dark' ? '#15130F' : '#F2EEE5');
+                }
             } catch {
                 document.documentElement.dataset.theme = 'light';
             }

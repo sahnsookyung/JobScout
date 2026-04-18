@@ -37,6 +37,7 @@ describe('useTheme', () => {
             },
         });
         delete document.documentElement.dataset.theme;
+        document.head.innerHTML = '<meta name="theme-color" content="#F2EEE5" data-theme-color="true" />';
     });
 
     it('uses the current document theme and persists updates', () => {
@@ -46,12 +47,14 @@ describe('useTheme', () => {
         const { result } = renderHook(() => useTheme());
 
         expect(result.current.theme).toBe('dark');
+        expect(document.head.querySelector('meta[name="theme-color"]')?.getAttribute('content')).toBe('#15130F');
 
         act(() => {
             result.current.toggle();
         });
 
         expect(document.documentElement.dataset.theme).toBe('light');
+        expect(document.head.querySelector('meta[name="theme-color"]')?.getAttribute('content')).toBe('#F2EEE5');
         expect(localStorage.getItem('jobscout-theme')).toBe('light');
     });
 
@@ -65,6 +68,7 @@ describe('useTheme', () => {
         });
 
         expect(result.current.theme).toBe('dark');
+        expect(document.head.querySelector('meta[name="theme-color"]')?.getAttribute('content')).toBe('#15130F');
 
         act(() => {
             result.current.setTheme('light');
@@ -75,5 +79,6 @@ describe('useTheme', () => {
         });
 
         expect(result.current.theme).toBe('light');
+        expect(document.head.querySelector('meta[name="theme-color"]')?.getAttribute('content')).toBe('#F2EEE5');
     });
 });
