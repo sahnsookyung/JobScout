@@ -670,6 +670,9 @@ def _prepare_selection_result(
     )
     top_k_used = int(getattr(result_policy, "top_k", len(scored_matches)) or len(scored_matches))
     notification_fit_floor_used = float(resolve_notification_fit_floor(ctx, owner_id=owner_id))
+    two_tier_enabled = bool(
+        getattr(matching_config, "two_tier_selection_enabled", True)
+    )
     return select_matches(
         scored_matches,
         ranking_context=ranking_context,
@@ -679,6 +682,7 @@ def _prepare_selection_result(
         notification_fit_floor_used=notification_fit_floor_used,
         resume_resolution_reason=resume_resolution_reason,
         task_id=task_id,
+        two_tier_enabled=two_tier_enabled,
     )
 
 

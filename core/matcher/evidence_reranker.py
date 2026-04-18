@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 
 
 class CrossEncoderLike(Protocol):
-    def score_text_pairs(self, pairs: List[tuple[str, str]]) -> List[float]: ...
+    def score_text_pairs(self, pairs: List[tuple[str, str]]) -> List[float]:
+        """Score (query, doc) text pairs and return a float per pair."""
 
 
 def rerank_requirement_evidence(

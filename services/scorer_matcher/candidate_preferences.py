@@ -279,6 +279,20 @@ def _allowed_preference_modes(config: PreferencesConfig) -> List[str]:
     return config.allowed_modes_normalized()
 
 
+_KNOWN_PREFERENCE_MODES: frozenset[str] = frozenset(
+    {"semantic_rerank", "llm_judge", "fit_only", "default"}
+)
+
+
+def _safe_mode(value: str) -> str:
+    """Return value only if it is a known preference mode, else 'other'.
+
+    Breaks the taint chain from user-supplied config into log sinks so that
+    static analyzers do not flag downstream logging as sensitive.
+    """
+    return value if value in _KNOWN_PREFERENCE_MODES else "other"
+
+
 def _resolve_requested_mode(
     requested_mode: Any,
     config: PreferencesConfig,
@@ -457,8 +471,8 @@ def apply_preference_semantic_reranking(
 
     logger.info(
         "Preference reranking applied: mode_requested=%s mode_effective=%s matches=%d",
-        requested_mode,
-        effective_mode,
+        _safe_mode(requested_mode),
+        _safe_mode(effective_mode),
         len(scored_matches),
     )
     return _apply_assessments(

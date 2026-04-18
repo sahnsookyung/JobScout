@@ -16,6 +16,7 @@ from services.scorer_matcher.candidate_preferences import (
     _matches_candidate_preferences,
     _resolve_requested_mode,
     _resolve_preference_profile,
+    _safe_mode,
     _stored_preference_profile,
     _apply_assessments,
     apply_candidate_preference_filters,
@@ -544,3 +545,15 @@ class TestPreferenceSemanticReranking:
             "preference_mode_effective": "semantic_rerank",
             "preference_mode_used": "semantic_rerank",
         }
+
+
+class TestSafeMode:
+    """Ensures tainted preference mode values never flow unsanitized into logs."""
+
+    @pytest.mark.parametrize("value", ["semantic_rerank", "llm_judge", "fit_only", "default"])
+    def test_known_modes_pass_through(self, value):
+        assert _safe_mode(value) == value
+
+    @pytest.mark.parametrize("value", ["", "unknown", "rm -rf /", "<script>"])
+    def test_unknown_values_collapse_to_other(self, value):
+        assert _safe_mode(value) == "other"

@@ -429,6 +429,10 @@ class MatchingConfig(BaseModel):
     invalidate_on_job_change: bool = True
     invalidate_on_resume_change: bool = True
     recalculate_existing: bool = False
+    # Rollout gate for the §C two-tier (primary/excluded) selection contract.
+    # Default true; setting false reverts the engine to the pre-§C single-tier
+    # behavior (excluded items are not persisted and the API never returns them).
+    two_tier_selection_enabled: bool = True
 
 
 class NotificationChannelConfig(BaseModel):
@@ -573,6 +577,7 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["FIT_SEMANTIC_RECALL_TOP_K"], ["matching", "scorer", "semantic_fit", "recall_top_k"]),
     (["EVIDENCE_RERANK_ENABLED"], ["matching", "scorer", "semantic_fit", "evidence_rerank_enabled"]),
     (["EVIDENCE_LLM_ESCALATION"], ["matching", "scorer", "semantic_fit", "evidence_llm_escalation"]),
+    (["TWO_TIER_SELECTION_ENABLED"], ["matching", "two_tier_selection_enabled"]),
     (["FIT_CROSS_ENCODER_ROUTE_POLICY"], ["matching", "scorer", "semantic_fit", "cross_encoder", "route_policy"]),
     (["FIT_CROSS_ENCODER_LOCAL_RUNTIME"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "runtime"]),
     (["FIT_CROSS_ENCODER_LOCAL_MODEL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "model_name"]),

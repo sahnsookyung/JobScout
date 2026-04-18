@@ -38,6 +38,7 @@ def select_matches(
     notification_fit_floor_used: float,
     resume_resolution_reason: str,
     task_id: Optional[str] = None,
+    two_tier_enabled: bool = True,
 ) -> MatchSelectionResult:
     # Partition scored matches by floor gates. Items that fail any floor can
     # never be primary; items that pass may or may not make it through top-K.
@@ -83,7 +84,9 @@ def select_matches(
     ]
     excluded_candidates.extend(excluded_by_floor)
 
-    excluded_budget = max(0, EXCLUDED_STORAGE_CAP)
+    # Rollout gate: when TWO_TIER_SELECTION_ENABLED=false we skip excluded
+    # persistence so runtime behavior matches the pre-§C single-tier contract.
+    excluded_budget = max(0, EXCLUDED_STORAGE_CAP) if two_tier_enabled else 0
     next_rank = len(selected_matches) + 1
     truncated_count = 0
     for match, reason in excluded_candidates:

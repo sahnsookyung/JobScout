@@ -8,7 +8,6 @@ from unittest.mock import Mock, patch
 import pytest
 
 from notification import NotificationPriority
-from notification.exceptions import NotificationConfigurationError
 from web.backend.services.notification_service import NotificationServiceWrapper
 
 

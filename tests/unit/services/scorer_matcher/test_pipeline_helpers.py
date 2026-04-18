@@ -314,6 +314,55 @@ class TestPrepareSelectionResult:
         tiers = [(item.selection_tier, item.excluded_reason) for item in result.item_snapshots]
         assert tiers == [("excluded", "below_min_fit"), ("excluded", "below_min_fit")]
 
+    @patch(
+        "services.scorer_matcher.pipeline.resolve_notification_fit_floor",
+        return_value=70.0,
+    )
+    @patch(
+        "services.scorer_matcher.pipeline.get_result_policy_store",
+        return_value=SimpleNamespace(
+            get_current_policy=lambda: SimpleNamespace(
+                min_fit=40.0,
+                min_jd_required_coverage=None,
+                top_k=5,
+            )
+        ),
+    )
+    def test_two_tier_selection_disabled_suppresses_excluded_snapshots(
+        self,
+        _mock_policy_store,
+        _mock_notification_floor,
+    ):
+        """§J rollout gate: when TWO_TIER_SELECTION_ENABLED=false the engine must
+        not persist excluded-tier items, so pre-§C single-tier behavior is
+        preserved byte-for-byte."""
+        matches = [
+            SimpleNamespace(
+                job=SimpleNamespace(id="job-1"),
+                fit_score=32.0,
+                preference_score=None,
+                job_similarity=0.8,
+                jd_required_coverage=0.2,
+                fit_components={"effective_fit_mode": "threshold"},
+            ),
+        ]
+
+        result = _prepare_selection_result(
+            matches,
+            ctx=SimpleNamespace(config=SimpleNamespace(notifications=SimpleNamespace())),
+            owner_id="user-1",
+            ranking_context=SimpleNamespace(
+                mode=SimpleNamespace(value="balanced"),
+                config=RankingConfig(active_default_mode="balanced"),
+            ),
+            matching_config=SimpleNamespace(two_tier_selection_enabled=False),
+            resume_resolution_reason="test",
+            task_id="task-1",
+        )
+
+        assert result.selected_matches == []
+        assert result.item_snapshots == []
+
 
 class TestCandidatePreferenceHelpers:
     def test_filters_preliminary_matches_with_hard_preferences(self):

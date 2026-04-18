@@ -87,6 +87,16 @@ def get_matches(
             detail=f"Invalid tier '{tier}'. Valid values: {', '.join(sorted(_VALID_TIERS))}"
         )
 
+    # Rollout gate: when two-tier selection is disabled, tier=all collapses
+    # to tier=primary so the API behaves like the pre-§C single-tier contract.
+    from core.config_loader import load_config
+    if tier == "all":
+        matching_cfg = getattr(load_config(), "matching", None)
+        if matching_cfg is not None and not getattr(
+            matching_cfg, "two_tier_selection_enabled", True
+        ):
+            tier = "primary"
+
     policy_service = get_policy_service()
     current_policy = policy_service.get_current_policy()
 
