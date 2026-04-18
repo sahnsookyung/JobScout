@@ -1,6 +1,6 @@
-// MatchDetailsModal.tsx
-import React, { useEffect } from 'react';
-import { X, MapPin, Building2, Laptop, XCircle, Award, Sparkles } from 'lucide-react';
+import React from 'react';
+import { MapPin, Building2, Laptop } from 'lucide-react';
+import { ModalShell } from '@/components/ui/ModalShell';
 import { useMatchDetails } from '@/hooks/useMatchDetails';
 import { Badge } from '@/components/ui/Badge';
 import { formatScore, formatSalary } from '@/utils/formatters';
@@ -31,66 +31,42 @@ type FitDiagnosticsExplanation = Readonly<{
     fallback_reason?: string;
 }>;
 
-function useEscapeKey(onClose: () => void, enabled: boolean) {
-    useEffect(() => {
-        if (!enabled) return;
-        const handleEscape = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') onClose();
-        };
-        globalThis.addEventListener('keydown', handleEscape);
-        return () => globalThis.removeEventListener('keydown', handleEscape);
-    }, [enabled, onClose]);
+function evidenceToneLabel(score: number | null | undefined): string {
+    if (typeof score !== 'number') return 'unscored';
+    if (score >= 0.7) return 'strong';
+    if (score >= 0.4) return 'moderate';
+    return 'weak';
 }
 
-function ModalShell({
-    title,
-    onClose,
-    children,
-}: Readonly<{
-    title: string;
-    onClose: () => void;
-    children: React.ReactNode;
-}>) {
-    return (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
-            <div
-                className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
-                onClick={onClose}
-                aria-hidden="true"
-            />
-
-            <div className="flex min-h-full items-center justify-center p-4">
-                <div className="relative w-full max-w-5xl bg-white rounded-3xl shadow-2xl overflow-hidden">
-                    {/* Header with gradient */}
-                    <div className="relative bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 p-8">
-                        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/10" />
-                        <div className="relative flex items-center justify-between">
-                            <h2 className="text-3xl font-black text-white">{title}</h2>
-                            <button
-                                onClick={onClose}
-                                className="p-2 text-white/80 hover:text-white hover:bg-white/20 rounded-xl transition-all duration-200"
-                                aria-label="Close"
-                            >
-                                <X className="w-6 h-6" />
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="p-8 max-h-[75vh] overflow-y-auto">
-                        {children}
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
+function formatDiagnosticLabel(value: string | null | undefined): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    return value.replace(/_/g, ' ');
 }
+
+function preferenceStatusMessage(preferenceStatus: any): string | null {
+    if (!preferenceStatus) {
+        return null;
+    }
+
+    if (preferenceStatus.applied) {
+        return 'Preferences applied.';
+    }
+
+    return `Preferences skipped: ${preferenceStatus.reason ?? 'unconfigured'}.`;
+}
+
 
 function LoadingState() {
     return (
         <div className="flex justify-center py-16">
-            <div className="relative">
-                <div className="absolute inset-0 bg-blue-400 blur-xl opacity-50 animate-pulse" />
-                <div className="relative animate-spin rounded-full h-16 w-16 border-4 border-gray-200 border-t-blue-600" />
+            <div className="flex items-center gap-3 text-[13px] text-ink-soft">
+                <span className="relative flex h-2 w-2">
+                    <span className="ember absolute inset-0 rounded-full bg-accent opacity-40" aria-hidden="true" />
+                    <span className="relative m-auto h-1 w-1 rounded-full bg-accent" />
+                </span>
+                <span>Loading match</span>
             </div>
         </div>
     );
@@ -98,31 +74,25 @@ function LoadingState() {
 
 function ErrorState({ message }: Readonly<{ message: string }>) {
     return (
-        <div className="text-center py-16">
-            <div className="inline-flex items-center gap-3 px-6 py-4 bg-red-50 text-red-700 rounded-2xl border-2 border-red-200">
-                <XCircle className="w-6 h-6" />
-                <span className="font-semibold">{message}</span>
-            </div>
+        <div className="py-12 text-center">
+            <p className="border border-warn/40 bg-warn-soft px-4 py-3 text-[13px] text-ink">{message}</p>
         </div>
     );
 }
 
-function ScoreDisplay({ label, value, gradient }: Readonly<{ label: string; value: number; gradient: string }>) {
+function ScoreDisplay({ label, value, emphasis }: Readonly<{ label: string; value: number; emphasis?: boolean }>) {
+    const tone = emphasis && value >= 80 ? 'text-accent' : 'text-ink';
     return (
-        <div className="relative">
-            <div className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-10 blur-xl rounded-2xl`} />
-            <div className="relative bg-white rounded-2xl p-6 border-2 border-gray-100 shadow-lg">
-                <div className="text-sm font-bold text-gray-600 uppercase tracking-wider mb-2">{label}</div>
-                <div className={`text-5xl font-black bg-gradient-to-br ${gradient} bg-clip-text text-transparent`}>
-                    {formatScore(value)}
-                </div>
-                {/* Progress bar */}
-                <div className="mt-4 h-2 bg-gray-200 rounded-full overflow-hidden">
-                    <div
-                        className={`h-full bg-gradient-to-r ${gradient} transition-all duration-1000 ease-out`}
-                        style={{ width: `${value}%` }}
-                    />
-                </div>
+        <div className="border border-rule bg-surface p-6">
+            <p className="caption">{label}</p>
+            <div className={`display-numeral mt-2 text-[56px] tabular-nums ${tone}`}>
+                {formatScore(value)}
+            </div>
+            <div className="mt-4 h-px bg-rule">
+                <div
+                    className={`h-[2px] -translate-y-px ${emphasis && value >= 80 ? 'bg-accent' : 'bg-ink-soft'} transition-[width] duration-700 ease-out`}
+                    style={{ width: `${value}%` }}
+                />
             </div>
         </div>
     );
@@ -132,89 +102,77 @@ function JobInfoSection({ job }: Readonly<{ job: any }>) {
     const hasSalary = Boolean(job.salary_min || job.salary_max);
 
     return (
-        <section className="bg-gradient-to-br from-slate-50 to-blue-50 rounded-2xl p-8 border-2 border-blue-100">
-            <div className="flex items-start justify-between mb-6">
-                <div className="flex-1">
-                    <h3 className="text-3xl font-black text-gray-900 mb-4 leading-tight">{job.title}</h3>
+        <section>
+            <h3 className="text-[24px] font-medium leading-tight tracking-tight text-ink">{job.title}</h3>
 
-                    <div className="flex flex-wrap items-center gap-4 mb-4">
-                        <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-xl shadow-sm border border-gray-200">
-                            <Building2 className="w-5 h-5 text-gray-500" aria-hidden="true" />
-                            <span className="font-bold text-gray-900">{job.company}</span>
-                        </div>
-
-                        {job.location && (
-                            <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-xl shadow-sm border border-gray-200">
-                                <MapPin className="w-5 h-5 text-gray-500" aria-hidden="true" />
-                                <span className="font-medium text-gray-700">{job.location}</span>
-                            </div>
-                        )}
-
-                        {job.is_remote && (
-                            <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-xl shadow-md font-bold">
-                                <Laptop className="w-4 h-4" aria-hidden="true" />
-                                <span>Remote</span>
-                            </div>
-                        )}
-                    </div>
-                </div>
+            <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-[13px] text-ink-soft">
+                <span className="inline-flex items-center gap-1.5">
+                    <Building2 className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
+                    <span className="text-ink">{job.company}</span>
+                </span>
+                {job.location && (
+                    <span className="inline-flex items-center gap-1.5">
+                        <MapPin className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
+                        <span>{job.location}</span>
+                    </span>
+                )}
+                {job.is_remote && (
+                    <span className="inline-flex items-center gap-1.5 text-accent">
+                        <Laptop className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>Remote</span>
+                    </span>
+                )}
             </div>
 
-            {/* Job details grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <dl className="mt-6 grid grid-cols-2 gap-px overflow-hidden border border-rule bg-rule md:grid-cols-4">
                 {hasSalary && (
-                    <div className="bg-white p-4 rounded-xl border border-gray-200">
-                        <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Salary</div>
-                        <div className="font-black text-gray-900">{formatSalary(job.salary_min, job.salary_max, job.currency)}</div>
+                    <div className="bg-surface px-4 py-3">
+                        <dt className="caption">Salary</dt>
+                        <dd className="mt-1 text-[14px] text-ink tabular-nums">
+                            {formatSalary(job.salary_min, job.salary_max, job.currency)}
+                        </dd>
                     </div>
                 )}
-
                 {(job.min_years_experience !== null && job.min_years_experience !== undefined) && (
-                    <div className="bg-white p-4 rounded-xl border border-gray-200">
-                        <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Experience</div>
-                        <div className="font-black text-gray-900">{job.min_years_experience}+ years</div>
+                    <div className="bg-surface px-4 py-3">
+                        <dt className="caption">Experience</dt>
+                        <dd className="mt-1 text-[14px] text-ink tabular-nums">{job.min_years_experience}+ years</dd>
                     </div>
                 )}
-
                 {job.job_level && (
-                    <div className="bg-white p-4 rounded-xl border border-gray-200">
-                        <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Level</div>
-                        <div className="font-black text-gray-900">{job.job_level}</div>
+                    <div className="bg-surface px-4 py-3">
+                        <dt className="caption">Level</dt>
+                        <dd className="mt-1 text-[14px] text-ink">{job.job_level}</dd>
                     </div>
                 )}
-
                 {(job.requires_degree !== null && job.requires_degree !== undefined) && (
-                    <div className="bg-white p-4 rounded-xl border border-gray-200">
-                        <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Degree</div>
-                        <div className="font-black text-gray-900">{job.requires_degree ? 'Required' : 'Not Required'}</div>
+                    <div className="bg-surface px-4 py-3">
+                        <dt className="caption">Degree</dt>
+                        <dd className="mt-1 text-[14px] text-ink">{job.requires_degree ? 'Required' : 'Not required'}</dd>
                     </div>
                 )}
-            </div>
+            </dl>
         </section>
     );
 }
 
 function ScoresSection({ match }: Readonly<{ match: any }>) {
-    const isHighScore = (match.fit_score ?? 0) >= 80;
     const fitExplanation = match.fit_explanation;
     const semanticSummary = typeof fitExplanation?.summary === 'string' ? fitExplanation.summary : null;
     const fitConfidence = typeof match.fit_confidence === 'number' ? match.fit_confidence : null;
     const scorerName = typeof match.fit_scorer?.name === 'string' ? match.fit_scorer.name : null;
     const retrieval = fitExplanation?.retrieval as RetrievalExplanation | undefined;
     const diagnostics = fitExplanation?.diagnostics as FitDiagnosticsExplanation | undefined;
+    const preferenceSummary = preferenceStatusMessage(match.preference_status);
+
     let retrievalMode: string | null = null;
-    if (retrieval?.mode === 'hybrid') {
-        retrievalMode = 'Hybrid retrieval';
-    } else if (retrieval?.mode === 'dense') {
-        retrievalMode = 'Dense retrieval';
-    }
+    if (retrieval?.mode === 'hybrid') retrievalMode = 'Hybrid retrieval';
+    else if (retrieval?.mode === 'dense') retrievalMode = 'Dense retrieval';
+
     const retrievalSources = Array.isArray(retrieval?.sources) ? retrieval.sources.join(' + ') : null;
-    const fitMode = typeof diagnostics?.effective_fit_mode === 'string'
-        ? diagnostics.effective_fit_mode.replace(/_/g, ' ')
-        : null;
-    const providerRoute = typeof diagnostics?.provider_route === 'string'
-        ? diagnostics.provider_route.replace(/_/g, ' ')
-        : null;
+    const fitMode = formatDiagnosticLabel(diagnostics?.effective_fit_mode);
+    const providerRoute = formatDiagnosticLabel(diagnostics?.provider_route);
+
     let fallbackMessage: string | null = null;
     if (typeof fitExplanation?.message === 'string') {
         fallbackMessage = fitExplanation.message;
@@ -224,82 +182,71 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
 
     return (
         <section>
-            {isHighScore && (
-                <div className="mb-6 inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-yellow-400 to-orange-400 text-white rounded-xl shadow-lg font-black">
-                    <Award className="w-5 h-5" aria-hidden="true" />
-                    <span>Exceptional Match!</span>
-                    <Sparkles className="w-4 h-4" aria-hidden="true" />
-                </div>
-            )}
+            <p className="caption">Scores</p>
+            <h4 className="mt-1 text-[18px] font-medium text-ink">How this one adds up</h4>
 
-            <h4 className="text-xl font-black text-gray-900 mb-6">Match Scores</h4>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                <ScoreDisplay label="Fit" value={match.fit_score ?? 0} gradient="from-blue-500 to-indigo-600" />
-                <ScoreDisplay label="Preference" value={(match.preference_score ?? 0) * 100} gradient="from-blue-400 to-blue-600" />
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <ScoreDisplay label="Fit" value={match.fit_score ?? 0} emphasis />
+                <ScoreDisplay label="Preference" value={(match.preference_score ?? 0) * 100} />
             </div>
 
-            {/* Coverage details */}
-            <div className="grid grid-cols-2 gap-4 bg-gray-50 p-6 rounded-2xl border border-gray-200">
-                <div>
-                    <div className="text-xs font-bold text-gray-600 uppercase tracking-wider mb-1">Required Coverage</div>
-                    <div className="text-2xl font-black text-gray-900">{formatScore(match.required_coverage * 100)}</div>
+            <dl className="mt-4 grid grid-cols-2 gap-px overflow-hidden border border-rule bg-rule md:grid-cols-4">
+                <div className="bg-surface px-4 py-3">
+                    <dt className="caption">Required coverage</dt>
+                    <dd className="display-numeral mt-1 text-[22px] text-ink tabular-nums">
+                        {formatScore(match.required_coverage * 100)}
+                    </dd>
                 </div>
-                <div>
-                    <div className="text-xs font-bold text-gray-600 uppercase tracking-wider mb-1">Preferred Coverage</div>
-                    <div className="text-2xl font-black text-gray-900">{formatScore(match.preferred_requirement_coverage * 100)}</div>
+                <div className="bg-surface px-4 py-3">
+                    <dt className="caption">Preferred coverage</dt>
+                    <dd className="display-numeral mt-1 text-[22px] text-ink tabular-nums">
+                        {formatScore(match.preferred_requirement_coverage * 100)}
+                    </dd>
                 </div>
-                <div>
-                    <div className="text-xs font-bold text-gray-600 uppercase tracking-wider mb-1">Matched Requirements</div>
-                    <div className="text-2xl font-black text-gray-900">
+                <div className="bg-surface px-4 py-3">
+                    <dt className="caption">Matched requirements</dt>
+                    <dd className="display-numeral mt-1 text-[22px] text-ink tabular-nums">
                         {match.matched_requirements_count} / {match.total_requirements}
-                    </div>
+                    </dd>
                 </div>
-                <div>
-                    <div className="text-xs font-bold text-gray-600 uppercase tracking-wider mb-1">Penalties</div>
-                    <div className="text-2xl font-black text-gray-900">{match.penalties.toFixed(1)}</div>
+                <div className="bg-surface px-4 py-3">
+                    <dt className="caption">Penalties</dt>
+                    <dd className="display-numeral mt-1 text-[22px] text-ink tabular-nums">
+                        {match.penalties.toFixed(1)}
+                    </dd>
                 </div>
-            </div>
+            </dl>
 
             {semanticSummary && (
-                <div className="mt-6 rounded-2xl border-2 border-blue-100 bg-gradient-to-br from-blue-50 to-indigo-50 p-6">
-                    <div className="flex flex-wrap items-center gap-3 mb-3">
-                        <Badge variant="info" className="font-bold">Semantic Fit</Badge>
+                <div className="mt-5 border border-rule bg-surface p-6">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="accent">Semantic fit</Badge>
                         {fitConfidence !== null && (
-                            <span className="text-sm font-bold text-blue-700">
-                                Confidence {formatScore(fitConfidence * 100)}
+                            <span className="caption">
+                                Confidence <span className="tabular-nums text-ink">{formatScore(fitConfidence * 100)}</span>
                             </span>
                         )}
                         {scorerName && (
-                            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
-                                {scorerName.replaceAll('_', ' ')}
-                            </span>
+                            <span className="caption">{scorerName.replaceAll('_', ' ')}</span>
                         )}
-                        {retrievalMode && (
-                            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
-                                {retrievalMode}
-                            </span>
-                        )}
-                        {fitMode && (
-                            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
-                                {fitMode}
-                            </span>
-                        )}
-                        {providerRoute && (
-                            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
-                                {providerRoute}
-                            </span>
-                        )}
+                        {retrievalMode && <span className="caption">{retrievalMode}</span>}
+                        {fitMode && <span className="caption">{fitMode}</span>}
+                        {providerRoute && <span className="caption">{providerRoute}</span>}
                     </div>
-                    <p className="text-base font-medium text-gray-800 leading-relaxed">{semanticSummary}</p>
+                    <p className="mt-3 text-[14px] leading-relaxed text-ink-soft">{semanticSummary}</p>
                     {retrievalSources && (
-                        <p className="mt-3 text-sm font-medium text-blue-700">
+                        <p className="mt-3 text-[13px] text-ink-muted">
                             Candidate generation used {retrievalSources}.
                         </p>
                     )}
                     {fallbackMessage && (
-                        <p className="mt-3 text-sm font-medium text-amber-700">
+                        <p className="mt-3 border-l-2 border-warn/60 pl-3 text-[13px] text-ink-soft">
                             {fallbackMessage}
+                        </p>
+                    )}
+                    {preferenceSummary && (
+                        <p className="mt-3 text-[13px] text-ink-muted">
+                            {preferenceSummary}
                         </p>
                     )}
                 </div>
@@ -322,55 +269,58 @@ function RequirementCard({
     const evidenceText = verdict?.evidence_text ?? req.evidence_text;
     const evidenceSection = verdict?.evidence_section ?? req.evidence_section;
     const reason = typeof verdict?.reason === 'string' ? verdict.reason : null;
-    let cardToneClasses = 'bg-gray-50 border-gray-200 hover:border-gray-300';
-    let verdictBadgeVariant: 'success' | 'warning' | 'error' = 'error';
-    let verdictBadgeLabel = '✗ Missing';
+    const evidenceScore = typeof req.evidence_score === 'number'
+        ? req.evidence_score
+        : (typeof verdict?.semantic_score === 'number' ? verdict.semantic_score : null);
+    const vectorScore = typeof req.similarity_score === 'number' ? req.similarity_score : null;
+    const toneLabel = evidenceToneLabel(evidenceScore);
 
+    let verdictBadgeVariant: 'success' | 'warning' | 'error' = 'error';
+    let verdictBadgeLabel = 'Missing';
+    if (isCovered) { verdictBadgeVariant = 'success'; verdictBadgeLabel = 'Covered'; }
+    else if (isPartial) { verdictBadgeVariant = 'warning'; verdictBadgeLabel = 'Partial'; }
+
+    let borderTone = 'border-rule';
     if (isCovered) {
-        cardToneClasses = 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200 hover:border-blue-300';
-        verdictBadgeVariant = 'success';
-        verdictBadgeLabel = '✓ Covered';
+        borderTone = 'border-affirm/40';
     } else if (isPartial) {
-        cardToneClasses = 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200 hover:border-amber-300';
-        verdictBadgeVariant = 'warning';
-        verdictBadgeLabel = '△ Partial';
+        borderTone = 'border-warn/40';
     }
 
     return (
-        <div className={`p-5 rounded-2xl border-2 transition-all duration-200 ${cardToneClasses}`}>
-            <div className="flex items-start justify-between gap-4 mb-3">
+        <div className={`border ${borderTone} bg-surface p-5`}>
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
                 <div className="flex items-center gap-2">
-                    <Badge variant={isRequired ? 'info' : 'default'} className="font-bold">
+                    <Badge variant={isRequired ? 'info' : 'default'}>
                         {isRequired ? 'Required' : 'Preferred'}
                     </Badge>
-                    <Badge variant={verdictBadgeVariant} className="font-bold">
-                        {verdictBadgeLabel}
-                    </Badge>
+                    <Badge variant={verdictBadgeVariant}>{verdictBadgeLabel}</Badge>
                 </div>
-                {verdict && (
-                    <div className="text-xs font-bold text-gray-500 bg-white px-3 py-1 rounded-lg">
-                        Semantic review
-                    </div>
+                {typeof evidenceScore === 'number' && (
+                    <span
+                        className="caption tabular-nums"
+                        title={vectorScore !== null ? `Vector similarity ${vectorScore.toFixed(2)}` : undefined}
+                    >
+                        Evidence <span className="text-ink">{evidenceScore.toFixed(2)}</span> · {toneLabel}
+                    </span>
                 )}
             </div>
 
-            <div className="font-semibold text-gray-900 mb-3">
-                {req.requirement_text || 'No description'}
-            </div>
+            <p className="text-[14px] text-ink">{req.requirement_text || 'No description'}</p>
 
             {reason && (
-                <div className="mb-3 rounded-lg border border-blue-100 bg-white/80 p-3">
-                    <div className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">Why this verdict</div>
-                    <div className="text-sm text-gray-700">{reason}</div>
+                <div className="mt-3 border-l-2 border-rule pl-3">
+                    <p className="caption">Why</p>
+                    <p className="mt-1 text-[13px] text-ink-soft">{reason}</p>
                 </div>
             )}
 
             {evidenceText && (
-                <div className="p-3 bg-white rounded-lg border border-gray-200">
-                    <div className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">Evidence Found</div>
-                    <div className="text-sm text-gray-700">{evidenceText}</div>
+                <div className="mt-3 border-l-2 border-accent/60 pl-3">
+                    <p className="caption">Evidence</p>
+                    <p className="mt-1 text-[13px] text-ink-soft">{evidenceText}</p>
                     {evidenceSection && (
-                        <div className="text-xs text-gray-500 mt-1">Source: {evidenceSection}</div>
+                        <p className="mt-1 text-[12px] text-ink-muted">Source: {evidenceSection}</p>
                     )}
                 </div>
             )}
@@ -397,69 +347,75 @@ function RequirementsSection({
 
     return (
         <section>
-            <h4 className="text-xl font-black text-gray-900 mb-6">Requirements Analysis</h4>
+            <p className="caption">Requirements</p>
+            <h4 className="mt-1 text-[18px] font-medium text-ink">What the job asks for</h4>
 
-            {requiredReqs.length > 0 && (
-                <div className="mb-8">
-                    <div className="flex items-center justify-between mb-4">
-                        <h5 className="text-lg font-bold text-gray-900">Required ({requiredReqs.length})</h5>
-                        <div className="flex items-center gap-2">
-                            <div className="text-sm font-bold text-gray-600">{requiredCovered}/{requiredReqs.length} covered</div>
-                            <div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-500"
-                                    style={{ width: `${(requiredCovered / requiredReqs.length) * 100}%` }}
-                                />
-                            </div>
-                        </div>
-                    </div>
-                    <div className="space-y-3">
-                        {requiredReqs.map((req) => (
-                            <RequirementCard
-                                key={req.requirement_id}
-                                req={req}
-                                verdict={verdictById.get(req.requirement_id)}
-                            />
-                        ))}
-                    </div>
-                </div>
-            )}
+            <RequirementGroup
+                title="Required"
+                requirements={requiredReqs}
+                coveredCount={requiredCovered}
+                verdictById={verdictById}
+                className="mt-5"
+            />
 
-            {preferredReqs.length > 0 && (
-                <div>
-                    <div className="flex items-center justify-between mb-4">
-                        <h5 className="text-lg font-bold text-gray-900">Preferred ({preferredReqs.length})</h5>
-                        <div className="flex items-center gap-2">
-                            <div className="text-sm font-bold text-gray-600">{preferredCovered}/{preferredReqs.length} covered</div>
-                            <div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500"
-                                    style={{ width: `${(preferredCovered / preferredReqs.length) * 100}%` }}
-                                />
-                            </div>
-                        </div>
-                    </div>
-                    <div className="space-y-3">
-                        {preferredReqs.map((req) => (
-                            <RequirementCard
-                                key={req.requirement_id}
-                                req={req}
-                                verdict={verdictById.get(req.requirement_id)}
-                            />
-                        ))}
-                    </div>
-                </div>
-            )}
+            <RequirementGroup
+                title="Preferred"
+                requirements={preferredReqs}
+                coveredCount={preferredCovered}
+                verdictById={verdictById}
+                className="mt-8"
+            />
         </section>
+    );
+}
+
+function RequirementGroup({
+    title,
+    requirements,
+    coveredCount,
+    verdictById,
+    className,
+}: Readonly<{
+    title: string;
+    requirements: any[];
+    coveredCount: number;
+    verdictById: Map<string, SemanticVerdict>;
+    className: string;
+}>) {
+    if (requirements.length === 0) {
+        return null;
+    }
+
+    return (
+        <div className={className}>
+            <div className="flex items-baseline justify-between border-b border-rule pb-2">
+                <h5 className="text-[14px] font-medium text-ink">
+                    {title} <span className="text-ink-muted tabular-nums">({requirements.length})</span>
+                </h5>
+                <span className="caption tabular-nums">
+                    <span className="text-ink">{coveredCount}</span>/{requirements.length} covered
+                </span>
+            </div>
+            <div className="mt-3 space-y-2">
+                {requirements.map((req) => (
+                    <RequirementCard
+                        key={req.requirement_id}
+                        req={req}
+                        verdict={verdictById.get(req.requirement_id)}
+                    />
+                ))}
+            </div>
+        </div>
     );
 }
 
 function JobDescriptionSection({ description }: Readonly<{ description: string }>) {
     return (
         <section>
-            <h4 className="text-xl font-black text-gray-900 mb-4">Job Description</h4>
-            <div className="prose prose-sm max-w-none bg-gray-50 p-6 rounded-2xl border border-gray-200">
-                <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">{description}</p>
+            <p className="caption">Description</p>
+            <h4 className="mt-1 text-[18px] font-medium text-ink">The original posting</h4>
+            <div className="mt-4 border-l-2 border-rule pl-5">
+                <p className="whitespace-pre-wrap text-[14px] leading-relaxed text-ink-soft">{description}</p>
             </div>
         </section>
     );
@@ -470,7 +426,7 @@ function ModalBody({ isLoading, data }: Readonly<{ isLoading: boolean; data: any
     if (!data) return <ErrorState message="Failed to load match details" />;
 
     return (
-        <div className="space-y-8">
+        <div className="space-y-10">
             <JobInfoSection job={data.job} />
             <ScoresSection match={data.match} />
             <RequirementsSection requirements={data.requirements} fitExplanation={data.match.fit_explanation} />
@@ -481,14 +437,21 @@ function ModalBody({ isLoading, data }: Readonly<{ isLoading: boolean; data: any
 
 export const MatchDetailsModal: React.FC<MatchDetailsModalProps> = ({ matchId, onClose }) => {
     const isOpen = Boolean(matchId);
-    useEscapeKey(onClose, isOpen);
 
     const { data, isLoading } = useMatchDetails(matchId);
 
     if (!isOpen) return null;
 
     return (
-        <ModalShell title="Match Details" onClose={onClose}>
+        <ModalShell
+            isOpen={isOpen}
+            onClose={onClose}
+            titleId="match-details-title"
+            eyebrow="Review"
+            title="Match details"
+            closeLabel="Close match details"
+            maxWidth="max-w-5xl"
+        >
             <ModalBody isLoading={isLoading} data={data} />
         </ModalShell>
     );

@@ -383,6 +383,7 @@ describe('useCandidatePreferences', () => {
                 salary_min: null,
                 employment_types: [],
                 soft_preferences: 'Platform work',
+                preference_mode: 'semantic_rerank',
             });
         });
 
@@ -393,6 +394,7 @@ describe('useCandidatePreferences', () => {
             salary_min: null,
             employment_types: [],
             soft_preferences: 'Platform work',
+            preference_mode: 'semantic_rerank',
         });
 
         await waitFor(() => expect(result.current.preferences).toEqual(updatedPreferences));

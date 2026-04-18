@@ -24,6 +24,9 @@ export interface MatchSummary {
     explanation_label: string | null;
     balanced_primary_score: number | null;
     missing_scores: string[];
+    scoring_degraded_reason?: string | null;
+    selection_tier?: 'primary' | 'excluded';
+    excluded_reason?: string | null;
 }
 
 export interface RequirementDetail {
@@ -32,6 +35,7 @@ export interface RequirementDetail {
     evidence_text: string | null;
     evidence_section: string | null;
     similarity_score: number;
+    evidence_score?: number | null;
     is_covered: boolean;
     req_type: string;
 }
@@ -62,6 +66,8 @@ export interface MatchDetail {
     fit_confidence: number | null;
     fit_explanation: Record<string, any> | null;
     fit_scorer: Record<string, any> | null;
+    scoring_degraded_reason?: string | null;
+    preference_status?: Record<string, any> | null;
     base_score: number;
     penalties: number;
     required_coverage: number;
@@ -109,6 +115,11 @@ export interface StatsResponse {
             average: number;
             poor: number;
         };
+        total_scored: number;
+        primary_count: number;
+        excluded_count: number;
+        excluded_by_reason: Record<string, number>;
+        preference_status?: Record<string, any> | null;
     };
 }
 
@@ -174,6 +185,10 @@ export interface NotificationChannelSettings {
     last_test_status?: string | null;
     last_tested_at?: string | null;
     last_test_error?: string | null;
+    effective_recipient?: string | null;
+    override_address?: string | null;
+    override_status?: 'none' | 'pending' | 'verified' | 'expired' | (string & {}) | null;
+    override_verified_at?: string | null;
 }
 
 export interface NotificationSettings {
@@ -206,6 +221,16 @@ export interface NotificationSettingsTestResponse {
     success: boolean;
     notification_id?: string | null;
     message: string;
+}
+
+export interface NotificationEmailOverrideRequest {
+    address: string;
+}
+
+export interface NotificationEmailOverrideResponse {
+    success: boolean;
+    message: string;
+    channel?: NotificationChannelSettings | null;
 }
 
 export interface CandidatePreferences {

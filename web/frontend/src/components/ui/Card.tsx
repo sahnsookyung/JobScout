@@ -5,13 +5,19 @@ interface CardProps {
     children: React.ReactNode;
     className?: string;
     onClick?: () => void;
+    variant?: 'default' | 'sunk' | 'raised';
 }
 
-export const Card: React.FC<CardProps> = ({ children, className, onClick }) => {
+export const Card: React.FC<CardProps> = ({ children, className, onClick, variant = 'default' }) => {
     const classes = clsx(
-        'bg-white rounded-xl border border-gray-100 shadow-md transition-all duration-300 ease-in-out',
-        onClick && 'block w-full appearance-none p-0 text-left font-inherit cursor-pointer hover:shadow-xl hover:-translate-y-1',
-        className
+        'border border-rule transition-colors duration-200 ease-out',
+        {
+            'bg-surface': variant === 'default',
+            'bg-surface-sunk': variant === 'sunk',
+            'bg-surface-raised': variant === 'raised',
+        },
+        onClick && 'block w-full appearance-none p-0 text-left font-inherit cursor-pointer hover:border-rule-strong',
+        className,
     );
 
     if (onClick) {

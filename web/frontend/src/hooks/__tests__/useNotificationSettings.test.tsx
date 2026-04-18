@@ -10,6 +10,9 @@ vi.mock('@/services/notificationSettingsApi', () => ({
         getSettings: vi.fn(),
         updateSettings: vi.fn(),
         sendTest: vi.fn(),
+        sendEmailOverrideVerification: vi.fn(),
+        verifyEmailOverride: vi.fn(),
+        clearEmailOverride: vi.fn(),
     },
 }));
 
@@ -54,6 +57,15 @@ describe('useNotificationSettings', () => {
         vi.mocked(notificationSettingsApi.sendTest).mockResolvedValue({
             data: { success: true, notification_id: 'notif-1', message: 'Queued test notification' },
         } as never);
+        vi.mocked(notificationSettingsApi.sendEmailOverrideVerification).mockResolvedValue({
+            data: { success: true, message: 'Verification email sent' },
+        } as never);
+        vi.mocked(notificationSettingsApi.verifyEmailOverride).mockResolvedValue({
+            data: { success: true, message: 'Email override verified' },
+        } as never);
+        vi.mocked(notificationSettingsApi.clearEmailOverride).mockResolvedValue({
+            data: { success: true, message: 'Email override cleared' },
+        } as never);
     });
 
     it('loads notification settings', async () => {
@@ -97,5 +109,20 @@ describe('useNotificationSettings', () => {
         await result.current.sendTest({ channel_type: 'email' });
 
         expect(notificationSettingsApi.sendTest).toHaveBeenCalledWith({ channel_type: 'email' });
+    });
+
+    it('handles email override verification flows', async () => {
+        const { result } = renderHook(() => useNotificationSettings(), { wrapper: createWrapper() });
+        await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+        await result.current.sendEmailOverrideVerification({ address: 'ada@example.com' });
+        await result.current.verifyEmailOverride('token-123');
+        await result.current.clearEmailOverride();
+
+        expect(notificationSettingsApi.sendEmailOverrideVerification).toHaveBeenCalledWith({
+            address: 'ada@example.com',
+        });
+        expect(notificationSettingsApi.verifyEmailOverride).toHaveBeenCalledWith('token-123');
+        expect(notificationSettingsApi.clearEmailOverride).toHaveBeenCalledTimes(1);
     });
 });

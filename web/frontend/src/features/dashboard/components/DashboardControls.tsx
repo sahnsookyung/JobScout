@@ -1,5 +1,4 @@
-// DashboardControls.tsx
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { usePipeline } from '@/hooks/usePipeline';
 import { useStats } from '@/hooks/useStats';
 import { toast } from 'sonner';
@@ -12,19 +11,26 @@ import { ActionButton } from './ActionButton';
 import { StatusBanner } from './StatusBanner';
 
 export const DashboardControls: React.FC = () => {
-    const { runPipeline, stopPipeline, isRunning, isStopping, status, isUploading, isPreparingResume, resumeProcessingStep, uploadResume } = usePipeline();
+    const {
+        runPipeline,
+        stopPipeline,
+        isRunning,
+        isStopping,
+        status,
+        isUploading,
+        isPreparingResume,
+        resumeProcessingStep,
+        uploadResume,
+    } = usePipeline();
     const { data: stats } = useStats();
     const [resumeFilename, setResumeFilename] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    // Check for existing resume in IndexedDB on mount
     useEffect(() => {
         const checkExistingResume = async () => {
             try {
                 const filename = await getResumeFilename();
-                if (filename) {
-                    setResumeFilename(filename);
-                }
+                if (filename) setResumeFilename(filename);
             } catch (error) {
                 console.warn('[DashboardControls] Failed to check IndexedDB:', error);
             }
@@ -37,10 +43,8 @@ export const DashboardControls: React.FC = () => {
         if (!file) return;
 
         if (file.size > RESUME_MAX_SIZE) {
-            toast.error(`File size exceeds ${RESUME_MAX_SIZE_MB}MB limit. Please upload a smaller file.`);
-            if (fileInputRef.current) {
-                fileInputRef.current.value = '';
-            }
+            toast.error(`That file is over ${RESUME_MAX_SIZE_MB}MB. Try a smaller one.`);
+            if (fileInputRef.current) fileInputRef.current.value = '';
             return;
         }
 
@@ -48,22 +52,19 @@ export const DashboardControls: React.FC = () => {
             const { alreadyExists, message } = await uploadResume(file);
             setResumeFilename(file.name);
             if (alreadyExists) {
-                toast.success('An identical resume has already been uploaded.');
+                toast.success('This resume is already saved.');
             } else {
                 toast.success(message);
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown error';
-            toast.error(`Failed to upload resume: ${message}`);
+            toast.error(`Resume upload failed: ${message}`);
         } finally {
-            if (fileInputRef.current) {
-                fileInputRef.current.value = '';
-            }
+            if (fileInputRef.current) fileInputRef.current.value = '';
         }
     };
 
     const statusData = status;
-
     const hasStatus = statusData !== null && statusData !== undefined;
     const isRunningStatus = hasStatus && ['pending', 'running'].includes(statusData?.status ?? '');
     const isCancellationRequested = hasStatus && statusData?.status === 'cancellation_requested';
@@ -73,12 +74,8 @@ export const DashboardControls: React.FC = () => {
     const isFailedStatus = hasStatus && statusData?.status === 'failed';
     const isCancelledStatus = hasStatus && statusData?.status === 'cancelled';
     const showStatusBanner = (
-        isRunningStatus ||
-        isCancellationRequested ||
-        isPersistingStatus ||
-        isCompletedStatus ||
-        isFailedStatus ||
-        isCancelledStatus
+        isRunningStatus || isCancellationRequested || isPersistingStatus
+        || isCompletedStatus || isFailedStatus || isCancelledStatus
     );
 
     const totalMatches = stats?.total_matches ?? 0;
@@ -96,36 +93,33 @@ export const DashboardControls: React.FC = () => {
     const hiddenArc = (hiddenPercentage / 100) * circumference;
     const belowArc = (belowPercentage / 100) * circumference;
 
-    const chartProps = {
-        activeArc, hiddenArc, belowArc, circumference, radius
-    };
+    const chartProps = { activeArc, hiddenArc, belowArc, circumference, radius };
 
     return (
         <DashboardWrapper>
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+            <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_auto] lg:items-start lg:gap-10">
                 <StatsPanel stats={stats} {...chartProps} activeMatches={activeMatches} />
-                <div className={hasStatus ? 'lg:self-center' : ''}>
-                    <div className="flex gap-3 lg:flex-col lg:w-[180px]">
-                        <ResumeUploadSection
-                            fileInputRef={fileInputRef}
-                            onUpload={handleResumeUpload}
-                            isUploading={isUploading || isPreparingResume}
-                            isRunning={isRunning}
-                            filename={resumeFilename}
-                            processingStep={resumeProcessingStep}
-                        />
-                        <ActionButton
-                            canStop={canStop}
-                            isCancellationRequested={isCancellationRequested}
-                            isPersistingStatus={isPersistingStatus}
-                            isRunning={isRunning}
-                            isStopping={isStopping}
-                            isProcessingResume={isPreparingResume}
-                            processingStep={resumeProcessingStep}
-                            onRun={() => runPipeline((msg) => toast.error(msg))}
-                            onStop={stopPipeline}
-                        />
-                    </div>
+                <div className="flex flex-col gap-3 lg:w-[220px] lg:border-l lg:border-rule lg:pl-8">
+                    <p className="caption">Run</p>
+                    <ResumeUploadSection
+                        fileInputRef={fileInputRef}
+                        onUpload={handleResumeUpload}
+                        isUploading={isUploading || isPreparingResume}
+                        isRunning={isRunning}
+                        filename={resumeFilename}
+                        processingStep={resumeProcessingStep}
+                    />
+                    <ActionButton
+                        canStop={canStop}
+                        isCancellationRequested={isCancellationRequested}
+                        isPersistingStatus={isPersistingStatus}
+                        isRunning={isRunning}
+                        isStopping={isStopping}
+                        isProcessingResume={isPreparingResume}
+                        processingStep={resumeProcessingStep}
+                        onRun={() => runPipeline((msg) => toast.error(msg))}
+                        onStop={stopPipeline}
+                    />
                 </div>
             </div>
             {showStatusBanner && statusData && <StatusBanner {...statusData} />}

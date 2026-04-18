@@ -1,49 +1,489 @@
 @import "tailwindcss" source("../");
 
+/* ============================================================
+   JobScout — "A warm workshop for a hard season"
+   Design tokens: warm neutrals, one accent (terracotta), hairline
+   rules, no red, AAA contrast, dark is warm not OLED-cold.
+   ============================================================ */
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 :root {
-    font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-    line-height: 1.5;
-    font-weight: 400;
+    color-scheme: light;
+
+    /* Surfaces — warm paper */
+    --canvas: #F2EEE5;
+    --surface: #FAF6EC;
+    --surface-raised: #FFFBF1;
+    --surface-sunk: #EAE4D5;
+
+    /* Ink — warm near-black */
+    --ink: #17140F;
+    --ink-soft: #544B3F;
+    --ink-muted: #8A7F6E;
+    --ink-faint: #B3A895;
+
+    /* Rules — hairlines on warm paper */
+    --rule: #DFD7C5;
+    --rule-strong: #CBC1AB;
+
+    /* Accent — terracotta, used ONLY for action */
+    --accent: #C84B31;
+    --accent-ink: #8B2E1C;
+    --accent-hover: #B03E28;
+    --accent-soft: #F1DFD7;
+    --accent-ring: rgba(200, 75, 49, 0.32);
+
+    /* Warn — clay/ochre, never red */
+    --warn: #8A6A24;
+    --warn-soft: #EFE3C4;
+
+    /* Positive — restraint; affirmation is a warmer ink, not a hue */
+    --affirm: #3F5A3C;
+    --affirm-soft: #DFE4D5;
+
+    /* Data */
+    --data-strong: var(--ink);
+    --data-bar: var(--ink-soft);
+    --data-track: var(--rule);
+
+    /* Focus */
+    --focus-ring: var(--accent-ring);
+
+    /* Motion */
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --dur-fast: 180ms;
+    --dur-base: 280ms;
+    --dur-slow: 420ms;
+}
+
+[data-theme="dark"] {
+    color-scheme: dark;
+
+    /* Warm dark — library at night, not void */
+    --canvas: #15130F;
+    --surface: #1E1B16;
+    --surface-raised: #26221C;
+    --surface-sunk: #0E0C09;
+
+    --ink: #F2EDE2;
+    --ink-soft: #C2B9A8;
+    --ink-muted: #8A8273;
+    --ink-faint: #5C5648;
+
+    --rule: #2B2720;
+    --rule-strong: #3A352C;
+
+    --accent: #E06A4E;
+    --accent-ink: #F18A70;
+    --accent-hover: #ED7B5F;
+    --accent-soft: #3A1F17;
+    --accent-ring: rgba(224, 106, 78, 0.36);
+
+    --warn: #D4A05E;
+    --warn-soft: #3C2E18;
+
+    --affirm: #9BB595;
+    --affirm-soft: #283023;
+
+    --data-strong: var(--ink);
+    --data-bar: var(--ink-soft);
+    --data-track: var(--rule-strong);
+
+    --focus-ring: var(--accent-ring);
+}
+
+@theme {
+    /* Fonts */
+    --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+    --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-display: "Geist", ui-sans-serif, system-ui, sans-serif;
+
+    /* Colors — map our tokens onto Tailwind's palette so bg-canvas, text-ink, etc. work */
+    --color-canvas: var(--canvas);
+    --color-surface: var(--surface);
+    --color-surface-raised: var(--surface-raised);
+    --color-surface-sunk: var(--surface-sunk);
+
+    --color-ink: var(--ink);
+    --color-ink-soft: var(--ink-soft);
+    --color-ink-muted: var(--ink-muted);
+    --color-ink-faint: var(--ink-faint);
+
+    --color-rule: var(--rule);
+    --color-rule-strong: var(--rule-strong);
+
+    --color-accent: var(--accent);
+    --color-accent-ink: var(--accent-ink);
+    --color-accent-hover: var(--accent-hover);
+    --color-accent-soft: var(--accent-soft);
+
+    --color-warn: var(--warn);
+    --color-warn-soft: var(--warn-soft);
+
+    --color-affirm: var(--affirm);
+    --color-affirm-soft: var(--affirm-soft);
+
+    /* Radii — sharp by default, modest curves for interactive only */
+    --radius-xs: 2px;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+    --radius-xl: 10px;
+
+    /* Max widths */
+    --container-content: 1280px;
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+
+html,
+body {
+    margin: 0;
+    background-color: var(--canvas);
+    color: var(--ink);
 }
 
 body {
-    margin: 0;
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+    font-weight: 400;
+    line-height: 1.55;
     min-width: 320px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
 }
 
 #root {
     width: 100%;
+    min-height: 100vh;
+    background-color: var(--canvas);
+    color: var(--ink);
 }
 
-/* Custom range slider styling */
-input[type="range"].slider-thumb::-webkit-slider-thumb {
+/* Numerals are always tabular & mono, everywhere */
+.num,
+[data-num] {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "ss01", "tnum", "zero";
+}
+
+/* Selection */
+::selection {
+    background-color: var(--accent-soft);
+    color: var(--accent-ink);
+}
+
+/* Scrollbars — quiet */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--rule-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+    background-color: var(--rule-strong);
+    border-radius: 10px;
+    border: 3px solid var(--canvas);
+}
+
+/* Focus ring — earned on keyboard nav */
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+}
+
+button:focus:not(:focus-visible) {
+    outline: none;
+}
+
+/* Form controls inherit type */
+input,
+textarea,
+select,
+button {
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+}
+
+/* Placeholder quieter than copy */
+::placeholder {
+    color: var(--ink-faint);
+    opacity: 1;
+}
+
+/* ============================================================
+   Motion — slower, warmer easing; honor reduced-motion fully
+   ============================================================ */
+
+@keyframes wm-fade-rise {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes wm-fade-in {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes wm-ember {
+    0%, 100% {
+        opacity: 0.55;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1.12);
+    }
+}
+
+@keyframes wm-fill {
+    from {
+        transform: scaleX(0);
+    }
+    to {
+        transform: scaleX(var(--fill-x, 1));
+    }
+}
+
+@keyframes wm-marquee-indeterminate {
+    0% {
+        transform: translateX(-40%);
+    }
+    100% {
+        transform: translateX(140%);
+    }
+}
+
+@utility enter {
+    animation: wm-fade-rise var(--dur-slow) var(--ease-out) both;
+}
+
+@utility enter-fade {
+    animation: wm-fade-in var(--dur-base) var(--ease-out) both;
+}
+
+@utility ember {
+    animation: wm-ember 2400ms var(--ease-out) infinite;
+}
+
+/* Stagger children 60ms apart, capped at 12 */
+@utility stagger {
+    & > * {
+        animation: wm-fade-rise var(--dur-slow) var(--ease-out) both;
+    }
+    & > *:nth-child(1) { animation-delay: 40ms; }
+    & > *:nth-child(2) { animation-delay: 100ms; }
+    & > *:nth-child(3) { animation-delay: 160ms; }
+    & > *:nth-child(4) { animation-delay: 220ms; }
+    & > *:nth-child(5) { animation-delay: 280ms; }
+    & > *:nth-child(6) { animation-delay: 340ms; }
+    & > *:nth-child(7) { animation-delay: 400ms; }
+    & > *:nth-child(8) { animation-delay: 460ms; }
+    & > *:nth-child(9) { animation-delay: 520ms; }
+    & > *:nth-child(10) { animation-delay: 580ms; }
+    & > *:nth-child(n+11) { animation-delay: 640ms; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* ============================================================
+   Components — a few small utilities used across the app
+   ============================================================ */
+
+/* Hairline divider, used both vertical and horizontal */
+@utility rule {
+    background-color: var(--rule);
+}
+
+@utility rule-strong {
+    background-color: var(--rule-strong);
+}
+
+/* The crosshair mark — used as the logo glyph */
+.jobscout-mark {
+    width: 22px;
+    height: 22px;
+    position: relative;
+    display: inline-block;
+    color: var(--accent);
+}
+
+.jobscout-mark::before,
+.jobscout-mark::after {
+    content: "";
+    position: absolute;
+    background: currentColor;
+}
+
+.jobscout-mark::before {
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    transform: translateX(-50%);
+}
+
+.jobscout-mark::after {
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    transform: translateY(-50%);
+}
+
+/* Soft section caption — used for "Section / Context" style labels */
+@utility caption {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+}
+
+/* Display — for hero score numerals */
+@utility display-numeral {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum", "zero";
+    font-weight: 500;
+    letter-spacing: -0.04em;
+    line-height: 1;
+    color: var(--ink);
+}
+
+/* Primary action button baseline — used by <Button> */
+@utility btn-accent {
+    background-color: var(--accent);
+    color: #FFF;
+    border: 1px solid var(--accent);
+
+    &:hover {
+        background-color: var(--accent-hover);
+        border-color: var(--accent-hover);
+    }
+
+    &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+}
+
+/* Range sliders — warm thumb, hairline track */
+input[type="range"].wm-slider {
+    -webkit-appearance: none;
     appearance: none;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: #2563eb;
+    background: transparent;
     cursor: pointer;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-    transition: all 0.2s;
+    height: 20px;
 }
 
-input[type="range"].slider-thumb::-webkit-slider-thumb:hover {
-    background: #1d4ed8;
+input[type="range"].wm-slider::-webkit-slider-runnable-track {
+    height: 2px;
+    background: var(--rule-strong);
+    border-radius: 2px;
+}
+
+input[type="range"].wm-slider::-moz-range-track {
+    height: 2px;
+    background: var(--rule-strong);
+    border-radius: 2px;
+}
+
+input[type="range"].wm-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: var(--accent);
+    border: 2px solid var(--surface);
+    border-radius: 50%;
+    margin-top: -7px;
+    box-shadow: 0 0 0 1px var(--accent);
+    transition: transform var(--dur-fast) var(--ease-out);
+}
+
+input[type="range"].wm-slider:hover::-webkit-slider-thumb,
+input[type="range"].wm-slider:focus-visible::-webkit-slider-thumb {
     transform: scale(1.1);
 }
 
+input[type="range"].wm-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    background: var(--accent);
+    border: 2px solid var(--surface);
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px var(--accent);
+    transition: transform var(--dur-fast) var(--ease-out);
+}
+
+input[type="range"].wm-slider:hover::-moz-range-thumb,
+input[type="range"].wm-slider:focus-visible::-moz-range-thumb {
+    transform: scale(1.1);
+}
+
+/* Legacy slider (from old PolicyPanel) — keep selector alive during migration */
+input[type="range"].slider-thumb::-webkit-slider-thumb,
 input[type="range"].slider-thumb::-moz-range-thumb {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: #2563eb;
-    cursor: pointer;
-    border: none;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-    transition: all 0.2s;
+    background: var(--accent);
 }
 
-input[type="range"].slider-thumb::-moz-range-thumb:hover {
-    background: #1d4ed8;
-    transform: scale(1.1);
+/* Checkbox/input accents — terracotta, not blue */
+input[type="checkbox"],
+input[type="radio"] {
+    accent-color: var(--accent);
+}
+
+/* Sonner toast theming */
+:where([data-sonner-toaster]) {
+    --normal-bg: var(--surface-raised);
+    --normal-text: var(--ink);
+    --normal-border: var(--rule);
+    --success-bg: var(--surface-raised);
+    --success-text: var(--ink);
+    --success-border: var(--rule);
+    --error-bg: var(--warn-soft);
+    --error-text: var(--ink);
+    --error-border: var(--warn);
+    font-family: var(--font-sans) !important;
+}
+
+:where([data-sonner-toast]) {
+    border-radius: var(--radius-md) !important;
+    font-family: var(--font-sans) !important;
 }

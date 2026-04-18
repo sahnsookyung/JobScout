@@ -9,5 +9,6 @@ export const useStats = () => {
             return response.data.stats;
         },
         staleTime: 60000,
+        refetchOnWindowFocus: false,
     });
 };

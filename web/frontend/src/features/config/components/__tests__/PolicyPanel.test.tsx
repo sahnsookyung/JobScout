@@ -50,12 +50,12 @@ describe('PolicyPanel', () => {
     describe('default state (no policy)', () => {
         it('renders Result Policy heading', () => {
             render(<PolicyPanel />);
-            expect(screen.getByText('Result Policy')).toBeTruthy();
+            expect(screen.getByText('Result policy')).toBeTruthy();
         });
 
         it('renders Quick Presets label', () => {
             render(<PolicyPanel />);
-            expect(screen.getByText('Quick Presets')).toBeTruthy();
+            expect(screen.getByText('Quick presets')).toBeTruthy();
         });
 
         it('renders three preset buttons', () => {
@@ -67,12 +67,12 @@ describe('PolicyPanel', () => {
 
         it('renders Min Fit Score label', () => {
             render(<PolicyPanel />);
-            expect(screen.getByText('Min Fit Score')).toBeTruthy();
+            expect(screen.getByText('Min fit score')).toBeTruthy();
         });
 
         it('renders Max Results label', () => {
             render(<PolicyPanel />);
-            expect(screen.getByText('Max Results')).toBeTruthy();
+            expect(screen.getByText('Max results')).toBeTruthy();
         });
 
         it('shows default minFit value of 55', () => {
@@ -107,6 +107,20 @@ describe('PolicyPanel', () => {
             render(<PolicyPanel />);
             const slider = screen.getByRole('slider', { name: /maximum number of results/i });
             expect((slider as HTMLInputElement).value).toBe('150');
+        });
+
+        it('does not auto-save policy values during hydration', async () => {
+            mockUsePolicy.mockReturnValue({
+                ...defaultHook,
+                policy: { min_fit: 70, top_k: 150, min_jd_required_coverage: null },
+            } as never);
+            render(<PolicyPanel />);
+
+            await act(async () => {
+                vi.advanceTimersByTime(300);
+            });
+
+            expect(defaultHook.updatePolicy).not.toHaveBeenCalled();
         });
     });
 

@@ -42,7 +42,7 @@ describe('CandidatePreferencesPanel', () => {
     it('preserves unsaved edits across background preference refetches', async () => {
         const { rerender } = render(<CandidatePreferencesPanel />);
 
-        const textarea = screen.getByPlaceholderText(/i prefer fast-moving product teams/i);
+        const textarea = screen.getByPlaceholderText(/small product teams/i);
         await userEvent.clear(textarea);
         await userEvent.type(textarea, 'Unsaved local preference');
 
@@ -62,7 +62,7 @@ describe('CandidatePreferencesPanel', () => {
     it('hydrates the latest saved preferences once the form is clean again', async () => {
         const { rerender } = render(<CandidatePreferencesPanel />);
 
-        const textarea = screen.getByPlaceholderText(/i prefer fast-moving product teams/i);
+        const textarea = screen.getByPlaceholderText(/small product teams/i);
         await userEvent.clear(textarea);
         await userEvent.type(textarea, 'Updated saved preference');
 
@@ -93,7 +93,7 @@ describe('CandidatePreferencesPanel', () => {
                 preference_mode: 'semantic_rerank',
             });
         });
-        expect(toast.success).toHaveBeenCalledWith('Candidate preferences saved');
+        expect(toast.success).toHaveBeenCalledWith('Preferences saved.');
 
         rerender(<CandidatePreferencesPanel />);
 
@@ -105,18 +105,18 @@ describe('CandidatePreferencesPanel', () => {
         render(<CandidatePreferencesPanel />);
 
         await userEvent.selectOptions(screen.getAllByRole('combobox')[0], 'hybrid');
-        fireEvent.change(screen.getByPlaceholderText(/tokyo, remote japan, berlin/i), {
+        fireEvent.change(screen.getByPlaceholderText('Tokyo, Remote Japan, Berlin'), {
             target: { value: 'Tokyo, Remote Japan' },
         });
-        await userEvent.clear(screen.getByPlaceholderText(/leave blank if flexible/i));
-        await userEvent.type(screen.getByPlaceholderText(/leave blank if flexible/i), '150000');
-        fireEvent.change(screen.getByPlaceholderText(/full-time, contract/i), {
+        await userEvent.clear(screen.getByPlaceholderText('Leave blank if flexible'));
+        await userEvent.type(screen.getByPlaceholderText('Leave blank if flexible'), '150000');
+        fireEvent.change(screen.getByPlaceholderText('Full-time, Contract'), {
             target: { value: 'Contract, Part-time' },
         });
         await userEvent.click(screen.getByRole('checkbox'));
         await userEvent.selectOptions(screen.getAllByRole('combobox')[1], 'llm_judge');
 
-        expect(screen.getByText('You have unsaved preference changes.')).toBeInTheDocument();
+        expect(screen.getByText('You have unsaved changes.')).toBeInTheDocument();
 
         await userEvent.click(screen.getByRole('button', { name: /save preferences/i }));
 
@@ -137,6 +137,7 @@ describe('CandidatePreferencesPanel', () => {
         savePreferences.mockRejectedValueOnce(new Error('Save exploded'));
         render(<CandidatePreferencesPanel />);
 
+        await userEvent.type(screen.getByPlaceholderText(/small product teams/i), ' with extra detail');
         await userEvent.click(screen.getByRole('button', { name: /save preferences/i }));
 
         await waitFor(() => {
@@ -148,10 +149,11 @@ describe('CandidatePreferencesPanel', () => {
         savePreferences.mockRejectedValueOnce('unexpected');
         render(<CandidatePreferencesPanel />);
 
+        await userEvent.type(screen.getByPlaceholderText(/small product teams/i), ' with extra detail');
         await userEvent.click(screen.getByRole('button', { name: /save preferences/i }));
 
         await waitFor(() => {
-            expect(toast.error).toHaveBeenCalledWith('Failed to save candidate preferences');
+            expect(toast.error).toHaveBeenCalledWith('Couldn’t save your preferences.');
         });
     });
 

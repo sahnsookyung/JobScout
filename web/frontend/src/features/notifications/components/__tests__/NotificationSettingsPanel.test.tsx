@@ -24,6 +24,9 @@ const createWrapper = () => {
 describe('NotificationSettingsPanel', () => {
     const saveSettings = vi.fn();
     const sendTest = vi.fn();
+    const sendEmailOverrideVerification = vi.fn();
+    const clearEmailOverride = vi.fn();
+    const verifyEmailOverride = vi.fn();
 
     beforeEach(() => {
         vi.clearAllMocks();
@@ -60,11 +63,19 @@ describe('NotificationSettingsPanel', () => {
             isLoading: false,
             isSaving: false,
             isTesting: false,
+            isSendingEmailVerification: false,
+            isClearingEmailOverride: false,
             saveSettings,
             sendTest,
+            sendEmailOverrideVerification,
+            clearEmailOverride,
+            verifyEmailOverride,
         });
         saveSettings.mockResolvedValue({ data: {} });
         sendTest.mockResolvedValue({ data: { message: 'Queued test notification' } });
+        sendEmailOverrideVerification.mockResolvedValue({ data: { message: 'Verification email sent' } });
+        clearEmailOverride.mockResolvedValue({ data: { message: 'Email override cleared' } });
+        verifyEmailOverride.mockResolvedValue({ data: { message: 'Email override verified' } });
     });
 
     it('renders saved channel state', () => {
@@ -103,7 +114,7 @@ describe('NotificationSettingsPanel', () => {
                 },
             });
         });
-        expect(toast.success).toHaveBeenCalledWith('Notification settings saved');
+        expect(toast.success).toHaveBeenCalledWith('Notification settings saved.');
     });
 
     it('disables test actions while there are unsaved changes', async () => {
@@ -186,8 +197,13 @@ describe('NotificationSettingsPanel', () => {
             isLoading: false,
             isSaving: false,
             isTesting: false,
+            isSendingEmailVerification: false,
+            isClearingEmailOverride: false,
             saveSettings,
             sendTest,
+            sendEmailOverrideVerification,
+            clearEmailOverride,
+            verifyEmailOverride,
         });
 
         render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
@@ -202,6 +218,7 @@ describe('NotificationSettingsPanel', () => {
         saveSettings.mockRejectedValueOnce(new Error('Save exploded'));
         render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
 
+        fireEvent.change(screen.getByLabelText('Minimum fit for alerts'), { target: { value: '72' } });
         await userEvent.click(screen.getByRole('button', { name: /save settings/i }));
 
         await waitFor(() => {
@@ -221,14 +238,149 @@ describe('NotificationSettingsPanel', () => {
         });
     });
 
+    it('sends and clears an email override', async () => {
+        mockUseNotificationSettings.mockReturnValue({
+            settings: {
+                notifications_enabled: true,
+                min_fit_for_alerts: 70,
+                notify_on_new_match: true,
+                notify_on_batch_complete: false,
+                revision: 2,
+                channels: {
+                    email: {
+                        enabled: true,
+                        configured: true,
+                        available: true,
+                        masked_recipient: '***@example.com',
+                        effective_recipient: 'ada+alerts@example.com',
+                        override_address: 'ada+alerts@example.com',
+                        override_status: 'pending',
+                        availability_reason: null,
+                        last_test_status: 'queued',
+                        last_tested_at: null,
+                        last_test_error: null,
+                    },
+                },
+            },
+            isLoading: false,
+            isSaving: false,
+            isTesting: false,
+            isSendingEmailVerification: false,
+            isClearingEmailOverride: false,
+            saveSettings,
+            sendTest,
+            sendEmailOverrideVerification,
+            clearEmailOverride,
+            verifyEmailOverride,
+        });
+
+        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+
+        await userEvent.clear(screen.getByPlaceholderText('name@example.com'));
+        await userEvent.type(screen.getByPlaceholderText('name@example.com'), 'new@example.com');
+        await userEvent.click(screen.getByRole('button', { name: /send verification/i }));
+        await userEvent.click(screen.getByRole('button', { name: /clear override/i }));
+
+        await waitFor(() => {
+            expect(sendEmailOverrideVerification).toHaveBeenCalledWith({ address: 'new@example.com' });
+        });
+        await waitFor(() => {
+            expect(clearEmailOverride).toHaveBeenCalledTimes(1);
+        });
+        expect(screen.getByText(/pending/i)).toBeInTheDocument();
+    });
+
+    it('renders verified and expired email helper copy', () => {
+        const { rerender } = render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+
+        mockUseNotificationSettings.mockReturnValue({
+            settings: {
+                notifications_enabled: true,
+                min_fit_for_alerts: 70,
+                notify_on_new_match: true,
+                notify_on_batch_complete: false,
+                revision: 3,
+                channels: {
+                    email: {
+                        enabled: true,
+                        configured: true,
+                        available: true,
+                        masked_recipient: '***@example.com',
+                        override_address: 'ada@example.com',
+                        override_status: 'verified',
+                        availability_reason: null,
+                        last_test_status: null,
+                        last_tested_at: null,
+                        last_test_error: null,
+                    },
+                },
+            },
+            isLoading: false,
+            isSaving: false,
+            isTesting: false,
+            isSendingEmailVerification: false,
+            isClearingEmailOverride: false,
+            saveSettings,
+            sendTest,
+            sendEmailOverrideVerification,
+            clearEmailOverride,
+            verifyEmailOverride,
+        });
+
+        rerender(<NotificationSettingsPanel />);
+        expect(screen.getByText('Verified override')).toBeInTheDocument();
+
+        mockUseNotificationSettings.mockReturnValue({
+            settings: {
+                notifications_enabled: true,
+                min_fit_for_alerts: 70,
+                notify_on_new_match: true,
+                notify_on_batch_complete: false,
+                revision: 4,
+                channels: {
+                    email: {
+                        enabled: true,
+                        configured: true,
+                        available: true,
+                        masked_recipient: '***@example.com',
+                        override_address: 'ada@example.com',
+                        override_status: 'expired',
+                        availability_reason: null,
+                        last_test_status: null,
+                        last_tested_at: null,
+                        last_test_error: null,
+                    },
+                },
+            },
+            isLoading: false,
+            isSaving: false,
+            isTesting: false,
+            isSendingEmailVerification: false,
+            isClearingEmailOverride: false,
+            saveSettings,
+            sendTest,
+            sendEmailOverrideVerification,
+            clearEmailOverride,
+            verifyEmailOverride,
+        });
+
+        rerender(<NotificationSettingsPanel />);
+        expect(screen.getByText('Expired — resend')).toBeInTheDocument();
+    });
+
     it('renders a loading skeleton while settings are loading', () => {
         mockUseNotificationSettings.mockReturnValue({
             settings: undefined,
             isLoading: true,
             isSaving: false,
             isTesting: false,
+            isSendingEmailVerification: false,
+            isClearingEmailOverride: false,
             saveSettings,
             sendTest,
+            sendEmailOverrideVerification,
+            clearEmailOverride,
+            verifyEmailOverride,
         });
 
         const { container } = render(<NotificationSettingsPanel />, { wrapper: createWrapper() });

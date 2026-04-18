@@ -4,14 +4,15 @@
  * Run with: npm run test (Vitest)
  */
 
+import { webcrypto } from 'node:crypto';
+
 import { saveResume, getResume, getResumeHash, deleteResume, hasResume } from '../indexedDB';
 import { computeFileHash, validateFileSize } from '../fileUtils';
 import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
 
 // Polyfill crypto.subtle for JSDOM environment (needed for xxhash)
 if (globalThis.crypto?.subtle === undefined) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    Object.defineProperty(globalThis, 'crypto', { value: require('node:crypto').webcrypto });
+    Object.defineProperty(globalThis, 'crypto', { value: webcrypto });
 }
 
 describe('IndexedDB Resume Storage', () => {

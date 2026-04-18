@@ -3,6 +3,7 @@ import { AuthGate } from '@/features/auth/AuthGate';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MatchList } from '@/features/matches/components/MatchList';
 import { MatchDetailsModal } from '@/features/matches/components/MatchDetailsModal';
+import { EmailVerificationPage } from '@/features/notifications/components/EmailVerificationPage';
 import { PolicyPanel } from '@/features/config/components/PolicyPanel';
 import { DashboardControls } from '@/features/dashboard/components/DashboardControls';
 import { DashboardHeader } from '@/features/dashboard/components/DashboardHeader';
@@ -21,31 +22,27 @@ function AppContent() {
     const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-gray-50">
+        <div className="min-h-screen bg-canvas text-ink">
             <DashboardHeader />
 
-            {/* Main Content */}
-            <main className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
-                {/* Compact Controls Bar at Top */}
-                <div className="mb-6">
+            <main className="mx-auto max-w-[var(--container-content)] px-5 pb-24 pt-8 sm:px-8 lg:px-10">
+                <div className="enter mb-10">
                     <DashboardControls />
                 </div>
 
-                {/* Two Column Layout: Matches + Sidebar */}
-                <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-                    {/* Panels: show first on small screens, right column on xl+ */}
-                    <aside className="order-first xl:order-last space-y-6">
-                        <PolicyPanel />
+                <div className="grid grid-cols-1 gap-10 lg:grid-cols-[280px_minmax(0,1fr)]">
+                    <aside className="order-first lg:order-first">
+                        <div className="sticky top-24">
+                            <PolicyPanel />
+                        </div>
                     </aside>
 
-                    {/* Matches: show after panels on small screens, left column on xl+ */}
-                    <section className="order-last xl:order-first min-w-0">
+                    <section className="order-last lg:order-last min-w-0">
                         <MatchList onMatchSelect={setSelectedMatchId} />
                     </section>
                 </div>
             </main>
 
-            {/* Match Details Modal */}
             <MatchDetailsModal
                 matchId={selectedMatchId}
                 onClose={() => setSelectedMatchId(null)}
@@ -55,12 +52,18 @@ function AppContent() {
 }
 
 function App() {
+    const isEmailVerificationRoute = globalThis.location.pathname === '/verify-email';
+
     return (
         <QueryClientProvider client={queryClient}>
             <ToastProvider />
-            <AuthGate>
-                <AppContent />
-            </AuthGate>
+            {isEmailVerificationRoute ? (
+                <EmailVerificationPage />
+            ) : (
+                <AuthGate>
+                    <AppContent />
+                </AuthGate>
+            )}
         </QueryClientProvider>
     );
 }
