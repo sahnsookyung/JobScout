@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from web.backend.routers.stats import router
-from web.backend.dependencies import get_db
+from web.backend.dependencies import get_current_user, get_db
 
 
 def _make_query_mock(total=10, hidden=2, below_threshold=1, excellent=4, good=2, average=2, poor=2):
@@ -48,6 +48,7 @@ class TestGetStats:
 
     def _setup(self, app, mock_db, mock_policy_svc):
         app.dependency_overrides[get_db] = lambda: mock_db
+        app.dependency_overrides[get_current_user] = lambda: Mock(id="test-user")
         return patch("web.backend.routers.stats.get_policy_service", return_value=mock_policy_svc)
 
     def test_returns_200(self, client, app):
