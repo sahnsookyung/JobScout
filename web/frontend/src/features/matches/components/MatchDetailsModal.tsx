@@ -38,6 +38,25 @@ function evidenceToneLabel(score: number | null | undefined): string {
     return 'weak';
 }
 
+function formatDiagnosticLabel(value: string | null | undefined): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    return value.replace(/_/g, ' ');
+}
+
+function preferenceStatusMessage(preferenceStatus: any): string | null {
+    if (!preferenceStatus) {
+        return null;
+    }
+
+    if (preferenceStatus.applied) {
+        return 'Preferences applied.';
+    }
+
+    return `Preferences skipped: ${preferenceStatus.reason ?? 'unconfigured'}.`;
+}
+
 
 function LoadingState() {
     return (
@@ -144,18 +163,15 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
     const scorerName = typeof match.fit_scorer?.name === 'string' ? match.fit_scorer.name : null;
     const retrieval = fitExplanation?.retrieval as RetrievalExplanation | undefined;
     const diagnostics = fitExplanation?.diagnostics as FitDiagnosticsExplanation | undefined;
+    const preferenceSummary = preferenceStatusMessage(match.preference_status);
 
     let retrievalMode: string | null = null;
     if (retrieval?.mode === 'hybrid') retrievalMode = 'Hybrid retrieval';
     else if (retrieval?.mode === 'dense') retrievalMode = 'Dense retrieval';
 
     const retrievalSources = Array.isArray(retrieval?.sources) ? retrieval.sources.join(' + ') : null;
-    const fitMode = typeof diagnostics?.effective_fit_mode === 'string'
-        ? diagnostics.effective_fit_mode.replace(/_/g, ' ')
-        : null;
-    const providerRoute = typeof diagnostics?.provider_route === 'string'
-        ? diagnostics.provider_route.replace(/_/g, ' ')
-        : null;
+    const fitMode = formatDiagnosticLabel(diagnostics?.effective_fit_mode);
+    const providerRoute = formatDiagnosticLabel(diagnostics?.provider_route);
 
     let fallbackMessage: string | null = null;
     if (typeof fitExplanation?.message === 'string') {
@@ -228,11 +244,9 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
                             {fallbackMessage}
                         </p>
                     )}
-                    {match.preference_status && (
+                    {preferenceSummary && (
                         <p className="mt-3 text-[13px] text-ink-muted">
-                            {match.preference_status.applied
-                                ? 'Preferences applied.'
-                                : `Preferences skipped: ${match.preference_status.reason ?? 'unconfigured'}.`}
+                            {preferenceSummary}
                         </p>
                     )}
                 </div>
@@ -266,7 +280,12 @@ function RequirementCard({
     if (isCovered) { verdictBadgeVariant = 'success'; verdictBadgeLabel = 'Covered'; }
     else if (isPartial) { verdictBadgeVariant = 'warning'; verdictBadgeLabel = 'Partial'; }
 
-    const borderTone = isCovered ? 'border-affirm/40' : isPartial ? 'border-warn/40' : 'border-rule';
+    let borderTone = 'border-rule';
+    if (isCovered) {
+        borderTone = 'border-affirm/40';
+    } else if (isPartial) {
+        borderTone = 'border-warn/40';
+    }
 
     return (
         <div className={`border ${borderTone} bg-surface p-5`}>
@@ -331,46 +350,62 @@ function RequirementsSection({
             <p className="caption">Requirements</p>
             <h4 className="mt-1 text-[18px] font-medium text-ink">What the job asks for</h4>
 
-            {requiredReqs.length > 0 && (
-                <div className="mt-5">
-                    <div className="flex items-baseline justify-between border-b border-rule pb-2">
-                        <h5 className="text-[14px] font-medium text-ink">Required <span className="text-ink-muted tabular-nums">({requiredReqs.length})</span></h5>
-                        <span className="caption tabular-nums">
-                            <span className="text-ink">{requiredCovered}</span>/{requiredReqs.length} covered
-                        </span>
-                    </div>
-                    <div className="mt-3 space-y-2">
-                        {requiredReqs.map((req) => (
-                            <RequirementCard
-                                key={req.requirement_id}
-                                req={req}
-                                verdict={verdictById.get(req.requirement_id)}
-                            />
-                        ))}
-                    </div>
-                </div>
-            )}
+            <RequirementGroup
+                title="Required"
+                requirements={requiredReqs}
+                coveredCount={requiredCovered}
+                verdictById={verdictById}
+                className="mt-5"
+            />
 
-            {preferredReqs.length > 0 && (
-                <div className="mt-8">
-                    <div className="flex items-baseline justify-between border-b border-rule pb-2">
-                        <h5 className="text-[14px] font-medium text-ink">Preferred <span className="text-ink-muted tabular-nums">({preferredReqs.length})</span></h5>
-                        <span className="caption tabular-nums">
-                            <span className="text-ink">{preferredCovered}</span>/{preferredReqs.length} covered
-                        </span>
-                    </div>
-                    <div className="mt-3 space-y-2">
-                        {preferredReqs.map((req) => (
-                            <RequirementCard
-                                key={req.requirement_id}
-                                req={req}
-                                verdict={verdictById.get(req.requirement_id)}
-                            />
-                        ))}
-                    </div>
-                </div>
-            )}
+            <RequirementGroup
+                title="Preferred"
+                requirements={preferredReqs}
+                coveredCount={preferredCovered}
+                verdictById={verdictById}
+                className="mt-8"
+            />
         </section>
+    );
+}
+
+function RequirementGroup({
+    title,
+    requirements,
+    coveredCount,
+    verdictById,
+    className,
+}: Readonly<{
+    title: string;
+    requirements: any[];
+    coveredCount: number;
+    verdictById: Map<string, SemanticVerdict>;
+    className: string;
+}>) {
+    if (requirements.length === 0) {
+        return null;
+    }
+
+    return (
+        <div className={className}>
+            <div className="flex items-baseline justify-between border-b border-rule pb-2">
+                <h5 className="text-[14px] font-medium text-ink">
+                    {title} <span className="text-ink-muted tabular-nums">({requirements.length})</span>
+                </h5>
+                <span className="caption tabular-nums">
+                    <span className="text-ink">{coveredCount}</span>/{requirements.length} covered
+                </span>
+            </div>
+            <div className="mt-3 space-y-2">
+                {requirements.map((req) => (
+                    <RequirementCard
+                        key={req.requirement_id}
+                        req={req}
+                        verdict={verdictById.get(req.requirement_id)}
+                    />
+                ))}
+            </div>
+        </div>
     );
 }
 

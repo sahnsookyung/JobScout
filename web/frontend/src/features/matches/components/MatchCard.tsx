@@ -72,11 +72,12 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
     const canToggleHidden = !isExcluded;
 
     const rootMuted = match.is_hidden || isExcluded;
-    const scoreColor = !rootMuted && fitScore >= 80
-        ? 'text-accent'
-        : rootMuted
-            ? 'text-ink-muted'
-            : 'text-ink';
+    let scoreColor = 'text-ink';
+    if (rootMuted) {
+        scoreColor = 'text-ink-muted';
+    } else if (fitScore >= 80) {
+        scoreColor = 'text-accent';
+    }
 
     const coveragePct = Math.max(0, Math.min(100, reqCoverage));
 

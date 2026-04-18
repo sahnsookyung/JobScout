@@ -125,7 +125,7 @@ export function GoogleLoginScreen() {
                                 <span className="ember absolute inset-0 rounded-full bg-accent opacity-40" aria-hidden="true" />
                                 <span className="relative m-auto h-1 w-1 rounded-full bg-accent" />
                             </span>
-                            Finishing sign-in
+                            <span>Finishing sign-in</span>
                         </p>
                     )}
                     {authError && (

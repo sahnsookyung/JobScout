@@ -45,7 +45,7 @@ describe('DashboardWrapper', () => {
 
         const wrapper = container.firstChild as HTMLElement;
         expect(wrapper).toHaveClass('border', 'border-rule', 'bg-surface');
-        expect(container.querySelector('.p-5.sm\\:p-7')).toBeInTheDocument();
+        expect(container.querySelector(String.raw`.p-5.sm\:p-7`)).toBeInTheDocument();
     });
 });
 
@@ -85,6 +85,17 @@ describe('ResumeUploadSection', () => {
         expect(fileInput).toHaveAttribute('accept', '.json,.yaml,.yml,.txt,.docx,.pdf');
     });
 
+    it('opens the file picker from the upload button', () => {
+        const fileInputRef = { current: null as HTMLInputElement | null };
+
+        render(<ResumeUploadSection {...defaultProps} fileInputRef={fileInputRef} />);
+
+        const click = vi.spyOn(screen.getByTestId('resume-file-input'), 'click');
+        screen.getByRole('button').click();
+
+        expect(click).toHaveBeenCalledTimes(1);
+    });
+
     it('calls onUpload when file is selected', () => {
         const mockOnUpload = vi.fn();
         render(<ResumeUploadSection {...defaultProps} onUpload={mockOnUpload} />);
@@ -99,6 +110,18 @@ describe('ResumeUploadSection', () => {
 
         rerender(<ResumeUploadSection {...defaultProps} isRunning />);
         expect(screen.getByRole('button')).toBeDisabled();
+    });
+
+    it('shows the active processing-step label while uploading', () => {
+        render(
+            <ResumeUploadSection
+                {...defaultProps}
+                isUploading
+                processingStep="embedding"
+            />
+        );
+
+        expect(screen.getByText('Building vectors')).toBeInTheDocument();
     });
 });
 

@@ -127,4 +127,29 @@ describe('DashboardHeader', () => {
 
         expect(logout).toHaveBeenCalledTimes(1);
     });
+
+    it('closes the profile panel on outside click', async () => {
+        render(<DashboardHeader />);
+
+        await userEvent.click(screen.getByRole('button', { name: /open profile menu/i }));
+        expect(screen.getByLabelText('Profile panel')).toBeInTheDocument();
+
+        fireEvent.mouseDown(document.body);
+
+        await waitFor(() => {
+            expect(screen.queryByLabelText('Profile panel')).not.toBeInTheDocument();
+        });
+    });
+
+    it('renders the local session fallback when no user is signed in', async () => {
+        mockUseAuth.mockReturnValue(makeAuthState({ user: null }));
+
+        render(<DashboardHeader />);
+        await userEvent.click(screen.getByRole('button', { name: /open profile menu/i }));
+
+        const panel = screen.getByLabelText('Profile panel');
+        expect(within(panel).getByText('Workshop')).toBeInTheDocument();
+        expect(within(panel).getByText('Local session')).toBeInTheDocument();
+        expect(within(panel).getByText(/google sign-in is off in this session/i)).toBeInTheDocument();
+    });
 });

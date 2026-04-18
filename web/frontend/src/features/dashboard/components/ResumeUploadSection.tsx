@@ -32,7 +32,12 @@ export const ResumeUploadSection: React.FC<ResumeUploadSectionProps> = ({
     if (isUploading) label = uploadingLabel;
     else if (filename) label = 'Replace resume';
 
-    const Icon = isUploading ? Loader2 : filename ? FileText : Upload;
+    let Icon = Upload;
+    if (isUploading) {
+        Icon = Loader2;
+    } else if (filename) {
+        Icon = FileText;
+    }
 
     return (
         <>

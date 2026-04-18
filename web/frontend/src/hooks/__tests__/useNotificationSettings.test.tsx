@@ -110,4 +110,19 @@ describe('useNotificationSettings', () => {
 
         expect(notificationSettingsApi.sendTest).toHaveBeenCalledWith({ channel_type: 'email' });
     });
+
+    it('handles email override verification flows', async () => {
+        const { result } = renderHook(() => useNotificationSettings(), { wrapper: createWrapper() });
+        await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+        await result.current.sendEmailOverrideVerification({ address: 'ada@example.com' });
+        await result.current.verifyEmailOverride('token-123');
+        await result.current.clearEmailOverride();
+
+        expect(notificationSettingsApi.sendEmailOverrideVerification).toHaveBeenCalledWith({
+            address: 'ada@example.com',
+        });
+        expect(notificationSettingsApi.verifyEmailOverride).toHaveBeenCalledWith('token-123');
+        expect(notificationSettingsApi.clearEmailOverride).toHaveBeenCalledTimes(1);
+    });
 });

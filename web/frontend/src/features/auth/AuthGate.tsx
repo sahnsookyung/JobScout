@@ -31,7 +31,7 @@ function AuthGateInner({ children }: AuthGateProps) {
                         <span className="ember absolute inset-0 rounded-full bg-accent opacity-40" aria-hidden="true" />
                         <span className="relative m-auto h-1 w-1 rounded-full bg-accent" />
                     </span>
-                    Restoring your session...
+                    <span>Restoring your session...</span>
                 </output>
             </div>
         );

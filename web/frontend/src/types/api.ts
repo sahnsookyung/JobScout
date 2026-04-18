@@ -187,7 +187,7 @@ export interface NotificationChannelSettings {
     last_test_error?: string | null;
     effective_recipient?: string | null;
     override_address?: string | null;
-    override_status?: 'none' | 'pending' | 'verified' | 'expired' | string | null;
+    override_status?: 'none' | 'pending' | 'verified' | 'expired' | (string & {}) | null;
     override_verified_at?: string | null;
 }
 

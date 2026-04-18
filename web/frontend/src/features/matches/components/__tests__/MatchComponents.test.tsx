@@ -6,6 +6,8 @@ import { MatchCard } from '../MatchCard';
 import { MatchDetailsModal } from '../MatchDetailsModal';
 import { MatchFilters } from '../MatchFilters';
 import { MatchList } from '../MatchList';
+import { matchesApi } from '@/services/matchesApi';
+import { toast } from '@/components/ui/Toast';
 
 vi.mock('lucide-react', () => ({
     MapPin: ({ className }: any) => <svg data-testid="map-pin" className={className} />,
@@ -227,6 +229,47 @@ describe('MatchCard', () => {
             screen.getByRole('button', { name: /view details for senior engineer at techcorp/i }),
         ).toHaveClass('focus-visible:outline-accent');
     });
+
+    it('shows excluded matches without a hide toggle', () => {
+        render(
+            <MatchCard
+                match={makeMatch({
+                    selection_tier: 'excluded',
+                    excluded_reason: 'below_threshold',
+                })}
+                onSelect={vi.fn()}
+            />,
+            { wrapper: makeQueryWrapper() }
+        );
+
+        expect(screen.getByText('below threshold')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^hide$/i })).not.toBeInTheDocument();
+    });
+
+    it('persists hide changes and reports failures', async () => {
+        vi.mocked(matchesApi.toggleHidden).mockResolvedValueOnce({
+            data: { is_hidden: true },
+        } as never);
+
+        render(<MatchCard match={makeMatch()} onSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        fireEvent.click(screen.getByRole('button', { name: /^hide$/i }));
+
+        await waitFor(() => {
+            expect(matchesApi.toggleHidden).toHaveBeenCalledWith('match-1');
+        });
+        expect(toast.success).toHaveBeenCalledWith(
+            'Hidden from your list',
+            expect.objectContaining({ duration: 5000 }),
+        );
+
+        vi.mocked(matchesApi.toggleHidden).mockRejectedValueOnce(new Error('boom'));
+        fireEvent.click(screen.getByRole('button', { name: /^hide$/i }));
+
+        await waitFor(() => {
+            expect(toast.error).toHaveBeenCalledWith('Could not update job visibility.');
+        });
+    });
 });
 
 const storageMock = (() => {
@@ -300,6 +343,55 @@ describe('MatchList', () => {
         mockUseMatches.mockReturnValue({ data: { matches: [] }, isLoading: false, error: null, refetch: vi.fn() });
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
         expect(screen.getAllByRole('checkbox')[1]).toBeChecked();
+    });
+
+    it('shows degraded copy and can reveal below-threshold results', () => {
+        mockUseStats.mockReturnValue({ data: { excluded_count: 2 } });
+        mockUseMatches.mockImplementation((params) => ({
+            data: {
+                matches: params.tier === 'all'
+                    ? [makeMatch({ match_id: 'match-2', fit_score: 62 })]
+                    : [makeMatch({ scoring_degraded_reason: 'remote_unavailable' })],
+            },
+            isLoading: false,
+            error: null,
+            refetch: vi.fn(),
+        }));
+
+        render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        expect(screen.getByText(/remote cross-encoder is unreachable/i)).toBeInTheDocument();
+
+        mockUseMatches.mockImplementation((params) => ({
+            data: { matches: params.tier === 'all' ? [makeMatch({ match_id: 'match-3' })] : [] },
+            isLoading: false,
+            error: null,
+            refetch: vi.fn(),
+        }));
+        fireEvent.click(screen.getByRole('checkbox', { name: /below-threshold \(2\)/i }));
+
+        expect(mockUseMatches).toHaveBeenLastCalledWith(
+            expect.objectContaining({ tier: 'all' }),
+        );
+    });
+
+    it('renders the top-match treatment for the strongest visible result', () => {
+        mockUseMatches.mockReturnValue({
+            data: {
+                matches: [
+                    makeMatch({ fit_score: 86 }),
+                    makeMatch({ match_id: 'match-2', title: 'Platform Engineer', fit_score: 70 }),
+                ],
+            },
+            isLoading: false,
+            error: null,
+            refetch: vi.fn(),
+        });
+
+        render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        expect(screen.getByText('Top match')).toBeInTheDocument();
+        expect(screen.getByText('1 strong')).toBeInTheDocument();
     });
 });
 
