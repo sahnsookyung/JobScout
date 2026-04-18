@@ -378,3 +378,45 @@ class TestNotificationsRouter:
 
         assert response.status_code == 400
         assert "Unsupported notification channel" in response.json()["detail"]
+
+    def test_create_email_override_success(self, client, mock_notification_service):
+        mock_notification_service.send_email_override_verification.return_value = {
+            "enabled": True,
+            "configured": True,
+            "available": True,
+            "availability_reason": None,
+            "masked_recipient": "***@example.com",
+            "override_address": "alerts@example.com",
+            "override_status": "pending",
+            "override_verified_at": None,
+        }
+
+        response = client.post(
+            "/api/v1/notification-settings/email/override",
+            json={"address": "alerts@example.com"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["message"] == "Verification email sent"
+        mock_notification_service.send_email_override_verification.assert_called_once()
+
+    def test_verify_email_override_success(self, client, mock_notification_service):
+        mock_notification_service.verify_email_override.return_value = {
+            "enabled": True,
+            "configured": True,
+            "available": True,
+            "availability_reason": None,
+            "masked_recipient": "***@example.com",
+            "override_address": "alerts@example.com",
+            "override_status": "verified",
+            "override_verified_at": "2026-04-18T00:00:00+00:00",
+        }
+
+        response = client.post(
+            "/api/v1/notification-settings/email/verify",
+            json={"token": "very-secret-token"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["message"] == "Email override verified"
+        mock_notification_service.verify_email_override.assert_called_once_with("very-secret-token")

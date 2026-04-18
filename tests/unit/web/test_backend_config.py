@@ -73,6 +73,10 @@ def test_get_config_is_cached(monkeypatch, tmp_path: Path) -> None:
         },
     )
     monkeypatch.setattr("web.backend.config.get_project_root", lambda: tmp_path)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("TEST_DATABASE_URL", raising=False)
+    monkeypatch.delenv("BASE_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
 
     first = get_config()
     second = get_config()

@@ -70,6 +70,8 @@ def _make_match(
     m.is_hidden = False
     m.created_at = datetime.now(timezone.utc)
     m.calculated_at = datetime.now(timezone.utc)
+    m.selection_tier = "primary"
+    m.excluded_reason = None
     job = Mock()
     job.id = job_id
     job.title = title

@@ -16,6 +16,7 @@ from core.scorer.semantic_fit import (
     CrossEncoderSemanticFitScorer,
     LLMSemanticFitScorer,
     LocalCrossEncoderProvider,
+    get_shared_local_cross_encoder_provider,
     RemoteCrossEncoderProvider,
     SemanticFitScorer,
     ThresholdSemanticFitScorer,
@@ -80,7 +81,7 @@ class ScoringService:
         semantic_fit_config = getattr(self.config, "semantic_fit", None)
         local_provider = None
         if semantic_fit_config.cross_encoder.local.enabled:
-            local_provider = LocalCrossEncoderProvider(
+            local_provider = get_shared_local_cross_encoder_provider(
                 model_name=semantic_fit_config.cross_encoder.local.model_name,
                 cache_path=semantic_fit_config.cross_encoder.local.model_cache_path,
                 runtime=semantic_fit_config.cross_encoder.local.runtime,

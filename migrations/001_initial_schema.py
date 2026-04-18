@@ -12,7 +12,7 @@ from sqlalchemy.engine import Connection
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from database.database import DATABASE_URL
+from database.database import get_database_url
 from database.models import SYSTEM_OWNER_ID
 
 DEFAULT_DEV_USER_EMAIL = "dev-user@jobscout.local"
@@ -553,7 +553,7 @@ def rollback(conn: Connection) -> None:
 
 
 def _run_standalone(rollback_mode: bool) -> None:
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(get_database_url())
     with engine.connect() as conn:
         if rollback_mode:
             rollback(conn)

@@ -49,9 +49,9 @@ class ResumeSectionEmbedding(Base):
     __tablename__ = 'resume_section_embedding'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    owner_id = Column(UUID(as_uuid=True), ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False, index=True)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False)
     fingerprint_version = Column(Integer, nullable=False, default=RESUME_FINGERPRINT_VERSION)
-    resume_fingerprint = Column(Text, nullable=False, index=True)
+    resume_fingerprint = Column(Text, nullable=False)
     section_type = Column(Text, nullable=False)
     section_index = Column(Integer, nullable=False)
     source_text = Column(Text, nullable=False)
@@ -62,6 +62,7 @@ class ResumeSectionEmbedding(Base):
     __table_args__ = (
         Index('idx_rse_resume', 'resume_fingerprint', 'section_type', 'section_index'),
         Index('idx_rse_owner_resume', 'owner_id', 'resume_fingerprint'),
+        Index('ix_resume_section_embedding_resume_fingerprint', 'resume_fingerprint'),
         Index(
             'idx_rse_embedding_hnsw',
             'embedding',
@@ -78,9 +79,9 @@ class ResumeEvidenceUnitEmbedding(Base):
     __tablename__ = 'resume_evidence_unit_embedding'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    owner_id = Column(UUID(as_uuid=True), ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False, index=True)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False)
     fingerprint_version = Column(Integer, nullable=False, default=RESUME_FINGERPRINT_VERSION)
-    resume_fingerprint = Column(Text, nullable=False, index=True)
+    resume_fingerprint = Column(Text, nullable=False)
     evidence_unit_id = Column(Text, nullable=False)
     source_text = Column(Text, nullable=False)
     source_section = Column(Text)
@@ -94,6 +95,7 @@ class ResumeEvidenceUnitEmbedding(Base):
     __table_args__ = (
         Index('idx_rfue_fingerprint', 'resume_fingerprint'),
         Index('idx_rfue_owner_resume', 'owner_id', 'resume_fingerprint'),
+        Index('ix_resume_evidence_unit_embedding_resume_fingerprint', 'resume_fingerprint'),
         Index(
             'idx_rfue_embedding_hnsw',
             'embedding',
@@ -110,9 +112,9 @@ class StructuredResume(Base):
     __tablename__ = 'structured_resume'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    owner_id = Column(UUID(as_uuid=True), ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False, index=True)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False)
     fingerprint_version = Column(Integer, nullable=False, default=RESUME_FINGERPRINT_VERSION)
-    resume_fingerprint = Column(Text, nullable=False, unique=True, index=True)
+    resume_fingerprint = Column(Text, nullable=False)
     extracted_data = Column(JSONB, nullable=False)
     total_experience_years = Column(Numeric(4, 1))
     extraction_confidence = Column(Numeric(3, 2))
@@ -124,6 +126,7 @@ class StructuredResume(Base):
         Index('idx_structured_resume_fingerprint', 'resume_fingerprint'),
         Index('idx_structured_resume_owner_resume', 'owner_id', 'resume_fingerprint'),
         Index('idx_structured_resume_years', 'total_experience_years'),
+        Index('ix_structured_resume_resume_fingerprint', 'resume_fingerprint', unique=True),
     )
 
 
@@ -133,7 +136,7 @@ class ResumeProcessingState(Base):
     __tablename__ = 'resume_processing_state'
 
     resume_fingerprint = Column(Text, primary_key=True)
-    owner_id = Column(UUID(as_uuid=True), ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False, index=True)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False)
     fingerprint_version = Column(Integer, nullable=False, default=RESUME_FINGERPRINT_VERSION)
     processing_status = Column(Text, nullable=False)
     last_error = Column(Text, nullable=True)
@@ -168,10 +171,10 @@ class ResumeUpload(Base):
     __tablename__ = 'resume_upload'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    owner_id = Column(UUID(as_uuid=True), ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False, index=True)
-    resume_hash = Column(Text, nullable=False, index=True)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False)
+    resume_hash = Column(Text, nullable=False)
     fingerprint_version = Column(Integer, nullable=False, default=RESUME_FINGERPRINT_VERSION)
-    resume_fingerprint = Column(Text, nullable=False, index=True)
+    resume_fingerprint = Column(Text, nullable=False)
     original_filename = Column(Text, nullable=True)
     status = Column(Text, nullable=False, default=RESUME_UPLOAD_PENDING)
     last_error = Column(Text, nullable=True)
@@ -181,7 +184,7 @@ class ResumeUpload(Base):
     user_safe_message = Column(Text, nullable=True)
     failure_debug_context = Column(JSONB, nullable=True)
     processing_task_id = Column(Text, nullable=True)
-    retry_of_upload_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    retry_of_upload_id = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(
         TIMESTAMP(timezone=True),
         nullable=False,

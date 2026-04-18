@@ -35,10 +35,15 @@ from typing import List, Dict, Any, Optional
 # Use testcontainers fixtures from conftest.py.  The test_database fixture sets
 # TEST_DATABASE_URL before setUpClass runs; the redis_container fixture sets
 # TEST_REDIS_URL.  Both are session-scoped, so containers start once per run.
-pytestmark = pytest.mark.usefixtures("test_database", "redis_container")
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.db,
+    pytest.mark.redis,
+    pytest.mark.usefixtures("test_database", "redis_container"),
+]
 
 # All necessary imports are defined before MockAIService
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from database.models import JobPost, JobRequirementUnit, JobMatch, SYSTEM_OWNER_ID
@@ -260,8 +265,12 @@ class TestFullPipelineIntegration(unittest.TestCase):
     
     @classmethod
     def _setup_database(cls):
-        """Create the test schema using the migration runner."""
+        """Reset the isolated test DB, then create the schema using migrations."""
         from database.migrate import migrate_database
+        with cls.engine.begin() as conn:
+            conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+            conn.execute(text("CREATE SCHEMA public"))
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         migrate_database(engine=cls.engine)
     
     @classmethod

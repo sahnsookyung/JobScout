@@ -59,6 +59,8 @@ class MatchSummaryCandidate:
     created_at: Any
     calculated_at: Any
     ranking_explanation: Any = None
+    selection_tier: str = "primary"
+    excluded_reason: Optional[str] = None
 
 
 class MatchService:
@@ -76,6 +78,7 @@ class MatchService:
         remote_only: bool = False,
         show_hidden: bool = False,
         ranking_mode: Optional[str] = None,
+        tier: str = "primary",
     ) -> List[MatchSummary]:
         """
         Get filtered job matches, ranked by the requested mode.
@@ -117,15 +120,26 @@ class MatchService:
             min_fit=min_fit,
             remote_only=remote_only,
             show_hidden=show_hidden,
+            tier=tier,
         )
 
-        # Stage 2: Python rank
+        # Stage 2: Python rank the primary tier only. Excluded items were
+        # never ranked against the active policy and do not compete for top-K.
+        primary_pool = [
+            m for m in pool
+            if getattr(m, "selection_tier", "primary") == "primary"
+        ]
+        excluded_pool = [
+            m for m in pool
+            if getattr(m, "selection_tier", "primary") != "primary"
+        ]
         ctx = RankingContext(mode=mode, config=ranking_config)
-        rank_matches(pool, ctx)
+        rank_matches(primary_pool, ctx)
 
-        # Stage 3: Truncate
+        # Stage 3: Truncate primary to top-K, then append excluded (already
+        # ordered by persisted rank_position).
         effective_k = ranking_config.effective_top_k(top_k)
-        ranked = pool[:effective_k]
+        ranked = primary_pool[:effective_k] + excluded_pool
 
         return [self._to_match_summary(m) for m in ranked]
 
@@ -148,16 +162,20 @@ class MatchService:
         min_fit: Optional[float],
         remote_only: bool,
         show_hidden: bool,
+        tier: str = "primary",
     ) -> List[Any]:
         with job_uow() as repo:
+            repo_tier = "primary" if tier == "primary" else "all"
             items = repo.match_selection.get_items_for_run(
-                canonical_selection.selection_run_id
+                canonical_selection.selection_run_id,
+                tier=repo_tier,
             )
             pool: List[Any] = []
             for item in items:
                 match = item.job_match
                 job = getattr(match, "job_post", None)
                 fit_score = self._item_fit_score(item)
+                item_tier = getattr(item, "selection_tier", "primary") or "primary"
                 if not self._selection_item_passes_filters(
                     match,
                     job,
@@ -166,6 +184,7 @@ class MatchService:
                     min_fit=min_fit,
                     remote_only=remote_only,
                     show_hidden=show_hidden,
+                    tier=item_tier,
                 ):
                     continue
                 pool.append(self._selection_item_to_summary_candidate(item, match, job, fit_score))
@@ -189,12 +208,17 @@ class MatchService:
         min_fit: Optional[float],
         remote_only: bool,
         show_hidden: bool,
+        tier: str = "primary",
     ) -> bool:
-        if status != "all" and match.status != status:
-            return False
+        # Status/hidden filters only apply to primary-tier items. Excluded
+        # items are browse-only (no hide/unhide), so these knobs are a no-op
+        # for that tier — the whole tier is "below the fold".
+        if tier == "primary":
+            if status != "all" and match.status != status:
+                return False
+            if not show_hidden and bool(match.is_hidden):
+                return False
         if min_fit is not None and (fit_score is None or fit_score < min_fit):
-            return False
-        if not show_hidden and bool(match.is_hidden):
             return False
         return not (remote_only and not bool(getattr(job, "is_remote", False)))
 
@@ -225,6 +249,8 @@ class MatchService:
             is_hidden=bool(match.is_hidden),
             created_at=match.created_at,
             calculated_at=match.calculated_at,
+            selection_tier=getattr(item, "selection_tier", "primary") or "primary",
+            excluded_reason=getattr(item, "excluded_reason", None),
         )
     
     def _get_match_for_owner(
@@ -401,6 +427,10 @@ class MatchService:
         preferred_requirement_coverage = self._float_or_zero(
             match.preferred_requirement_coverage
         )
+        selection_tier = getattr(match, "selection_tier", "primary")
+        selection_tier = selection_tier if isinstance(selection_tier, str) else "primary"
+        excluded_reason = getattr(match, "excluded_reason", None)
+        excluded_reason = excluded_reason if isinstance(excluded_reason, str) else None
 
         return MatchSummary(
             match_id=str(match.id),
@@ -423,6 +453,9 @@ class MatchService:
             explanation_label=expl.explanation_label if expl else None,
             balanced_primary_score=expl.balanced_primary_score if expl else None,
             missing_scores=list(expl.missing_scores) if expl else [],
+            scoring_degraded_reason=self._scoring_degraded_reason(getattr(match, "fit_components", None)),
+            selection_tier=selection_tier or "primary",
+            excluded_reason=excluded_reason,
         )
     
     def _to_match_detail(self, match: JobMatch, penalty_details: Dict[str, Any]) -> MatchDetail:
@@ -436,11 +469,13 @@ class MatchService:
             resume_fingerprint=safe_str(match.resume_fingerprint),
             fit_score=safe_float(match.fit_score) if match.fit_score is not None else None,
             preference_score=safe_float(match.preference_score) if match.preference_score is not None else None,
+            scoring_degraded_reason=self._scoring_degraded_reason(match.fit_components),
             fit_components=fit_components,
             preference_components=self._preference_components(match),
             fit_confidence=self._fit_confidence(fit_components),
             fit_explanation=self._fit_explanation(fit_components),
             fit_scorer=self._fit_scorer(fit_components),
+            preference_status=self._preference_status(match),
             base_score=safe_float(match.base_score),
             penalties=safe_float(match.penalties),
             required_coverage=safe_float(match.required_coverage),
@@ -479,6 +514,28 @@ class MatchService:
         return scorer if isinstance(scorer, dict) else None
 
     @staticmethod
+    def _scoring_degraded_reason(fit_components: Any) -> Optional[str]:
+        """Derive a compact code for the UI banner from `semantic_fit_fallback_reason`.
+
+        Returns one of: remote_unavailable, local_unavailable, provider_disabled, or
+        the raw reason string if no known prefix matches. None when scoring was
+        fully healthy.
+        """
+        if not isinstance(fit_components, dict):
+            return None
+        raw = fit_components.get("semantic_fit_fallback_reason")
+        if not raw:
+            return None
+        text = str(raw).lower()
+        if "remote" in text:
+            return "remote_unavailable"
+        if "local" in text and ("disabled" in text or "no provider" in text or "not available" in text):
+            return "local_unavailable"
+        if "disabled" in text:
+            return "provider_disabled"
+        return "degraded"
+
+    @staticmethod
     def _fit_components(fit_components: Any) -> Optional[Dict[str, Any]]:
         if not isinstance(fit_components, dict):
             return None
@@ -493,6 +550,33 @@ class MatchService:
         preference_components = getattr(match, "preference_components", None)
         if isinstance(preference_components, dict) and preference_components:
             return preference_components
+        return None
+
+    @staticmethod
+    def _preference_status(match: JobMatch) -> Optional[Dict[str, Any]]:
+        ranking_snapshot = getattr(match, "ranking_snapshot", None)
+        if isinstance(ranking_snapshot, dict):
+            status = ranking_snapshot.get("preference_status")
+            if isinstance(status, dict):
+                return status
+
+        preference_components = getattr(match, "preference_components", None)
+        if not isinstance(preference_components, dict):
+            return None
+
+        fallback_reason = preference_components.get("preference_fallback_reason")
+        mode_used = preference_components.get("preference_mode_used")
+        if fallback_reason:
+            return {
+                "applied": False,
+                "reason": fallback_reason,
+                "effective_mode": mode_used,
+            }
+        if mode_used:
+            return {
+                "applied": True,
+                "effective_mode": mode_used,
+            }
         return None
     
     def _to_job_details(self, job: Optional[JobPost]) -> JobDetails:
@@ -538,6 +622,7 @@ class MatchService:
             evidence_text=req.evidence_text,
             evidence_section=req.evidence_section,
             similarity_score=safe_float(req.similarity_score),
+            evidence_score=safe_float(req.evidence_score) if req.evidence_score is not None else None,
             is_covered=req.is_covered or False,
             req_type=safe_str(req.req_type, "required"),
         )

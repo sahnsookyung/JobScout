@@ -3,6 +3,8 @@
 from .requests import (
     PolicyUpdate,
     NotificationRequest,
+    NotificationEmailOverrideRequest,
+    NotificationEmailVerificationRequest,
     NotificationChannelSettingsUpdate,
     NotificationSettingsUpdateRequest,
     NotificationSettingsTestRequest,
@@ -25,6 +27,7 @@ from .responses import (
     PipelineTaskResponse,
     PipelineStatusResponse,
     NotificationResponse,
+    NotificationEmailOverrideResponse,
     NotificationChannelSettingsResponse,
     NotificationSettingsResponse,
     NotificationSettingsTestResponse,

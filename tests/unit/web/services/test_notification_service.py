@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from notification import NotificationPriority
+from notification.exceptions import NotificationConfigurationError
 from web.backend.services.notification_service import NotificationServiceWrapper
 
 
@@ -459,3 +460,118 @@ class TestNotificationServiceWrapper:
 
         with pytest.raises(NotificationConfigurationError, match="Unsupported notification channel"):
             wrapper.send_test_notification(SimpleNamespace(id="user-123"), "webhook")
+
+    @patch("web.backend.services.notification_service.UserNotificationSettingsService")
+    @patch("web.backend.services.notification_service.NotificationService")
+    @patch("web.backend.services.notification_service.JobRepository")
+    @patch("web.backend.services.notification_service.get_config")
+    def test_send_email_override_verification_commits_after_send(
+        self,
+        mock_get_config,
+        mock_repo_class,
+        mock_notification_service_class,
+        mock_settings_service_class,
+    ):
+        db = Mock()
+        channel = SimpleNamespace(
+            verification_sent_at=None,
+            config_json={},
+            override_address=None,
+            override_verified_at=None,
+            verification_token_hash=None,
+            verification_token_expires_at=None,
+        )
+        repo = Mock()
+        repo.notification_settings.get_or_create_channel.return_value = channel
+        mock_repo_class.return_value = repo
+        service = Mock()
+        mock_notification_service_class.return_value = service
+        snapshot = SimpleNamespace(
+            notifications_enabled=True,
+            min_fit_for_alerts=70,
+            notify_on_new_match=True,
+            notify_on_batch_complete=True,
+            revision=1,
+            channels={"email": SimpleNamespace(
+                enabled=True,
+                configured=True,
+                available=True,
+                availability_reason=None,
+                masked_recipient="***@example.com",
+                last_test_status=None,
+                last_tested_at=None,
+                last_test_error=None,
+                effective_recipient="alerts@example.com",
+                override_address="alerts@example.com",
+                override_status="pending",
+                override_verified_at=None,
+            )}
+        )
+        mock_settings_service = Mock()
+        mock_settings_service.get_settings_snapshot.return_value = snapshot
+        mock_settings_service_class.return_value = mock_settings_service
+        mock_get_config.return_value = SimpleNamespace(
+            notifications=SimpleNamespace(
+                redis_url="redis://example/0",
+                base_url="https://jobscout.app",
+                use_async_queue=True,
+                channels={},
+            )
+        )
+
+        wrapper = NotificationServiceWrapper(db)
+        user = SimpleNamespace(id="user-123", email="account@example.com")
+
+        result = wrapper.send_email_override_verification(user, "alerts@example.com")
+
+        service.send_notification.assert_called_once()
+        db.rollback.assert_not_called()
+        db.commit.assert_called_once()
+        sent_body = service.send_notification.call_args.kwargs["body"]
+        assert "/verify-email#token=" in sent_body
+        assert result["override_status"] == "pending"
+
+    @patch("web.backend.services.notification_service.UserNotificationSettingsService")
+    @patch("web.backend.services.notification_service.NotificationService")
+    @patch("web.backend.services.notification_service.JobRepository")
+    @patch("web.backend.services.notification_service.get_config")
+    def test_send_email_override_verification_rolls_back_on_send_error(
+        self,
+        mock_get_config,
+        mock_repo_class,
+        mock_notification_service_class,
+        mock_settings_service_class,
+    ):
+        db = Mock()
+        channel = SimpleNamespace(
+            verification_sent_at=None,
+            config_json={},
+            override_address=None,
+            override_verified_at=None,
+            verification_token_hash=None,
+            verification_token_expires_at=None,
+        )
+        repo = Mock()
+        repo.notification_settings.get_or_create_channel.return_value = channel
+        mock_repo_class.return_value = repo
+        service = Mock()
+        service.send_notification.side_effect = RuntimeError("queue unavailable")
+        mock_notification_service_class.return_value = service
+        mock_settings_service_class.return_value = Mock()
+        mock_get_config.return_value = SimpleNamespace(
+            notifications=SimpleNamespace(
+                redis_url="redis://example/0",
+                base_url="https://jobscout.app",
+                use_async_queue=True,
+                channels={},
+            )
+        )
+
+        wrapper = NotificationServiceWrapper(db)
+        user = SimpleNamespace(id="user-123", email="account@example.com")
+
+        with pytest.raises(RuntimeError, match="queue unavailable"):
+            wrapper.send_email_override_verification(user, "alerts@example.com")
+
+        db.rollback.assert_called_once()
+        db.commit.assert_not_called()

@@ -477,7 +477,7 @@ class TestPreferenceSemanticReranking:
                 config=config,
             )
         assert result[0].preference_components["preference_mode_used"] == "fit_only_fallback"
-        assert result[0].preference_components["preference_fallback_reason"] == "preference_reranking_failed"
+        assert result[0].preference_components["preference_fallback_reason"] == "preference_reranking_failed:RuntimeError"
 
     def test_empty_soft_preferences_returns_matches_unchanged(self):
         config = _preferences_config()

@@ -183,22 +183,36 @@ class TestRunScorerService:
     def test_delegates_to_score_matches(self):
         scorer = MagicMock()
         scorer.score_matches.return_value = ["scored"]
-        config = SimpleNamespace(result_policy=SimpleNamespace(min_fit=50.0))
+        config = SimpleNamespace(
+            result_policy=SimpleNamespace(
+                min_fit=50.0,
+                min_jd_required_coverage=0.8,
+                top_k=1,
+            )
+        )
         stop_event = threading.Event()
+        policy = SimpleNamespace(
+            min_fit=50.0,
+            min_jd_required_coverage=0.8,
+            top_k=1,
+        )
 
         with patch(
             "services.scorer_matcher.pipeline.get_result_policy_store",
-            return_value=SimpleNamespace(get_current_policy=lambda: "policy"),
+            return_value=SimpleNamespace(get_current_policy=lambda: policy),
         ):
             result = _run_scorer_service(scorer, ["prelim"], config, stop_event)
 
         assert result == ["scored"]
         scorer.score_matches.assert_called_once_with(
             preliminary_matches=["prelim"],
-            result_policy="policy",
+            result_policy=policy,
             match_type="requirements_only",
             stop_event=stop_event,
         )
+        assert policy.min_fit == 0.0
+        assert policy.min_jd_required_coverage is None
+        assert policy.top_k == 1
 
 
 class TestPrepareSelectionResult:
@@ -240,6 +254,65 @@ class TestPrepareSelectionResult:
         )
 
         assert [match.job.id for match in result.selected_matches] == ["job-pref"]
+
+    @patch(
+        "services.scorer_matcher.pipeline.resolve_notification_fit_floor",
+        return_value=70.0,
+    )
+    @patch(
+        "services.scorer_matcher.pipeline.get_result_policy_store",
+        return_value=SimpleNamespace(
+            get_current_policy=lambda: SimpleNamespace(
+                min_fit=40.0,
+                min_jd_required_coverage=None,
+                top_k=5,
+            )
+        ),
+    )
+    def test_below_min_fit_items_are_tiered_as_excluded(
+        self,
+        _mock_policy_store,
+        _mock_notification_floor,
+    ):
+        """Post two-tier contract: below-floor items are retained as excluded,
+        not dropped and not auto-promoted. Preserves the user's configured floor
+        while making below-floor runs visible in the UI."""
+        matches = [
+            SimpleNamespace(
+                job=SimpleNamespace(id="job-1"),
+                fit_score=32.0,
+                preference_score=None,
+                job_similarity=0.8,
+                jd_required_coverage=0.2,
+                fit_components={"effective_fit_mode": "threshold"},
+            ),
+            SimpleNamespace(
+                job=SimpleNamespace(id="job-2"),
+                fit_score=28.0,
+                preference_score=None,
+                job_similarity=0.7,
+                jd_required_coverage=0.15,
+                fit_components={"effective_fit_mode": "threshold"},
+            ),
+        ]
+
+        result = _prepare_selection_result(
+            matches,
+            ctx=SimpleNamespace(config=SimpleNamespace(notifications=SimpleNamespace())),
+            owner_id="user-1",
+            ranking_context=SimpleNamespace(
+                mode=SimpleNamespace(value="balanced"),
+                config=RankingConfig(active_default_mode="balanced"),
+            ),
+            matching_config=SimpleNamespace(),
+            resume_resolution_reason="test",
+            task_id="task-1",
+        )
+
+        assert result.selected_matches == []
+        assert result.policy_snapshot.fit_floor_used == 40.0
+        tiers = [(item.selection_tier, item.excluded_reason) for item in result.item_snapshots]
+        assert tiers == [("excluded", "below_min_fit"), ("excluded", "below_min_fit")]
 
 
 class TestCandidatePreferenceHelpers:

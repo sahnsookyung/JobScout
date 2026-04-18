@@ -103,6 +103,7 @@ class JobMatchRequirement(Base):
     
     # Match details
     similarity_score = Column(Numeric(3, 2), nullable=False)  # Cosine similarity (0.00-1.00)
+    evidence_score = Column(Numeric(5, 4), nullable=True)  # Cross-encoder rerank score for the chosen evidence
     is_covered = Column(Boolean, default=False)  # Whether this meets threshold
     req_type = Column(Text, nullable=False)  # required|preferred|responsibility|constraint|benefit
 

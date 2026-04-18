@@ -15,7 +15,7 @@ from typing import Iterable
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Connection, Engine
 
-from database.database import DATABASE_URL
+from database.database import get_database_url
 from database.models import Base
 
 logger = logging.getLogger(__name__)
@@ -182,7 +182,7 @@ def check_database_schema(
     if not migration_paths:
         raise DatabaseSchemaError("No migration files found.")
 
-    db_engine = engine or create_engine(DATABASE_URL)
+    db_engine = engine or create_engine(get_database_url())
     created_engine = engine is None
     try:
         with db_engine.connect() as conn:
@@ -208,7 +208,7 @@ def migrate_database(
     if not migration_paths:
         raise DatabaseSchemaError("No migration files found.")
 
-    db_engine = engine or create_engine(DATABASE_URL)
+    db_engine = engine or create_engine(get_database_url())
     created_engine = engine is None
     applied_now: list[str] = []
 

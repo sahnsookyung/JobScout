@@ -7,44 +7,81 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from ..dependencies import get_db
-from ..services.policy_service import get_policy_service
-from ..models.responses import StatsResponse
+from core.match_selection import resolve_canonical_resume_selection
 from database.models import JobMatch
+from database.uow import job_uow
+
+from ..dependencies import get_current_user, get_db
+from ..models.responses import StatsResponse
+from ..services.policy_service import get_policy_service
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
 
 @router.get("", response_model=StatsResponse)
-def get_stats(db: Annotated[Session, Depends(get_db)]):
+def get_stats(
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[object, Depends(get_current_user)],
+):
     """
-    Get overall statistics about matches in the database.
+    Get statistics about matches for the user's canonical selection run.
 
-    Returns total counts and score distribution.
+    Reports totals and tier counts scoped to the latest selection run, so
+    `total_scored` reconciles with `GET /api/matches?tier=all` and
+    `primary_count` matches `?tier=primary`. Legacy fields remain for
+    backwards-compat with existing UI code.
     """
     policy_service = get_policy_service()
     current_policy = policy_service.get_current_policy()
     min_fit = current_policy.min_fit
-    
-    # Base query
+
+    owner_id = getattr(user, "id", None)
+
+    # Canonical-run scoped tier counts (primary source of truth).
+    total_scored = 0
+    primary_count = 0
+    excluded_count = 0
+    excluded_by_reason: dict[str, int] = {}
+    preference_status = None
+
+    try:
+        with job_uow() as repo:
+            canonical = resolve_canonical_resume_selection(repo, owner_id)
+            if canonical is not None:
+                tier_counts = repo.match_selection.count_items_for_run_by_tier(
+                    canonical.selection_run_id
+                )
+                primary_count = int(tier_counts.get("primary", 0))
+                excluded_count = int(tier_counts.get("excluded", 0))
+                total_scored = primary_count + excluded_count
+                excluded_by_reason = repo.match_selection.count_excluded_items_by_reason(
+                    canonical.selection_run_id
+                )
+                items = repo.match_selection.get_items_for_run(
+                    canonical.selection_run_id,
+                    tier="all",
+                )
+                for item in items:
+                    ranking_snapshot = getattr(item.job_match, "ranking_snapshot", None)
+                    if isinstance(ranking_snapshot, dict):
+                        status = ranking_snapshot.get("preference_status")
+                        if isinstance(status, dict):
+                            preference_status = status
+                            break
+    except Exception:
+        # Stats should never fail the page; fall back to DB-wide numbers.
+        pass
+
+    # Legacy DB-wide numbers (kept for the existing UI dashboard).
     base_query = db.query(JobMatch)
-    
-    # Total matches
     total_matches = base_query.count()
-    
-    # Hidden count
     hidden_count = base_query.filter(JobMatch.is_hidden.is_(True)).count()
-    
-    # Below threshold count
     below_threshold_count = base_query.filter(
         (JobMatch.fit_score < min_fit) | (JobMatch.fit_score.is_(None)),
         JobMatch.is_hidden.is_(False)
     ).count()
-    
-    # Active matches (visible and above threshold)
     active_matches = total_matches - hidden_count - below_threshold_count
-    
-    # Score distribution
+
     score_dist = {
         'excellent': base_query.filter(JobMatch.fit_score >= 80).count(),
         'good': base_query.filter(
@@ -57,7 +94,7 @@ def get_stats(db: Annotated[Session, Depends(get_db)]):
         ).count(),
         'poor': base_query.filter(JobMatch.fit_score < 40).count(),
     }
-    
+
     return StatsResponse(
         success=True,
         stats={
@@ -66,6 +103,12 @@ def get_stats(db: Annotated[Session, Depends(get_db)]):
             'hidden_count': hidden_count,
             'below_threshold_count': below_threshold_count,
             'min_fit_threshold': min_fit,
-            'score_distribution': score_dist
+            'score_distribution': score_dist,
+            # Canonical selection-run scoped counts.
+            'total_scored': total_scored,
+            'primary_count': primary_count,
+            'excluded_count': excluded_count,
+            'excluded_by_reason': excluded_by_reason,
+            'preference_status': preference_status,
         }
     )

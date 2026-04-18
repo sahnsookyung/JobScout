@@ -316,12 +316,14 @@ def _clone_match(
     evidence: Optional[Any],
     similarity: float,
     is_covered: bool,
+    evidence_score: Optional[float] = None,
 ) -> RequirementMatchResult:
     return RequirementMatchResult(
         requirement=requirement_match.requirement,
         evidence=evidence,
         similarity=similarity,
         is_covered=is_covered,
+        evidence_score=evidence_score,
         evidence_candidates=list(requirement_match.evidence_candidates),
     )
 
@@ -653,6 +655,54 @@ def _coverage_level_and_reason(semantic_score: float) -> tuple[str, str]:
     return "missing", REASON_MISSING
 
 
+_SHARED_LOCAL_PROVIDERS: Dict[tuple, "LocalCrossEncoderProvider"] = {}
+
+
+def get_shared_local_cross_encoder_provider(
+    *,
+    model_name: str,
+    cache_path: Optional[str] = None,
+    runtime: str = "auto",
+    max_batch_size: int = 32,
+    trust_remote_code: bool = False,
+    allow_heuristic: bool = False,
+) -> "LocalCrossEncoderProvider":
+    """Return a process-wide cached LocalCrossEncoderProvider.
+
+    Two model instances = ~4 GB of resident memory for BGE rerankers. The
+    scorer and the evidence reranker both need a cross-encoder against the
+    same weights, so we share one provider (and its loaded model) across
+    both call sites. Keyed by the full construction tuple so a test that
+    passes different kwargs still gets a distinct provider.
+    """
+    resolved_cache_path = (
+        cache_path
+        or os.getenv("SENTENCE_TRANSFORMERS_HOME")
+        or os.getenv("HF_HOME")
+    )
+    key = (
+        model_name,
+        resolved_cache_path,
+        runtime,
+        int(max_batch_size),
+        bool(trust_remote_code),
+        bool(allow_heuristic),
+    )
+    cached = _SHARED_LOCAL_PROVIDERS.get(key)
+    if cached is not None:
+        return cached
+    provider = LocalCrossEncoderProvider(
+        model_name=model_name,
+        cache_path=resolved_cache_path,
+        runtime=runtime,
+        max_batch_size=max_batch_size,
+        trust_remote_code=trust_remote_code,
+        allow_heuristic=allow_heuristic,
+    )
+    _SHARED_LOCAL_PROVIDERS[key] = provider
+    return provider
+
+
 class LocalCrossEncoderProvider:
     route_name = "local"
 
@@ -664,12 +714,21 @@ class LocalCrossEncoderProvider:
         runtime: str = "auto",
         max_batch_size: int = 32,
         trust_remote_code: bool = False,
+        allow_heuristic: bool = False,
     ):
         self.model_name = model_name
-        self.cache_path = cache_path
+        self.cache_path = (
+            cache_path
+            or os.getenv("SENTENCE_TRANSFORMERS_HOME")
+            or os.getenv("HF_HOME")
+        )
         self.runtime = runtime
         self.max_batch_size = max(1, int(max_batch_size))
         self.trust_remote_code = trust_remote_code
+        # allow_heuristic is False in production: a failure to load the local
+        # cross-encoder is a deploy bug that must not silently degrade to a
+        # heuristic scorer. Tests that need the heuristic path opt in explicitly.
+        self.allow_heuristic = allow_heuristic
         self._model: Any = None
         self._provider_id = "heuristic-local"
         self._effective_route_name = self.route_name
@@ -684,10 +743,23 @@ class LocalCrossEncoderProvider:
 
     def _candidate_runtimes(self) -> List[str]:
         if self.runtime == "auto":
-            return ["flag_embedding", "sentence_transformers", "heuristic"]
+            runtimes = ["flag_embedding", "sentence_transformers"]
+            if self.allow_heuristic:
+                runtimes.append("heuristic")
+            return runtimes
         if self.runtime == "heuristic":
+            if not self.allow_heuristic:
+                raise RuntimeError(
+                    "Cross-encoder runtime is 'heuristic' but allow_heuristic=False. "
+                    "Heuristic mode is for unit tests only; in production, configure "
+                    "a real runtime (flag_embedding / sentence_transformers) or set "
+                    "allow_heuristic=True intentionally."
+                )
             return ["heuristic"]
-        return [self.runtime, "heuristic"]
+        runtimes = [self.runtime]
+        if self.allow_heuristic:
+            runtimes.append("heuristic")
+        return runtimes
 
     @staticmethod
     def _filter_supported_kwargs(factory: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -768,6 +840,10 @@ class LocalCrossEncoderProvider:
         common_kwargs: Dict[str, Any] = {
             "use_fp16": False,
             "trust_remote_code": self.trust_remote_code,
+            # Runtime should consume the pre-populated cache volume only.
+            # This avoids slow HF Hub calls during service boot and makes a
+            # missing cache fail fast instead of silently degrading.
+            "local_files_only": True,
         }
         if self.cache_path:
             common_kwargs["cache_dir"] = self.cache_path
@@ -790,6 +866,7 @@ class LocalCrossEncoderProvider:
         model_kwargs: Dict[str, Any] = {}
         if self.cache_path:
             model_kwargs["cache_folder"] = self.cache_path
+        model_kwargs["local_files_only"] = True
         model = CrossEncoder(self.model_name, **model_kwargs)
         self._provider_id = f"sentence_transformers:{self.model_name}"
         self._effective_route_name = self.route_name
@@ -808,7 +885,7 @@ class LocalCrossEncoderProvider:
             try:
                 loader = getattr(self, f"_load_{runtime_name}_runtime")
             except AttributeError:
-                logger.warning("Unknown local cross-encoder runtime '%s'; falling back.", runtime_name)
+                logger.warning("Unknown local cross-encoder runtime '%s'; continuing.", runtime_name)
                 continue
             try:
                 self._model = loader()
@@ -816,20 +893,53 @@ class LocalCrossEncoderProvider:
             except Exception as exc:  # noqa: BLE001 - try the next supported local runtime
                 last_error = exc
                 logger.warning(
-                    "Local semantic fit runtime %s unavailable for model %s; trying next runtime: %s",
+                    "Local cross-encoder runtime %s failed to load for model %s: %s",
                     runtime_name,
                     self.model_name,
                     exc,
                 )
-        self._provider_id = "heuristic-local"
-        self._effective_route_name = "local_heuristic"
-        self._model = False
-        if last_error is not None:
-            logger.warning(
-                "Falling back to heuristic local semantic scoring after runtime initialization failures: %s",
-                last_error,
+        if self.allow_heuristic:
+            self._provider_id = "heuristic-local"
+            self._effective_route_name = "local_heuristic"
+            self._model = False
+            if last_error is not None:
+                logger.warning(
+                    "Falling back to heuristic local cross-encoder after runtime failures: %s",
+                    last_error,
+                )
+            return self._model
+        raise RuntimeError(
+            f"Local cross-encoder could not be loaded (model={self.model_name!r}, "
+            f"runtime={self.runtime!r}). Check FlagEmbedding / sentence-transformers "
+            "versions, that the model cache is pre-populated, and that HF_TOKEN is set "
+            "if downloading weights at boot. Heuristic fallback is disabled by default; "
+            "pass allow_heuristic=True explicitly only for unit tests."
+        ) from last_error
+
+    def warm_up(self) -> Dict[str, Any]:
+        """Force model load + a single canned inference. Call at service startup.
+
+        Raises if the provider cannot produce a numeric score on a trivial pair.
+        Returns diagnostics suitable for a readiness probe.
+        """
+        model = self._load_model()
+        canary_pair = ("requirement: python experience", "evidence: built python services for 5 years")
+        if model is False:
+            # Heuristic path (only reached when allow_heuristic=True). Exercise the
+            # heuristic scorer so the caller still gets a deterministic signal.
+            scores = self.score_text_pairs([canary_pair])
+        else:
+            scores = self.score_text_pairs([canary_pair])
+        if not scores or not isinstance(scores[0], (int, float)):
+            raise RuntimeError(
+                f"Local cross-encoder warm-up produced no numeric score (model={self.model_name!r}). "
+                "The runtime loaded but inference did not return a float."
             )
-        return self._model
+        return {
+            "provider_id": self.provider_id,
+            "provider_route": self.effective_route_name,
+            "canary_score": float(scores[0]),
+        }
 
     def score_pairs(self, pairs: List[SerializedPair]) -> tuple[List[PairAssessment], Dict[str, Any]]:
         started_at = time.perf_counter()
@@ -1230,6 +1340,50 @@ def _select_best_assessment(
     return best_pair, best_assessment
 
 
+def identify_evidence_escalation_candidates(
+    *,
+    original_matches: List[RequirementMatchResult],
+    adjusted_matches: List[RequirementMatchResult],
+    adjusted_missing: List[RequirementMatchResult],
+    borderline_band: tuple[float, float],
+) -> List[str]:
+    """Return requirement IDs that qualify for LLM escalation (§B.4).
+
+    A requirement escalates when:
+    1. The reranker produced an evidence_score (evidence rerank ran).
+    2. That score lands inside the borderline band [low, high] — the zone
+       where the cross-encoder is least confident.
+    3. The threshold verdict (original `is_covered`, driven by cosine) and
+       the cross-encoder verdict (adjusted `is_covered`) disagree.
+
+    Callers route these requirements through the existing LLM judge path
+    for a tie-breaking verdict. Pure function — trivially unit-testable and
+    safe to invoke even when the escalation flag is off (useful for
+    observability without behavior changes).
+    """
+    low, high = borderline_band
+    original_by_id = {
+        str(getattr(m.requirement, "id", "")): m for m in original_matches
+    }
+    adjusted_all = list(adjusted_matches) + list(adjusted_missing)
+
+    candidates: List[str] = []
+    for adjusted in adjusted_all:
+        req_id = str(getattr(adjusted.requirement, "id", ""))
+        evidence_score = getattr(adjusted, "evidence_score", None)
+        if evidence_score is None:
+            continue
+        if not (low <= float(evidence_score) <= high):
+            continue
+        original = original_by_id.get(req_id)
+        if original is None:
+            continue
+        if bool(original.is_covered) == bool(adjusted.is_covered):
+            continue
+        candidates.append(req_id)
+    return candidates
+
+
 def _score_with_assessments(
     preliminary: JobMatchPreliminary,
     *,
@@ -1348,6 +1502,7 @@ def _fallback_adjusted_match(requirement_match: RequirementMatchResult, threshol
             threshold,
         ),
         is_covered=preserved_coverage == "covered",
+        evidence_score=float(requirement_match.similarity or 0.0),
     )
 
 
@@ -1402,6 +1557,7 @@ def _score_requirement_match(
             evidence=requirement_match.evidence,
             similarity=0.0,
             is_covered=False,
+            evidence_score=0.0,
         )
         return adjusted, _missing_assessment_verdict(requirement_match, provider_route)
 
@@ -1411,6 +1567,7 @@ def _score_requirement_match(
         evidence=best_pair.candidate.evidence,
         similarity=similarity,
         is_covered=best_assessment.coverage_level == "covered",
+        evidence_score=round(_clamp01(best_assessment.semantic_score), 4),
     )
     return adjusted, _scored_requirement_verdict(
         requirement_match,
@@ -1541,7 +1698,7 @@ class CrossEncoderSemanticFitScorer:
         for provider in providers:
             try:
                 assessments, provider_diagnostics = provider.score_pairs(serialized_pairs)
-                return _score_with_assessments(
+                result = _score_with_assessments(
                     preliminary,
                     assessments=assessments,
                     serialized_pairs=serialized_pairs,
@@ -1559,6 +1716,12 @@ class CrossEncoderSemanticFitScorer:
                         truncation_aggregate=truncation_aggregate,
                     ),
                 )
+                self._annotate_evidence_escalation(
+                    preliminary=preliminary,
+                    result=result,
+                    config=config,
+                )
+                return result
             except Exception as exc:
                 last_error = exc
                 logger.warning(
@@ -1573,6 +1736,43 @@ class CrossEncoderSemanticFitScorer:
             fit_penalties=fit_penalties,
             config=config,
             last_error=last_error,
+        )
+
+    @staticmethod
+    def _annotate_evidence_escalation(
+        *,
+        preliminary: JobMatchPreliminary,
+        result: SemanticFitScoreResult,
+        config: ScorerConfig,
+    ) -> None:
+        """Tag borderline disagreements for the optional §B.4 LLM escalation.
+
+        This is detection-only: when the flag is on and candidates exist, we
+        stash the requirement IDs in `fit_components` and log for visibility.
+        Actual LLM re-judging is routed upstream by the caller that owns both
+        cross-encoder and LLM scorers. Keeping the detection here (next to
+        the CE verdicts) avoids re-walking the adjusted requirement lists.
+        """
+        semantic_fit = getattr(config, "semantic_fit", None)
+        if semantic_fit is None or not getattr(semantic_fit, "evidence_llm_escalation", False):
+            return
+        band = tuple(getattr(semantic_fit, "evidence_llm_borderline_band", (0.40, 0.65)))
+        if len(band) != 2:
+            return
+        candidates = identify_evidence_escalation_candidates(
+            original_matches=list(preliminary.requirement_matches)
+            + list(preliminary.missing_requirements),
+            adjusted_matches=result.matched_requirements,
+            adjusted_missing=result.missing_requirements,
+            borderline_band=(float(band[0]), float(band[1])),
+        )
+        if not candidates:
+            return
+        result.fit_components["evidence_llm_escalation_candidates"] = candidates
+        logger.info(
+            "evidence_llm_escalation candidates=%d band=%s",
+            len(candidates),
+            band,
         )
 
 

@@ -1,0 +1,3029 @@
+{
+  "constraints": [
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "app_settings_pkey",
+      "table": "app_settings",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
+      "name": "candidate_preferences_owner_id_fkey",
+      "table": "candidate_preferences",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (owner_id)",
+      "name": "candidate_preferences_pkey",
+      "table": "candidate_preferences",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (job_post_id) REFERENCES job_post(id) ON DELETE CASCADE",
+      "name": "job_benefit_job_post_id_fkey",
+      "table": "job_benefit",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "job_benefit_pkey",
+      "table": "job_benefit",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (job_post_id) REFERENCES job_post(id) ON DELETE CASCADE",
+      "name": "job_match_job_post_id_fkey",
+      "table": "job_match",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "job_match_pkey",
+      "table": "job_match",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "UNIQUE (job_post_id, resume_fingerprint)",
+      "name": "uq_job_match_job_resume",
+      "table": "job_match",
+      "type": "UNIQUE"
+    },
+    {
+      "definition": "FOREIGN KEY (job_match_id) REFERENCES job_match(id) ON DELETE CASCADE",
+      "name": "job_match_requirement_job_match_id_fkey",
+      "table": "job_match_requirement",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (job_requirement_unit_id) REFERENCES job_requirement_unit(id) ON DELETE CASCADE",
+      "name": "job_match_requirement_job_requirement_unit_id_fkey",
+      "table": "job_match_requirement",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "job_match_requirement_pkey",
+      "table": "job_match_requirement",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "job_post_pkey",
+      "table": "job_post",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE",
+      "name": "job_post_tenant_id_fkey",
+      "table": "job_post",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (job_post_id) REFERENCES job_post(id) ON DELETE CASCADE",
+      "name": "job_post_source_job_post_id_fkey",
+      "table": "job_post_source",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "job_post_source_pkey",
+      "table": "job_post_source",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE",
+      "name": "job_post_source_tenant_id_fkey",
+      "table": "job_post_source",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (job_post_id) REFERENCES job_post(id) ON DELETE CASCADE",
+      "name": "job_requirement_unit_job_post_id_fkey",
+      "table": "job_requirement_unit",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "job_requirement_unit_pkey",
+      "table": "job_requirement_unit",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (job_requirement_unit_id) REFERENCES job_requirement_unit(id) ON DELETE CASCADE",
+      "name": "job_requirement_unit_embedding_job_requirement_unit_id_fkey",
+      "table": "job_requirement_unit_embedding",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (job_requirement_unit_id)",
+      "name": "job_requirement_unit_embedding_pkey",
+      "table": "job_requirement_unit_embedding",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (job_match_id) REFERENCES job_match(id) ON DELETE CASCADE",
+      "name": "match_selection_item_job_match_id_fkey",
+      "table": "match_selection_item",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "match_selection_item_pkey",
+      "table": "match_selection_item",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (selection_run_id) REFERENCES match_selection_run(id) ON DELETE CASCADE",
+      "name": "match_selection_item_selection_run_id_fkey",
+      "table": "match_selection_item",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "CHECK ((((selection_tier = 'primary'::text) AND (excluded_reason IS NULL)) OR ((selection_tier = 'excluded'::text) AND (excluded_reason IS NOT NULL))))",
+      "name": "msi_excluded_reason_chk",
+      "table": "match_selection_item",
+      "type": "CHECK"
+    },
+    {
+      "definition": "CHECK ((selection_tier = ANY (ARRAY['primary'::text, 'excluded'::text])))",
+      "name": "msi_selection_tier_chk",
+      "table": "match_selection_item",
+      "type": "CHECK"
+    },
+    {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
+      "name": "match_selection_run_owner_id_fkey",
+      "table": "match_selection_run",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "match_selection_run_pkey",
+      "table": "match_selection_run",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (job_match_id) REFERENCES job_match(id) ON DELETE CASCADE",
+      "name": "notification_tracker_job_match_id_fkey",
+      "table": "notification_tracker",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
+      "name": "notification_tracker_owner_id_fkey",
+      "table": "notification_tracker",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "notification_tracker_pkey",
+      "table": "notification_tracker",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "UNIQUE (dedup_hash)",
+      "name": "uq_notification_dedup",
+      "table": "notification_tracker",
+      "type": "UNIQUE"
+    },
+    {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
+      "name": "resume_evidence_unit_embedding_owner_id_fkey",
+      "table": "resume_evidence_unit_embedding",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "resume_evidence_unit_embedding_pkey",
+      "table": "resume_evidence_unit_embedding",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
+      "name": "resume_processing_state_owner_id_fkey",
+      "table": "resume_processing_state",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (resume_fingerprint)",
+      "name": "resume_processing_state_pkey",
+      "table": "resume_processing_state",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
+      "name": "resume_section_embedding_owner_id_fkey",
+      "table": "resume_section_embedding",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "resume_section_embedding_pkey",
+      "table": "resume_section_embedding",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
+      "name": "resume_upload_owner_id_fkey",
+      "table": "resume_upload",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "resume_upload_pkey",
+      "table": "resume_upload",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
+      "name": "structured_resume_owner_id_fkey",
+      "table": "structured_resume",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "structured_resume_pkey",
+      "table": "structured_resume",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "tenant_pkey",
+      "table": "tenant",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "UNIQUE (provider, provider_subject)",
+      "name": "uq_user_auth_identity_provider_subject",
+      "table": "user_auth_identity",
+      "type": "UNIQUE"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "user_auth_identity_pkey",
+      "table": "user_auth_identity",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
+      "name": "user_auth_identity_user_id_fkey",
+      "table": "user_auth_identity",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
+      "name": "user_feature_capability_owner_id_fkey",
+      "table": "user_feature_capability",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "user_feature_capability_pkey",
+      "table": "user_feature_capability",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
+      "name": "user_files_owner_id_fkey",
+      "table": "user_files",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "user_files_pkey",
+      "table": "user_files",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "UNIQUE (storage_key)",
+      "name": "user_files_storage_key_key",
+      "table": "user_files",
+      "type": "UNIQUE"
+    },
+    {
+      "definition": "UNIQUE (owner_id, channel_type)",
+      "name": "uq_user_notification_channel_owner_type",
+      "table": "user_notification_channel",
+      "type": "UNIQUE"
+    },
+    {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES user_notification_settings(owner_id) ON DELETE CASCADE",
+      "name": "user_notification_channel_owner_id_fkey",
+      "table": "user_notification_channel",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "user_notification_channel_pkey",
+      "table": "user_notification_channel",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
+      "name": "user_notification_settings_owner_id_fkey",
+      "table": "user_notification_settings",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (owner_id)",
+      "name": "user_notification_settings_pkey",
+      "table": "user_notification_settings",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "UNIQUE (email)",
+      "name": "users_email_key",
+      "table": "users",
+      "type": "UNIQUE"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "users_pkey",
+      "table": "users",
+      "type": "PRIMARY KEY"
+    }
+  ],
+  "enums": [
+    {
+      "labels": [
+        "google",
+        "password"
+      ],
+      "name": "auth_provider"
+    },
+    {
+      "labels": [
+        "resume"
+      ],
+      "name": "file_type"
+    },
+    {
+      "labels": [
+        "pending",
+        "scanned",
+        "rejected",
+        "ready"
+      ],
+      "name": "upload_status"
+    }
+  ],
+  "extensions": [
+    "vector"
+  ],
+  "indexes": [
+    {
+      "access_method": "btree",
+      "definition": "CREATE UNIQUE INDEX ix_app_settings_key ON public.app_settings USING btree (key)",
+      "name": "ix_app_settings_key",
+      "predicate": null,
+      "reloptions": null,
+      "table": "app_settings",
+      "unique": true
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_jb_category ON public.job_benefit USING btree (category)",
+      "name": "idx_jb_category",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_benefit",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_jb_job ON public.job_benefit USING btree (job_post_id)",
+      "name": "idx_jb_job",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_benefit",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_match_calculated ON public.job_match USING btree (calculated_at)",
+      "name": "idx_job_match_calculated",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_match",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_match_created ON public.job_match USING btree (created_at)",
+      "name": "idx_job_match_created",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_match",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_match_fit ON public.job_match USING btree (fit_score)",
+      "name": "idx_job_match_fit",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_match",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_match_hidden ON public.job_match USING btree (is_hidden)",
+      "name": "idx_job_match_hidden",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_match",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_match_notified ON public.job_match USING btree (notified)",
+      "name": "idx_job_match_notified",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_match",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_match_pref ON public.job_match USING btree (preference_score)",
+      "name": "idx_job_match_pref",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_match",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_match_resume ON public.job_match USING btree (resume_fingerprint)",
+      "name": "idx_job_match_resume",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_match",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_match_status ON public.job_match USING btree (status)",
+      "name": "idx_job_match_status",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_match",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_jmr_covered ON public.job_match_requirement USING btree (is_covered)",
+      "name": "idx_jmr_covered",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_match_requirement",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_jmr_match ON public.job_match_requirement USING btree (job_match_id)",
+      "name": "idx_jmr_match",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_match_requirement",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_jmr_requirement ON public.job_match_requirement USING btree (job_requirement_unit_id)",
+      "name": "idx_jmr_requirement",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_match_requirement",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_jmr_similarity ON public.job_match_requirement USING btree (similarity_score)",
+      "name": "idx_jmr_similarity",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_match_requirement",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_post_company ON public.job_post USING btree (company)",
+      "name": "idx_job_post_company",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_post",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_post_content_hash ON public.job_post USING btree (content_hash)",
+      "name": "idx_job_post_content_hash",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_post",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_post_embedding_retry ON public.job_post USING btree (embedding_status, embedding_next_retry_at)",
+      "name": "idx_job_post_embedding_retry",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_post",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_post_extraction_retry ON public.job_post USING btree (extraction_status, extraction_next_retry_at)",
+      "name": "idx_job_post_extraction_retry",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_post",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_post_last_seen ON public.job_post USING btree (last_seen_at)",
+      "name": "idx_job_post_last_seen",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_post",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_post_remote ON public.job_post USING btree (is_remote)",
+      "name": "idx_job_post_remote",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_post",
+      "unique": false
+    },
+    {
+      "access_method": "hnsw",
+      "definition": "CREATE INDEX idx_job_post_summary_embedding_hnsw ON public.job_post USING hnsw (summary_embedding vector_cosine_ops) WITH (m='16', ef_construction='64')",
+      "name": "idx_job_post_summary_embedding_hnsw",
+      "predicate": null,
+      "reloptions": [
+        "ef_construction=64",
+        "m=16"
+      ],
+      "table": "job_post",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_post_tenant ON public.job_post USING btree (tenant_id)",
+      "name": "idx_job_post_tenant",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_post",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE UNIQUE INDEX uq_job_post_global_fingerprint ON public.job_post USING btree (fingerprint_version, canonical_fingerprint) WHERE (tenant_id IS NULL)",
+      "name": "uq_job_post_global_fingerprint",
+      "predicate": "(tenant_id IS NULL)",
+      "reloptions": null,
+      "table": "job_post",
+      "unique": true
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE UNIQUE INDEX uq_job_post_tenant_fingerprint ON public.job_post USING btree (tenant_id, fingerprint_version, canonical_fingerprint) WHERE (tenant_id IS NOT NULL)",
+      "name": "uq_job_post_tenant_fingerprint",
+      "predicate": "(tenant_id IS NOT NULL)",
+      "reloptions": null,
+      "table": "job_post",
+      "unique": true
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_post_source_job ON public.job_post_source USING btree (job_post_id)",
+      "name": "idx_job_post_source_job",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_post_source",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_post_source_seen ON public.job_post_source USING btree (last_seen_at)",
+      "name": "idx_job_post_source_seen",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_post_source",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_post_source_tenant ON public.job_post_source USING btree (tenant_id)",
+      "name": "idx_job_post_source_tenant",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_post_source",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE UNIQUE INDEX uq_job_post_source_global_site_url ON public.job_post_source USING btree (site, job_url) WHERE (tenant_id IS NULL)",
+      "name": "uq_job_post_source_global_site_url",
+      "predicate": "(tenant_id IS NULL)",
+      "reloptions": null,
+      "table": "job_post_source",
+      "unique": true
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE UNIQUE INDEX uq_job_post_source_tenant_site_url ON public.job_post_source USING btree (tenant_id, site, job_url) WHERE (tenant_id IS NOT NULL)",
+      "name": "uq_job_post_source_tenant_site_url",
+      "predicate": "(tenant_id IS NOT NULL)",
+      "reloptions": null,
+      "table": "job_post_source",
+      "unique": true
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_jru_job ON public.job_requirement_unit USING btree (job_post_id)",
+      "name": "idx_jru_job",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_requirement_unit",
+      "unique": false
+    },
+    {
+      "access_method": "hnsw",
+      "definition": "CREATE INDEX jru_embedding_hnsw ON public.job_requirement_unit_embedding USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='64')",
+      "name": "jru_embedding_hnsw",
+      "predicate": null,
+      "reloptions": [
+        "ef_construction=64",
+        "m=16"
+      ],
+      "table": "job_requirement_unit_embedding",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_match_selection_item_match ON public.match_selection_item USING btree (job_match_id)",
+      "name": "idx_match_selection_item_match",
+      "predicate": null,
+      "reloptions": null,
+      "table": "match_selection_item",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE UNIQUE INDEX idx_match_selection_item_run ON public.match_selection_item USING btree (selection_run_id, rank_position)",
+      "name": "idx_match_selection_item_run",
+      "predicate": null,
+      "reloptions": null,
+      "table": "match_selection_item",
+      "unique": true
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_msi_run_tier ON public.match_selection_item USING btree (selection_run_id, selection_tier)",
+      "name": "idx_msi_run_tier",
+      "predicate": null,
+      "reloptions": null,
+      "table": "match_selection_item",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE UNIQUE INDEX idx_match_selection_run_current ON public.match_selection_run USING btree (owner_id, resume_fingerprint) WHERE (is_current AND (lifecycle_status = 'committed'::text))",
+      "name": "idx_match_selection_run_current",
+      "predicate": "(is_current AND (lifecycle_status = 'committed'::text))",
+      "reloptions": null,
+      "table": "match_selection_run",
+      "unique": true
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_match_selection_run_owner ON public.match_selection_run USING btree (owner_id, created_at)",
+      "name": "idx_match_selection_run_owner",
+      "predicate": null,
+      "reloptions": null,
+      "table": "match_selection_run",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_match_selection_run_resume ON public.match_selection_run USING btree (resume_fingerprint, created_at)",
+      "name": "idx_match_selection_run_resume",
+      "predicate": null,
+      "reloptions": null,
+      "table": "match_selection_run",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_notification_failure_class ON public.notification_tracker USING btree (failure_class) WHERE (failure_class IS NOT NULL)",
+      "name": "idx_notification_failure_class",
+      "predicate": "(failure_class IS NOT NULL)",
+      "reloptions": null,
+      "table": "notification_tracker",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_notification_owner ON public.notification_tracker USING btree (owner_id, first_sent_at)",
+      "name": "idx_notification_owner",
+      "predicate": null,
+      "reloptions": null,
+      "table": "notification_tracker",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_notification_recent ON public.notification_tracker USING btree (dedup_hash, last_sent_at)",
+      "name": "idx_notification_recent",
+      "predicate": null,
+      "reloptions": null,
+      "table": "notification_tracker",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX ix_notification_tracker_dedup_hash ON public.notification_tracker USING btree (dedup_hash)",
+      "name": "ix_notification_tracker_dedup_hash",
+      "predicate": null,
+      "reloptions": null,
+      "table": "notification_tracker",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX ix_notification_tracker_job_match_id ON public.notification_tracker USING btree (job_match_id)",
+      "name": "ix_notification_tracker_job_match_id",
+      "predicate": null,
+      "reloptions": null,
+      "table": "notification_tracker",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX ix_notification_tracker_owner_id ON public.notification_tracker USING btree (owner_id)",
+      "name": "ix_notification_tracker_owner_id",
+      "predicate": null,
+      "reloptions": null,
+      "table": "notification_tracker",
+      "unique": false
+    },
+    {
+      "access_method": "hnsw",
+      "definition": "CREATE INDEX idx_rfue_embedding_hnsw ON public.resume_evidence_unit_embedding USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='64')",
+      "name": "idx_rfue_embedding_hnsw",
+      "predicate": null,
+      "reloptions": [
+        "ef_construction=64",
+        "m=16"
+      ],
+      "table": "resume_evidence_unit_embedding",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_rfue_fingerprint ON public.resume_evidence_unit_embedding USING btree (resume_fingerprint)",
+      "name": "idx_rfue_fingerprint",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_evidence_unit_embedding",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_rfue_owner_resume ON public.resume_evidence_unit_embedding USING btree (owner_id, resume_fingerprint)",
+      "name": "idx_rfue_owner_resume",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_evidence_unit_embedding",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX ix_resume_evidence_unit_embedding_resume_fingerprint ON public.resume_evidence_unit_embedding USING btree (resume_fingerprint)",
+      "name": "ix_resume_evidence_unit_embedding_resume_fingerprint",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_evidence_unit_embedding",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_resume_processing_state_owner ON public.resume_processing_state USING btree (owner_id, updated_at)",
+      "name": "idx_resume_processing_state_owner",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_processing_state",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_resume_processing_state_status ON public.resume_processing_state USING btree (processing_status)",
+      "name": "idx_resume_processing_state_status",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_processing_state",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_resume_processing_state_updated_at ON public.resume_processing_state USING btree (updated_at)",
+      "name": "idx_resume_processing_state_updated_at",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_processing_state",
+      "unique": false
+    },
+    {
+      "access_method": "hnsw",
+      "definition": "CREATE INDEX idx_rse_embedding_hnsw ON public.resume_section_embedding USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='64')",
+      "name": "idx_rse_embedding_hnsw",
+      "predicate": null,
+      "reloptions": [
+        "ef_construction=64",
+        "m=16"
+      ],
+      "table": "resume_section_embedding",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_rse_owner_resume ON public.resume_section_embedding USING btree (owner_id, resume_fingerprint)",
+      "name": "idx_rse_owner_resume",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_section_embedding",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_rse_resume ON public.resume_section_embedding USING btree (resume_fingerprint, section_type, section_index)",
+      "name": "idx_rse_resume",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_section_embedding",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX ix_resume_section_embedding_resume_fingerprint ON public.resume_section_embedding USING btree (resume_fingerprint)",
+      "name": "ix_resume_section_embedding_resume_fingerprint",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_section_embedding",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_resume_upload_owner_created ON public.resume_upload USING btree (owner_id, created_at)",
+      "name": "idx_resume_upload_owner_created",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_upload",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_resume_upload_owner_fingerprint ON public.resume_upload USING btree (owner_id, resume_fingerprint)",
+      "name": "idx_resume_upload_owner_fingerprint",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_upload",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_resume_upload_owner_hash ON public.resume_upload USING btree (owner_id, resume_hash)",
+      "name": "idx_resume_upload_owner_hash",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_upload",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_resume_upload_processing_task_id ON public.resume_upload USING btree (processing_task_id)",
+      "name": "idx_resume_upload_processing_task_id",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_upload",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_structured_resume_fingerprint ON public.structured_resume USING btree (resume_fingerprint)",
+      "name": "idx_structured_resume_fingerprint",
+      "predicate": null,
+      "reloptions": null,
+      "table": "structured_resume",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_structured_resume_owner_resume ON public.structured_resume USING btree (owner_id, resume_fingerprint)",
+      "name": "idx_structured_resume_owner_resume",
+      "predicate": null,
+      "reloptions": null,
+      "table": "structured_resume",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_structured_resume_years ON public.structured_resume USING btree (total_experience_years)",
+      "name": "idx_structured_resume_years",
+      "predicate": null,
+      "reloptions": null,
+      "table": "structured_resume",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE UNIQUE INDEX ix_structured_resume_resume_fingerprint ON public.structured_resume USING btree (resume_fingerprint)",
+      "name": "ix_structured_resume_resume_fingerprint",
+      "predicate": null,
+      "reloptions": null,
+      "table": "structured_resume",
+      "unique": true
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_user_auth_identity_email ON public.user_auth_identity USING btree (email_normalized)",
+      "name": "idx_user_auth_identity_email",
+      "predicate": null,
+      "reloptions": null,
+      "table": "user_auth_identity",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_user_auth_identity_user_provider ON public.user_auth_identity USING btree (user_id, provider)",
+      "name": "idx_user_auth_identity_user_provider",
+      "predicate": null,
+      "reloptions": null,
+      "table": "user_auth_identity",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_user_feature_capability_feature ON public.user_feature_capability USING btree (feature_key)",
+      "name": "idx_user_feature_capability_feature",
+      "predicate": null,
+      "reloptions": null,
+      "table": "user_feature_capability",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE UNIQUE INDEX idx_user_feature_capability_owner_feature ON public.user_feature_capability USING btree (owner_id, feature_key)",
+      "name": "idx_user_feature_capability_owner_feature",
+      "predicate": null,
+      "reloptions": null,
+      "table": "user_feature_capability",
+      "unique": true
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_user_files_created_at ON public.user_files USING btree (created_at)",
+      "name": "idx_user_files_created_at",
+      "predicate": null,
+      "reloptions": null,
+      "table": "user_files",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_user_files_owner_type ON public.user_files USING btree (owner_id, file_type)",
+      "name": "idx_user_files_owner_type",
+      "predicate": null,
+      "reloptions": null,
+      "table": "user_files",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_user_files_storage_key ON public.user_files USING btree (storage_key)",
+      "name": "idx_user_files_storage_key",
+      "predicate": null,
+      "reloptions": null,
+      "table": "user_files",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_unc_verif_hash_pending ON public.user_notification_channel USING btree (verification_token_hash) WHERE (verification_token_hash IS NOT NULL)",
+      "name": "idx_unc_verif_hash_pending",
+      "predicate": "(verification_token_hash IS NOT NULL)",
+      "reloptions": null,
+      "table": "user_notification_channel",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_user_notification_channel_last_tested ON public.user_notification_channel USING btree (last_tested_at)",
+      "name": "idx_user_notification_channel_last_tested",
+      "predicate": null,
+      "reloptions": null,
+      "table": "user_notification_channel",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_user_notification_channel_owner ON public.user_notification_channel USING btree (owner_id)",
+      "name": "idx_user_notification_channel_owner",
+      "predicate": null,
+      "reloptions": null,
+      "table": "user_notification_channel",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_users_email ON public.users USING btree (email)",
+      "name": "idx_users_email",
+      "predicate": null,
+      "reloptions": null,
+      "table": "users",
+      "unique": false
+    }
+  ],
+  "tables": {
+    "app_settings": {
+      "columns": [
+        {
+          "default": "nextval('app_settings_id_seq'::regclass)",
+          "name": "id",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "key",
+          "nullable": false,
+          "type": "character varying(255)"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "value",
+          "nullable": true,
+          "type": "text"
+        }
+      ]
+    },
+    "candidate_preferences": {
+      "columns": [
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "'[]'::jsonb",
+          "name": "employment_types",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "owner_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": "'semantic_rerank'::text",
+          "name": "preference_mode",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "preference_profile",
+          "nullable": true,
+          "type": "jsonb"
+        },
+        {
+          "default": "'any'::text",
+          "name": "remote_mode",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "revision",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "salary_min",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "soft_preference_summary",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "''::text",
+          "name": "soft_preferences",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": "'[]'::jsonb",
+          "name": "target_locations",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "false",
+          "name": "visa_sponsorship_required",
+          "nullable": false,
+          "type": "boolean"
+        }
+      ]
+    },
+    "job_benefit": {
+      "columns": [
+        {
+          "default": null,
+          "name": "category",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "job_post_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "ordinal",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "text",
+          "nullable": false,
+          "type": "text"
+        }
+      ]
+    },
+    "job_match": {
+      "columns": [
+        {
+          "default": null,
+          "name": "base_score",
+          "nullable": true,
+          "type": "numeric(5,2)"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "calculated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "fit_components",
+          "nullable": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "fit_score",
+          "nullable": true,
+          "type": "numeric(5,2)"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "invalidated_reason",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "is_hidden",
+          "nullable": true,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "job_content_hash",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "job_post_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "job_similarity",
+          "nullable": true,
+          "type": "numeric(3,2)"
+        },
+        {
+          "default": null,
+          "name": "match_type",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "matched_requirements_count",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "notified",
+          "nullable": true,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "penalties",
+          "nullable": true,
+          "type": "numeric(5,2)"
+        },
+        {
+          "default": null,
+          "name": "penalty_details",
+          "nullable": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "preference_components",
+          "nullable": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "preference_score",
+          "nullable": true,
+          "type": "numeric(5,4)"
+        },
+        {
+          "default": null,
+          "name": "preferred_requirement_coverage",
+          "nullable": true,
+          "type": "numeric(3,2)"
+        },
+        {
+          "default": null,
+          "name": "ranking_snapshot",
+          "nullable": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "required_coverage",
+          "nullable": true,
+          "type": "numeric(3,2)"
+        },
+        {
+          "default": null,
+          "name": "resume_fingerprint",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "similarity_threshold",
+          "nullable": true,
+          "type": "numeric(3,2)"
+        },
+        {
+          "default": null,
+          "name": "status",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "total_requirements",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        }
+      ]
+    },
+    "job_match_requirement": {
+      "columns": [
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "evidence_score",
+          "nullable": true,
+          "type": "numeric(5,4)"
+        },
+        {
+          "default": null,
+          "name": "evidence_section",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "evidence_tags",
+          "nullable": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "evidence_text",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "is_covered",
+          "nullable": true,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "job_match_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "job_requirement_unit_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "req_type",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "similarity_score",
+          "nullable": false,
+          "type": "numeric(3,2)"
+        }
+      ]
+    },
+    "job_post": {
+      "columns": [
+        {
+          "default": null,
+          "name": "canonical_fingerprint",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "canonical_job_summary",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "canonical_job_summary_hash",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "1",
+          "name": "canonical_job_summary_version",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "company",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "company_addresses",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "company_description",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "company_industry",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "company_logo",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "company_num_employees",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "company_rating",
+          "nullable": true,
+          "type": "numeric"
+        },
+        {
+          "default": null,
+          "name": "company_revenue",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "company_reviews_count",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "company_url",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "company_url_direct",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "content_hash",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "currency",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "description",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "emails",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "embedding_attempts",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "embedding_last_attempt_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "embedding_last_error",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "embedding_next_retry_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "embedding_status",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "experience_range",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "extraction_attempts",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "extraction_last_attempt_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "extraction_last_error",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "extraction_next_retry_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "extraction_status",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "fingerprint_version",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "first_seen_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "is_embedded",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "is_extracted",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "is_remote",
+          "nullable": true,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "job_level",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "job_type",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "last_seen_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "location_text",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "min_years_experience",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "raw_payload",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "requires_degree",
+          "nullable": true,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "salary_interval",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "salary_max",
+          "nullable": true,
+          "type": "numeric"
+        },
+        {
+          "default": null,
+          "name": "salary_min",
+          "nullable": true,
+          "type": "numeric"
+        },
+        {
+          "default": null,
+          "name": "security_clearance",
+          "nullable": true,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "skills_raw",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "status",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "summary_embedding",
+          "nullable": true,
+          "type": "vector"
+        },
+        {
+          "default": null,
+          "name": "tenant_id",
+          "nullable": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "title",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "vacancy_count",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "work_from_home_type",
+          "nullable": true,
+          "type": "text"
+        }
+      ]
+    },
+    "job_post_source": {
+      "columns": [
+        {
+          "default": null,
+          "name": "date_posted",
+          "nullable": true,
+          "type": "date"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "first_seen_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "is_active",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "job_post_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "job_url",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "job_url_direct",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "last_seen_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "site",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "source_job_id",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "tenant_id",
+          "nullable": true,
+          "type": "uuid"
+        }
+      ]
+    },
+    "job_requirement_unit": {
+      "columns": [
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "job_post_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "min_years",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "ordinal",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "req_type",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "tags",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "text",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "years_context",
+          "nullable": true,
+          "type": "text"
+        }
+      ]
+    },
+    "job_requirement_unit_embedding": {
+      "columns": [
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "embedding",
+          "nullable": false,
+          "type": "vector"
+        },
+        {
+          "default": null,
+          "name": "job_requirement_unit_id",
+          "nullable": false,
+          "type": "uuid"
+        }
+      ]
+    },
+    "match_selection_item": {
+      "columns": [
+        {
+          "default": "false",
+          "name": "alert_eligible",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "dominant_reason_code",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "excluded_reason",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "explanation_label",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "fit_score_at_selection",
+          "nullable": false,
+          "type": "numeric(5,2)"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "job_match_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": "0",
+          "name": "job_similarity_at_selection",
+          "nullable": false,
+          "type": "numeric(3,2)"
+        },
+        {
+          "default": null,
+          "name": "preference_score_at_selection",
+          "nullable": true,
+          "type": "numeric(5,4)"
+        },
+        {
+          "default": null,
+          "name": "rank_position",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": "'{}'::jsonb",
+          "name": "ranking_snapshot",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": "0",
+          "name": "required_coverage_at_selection",
+          "nullable": false,
+          "type": "numeric(3,2)"
+        },
+        {
+          "default": null,
+          "name": "selection_run_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": "'primary'::text",
+          "name": "selection_tier",
+          "nullable": false,
+          "type": "text"
+        }
+      ]
+    },
+    "match_selection_run": {
+      "columns": [
+        {
+          "default": "0",
+          "name": "alert_candidate_count",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": "0",
+          "name": "candidate_pool_size",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "0",
+          "name": "fit_floor_used",
+          "nullable": false,
+          "type": "numeric(5,2)"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": "false",
+          "name": "is_current",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": "'pending'::text",
+          "name": "lifecycle_status",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "notification_fit_floor_used",
+          "nullable": false,
+          "type": "numeric(5,2)"
+        },
+        {
+          "default": null,
+          "name": "owner_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": "'{}'::jsonb",
+          "name": "policy_snapshot_json",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "ranking_config_version",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "ranking_mode_used",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "resume_fingerprint",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": "''::text",
+          "name": "resume_resolution_reason",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "selected_count",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "stable_tie_break_key",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "task_id",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "top_k_used",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        }
+      ]
+    },
+    "notification_tracker": {
+      "columns": [
+        {
+          "default": null,
+          "name": "allow_resend",
+          "nullable": true,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "body",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "channel_type",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "content_hash",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "dedup_hash",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "error_message",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "'{}'::jsonb",
+          "name": "event_data",
+          "nullable": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "event_type",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "failure_class",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "first_sent_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "job_match_id",
+          "nullable": true,
+          "type": "uuid"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "last_sent_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "owner_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "recipient",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "resend_interval_hours",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "send_count",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "sent_successfully",
+          "nullable": true,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "subject",
+          "nullable": true,
+          "type": "text"
+        }
+      ]
+    },
+    "resume_evidence_unit_embedding": {
+      "columns": [
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "embedding",
+          "nullable": false,
+          "type": "vector"
+        },
+        {
+          "default": null,
+          "name": "evidence_unit_id",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "fingerprint_version",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "is_total_years_claim",
+          "nullable": true,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "owner_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "resume_fingerprint",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "source_section",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "source_text",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "tags",
+          "nullable": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "years_context",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "years_value",
+          "nullable": true,
+          "type": "double precision"
+        }
+      ]
+    },
+    "resume_processing_state": {
+      "columns": [
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "embedding_completed_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "extraction_completed_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "failure_class",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "failure_stage",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "fingerprint_version",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "last_error",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "owner_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "processing_status",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "resume_fingerprint",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "retryable",
+          "nullable": true,
+          "type": "boolean"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "user_safe_message",
+          "nullable": true,
+          "type": "text"
+        }
+      ]
+    },
+    "resume_section_embedding": {
+      "columns": [
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "embedding",
+          "nullable": false,
+          "type": "vector"
+        },
+        {
+          "default": null,
+          "name": "fingerprint_version",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "owner_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "resume_fingerprint",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "section_index",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "section_type",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "source_data",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "source_text",
+          "nullable": false,
+          "type": "text"
+        }
+      ]
+    },
+    "resume_upload": {
+      "columns": [
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "failure_class",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "failure_debug_context",
+          "nullable": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "failure_stage",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "fingerprint_version",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "last_error",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "original_filename",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "owner_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "processing_task_id",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "resume_fingerprint",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "resume_hash",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "retry_of_upload_id",
+          "nullable": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "retryable",
+          "nullable": true,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "status",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "user_safe_message",
+          "nullable": true,
+          "type": "text"
+        }
+      ]
+    },
+    "structured_resume": {
+      "columns": [
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "extracted_data",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "extraction_confidence",
+          "nullable": true,
+          "type": "numeric(3,2)"
+        },
+        {
+          "default": null,
+          "name": "extraction_warnings",
+          "nullable": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "fingerprint_version",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "owner_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "resume_fingerprint",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "total_experience_years",
+          "nullable": true,
+          "type": "numeric(4,1)"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        }
+      ]
+    },
+    "tenant": {
+      "columns": [
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "name",
+          "nullable": false,
+          "type": "text"
+        }
+      ]
+    },
+    "user_auth_identity": {
+      "columns": [
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "email",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "email_normalized",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "false",
+          "name": "email_verified",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "provider",
+          "nullable": false,
+          "type": "auth_provider"
+        },
+        {
+          "default": null,
+          "name": "provider_subject",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "user_id",
+          "nullable": false,
+          "type": "uuid"
+        }
+      ]
+    },
+    "user_feature_capability": {
+      "columns": [
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "true",
+          "name": "enabled",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "feature_key",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "owner_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "source",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "value_json",
+          "nullable": true,
+          "type": "jsonb"
+        }
+      ]
+    },
+    "user_files": {
+      "columns": [
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "file_type",
+          "nullable": false,
+          "type": "file_type"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "mime_type",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "original_filename",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "owner_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "size_bytes",
+          "nullable": false,
+          "type": "bigint"
+        },
+        {
+          "default": null,
+          "name": "storage_key",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": "'pending'::upload_status",
+          "name": "upload_status",
+          "nullable": false,
+          "type": "upload_status"
+        }
+      ]
+    },
+    "user_notification_channel": {
+      "columns": [
+        {
+          "default": null,
+          "name": "channel_type",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": "'{}'::jsonb",
+          "name": "config_json",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": "false",
+          "name": "configured",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "false",
+          "name": "enabled",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "last_test_error",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "last_test_status",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "last_tested_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "masked_recipient",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "override_address",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "override_verified_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "owner_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "secret_ciphertext",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "secret_key_version",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "verification_sent_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "verification_token_expires_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "verification_token_hash",
+          "nullable": true,
+          "type": "text"
+        }
+      ]
+    },
+    "user_notification_settings": {
+      "columns": [
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "70",
+          "name": "min_fit_for_alerts",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": "true",
+          "name": "notifications_enabled",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": "true",
+          "name": "notify_on_batch_complete",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": "true",
+          "name": "notify_on_new_match",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "owner_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": "0",
+          "name": "revision",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        }
+      ]
+    },
+    "users": {
+      "columns": [
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "display_name",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "email",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "email_verified_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "is_active",
+          "nullable": false,
+          "type": "boolean"
+        }
+      ]
+    }
+  }
+}

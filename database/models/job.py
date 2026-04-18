@@ -81,7 +81,12 @@ class JobPost(Base):
     raw_payload = Column(JSONB, nullable=False, default={})
     content_hash = Column(Text)  # Hash of description for content change detection
     canonical_job_summary = Column(Text)
-    canonical_job_summary_version = Column(Integer, nullable=False, default=1)
+    canonical_job_summary_version = Column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default=sql_text("1"),
+    )
     canonical_job_summary_hash = Column(Text)
     
     # Extended Company/Job Info

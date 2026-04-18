@@ -39,6 +39,7 @@ def validate_uuid(match_id: str) -> str:
 
 
 _VALID_RANKING_MODES = {"preference_first", "fit_first", "balanced"}
+_VALID_TIERS = {"primary", "all"}
 
 
 @router.get(
@@ -55,6 +56,7 @@ def get_matches(
     remote_only: Annotated[bool, Query(description="Filter to remote jobs only")] = False,
     show_hidden: Annotated[bool, Query(description="Include hidden matches in results")] = False,
     ranking_mode: Annotated[str | None, Query(description="Ranking mode: preference_first, fit_first, or balanced")] = None,
+    tier: Annotated[str, Query(description="Selection tier: primary (default) or all (include excluded)")] = "primary",
 ):
     """
     Get a list of job matches ranked by the declared mode.
@@ -79,6 +81,12 @@ def get_matches(
             detail=f"Invalid ranking_mode '{ranking_mode}'. Valid values: {', '.join(sorted(_VALID_RANKING_MODES))}"
         )
 
+    if tier not in _VALID_TIERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid tier '{tier}'. Valid values: {', '.join(sorted(_VALID_TIERS))}"
+        )
+
     policy_service = get_policy_service()
     current_policy = policy_service.get_current_policy()
 
@@ -93,6 +101,7 @@ def get_matches(
         remote_only=remote_only,
         show_hidden=show_hidden,
         ranking_mode=ranking_mode,
+        tier=tier,
     )
 
     return MatchesResponse(

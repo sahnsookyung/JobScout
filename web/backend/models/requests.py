@@ -62,6 +62,17 @@ class NotificationSettingsTestRequest(BaseModel):
     )
 
 
+class NotificationEmailOverrideRequest(BaseModel):
+    """Request to start email override verification."""
+
+    address: str = Field(..., min_length=3, max_length=320)
+
+class NotificationEmailVerificationRequest(BaseModel):
+    """Request to verify a pending email override token."""
+
+    token: str = Field(..., min_length=10)
+
+
 class CandidatePreferencesUpdateRequest(BaseModel):
     """Per-user candidate preference update request."""
 

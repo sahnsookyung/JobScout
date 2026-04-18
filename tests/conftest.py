@@ -35,7 +35,10 @@ def _block_production_db(clean_env):  # noqa: PT004  (runs after clean_env saves
     already saved the env backup before this fixture removes the variable,
     so the original value is automatically restored after each test.
     """
-    if os.environ.pop("DATABASE_URL", None):
+    current_db_url = os.environ.get("DATABASE_URL")
+    test_db_url = os.environ.get("TEST_DATABASE_URL")
+    if current_db_url and current_db_url != test_db_url:
+        os.environ.pop("DATABASE_URL", None)
         import warnings
         warnings.warn(
             "Test blocked from accessing production DATABASE_URL. "
@@ -82,6 +85,7 @@ def test_database():
     if external_url:
         from tests import check_db_available
         if check_db_available():
+            os.environ["DATABASE_URL"] = external_url
             yield external_url
             return
         else:
@@ -110,12 +114,21 @@ def test_database():
         
         # Set environment variable for tests to use
         os.environ["TEST_DATABASE_URL"] = db_url
+        os.environ["DATABASE_URL"] = db_url
         
-        # Create tables (first create pgvector extension)
-        from sqlalchemy import create_engine
-        from database.migrate import migrate_database
+        # Create tables from ORM metadata on the test path, mirroring the parity contract.
+        from sqlalchemy import create_engine, text
+        from database.models import Base
+        from tests.fixtures import schema_snapshot
         engine = create_engine(db_url)
-        migrate_database(engine=engine)
+        with engine.begin() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        Base.metadata.create_all(engine)
+        if schema_snapshot.SNAPSHOT_PATH.exists():
+            assert schema_snapshot.capture(engine) == schema_snapshot.load(), (
+                "ORM schema drifted from the checked-in snapshot. "
+                "Regenerate intentionally if this change is expected."
+            )
         
         _parsed = urlparse(db_url)
         if _parsed.password:
@@ -142,6 +155,8 @@ def test_database():
             print("\n✓ Test database stopped")
         if db_url and os.environ.get("TEST_DATABASE_URL") == db_url:
             os.environ.pop("TEST_DATABASE_URL", None)
+        if db_url and os.environ.get("DATABASE_URL") == db_url:
+            os.environ.pop("DATABASE_URL", None)
 
 
 @pytest.fixture(scope="session")

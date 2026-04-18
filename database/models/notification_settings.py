@@ -67,6 +67,11 @@ class UserNotificationChannel(Base):
     masked_recipient = Column(Text, nullable=True)
     secret_ciphertext = Column(Text, nullable=True)
     secret_key_version = Column(Text, nullable=True)
+    override_address = Column(Text, nullable=True)
+    override_verified_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    verification_token_hash = Column(Text, nullable=True)
+    verification_token_expires_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    verification_sent_at = Column(TIMESTAMP(timezone=True), nullable=True)
     config_json = Column(JSONB, nullable=False, default=dict, server_default=sql_text("'{}'"))
     last_test_status = Column(Text, nullable=True)
     last_tested_at = Column(TIMESTAMP(timezone=True), nullable=True)
@@ -89,4 +94,9 @@ class UserNotificationChannel(Base):
         UniqueConstraint("owner_id", "channel_type", name="uq_user_notification_channel_owner_type"),
         Index("idx_user_notification_channel_owner", "owner_id"),
         Index("idx_user_notification_channel_last_tested", "last_tested_at"),
+        Index(
+            "idx_unc_verif_hash_pending",
+            "verification_token_hash",
+            postgresql_where=sql_text("verification_token_hash IS NOT NULL"),
+        ),
     )

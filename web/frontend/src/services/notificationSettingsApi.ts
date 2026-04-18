@@ -1,6 +1,7 @@
 import { apiClient } from '@/services/api';
 import type {
     NotificationEmailOverrideRequest,
+    NotificationEmailVerificationRequest,
     NotificationEmailOverrideResponse,
     NotificationSettings,
     NotificationSettingsTestRequest,
@@ -28,10 +29,10 @@ export const notificationSettingsApi = {
         );
     },
 
-    verifyEmailOverride(token: string) {
-        return apiClient.get<NotificationEmailOverrideResponse>(
+    verifyEmailOverride(payload: NotificationEmailVerificationRequest) {
+        return apiClient.post<NotificationEmailOverrideResponse>(
             '/v1/notification-settings/email/verify',
-            { params: { token } },
+            payload,
         );
     },
 

@@ -115,109 +115,6 @@ function buildPayload(draft: EditableSettings): NotificationSettingsUpdateReques
     };
 }
 
-function AvailabilityNote({ reason }: Readonly<{ reason?: string | null }>) {
-    if (!reason) {
-        return null;
-    }
-
-    return (
-        <p className="inline-block border border-warn/40 bg-warn-soft px-2 py-0.5 text-[12px] text-ink">
-            {reason}
-        </p>
-    );
-}
-
-function ChannelEnabledToggle({
-    channelLabel,
-    checked,
-    disabled,
-    onChange,
-}: Readonly<{
-    channelLabel: string;
-    checked: boolean;
-    disabled: boolean;
-    onChange: (checked: boolean) => void;
-}>) {
-    return (
-        <label className="flex items-center gap-2 self-start border border-rule bg-surface px-3 py-1.5 text-[12px] text-ink-soft">
-            <span>Enabled</span>
-            <input
-                type="checkbox"
-                checked={checked}
-                disabled={disabled}
-                onChange={(event) => onChange(event.target.checked)}
-                aria-label={`Enable ${channelLabel}`}
-                className="h-4 w-4 rounded-sm border-rule accent-accent"
-            />
-        </label>
-    );
-}
-
-function ChannelHeader({
-    Icon,
-    channelLabel,
-    recipient,
-    helperText,
-    statusCaption,
-    availabilityReason,
-    toggle,
-}: Readonly<{
-    Icon: typeof Mail;
-    channelLabel: string;
-    recipient: string;
-    helperText: string;
-    statusCaption?: string | null;
-    availabilityReason?: string | null;
-    toggle: React.ReactNode;
-}>) {
-    return (
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div className="flex items-start gap-3">
-                <Icon className="mt-0.5 h-4 w-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />
-                <div className="space-y-1">
-                    <div className="text-[14px] font-medium text-ink">{channelLabel}</div>
-                    <div className="text-[13px] text-ink-soft">{recipient}</div>
-                    <div className="text-[12px] text-ink-muted">{helperText}</div>
-                    {statusCaption && <p className="caption">{statusCaption}</p>}
-                    <AvailabilityNote reason={availabilityReason} />
-                </div>
-            </div>
-
-            {toggle}
-        </div>
-    );
-}
-
-function ChannelTestRow({
-    lastTestStatus,
-    canTest,
-    isTesting,
-    onTest,
-}: Readonly<{
-    lastTestStatus?: string | null;
-    canTest: boolean;
-    isTesting: boolean;
-    onTest: () => void;
-}>) {
-    return (
-        <div className="mt-4 flex flex-col gap-3 border-t border-rule pt-4 sm:flex-row sm:items-center sm:justify-between">
-            <span className="caption">
-                Last test: <span className="text-ink-soft">{lastTestStatus || 'Never'}</span>
-            </span>
-            <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                disabled={!canTest || isTesting}
-                onClick={onTest}
-            >
-                <Send className="h-3.5 w-3.5" aria-hidden="true" />
-                Test
-            </Button>
-        </div>
-    );
-}
-
 function ToggleRow({
     label,
     description,
@@ -331,28 +228,6 @@ export function NotificationSettingsPanel() {
         }
     };
 
-    const handleSendEmailVerification = async () => {
-        try {
-            const response = await sendEmailOverrideVerification({
-                address: emailOverrideAddress.trim(),
-            });
-            toast.success(response.data.message);
-        } catch (error) {
-            const message = error instanceof Error ? error.message : 'Verification didn’t send.';
-            toast.error(message);
-        }
-    };
-
-    const handleClearEmailOverride = async () => {
-        try {
-            const response = await clearEmailOverride();
-            toast.success(response.data.message);
-        } catch (error) {
-            const message = error instanceof Error ? error.message : 'Couldn’t clear the override.';
-            toast.error(message);
-        }
-    };
-
     return (
         <div className="space-y-6">
             <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
@@ -440,22 +315,38 @@ export function NotificationSettingsPanel() {
                         if (channelType === 'email') {
                             return (
                                 <article key={channelType} className="px-5 py-5">
-                                    <ChannelHeader
-                                        Icon={Icon}
-                                        channelLabel={channelLabel}
-                                        recipient={channel.effective_recipient || channel.masked_recipient || 'No email configured'}
-                                        helperText={emailHelpText(channel)}
-                                        statusCaption={emailStatusText(channel)}
-                                        availabilityReason={!channel.available ? channel.availability_reason : null}
-                                        toggle={(
-                                            <ChannelEnabledToggle
-                                                channelLabel={channelLabel}
+                                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                        <div className="flex items-start gap-3">
+                                            <Icon className="mt-0.5 h-4 w-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />
+                                            <div className="space-y-1">
+                                                <div className="text-[14px] font-medium text-ink">{channelLabel}</div>
+                                                <div className="text-[13px] text-ink-soft">
+                                                    {channel.effective_recipient || channel.masked_recipient || 'No email configured'}
+                                                </div>
+                                                <div className="text-[12px] text-ink-muted">
+                                                    {emailHelpText(channel)}
+                                                </div>
+                                                <p className="caption">{emailStatusText(channel)}</p>
+                                                {!channel.available && channel.availability_reason && (
+                                                    <p className="inline-block border border-warn/40 bg-warn-soft px-2 py-0.5 text-[12px] text-ink">
+                                                        {channel.availability_reason}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <label className="flex items-center gap-2 self-start border border-rule bg-surface px-3 py-1.5 text-[12px] text-ink-soft">
+                                            <span>Enabled</span>
+                                            <input
+                                                type="checkbox"
                                                 checked={editableChannel.enabled}
                                                 disabled={!canEnable}
-                                                onChange={(checked) => updateChannel(channelType, { enabled: checked })}
+                                                onChange={(event) => updateChannel(channelType, { enabled: event.target.checked })}
+                                                aria-label={`Enable ${channelLabel}`}
+                                                className="h-4 w-4 rounded-sm border-rule accent-accent"
                                             />
-                                        )}
-                                    />
+                                        </label>
+                                    </div>
 
                                     <div className="mt-4 border-t border-rule pt-4">
                                         <label className="block">
@@ -478,7 +369,9 @@ export function NotificationSettingsPanel() {
                                                     size="sm"
                                                     variant="secondary"
                                                     disabled={!emailOverrideAddress.trim() || isSendingEmailVerification}
-                                                    onClick={() => void handleSendEmailVerification()}
+                                                    onClick={() => void sendEmailOverrideVerification({ address: emailOverrideAddress.trim() })
+                                                        .then((response) => toast.success(response.data.message))
+                                                        .catch((error) => toast.error(error instanceof Error ? error.message : 'Verification didn’t send.'))}
                                                 >
                                                     Send verification
                                                 </Button>
@@ -488,7 +381,9 @@ export function NotificationSettingsPanel() {
                                                         size="sm"
                                                         variant="ghost"
                                                         disabled={isClearingEmailOverride}
-                                                        onClick={() => void handleClearEmailOverride()}
+                                                        onClick={() => void clearEmailOverride()
+                                                            .then((response) => toast.success(response.data.message))
+                                                            .catch((error) => toast.error(error instanceof Error ? error.message : 'Couldn’t clear the override.'))}
                                                     >
                                                         Clear override
                                                     </Button>
@@ -497,33 +392,58 @@ export function NotificationSettingsPanel() {
                                         </div>
                                     </div>
 
-                                    <ChannelTestRow
-                                        lastTestStatus={channel.last_test_status}
-                                        canTest={canTest}
-                                        isTesting={isTesting}
-                                        onTest={() => void handleTest(channelType)}
-                                    />
+                                    <div className="mt-4 flex flex-col gap-3 border-t border-rule pt-4 sm:flex-row sm:items-center sm:justify-between">
+                                        <span className="caption">
+                                            Last test: <span className="text-ink-soft">{channel.last_test_status || 'Never'}</span>
+                                        </span>
+                                        <Button
+                                            type="button"
+                                            size="sm"
+                                            variant="secondary"
+                                            disabled={!canTest}
+                                            onClick={() => void handleTest(channelType)}
+                                        >
+                                            <Send className="h-3.5 w-3.5" aria-hidden="true" />
+                                            Test
+                                        </Button>
+                                    </div>
                                 </article>
                             );
                         }
 
                         return (
                             <article key={channelType} className="px-5 py-5">
-                                <ChannelHeader
-                                    Icon={Icon}
-                                    channelLabel={channelLabel}
-                                    recipient={channel.masked_recipient || (channel.configured ? 'Configured' : 'Not configured')}
-                                    helperText={CHANNEL_HELP[channelType] ?? 'Saved destination for notifications.'}
-                                    availabilityReason={!channel.available ? channel.availability_reason : null}
-                                    toggle={(
-                                        <ChannelEnabledToggle
-                                            channelLabel={channelLabel}
+                                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                    <div className="flex items-start gap-3">
+                                        <Icon className="mt-0.5 h-4 w-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />
+                                        <div className="space-y-1">
+                                            <div className="text-[14px] font-medium text-ink">{channelLabel}</div>
+                                            <div className="text-[13px] text-ink-soft">
+                                                {channel.masked_recipient || (channel.configured ? 'Configured' : 'Not configured')}
+                                            </div>
+                                            <div className="text-[12px] text-ink-muted">
+                                                {CHANNEL_HELP[channelType] ?? 'Saved destination for notifications.'}
+                                            </div>
+                                            {!channel.available && channel.availability_reason && (
+                                                <p className="inline-block border border-warn/40 bg-warn-soft px-2 py-0.5 text-[12px] text-ink">
+                                                    {channel.availability_reason}
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <label className="flex items-center gap-2 self-start border border-rule bg-surface px-3 py-1.5 text-[12px] text-ink-soft">
+                                        <span>Enabled</span>
+                                        <input
+                                            type="checkbox"
                                             checked={editableChannel.enabled}
                                             disabled={!canEnable}
-                                            onChange={(checked) => updateChannel(channelType, { enabled: checked })}
+                                            onChange={(event) => updateChannel(channelType, { enabled: event.target.checked })}
+                                            aria-label={`Enable ${channelLabel}`}
+                                            className="h-4 w-4 rounded-sm border-rule accent-accent"
                                         />
-                                    )}
-                                />
+                                    </label>
+                                </div>
 
                                 {SECRET_CHANNELS.has(channelType) && (
                                     <div className="mt-4 border-t border-rule pt-4">
@@ -560,12 +480,21 @@ export function NotificationSettingsPanel() {
                                     </div>
                                 )}
 
-                                <ChannelTestRow
-                                    lastTestStatus={channel.last_test_status}
-                                    canTest={canTest}
-                                    isTesting={isTesting}
-                                    onTest={() => void handleTest(channelType)}
-                                />
+                                <div className="mt-4 flex flex-col gap-3 border-t border-rule pt-4 sm:flex-row sm:items-center sm:justify-between">
+                                    <span className="caption">
+                                        Last test: <span className="text-ink-soft">{channel.last_test_status || 'Never'}</span>
+                                    </span>
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="secondary"
+                                        disabled={!canTest}
+                                        onClick={() => void handleTest(channelType)}
+                                    >
+                                        <Send className="h-3.5 w-3.5" aria-hidden="true" />
+                                        Test
+                                    </Button>
+                                </div>
                             </article>
                         );
                     })}

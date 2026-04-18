@@ -70,6 +70,7 @@ def _extract_requirement_match_data(requirement_match, *, use_getattr: bool):
         'evidence_section': evidence_section,
         'evidence_tags': evidence_tags,
         'similarity': requirement_match.similarity,
+        'evidence_score': getattr(requirement_match, 'evidence_score', None),
         'is_covered': requirement_match.is_covered,
     }
 
@@ -286,6 +287,7 @@ def _build_requirement_record(match_record: JobMatch, requirement_data, *, is_mi
         evidence_section=None if is_missing else requirement_data['evidence_section'],
         evidence_tags={} if is_missing else requirement_data['evidence_tags'],
         similarity_score=_to_float(requirement_data['similarity']),
+        evidence_score=None if is_missing else _to_optional_float(requirement_data.get('evidence_score')),
         is_covered=False if is_missing else requirement_data['is_covered'],
         req_type=requirement_data['req_type'],
     )

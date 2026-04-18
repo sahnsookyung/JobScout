@@ -435,6 +435,7 @@ def test_local_cross_encoder_provider_heuristic_fallback_when_no_runtime_availab
     provider = LocalCrossEncoderProvider(
         model_name="BAAI/bge-reranker-v2-m3",
         runtime="auto",
+        allow_heuristic=True,
     )
 
     provider._load_flag_embedding_runtime = MagicMock(side_effect=ImportError("no flag embedding"))
@@ -445,6 +446,19 @@ def test_local_cross_encoder_provider_heuristic_fallback_when_no_runtime_availab
     assert result is False
     assert provider.provider_id == "heuristic-local"
     assert provider.effective_route_name == "local_heuristic"
+
+
+def test_local_cross_encoder_provider_raises_when_runtimes_fail_and_heuristic_disabled():
+    provider = LocalCrossEncoderProvider(
+        model_name="BAAI/bge-reranker-v2-m3",
+        runtime="auto",
+    )
+
+    provider._load_flag_embedding_runtime = MagicMock(side_effect=ImportError("no flag embedding"))
+    provider._load_sentence_transformers_runtime = MagicMock(side_effect=ImportError("no sentence transformers"))
+
+    with pytest.raises(RuntimeError, match="Local cross-encoder could not be loaded"):
+        provider._load_model()
 
 
 def test_serialize_pair_records_truncation_details():
@@ -695,6 +709,7 @@ def test_cross_encoder_route_policy_remote_without_remote_provider_uses_threshol
         local_provider=LocalCrossEncoderProvider(
             model_name="BAAI/bge-reranker-v2-m3",
             runtime="heuristic",
+            allow_heuristic=True,
         ),
         remote_provider=None,
         fallback_scorer=ThresholdSemanticFitScorer(),
@@ -895,7 +910,7 @@ def test_local_cross_encoder_provider_runtime_helpers():
         runtime="sentence_transformers",
     )
 
-    assert provider._candidate_runtimes() == ["sentence_transformers", "heuristic"]
+    assert provider._candidate_runtimes() == ["sentence_transformers"]
     assert provider._normalize_runtime_scores({"scores": [{"score": 0.3}, [0.5], 0.9]}) == [0.3, 0.5, 0.9]
 
     def factory(model_name, cache_dir=None):
@@ -961,6 +976,7 @@ def test_local_cross_encoder_provider_unknown_runtime_falls_back_to_heuristic():
     provider = LocalCrossEncoderProvider(
         model_name="BAAI/bge-reranker-v2-m3",
         runtime="custom_runtime",
+        allow_heuristic=True,
     )
 
     result = provider._load_model()
@@ -975,6 +991,7 @@ def test_local_cross_encoder_provider_heuristic_scores_pairs():
     provider = LocalCrossEncoderProvider(
         model_name="BAAI/bge-reranker-v2-m3",
         runtime="heuristic",
+        allow_heuristic=True,
     )
 
     assessments, diagnostics = provider.score_pairs([pair])
@@ -990,6 +1007,7 @@ def test_local_cross_encoder_provider_scores_pairs_with_compute_score_runtime():
     provider = LocalCrossEncoderProvider(
         model_name="BAAI/bge-reranker-v2-m3",
         runtime="heuristic",
+        allow_heuristic=True,
     )
     provider._model = types.SimpleNamespace(compute_score=lambda pairs, batch_size=32: [3.0])
     provider._provider_id = "flag_embedding:test"
@@ -1012,6 +1030,7 @@ def test_local_cross_encoder_provider_scores_pairs_with_predict_runtime():
     provider = LocalCrossEncoderProvider(
         model_name="BAAI/bge-reranker-v2-m3",
         runtime="heuristic",
+        allow_heuristic=True,
     )
     provider._model = PredictModel()
     provider._provider_id = "sentence_transformers:test"
@@ -1028,6 +1047,7 @@ def test_local_cross_encoder_provider_raises_for_unsupported_runtime_object():
     provider = LocalCrossEncoderProvider(
         model_name="BAAI/bge-reranker-v2-m3",
         runtime="heuristic",
+        allow_heuristic=True,
     )
     provider._model = object()
     provider._provider_id = "local:test"
@@ -1171,12 +1191,12 @@ def test_llm_semantic_fit_with_no_serialized_pairs_uses_empty_summary():
 
 
 def test_score_text_pairs_heuristic_returns_nonzero_for_overlap():
-    provider = LocalCrossEncoderProvider("heuristic-model", runtime="heuristic")
+    provider = LocalCrossEncoderProvider("heuristic-model", runtime="heuristic", allow_heuristic=True)
     scores = provider.score_text_pairs([("python backend", "Python FastAPI backend service")])
     assert scores[0] > 0.0
 
 
 def test_score_text_pairs_heuristic_returns_zero_for_no_overlap():
-    provider = LocalCrossEncoderProvider("heuristic-model", runtime="heuristic")
+    provider = LocalCrossEncoderProvider("heuristic-model", runtime="heuristic", allow_heuristic=True)
     scores = provider.score_text_pairs([("python", "Java enterprise application")])
     assert scores[0] == 0.0

@@ -70,7 +70,16 @@ class MatchSelectionRepository(BaseRepository):
     def get_items_for_run(
         self,
         selection_run_id: Any,
+        *,
+        tier: Optional[str] = "primary",
     ) -> list[MatchSelectionItem]:
+        """Fetch selection items for a run.
+
+        `tier='primary'` (default) returns only primary-tier items, matching
+        the canonical "selection" semantics. `tier='all'` returns every
+        persisted item (primary + excluded) so callers can surface below-floor
+        context. `tier=None` is a legacy alias for 'all' kept for tests.
+        """
         stmt = (
             select(MatchSelectionItem)
             .where(MatchSelectionItem.selection_run_id == selection_run_id)
@@ -79,7 +88,43 @@ class MatchSelectionRepository(BaseRepository):
             )
             .order_by(MatchSelectionItem.rank_position.asc())
         )
+        if tier == "primary":
+            stmt = stmt.where(MatchSelectionItem.selection_tier == "primary")
         return list(self.db.execute(stmt).scalars().all())
+
+    def count_items_for_run_by_tier(
+        self,
+        selection_run_id: Any,
+    ) -> dict[str, int]:
+        """Return {'primary': N, 'excluded': M} for the run."""
+        from sqlalchemy import func
+
+        stmt = (
+            select(MatchSelectionItem.selection_tier, func.count())
+            .where(MatchSelectionItem.selection_run_id == selection_run_id)
+            .group_by(MatchSelectionItem.selection_tier)
+        )
+        return {row[0]: int(row[1]) for row in self.db.execute(stmt).all()}
+
+    def count_excluded_items_by_reason(
+        self,
+        selection_run_id: Any,
+    ) -> dict[str, int]:
+        """Return {'below_min_fit': N, 'beyond_top_k': M, ...} for excluded items."""
+        from sqlalchemy import func
+
+        stmt = (
+            select(MatchSelectionItem.excluded_reason, func.count())
+            .where(
+                MatchSelectionItem.selection_run_id == selection_run_id,
+                MatchSelectionItem.selection_tier == "excluded",
+            )
+            .group_by(MatchSelectionItem.excluded_reason)
+        )
+        return {
+            (row[0] or "unknown"): int(row[1])
+            for row in self.db.execute(stmt).all()
+        }
 
     def publish_selection_run(
         self,
@@ -138,6 +183,8 @@ class MatchSelectionRepository(BaseRepository):
                     dominant_reason_code=item.dominant_reason_code,
                     explanation_label=item.explanation_label,
                     ranking_snapshot=item.ranking_snapshot,
+                    selection_tier=getattr(item, "selection_tier", "primary"),
+                    excluded_reason=getattr(item, "excluded_reason", None),
                 )
             )
 
