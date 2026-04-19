@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from core.match_selection import resolve_canonical_resume_selection
-from database.models import JobMatch
+from database.models import JobMatch, StructuredResume
 from database.uow import job_uow
 
 from ..dependencies import get_current_user, get_db
@@ -16,6 +16,16 @@ from ..models.responses import StatsResponse
 from ..services.policy_service import get_policy_service
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
+
+
+def _owner_scoped_match_query(db: Session, owner_id: object | None):
+    query = db.query(JobMatch)
+    if owner_id is None:
+        return query
+    return query.join(
+        StructuredResume,
+        StructuredResume.resume_fingerprint == JobMatch.resume_fingerprint,
+    ).filter(StructuredResume.owner_id == owner_id)
 
 
 @router.get("", response_model=StatsResponse)
@@ -72,8 +82,8 @@ def get_stats(
         # Stats should never fail the page; fall back to DB-wide numbers.
         pass
 
-    # Legacy DB-wide numbers (kept for the existing UI dashboard).
-    base_query = db.query(JobMatch)
+    # Legacy dashboard fields stay available, but they must remain user-scoped.
+    base_query = _owner_scoped_match_query(db, owner_id)
     total_matches = base_query.count()
     hidden_count = base_query.filter(JobMatch.is_hidden.is_(True)).count()
     below_threshold_count = base_query.filter(

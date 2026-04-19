@@ -1,6 +1,7 @@
 """Unit tests for the canonical match selection engine."""
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from core.match_selection.engine import select_matches
 from core.ranking import RankingContext, RankingMode
@@ -106,3 +107,29 @@ def test_select_matches_with_zero_top_k_promotes_all_candidates_to_excluded() ->
     assert result.selected_matches == []
     assert [item.selection_tier for item in result.item_snapshots] == ["excluded", "excluded"]
     assert [item.excluded_reason for item in result.item_snapshots] == ["beyond_top_k", "beyond_top_k"]
+
+
+def test_select_matches_truncates_excluded_by_best_fit_not_input_order() -> None:
+    ranking_context = RankingContext(
+        mode=RankingMode.FIT_FIRST,
+        config=RankingConfig(active_default_mode="fit_first"),
+    )
+    matches = [
+        _match("excluded-low", fit_score=35.0, preference_score=0.2, job_similarity=0.4, required_coverage=0.9),
+        _match("excluded-high", fit_score=49.0, preference_score=0.2, job_similarity=0.4, required_coverage=0.9),
+        _match("primary", fit_score=90.0, preference_score=0.2, job_similarity=0.8, required_coverage=0.9),
+    ]
+
+    with patch("core.match_selection.engine.EXCLUDED_STORAGE_CAP", 1):
+        result = select_matches(
+            matches,
+            ranking_context=ranking_context,
+            fit_floor_used=50.0,
+            required_coverage_floor_used=None,
+            top_k_used=1,
+            notification_fit_floor_used=70.0,
+            resume_resolution_reason="test",
+        )
+
+    assert [item.job_id for item in result.item_snapshots] == ["primary", "excluded-high"]
+    assert result.policy_snapshot.ranking_config_snapshot["excluded_truncated_count"] == 1

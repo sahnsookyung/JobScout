@@ -35,6 +35,11 @@ class InvalidPolicyException(ServiceException):
     pass
 
 
+class InvalidMatchOperationException(ServiceException):
+    """Raised when a requested match mutation is not allowed."""
+    pass
+
+
 class NotificationException(ServiceException):
     """Raised when notification fails."""
     pass
@@ -59,6 +64,8 @@ def service_exception_handler(
     status_code = 500
     if isinstance(exc, (MatchNotFoundException, JobNotFoundException)):
         status_code = 404
+    elif isinstance(exc, InvalidMatchOperationException):
+        status_code = 409
     elif isinstance(exc, (InvalidPolicyException, PipelineLockedException)):
         status_code = 400
     

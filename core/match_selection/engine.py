@@ -76,20 +76,25 @@ def select_matches(
             )
         )
 
-    # Excluded tier: beyond_top_k first (already rank-ordered), then floor
-    # failures. Continue rank_position past primary so the unique index
-    # (selection_run_id, rank_position) holds.
-    excluded_candidates: list[tuple[Any, str]] = [
-        (match, "beyond_top_k") for match in beyond_top_k
+    # Excluded tier: retain the top-N excluded entries by fit score, not by
+    # arbitrary arrival order, so storage is deterministic across runs.
+    excluded_candidates: list[tuple[Any, str, int]] = [
+        (match, "beyond_top_k", index) for index, match in enumerate(beyond_top_k)
     ]
-    excluded_candidates.extend(excluded_by_floor)
+    excluded_candidates.extend(
+        (match, reason, len(excluded_candidates) + index)
+        for index, (match, reason) in enumerate(excluded_by_floor)
+    )
+    excluded_candidates.sort(
+        key=lambda item: (-_score(item[0], "fit_score"), item[2])
+    )
 
     # Rollout gate: when TWO_TIER_SELECTION_ENABLED=false we skip excluded
     # persistence so runtime behavior matches the pre-§C single-tier contract.
     excluded_budget = max(0, EXCLUDED_STORAGE_CAP) if two_tier_enabled else 0
     next_rank = len(selected_matches) + 1
     truncated_count = 0
-    for match, reason in excluded_candidates:
+    for match, reason, _original_order in excluded_candidates:
         if excluded_budget <= 0:
             truncated_count += 1
             continue

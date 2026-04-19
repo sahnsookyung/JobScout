@@ -12,7 +12,14 @@ from sqlalchemy.orm import Session
 
 from core.match_selection import resolve_canonical_resume_selection
 from core.ranking import rank_matches, RankingContext, RankingMode, get_ranking_policy_store
-from database.models import JobMatch, JobPost, JobMatchRequirement, StructuredResume
+from database.models import (
+    JobMatch,
+    JobMatchRequirement,
+    JobPost,
+    MatchSelectionItem,
+    MatchSelectionRun,
+    StructuredResume,
+)
 from database.uow import job_uow
 from sqlalchemy.orm import joinedload
 from ..models.responses import (
@@ -23,7 +30,7 @@ from ..models.responses import (
     RequirementDetail
 )
 from ..utils import safe_float, safe_int, safe_str, safe_datetime_iso
-from ..exceptions import MatchNotFoundException
+from ..exceptions import InvalidMatchOperationException, MatchNotFoundException
 
 logger = logging.getLogger(__name__)
 
@@ -337,12 +344,45 @@ class MatchService:
         if not match:
             raise MatchNotFoundException(f"Match {match_id} not found")
 
+        if owner_id is not None and self._selection_tier_for_current_owner_run(
+            match_id,
+            owner_id=owner_id,
+        ) == "excluded":
+            raise InvalidMatchOperationException(
+                "Excluded matches are browse-only and cannot be hidden."
+            )
+
         is_currently_hidden = match.is_hidden or False
         new_status = not is_currently_hidden
         match.is_hidden = new_status
         self.db.commit()
-        
+
         return new_status
+
+    def _selection_tier_for_current_owner_run(
+        self,
+        match_id: str,
+        *,
+        owner_id: Any,
+    ) -> Optional[str]:
+        item = (
+            self.db.query(MatchSelectionItem)
+            .join(
+                MatchSelectionRun,
+                MatchSelectionRun.id == MatchSelectionItem.selection_run_id,
+            )
+            .filter(
+                MatchSelectionItem.job_match_id == match_id,
+                MatchSelectionRun.owner_id == owner_id,
+                MatchSelectionRun.lifecycle_status == "committed",
+                MatchSelectionRun.is_current.is_(True),
+            )
+            .one_or_none()
+        )
+        if item is None:
+            return None
+        tier = getattr(item, "selection_tier", None)
+        return tier if isinstance(tier, str) else None
     
     def get_match_explanation(
         self,

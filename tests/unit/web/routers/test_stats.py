@@ -21,8 +21,11 @@ def _make_query_mock(total=10, hidden=2, below_threshold=1, excellent=4, good=2,
     """Build a mock DB session whose query chain returns the given counts."""
     mock_query = MagicMock()
     mock_query.count.return_value = total
+    mock_query.join.return_value = mock_query
+    mock_query.filter.return_value = mock_query
     # filter().count() calls in order: hidden, below_threshold, excellent, good, average, poor
-    mock_query.filter.return_value.count.side_effect = [
+    mock_query.count.side_effect = [
+        total,
         hidden, below_threshold, excellent, good, average, poor
     ]
     mock_db = MagicMock()
@@ -192,7 +195,15 @@ class TestGetStats:
              patch(
                  "web.backend.routers.stats.resolve_canonical_resume_selection",
                  return_value=None,
-             ):
+            ):
             data = client.get("/api/stats").json()
         assert data["stats"]["primary_count"] == 0
         assert data["stats"]["excluded_count"] == 0
+
+    def test_owner_scoped_legacy_counts_join_structured_resume(self, client, app):
+        mock_db = _make_query_mock()
+        with self._setup(app, mock_db, _make_policy_mock()):
+            response = client.get("/api/stats")
+
+        assert response.status_code == 200
+        mock_db.query.return_value.join.assert_called_once()

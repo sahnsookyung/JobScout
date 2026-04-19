@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..dependencies import get_current_user, get_db
+from ..exceptions import InvalidMatchOperationException
 from ..services.match_service import MatchService
 from ..services.policy_service import get_policy_service
 from ..models.responses import (
@@ -158,7 +159,10 @@ def toggle_match_hidden(
     """
     validate_uuid(match_id)
     service = MatchService(db)
-    new_status = service.toggle_hidden(match_id, owner_id=getattr(user, "id", None))
+    try:
+        new_status = service.toggle_hidden(match_id, owner_id=getattr(user, "id", None))
+    except InvalidMatchOperationException as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     
     return HideMatchResponse(
         success=True,

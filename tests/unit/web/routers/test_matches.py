@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from web.backend.dependencies import get_current_user
+from web.backend.exceptions import InvalidMatchOperationException
 from web.backend.routers.matches import router, validate_uuid
 
 
@@ -362,6 +363,17 @@ class TestMatchesRouter:
 
         assert response.status_code == 400
         assert 'Invalid match_id format' in response.json()['detail']
+
+    def test_toggle_match_hidden_rejects_excluded_match(self, client, mock_match_service):
+        mock_match_service.toggle_hidden.side_effect = InvalidMatchOperationException(
+            "Excluded matches are browse-only and cannot be hidden."
+        )
+
+        match_id = str(uuid.uuid4())
+        response = client.post(f'/api/matches/{match_id}/hide')
+
+        assert response.status_code == 409
+        assert "browse-only" in response.json()["detail"]
 
     def test_get_match_explanation_success(self, client, mock_match_service):
         """Test successful get match explanation."""
