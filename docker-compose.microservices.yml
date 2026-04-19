@@ -31,10 +31,6 @@ x-service-common: &service-common
       max-size: "10m"
       max-file: "3"
 
-include:
-  - path: docker-compose.base.yml
-    include_as: base
-
 services:
   extraction:
     <<: *service-common
