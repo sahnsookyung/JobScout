@@ -482,6 +482,57 @@ describe('NotificationSettingsPanel', () => {
         });
     });
 
+    it('shows direct error messages for verification failures raised as Error objects', async () => {
+        mockUseNotificationSettings.mockReturnValue({
+            settings: {
+                notifications_enabled: true,
+                min_fit_for_alerts: 70,
+                notify_on_new_match: true,
+                notify_on_batch_complete: false,
+                revision: 6,
+                channels: {
+                    email: {
+                        enabled: true,
+                        configured: true,
+                        available: true,
+                        masked_recipient: '***@example.com',
+                        effective_recipient: 'ada@example.com',
+                        override_address: 'ada@example.com',
+                        override_status: 'pending',
+                        availability_reason: null,
+                        last_test_status: null,
+                        last_tested_at: null,
+                        last_test_error: null,
+                    },
+                },
+            },
+            isLoading: false,
+            isSaving: false,
+            isTesting: false,
+            isSendingEmailVerification: false,
+            isClearingEmailOverride: false,
+            saveSettings,
+            sendTest,
+            sendEmailOverrideVerification,
+            clearEmailOverride,
+            verifyEmailOverride,
+        });
+        sendEmailOverrideVerification.mockRejectedValueOnce(new Error('Verification exploded'));
+        clearEmailOverride.mockRejectedValueOnce(new Error('Clear exploded'));
+
+        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+
+        await userEvent.click(screen.getByRole('button', { name: /send verification/i }));
+        await userEvent.click(screen.getByRole('button', { name: /clear override/i }));
+
+        await waitFor(() => {
+            expect(toast.error).toHaveBeenCalledWith('Verification exploded');
+        });
+        await waitFor(() => {
+            expect(toast.error).toHaveBeenCalledWith('Clear exploded');
+        });
+    });
+
     it('updates and tests a non-email channel', async () => {
         const { rerender } = render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
 
@@ -550,6 +601,55 @@ describe('NotificationSettingsPanel', () => {
 
         expect(screen.getByText('Not configured')).toBeInTheDocument();
         expect(screen.getAllByRole('button', { name: /test/i })[1]).toBeDisabled();
+    });
+
+    it('renders configured copy when a saved channel has no masked recipient', () => {
+        mockUseNotificationSettings.mockReturnValue({
+            settings: {
+                notifications_enabled: true,
+                min_fit_for_alerts: 70,
+                notify_on_new_match: true,
+                notify_on_batch_complete: false,
+                revision: 8,
+                channels: {
+                    email: {
+                        enabled: true,
+                        configured: true,
+                        available: true,
+                        masked_recipient: '***@example.com',
+                        availability_reason: null,
+                        last_test_status: null,
+                        last_tested_at: null,
+                        last_test_error: null,
+                    },
+                    discord: {
+                        enabled: false,
+                        configured: true,
+                        available: true,
+                        masked_recipient: null,
+                        availability_reason: null,
+                        last_test_status: null,
+                        last_tested_at: null,
+                        last_test_error: null,
+                    },
+                },
+            },
+            isLoading: false,
+            isSaving: false,
+            isTesting: false,
+            isSendingEmailVerification: false,
+            isClearingEmailOverride: false,
+            saveSettings,
+            sendTest,
+            sendEmailOverrideVerification,
+            clearEmailOverride,
+            verifyEmailOverride,
+        });
+
+        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+
+        expect(screen.getByText('Configured')).toBeInTheDocument();
+        expect(screen.getByText('Uses a saved Discord webhook destination.')).toBeInTheDocument();
     });
 
     it('updates global and email toggles, then tests a configured non-email channel', async () => {

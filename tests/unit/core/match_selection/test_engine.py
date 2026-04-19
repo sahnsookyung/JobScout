@@ -81,3 +81,28 @@ def test_select_matches_applies_required_coverage_floor() -> None:
 
     assert [match.job.id for match in result.selected_matches] == ["kept"]
     assert result.item_snapshots[0].alert_eligible is False
+
+
+def test_select_matches_with_zero_top_k_promotes_all_candidates_to_excluded() -> None:
+    ranking_context = RankingContext(
+        mode=RankingMode.BALANCED,
+        config=RankingConfig(active_default_mode="balanced"),
+    )
+    matches = [
+        _match("first", fit_score=80.0, preference_score=0.2, job_similarity=0.7, required_coverage=0.9),
+        _match("second", fit_score=75.0, preference_score=0.1, job_similarity=0.6, required_coverage=0.8),
+    ]
+
+    result = select_matches(
+        matches,
+        ranking_context=ranking_context,
+        fit_floor_used=50.0,
+        required_coverage_floor_used=None,
+        top_k_used=0,
+        notification_fit_floor_used=70.0,
+        resume_resolution_reason="test",
+    )
+
+    assert result.selected_matches == []
+    assert [item.selection_tier for item in result.item_snapshots] == ["excluded", "excluded"]
+    assert [item.excluded_reason for item in result.item_snapshots] == ["beyond_top_k", "beyond_top_k"]

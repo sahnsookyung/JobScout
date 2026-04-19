@@ -377,6 +377,17 @@ class TestUserNotificationSettingsService:
         assert email_target.recipient == user.email
         assert in_app_target.recipient == str(user.id)
 
+    def test_resolved_recipient_requires_email_target(self):
+        user = _make_user(email="")
+        service, _, _ = _make_service(
+            user=user,
+            settings=None,
+            channels={"email": _make_channel("email")},
+        )
+
+        with pytest.raises(NotificationConfigurationError, match="Email recipient is missing"):
+            service._resolved_recipient(user, "email")
+
     def test_resolve_delivery_target_decrypts_secret_channels(self):
         user = _make_user()
         discord_channel = _make_channel(
@@ -424,6 +435,16 @@ class TestUserNotificationSettingsService:
         service._apply_channel_update(user, channel, {})
         assert channel.configured is True
         assert channel.masked_recipient == "https://hooks.example.com/h"
+
+    def test_apply_channel_update_marks_email_unconfigured_without_recipient(self):
+        user = _make_user(email="")
+        service, _, _ = _make_service(user=user, settings=None, channels={})
+        channel = _make_channel("email")
+
+        service._apply_channel_update(user, channel, {})
+
+        assert channel.configured is False
+        assert channel.masked_recipient is None
 
     @patch("notification.user_settings._channel_available", return_value=(True, None))
     def test_channel_snapshot_uses_channel_state(self, mock_available):

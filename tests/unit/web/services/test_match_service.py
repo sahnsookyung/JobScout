@@ -1046,6 +1046,10 @@ class TestPreferenceStatusHelper:
         match = SimpleNamespace(ranking_snapshot=None, preference_components=None)
         assert real_service._preference_status(match) is None
 
+    def test_returns_none_when_components_have_no_mode_or_fallback(self, real_service):
+        match = SimpleNamespace(ranking_snapshot=None, preference_components={})
+        assert real_service._preference_status(match) is None
+
 
 class TestSelectionItemFiltersByTier:
     def test_excluded_tier_skips_status_and_hidden_filters(self, real_service):

@@ -677,6 +677,22 @@ class TestEmailRegexAndHelpers:
         assert started == now
         assert count == 0
 
+    def test_email_channel_returns_none_for_missing_or_invalid_payload(self):
+        assert NotificationServiceWrapper._email_channel({}) is None
+        assert NotificationServiceWrapper._email_channel({"channels": {"email": "not-a-dict"}}) is None
+
+    def test_verification_window_normalizes_naive_timestamp_to_utc(self):
+        now = datetime(2026, 4, 18, 12, 0, tzinfo=timezone.utc)
+        started, count = NotificationServiceWrapper._verification_window(
+            {
+                "verification_window_started_at": "2026-04-18T10:00:00",
+                "verification_send_count": 2,
+            },
+            now,
+        )
+        assert started == datetime(2026, 4, 18, 10, 0, tzinfo=timezone.utc)
+        assert count == 2
+
     def test_hash_token_produces_stable_hex(self):
         h1 = NotificationServiceWrapper._hash_token("abc")
         h2 = NotificationServiceWrapper._hash_token("abc")

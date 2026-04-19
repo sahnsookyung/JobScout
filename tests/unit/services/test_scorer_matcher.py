@@ -916,5 +916,78 @@ class TestRunMatchingPipelineSync:
             )
 
 
+class TestWarmUpCrossEncoder:
+    """`_warm_up_cross_encoder` decides strict-vs-lenient based on env."""
+
+    def _config(self, *, enabled=True, batch_size=8, runtime="auto"):
+        return SimpleNamespace(matching=SimpleNamespace(scorer=SimpleNamespace(
+            semantic_fit=SimpleNamespace(cross_encoder=SimpleNamespace(local=SimpleNamespace(
+                enabled=enabled,
+                model_name="bge-test",
+                model_cache_path=None,
+                runtime=runtime,
+                max_batch_size=batch_size,
+                trust_remote_code=False,
+            )))
+        )))
+
+    def test_skipped_when_local_provider_disabled(self, caplog):
+        from services.scorer_matcher.main import _warm_up_cross_encoder
+        with patch(
+            "core.scorer.semantic_fit.LocalCrossEncoderProvider"
+        ) as mock_provider_cls:
+            _warm_up_cross_encoder(self._config(enabled=False))
+        mock_provider_cls.assert_not_called()
+
+    def test_skipped_when_max_batch_size_unparseable(self):
+        from services.scorer_matcher.main import _warm_up_cross_encoder
+        with patch(
+            "core.scorer.semantic_fit.LocalCrossEncoderProvider"
+        ) as mock_provider_cls:
+            _warm_up_cross_encoder(self._config(batch_size="not-an-int"))
+        mock_provider_cls.assert_not_called()
+
+    def test_success_path_logs_diagnostics(self, monkeypatch, caplog):
+        import logging as _logging
+        from services.scorer_matcher.main import _warm_up_cross_encoder
+        provider = Mock()
+        provider.warm_up.return_value = {
+            "provider_route": "local_native",
+            "canary_score": 0.42,
+        }
+        with patch(
+            "core.scorer.semantic_fit.LocalCrossEncoderProvider",
+            return_value=provider,
+        ), caplog.at_level(_logging.INFO, logger="services.scorer_matcher.main"):
+            _warm_up_cross_encoder(self._config())
+        provider.warm_up.assert_called_once()
+        assert any("Cross-encoder warm-up succeeded" in r.getMessage() for r in caplog.records)
+
+    def test_failure_strict_raises(self, monkeypatch):
+        from services.scorer_matcher.main import _warm_up_cross_encoder
+        monkeypatch.setenv("MATCHER_STRICT_WARMUP", "true")
+        provider = Mock()
+        provider.warm_up.side_effect = RuntimeError("boom")
+        with patch(
+            "core.scorer.semantic_fit.LocalCrossEncoderProvider",
+            return_value=provider,
+        ), pytest.raises(RuntimeError, match="boom"):
+            _warm_up_cross_encoder(self._config())
+
+    def test_failure_lenient_logs_warning_and_continues(self, monkeypatch, caplog):
+        import logging as _logging
+        from services.scorer_matcher.main import _warm_up_cross_encoder
+        monkeypatch.setenv("MATCHER_STRICT_WARMUP", "false")
+        provider = Mock()
+        provider.warm_up.side_effect = RuntimeError("boom")
+        with patch(
+            "core.scorer.semantic_fit.LocalCrossEncoderProvider",
+            return_value=provider,
+        ), caplog.at_level(_logging.WARNING, logger="services.scorer_matcher.main"):
+            _warm_up_cross_encoder(self._config())  # must not raise
+        warned = [r for r in caplog.records if "MATCHER_STRICT_WARMUP=false" in r.getMessage()]
+        assert warned
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

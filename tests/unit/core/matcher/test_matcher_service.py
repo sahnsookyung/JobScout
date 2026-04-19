@@ -355,3 +355,21 @@ class TestBuildPreliminary:
         result = service._build_preliminary(repo, mock_job, 0.0, "fp-1")
         assert result.job_similarity == pytest.approx(0.0)
         assert result.retrieval_score == pytest.approx(0.0)
+
+    @patch("core.matcher.service.rerank_requirement_evidence")
+    def test_reranks_requirement_evidence_when_cross_encoder_available(self, mock_rerank):
+        service, _, _ = make_service()
+        repo = make_repo()
+        mock_job = MagicMock()
+        mock_job.requirements = ["req-1"]
+        matched = [MagicMock()]
+        missing = [MagicMock()]
+        service.requirement_matcher.match_requirements.return_value = (matched, missing)
+        service.cross_encoder_provider = MagicMock()
+
+        service._build_preliminary(repo, mock_job, 0.85, "fp-1")
+
+        mock_rerank.assert_called_once_with(
+            provider=service.cross_encoder_provider,
+            requirement_matches=matched + missing,
+        )
