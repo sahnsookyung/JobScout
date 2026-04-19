@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from types import SimpleNamespace
 
-import pytest
-
 from services.scorer_matcher.candidate_preferences import PreferenceStatus
 from services.scorer_matcher.pipeline import (
     _count_reranked_requirements,

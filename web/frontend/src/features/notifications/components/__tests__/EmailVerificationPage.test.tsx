@@ -55,4 +55,31 @@ describe('EmailVerificationPage', () => {
 
         expect(screen.getByRole('heading', { name: /verification didn’t complete/i })).toBeInTheDocument();
     });
+
+    it('reads the token from the query string and clears the URL', async () => {
+        globalThis.history.replaceState({}, '', '/verify-email?token=query-token');
+        mockNotificationSettingsApi.verifyEmailOverride.mockResolvedValue({
+            data: { success: true, message: 'Verified from query string.' },
+        } as never);
+
+        render(<EmailVerificationPage />);
+
+        await waitFor(() => {
+            expect(mockNotificationSettingsApi.verifyEmailOverride).toHaveBeenCalledWith({
+                token: 'query-token',
+            });
+        });
+        expect(globalThis.location.pathname + globalThis.location.search + globalThis.location.hash).toBe('/verify-email');
+    });
+
+    it('uses a fallback message when the verification request rejects with a non-error', async () => {
+        globalThis.history.replaceState({}, '', '/verify-email#token=bad-value');
+        mockNotificationSettingsApi.verifyEmailOverride.mockRejectedValue('bad value');
+
+        render(<EmailVerificationPage />);
+
+        await waitFor(() => {
+            expect(screen.getByRole('alert')).toHaveTextContent('Verification failed.');
+        });
+    });
 });

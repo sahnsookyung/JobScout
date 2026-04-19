@@ -687,7 +687,7 @@ class TestEmailRegexAndHelpers:
 @patch("web.backend.services.notification_service.UserNotificationSettingsService")
 @patch("web.backend.services.notification_service.NotificationService")
 @patch("web.backend.services.notification_service.JobRepository")
-@patch("web.backend.services.notification_service.get_config", side_effect=lambda: _baseline_config())
+@patch("web.backend.services.notification_service.get_config", side_effect=_baseline_config)
 def _build_wrapper(
     mock_get_config,
     mock_repo_class,

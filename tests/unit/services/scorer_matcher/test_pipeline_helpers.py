@@ -370,12 +370,18 @@ class TestEvidenceRerankProvider:
         assert _resolve_evidence_rerank_provider(cfg) is None
 
     def test_uses_shared_provider_when_enabled(self, monkeypatch):
-        import services.scorer_matcher.pipeline as pl
+        from services.scorer_matcher.pipeline import _resolve_evidence_rerank_provider
+
         seen_kwargs = {}
+
         def fake_get(**kwargs):
             seen_kwargs.update(kwargs)
             return Mock(name="shared-provider")
-        monkeypatch.setattr(pl, "get_shared_local_cross_encoder_provider", fake_get)
+
+        monkeypatch.setattr(
+            "services.scorer_matcher.pipeline.get_shared_local_cross_encoder_provider",
+            fake_get,
+        )
         cfg = SimpleNamespace(
             evidence_rerank_enabled=True,
             cross_encoder=SimpleNamespace(local=SimpleNamespace(
@@ -387,7 +393,7 @@ class TestEvidenceRerankProvider:
                 trust_remote_code=False,
             )),
         )
-        provider = pl._resolve_evidence_rerank_provider(cfg)
+        provider = _resolve_evidence_rerank_provider(cfg)
         assert provider is not None
         assert seen_kwargs["model_name"] == "bge"
         assert seen_kwargs["cache_path"] == "/cache"

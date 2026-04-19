@@ -470,9 +470,8 @@ def apply_preference_semantic_reranking(
         )
 
     logger.info(
-        "Preference reranking applied: mode_requested=%s mode_effective=%s matches=%d",
-        _safe_mode(requested_mode),
-        _safe_mode(effective_mode),
+        "Preference reranking applied: effective_judge_mode=%s matches=%d",
+        effective_mode == "llm_judge",
         len(scored_matches),
     )
     return _apply_assessments(

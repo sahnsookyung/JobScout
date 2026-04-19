@@ -387,4 +387,241 @@ describe('NotificationSettingsPanel', () => {
 
         expect(container.querySelectorAll('.animate-pulse')).toHaveLength(3);
     });
+
+    it('renders email fallback copy and blocks unavailable email toggles', () => {
+        mockUseNotificationSettings.mockReturnValue({
+            settings: {
+                notifications_enabled: true,
+                min_fit_for_alerts: 70,
+                notify_on_new_match: true,
+                notify_on_batch_complete: false,
+                revision: 5,
+                channels: {
+                    email: {
+                        enabled: false,
+                        configured: false,
+                        available: false,
+                        masked_recipient: null,
+                        override_address: null,
+                        override_status: 'none',
+                        availability_reason: 'Email delivery is disabled for this account',
+                        last_test_status: null,
+                        last_tested_at: null,
+                        last_test_error: null,
+                    },
+                },
+            },
+            isLoading: false,
+            isSaving: false,
+            isTesting: false,
+            isSendingEmailVerification: false,
+            isClearingEmailOverride: false,
+            saveSettings,
+            sendTest,
+            sendEmailOverrideVerification,
+            clearEmailOverride,
+            verifyEmailOverride,
+        });
+
+        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+
+        expect(screen.getByText('No email configured')).toBeInTheDocument();
+        expect(screen.getByText('Email delivery is disabled for this account')).toBeInTheDocument();
+        expect(screen.getByRole('checkbox', { name: 'Enable Email' })).toBeDisabled();
+        expect(screen.getByRole('button', { name: /test/i })).toBeDisabled();
+    });
+
+    it('shows default error toasts for non-error verification failures', async () => {
+        mockUseNotificationSettings.mockReturnValue({
+            settings: {
+                notifications_enabled: true,
+                min_fit_for_alerts: 70,
+                notify_on_new_match: true,
+                notify_on_batch_complete: false,
+                revision: 6,
+                channels: {
+                    email: {
+                        enabled: true,
+                        configured: true,
+                        available: true,
+                        masked_recipient: '***@example.com',
+                        effective_recipient: 'ada@example.com',
+                        override_address: 'ada@example.com',
+                        override_status: 'pending',
+                        availability_reason: null,
+                        last_test_status: null,
+                        last_tested_at: null,
+                        last_test_error: null,
+                    },
+                },
+            },
+            isLoading: false,
+            isSaving: false,
+            isTesting: false,
+            isSendingEmailVerification: false,
+            isClearingEmailOverride: false,
+            saveSettings,
+            sendTest,
+            sendEmailOverrideVerification,
+            clearEmailOverride,
+            verifyEmailOverride,
+        });
+        sendEmailOverrideVerification.mockRejectedValueOnce('bad send');
+        clearEmailOverride.mockRejectedValueOnce('bad clear');
+
+        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+
+        await userEvent.click(screen.getByRole('button', { name: /send verification/i }));
+        await userEvent.click(screen.getByRole('button', { name: /clear override/i }));
+
+        await waitFor(() => {
+            expect(toast.error).toHaveBeenCalledWith('Verification didn’t send.');
+        });
+        await waitFor(() => {
+            expect(toast.error).toHaveBeenCalledWith('Couldn’t clear the override.');
+        });
+    });
+
+    it('updates and tests a non-email channel', async () => {
+        const { rerender } = render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+
+        await userEvent.click(screen.getByRole('checkbox', { name: 'Enable Discord' }));
+        const testButtons = screen.getAllByRole('button', { name: /test/i });
+        expect(testButtons[1]).toBeDisabled();
+
+        await userEvent.click(screen.getByRole('button', { name: /save settings/i }));
+
+        await waitFor(() => {
+            expect(saveSettings).toHaveBeenCalledWith({
+                notifications_enabled: true,
+                min_fit_for_alerts: 70,
+                notify_on_new_match: true,
+                notify_on_batch_complete: false,
+                channels: {
+                    email: { enabled: true },
+                    discord: { enabled: true },
+                },
+            });
+        });
+
+        mockUseNotificationSettings.mockReturnValue({
+            settings: {
+                notifications_enabled: true,
+                min_fit_for_alerts: 70,
+                notify_on_new_match: true,
+                notify_on_batch_complete: false,
+                revision: 3,
+                channels: {
+                    email: {
+                        enabled: true,
+                        configured: true,
+                        available: true,
+                        masked_recipient: '***@example.com',
+                        availability_reason: null,
+                        last_test_status: null,
+                        last_tested_at: null,
+                        last_test_error: null,
+                    },
+                    discord: {
+                        enabled: true,
+                        configured: false,
+                        available: true,
+                        masked_recipient: null,
+                        availability_reason: null,
+                        last_test_status: null,
+                        last_tested_at: null,
+                        last_test_error: null,
+                    },
+                },
+            },
+            isLoading: false,
+            isSaving: false,
+            isTesting: false,
+            isSendingEmailVerification: false,
+            isClearingEmailOverride: false,
+            saveSettings,
+            sendTest,
+            sendEmailOverrideVerification,
+            clearEmailOverride,
+            verifyEmailOverride,
+        });
+
+        rerender(<NotificationSettingsPanel />);
+
+        expect(screen.getByText('Not configured')).toBeInTheDocument();
+        expect(screen.getAllByRole('button', { name: /test/i })[1]).toBeDisabled();
+    });
+
+    it('updates global and email toggles, then tests a configured non-email channel', async () => {
+        const { rerender } = render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+
+        await userEvent.click(screen.getByRole('checkbox', { name: 'Enable notifications' }));
+        await userEvent.click(screen.getByRole('checkbox', { name: 'Notify on new saved matches' }));
+        await userEvent.click(screen.getByRole('checkbox', { name: 'Notify when a batch finishes' }));
+        await userEvent.click(screen.getByRole('checkbox', { name: 'Enable Email' }));
+        await userEvent.click(screen.getByRole('button', { name: /save settings/i }));
+
+        await waitFor(() => {
+            expect(saveSettings).toHaveBeenCalledWith({
+                notifications_enabled: false,
+                min_fit_for_alerts: 70,
+                notify_on_new_match: false,
+                notify_on_batch_complete: true,
+                channels: {
+                    email: { enabled: false },
+                    discord: { enabled: false },
+                },
+            });
+        });
+
+        mockUseNotificationSettings.mockReturnValue({
+            settings: {
+                notifications_enabled: false,
+                min_fit_for_alerts: 70,
+                notify_on_new_match: false,
+                notify_on_batch_complete: true,
+                revision: 7,
+                channels: {
+                    email: {
+                        enabled: false,
+                        configured: true,
+                        available: true,
+                        masked_recipient: '***@example.com',
+                        availability_reason: null,
+                        last_test_status: null,
+                        last_tested_at: null,
+                        last_test_error: null,
+                    },
+                    discord: {
+                        enabled: false,
+                        configured: true,
+                        available: true,
+                        masked_recipient: 'https://discord.com/api/webhooks/...',
+                        availability_reason: null,
+                        last_test_status: null,
+                        last_tested_at: null,
+                        last_test_error: null,
+                    },
+                },
+            },
+            isLoading: false,
+            isSaving: false,
+            isTesting: false,
+            isSendingEmailVerification: false,
+            isClearingEmailOverride: false,
+            saveSettings,
+            sendTest,
+            sendEmailOverrideVerification,
+            clearEmailOverride,
+            verifyEmailOverride,
+        });
+
+        rerender(<NotificationSettingsPanel />);
+
+        await userEvent.click(screen.getAllByRole('button', { name: /test/i })[1]);
+
+        await waitFor(() => {
+            expect(sendTest).toHaveBeenCalledWith({ channel_type: 'discord' });
+        });
+    });
 });
