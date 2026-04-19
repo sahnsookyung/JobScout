@@ -420,3 +420,70 @@ class TestNotificationsRouter:
         assert response.status_code == 200
         assert response.json()["message"] == "Email override verified"
         mock_notification_service.verify_email_override.assert_called_once_with("very-secret-token")
+
+    def test_create_email_override_invalid_address_returns_400(self, client, mock_notification_service):
+        from notification.exceptions import NotificationConfigurationError
+        mock_notification_service.send_email_override_verification.side_effect = (
+            NotificationConfigurationError(
+                "Enter a valid email address", failure_class="email_invalid"
+            )
+        )
+        response = client.post(
+            "/api/v1/notification-settings/email/override",
+            json={"address": "bad"},
+        )
+        assert response.status_code == 400
+        assert "valid email" in response.json()["detail"]
+
+    def test_create_email_override_rate_limited_returns_429_with_retry_after(self, client, mock_notification_service):
+        from web.backend.services.notification_service import NotificationRateLimitError
+        mock_notification_service.send_email_override_verification.side_effect = (
+            NotificationRateLimitError("too soon", retry_after=42)
+        )
+        response = client.post(
+            "/api/v1/notification-settings/email/override",
+            json={"address": "alerts@example.com"},
+        )
+        assert response.status_code == 429
+        assert response.headers.get("Retry-After") == "42"
+
+    def test_create_email_override_rate_limited_without_retry_after(self, client, mock_notification_service):
+        from web.backend.services.notification_service import NotificationRateLimitError
+        mock_notification_service.send_email_override_verification.side_effect = (
+            NotificationRateLimitError("busy", retry_after=None)
+        )
+        response = client.post(
+            "/api/v1/notification-settings/email/override",
+            json={"address": "alerts@example.com"},
+        )
+        assert response.status_code == 429
+        assert response.headers.get("Retry-After") is None
+
+    def test_verify_email_override_invalid_token_returns_400(self, client, mock_notification_service):
+        from notification.exceptions import NotificationConfigurationError
+        mock_notification_service.verify_email_override.side_effect = (
+            NotificationConfigurationError(
+                "Verification link has expired", failure_class="verification_expired"
+            )
+        )
+        response = client.post(
+            "/api/v1/notification-settings/email/verify",
+            json={"token": "expired-token"},
+        )
+        assert response.status_code == 400
+
+    def test_delete_email_override_clears_and_returns_channel(self, client, mock_notification_service):
+        mock_notification_service.clear_email_override.return_value = {
+            "enabled": True,
+            "configured": True,
+            "available": True,
+            "availability_reason": None,
+            "masked_recipient": "***@example.com",
+            "override_address": None,
+            "override_status": "none",
+            "override_verified_at": None,
+        }
+        response = client.delete("/api/v1/notification-settings/email/override")
+        assert response.status_code == 200
+        assert response.json()["message"] == "Email override cleared"
+        mock_notification_service.clear_email_override.assert_called_once()

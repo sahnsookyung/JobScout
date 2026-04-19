@@ -45,6 +45,20 @@ def rerank_requirement_evidence(
     if not materialized:
         return
 
+    flat_pairs, offsets = _flatten_pairs(materialized)
+    if not flat_pairs:
+        return
+
+    scores = _score_or_none(provider, flat_pairs)
+    if scores is None:
+        return
+
+    _apply_scores(materialized, offsets, scores, total=len(flat_pairs))
+
+
+def _flatten_pairs(
+    materialized: List[RequirementMatchResult],
+) -> tuple[List[tuple[str, str]], List[tuple[int, int]]]:
     flat_pairs: List[tuple[str, str]] = []
     offsets: List[tuple[int, int]] = []
     for idx, result in enumerate(materialized):
@@ -54,41 +68,54 @@ def rerank_requirement_evidence(
         start = len(flat_pairs)
         for candidate in result.evidence_candidates:
             cand_text = _evidence_text(candidate)
-            if not cand_text:
-                continue
-            flat_pairs.append((req_text, cand_text))
+            if cand_text:
+                flat_pairs.append((req_text, cand_text))
         offsets.append((idx, start))
+    return flat_pairs, offsets
 
-    if not flat_pairs:
-        return
 
+def _score_or_none(
+    provider: CrossEncoderLike, pairs: List[tuple[str, str]]
+) -> List[float] | None:
     try:
-        scores = provider.score_text_pairs(flat_pairs)
+        return provider.score_text_pairs(pairs)
     except Exception as exc:  # noqa: BLE001 — reranker degrades gracefully
-        logger.warning("Evidence rerank failed; keeping vector-similarity evidence: %s", exc)
-        return
+        logger.warning(
+            "Evidence rerank failed; keeping vector-similarity evidence: %s", exc
+        )
+        return None
 
+
+def _apply_scores(
+    materialized: List[RequirementMatchResult],
+    offsets: List[tuple[int, int]],
+    scores: List[float],
+    *,
+    total: int,
+) -> None:
     for position, (result_idx, start) in enumerate(offsets):
-        end_next = offsets[position + 1][1] if position + 1 < len(offsets) else len(flat_pairs)
-        window_scores = scores[start:end_next]
-        if not window_scores:
+        end = offsets[position + 1][1] if position + 1 < len(offsets) else total
+        window = scores[start:end]
+        if not window:
             continue
-        result = materialized[result_idx]
-        candidates = [
-            c for c in result.evidence_candidates if _evidence_text(c)
-        ]
-        if len(candidates) != len(window_scores):
-            logger.debug(
-                "Rerank skipped requirement idx=%d: candidate/score mismatch (%d vs %d)",
-                result_idx, len(candidates), len(window_scores),
-            )
-            continue
-        best_index = max(range(len(window_scores)), key=lambda i: window_scores[i])
-        best_score = float(window_scores[best_index])
-        best_candidate = candidates[best_index]
-        result.evidence = best_candidate.evidence
-        result.similarity = float(best_candidate.similarity or 0.0)
-        result.evidence_score = best_score
+        _update_best_evidence(materialized[result_idx], window, result_idx)
+
+
+def _update_best_evidence(
+    result: RequirementMatchResult, window_scores: List[float], result_idx: int
+) -> None:
+    candidates = [c for c in result.evidence_candidates if _evidence_text(c)]
+    if len(candidates) != len(window_scores):
+        logger.debug(
+            "Rerank skipped requirement idx=%d: candidate/score mismatch (%d vs %d)",
+            result_idx, len(candidates), len(window_scores),
+        )
+        return
+    best_index = max(range(len(window_scores)), key=window_scores.__getitem__)
+    best_candidate = candidates[best_index]
+    result.evidence = best_candidate.evidence
+    result.similarity = float(best_candidate.similarity or 0.0)
+    result.evidence_score = float(window_scores[best_index])
 
 
 def _requirement_text(result: RequirementMatchResult) -> str:

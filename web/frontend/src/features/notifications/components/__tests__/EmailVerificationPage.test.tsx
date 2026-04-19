@@ -15,7 +15,7 @@ const mockNotificationSettingsApi = vi.mocked(notificationSettingsApi);
 describe('EmailVerificationPage', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        window.history.replaceState({}, '', '/verify-email');
+        globalThis.history.replaceState({}, '', '/verify-email');
     });
 
     it('shows a missing-token error immediately', () => {
@@ -26,7 +26,7 @@ describe('EmailVerificationPage', () => {
     });
 
     it('renders a success message after verifying the token', async () => {
-        window.history.replaceState({}, '', '/verify-email#token=abc123');
+        globalThis.history.replaceState({}, '', '/verify-email#token=abc123');
         mockNotificationSettingsApi.verifyEmailOverride.mockResolvedValue({
             data: { success: true, message: 'Email override verified.' },
         } as never);
@@ -44,7 +44,7 @@ describe('EmailVerificationPage', () => {
     });
 
     it('surfaces verification failures from the API', async () => {
-        window.history.replaceState({}, '', '/verify-email#token=expired');
+        globalThis.history.replaceState({}, '', '/verify-email#token=expired');
         mockNotificationSettingsApi.verifyEmailOverride.mockRejectedValue(new Error('Link expired.'));
 
         render(<EmailVerificationPage />);

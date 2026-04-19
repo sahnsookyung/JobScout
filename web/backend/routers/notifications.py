@@ -151,6 +151,10 @@ def send_notification_settings_test(
 @router.post(
     "/api/v1/notification-settings/email/override",
     response_model=NotificationEmailOverrideResponse,
+    responses={
+        400: {"description": "Invalid override email address"},
+        429: {"description": "Verification send rate-limited"},
+    },
 )
 def create_email_override(
     request: NotificationEmailOverrideRequest,
@@ -175,6 +179,9 @@ def create_email_override(
 @router.post(
     "/api/v1/notification-settings/email/verify",
     response_model=NotificationEmailOverrideResponse,
+    responses={
+        400: {"description": "Invalid or expired verification token"},
+    },
 )
 def verify_email_override(
     request: NotificationEmailVerificationRequest,

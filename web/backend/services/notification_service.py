@@ -20,7 +20,11 @@ from database.repository import JobRepository
 from web.backend.config import get_config
 
 logger = logging.getLogger(__name__)
-EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_EMAIL_LOCAL = r"[^@\s]{1,64}"
+_EMAIL_DOMAIN_LABEL = r"[^@\s\.]{1,63}"
+EMAIL_RE = re.compile(
+    rf"^{_EMAIL_LOCAL}@{_EMAIL_DOMAIN_LABEL}(?:\.{_EMAIL_DOMAIN_LABEL}){{1,10}}$"
+)
 
 
 class NotificationRateLimitError(Exception):
@@ -183,7 +187,7 @@ class NotificationServiceWrapper:
 
     def send_email_override_verification(self, user, address: str) -> Dict[str, Any]:
         normalized = address.strip().lower()
-        if not EMAIL_RE.match(normalized):
+        if len(normalized) > 320 or not EMAIL_RE.match(normalized):
             raise NotificationConfigurationError(
                 "Enter a valid email address",
                 failure_class="email_invalid",

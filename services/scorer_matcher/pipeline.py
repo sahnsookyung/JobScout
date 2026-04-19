@@ -772,6 +772,51 @@ def _run_preliminary_matching(
     return preliminary_matches
 
 
+def _tier_breakdown(
+    item_snapshots: List[MatchSelectionItemSnapshot],
+) -> tuple[Dict[str, int], Dict[str, int]]:
+    tier_counts: Dict[str, int] = {}
+    excluded_reasons: Dict[str, int] = {}
+    for item in item_snapshots:
+        tier = getattr(item, "selection_tier", "primary") or "primary"
+        tier_counts[tier] = tier_counts.get(tier, 0) + 1
+        if tier != "primary":
+            reason = getattr(item, "excluded_reason", None) or "unspecified"
+            excluded_reasons[reason] = excluded_reasons.get(reason, 0) + 1
+    return tier_counts, excluded_reasons
+
+
+def _count_reranked_requirements(match_dtos: List[MatchResultDTO]) -> int:
+    return sum(
+        1
+        for dto in match_dtos
+        for req in (getattr(dto, "requirement_matches", []) or [])
+        if getattr(req, "evidence_score", None) is not None
+    )
+
+
+def _degraded_reason_breakdown(match_dtos: List[MatchResultDTO]) -> Dict[str, int]:
+    degraded: Dict[str, int] = {}
+    for dto in match_dtos:
+        components = getattr(dto, "fit_components", None)
+        if not isinstance(components, dict):
+            continue
+        raw = components.get("semantic_fit_fallback_reason")
+        if raw:
+            key = str(raw)
+            degraded[key] = degraded.get(key, 0) + 1
+    return degraded
+
+
+def _truncated_excluded_count(
+    policy_snapshot: Optional[MatchSelectionPolicySnapshot],
+) -> int:
+    if policy_snapshot is None:
+        return 0
+    snapshot = getattr(policy_snapshot, "ranking_config_snapshot", None) or {}
+    return int(snapshot.get("excluded_truncated_count", 0) or 0)
+
+
 def _log_pipeline_run_summary(
     *,
     match_dtos: List[MatchResultDTO],
@@ -786,33 +831,10 @@ def _log_pipeline_run_summary(
     and preference-reranker status. `extra` keys land in structured-log sinks
     (JSON formatter / Loki) as queryable fields.
     """
-    tier_counts: Dict[str, int] = {}
-    excluded_reasons: Dict[str, int] = {}
-    for item in item_snapshots:
-        tier = getattr(item, "selection_tier", "primary") or "primary"
-        tier_counts[tier] = tier_counts.get(tier, 0) + 1
-        if tier != "primary":
-            reason = getattr(item, "excluded_reason", None) or "unspecified"
-            excluded_reasons[reason] = excluded_reasons.get(reason, 0) + 1
-
-    evidence_rerank_count = 0
-    for dto in match_dtos:
-        for req in getattr(dto, "requirement_matches", []) or []:
-            if getattr(req, "evidence_score", None) is not None:
-                evidence_rerank_count += 1
-
-    degraded_reasons: Dict[str, int] = {}
-    for dto in match_dtos:
-        components = getattr(dto, "fit_components", None) or {}
-        raw = components.get("semantic_fit_fallback_reason") if isinstance(components, dict) else None
-        if raw:
-            key = str(raw)
-            degraded_reasons[key] = degraded_reasons.get(key, 0) + 1
-
-    truncated_excluded = 0
-    if policy_snapshot is not None:
-        snapshot = getattr(policy_snapshot, "ranking_config_snapshot", None) or {}
-        truncated_excluded = int(snapshot.get("excluded_truncated_count", 0) or 0)
+    tier_counts, excluded_reasons = _tier_breakdown(item_snapshots)
+    evidence_rerank_count = _count_reranked_requirements(match_dtos)
+    degraded_reasons = _degraded_reason_breakdown(match_dtos)
+    truncated_excluded = _truncated_excluded_count(policy_snapshot)
 
     logger.info(
         "pipeline.run_summary selected=%d tier_counts=%s excluded_reasons=%s "

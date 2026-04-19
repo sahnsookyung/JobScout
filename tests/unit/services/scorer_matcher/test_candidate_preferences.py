@@ -547,6 +547,73 @@ class TestPreferenceSemanticReranking:
         }
 
 
+class TestPreferenceStatusDataclass:
+    """The PreferenceStatus.to_dict path is the public contract used by the
+    pipeline summary log + the API badge — its shape needs explicit pinning."""
+
+    def test_minimal_payload_only_includes_applied_flag(self):
+        from services.scorer_matcher.candidate_preferences import PreferenceStatus
+        assert PreferenceStatus(applied=True).to_dict() == {"applied": True}
+
+    def test_full_payload_includes_all_present_fields(self):
+        from services.scorer_matcher.candidate_preferences import PreferenceStatus
+        status = PreferenceStatus(
+            applied=False,
+            reason="runtime_error:ValueError",
+            requested_mode="llm_judge",
+            effective_mode="semantic_rerank",
+        )
+        assert status.to_dict() == {
+            "applied": False,
+            "reason": "runtime_error:ValueError",
+            "requested_mode": "llm_judge",
+            "effective_mode": "semantic_rerank",
+        }
+
+    def test_empty_string_reason_is_omitted(self):
+        from services.scorer_matcher.candidate_preferences import PreferenceStatus
+        status = PreferenceStatus(applied=False, reason="")
+        assert status.to_dict() == {"applied": False}
+
+
+class TestPreferenceRerankResultProtocol:
+    """Other call-sites still iterate/index/len the result. Lock that behavior."""
+
+    def test_iterates_over_matches(self):
+        from services.scorer_matcher.candidate_preferences import (
+            PreferenceRerankResult, PreferenceStatus,
+        )
+        m1, m2 = object(), object()
+        result = PreferenceRerankResult(
+            matches=[m1, m2], status=PreferenceStatus(applied=True),
+        )
+        assert list(result) == [m1, m2]
+
+    def test_supports_index_and_len(self):
+        from services.scorer_matcher.candidate_preferences import (
+            PreferenceRerankResult, PreferenceStatus,
+        )
+        result = PreferenceRerankResult(
+            matches=["a", "b", "c"], status=PreferenceStatus(applied=False),
+        )
+        assert len(result) == 3
+        assert result[1] == "b"
+
+
+class TestResolveRequestedMode:
+    def test_unknown_mode_falls_back_to_default(self):
+        cfg = PreferencesConfig(default_mode="semantic_rerank")
+        requested, effective = _resolve_requested_mode("garbage", cfg)
+        assert requested == "semantic_rerank"
+        assert effective in cfg.allowed_modes_normalized()
+
+    def test_default_used_when_requested_is_none(self):
+        cfg = PreferencesConfig(default_mode="llm_judge")
+        requested, effective = _resolve_requested_mode(None, cfg)
+        assert requested == "llm_judge"
+        assert effective in cfg.allowed_modes_normalized()
+
+
 class TestSafeMode:
     """Ensures tainted preference mode values never flow unsanitized into logs."""
 

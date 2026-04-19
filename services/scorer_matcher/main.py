@@ -353,7 +353,8 @@ def _warm_up_cross_encoder(config) -> None:
             diag.get("provider_route"),
             diag.get("canary_score", 0.0),
         )
-    except Exception as exc:  # noqa: BLE001 - warm-up is the one place we catch broadly, to decide strict-vs-lenient
+    # Warm-up is the one place we catch broadly, to decide strict-vs-lenient.
+    except Exception as exc:  # noqa: BLE001
         msg = (
             "Cross-encoder warm-up failed. The service cannot score requirements "
             "with the configured local model. "

@@ -35,11 +35,12 @@ export function EmailVerificationPage() {
             });
     }, []);
 
-    const heading = state === 'success'
-        ? 'Email verified'
-        : state === 'error'
-            ? 'Verification didn’t complete'
-            : 'Verifying';
+    const HEADINGS: Record<typeof state, string> = {
+        verifying: 'Verifying',
+        success: 'Email verified',
+        error: 'Verification didn’t complete',
+    };
+    const heading = HEADINGS[state];
 
     return (
         <main className="flex min-h-screen items-center justify-center bg-canvas px-4 py-12 text-ink">

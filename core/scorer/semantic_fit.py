@@ -922,14 +922,12 @@ class LocalCrossEncoderProvider:
         Raises if the provider cannot produce a numeric score on a trivial pair.
         Returns diagnostics suitable for a readiness probe.
         """
-        model = self._load_model()
+        self._load_model()
         canary_pair = ("requirement: python experience", "evidence: built python services for 5 years")
-        if model is False:
-            # Heuristic path (only reached when allow_heuristic=True). Exercise the
-            # heuristic scorer so the caller still gets a deterministic signal.
-            scores = self.score_text_pairs([canary_pair])
-        else:
-            scores = self.score_text_pairs([canary_pair])
+        # `score_text_pairs` transparently dispatches to the loaded model or the
+        # heuristic scorer (when allow_heuristic=True) — either way the warm-up
+        # exercises the code path the caller will use.
+        scores = self.score_text_pairs([canary_pair])
         if not scores or not isinstance(scores[0], (int, float)):
             raise RuntimeError(
                 f"Local cross-encoder warm-up produced no numeric score (model={self.model_name!r}). "

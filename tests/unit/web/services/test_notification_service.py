@@ -2,13 +2,19 @@
 Tests for the web notification service wrapper.
 """
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
 
 from notification import NotificationPriority
-from web.backend.services.notification_service import NotificationServiceWrapper
+from notification.exceptions import NotificationConfigurationError
+from web.backend.services.notification_service import (
+    EMAIL_RE,
+    NotificationRateLimitError,
+    NotificationServiceWrapper,
+)
 
 
 class TestNotificationServiceWrapper:
@@ -574,3 +580,289 @@ class TestNotificationServiceWrapper:
 
         db.rollback.assert_called_once()
         db.commit.assert_not_called()
+
+
+def _baseline_config():
+    return SimpleNamespace(
+        notifications=SimpleNamespace(
+            redis_url="redis://example/0",
+            base_url="https://jobscout.app",
+            use_async_queue=True,
+            channels={},
+        )
+    )
+
+
+def _channel_stub():
+    return SimpleNamespace(
+        verification_sent_at=None,
+        config_json={},
+        override_address=None,
+        override_verified_at=None,
+        verification_token_hash=None,
+        verification_token_expires_at=None,
+        masked_recipient=None,
+        owner_id="user-123",
+    )
+
+
+def _pending_snapshot():
+    return SimpleNamespace(
+        notifications_enabled=True,
+        min_fit_for_alerts=70,
+        notify_on_new_match=True,
+        notify_on_batch_complete=True,
+        revision=1,
+        channels={"email": SimpleNamespace(
+            enabled=True,
+            configured=True,
+            available=True,
+            availability_reason=None,
+            masked_recipient="***@example.com",
+            last_test_status=None,
+            last_tested_at=None,
+            last_test_error=None,
+            effective_recipient="alerts@example.com",
+            override_address="alerts@example.com",
+            override_status="pending",
+            override_verified_at=None,
+        )},
+    )
+
+
+class TestEmailRegexAndHelpers:
+    def test_email_regex_matches_standard_addresses(self):
+        assert EMAIL_RE.match("alerts@example.com")
+        assert EMAIL_RE.match("first.last+tag@sub.example.co.uk")
+
+    def test_email_regex_rejects_missing_at(self):
+        assert EMAIL_RE.match("no-at-sign") is None
+
+    def test_email_regex_rejects_no_tld(self):
+        assert EMAIL_RE.match("local@nodotdomain") is None
+
+    def test_verification_window_resets_after_24h(self):
+        now = datetime(2026, 4, 18, 12, 0, tzinfo=timezone.utc)
+        old = (now - timedelta(hours=25)).isoformat()
+        started, count = NotificationServiceWrapper._verification_window(
+            {"verification_window_started_at": old, "verification_send_count": 4},
+            now,
+        )
+        assert started == now
+        assert count == 0
+
+    def test_verification_window_preserves_active_window(self):
+        now = datetime(2026, 4, 18, 12, 0, tzinfo=timezone.utc)
+        recent = (now - timedelta(hours=2)).isoformat()
+        started, count = NotificationServiceWrapper._verification_window(
+            {"verification_window_started_at": recent, "verification_send_count": 3},
+            now,
+        )
+        assert started.replace(tzinfo=timezone.utc).isoformat() == recent
+        assert count == 3
+
+    def test_verification_window_handles_unparseable_timestamp(self):
+        now = datetime(2026, 4, 18, 12, 0, tzinfo=timezone.utc)
+        started, count = NotificationServiceWrapper._verification_window(
+            {"verification_window_started_at": "not-iso", "verification_send_count": 2},
+            now,
+        )
+        assert started == now
+        # Active window with unparseable start → treated as 'now started' with existing count preserved.
+        assert count == 2
+
+    def test_verification_window_first_send_defaults_to_zero(self):
+        now = datetime(2026, 4, 18, 12, 0, tzinfo=timezone.utc)
+        started, count = NotificationServiceWrapper._verification_window({}, now)
+        assert started == now
+        assert count == 0
+
+    def test_hash_token_produces_stable_hex(self):
+        h1 = NotificationServiceWrapper._hash_token("abc")
+        h2 = NotificationServiceWrapper._hash_token("abc")
+        assert h1 == h2
+        assert len(h1) == 64
+
+
+@patch("web.backend.services.notification_service.UserNotificationSettingsService")
+@patch("web.backend.services.notification_service.NotificationService")
+@patch("web.backend.services.notification_service.JobRepository")
+@patch("web.backend.services.notification_service.get_config", side_effect=lambda: _baseline_config())
+def _build_wrapper(
+    mock_get_config,
+    mock_repo_class,
+    mock_notification_service_class,
+    mock_settings_service_class,
+    *,
+    db,
+    channel,
+    send_notification=None,
+    snapshot=None,
+    channel_for_token=None,
+    user=None,
+):
+    repo = Mock()
+    if channel is not None:
+        repo.notification_settings.get_or_create_channel.return_value = channel
+    mock_repo_class.return_value = repo
+    service = Mock()
+    if send_notification is not None:
+        service.send_notification.side_effect = send_notification
+    mock_notification_service_class.return_value = service
+    settings_service = Mock()
+    settings_service.get_settings_snapshot.return_value = snapshot or _pending_snapshot()
+    mock_settings_service_class.return_value = settings_service
+    wrapper = NotificationServiceWrapper(db)
+    return wrapper, service, settings_service
+
+
+class TestSendEmailOverrideErrorPaths:
+    def test_address_failing_format_is_rejected(self):
+        db = Mock()
+        wrapper, *_ = _build_wrapper(db=db, channel=_channel_stub())
+        user = SimpleNamespace(id="user-123", email="account@example.com")
+        with pytest.raises(NotificationConfigurationError, match="valid email"):
+            wrapper.send_email_override_verification(user, "no-at-sign")
+        db.commit.assert_not_called()
+
+    def test_overly_long_address_is_rejected(self):
+        db = Mock()
+        wrapper, *_ = _build_wrapper(db=db, channel=_channel_stub())
+        user = SimpleNamespace(id="user-123", email="account@example.com")
+        long_local = "a" * 400
+        with pytest.raises(NotificationConfigurationError, match="valid email"):
+            wrapper.send_email_override_verification(user, f"{long_local}@example.com")
+
+    def test_same_as_account_email_is_rejected(self):
+        db = Mock()
+        wrapper, *_ = _build_wrapper(db=db, channel=_channel_stub())
+        user = SimpleNamespace(id="user-123", email="account@example.com")
+        with pytest.raises(NotificationConfigurationError, match="different from the account"):
+            wrapper.send_email_override_verification(user, "Account@Example.com")
+
+    def test_rate_limit_within_60s_window(self):
+        db = Mock()
+        channel = _channel_stub()
+        channel.verification_sent_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+        wrapper, *_ = _build_wrapper(db=db, channel=channel)
+        user = SimpleNamespace(id="user-123", email="account@example.com")
+        with pytest.raises(NotificationRateLimitError) as exc_info:
+            wrapper.send_email_override_verification(user, "alerts@example.com")
+        assert exc_info.value.retry_after is not None and exc_info.value.retry_after > 0
+
+    def test_rate_limit_after_five_sends_in_24h(self):
+        db = Mock()
+        channel = _channel_stub()
+        now = datetime.now(timezone.utc)
+        channel.verification_sent_at = now - timedelta(minutes=5)
+        channel.config_json = {
+            "verification_window_started_at": (now - timedelta(hours=3)).isoformat(),
+            "verification_send_count": 5,
+        }
+        wrapper, *_ = _build_wrapper(db=db, channel=channel)
+        user = SimpleNamespace(id="user-123", email="account@example.com")
+        with pytest.raises(NotificationRateLimitError):
+            wrapper.send_email_override_verification(user, "alerts@example.com")
+
+
+class TestVerifyAndClearEmailOverride:
+    def _query_returns(self, db, channel):
+        query = Mock()
+        query.filter.return_value.one_or_none.return_value = channel
+        db.query.return_value = query
+        return query
+
+    def test_verify_accepts_valid_token_and_marks_verified(self):
+        db = Mock()
+        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        channel = SimpleNamespace(
+            override_address="alerts@example.com",
+            override_verified_at=None,
+            verification_token_hash=NotificationServiceWrapper._hash_token("raw-token"),
+            verification_token_expires_at=future,
+            masked_recipient="***@example.com",
+            owner_id="user-123",
+        )
+        self._query_returns(db, channel)
+        db.get.return_value = SimpleNamespace(id="user-123", email="account@example.com")
+        wrapper, *_ = _build_wrapper(db=db, channel=channel)
+        result = wrapper.verify_email_override("raw-token")
+        assert channel.override_verified_at is not None
+        assert channel.verification_token_hash is None
+        assert channel.verification_token_expires_at is None
+        db.commit.assert_called_once()
+        assert result["override_status"] == "pending"  # snapshot-driven
+
+    def test_verify_rejects_unknown_token(self):
+        db = Mock()
+        self._query_returns(db, None)
+        wrapper, *_ = _build_wrapper(db=db, channel=None)
+        with pytest.raises(NotificationConfigurationError, match="invalid"):
+            wrapper.verify_email_override("bad")
+
+    def test_verify_rejects_channel_without_override_address(self):
+        db = Mock()
+        channel = SimpleNamespace(
+            override_address=None,
+            override_verified_at=None,
+            verification_token_hash="whatever",
+            verification_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            masked_recipient=None,
+            owner_id="user-123",
+        )
+        self._query_returns(db, channel)
+        wrapper, *_ = _build_wrapper(db=db, channel=None)
+        with pytest.raises(NotificationConfigurationError, match="invalid"):
+            wrapper.verify_email_override("raw")
+
+    def test_verify_rejects_expired_token(self):
+        db = Mock()
+        past = datetime.now(timezone.utc) - timedelta(hours=1)
+        channel = SimpleNamespace(
+            override_address="alerts@example.com",
+            override_verified_at=None,
+            verification_token_hash=NotificationServiceWrapper._hash_token("raw"),
+            verification_token_expires_at=past,
+            masked_recipient=None,
+            owner_id="user-123",
+        )
+        self._query_returns(db, channel)
+        wrapper, *_ = _build_wrapper(db=db, channel=None)
+        with pytest.raises(NotificationConfigurationError, match="expired"):
+            wrapper.verify_email_override("raw")
+
+    def test_verify_raises_when_user_missing(self):
+        db = Mock()
+        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        channel = SimpleNamespace(
+            override_address="alerts@example.com",
+            override_verified_at=None,
+            verification_token_hash=NotificationServiceWrapper._hash_token("raw"),
+            verification_token_expires_at=future,
+            masked_recipient=None,
+            owner_id="user-123",
+        )
+        self._query_returns(db, channel)
+        db.get.return_value = None
+        wrapper, *_ = _build_wrapper(db=db, channel=None)
+        with pytest.raises(NotificationConfigurationError, match="user does not exist"):
+            wrapper.verify_email_override("raw")
+
+    def test_clear_resets_override_and_returns_snapshot(self):
+        db = Mock()
+        channel = _channel_stub()
+        channel.override_address = "alerts@example.com"
+        channel.override_verified_at = datetime.now(timezone.utc)
+        channel.verification_token_hash = "abc"
+        channel.verification_token_expires_at = datetime.now(timezone.utc)
+        channel.verification_sent_at = datetime.now(timezone.utc)
+        channel.masked_recipient = "***@example.com"
+        wrapper, *_ = _build_wrapper(db=db, channel=channel)
+        wrapper.clear_email_override(SimpleNamespace(id="user-123"))
+        assert channel.override_address is None
+        assert channel.override_verified_at is None
+        assert channel.verification_token_hash is None
+        assert channel.verification_token_expires_at is None
+        assert channel.verification_sent_at is None
+        assert channel.masked_recipient is None
+        db.commit.assert_called_once()

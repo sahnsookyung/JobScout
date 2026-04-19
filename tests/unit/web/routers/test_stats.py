@@ -5,6 +5,9 @@ Covers the /api/stats GET endpoint: total counts, hidden, below threshold,
 active matches, score distribution buckets.
 """
 
+from contextlib import contextmanager
+from types import SimpleNamespace
+
 import pytest
 from unittest.mock import MagicMock, Mock, patch
 from fastapi import FastAPI
@@ -120,3 +123,76 @@ class TestGetStats:
             "below_threshold_count", "min_fit_threshold", "score_distribution",
         }
         assert expected_keys.issubset(data["stats"].keys())
+
+    def test_canonical_selection_run_populates_tier_counts(self, client, app):
+        """With a canonical run, tier counts and excluded_by_reason come from
+        match_selection repo, not from the DB-wide legacy query."""
+        mock_db = _make_query_mock()
+        canonical = SimpleNamespace(selection_run_id="run-1")
+        match_selection_repo = Mock()
+        match_selection_repo.count_items_for_run_by_tier.return_value = {
+            "primary": 5, "excluded": 7,
+        }
+        match_selection_repo.count_excluded_items_by_reason.return_value = {
+            "below_min_fit": 4, "beyond_top_k": 3,
+        }
+        # Provide one item with a ranking_snapshot carrying preference_status dict.
+        item = SimpleNamespace(job_match=SimpleNamespace(
+            ranking_snapshot={"preference_status": {"applied": True, "reason": "ok"}}
+        ))
+        match_selection_repo.get_items_for_run.return_value = [item]
+        repo = SimpleNamespace(match_selection=match_selection_repo)
+
+        @contextmanager
+        def fake_uow():
+            yield repo
+
+        with self._setup(app, mock_db, _make_policy_mock(min_fit=40.0)), \
+             patch("web.backend.routers.stats.job_uow", fake_uow), \
+             patch(
+                 "web.backend.routers.stats.resolve_canonical_resume_selection",
+                 return_value=canonical,
+             ):
+            data = client.get("/api/stats").json()
+        stats = data["stats"]
+        assert stats["primary_count"] == 5
+        assert stats["excluded_count"] == 7
+        assert stats["total_scored"] == 12
+        assert stats["excluded_by_reason"] == {"below_min_fit": 4, "beyond_top_k": 3}
+        assert stats["preference_status"] == {"applied": True, "reason": "ok"}
+
+    def test_canonical_selection_failure_falls_back_to_zero_tier_counts(self, client, app):
+        """If the UoW fails, stats must still return — canonical counts drop to 0."""
+        mock_db = _make_query_mock()
+
+        @contextmanager
+        def exploding_uow():
+            raise RuntimeError("db down")
+            yield  # pragma: no cover
+
+        with self._setup(app, mock_db, _make_policy_mock()), \
+             patch("web.backend.routers.stats.job_uow", exploding_uow):
+            data = client.get("/api/stats").json()
+        stats = data["stats"]
+        assert stats["total_scored"] == 0
+        assert stats["primary_count"] == 0
+        assert stats["excluded_count"] == 0
+        assert stats["excluded_by_reason"] == {}
+        assert stats["preference_status"] is None
+
+    def test_no_canonical_run_leaves_tier_counts_zero(self, client, app):
+        mock_db = _make_query_mock()
+
+        @contextmanager
+        def fake_uow():
+            yield SimpleNamespace()
+
+        with self._setup(app, mock_db, _make_policy_mock()), \
+             patch("web.backend.routers.stats.job_uow", fake_uow), \
+             patch(
+                 "web.backend.routers.stats.resolve_canonical_resume_selection",
+                 return_value=None,
+             ):
+            data = client.get("/api/stats").json()
+        assert data["stats"]["primary_count"] == 0
+        assert data["stats"]["excluded_count"] == 0

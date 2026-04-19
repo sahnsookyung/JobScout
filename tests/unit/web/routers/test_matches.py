@@ -4,6 +4,8 @@ Tests for Matches Router
 Covers: web/backend/routers/matches.py
 """
 
+from types import SimpleNamespace
+
 import pytest
 import uuid
 from unittest.mock import Mock, patch
@@ -230,6 +232,41 @@ class TestMatchesRouter:
         # Test out of bounds (above)
         response = client.get('/api/matches', params={'top_k': 501})
         assert response.status_code == 422
+
+    def test_get_matches_invalid_tier_returns_422(self, client, mock_match_service, mock_policy_service):
+        response = client.get('/api/matches', params={'tier': 'banana'})
+        assert response.status_code == 422
+        assert "Invalid tier" in response.json()["detail"]
+
+    def test_get_matches_tier_all_passed_through_when_two_tier_enabled(
+        self, client, mock_match_service, mock_policy_service
+    ):
+        mock_match_service.get_matches.return_value = []
+        cfg = SimpleNamespace(matching=SimpleNamespace(two_tier_selection_enabled=True))
+        with patch("core.config_loader.load_config", return_value=cfg):
+            response = client.get('/api/matches', params={'tier': 'all'})
+        assert response.status_code == 200
+        assert mock_match_service.get_matches.call_args.kwargs["tier"] == "all"
+
+    def test_get_matches_tier_all_collapses_to_primary_when_disabled(
+        self, client, mock_match_service, mock_policy_service
+    ):
+        mock_match_service.get_matches.return_value = []
+        cfg = SimpleNamespace(matching=SimpleNamespace(two_tier_selection_enabled=False))
+        with patch("core.config_loader.load_config", return_value=cfg):
+            response = client.get('/api/matches', params={'tier': 'all'})
+        assert response.status_code == 200
+        assert mock_match_service.get_matches.call_args.kwargs["tier"] == "primary"
+
+    def test_get_matches_tier_primary_default_skips_config_lookup(
+        self, client, mock_match_service, mock_policy_service
+    ):
+        mock_match_service.get_matches.return_value = []
+        with patch("core.config_loader.load_config") as mock_load:
+            response = client.get('/api/matches')  # tier defaults to primary
+        assert response.status_code == 200
+        mock_load.assert_not_called()
+        assert mock_match_service.get_matches.call_args.kwargs["tier"] == "primary"
 
     def test_get_match_details_success(self, client, mock_match_service):
         """Test successful get match details."""
