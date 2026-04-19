@@ -40,44 +40,106 @@ def select_matches(
     task_id: Optional[str] = None,
     two_tier_enabled: bool = True,
 ) -> MatchSelectionResult:
-    # Partition scored matches by floor gates. Items that fail any floor can
-    # never be primary; items that pass may or may not make it through top-K.
+    eligible, excluded_by_floor = _partition_matches(
+        matches,
+        fit_floor_used=fit_floor_used,
+        required_coverage_floor_used=required_coverage_floor_used,
+    )
+    candidate_pool_size = len(eligible)
+    if candidate_pool_size:
+        rank_matches(eligible, ranking_context)
+
+    selected_matches, beyond_top_k = _split_primary_matches(eligible, top_k_used)
+    item_snapshots = _primary_item_snapshots(
+        selected_matches,
+        notification_fit_floor_used=notification_fit_floor_used,
+    )
+    excluded_candidates = _sorted_excluded_candidates(
+        beyond_top_k,
+        excluded_by_floor,
+    )
+    truncated_count = _append_excluded_item_snapshots(
+        item_snapshots,
+        excluded_candidates,
+        notification_fit_floor_used=notification_fit_floor_used,
+        two_tier_enabled=two_tier_enabled,
+    )
+
+    policy_snapshot = MatchSelectionPolicySnapshot.from_ranking_context(
+        ranking_context=ranking_context,
+        fit_floor_used=fit_floor_used,
+        required_coverage_floor_used=required_coverage_floor_used,
+        notification_fit_floor_used=notification_fit_floor_used,
+        top_k_used=top_k_used,
+        candidate_pool_size=candidate_pool_size,
+        selected_count=len(selected_matches),
+        alert_candidate_count=_alert_candidate_count(item_snapshots),
+        resume_resolution_reason=resume_resolution_reason,
+        task_id=task_id,
+    )
+    _record_truncation_count(
+        policy_snapshot,
+        truncated_count=truncated_count,
+        two_tier_enabled=two_tier_enabled,
+    )
+    return MatchSelectionResult(
+        selected_matches=selected_matches,
+        item_snapshots=item_snapshots,
+        policy_snapshot=policy_snapshot,
+    )
+
+
+def _partition_matches(
+    matches: list[Any],
+    *,
+    fit_floor_used: float,
+    required_coverage_floor_used: Optional[float],
+) -> tuple[list[Any], list[tuple[Any, str]]]:
     eligible: list[Any] = []
     excluded_by_floor: list[tuple[Any, str]] = []
     for match in matches:
         reason = _excluded_reason_from_floors(
-            match, fit_floor_used, required_coverage_floor_used
+            match,
+            fit_floor_used,
+            required_coverage_floor_used,
         )
         if reason is None:
             eligible.append(match)
         else:
             excluded_by_floor.append((match, reason))
+    return eligible, excluded_by_floor
 
-    candidate_pool_size = len(eligible)
-    if candidate_pool_size:
-        rank_matches(eligible, ranking_context)
 
+def _split_primary_matches(
+    eligible: list[Any],
+    top_k_used: int,
+) -> tuple[list[Any], list[Any]]:
     if top_k_used > 0:
-        selected_matches = eligible[:top_k_used]
-        beyond_top_k = eligible[top_k_used:]
-    else:
-        selected_matches = []
-        beyond_top_k = list(eligible)
+        return eligible[:top_k_used], eligible[top_k_used:]
+    return [], list(eligible)
 
-    item_snapshots: list[MatchSelectionItemSnapshot] = []
-    for index, match in enumerate(selected_matches, start=1):
-        item_snapshots.append(
-            _item_snapshot_from_match(
-                match,
-                rank_position=index,
-                notification_fit_floor_used=notification_fit_floor_used,
-                selection_tier="primary",
-                excluded_reason=None,
-            )
+
+def _primary_item_snapshots(
+    selected_matches: list[Any],
+    *,
+    notification_fit_floor_used: float,
+) -> list[MatchSelectionItemSnapshot]:
+    return [
+        _item_snapshot_from_match(
+            match,
+            rank_position=index,
+            notification_fit_floor_used=notification_fit_floor_used,
+            selection_tier="primary",
+            excluded_reason=None,
         )
+        for index, match in enumerate(selected_matches, start=1)
+    ]
 
-    # Excluded tier: retain the top-N excluded entries by fit score, not by
-    # arbitrary arrival order, so storage is deterministic across runs.
+
+def _sorted_excluded_candidates(
+    beyond_top_k: list[Any],
+    excluded_by_floor: list[tuple[Any, str]],
+) -> list[tuple[Any, str, int]]:
     excluded_candidates: list[tuple[Any, str, int]] = [
         (match, "beyond_top_k", index) for index, match in enumerate(beyond_top_k)
     ]
@@ -86,19 +148,23 @@ def select_matches(
         (match, reason, base_offset + index)
         for index, (match, reason) in enumerate(excluded_by_floor)
     )
-    excluded_candidates.sort(
-        key=lambda item: (-_score(item[0], "fit_score"), item[2])
-    )
+    excluded_candidates.sort(key=lambda item: (-_score(item[0], "fit_score"), item[2]))
+    return excluded_candidates
 
-    # Rollout gate: when TWO_TIER_SELECTION_ENABLED=false we skip excluded
-    # persistence so runtime behavior matches the pre-§C single-tier contract.
+
+def _append_excluded_item_snapshots(
+    item_snapshots: list[MatchSelectionItemSnapshot],
+    excluded_candidates: list[tuple[Any, str, int]],
+    *,
+    notification_fit_floor_used: float,
+    two_tier_enabled: bool,
+) -> int:
     excluded_budget = max(0, EXCLUDED_STORAGE_CAP) if two_tier_enabled else 0
-    next_rank = len(selected_matches) + 1
+    next_rank = len(item_snapshots) + 1
     truncated_count = 0
     for match, reason, _original_order in excluded_candidates:
         if excluded_budget <= 0:
-            if two_tier_enabled:
-                truncated_count += 1
+            truncated_count += int(two_tier_enabled)
             continue
         item_snapshots.append(
             _item_snapshot_from_match(
@@ -111,31 +177,28 @@ def select_matches(
         )
         next_rank += 1
         excluded_budget -= 1
+    return truncated_count
 
-    policy_snapshot = MatchSelectionPolicySnapshot.from_ranking_context(
-        ranking_context=ranking_context,
-        fit_floor_used=fit_floor_used,
-        required_coverage_floor_used=required_coverage_floor_used,
-        notification_fit_floor_used=notification_fit_floor_used,
-        top_k_used=top_k_used,
-        candidate_pool_size=candidate_pool_size,
-        selected_count=len(selected_matches),
-        alert_candidate_count=sum(
-            1 for item in item_snapshots
-            if item.selection_tier == "primary" and item.alert_eligible
-        ),
-        resume_resolution_reason=resume_resolution_reason,
-        task_id=task_id,
+
+def _alert_candidate_count(item_snapshots: list[MatchSelectionItemSnapshot]) -> int:
+    return sum(
+        1
+        for item in item_snapshots
+        if item.selection_tier == "primary" and item.alert_eligible
     )
-    if two_tier_enabled and truncated_count:
-        # Surface truncation in the policy snapshot via ranking_config_snapshot
-        # piggyback. Auditable in the run row without a new column.
-        policy_snapshot.ranking_config_snapshot["excluded_truncated_count"] = truncated_count
-    return MatchSelectionResult(
-        selected_matches=selected_matches,
-        item_snapshots=item_snapshots,
-        policy_snapshot=policy_snapshot,
-    )
+
+
+def _record_truncation_count(
+    policy_snapshot: MatchSelectionPolicySnapshot,
+    *,
+    truncated_count: int,
+    two_tier_enabled: bool,
+) -> None:
+    if not two_tier_enabled or not truncated_count:
+        return
+    # Surface truncation in the policy snapshot via ranking_config_snapshot
+    # piggyback. Auditable in the run row without a new column.
+    policy_snapshot.ranking_config_snapshot["excluded_truncated_count"] = truncated_count
 
 
 def _score(match: Any, attribute: str) -> float:
