@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 
 import { NotificationSettingsPanel } from '../NotificationSettingsPanel';
 import { useNotificationSettings } from '@/hooks/useNotificationSettings';
+import type { NotificationSettings } from '@/types/api';
 
 vi.mock('@/hooks/useNotificationSettings');
 vi.mock('sonner');
@@ -21,6 +22,49 @@ const createWrapper = () => {
     );
 };
 
+const renderPanel = () => render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+
+const makeChannel = (
+    overrides: Partial<NotificationSettings['channels'][string]> = {}
+): NotificationSettings['channels'][string] => ({
+    enabled: true,
+    configured: true,
+    available: true,
+    masked_recipient: '***@example.com',
+    availability_reason: null,
+    last_test_status: null,
+    last_tested_at: null,
+    last_test_error: null,
+    ...overrides,
+});
+
+const makeSettings = (overrides: Partial<NotificationSettings> = {}): NotificationSettings => {
+    const base: NotificationSettings = {
+        notifications_enabled: true,
+        min_fit_for_alerts: 70,
+        notify_on_new_match: true,
+        notify_on_batch_complete: false,
+        revision: 2,
+        channels: {
+            email: makeChannel(),
+            discord: makeChannel({
+                enabled: false,
+                masked_recipient: 'https://discord.com/api/webhooks/...',
+                last_test_status: 'queued',
+            }),
+        },
+    };
+
+    return {
+        ...base,
+        ...overrides,
+        channels: {
+            ...base.channels,
+            ...(overrides.channels ?? {}),
+        },
+    };
+};
+
 describe('NotificationSettingsPanel', () => {
     const saveSettings = vi.fn();
     const sendTest = vi.fn();
@@ -28,49 +72,30 @@ describe('NotificationSettingsPanel', () => {
     const clearEmailOverride = vi.fn();
     const verifyEmailOverride = vi.fn();
 
+    const makeHookState = (
+        overrides: Partial<ReturnType<typeof useNotificationSettings>> = {}
+    ): ReturnType<typeof useNotificationSettings> => ({
+        settings: makeSettings(),
+        isLoading: false,
+        isSaving: false,
+        isTesting: false,
+        isSendingEmailVerification: false,
+        isClearingEmailOverride: false,
+        saveSettings,
+        sendTest,
+        sendEmailOverrideVerification,
+        clearEmailOverride,
+        verifyEmailOverride,
+        ...overrides,
+    });
+
+    const setHookState = (overrides: Partial<ReturnType<typeof useNotificationSettings>> = {}) => {
+        mockUseNotificationSettings.mockReturnValue(makeHookState(overrides));
+    };
+
     beforeEach(() => {
         vi.clearAllMocks();
-        mockUseNotificationSettings.mockReturnValue({
-            settings: {
-                notifications_enabled: true,
-                min_fit_for_alerts: 70,
-                notify_on_new_match: true,
-                notify_on_batch_complete: false,
-                revision: 2,
-                channels: {
-                    email: {
-                        enabled: true,
-                        configured: true,
-                        available: true,
-                        masked_recipient: '***@example.com',
-                        availability_reason: null,
-                        last_test_status: null,
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
-                    discord: {
-                        enabled: false,
-                        configured: true,
-                        available: true,
-                        masked_recipient: 'https://discord.com/api/webhooks/...',
-                        availability_reason: null,
-                        last_test_status: 'queued',
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
-                },
-            },
-            isLoading: false,
-            isSaving: false,
-            isTesting: false,
-            isSendingEmailVerification: false,
-            isClearingEmailOverride: false,
-            saveSettings,
-            sendTest,
-            sendEmailOverrideVerification,
-            clearEmailOverride,
-            verifyEmailOverride,
-        });
+        setHookState();
         saveSettings.mockResolvedValue({ data: {} });
         sendTest.mockResolvedValue({ data: { message: 'Queued test notification' } });
         sendEmailOverrideVerification.mockResolvedValue({ data: { message: 'Verification email sent' } });
@@ -79,7 +104,7 @@ describe('NotificationSettingsPanel', () => {
     });
 
     it('renders saved channel state', () => {
-        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        renderPanel();
 
         expect(screen.getByText('Alert rules')).toBeInTheDocument();
         expect(screen.getByText('***@example.com')).toBeInTheDocument();
@@ -89,7 +114,7 @@ describe('NotificationSettingsPanel', () => {
     });
 
     it('saves edited settings explicitly', async () => {
-        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        renderPanel();
 
         const threshold = screen.getByLabelText('Minimum fit for alerts');
         fireEvent.change(threshold, { target: { value: '75' } });
@@ -118,7 +143,7 @@ describe('NotificationSettingsPanel', () => {
     });
 
     it('disables test actions while there are unsaved changes', async () => {
-        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        renderPanel();
 
         const threshold = screen.getByLabelText('Minimum fit for alerts');
         fireEvent.change(threshold, { target: { value: '71' } });
@@ -129,7 +154,7 @@ describe('NotificationSettingsPanel', () => {
     });
 
     it('queues a test notification when settings are clean', async () => {
-        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        renderPanel();
 
         const testButtons = screen.getAllByRole('button', { name: /test/i });
         await userEvent.click(testButtons[0]);
@@ -141,7 +166,7 @@ describe('NotificationSettingsPanel', () => {
     });
 
     it('clears a saved secret explicitly', async () => {
-        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        renderPanel();
 
         await userEvent.click(screen.getByRole('button', { name: /clear/i }));
         await userEvent.click(screen.getByRole('button', { name: /save settings/i }));
@@ -164,59 +189,33 @@ describe('NotificationSettingsPanel', () => {
     });
 
     it('shows unavailable channel messaging and disables enabling it', () => {
-        mockUseNotificationSettings.mockReturnValue({
-            settings: {
-                notifications_enabled: true,
-                min_fit_for_alerts: 70,
-                notify_on_new_match: true,
-                notify_on_batch_complete: false,
-                revision: 2,
+        setHookState({
+            settings: makeSettings({
                 channels: {
-                    email: {
-                        enabled: true,
-                        configured: true,
-                        available: true,
-                        masked_recipient: '***@example.com',
-                        availability_reason: null,
-                        last_test_status: null,
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
-                    telegram: {
+                    email: makeChannel(),
+                    telegram: makeChannel({
                         enabled: false,
                         configured: false,
                         available: false,
                         masked_recipient: null,
                         availability_reason: 'Telegram bot credentials are not configured',
                         last_test_status: null,
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
+                    }),
                 },
-            },
-            isLoading: false,
-            isSaving: false,
-            isTesting: false,
-            isSendingEmailVerification: false,
-            isClearingEmailOverride: false,
-            saveSettings,
-            sendTest,
-            sendEmailOverrideVerification,
-            clearEmailOverride,
-            verifyEmailOverride,
+            }),
         });
 
-        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        renderPanel();
 
         expect(screen.getByText('Telegram bot credentials are not configured')).toBeInTheDocument();
         expect(screen.getByRole('checkbox', { name: 'Enable Telegram' })).toBeDisabled();
         const testButtons = screen.getAllByRole('button', { name: /test/i });
-        expect(testButtons[1]).toBeDisabled();
+        expect(testButtons[2]).toBeDisabled();
     });
 
     it('shows a save error toast', async () => {
         saveSettings.mockRejectedValueOnce(new Error('Save exploded'));
-        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        renderPanel();
 
         fireEvent.change(screen.getByLabelText('Minimum fit for alerts'), { target: { value: '72' } });
         await userEvent.click(screen.getByRole('button', { name: /save settings/i }));
@@ -228,7 +227,7 @@ describe('NotificationSettingsPanel', () => {
 
     it('shows a test error toast', async () => {
         sendTest.mockRejectedValueOnce(new Error('Test exploded'));
-        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        renderPanel();
 
         const testButtons = screen.getAllByRole('button', { name: /test/i });
         await userEvent.click(testButtons[0]);
@@ -239,42 +238,20 @@ describe('NotificationSettingsPanel', () => {
     });
 
     it('sends and clears an email override', async () => {
-        mockUseNotificationSettings.mockReturnValue({
-            settings: {
-                notifications_enabled: true,
-                min_fit_for_alerts: 70,
-                notify_on_new_match: true,
-                notify_on_batch_complete: false,
-                revision: 2,
+        setHookState({
+            settings: makeSettings({
                 channels: {
-                    email: {
-                        enabled: true,
-                        configured: true,
-                        available: true,
-                        masked_recipient: '***@example.com',
+                    email: makeChannel({
                         effective_recipient: 'ada+alerts@example.com',
                         override_address: 'ada+alerts@example.com',
                         override_status: 'pending',
-                        availability_reason: null,
                         last_test_status: 'queued',
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
+                    }),
                 },
-            },
-            isLoading: false,
-            isSaving: false,
-            isTesting: false,
-            isSendingEmailVerification: false,
-            isClearingEmailOverride: false,
-            saveSettings,
-            sendTest,
-            sendEmailOverrideVerification,
-            clearEmailOverride,
-            verifyEmailOverride,
+            }),
         });
 
-        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        renderPanel();
 
         await userEvent.clear(screen.getByPlaceholderText('name@example.com'));
         await userEvent.type(screen.getByPlaceholderText('name@example.com'), 'new@example.com');
@@ -291,77 +268,33 @@ describe('NotificationSettingsPanel', () => {
     });
 
     it('renders verified and expired email helper copy', () => {
-        const { rerender } = render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        const { rerender } = renderPanel();
 
-        mockUseNotificationSettings.mockReturnValue({
-            settings: {
-                notifications_enabled: true,
-                min_fit_for_alerts: 70,
-                notify_on_new_match: true,
-                notify_on_batch_complete: false,
+        setHookState({
+            settings: makeSettings({
                 revision: 3,
                 channels: {
-                    email: {
-                        enabled: true,
-                        configured: true,
-                        available: true,
-                        masked_recipient: '***@example.com',
+                    email: makeChannel({
                         override_address: 'ada@example.com',
                         override_status: 'verified',
-                        availability_reason: null,
-                        last_test_status: null,
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
+                    }),
                 },
-            },
-            isLoading: false,
-            isSaving: false,
-            isTesting: false,
-            isSendingEmailVerification: false,
-            isClearingEmailOverride: false,
-            saveSettings,
-            sendTest,
-            sendEmailOverrideVerification,
-            clearEmailOverride,
-            verifyEmailOverride,
+            }),
         });
 
         rerender(<NotificationSettingsPanel />);
         expect(screen.getByText('Verified override')).toBeInTheDocument();
 
-        mockUseNotificationSettings.mockReturnValue({
-            settings: {
-                notifications_enabled: true,
-                min_fit_for_alerts: 70,
-                notify_on_new_match: true,
-                notify_on_batch_complete: false,
+        setHookState({
+            settings: makeSettings({
                 revision: 4,
                 channels: {
-                    email: {
-                        enabled: true,
-                        configured: true,
-                        available: true,
-                        masked_recipient: '***@example.com',
+                    email: makeChannel({
                         override_address: 'ada@example.com',
                         override_status: 'expired',
-                        availability_reason: null,
-                        last_test_status: null,
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
+                    }),
                 },
-            },
-            isLoading: false,
-            isSaving: false,
-            isTesting: false,
-            isSendingEmailVerification: false,
-            isClearingEmailOverride: false,
-            saveSettings,
-            sendTest,
-            sendEmailOverrideVerification,
-            clearEmailOverride,
-            verifyEmailOverride,
+            }),
         });
 
         rerender(<NotificationSettingsPanel />);
@@ -369,35 +302,19 @@ describe('NotificationSettingsPanel', () => {
     });
 
     it('renders a loading skeleton while settings are loading', () => {
-        mockUseNotificationSettings.mockReturnValue({
-            settings: undefined,
-            isLoading: true,
-            isSaving: false,
-            isTesting: false,
-            isSendingEmailVerification: false,
-            isClearingEmailOverride: false,
-            saveSettings,
-            sendTest,
-            sendEmailOverrideVerification,
-            clearEmailOverride,
-            verifyEmailOverride,
-        });
+        setHookState({ settings: undefined, isLoading: true });
 
-        const { container } = render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        const { container } = renderPanel();
 
         expect(container.querySelectorAll('.animate-pulse')).toHaveLength(3);
     });
 
     it('renders email fallback copy and blocks unavailable email toggles', () => {
-        mockUseNotificationSettings.mockReturnValue({
-            settings: {
-                notifications_enabled: true,
-                min_fit_for_alerts: 70,
-                notify_on_new_match: true,
-                notify_on_batch_complete: false,
+        setHookState({
+            settings: makeSettings({
                 revision: 5,
                 channels: {
-                    email: {
+                    email: makeChannel({
                         enabled: false,
                         configured: false,
                         available: false,
@@ -405,71 +322,36 @@ describe('NotificationSettingsPanel', () => {
                         override_address: null,
                         override_status: 'none',
                         availability_reason: 'Email delivery is disabled for this account',
-                        last_test_status: null,
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
+                    }),
                 },
-            },
-            isLoading: false,
-            isSaving: false,
-            isTesting: false,
-            isSendingEmailVerification: false,
-            isClearingEmailOverride: false,
-            saveSettings,
-            sendTest,
-            sendEmailOverrideVerification,
-            clearEmailOverride,
-            verifyEmailOverride,
+            }),
         });
 
-        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        renderPanel();
 
         expect(screen.getByText('No email configured')).toBeInTheDocument();
         expect(screen.getByText('Email delivery is disabled for this account')).toBeInTheDocument();
         expect(screen.getByRole('checkbox', { name: 'Enable Email' })).toBeDisabled();
-        expect(screen.getByRole('button', { name: /test/i })).toBeDisabled();
+        expect(screen.getAllByRole('button', { name: /test/i })[0]).toBeDisabled();
     });
 
     it('shows default error toasts for non-error verification failures', async () => {
-        mockUseNotificationSettings.mockReturnValue({
-            settings: {
-                notifications_enabled: true,
-                min_fit_for_alerts: 70,
-                notify_on_new_match: true,
-                notify_on_batch_complete: false,
+        setHookState({
+            settings: makeSettings({
                 revision: 6,
                 channels: {
-                    email: {
-                        enabled: true,
-                        configured: true,
-                        available: true,
-                        masked_recipient: '***@example.com',
+                    email: makeChannel({
                         effective_recipient: 'ada@example.com',
                         override_address: 'ada@example.com',
                         override_status: 'pending',
-                        availability_reason: null,
-                        last_test_status: null,
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
+                    }),
                 },
-            },
-            isLoading: false,
-            isSaving: false,
-            isTesting: false,
-            isSendingEmailVerification: false,
-            isClearingEmailOverride: false,
-            saveSettings,
-            sendTest,
-            sendEmailOverrideVerification,
-            clearEmailOverride,
-            verifyEmailOverride,
+            }),
         });
         sendEmailOverrideVerification.mockRejectedValueOnce('bad send');
         clearEmailOverride.mockRejectedValueOnce('bad clear');
 
-        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        renderPanel();
 
         await userEvent.click(screen.getByRole('button', { name: /send verification/i }));
         await userEvent.click(screen.getByRole('button', { name: /clear override/i }));
@@ -483,44 +365,22 @@ describe('NotificationSettingsPanel', () => {
     });
 
     it('shows direct error messages for verification failures raised as Error objects', async () => {
-        mockUseNotificationSettings.mockReturnValue({
-            settings: {
-                notifications_enabled: true,
-                min_fit_for_alerts: 70,
-                notify_on_new_match: true,
-                notify_on_batch_complete: false,
+        setHookState({
+            settings: makeSettings({
                 revision: 6,
                 channels: {
-                    email: {
-                        enabled: true,
-                        configured: true,
-                        available: true,
-                        masked_recipient: '***@example.com',
+                    email: makeChannel({
                         effective_recipient: 'ada@example.com',
                         override_address: 'ada@example.com',
                         override_status: 'pending',
-                        availability_reason: null,
-                        last_test_status: null,
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
+                    }),
                 },
-            },
-            isLoading: false,
-            isSaving: false,
-            isTesting: false,
-            isSendingEmailVerification: false,
-            isClearingEmailOverride: false,
-            saveSettings,
-            sendTest,
-            sendEmailOverrideVerification,
-            clearEmailOverride,
-            verifyEmailOverride,
+            }),
         });
         sendEmailOverrideVerification.mockRejectedValueOnce(new Error('Verification exploded'));
         clearEmailOverride.mockRejectedValueOnce(new Error('Clear exploded'));
 
-        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        renderPanel();
 
         await userEvent.click(screen.getByRole('button', { name: /send verification/i }));
         await userEvent.click(screen.getByRole('button', { name: /clear override/i }));
@@ -534,7 +394,7 @@ describe('NotificationSettingsPanel', () => {
     });
 
     it('updates and tests a non-email channel', async () => {
-        const { rerender } = render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        const { rerender } = renderPanel();
 
         await userEvent.click(screen.getByRole('checkbox', { name: 'Enable Discord' }));
         const testButtons = screen.getAllByRole('button', { name: /test/i });
@@ -555,46 +415,18 @@ describe('NotificationSettingsPanel', () => {
             });
         });
 
-        mockUseNotificationSettings.mockReturnValue({
-            settings: {
-                notifications_enabled: true,
-                min_fit_for_alerts: 70,
-                notify_on_new_match: true,
-                notify_on_batch_complete: false,
+        setHookState({
+            settings: makeSettings({
                 revision: 3,
                 channels: {
-                    email: {
-                        enabled: true,
-                        configured: true,
-                        available: true,
-                        masked_recipient: '***@example.com',
-                        availability_reason: null,
-                        last_test_status: null,
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
-                    discord: {
+                    discord: makeChannel({
                         enabled: true,
                         configured: false,
-                        available: true,
                         masked_recipient: null,
-                        availability_reason: null,
                         last_test_status: null,
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
+                    }),
                 },
-            },
-            isLoading: false,
-            isSaving: false,
-            isTesting: false,
-            isSendingEmailVerification: false,
-            isClearingEmailOverride: false,
-            saveSettings,
-            sendTest,
-            sendEmailOverrideVerification,
-            clearEmailOverride,
-            verifyEmailOverride,
+            }),
         });
 
         rerender(<NotificationSettingsPanel />);
@@ -604,56 +436,27 @@ describe('NotificationSettingsPanel', () => {
     });
 
     it('renders configured copy when a saved channel has no masked recipient', () => {
-        mockUseNotificationSettings.mockReturnValue({
-            settings: {
-                notifications_enabled: true,
-                min_fit_for_alerts: 70,
-                notify_on_new_match: true,
-                notify_on_batch_complete: false,
+        setHookState({
+            settings: makeSettings({
                 revision: 8,
                 channels: {
-                    email: {
-                        enabled: true,
-                        configured: true,
-                        available: true,
-                        masked_recipient: '***@example.com',
-                        availability_reason: null,
-                        last_test_status: null,
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
-                    discord: {
+                    discord: makeChannel({
                         enabled: false,
-                        configured: true,
-                        available: true,
                         masked_recipient: null,
-                        availability_reason: null,
                         last_test_status: null,
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
+                    }),
                 },
-            },
-            isLoading: false,
-            isSaving: false,
-            isTesting: false,
-            isSendingEmailVerification: false,
-            isClearingEmailOverride: false,
-            saveSettings,
-            sendTest,
-            sendEmailOverrideVerification,
-            clearEmailOverride,
-            verifyEmailOverride,
+            }),
         });
 
-        render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        renderPanel();
 
         expect(screen.getByText('Configured')).toBeInTheDocument();
         expect(screen.getByText('Uses a saved Discord webhook destination.')).toBeInTheDocument();
     });
 
     it('updates global and email toggles, then tests a configured non-email channel', async () => {
-        const { rerender } = render(<NotificationSettingsPanel />, { wrapper: createWrapper() });
+        const { rerender } = renderPanel();
 
         await userEvent.click(screen.getByRole('checkbox', { name: 'Enable notifications' }));
         await userEvent.click(screen.getByRole('checkbox', { name: 'Notify on new saved matches' }));
@@ -674,46 +477,23 @@ describe('NotificationSettingsPanel', () => {
             });
         });
 
-        mockUseNotificationSettings.mockReturnValue({
-            settings: {
+        setHookState({
+            settings: makeSettings({
                 notifications_enabled: false,
-                min_fit_for_alerts: 70,
                 notify_on_new_match: false,
                 notify_on_batch_complete: true,
                 revision: 7,
                 channels: {
-                    email: {
+                    email: makeChannel({
                         enabled: false,
-                        configured: true,
-                        available: true,
-                        masked_recipient: '***@example.com',
-                        availability_reason: null,
-                        last_test_status: null,
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
-                    discord: {
+                    }),
+                    discord: makeChannel({
                         enabled: false,
-                        configured: true,
-                        available: true,
                         masked_recipient: 'https://discord.com/api/webhooks/...',
-                        availability_reason: null,
                         last_test_status: null,
-                        last_tested_at: null,
-                        last_test_error: null,
-                    },
+                    }),
                 },
-            },
-            isLoading: false,
-            isSaving: false,
-            isTesting: false,
-            isSendingEmailVerification: false,
-            isClearingEmailOverride: false,
-            saveSettings,
-            sendTest,
-            sendEmailOverrideVerification,
-            clearEmailOverride,
-            verifyEmailOverride,
+            }),
         });
 
         rerender(<NotificationSettingsPanel />);
