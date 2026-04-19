@@ -290,7 +290,37 @@ def _compose_images_available(
         timeout=120,
         check=False,
     )
-    return inspect.returncode == 0
+    if inspect.returncode != 0:
+        return False
+
+    runtime_images = [
+        image_name
+        for image_name in image_names
+        if image_name.startswith("jobscout-")
+        and "frontend" not in image_name
+        and "mock-llm" not in image_name
+    ]
+    for image_name in runtime_images:
+        import_check = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--entrypoint",
+                "python",
+                image_name,
+                "-c",
+                "import database.bootstrap",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        if import_check.returncode != 0:
+            return False
+
+    return True
 
 
 def _resolve_build_images(

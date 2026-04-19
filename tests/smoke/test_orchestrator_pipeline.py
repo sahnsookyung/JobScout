@@ -53,6 +53,7 @@ SERVICE_TEST_IMAGES = {
     "mock_llm": "jobscout-mock-llm-test:latest",
 }
 MOCK_LLM_URL_DOCKER = "http://mock-llm-test:8090/v1"
+MATCHER_HEALTH_TIMEOUT_SECONDS = 240
 
 
 # Set environment for modules that import at load time
@@ -83,9 +84,61 @@ def run_docker_command(args, check=False, timeout=30):
     return result
 
 
+def _image_needs_bootstrap_module(image_name: str) -> bool:
+    return image_name in {
+        SERVICE_TEST_IMAGES["extraction"],
+        SERVICE_TEST_IMAGES["embeddings"],
+        SERVICE_TEST_IMAGES["matcher"],
+        SERVICE_TEST_IMAGES["orchestrator"],
+    }
+
+
+def _image_supports_bootstrap(image_name: str) -> bool:
+    if not _image_needs_bootstrap_module(image_name):
+        return True
+
+    check = run_docker_command(
+        [
+            "run",
+            "--rm",
+            "--entrypoint",
+            "python",
+            image_name,
+            "-c",
+            "import database.bootstrap",
+        ],
+        check=False,
+        timeout=120,
+    )
+    if check.returncode != 0:
+        return False
+
+    if image_name != SERVICE_TEST_IMAGES["matcher"]:
+        return True
+
+    matcher_check = run_docker_command(
+        [
+            "run",
+            "--rm",
+            "--entrypoint",
+            "python",
+            image_name,
+            "-c",
+            (
+                "import inspect, sys; "
+                "from services.scorer_matcher.main import _warm_up_cross_encoder; "
+                "sys.exit(0 if 'MATCHER_SKIP_WARMUP' in inspect.getsource(_warm_up_cross_encoder) else 1)"
+            ),
+        ],
+        check=False,
+        timeout=120,
+    )
+    return matcher_check.returncode == 0
+
+
 
 def build_service_images(project_root: pathlib.Path):
-    """Build service-specific Docker images when they are missing."""
+    """Build service-specific Docker images when they are missing or stale."""
     dockerfiles = {
         "extraction": project_root / "services" / "extraction" / "Dockerfile",
         "embeddings": project_root / "services" / "embeddings" / "Dockerfile",
@@ -96,11 +149,13 @@ def build_service_images(project_root: pathlib.Path):
 
     for service_name, image_name in SERVICE_TEST_IMAGES.items():
         image_check = run_docker_command(["images", "-q", image_name])
-        if image_check.stdout.strip():
+        image_exists = bool(image_check.stdout.strip())
+        if image_exists and _image_supports_bootstrap(image_name):
             continue
 
         dockerfile = dockerfiles[service_name]
-        print(f"  Building {image_name} from {dockerfile}...")
+        reason = "stale runtime modules" if image_exists else "missing image"
+        print(f"  Building {image_name} from {dockerfile} ({reason})...")
         run_docker_command(
             [
                 "build",
@@ -113,8 +168,6 @@ def build_service_images(project_root: pathlib.Path):
             check=True,
             timeout=1800,
         )
-
-
 
 def start_test_infrastructure():
     """Start Redis and all microservices containers."""
@@ -262,6 +315,7 @@ def start_test_infrastructure():
         "-e", "ETL_LLM_API_KEY=mock-key",
         "-e", f"ETL_EMBEDDING_BASE_URL={MOCK_LLM_URL_DOCKER}",
         "-e", "ETL_EMBEDDING_API_KEY=mock-key",
+        "-e", "MATCHER_SKIP_WARMUP=true",
         "-e", "PREFERENCES_PARSER_PROVIDER=openai_compatible",
         "-e", f"PREFERENCES_PARSER_BASE_URL={MOCK_LLM_URL_DOCKER}",
         "-e", "PREFERENCES_PARSER_API_KEY=mock-key",
@@ -320,7 +374,13 @@ def start_test_infrastructure():
     print("  Waiting for services to be ready...")
     wait_for_service(f"localhost:{EXTRACTION_PORT}", "health")
     wait_for_service(f"localhost:{EMBEDDINGS_PORT}", "health")
-    wait_for_service(f"localhost:{MATCHER_PORT}", "health")
+    # Cold starts can include model bootstrap work, so the matcher needs a
+    # longer health window than the other services.
+    wait_for_service(
+        f"localhost:{MATCHER_PORT}",
+        "health",
+        timeout=MATCHER_HEALTH_TIMEOUT_SECONDS,
+    )
     wait_for_service(f"localhost:{ORCHESTRATOR_PORT}", "health")
 
 

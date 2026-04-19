@@ -324,6 +324,10 @@ def _warm_up_cross_encoder(config) -> None:
     (default true); when false, a failure is logged but the service still
     starts — useful for local dev without the model cache.
     """
+    if os.getenv("MATCHER_SKIP_WARMUP", "false").lower() in {"1", "true", "yes"}:
+        logger.info("Cross-encoder warm-up skipped via MATCHER_SKIP_WARMUP")
+        return
+
     from core.scorer.semantic_fit import LocalCrossEncoderProvider
 
     semantic_fit = getattr(getattr(config, "matching", None), "scorer", None)
