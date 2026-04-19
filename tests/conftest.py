@@ -85,7 +85,15 @@ def test_database():
     if external_url:
         from tests import check_db_available
         if check_db_available():
+            from sqlalchemy import create_engine
+            from database.bootstrap import bootstrap_database
+
             os.environ["DATABASE_URL"] = external_url
+            engine = create_engine(external_url)
+            try:
+                bootstrap_database(engine=engine)
+            finally:
+                engine.dispose()
             yield external_url
             return
         else:
@@ -116,17 +124,15 @@ def test_database():
         os.environ["TEST_DATABASE_URL"] = db_url
         os.environ["DATABASE_URL"] = db_url
         
-        # Create tables from ORM metadata on the test path, mirroring the parity contract.
-        from sqlalchemy import create_engine, text
-        from database.models import Base
+        # Bootstrap via the same schema entrypoint used by the application.
+        from sqlalchemy import create_engine
+        from database.bootstrap import bootstrap_database
         from tests.fixtures import schema_snapshot
         engine = create_engine(db_url)
-        with engine.begin() as conn:
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        Base.metadata.create_all(engine)
+        bootstrap_database(engine=engine)
         if schema_snapshot.SNAPSHOT_PATH.exists():
             assert schema_snapshot.capture(engine) == schema_snapshot.load(), (
-                "ORM schema drifted from the checked-in snapshot. "
+                "Bootstrapped schema drifted from the checked-in snapshot. "
                 "Regenerate intentionally if this change is expected."
             )
         

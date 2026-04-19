@@ -1,9 +1,9 @@
-"""Parity test: migration chain vs ORM create_all() vs checked-in snapshot.
+"""Parity test: bootstrap path vs ORM create_all() vs checked-in snapshot.
 
-Uses testcontainers to spin up two ephemeral Postgres instances. One is migrated
-via ``database.migrate.migrate_database``, the other built via ``Base.metadata
+Uses testcontainers to spin up two ephemeral Postgres instances. One is bootstrapped
+via ``database.bootstrap.bootstrap_database``, the other built via ``Base.metadata
 .create_all()``. The two captured snapshots must match each other and must also
-match the checked-in ``tests/fixtures/schema_snapshot.json``.
+match the checked-in ``database/schema_snapshot.json``.
 
 If the checked-in snapshot is missing, the test reports a clear regeneration
 command instead of failing silently.
@@ -37,12 +37,12 @@ def _start_pg():
 def _capture_migrations_path() -> dict:
     postgres = _start_pg()
     try:
-        from database.migrate import migrate_database
+        from database.bootstrap import bootstrap_database
 
         url = postgres.get_connection_url()
         engine = create_engine(url)
         try:
-            migrate_database(engine=engine)
+            bootstrap_database(engine=engine)
             return schema_snapshot.capture(engine)
         finally:
             engine.dispose()
@@ -82,19 +82,19 @@ def test_migration_path_matches_create_all_path():
 
 
 def test_migration_path_matches_checked_in_snapshot():
-    """Regressions in the migration chain must be explicit — the snapshot is checked in."""
+    """Regressions in the bootstrap schema must be explicit — the snapshot is checked in."""
     pytest.importorskip("testcontainers")
     if not schema_snapshot.SNAPSHOT_PATH.exists():
         pytest.skip(
             "Baseline snapshot missing. Generate via: "
-            "`uv run python -m tests.fixtures.schema_snapshot --write --url=$TEST_DATABASE_URL`"
+            "`uv run python -m database.schema_snapshot --write --url=$TEST_DATABASE_URL`"
         )
 
     current = _capture_migrations_path()
     checked_in = schema_snapshot.load()
     assert current == checked_in, (
-        "Migration chain schema has drifted from the checked-in snapshot. "
+        "Bootstrapped schema has drifted from the checked-in snapshot. "
         "If the change is intentional, regenerate the snapshot with: "
-        "`uv run python -m tests.fixtures.schema_snapshot --write --url=<db_url>` "
+        "`uv run python -m database.schema_snapshot --write --url=<db_url>` "
         "and include the diff in your PR description."
     )

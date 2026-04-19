@@ -421,7 +421,7 @@ start_docker() {
 }
 
 run_migrations() {
-    log_info "Applying database migrations..."
+    log_info "Preparing database schema..."
 
     if ! command -v uv &> /dev/null; then
         log_error "uv is not installed. Install with: pip install uv" >&2
@@ -430,10 +430,10 @@ run_migrations() {
 
     (
         cd "${PROJECT_ROOT}" &&
-        uv run python -m database.migrate
+        uv run python -m database.bootstrap
     )
 
-    log_success "Database migrations applied"
+    log_success "Database schema ready"
     return 0
 }
 
@@ -508,11 +508,12 @@ start_web_app() {
 start_web_ui() {
     local WEB_UI_PID
     local i
+    local frontend_dir="${PROJECT_ROOT}/web/frontend"
 
     log_info "Starting Vite web UI..."
 
     # Check if package.json exists
-    if [[ ! -f "${PROJECT_ROOT}/web/frontend/package.json" ]]; then
+    if [[ ! -f "${frontend_dir}/package.json" ]]; then
         log_error "Web UI package.json not found" >&2
         return 1
     fi
@@ -527,7 +528,18 @@ start_web_ui() {
         return 1
     fi
 
-    cd "${PROJECT_ROOT}/web/frontend"
+    if [[ ! -d "${frontend_dir}/node_modules" ]]; then
+        log_info "Frontend dependencies missing; installing with npm ci..."
+        (
+            cd "${frontend_dir}" &&
+            npm ci
+        ) || {
+            log_error "Failed to install frontend dependencies." >&2
+            return 1
+        }
+    fi
+
+    cd "${frontend_dir}"
     npm run dev > "${LOGS_DIR}/web-ui.log" 2>&1 &
 
     WEB_UI_PID=$!

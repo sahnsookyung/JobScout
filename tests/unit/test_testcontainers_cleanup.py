@@ -5,7 +5,7 @@ import sqlalchemy
 import testcontainers.postgres as postgres_module
 import testcontainers.redis as redis_module
 
-import database.migrate as migrate_module
+import database.bootstrap as bootstrap_module
 import tests.conftest as project_conftest
 
 
@@ -34,13 +34,13 @@ def test_test_database_stops_container_when_setup_fails(monkeypatch) -> None:
     container = FakePostgresContainer()
     engine = _FakeEngine()
 
-    def fail_migrate(*, engine) -> None:
-        raise RuntimeError("migration failed")
+    def fail_bootstrap(*, engine) -> None:
+        raise RuntimeError("bootstrap failed")
 
     monkeypatch.delenv("TEST_DATABASE_URL", raising=False)
     monkeypatch.setattr(postgres_module, "PostgresContainer", lambda *args, **kwargs: container)
     monkeypatch.setattr(sqlalchemy, "create_engine", lambda url: engine)
-    monkeypatch.setattr(migrate_module, "migrate_database", fail_migrate)
+    monkeypatch.setattr(bootstrap_module, "bootstrap_database", fail_bootstrap)
 
     fixture = project_conftest.test_database.__wrapped__
     generator = fixture()

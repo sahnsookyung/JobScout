@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 def run_test():
     # 1. Initialize DB
     logger.info("Initializing DB...")
-    from database.migrate import migrate_database
-    migrate_database()
+    from database.bootstrap import bootstrap_database
+    bootstrap_database()
 
     # 2. Load Data
     json_path = "/app/api_responses.json"

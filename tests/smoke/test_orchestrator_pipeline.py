@@ -190,7 +190,7 @@ def start_test_infrastructure():
         "--network", "test-network",
         "-e", "DATABASE_URL=postgresql://user:password@postgres-test:5432/jobscout_test",
         "jobscout-orchestrator:latest",
-        "python", "-m", "database.migrate"
+        "python", "-m", "database.bootstrap"
     ], check=True)
 
     print("  Starting Mock LLM...")

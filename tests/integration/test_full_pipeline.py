@@ -266,12 +266,12 @@ class TestFullPipelineIntegration(unittest.TestCase):
     @classmethod
     def _setup_database(cls):
         """Reset the isolated test DB, then create the schema using migrations."""
-        from database.migrate import migrate_database
+        from database.bootstrap import bootstrap_database
         with cls.engine.begin() as conn:
             conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
             conn.execute(text("CREATE SCHEMA public"))
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        migrate_database(engine=cls.engine)
+            bootstrap_database(engine=cls.engine)
     
     @classmethod
     def tearDownClass(cls):
