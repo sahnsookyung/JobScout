@@ -64,7 +64,6 @@ services:
       start_period: 10s
 
   db-migrate:
-    profiles: ["web"]
     build:
       context: .
       dockerfile: Dockerfile
