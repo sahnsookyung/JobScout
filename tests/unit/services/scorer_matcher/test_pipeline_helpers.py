@@ -4,7 +4,7 @@ import pytest
 import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from tests.mocks.fake_service import FakeLLMService
 from services.scorer_matcher.candidate_preferences import (
@@ -183,22 +183,36 @@ class TestRunScorerService:
     def test_delegates_to_score_matches(self):
         scorer = MagicMock()
         scorer.score_matches.return_value = ["scored"]
-        config = SimpleNamespace(result_policy=SimpleNamespace(min_fit=50.0))
+        config = SimpleNamespace(
+            result_policy=SimpleNamespace(
+                min_fit=50.0,
+                min_jd_required_coverage=0.8,
+                top_k=1,
+            )
+        )
         stop_event = threading.Event()
+        policy = SimpleNamespace(
+            min_fit=50.0,
+            min_jd_required_coverage=0.8,
+            top_k=1,
+        )
 
         with patch(
             "services.scorer_matcher.pipeline.get_result_policy_store",
-            return_value=SimpleNamespace(get_current_policy=lambda: "policy"),
+            return_value=SimpleNamespace(get_current_policy=lambda: policy),
         ):
             result = _run_scorer_service(scorer, ["prelim"], config, stop_event)
 
         assert result == ["scored"]
         scorer.score_matches.assert_called_once_with(
             preliminary_matches=["prelim"],
-            result_policy="policy",
+            result_policy=policy,
             match_type="requirements_only",
             stop_event=stop_event,
         )
+        assert policy.min_fit == 0.0
+        assert policy.min_jd_required_coverage is None
+        assert policy.top_k == 1
 
 
 class TestPrepareSelectionResult:
@@ -240,6 +254,200 @@ class TestPrepareSelectionResult:
         )
 
         assert [match.job.id for match in result.selected_matches] == ["job-pref"]
+
+    @patch(
+        "services.scorer_matcher.pipeline.resolve_notification_fit_floor",
+        return_value=70.0,
+    )
+    @patch(
+        "services.scorer_matcher.pipeline.get_result_policy_store",
+        return_value=SimpleNamespace(
+            get_current_policy=lambda: SimpleNamespace(
+                min_fit=40.0,
+                min_jd_required_coverage=None,
+                top_k=5,
+            )
+        ),
+    )
+    def test_below_min_fit_items_are_tiered_as_excluded(
+        self,
+        _mock_policy_store,
+        _mock_notification_floor,
+    ):
+        """Post two-tier contract: below-floor items are retained as excluded,
+        not dropped and not auto-promoted. Preserves the user's configured floor
+        while making below-floor runs visible in the UI."""
+        matches = [
+            SimpleNamespace(
+                job=SimpleNamespace(id="job-1"),
+                fit_score=32.0,
+                preference_score=None,
+                job_similarity=0.8,
+                jd_required_coverage=0.2,
+                fit_components={"effective_fit_mode": "threshold"},
+            ),
+            SimpleNamespace(
+                job=SimpleNamespace(id="job-2"),
+                fit_score=28.0,
+                preference_score=None,
+                job_similarity=0.7,
+                jd_required_coverage=0.15,
+                fit_components={"effective_fit_mode": "threshold"},
+            ),
+        ]
+
+        result = _prepare_selection_result(
+            matches,
+            ctx=SimpleNamespace(config=SimpleNamespace(notifications=SimpleNamespace())),
+            owner_id="user-1",
+            ranking_context=SimpleNamespace(
+                mode=SimpleNamespace(value="balanced"),
+                config=RankingConfig(active_default_mode="balanced"),
+            ),
+            matching_config=SimpleNamespace(),
+            resume_resolution_reason="test",
+            task_id="task-1",
+        )
+
+        assert result.selected_matches == []
+        assert result.policy_snapshot.fit_floor_used == 40.0
+        tiers = [(item.selection_tier, item.excluded_reason) for item in result.item_snapshots]
+        assert tiers == [("excluded", "below_min_fit"), ("excluded", "below_min_fit")]
+
+    def test_run_scorer_service_widens_policy_to_score_every_preliminary(self):
+        from services.scorer_matcher.pipeline import _run_scorer_service
+        scorer = Mock()
+        scorer.score_matches.return_value = []
+        # ResultPolicy stub WITHOUT model_copy → exercises the else-branch (lines 634-637).
+        policy = SimpleNamespace(
+            min_fit=40.0, min_jd_required_coverage=0.5, top_k=10,
+        )
+        matching_config = SimpleNamespace(result_policy=policy)
+        # 12 preliminary matches > policy.top_k=10 → widened_top_k must be 12.
+        prelims = list(range(12))
+        with patch(
+            "services.scorer_matcher.pipeline._resolve_result_policy",
+            return_value=policy,
+        ):
+            _run_scorer_service(scorer, prelims, matching_config, threading.Event())
+        called_kwargs = scorer.score_matches.call_args.kwargs
+        widened = called_kwargs["result_policy"]
+        assert widened.min_fit == 0.0
+        assert widened.min_jd_required_coverage is None
+        assert widened.top_k == 12
+
+    def test_run_scorer_service_no_op_when_no_preliminary_matches(self):
+        from services.scorer_matcher.pipeline import _run_scorer_service
+        scorer = Mock()
+        scorer.score_matches.return_value = []
+        with patch(
+            "services.scorer_matcher.pipeline._resolve_result_policy",
+            return_value=SimpleNamespace(
+                min_fit=40.0, min_jd_required_coverage=0.5, top_k=5,
+            ),
+        ):
+            _run_scorer_service(
+                scorer, [], SimpleNamespace(result_policy=None), threading.Event()
+            )
+        # Policy untouched when no prelims (the if-block is skipped).
+        called = scorer.score_matches.call_args.kwargs["result_policy"]
+        assert called.min_fit == 40.0
+        assert called.top_k == 5
+
+
+class TestEvidenceRerankProvider:
+    def test_returns_none_when_evidence_rerank_disabled(self):
+        from services.scorer_matcher.pipeline import _resolve_evidence_rerank_provider
+        cfg = SimpleNamespace(evidence_rerank_enabled=False, cross_encoder=None)
+        assert _resolve_evidence_rerank_provider(cfg) is None
+
+    def test_returns_none_when_local_provider_disabled(self):
+        from services.scorer_matcher.pipeline import _resolve_evidence_rerank_provider
+        cfg = SimpleNamespace(
+            evidence_rerank_enabled=True,
+            cross_encoder=SimpleNamespace(local=SimpleNamespace(enabled=False)),
+        )
+        assert _resolve_evidence_rerank_provider(cfg) is None
+
+    def test_uses_shared_provider_when_enabled(self, monkeypatch):
+        from services.scorer_matcher.pipeline import _resolve_evidence_rerank_provider
+
+        seen_kwargs = {}
+
+        def fake_get(**kwargs):
+            seen_kwargs.update(kwargs)
+            return Mock(name="shared-provider")
+
+        monkeypatch.setattr(
+            "services.scorer_matcher.pipeline.get_shared_local_cross_encoder_provider",
+            fake_get,
+        )
+        cfg = SimpleNamespace(
+            evidence_rerank_enabled=True,
+            cross_encoder=SimpleNamespace(local=SimpleNamespace(
+                enabled=True,
+                model_name="bge",
+                model_cache_path="/cache",
+                runtime="auto",
+                max_batch_size=16,
+                trust_remote_code=False,
+            )),
+        )
+        provider = _resolve_evidence_rerank_provider(cfg)
+        assert provider is not None
+        assert seen_kwargs["model_name"] == "bge"
+        assert seen_kwargs["cache_path"] == "/cache"
+
+
+class TestTwoTierFlagInPrepareSelection:
+    @patch(
+        "services.scorer_matcher.pipeline.resolve_notification_fit_floor",
+        return_value=70.0,
+    )
+    @patch(
+        "services.scorer_matcher.pipeline.get_result_policy_store",
+        return_value=SimpleNamespace(
+            get_current_policy=lambda: SimpleNamespace(
+                min_fit=40.0,
+                min_jd_required_coverage=None,
+                top_k=5,
+            )
+        ),
+    )
+    def test_two_tier_selection_disabled_suppresses_excluded_snapshots(
+        self,
+        _mock_policy_store,
+        _mock_notification_floor,
+    ):
+        """§J rollout gate: when TWO_TIER_SELECTION_ENABLED=false the engine must
+        not persist excluded-tier items, so pre-§C single-tier behavior is
+        preserved byte-for-byte."""
+        matches = [
+            SimpleNamespace(
+                job=SimpleNamespace(id="job-1"),
+                fit_score=32.0,
+                preference_score=None,
+                job_similarity=0.8,
+                jd_required_coverage=0.2,
+                fit_components={"effective_fit_mode": "threshold"},
+            ),
+        ]
+
+        result = _prepare_selection_result(
+            matches,
+            ctx=SimpleNamespace(config=SimpleNamespace(notifications=SimpleNamespace())),
+            owner_id="user-1",
+            ranking_context=SimpleNamespace(
+                mode=SimpleNamespace(value="balanced"),
+                config=RankingConfig(active_default_mode="balanced"),
+            ),
+            matching_config=SimpleNamespace(two_tier_selection_enabled=False),
+            resume_resolution_reason="test",
+            task_id="task-1",
+        )
+
+        assert result.selected_matches == []
+        assert result.item_snapshots == []
 
 
 class TestCandidatePreferenceHelpers:

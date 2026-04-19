@@ -260,6 +260,17 @@ class SemanticFitConfig(BaseModel):
     default_mode: Literal["cross_encoder", "llm"] = "cross_encoder"
     threshold_fallback_enabled: bool = True
     recall_top_k: int = 5
+    # Gate for the §B evidence cross-encoder rerank path. Defaults to False
+    # so scorer/matcher can ship independently of the rerank rollout; flip to
+    # True once the reranker has been validated against production jobs.
+    evidence_rerank_enabled: bool = False
+    # Opt-in LLM escalation: when on, primary-tier requirements whose rerank
+    # evidence_score lands inside the borderline band AND whose threshold /
+    # cross-encoder verdicts disagree get re-judged by the LLM scorer. Default
+    # off to avoid surprise latency/cost; the reranker alone resolves most
+    # confusions, and LLM is a targeted tiebreaker.
+    evidence_llm_escalation: bool = False
+    evidence_llm_borderline_band: tuple[float, float] = (0.40, 0.65)
     cross_encoder: SemanticFitCrossEncoderConfig = Field(
         default_factory=SemanticFitCrossEncoderConfig
     )
@@ -418,6 +429,10 @@ class MatchingConfig(BaseModel):
     invalidate_on_job_change: bool = True
     invalidate_on_resume_change: bool = True
     recalculate_existing: bool = False
+    # Rollout gate for the §C two-tier (primary/excluded) selection contract.
+    # Default true; setting false reverts the engine to the pre-§C single-tier
+    # behavior (excluded items are not persisted and the API never returns them).
+    two_tier_selection_enabled: bool = True
 
 
 class NotificationChannelConfig(BaseModel):
@@ -560,6 +575,9 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["FIT_SEMANTIC_ENABLED"], ["matching", "scorer", "semantic_fit", "enabled"]),
     (["FIT_SEMANTIC_DEFAULT_MODE"], ["matching", "scorer", "semantic_fit", "default_mode"]),
     (["FIT_SEMANTIC_RECALL_TOP_K"], ["matching", "scorer", "semantic_fit", "recall_top_k"]),
+    (["EVIDENCE_RERANK_ENABLED"], ["matching", "scorer", "semantic_fit", "evidence_rerank_enabled"]),
+    (["EVIDENCE_LLM_ESCALATION"], ["matching", "scorer", "semantic_fit", "evidence_llm_escalation"]),
+    (["TWO_TIER_SELECTION_ENABLED"], ["matching", "two_tier_selection_enabled"]),
     (["FIT_CROSS_ENCODER_ROUTE_POLICY"], ["matching", "scorer", "semantic_fit", "cross_encoder", "route_policy"]),
     (["FIT_CROSS_ENCODER_LOCAL_RUNTIME"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "runtime"]),
     (["FIT_CROSS_ENCODER_LOCAL_MODEL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "model_name"]),

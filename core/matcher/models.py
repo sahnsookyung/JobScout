@@ -24,6 +24,7 @@ class RequirementMatchResult:
     evidence: Optional[ResumeEvidenceUnit]
     similarity: float
     is_covered: bool
+    evidence_score: Optional[float] = None
     evidence_candidates: List[RequirementEvidenceCandidate] = field(default_factory=list)
 
 

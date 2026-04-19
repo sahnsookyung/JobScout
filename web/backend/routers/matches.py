@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..dependencies import get_current_user, get_db
+from ..exceptions import InvalidMatchOperationException
 from ..services.match_service import MatchService
 from ..services.policy_service import get_policy_service
 from ..models.responses import (
@@ -39,6 +40,7 @@ def validate_uuid(match_id: str) -> str:
 
 
 _VALID_RANKING_MODES = {"preference_first", "fit_first", "balanced"}
+_VALID_TIERS = {"primary", "all"}
 
 
 @router.get(
@@ -49,19 +51,22 @@ _VALID_RANKING_MODES = {"preference_first", "fit_first", "balanced"}
 def get_matches(
     db: DbSession,
     user: Annotated[object, Depends(get_current_user)],
-    status: Annotated[str, Query(description="Match status: active, stale, or all")] = "active",
+    status: Annotated[str, Query(description="Match status for primary-tier matches: active, stale, or all")] = "active",
     min_fit: Annotated[float | None, Query(ge=0, le=100, description="Minimum fit score filter")] = None,
-    top_k: Annotated[int | None, Query(ge=1, le=500, description="Maximum results to return")] = None,
+    top_k: Annotated[int | None, Query(ge=1, le=500, description="Maximum results to return. When tier=all and omitted, the full canonical run is returned.")] = None,
     remote_only: Annotated[bool, Query(description="Filter to remote jobs only")] = False,
-    show_hidden: Annotated[bool, Query(description="Include hidden matches in results")] = False,
+    show_hidden: Annotated[bool, Query(description="Include hidden primary-tier matches in results")] = False,
     ranking_mode: Annotated[str | None, Query(description="Ranking mode: preference_first, fit_first, or balanced")] = None,
+    tier: Annotated[str, Query(description="Selection tier: primary (default) or all (include excluded; status/show_hidden only apply to primary items)")] = "primary",
 ):
     """
     Get a list of job matches ranked by the declared mode.
 
     Stage 1 retrieves the canonical resume's persisted match set.
     Stage 2 re-ranks using the requested mode with NULL-aware sort keys.
-    Stage 3 truncates to effective_top_k.
+    Stage 3 truncates primary-tier results to effective_top_k by default.
+    When `tier=all`, omitted `top_k` returns the full canonical run and an
+    explicit `top_k` caps the final combined result count.
 
     Raises:
         422: Invalid `status` or `ranking_mode` value.
@@ -79,10 +84,28 @@ def get_matches(
             detail=f"Invalid ranking_mode '{ranking_mode}'. Valid values: {', '.join(sorted(_VALID_RANKING_MODES))}"
         )
 
+    if tier not in _VALID_TIERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid tier '{tier}'. Valid values: {', '.join(sorted(_VALID_TIERS))}"
+        )
+
+    # Rollout gate: when two-tier selection is disabled, tier=all collapses
+    # to tier=primary so the API behaves like the pre-§C single-tier contract.
+    from core.config_loader import load_config
+    if tier == "all":
+        matching_cfg = getattr(load_config(), "matching", None)
+        if matching_cfg is not None and not getattr(
+            matching_cfg, "two_tier_selection_enabled", True
+        ):
+            tier = "primary"
+
     policy_service = get_policy_service()
     current_policy = policy_service.get_current_policy()
 
-    effective_top_k = top_k if top_k is not None else current_policy.top_k
+    effective_top_k = top_k
+    if effective_top_k is None and tier == "primary":
+        effective_top_k = current_policy.top_k
 
     service = MatchService(db)
     matches = service.get_matches(
@@ -93,6 +116,7 @@ def get_matches(
         remote_only=remote_only,
         show_hidden=show_hidden,
         ranking_mode=ranking_mode,
+        tier=tier,
     )
 
     return MatchesResponse(
@@ -125,7 +149,10 @@ def get_match_details(
 @router.post(
     "/{match_id}/hide",
     response_model=HideMatchResponse,
-    responses={400: {"description": "Invalid match ID"}},
+    responses={
+        400: {"description": "Invalid match ID"},
+        409: {"description": "Match cannot be hidden in its current selection tier"},
+    },
 )
 def toggle_match_hidden(
     match_id: str,
@@ -139,7 +166,10 @@ def toggle_match_hidden(
     """
     validate_uuid(match_id)
     service = MatchService(db)
-    new_status = service.toggle_hidden(match_id, owner_id=getattr(user, "id", None))
+    try:
+        new_status = service.toggle_hidden(match_id, owner_id=getattr(user, "id", None))
+    except InvalidMatchOperationException as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     
     return HideMatchResponse(
         success=True,

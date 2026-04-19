@@ -62,11 +62,54 @@ services:
       retries: 3
       start_period: 10s
 
+  # One-shot init container: downloads the cross-encoder model into the
+  # scorer_models named volume before scorer-matcher starts, so the matcher's
+  # boot-time warm_up() finds weights already on disk instead of timing out
+  # liveness during a cold download. HF_TOKEN is consumed here (if needed by
+  # the repo) and NOT by scorer-matcher at runtime.
+  scorer-model-bootstrap:
+    build:
+      context: .
+      dockerfile: services/scorer_matcher/Dockerfile
+    env_file:
+      - .env
+    environment:
+      - HF_HOME=/home/appuser/.cache/huggingface
+      - SENTENCE_TRANSFORMERS_HOME=/home/appuser/.cache/huggingface
+      - SCORER_MODEL=${SCORER_MODEL:-BAAI/bge-reranker-v2-m3}
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - scorer_models:/home/appuser/.cache/huggingface
+    command:
+      - python
+      - -c
+      - |
+        import os, sys
+        from huggingface_hub import snapshot_download
+        model = os.environ.get('SCORER_MODEL', 'BAAI/bge-reranker-v2-m3')
+        token = os.environ.get('HF_TOKEN') or None
+        cache_dir = os.environ['HF_HOME']
+        print(f'[bootstrap] populating HF cache at {cache_dir} for {model}', flush=True)
+        path = snapshot_download(repo_id=model, cache_dir=cache_dir, token=token)
+        print(f'[bootstrap] model ready at {path}', flush=True)
+    restart: "no"
+
   scorer-matcher:
     <<: *service-common
     build:
       context: .
       dockerfile: services/scorer_matcher/Dockerfile
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      scorer-model-bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - scorer_models:/home/appuser/.cache/huggingface
     ports:
       - "${SCORER_MATCHER_PORT:-8083}:8083"
     healthcheck:
@@ -115,3 +158,4 @@ services:
 
 volumes:
   resume_uploads:
+  scorer_models:

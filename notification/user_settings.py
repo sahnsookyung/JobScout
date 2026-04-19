@@ -63,11 +63,44 @@ def _mask_channel_recipient(channel_type: str, value: str | None, user: User | N
     return None
 
 
-def _channel_available(channel_type: str, user: User) -> tuple[bool, Optional[str]]:
+def _email_override_status(settings_channel: UserNotificationChannel | None) -> str:
+    override_address = getattr(settings_channel, "override_address", None)
+    if settings_channel is None or not override_address:
+        return "none"
+    if getattr(settings_channel, "override_verified_at", None) is not None:
+        return "verified"
+    expires_at = getattr(settings_channel, "verification_token_expires_at", None)
+    if expires_at is not None and expires_at < datetime.now(timezone.utc):
+        return "expired"
+    return "pending"
+
+
+def _resolved_email_recipient(
+    user: User,
+    settings_channel: UserNotificationChannel | None,
+) -> str | None:
+    if (
+        settings_channel is not None
+        and getattr(settings_channel, "override_address", None)
+        and getattr(settings_channel, "override_verified_at", None) is not None
+    ):
+        return getattr(settings_channel, "override_address", None)
+    return user.email
+
+
+def _channel_available(
+    channel_type: str,
+    user: User,
+    settings_channel: UserNotificationChannel | None = None,
+) -> tuple[bool, Optional[str]]:
     if channel_type == "email":
-        if not user.email:
+        recipient = _resolved_email_recipient(user, settings_channel)
+        if not recipient:
             return False, "A user email is required for email notifications"
-        if _auth_mode() != DEV_BYPASS_AUTH_MODE and user.email_verified_at is None:
+        if (
+            settings_channel is None
+            or getattr(settings_channel, "override_verified_at", None) is None
+        ) and _auth_mode() != DEV_BYPASS_AUTH_MODE and user.email_verified_at is None:
             return False, "A verified account email is required for email notifications"
         if not EmailChannel().validate_config():
             return False, "SMTP is not configured in this runtime"
@@ -121,6 +154,10 @@ class ChannelSnapshot:
     last_tested_at: Optional[datetime]
     last_test_error: Optional[str]
     config_json: dict[str, Any]
+    effective_recipient: Optional[str] = None
+    override_address: Optional[str] = None
+    override_status: Optional[str] = None
+    override_verified_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)
@@ -197,7 +234,7 @@ class UserNotificationSettingsService:
                 )
 
             channel = self.repo.notification_settings.get_or_create_channel(user.id, normalized)
-            available, reason = _channel_available(normalized, user)
+            available, reason = _channel_available(normalized, user, channel)
             requested_enabled = bool(channel_payload["enabled"])
             if requested_enabled and not available:
                 raise NotificationConfigurationError(
@@ -282,7 +319,14 @@ class UserNotificationSettingsService:
 
     def _resolved_recipient(self, user: User, channel_type: str) -> str:
         if channel_type == "email":
-            return user.email
+            channel = self.repo.notification_settings.get_channel(user.id, channel_type)
+            recipient = _resolved_email_recipient(user, channel)
+            if not recipient:
+                raise NotificationConfigurationError(
+                    "Email recipient is missing",
+                    failure_class="recipient_missing",
+                )
+            return recipient
         if channel_type == "in_app":
             return str(user.id)
 
@@ -308,8 +352,8 @@ class UserNotificationSettingsService:
         secret_value = channel_payload.get("secret_value")
 
         if channel_type == "email":
-            channel.configured = bool(user.email)
-            channel.masked_recipient = _mask_email(user.email)
+            channel.configured = bool(_resolved_email_recipient(user, channel))
+            channel.masked_recipient = _mask_email(_resolved_email_recipient(user, channel))
             channel.secret_ciphertext = None
             channel.secret_key_version = None
             return
@@ -362,7 +406,7 @@ class UserNotificationSettingsService:
         settings_channel: UserNotificationChannel | None,
         channel_type: str,
     ) -> ChannelSnapshot:
-        available, reason = _channel_available(channel_type, user)
+        available, reason = _channel_available(channel_type, user, settings_channel)
         configured = False
         masked_recipient = None
         config_json: dict[str, Any] = {}
@@ -370,6 +414,10 @@ class UserNotificationSettingsService:
         last_tested_at = None
         last_test_error = None
         enabled = False
+        effective_recipient = None
+        override_address = None
+        override_status = None
+        override_verified_at = None
 
         if settings_channel is not None:
             configured = bool(settings_channel.configured)
@@ -379,13 +427,18 @@ class UserNotificationSettingsService:
             last_tested_at = settings_channel.last_tested_at
             last_test_error = settings_channel.last_test_error
             enabled = bool(settings_channel.enabled)
+            override_address = getattr(settings_channel, "override_address", None)
+            override_status = _email_override_status(settings_channel)
+            override_verified_at = getattr(settings_channel, "override_verified_at", None)
 
         if channel_type == "email":
-            configured = bool(user.email)
-            masked_recipient = _mask_email(user.email)
+            configured = bool(_resolved_email_recipient(user, settings_channel))
+            effective_recipient = _mask_email(_resolved_email_recipient(user, settings_channel))
+            masked_recipient = effective_recipient
         elif channel_type == "in_app":
             configured = True
             masked_recipient = IN_APP_INBOX_LABEL
+            effective_recipient = IN_APP_INBOX_LABEL
 
         return ChannelSnapshot(
             channel_type=channel_type,
@@ -398,4 +451,8 @@ class UserNotificationSettingsService:
             last_tested_at=last_tested_at,
             last_test_error=last_test_error,
             config_json=config_json,
+            effective_recipient=effective_recipient,
+            override_address=override_address,
+            override_status=override_status,
+            override_verified_at=override_verified_at,
         )

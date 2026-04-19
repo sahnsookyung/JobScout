@@ -615,13 +615,43 @@ def test_cross_encoder_reranker_any_positive_score_emits_reason_code():
     assert "tech_stack_match" in result[0].preference_reason_codes
 
 
-def test_build_preference_semantic_reranker_routes_to_cross_encoder():
+@patch("core.scorer.semantic_fit.get_shared_local_cross_encoder_provider")
+def test_build_preference_semantic_reranker_routes_to_cross_encoder(mock_get_provider):
+    mock_get_provider.return_value = Mock()
     config = PreferencesConfig(
         reranker="cross_encoder",
         cross_encoder=PreferenceCrossEncoderConfig(enabled=True),
     )
     reranker = build_preference_semantic_reranker(config)
     assert isinstance(reranker, CrossEncoderPreferenceReranker)
+    mock_get_provider.assert_called_once_with(
+        model_name="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        cache_path=None,
+        runtime="auto",
+        max_batch_size=32,
+        trust_remote_code=False,
+        allow_heuristic=False,
+    )
+
+@patch("core.scorer.semantic_fit.get_shared_local_cross_encoder_provider")
+def test_build_preference_semantic_reranker_allows_explicit_heuristic_runtime(mock_get_provider):
+    mock_get_provider.return_value = Mock()
+    config = PreferencesConfig(
+        reranker="cross_encoder",
+        cross_encoder=PreferenceCrossEncoderConfig(enabled=True, runtime="heuristic"),
+    )
+
+    reranker = build_preference_semantic_reranker(config)
+
+    assert isinstance(reranker, CrossEncoderPreferenceReranker)
+    mock_get_provider.assert_called_once_with(
+        model_name="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        cache_path=None,
+        runtime="heuristic",
+        max_batch_size=32,
+        trust_remote_code=False,
+        allow_heuristic=True,
+    )
 
 
 def test_build_preference_semantic_reranker_returns_none_for_disabled_cross_encoder():

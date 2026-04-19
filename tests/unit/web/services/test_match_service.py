@@ -70,6 +70,8 @@ def _make_match(
     m.is_hidden = False
     m.created_at = datetime.now(timezone.utc)
     m.calculated_at = datetime.now(timezone.utc)
+    m.selection_tier = "primary"
+    m.excluded_reason = None
     job = Mock()
     job.id = job_id
     job.title = title
@@ -201,6 +203,52 @@ class TestThreeStagePipeline:
         results = service.get_matches()  # top_k=None
 
         assert len(results) == 3
+
+    @patch("web.backend.services.match_service.rank_matches")
+    @patch("web.backend.services.match_service.get_ranking_policy_store")
+    def test_tier_all_without_explicit_top_k_returns_primary_and_excluded(
+        self, mock_store, mock_rank, mock_db, service
+    ):
+        from core.ranking.policy import RankingConfig
+        cfg = RankingConfig(
+            balanced_w_pref=0.6, balanced_w_fit=0.4,
+            max_ranking_candidates=500, default_top_k=2, max_top_k=100,
+        )
+        mock_store.return_value.get_current_config.return_value = cfg
+
+        primary = [_make_match(f"p{i}") for i in range(2)]
+        excluded = [_make_match(f"e{i}") for i in range(3)]
+        for match in excluded:
+            match.selection_tier = "excluded"
+        _wire_rankable_pool(service, primary + excluded)
+        mock_rank.side_effect = lambda p, ctx: p
+
+        results = service.get_matches(tier="all", top_k=None)
+
+        assert len(results) == 5
+
+    @patch("web.backend.services.match_service.rank_matches")
+    @patch("web.backend.services.match_service.get_ranking_policy_store")
+    def test_tier_all_with_explicit_top_k_caps_final_combined_results(
+        self, mock_store, mock_rank, mock_db, service
+    ):
+        from core.ranking.policy import RankingConfig
+        cfg = RankingConfig(
+            balanced_w_pref=0.6, balanced_w_fit=0.4,
+            max_ranking_candidates=500, default_top_k=2, max_top_k=4,
+        )
+        mock_store.return_value.get_current_config.return_value = cfg
+
+        primary = [_make_match(f"p{i}") for i in range(2)]
+        excluded = [_make_match(f"e{i}") for i in range(3)]
+        for match in excluded:
+            match.selection_tier = "excluded"
+        _wire_rankable_pool(service, primary + excluded)
+        mock_rank.side_effect = lambda p, ctx: p
+
+        results = service.get_matches(tier="all", top_k=4)
+
+        assert len(results) == 4
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
@@ -969,3 +1017,112 @@ class TestToRequirementDetail:
         assert result.requirement_id == "req-1"
         assert result.requirement_text == "Python"
         assert result.is_covered is True
+
+
+class TestScoringDegradedReason:
+    """The /api/matches banner derives a compact code from fit_components."""
+
+    def test_returns_none_for_non_dict_components(self, real_service):
+        assert real_service._scoring_degraded_reason(None) is None
+        assert real_service._scoring_degraded_reason("string") is None
+
+    def test_returns_none_when_no_fallback_reason(self, real_service):
+        assert real_service._scoring_degraded_reason({"other": 1}) is None
+
+    def test_remote_keyword_maps_to_remote_unavailable(self, real_service):
+        assert real_service._scoring_degraded_reason(
+            {"semantic_fit_fallback_reason": "REMOTE host down"}
+        ) == "remote_unavailable"
+
+    def test_local_disabled_maps_to_local_unavailable(self, real_service):
+        assert real_service._scoring_degraded_reason(
+            {"semantic_fit_fallback_reason": "local provider disabled"}
+        ) == "local_unavailable"
+
+    def test_local_no_provider_maps_to_local_unavailable(self, real_service):
+        assert real_service._scoring_degraded_reason(
+            {"semantic_fit_fallback_reason": "local: no provider configured"}
+        ) == "local_unavailable"
+
+    def test_provider_disabled_falls_to_provider_disabled(self, real_service):
+        assert real_service._scoring_degraded_reason(
+            {"semantic_fit_fallback_reason": "scoring disabled at runtime"}
+        ) == "provider_disabled"
+
+    def test_unrecognized_reason_falls_to_degraded(self, real_service):
+        assert real_service._scoring_degraded_reason(
+            {"semantic_fit_fallback_reason": "weird new reason"}
+        ) == "degraded"
+
+
+class TestPreferenceStatusHelper:
+    def test_returns_ranking_snapshot_status_when_present(self, real_service):
+        match = SimpleNamespace(
+            ranking_snapshot={"preference_status": {"applied": True, "reason": "ok"}},
+            preference_components=None,
+        )
+        assert real_service._preference_status(match) == {"applied": True, "reason": "ok"}
+
+    def test_returns_fallback_reason_from_components(self, real_service):
+        match = SimpleNamespace(
+            ranking_snapshot=None,
+            preference_components={
+                "preference_fallback_reason": "preference_reranking_failed:RuntimeError",
+                "preference_mode_used": "fit_only_fallback",
+            },
+        )
+        result = real_service._preference_status(match)
+        assert result == {
+            "applied": False,
+            "reason": "preference_reranking_failed:RuntimeError",
+            "effective_mode": "fit_only_fallback",
+        }
+
+    def test_returns_applied_when_only_mode_used_present(self, real_service):
+        match = SimpleNamespace(
+            ranking_snapshot=None,
+            preference_components={"preference_mode_used": "semantic_rerank"},
+        )
+        assert real_service._preference_status(match) == {
+            "applied": True,
+            "effective_mode": "semantic_rerank",
+        }
+
+    def test_returns_none_when_components_missing(self, real_service):
+        match = SimpleNamespace(ranking_snapshot=None, preference_components=None)
+        assert real_service._preference_status(match) is None
+
+    def test_returns_none_when_components_have_no_mode_or_fallback(self, real_service):
+        match = SimpleNamespace(ranking_snapshot=None, preference_components={})
+        assert real_service._preference_status(match) is None
+
+
+class TestSelectionItemFiltersByTier:
+    def test_excluded_tier_skips_status_and_hidden_filters(self, real_service):
+        excluded_match = SimpleNamespace(status="stale", is_hidden=True)
+        remote_job = SimpleNamespace(is_remote=True)
+        # Excluded tier ignores status/hidden — only min_fit + remote_only apply.
+        assert real_service._selection_item_passes_filters(
+            excluded_match,
+            remote_job,
+            45.0,
+            status="active",
+            min_fit=40.0,
+            remote_only=True,
+            show_hidden=False,
+            tier="excluded",
+        )
+
+    def test_excluded_tier_still_respects_min_fit(self, real_service):
+        excluded_match = SimpleNamespace(status="active", is_hidden=False)
+        remote_job = SimpleNamespace(is_remote=True)
+        assert not real_service._selection_item_passes_filters(
+            excluded_match,
+            remote_job,
+            10.0,
+            status="all",
+            min_fit=40.0,
+            remote_only=False,
+            show_hidden=True,
+            tier="excluded",
+        )

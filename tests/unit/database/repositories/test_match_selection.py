@@ -136,6 +136,62 @@ def test_get_items_for_run_returns_ordered_items():
     assert repo.get_items_for_run("run-1") == items
 
 
+def test_get_items_for_run_with_tier_all_omits_tier_filter():
+    session = MagicMock()
+    items = [SimpleNamespace(id="item-1"), SimpleNamespace(id="item-2")]
+    session.execute.return_value.scalars.return_value.all.return_value = items
+    repo = MatchSelectionRepository(session)
+
+    result = repo.get_items_for_run("run-1", tier="all")
+
+    assert result == items
+    sql = str(session.execute.call_args.args[0])
+    # Primary-only filter must NOT appear when tier='all'.
+    assert "selection_tier" not in sql or "primary" not in sql
+
+
+def test_get_items_for_run_default_tier_filters_to_primary():
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.all.return_value = []
+    repo = MatchSelectionRepository(session)
+
+    repo.get_items_for_run("run-1")
+
+    sql = str(session.execute.call_args.args[0])
+    assert "selection_tier" in sql
+
+
+def test_count_items_for_run_by_tier_groups_rows():
+    session = MagicMock()
+    session.execute.return_value.all.return_value = [("primary", 5), ("excluded", 7)]
+    repo = MatchSelectionRepository(session)
+
+    result = repo.count_items_for_run_by_tier("run-1")
+
+    assert result == {"primary": 5, "excluded": 7}
+    sql = str(session.execute.call_args.args[0])
+    assert "match_selection_item" in sql.lower() or "selection_tier" in sql.lower()
+
+
+def test_count_items_for_run_by_tier_handles_empty_run():
+    session = MagicMock()
+    session.execute.return_value.all.return_value = []
+    repo = MatchSelectionRepository(session)
+    assert repo.count_items_for_run_by_tier("run-empty") == {}
+
+
+def test_count_excluded_items_by_reason_buckets_by_reason():
+    session = MagicMock()
+    session.execute.return_value.all.return_value = [
+        ("below_min_fit", 4), ("beyond_top_k", 3), (None, 1),
+    ]
+    repo = MatchSelectionRepository(session)
+
+    result = repo.count_excluded_items_by_reason("run-1")
+
+    assert result == {"below_min_fit": 4, "beyond_top_k": 3, "unknown": 1}
+
+
 def test_publish_selection_run_requires_saved_job_match_for_each_selected_item():
     session = MagicMock()
     repo = MatchSelectionRepository(session)

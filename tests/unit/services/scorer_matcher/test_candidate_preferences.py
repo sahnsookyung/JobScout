@@ -16,6 +16,7 @@ from services.scorer_matcher.candidate_preferences import (
     _matches_candidate_preferences,
     _resolve_requested_mode,
     _resolve_preference_profile,
+    _safe_mode,
     _stored_preference_profile,
     _apply_assessments,
     apply_candidate_preference_filters,
@@ -477,7 +478,7 @@ class TestPreferenceSemanticReranking:
                 config=config,
             )
         assert result[0].preference_components["preference_mode_used"] == "fit_only_fallback"
-        assert result[0].preference_components["preference_fallback_reason"] == "preference_reranking_failed"
+        assert result[0].preference_components["preference_fallback_reason"] == "preference_reranking_failed:RuntimeError"
 
     def test_empty_soft_preferences_returns_matches_unchanged(self):
         config = _preferences_config()
@@ -544,3 +545,82 @@ class TestPreferenceSemanticReranking:
             "preference_mode_effective": "semantic_rerank",
             "preference_mode_used": "semantic_rerank",
         }
+
+
+class TestPreferenceStatusDataclass:
+    """The PreferenceStatus.to_dict path is the public contract used by the
+    pipeline summary log + the API badge — its shape needs explicit pinning."""
+
+    def test_minimal_payload_only_includes_applied_flag(self):
+        from services.scorer_matcher.candidate_preferences import PreferenceStatus
+        assert PreferenceStatus(applied=True).to_dict() == {"applied": True}
+
+    def test_full_payload_includes_all_present_fields(self):
+        from services.scorer_matcher.candidate_preferences import PreferenceStatus
+        status = PreferenceStatus(
+            applied=False,
+            reason="runtime_error:ValueError",
+            requested_mode="llm_judge",
+            effective_mode="semantic_rerank",
+        )
+        assert status.to_dict() == {
+            "applied": False,
+            "reason": "runtime_error:ValueError",
+            "requested_mode": "llm_judge",
+            "effective_mode": "semantic_rerank",
+        }
+
+    def test_empty_string_reason_is_omitted(self):
+        from services.scorer_matcher.candidate_preferences import PreferenceStatus
+        status = PreferenceStatus(applied=False, reason="")
+        assert status.to_dict() == {"applied": False}
+
+
+class TestPreferenceRerankResultProtocol:
+    """Other call-sites still iterate/index/len the result. Lock that behavior."""
+
+    def test_iterates_over_matches(self):
+        from services.scorer_matcher.candidate_preferences import (
+            PreferenceRerankResult, PreferenceStatus,
+        )
+        m1, m2 = object(), object()
+        result = PreferenceRerankResult(
+            matches=[m1, m2], status=PreferenceStatus(applied=True),
+        )
+        assert list(result) == [m1, m2]
+
+    def test_supports_index_and_len(self):
+        from services.scorer_matcher.candidate_preferences import (
+            PreferenceRerankResult, PreferenceStatus,
+        )
+        result = PreferenceRerankResult(
+            matches=["a", "b", "c"], status=PreferenceStatus(applied=False),
+        )
+        assert len(result) == 3
+        assert result[1] == "b"
+
+
+class TestResolveRequestedMode:
+    def test_unknown_mode_falls_back_to_default(self):
+        cfg = PreferencesConfig(default_mode="semantic_rerank")
+        requested, effective = _resolve_requested_mode("garbage", cfg)
+        assert requested == "semantic_rerank"
+        assert effective in cfg.allowed_modes_normalized()
+
+    def test_default_used_when_requested_is_none(self):
+        cfg = PreferencesConfig(default_mode="llm_judge")
+        requested, effective = _resolve_requested_mode(None, cfg)
+        assert requested == "llm_judge"
+        assert effective in cfg.allowed_modes_normalized()
+
+
+class TestSafeMode:
+    """Ensures tainted preference mode values never flow unsanitized into logs."""
+
+    @pytest.mark.parametrize("value", ["semantic_rerank", "llm_judge", "fit_only", "default"])
+    def test_known_modes_pass_through(self, value):
+        assert _safe_mode(value) == value
+
+    @pytest.mark.parametrize("value", ["", "unknown", "rm -rf /", "<script>"])
+    def test_unknown_values_collapse_to_other(self, value):
+        assert _safe_mode(value) == "other"

@@ -1,6 +1,16 @@
 import uuid
 
-from sqlalchemy import Column, Text, Boolean, TIMESTAMP, ForeignKey, Enum, BigInteger, Index
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    Enum,
+    ForeignKey,
+    Index,
+    Text,
+    TIMESTAMP,
+    UniqueConstraint,
+)
 from sqlalchemy.sql import text as sql_text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -50,7 +60,12 @@ class UserAuthIdentity(Base):
     provider_subject = Column(Text, nullable=False)
     email = Column(Text)
     email_normalized = Column(Text)
-    email_verified = Column(Boolean, nullable=False, default=False)
+    email_verified = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=sql_text("FALSE"),
+    )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
 
     user = relationship("User", back_populates="auth_identities")
@@ -58,11 +73,10 @@ class UserAuthIdentity(Base):
     __table_args__ = (
         Index('idx_user_auth_identity_email', 'email_normalized'),
         Index('idx_user_auth_identity_user_provider', 'user_id', 'provider'),
-        Index(
-            'idx_user_auth_identity_provider_subject',
+        UniqueConstraint(
             'provider',
             'provider_subject',
-            unique=True,
+            name='uq_user_auth_identity_provider_subject',
         ),
     )
 

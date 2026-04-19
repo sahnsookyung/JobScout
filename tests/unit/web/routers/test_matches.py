@@ -4,6 +4,8 @@ Tests for Matches Router
 Covers: web/backend/routers/matches.py
 """
 
+from types import SimpleNamespace
+
 import pytest
 import uuid
 from unittest.mock import Mock, patch
@@ -12,6 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from web.backend.dependencies import get_current_user
+from web.backend.exceptions import InvalidMatchOperationException
 from web.backend.routers.matches import router, validate_uuid
 
 
@@ -167,6 +170,15 @@ class TestMatchesRouter:
         assert call_kwargs['min_fit'] is None
         assert call_kwargs['top_k'] == 100  # From policy
 
+    def test_get_matches_tier_all_without_explicit_top_k_returns_full_run(self, client, mock_match_service, mock_policy_service):
+        mock_match_service.get_matches.return_value = []
+        cfg = SimpleNamespace(matching=SimpleNamespace(two_tier_selection_enabled=True))
+        with patch("core.config_loader.load_config", return_value=cfg):
+            response = client.get('/api/matches', params={'tier': 'all'})
+
+        assert response.status_code == 200
+        assert mock_match_service.get_matches.call_args.kwargs["top_k"] is None
+
     def test_get_matches_invalid_status(self, client):
         """Test get matches with invalid status parameter."""
         response = client.get('/api/matches', params={'status': 'invalid_status'})
@@ -189,6 +201,9 @@ class TestMatchesRouter:
 
         assert schema['paths']['/api/matches/{match_id}']['get']['responses']['400']['description'] == 'Invalid match ID'
         assert schema['paths']['/api/matches/{match_id}/hide']['post']['responses']['400']['description'] == 'Invalid match ID'
+        assert schema['paths']['/api/matches/{match_id}/hide']['post']['responses']['409']['description'] == (
+            'Match cannot be hidden in its current selection tier'
+        )
         assert schema['paths']['/api/matches/{match_id}/explanation']['get']['responses']['400']['description'] == 'Invalid match ID'
 
     def test_get_matches_min_fit_bounds(self, client, mock_match_service, mock_policy_service):
@@ -230,6 +245,41 @@ class TestMatchesRouter:
         # Test out of bounds (above)
         response = client.get('/api/matches', params={'top_k': 501})
         assert response.status_code == 422
+
+    def test_get_matches_invalid_tier_returns_422(self, client, mock_match_service, mock_policy_service):
+        response = client.get('/api/matches', params={'tier': 'banana'})
+        assert response.status_code == 422
+        assert "Invalid tier" in response.json()["detail"]
+
+    def test_get_matches_tier_all_passed_through_when_two_tier_enabled(
+        self, client, mock_match_service, mock_policy_service
+    ):
+        mock_match_service.get_matches.return_value = []
+        cfg = SimpleNamespace(matching=SimpleNamespace(two_tier_selection_enabled=True))
+        with patch("core.config_loader.load_config", return_value=cfg):
+            response = client.get('/api/matches', params={'tier': 'all'})
+        assert response.status_code == 200
+        assert mock_match_service.get_matches.call_args.kwargs["tier"] == "all"
+
+    def test_get_matches_tier_all_collapses_to_primary_when_disabled(
+        self, client, mock_match_service, mock_policy_service
+    ):
+        mock_match_service.get_matches.return_value = []
+        cfg = SimpleNamespace(matching=SimpleNamespace(two_tier_selection_enabled=False))
+        with patch("core.config_loader.load_config", return_value=cfg):
+            response = client.get('/api/matches', params={'tier': 'all'})
+        assert response.status_code == 200
+        assert mock_match_service.get_matches.call_args.kwargs["tier"] == "primary"
+
+    def test_get_matches_tier_primary_default_skips_config_lookup(
+        self, client, mock_match_service, mock_policy_service
+    ):
+        mock_match_service.get_matches.return_value = []
+        with patch("core.config_loader.load_config") as mock_load:
+            response = client.get('/api/matches')  # tier defaults to primary
+        assert response.status_code == 200
+        mock_load.assert_not_called()
+        assert mock_match_service.get_matches.call_args.kwargs["tier"] == "primary"
 
     def test_get_match_details_success(self, client, mock_match_service):
         """Test successful get match details."""
@@ -325,6 +375,17 @@ class TestMatchesRouter:
 
         assert response.status_code == 400
         assert 'Invalid match_id format' in response.json()['detail']
+
+    def test_toggle_match_hidden_rejects_excluded_match(self, client, mock_match_service):
+        mock_match_service.toggle_hidden.side_effect = InvalidMatchOperationException(
+            "Excluded matches are browse-only and cannot be hidden."
+        )
+
+        match_id = str(uuid.uuid4())
+        response = client.post(f'/api/matches/{match_id}/hide')
+
+        assert response.status_code == 409
+        assert "browse-only" in response.json()["detail"]
 
     def test_get_match_explanation_success(self, client, mock_match_service):
         """Test successful get match explanation."""

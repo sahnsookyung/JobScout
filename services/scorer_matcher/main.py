@@ -316,6 +316,57 @@ def _setup_logging() -> None:
     logger.debug("NUL log sanitization active=%s", is_nul_filter_active())
 
 
+def _warm_up_cross_encoder(config) -> None:
+    """Boot-time cross-encoder warm-up.
+
+    Surfaces local-runtime deploy bugs immediately instead of letting them hide
+    as "every match scored by heuristic". Controlled by MATCHER_STRICT_WARMUP
+    (default true); when false, a failure is logged but the service still
+    starts — useful for local dev without the model cache.
+    """
+    from core.scorer.semantic_fit import LocalCrossEncoderProvider
+
+    semantic_fit = getattr(getattr(config, "matching", None), "scorer", None)
+    semantic_fit = getattr(semantic_fit, "semantic_fit", None) if semantic_fit else None
+    if not semantic_fit or not semantic_fit.cross_encoder.local.enabled:
+        logger.info("Cross-encoder warm-up skipped: local provider disabled in config")
+        return
+
+    local_cfg = semantic_fit.cross_encoder.local
+    try:
+        max_batch_size = int(local_cfg.max_batch_size)
+    except (TypeError, ValueError):
+        logger.info("Cross-encoder warm-up skipped: local config is not fully materialized")
+        return
+    provider = LocalCrossEncoderProvider(
+        model_name=local_cfg.model_name,
+        cache_path=local_cfg.model_cache_path,
+        runtime=local_cfg.runtime,
+        max_batch_size=max_batch_size,
+        trust_remote_code=local_cfg.trust_remote_code,
+    )
+    strict = os.getenv("MATCHER_STRICT_WARMUP", "true").lower() in {"1", "true", "yes"}
+    try:
+        diag = provider.warm_up()
+        logger.info(
+            "Cross-encoder warm-up succeeded: route=%s canary_score=%.3f",
+            diag.get("provider_route"),
+            diag.get("canary_score", 0.0),
+        )
+    # Warm-up is the one place we catch broadly, to decide strict-vs-lenient.
+    except Exception as exc:  # noqa: BLE001
+        msg = (
+            "Cross-encoder warm-up failed. The service cannot score requirements "
+            "with the configured local model. "
+            "If this is intentional (local dev without the model cache), set "
+            "MATCHER_STRICT_WARMUP=false."
+        )
+        if strict:
+            logger.error("%s Error: %s", msg, exc)
+            raise
+        logger.warning("%s Error: %s (continuing because MATCHER_STRICT_WARMUP=false)", msg, exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _setup_logging()
@@ -323,6 +374,7 @@ async def lifespan(app: FastAPI):
     init_db()
 
     config = load_config()
+    _warm_up_cross_encoder(config)
     ctx = AppContext.build(config)
     consumer = MatcherConsumer(ctx)
     state = MatcherState(ctx=ctx, consumer=consumer)

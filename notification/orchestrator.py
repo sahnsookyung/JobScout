@@ -117,7 +117,9 @@ def _load_persisted_notification_matches(
 ) -> List:
     """Load canonical persisted notification candidates for this run."""
     with job_uow() as repo:
-        items = repo.match_selection.get_items_for_run(selection_run_id)
+        items = repo.match_selection.get_items_for_run(
+            selection_run_id, tier="primary"
+        )
         return [
             NotificationCandidate(
                 id=str(item.job_match_id),

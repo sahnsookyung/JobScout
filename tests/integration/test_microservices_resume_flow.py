@@ -54,7 +54,10 @@ FAIL_EMBEDDING_RESUME_FIXTURE = (
 )
 DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
 E2E_COMPOSE_PROJECT_NAME = "jobscout-e2e"
-STARTUP_TIMEOUT_SECONDS = 180.0
+# Cold boots now include the scorer-model bootstrap + a real local reranker
+# warm-up inference. On unauthenticated HF Hub pulls this can exceed 3 minutes,
+# so the E2E harness needs a larger startup window than the pre-hardening stack.
+STARTUP_TIMEOUT_SECONDS = 420.0
 UPLOAD_TIMEOUT_SECONDS = 150.0
 MATCHING_TIMEOUT_SECONDS = 150.0
 NOTIFICATION_TIMEOUT_SECONDS = 30.0

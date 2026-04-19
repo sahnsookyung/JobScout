@@ -5,6 +5,10 @@ import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.config_loader import MatcherConfig
+from core.matcher.evidence_reranker import (
+    CrossEncoderLike,
+    rerank_requirement_evidence,
+)
 from core.matcher.models import JobMatchPreliminary
 from core.matcher.requirement_matcher import RequirementMatcher
 from database.models import JobPost
@@ -34,6 +38,7 @@ class MatcherService:
         config: MatcherConfig,
         *,
         requirement_recall_top_k: int = 5,
+        cross_encoder_provider: Optional[CrossEncoderLike] = None,
     ):
         self.resume_profiler = resume_profiler
         self.config = config
@@ -42,6 +47,7 @@ class MatcherService:
             similarity_threshold=config.similarity_threshold,
             default_top_k=self.requirement_recall_top_k,
         )
+        self.cross_encoder_provider = cross_encoder_provider
 
     def match_resume_two_stage(
         self,
@@ -278,6 +284,11 @@ class MatcherService:
             resume_fingerprint,
             top_k=self.requirement_recall_top_k,
         )
+        if self.cross_encoder_provider is not None:
+            rerank_requirement_evidence(
+                provider=self.cross_encoder_provider,
+                requirement_matches=list(matched) + list(missing),
+            )
         return JobMatchPreliminary(
             job=job,
             job_similarity=job_similarity,

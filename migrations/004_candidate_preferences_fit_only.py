@@ -1,4 +1,9 @@
-"""Replace facet-based wants storage with candidate preferences and fit-only matches."""
+"""Replace facet-based wants storage with candidate preferences and fit-only matches.
+
+Historical note: `candidate_preferences` is already created in
+`001_initial_schema.py`. The repeated `CREATE TABLE IF NOT EXISTS` here is
+redundant but intentionally left in place because migrations are append-only.
+"""
 
 from __future__ import annotations
 

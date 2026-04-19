@@ -13,17 +13,21 @@ from ..dependencies import get_current_user, get_db
 from ..services.notification_service import NotificationServiceWrapper
 from ..models.requests import (
     NotificationRequest,
+    NotificationEmailOverrideRequest,
+    NotificationEmailVerificationRequest,
     NotificationSettingsTestRequest,
     NotificationSettingsUpdateRequest,
 )
 from ..models.responses import (
     NotificationResponse,
+    NotificationEmailOverrideResponse,
     NotificationSettingsResponse,
     NotificationSettingsTestResponse,
     QueueStatusResponse,
 )
 from notification import NotificationPriority
 from notification.exceptions import NotificationConfigurationError
+from ..services.notification_service import NotificationRateLimitError
 
 router = APIRouter(tags=["notifications"])
 
@@ -142,6 +146,73 @@ def send_notification_settings_test(
         success=True,
         notification_id=notification_id,
         message=f"Queued test notification for {request.channel_type}",
+    )
+
+@router.post(
+    "/api/v1/notification-settings/email/override",
+    response_model=NotificationEmailOverrideResponse,
+    responses={
+        400: {"description": "Invalid override email address"},
+        429: {"description": "Verification send rate-limited"},
+    },
+)
+def create_email_override(
+    request: NotificationEmailOverrideRequest,
+    notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)],
+    user: Annotated[object, Depends(get_current_user)],
+):
+    """Send an email verification link for a custom notification address."""
+    try:
+        channel = notification_service.send_email_override_verification(user, request.address)
+    except NotificationRateLimitError as exc:
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after is not None else None
+        raise HTTPException(status_code=429, detail=str(exc), headers=headers) from exc
+    except NotificationConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return NotificationEmailOverrideResponse(
+        success=True,
+        message="Verification email sent",
+        channel=channel,
+    )
+
+@router.post(
+    "/api/v1/notification-settings/email/verify",
+    response_model=NotificationEmailOverrideResponse,
+    responses={
+        400: {"description": "Invalid or expired verification token"},
+    },
+)
+def verify_email_override(
+    request: NotificationEmailVerificationRequest,
+    notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)],
+):
+    """Verify a pending notification email override token."""
+    try:
+        channel = notification_service.verify_email_override(request.token)
+    except NotificationConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return NotificationEmailOverrideResponse(
+        success=True,
+        message="Email override verified",
+        channel=channel,
+    )
+
+@router.delete(
+    "/api/v1/notification-settings/email/override",
+    response_model=NotificationEmailOverrideResponse,
+)
+def delete_email_override(
+    notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)],
+    user: Annotated[object, Depends(get_current_user)],
+):
+    """Clear any configured notification email override."""
+    channel = notification_service.clear_email_override(user)
+    return NotificationEmailOverrideResponse(
+        success=True,
+        message="Email override cleared",
+        channel=channel,
     )
 
 

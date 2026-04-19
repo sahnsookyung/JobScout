@@ -50,7 +50,7 @@ export const useNotificationSettings = () => {
     });
 
     const verifyEmailOverride = async (token: string) => {
-        const response = await notificationSettingsApi.verifyEmailOverride(token);
+        const response = await notificationSettingsApi.verifyEmailOverride({ token });
         await queryClient.invalidateQueries({ queryKey: ['notification-settings'] });
         return response;
     };

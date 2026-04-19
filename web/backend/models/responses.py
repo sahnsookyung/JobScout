@@ -77,6 +77,10 @@ class MatchSummary(BaseModel):
     balanced_primary_score: Optional[float] = None
     missing_scores: List[str] = Field(default_factory=list)
 
+    scoring_degraded_reason: Optional[str] = None
+    selection_tier: str = "primary"
+    excluded_reason: Optional[str] = None
+
 
 class RequirementDetail(BaseModel):
     """Details of a requirement match."""
@@ -85,6 +89,7 @@ class RequirementDetail(BaseModel):
     evidence_text: Optional[str] = None
     evidence_section: Optional[str] = None
     similarity_score: float = Field(ge=0, le=1)
+    evidence_score: Optional[float] = Field(default=None, ge=0, le=1)
     is_covered: bool
     req_type: str
 
@@ -120,6 +125,8 @@ class MatchDetail(BaseModel):
     fit_confidence: Optional[float] = Field(default=None, ge=0, le=1)
     fit_explanation: Optional[Dict[str, Any]] = None
     fit_scorer: Optional[Dict[str, Any]] = None
+    scoring_degraded_reason: Optional[str] = None
+    preference_status: Optional[Dict[str, Any]] = None
 
     # Legacy fields
     base_score: float
@@ -220,6 +227,10 @@ class NotificationChannelSettingsResponse(BaseModel):
     last_test_status: Optional[str] = None
     last_tested_at: Optional[str] = None
     last_test_error: Optional[str] = None
+    effective_recipient: Optional[str] = None
+    override_address: Optional[str] = None
+    override_status: Optional[str] = None
+    override_verified_at: Optional[str] = None
 
 
 class NotificationSettingsResponse(BaseModel):
@@ -239,6 +250,14 @@ class NotificationSettingsTestResponse(BaseModel):
     success: bool
     notification_id: Optional[str] = None
     message: str
+
+
+class NotificationEmailOverrideResponse(BaseModel):
+    """Response for email override operations."""
+
+    success: bool
+    message: str
+    channel: Optional[NotificationChannelSettingsResponse] = None
 
 
 class CandidatePreferencesResponse(BaseModel):

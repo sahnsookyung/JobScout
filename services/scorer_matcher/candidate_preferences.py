@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from core.config_loader import PreferencesConfig
@@ -31,6 +32,41 @@ NEGATIVE_VISA_PATTERNS = (
     re.compile(r"\bwithout sponsorship\b"),
     re.compile(r"\bmust be authorized to work\b"),
 )
+
+@dataclass(frozen=True)
+class PreferenceStatus:
+    """Run-level status for preference reranking."""
+
+    applied: bool
+    reason: Optional[str] = None
+    requested_mode: Optional[str] = None
+    effective_mode: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"applied": self.applied}
+        if self.reason:
+            payload["reason"] = self.reason
+        if self.requested_mode:
+            payload["requested_mode"] = self.requested_mode
+        if self.effective_mode:
+            payload["effective_mode"] = self.effective_mode
+        return payload
+
+@dataclass(frozen=True)
+class PreferenceRerankResult:
+    """Backward-compatible preference rerank result."""
+
+    matches: List[Any]
+    status: PreferenceStatus
+
+    def __iter__(self):
+        return iter(self.matches)
+
+    def __getitem__(self, index):
+        return self.matches[index]
+
+    def __len__(self) -> int:
+        return len(self.matches)
 
 
 def _normalize_text(value: Any) -> str:
@@ -243,6 +279,20 @@ def _allowed_preference_modes(config: PreferencesConfig) -> List[str]:
     return config.allowed_modes_normalized()
 
 
+_KNOWN_PREFERENCE_MODES: frozenset[str] = frozenset(
+    {"semantic_rerank", "llm_judge", "fit_only", "default"}
+)
+
+
+def _safe_mode(value: str) -> str:
+    """Return value only if it is a known preference mode, else 'other'.
+
+    Breaks the taint chain from user-supplied config into log sinks so that
+    static analyzers do not flag downstream logging as sensitive.
+    """
+    return value if value in _KNOWN_PREFERENCE_MODES else "other"
+
+
 def _resolve_requested_mode(
     requested_mode: Any,
     config: PreferencesConfig,
@@ -271,6 +321,9 @@ def _fit_only_fallback(
     effective_mode: str,
     reason: str,
 ):
+    component_reason = reason
+    if reason.startswith("runtime_error:"):
+        component_reason = f"preference_reranking_failed:{reason.split(':', 1)[1]}"
     for match in scored_matches:
         preference_components = dict(getattr(match, "preference_components", {}) or {})
         preference_components.update(
@@ -280,12 +333,20 @@ def _fit_only_fallback(
                 "preference_mode_requested": requested_mode,
                 "preference_mode_effective": effective_mode,
                 "preference_mode_used": "fit_only_fallback",
-                "preference_fallback_reason": reason,
+                "preference_fallback_reason": component_reason,
             }
         )
         match.preference_components = preference_components
         match.preference_score = None  # NULL = evaluator did not run
-    return scored_matches
+    return PreferenceRerankResult(
+        matches=scored_matches,
+        status=PreferenceStatus(
+            applied=False,
+            reason=reason,
+            requested_mode=requested_mode,
+            effective_mode=effective_mode,
+        ),
+    )
 
 
 def _assessments_by_job_id(
@@ -328,7 +389,14 @@ def _apply_assessments(
         )
         match.preference_components = preference_components
         match.preference_score = preference_score  # 0.0 = scored poor; None = not evaluated
-    return scored_matches
+    return PreferenceRerankResult(
+        matches=scored_matches,
+        status=PreferenceStatus(
+            applied=True,
+            requested_mode=requested_mode,
+            effective_mode=effective_mode,
+        ),
+    )
 
 
 def apply_preference_semantic_reranking(
@@ -339,11 +407,17 @@ def apply_preference_semantic_reranking(
 ):
     """Apply semantic preference reranking after fit-qualified scoring."""
     if not preferences:
-        return scored_matches
+        return PreferenceRerankResult(
+            matches=scored_matches,
+            status=PreferenceStatus(applied=False, reason="unconfigured"),
+        )
 
     soft_preferences = str(preferences.get("soft_preferences") or "").strip()
     if not soft_preferences:
-        return scored_matches
+        return PreferenceRerankResult(
+            matches=scored_matches,
+            status=PreferenceStatus(applied=False, reason="disabled"),
+        )
 
     requested_mode, effective_mode = _resolve_requested_mode(
         preferences.get("preference_mode"),
@@ -381,15 +455,25 @@ def apply_preference_semantic_reranking(
                     reason="preference_reranker_unavailable",
                 )
             assessments = reranker.rerank(profile, job_payloads)
-    except Exception:
-        logger.warning("Preference reranking failed; degrading to fit-only ordering", exc_info=True)
+    except Exception as exc:  # noqa: BLE001 - we record the exception class in the reason
+        reason = f"runtime_error:{type(exc).__name__}"
+        logger.warning(
+            "Preference reranking failed (%s); degrading to fit-only ordering",
+            reason,
+            exc_info=True,
+        )
         return _fit_only_fallback(
             scored_matches,
             requested_mode=requested_mode,
             effective_mode=effective_mode,
-            reason="preference_reranking_failed",
+            reason=reason,
         )
 
+    logger.info(
+        "Preference reranking applied: effective_judge_mode=%s matches=%d",
+        effective_mode == "llm_judge",
+        len(scored_matches),
+    )
     return _apply_assessments(
         scored_matches,
         assessments,

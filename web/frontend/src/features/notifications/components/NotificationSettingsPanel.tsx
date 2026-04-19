@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Mail, MessageSquare, Send } from 'lucide-react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Mail, MessageSquare, Send, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/Button';
@@ -22,6 +22,8 @@ type EditableSettings = {
     notify_on_batch_complete: boolean;
     channels: Record<string, EditableChannel>;
 };
+
+type NotificationChannel = NotificationSettings['channels'][string];
 
 const CHANNEL_LABELS: Record<string, string> = {
     email: 'Email',
@@ -115,109 +117,6 @@ function buildPayload(draft: EditableSettings): NotificationSettingsUpdateReques
     };
 }
 
-function AvailabilityNote({ reason }: Readonly<{ reason?: string | null }>) {
-    if (!reason) {
-        return null;
-    }
-
-    return (
-        <p className="inline-block border border-warn/40 bg-warn-soft px-2 py-0.5 text-[12px] text-ink">
-            {reason}
-        </p>
-    );
-}
-
-function ChannelEnabledToggle({
-    channelLabel,
-    checked,
-    disabled,
-    onChange,
-}: Readonly<{
-    channelLabel: string;
-    checked: boolean;
-    disabled: boolean;
-    onChange: (checked: boolean) => void;
-}>) {
-    return (
-        <label className="flex items-center gap-2 self-start border border-rule bg-surface px-3 py-1.5 text-[12px] text-ink-soft">
-            <span>Enabled</span>
-            <input
-                type="checkbox"
-                checked={checked}
-                disabled={disabled}
-                onChange={(event) => onChange(event.target.checked)}
-                aria-label={`Enable ${channelLabel}`}
-                className="h-4 w-4 rounded-sm border-rule accent-accent"
-            />
-        </label>
-    );
-}
-
-function ChannelHeader({
-    Icon,
-    channelLabel,
-    recipient,
-    helperText,
-    statusCaption,
-    availabilityReason,
-    toggle,
-}: Readonly<{
-    Icon: typeof Mail;
-    channelLabel: string;
-    recipient: string;
-    helperText: string;
-    statusCaption?: string | null;
-    availabilityReason?: string | null;
-    toggle: React.ReactNode;
-}>) {
-    return (
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div className="flex items-start gap-3">
-                <Icon className="mt-0.5 h-4 w-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />
-                <div className="space-y-1">
-                    <div className="text-[14px] font-medium text-ink">{channelLabel}</div>
-                    <div className="text-[13px] text-ink-soft">{recipient}</div>
-                    <div className="text-[12px] text-ink-muted">{helperText}</div>
-                    {statusCaption && <p className="caption">{statusCaption}</p>}
-                    <AvailabilityNote reason={availabilityReason} />
-                </div>
-            </div>
-
-            {toggle}
-        </div>
-    );
-}
-
-function ChannelTestRow({
-    lastTestStatus,
-    canTest,
-    isTesting,
-    onTest,
-}: Readonly<{
-    lastTestStatus?: string | null;
-    canTest: boolean;
-    isTesting: boolean;
-    onTest: () => void;
-}>) {
-    return (
-        <div className="mt-4 flex flex-col gap-3 border-t border-rule pt-4 sm:flex-row sm:items-center sm:justify-between">
-            <span className="caption">
-                Last test: <span className="text-ink-soft">{lastTestStatus || 'Never'}</span>
-            </span>
-            <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                disabled={!canTest || isTesting}
-                onClick={onTest}
-            >
-                <Send className="h-3.5 w-3.5" aria-hidden="true" />
-                Test
-            </Button>
-        </div>
-    );
-}
-
 function ToggleRow({
     label,
     description,
@@ -243,6 +142,87 @@ function ToggleRow({
                 className="mt-1 h-4 w-4 rounded-sm border-rule accent-accent"
             />
         </label>
+    );
+}
+
+function ChannelCard({
+    icon: Icon,
+    channelLabel,
+    secondaryText,
+    helperText,
+    statusText,
+    availabilityReason,
+    enabled,
+    canEnable,
+    canTest,
+    lastTestStatus,
+    onToggle,
+    onTest,
+    children,
+}: Readonly<{
+    icon: LucideIcon;
+    channelLabel: string;
+    secondaryText: string;
+    helperText: string;
+    statusText?: string;
+    availabilityReason?: string | null;
+    enabled: boolean;
+    canEnable: boolean;
+    canTest: boolean;
+    lastTestStatus?: string | null;
+    onToggle: (checked: boolean) => void;
+    onTest: () => void;
+    children?: ReactNode;
+}>) {
+    return (
+        <article className="px-5 py-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="flex items-start gap-3">
+                    <Icon className="mt-0.5 h-4 w-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />
+                    <div className="space-y-1">
+                        <div className="text-[14px] font-medium text-ink">{channelLabel}</div>
+                        <div className="text-[13px] text-ink-soft">{secondaryText}</div>
+                        <div className="text-[12px] text-ink-muted">{helperText}</div>
+                        {statusText ? <p className="caption">{statusText}</p> : null}
+                        {availabilityReason ? (
+                            <p className="inline-block border border-warn/40 bg-warn-soft px-2 py-0.5 text-[12px] text-ink">
+                                {availabilityReason}
+                            </p>
+                        ) : null}
+                    </div>
+                </div>
+
+                <label className="flex items-center gap-2 self-start border border-rule bg-surface px-3 py-1.5 text-[12px] text-ink-soft">
+                    <span>Enabled</span>
+                    <input
+                        type="checkbox"
+                        checked={enabled}
+                        disabled={!canEnable}
+                        onChange={(event) => onToggle(event.target.checked)}
+                        aria-label={`Enable ${channelLabel}`}
+                        className="h-4 w-4 rounded-sm border-rule accent-accent"
+                    />
+                </label>
+            </div>
+
+            {children}
+
+            <div className="mt-4 flex flex-col gap-3 border-t border-rule pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <span className="caption">
+                    Last test: <span className="text-ink-soft">{lastTestStatus || 'Never'}</span>
+                </span>
+                <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={!canTest}
+                    onClick={onTest}
+                >
+                    <Send className="h-3.5 w-3.5" aria-hidden="true" />
+                    Test
+                </Button>
+            </div>
+        </article>
     );
 }
 
@@ -333,9 +313,7 @@ export function NotificationSettingsPanel() {
 
     const handleSendEmailVerification = async () => {
         try {
-            const response = await sendEmailOverrideVerification({
-                address: emailOverrideAddress.trim(),
-            });
+            const response = await sendEmailOverrideVerification({ address: emailOverrideAddress.trim() });
             toast.success(response.data.message);
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Verification didn’t send.';
@@ -343,7 +321,7 @@ export function NotificationSettingsPanel() {
         }
     };
 
-    const handleClearEmailOverride = async () => {
+    const handleClearEmailVerification = async () => {
         try {
             const response = await clearEmailOverride();
             toast.success(response.data.message);
@@ -436,27 +414,25 @@ export function NotificationSettingsPanel() {
                         const canTest = !hasUnsavedChanges && channel.available && channel.configured && !isTesting;
                         const Icon = CHANNEL_ICONS[channelType] ?? Mail;
                         const channelLabel = CHANNEL_LABELS[channelType] ?? channelType;
+                        const availabilityReason = channel.available ? null : channel.availability_reason;
 
                         if (channelType === 'email') {
                             return (
-                                <article key={channelType} className="px-5 py-5">
-                                    <ChannelHeader
-                                        Icon={Icon}
-                                        channelLabel={channelLabel}
-                                        recipient={channel.effective_recipient || channel.masked_recipient || 'No email configured'}
-                                        helperText={emailHelpText(channel)}
-                                        statusCaption={emailStatusText(channel)}
-                                        availabilityReason={!channel.available ? channel.availability_reason : null}
-                                        toggle={(
-                                            <ChannelEnabledToggle
-                                                channelLabel={channelLabel}
-                                                checked={editableChannel.enabled}
-                                                disabled={!canEnable}
-                                                onChange={(checked) => updateChannel(channelType, { enabled: checked })}
-                                            />
-                                        )}
-                                    />
-
+                                <ChannelCard
+                                    key={channelType}
+                                    icon={Icon}
+                                    channelLabel={channelLabel}
+                                    secondaryText={channel.effective_recipient || channel.masked_recipient || 'No email configured'}
+                                    helperText={emailHelpText(channel)}
+                                    statusText={emailStatusText(channel)}
+                                    availabilityReason={availabilityReason}
+                                    enabled={editableChannel.enabled}
+                                    canEnable={canEnable}
+                                    canTest={canTest}
+                                    lastTestStatus={channel.last_test_status}
+                                    onToggle={(checked) => updateChannel(channelType, { enabled: checked })}
+                                    onTest={() => void handleTest(channelType)}
+                                >
                                     <div className="mt-4 border-t border-rule pt-4">
                                         <label className="block">
                                             <span className="caption">Override email</span>
@@ -482,50 +458,40 @@ export function NotificationSettingsPanel() {
                                                 >
                                                     Send verification
                                                 </Button>
-                                                {channel.override_address && (
+                                                {channel.override_address ? (
                                                     <Button
                                                         type="button"
                                                         size="sm"
                                                         variant="ghost"
                                                         disabled={isClearingEmailOverride}
-                                                        onClick={() => void handleClearEmailOverride()}
+                                                        onClick={() => void handleClearEmailVerification()}
                                                     >
                                                         Clear override
                                                     </Button>
-                                                )}
+                                                ) : null}
                                             </div>
                                         </div>
                                     </div>
-
-                                    <ChannelTestRow
-                                        lastTestStatus={channel.last_test_status}
-                                        canTest={canTest}
-                                        isTesting={isTesting}
-                                        onTest={() => void handleTest(channelType)}
-                                    />
-                                </article>
+                                </ChannelCard>
                             );
                         }
 
                         return (
-                            <article key={channelType} className="px-5 py-5">
-                                <ChannelHeader
-                                    Icon={Icon}
-                                    channelLabel={channelLabel}
-                                    recipient={channel.masked_recipient || (channel.configured ? 'Configured' : 'Not configured')}
-                                    helperText={CHANNEL_HELP[channelType] ?? 'Saved destination for notifications.'}
-                                    availabilityReason={!channel.available ? channel.availability_reason : null}
-                                    toggle={(
-                                        <ChannelEnabledToggle
-                                            channelLabel={channelLabel}
-                                            checked={editableChannel.enabled}
-                                            disabled={!canEnable}
-                                            onChange={(checked) => updateChannel(channelType, { enabled: checked })}
-                                        />
-                                    )}
-                                />
-
-                                {SECRET_CHANNELS.has(channelType) && (
+                            <ChannelCard
+                                key={channelType}
+                                icon={Icon}
+                                channelLabel={channelLabel}
+                                secondaryText={channel.masked_recipient || (channel.configured ? 'Configured' : 'Not configured')}
+                                helperText={CHANNEL_HELP[channelType] ?? 'Saved destination for notifications.'}
+                                availabilityReason={availabilityReason}
+                                enabled={editableChannel.enabled}
+                                canEnable={canEnable}
+                                canTest={canTest}
+                                lastTestStatus={channel.last_test_status}
+                                onToggle={(checked) => updateChannel(channelType, { enabled: checked })}
+                                onTest={() => void handleTest(channelType)}
+                            >
+                                {SECRET_CHANNELS.has(channelType) ? (
                                     <div className="mt-4 border-t border-rule pt-4">
                                         <label className="block">
                                             <span className="caption">Destination</span>
@@ -558,15 +524,8 @@ export function NotificationSettingsPanel() {
                                             </Button>
                                         </div>
                                     </div>
-                                )}
-
-                                <ChannelTestRow
-                                    lastTestStatus={channel.last_test_status}
-                                    canTest={canTest}
-                                    isTesting={isTesting}
-                                    onTest={() => void handleTest(channelType)}
-                                />
-                            </article>
+                                ) : null}
+                            </ChannelCard>
                         );
                     })}
                 </div>

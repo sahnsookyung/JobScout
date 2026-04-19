@@ -77,6 +77,8 @@ class MatchSelectionItemSnapshot:
     dominant_reason_code: Optional[str]
     explanation_label: Optional[str]
     ranking_snapshot: dict[str, Any] = field(default_factory=dict)
+    selection_tier: str = "primary"
+    excluded_reason: Optional[str] = None
 
 
 @dataclass(frozen=True)

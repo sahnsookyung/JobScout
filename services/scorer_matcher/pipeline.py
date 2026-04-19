@@ -28,6 +28,7 @@ from core.matcher import (
 from core.ranking import RankingContext, RankingMode, get_ranking_policy_store
 from core.scorer import ScoringService
 from core.scorer.persistence import save_match_to_db
+from core.scorer.semantic_fit import get_shared_local_cross_encoder_provider
 from core.llm.interfaces import LLMProvider
 from core.llm.schema_models import ResumeSchema
 from database.models import SYSTEM_OWNER_ID
@@ -36,6 +37,8 @@ from etl.resume.embedding_store import JobRepositoryAdapter
 from database.uow import job_uow
 from notification.orchestrator import resolve_notification_fit_floor, send_notifications
 from services.scorer_matcher.candidate_preferences import (
+    PreferenceStatus,
+    PreferenceRerankResult,
     apply_candidate_preference_filters,
     apply_preference_semantic_reranking,
     load_candidate_preferences,
@@ -529,6 +532,7 @@ def _prepare_matcher_service(ctx, repo, matching_config):
     scorer_config = getattr(matching_config, "scorer", None)
     semantic_fit_config = getattr(scorer_config, "semantic_fit", None)
     recall_top_k = getattr(semantic_fit_config, "recall_top_k", 5)
+    cross_encoder_provider = _resolve_evidence_rerank_provider(semantic_fit_config)
     return MatcherService(
         resume_profiler=ResumeProfiler(
             ai_service=ctx.ai_service,
@@ -536,6 +540,27 @@ def _prepare_matcher_service(ctx, repo, matching_config):
         ),
         config=matching_config.matcher,
         requirement_recall_top_k=recall_top_k,
+        cross_encoder_provider=cross_encoder_provider,
+    )
+
+
+def _resolve_evidence_rerank_provider(semantic_fit_config):
+    """Return the shared local cross-encoder provider when evidence rerank is enabled.
+
+    Shares one loaded model with the scorer via `get_shared_local_cross_encoder_provider`
+    so we don't pay ~2 GB of BGE reranker weights twice.
+    """
+    if not getattr(semantic_fit_config, "evidence_rerank_enabled", False):
+        return None
+    local_cfg = getattr(getattr(semantic_fit_config, "cross_encoder", None), "local", None)
+    if local_cfg is None or not getattr(local_cfg, "enabled", False):
+        return None
+    return get_shared_local_cross_encoder_provider(
+        model_name=local_cfg.model_name,
+        cache_path=local_cfg.model_cache_path,
+        runtime=local_cfg.runtime,
+        max_batch_size=local_cfg.max_batch_size,
+        trust_remote_code=local_cfg.trust_remote_code,
     )
 
 
@@ -582,7 +607,15 @@ def _run_vector_matching(
 
 
 def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event):
-    """Run rule-based scoring."""
+    """Run rule-based scoring over every preliminary match.
+
+    We deliberately widen the scoring pass to include every preliminary match
+    (min_fit=0, no coverage floor, top_k=all). Floor/top_k gates are applied
+    by the canonical selection stage, which now persists below-floor items as
+    `selection_tier='excluded'` instead of dropping them. This keeps the
+    scoring pass exhaustive without leaking the widened policy into the
+    canonical selection contract.
+    """
     logger.info("=== MATCHING STEP 2: Running ScorerService (Fit-first scoring) ===")
     result_policy = _resolve_result_policy(matching_config)
     if result_policy and preliminary_matches:
@@ -591,15 +624,17 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event
             len(preliminary_matches),
         )
         if hasattr(result_policy, "model_copy"):
-            result_policy = result_policy.model_copy(update={"top_k": widened_top_k})
-        elif hasattr(result_policy, "top_k"):
-            try:
-                result_policy.top_k = widened_top_k
-            except Exception:
-                # Mutation failed — clear the policy so scorer returns all matches;
-                # the canonical selection stage will re-apply the original limit afterward.
-                logger.warning("Could not widen result policy top_k prior to preference reranking; passing all matches to reranker", exc_info=True)
-                result_policy = None
+            result_policy = result_policy.model_copy(
+                update={
+                    "min_fit": 0.0,
+                    "min_jd_required_coverage": None,
+                    "top_k": widened_top_k,
+                }
+            )
+        else:
+            result_policy.min_fit = 0.0
+            result_policy.min_jd_required_coverage = None
+            result_policy.top_k = widened_top_k
 
     return scorer.score_matches(
         preliminary_matches=preliminary_matches,
@@ -619,7 +654,13 @@ def _prepare_selection_result(
     resume_resolution_reason: str,
     task_id: Optional[str],
 ):
-    """Apply the canonical selection contract and return committed-run snapshots."""
+    """Apply the canonical selection contract and return committed-run snapshots.
+
+    Uses the ORIGINAL result policy (min_fit/top_k) — not the widened one from
+    `_run_scorer_service`. Matches that fall below the floor or beyond top_k
+    are tiered as 'excluded' rather than dropped, so stats and the API can
+    reconcile with what the user configured.
+    """
     result_policy = _resolve_result_policy(matching_config)
     fit_floor_used = float(getattr(result_policy, "min_fit", 0.0) or 0.0)
     required_coverage_floor_used = getattr(
@@ -629,6 +670,9 @@ def _prepare_selection_result(
     )
     top_k_used = int(getattr(result_policy, "top_k", len(scored_matches)) or len(scored_matches))
     notification_fit_floor_used = float(resolve_notification_fit_floor(ctx, owner_id=owner_id))
+    two_tier_enabled = bool(
+        getattr(matching_config, "two_tier_selection_enabled", True)
+    )
     return select_matches(
         scored_matches,
         ranking_context=ranking_context,
@@ -638,6 +682,7 @@ def _prepare_selection_result(
         notification_fit_floor_used=notification_fit_floor_used,
         resume_resolution_reason=resume_resolution_reason,
         task_id=task_id,
+        two_tier_enabled=two_tier_enabled,
     )
 
 
@@ -725,6 +770,96 @@ def _run_preliminary_matching(
         len(preliminary_matches), step_elapsed,
     )
     return preliminary_matches
+
+
+def _tier_breakdown(
+    item_snapshots: List[MatchSelectionItemSnapshot],
+) -> tuple[Dict[str, int], Dict[str, int]]:
+    tier_counts: Dict[str, int] = {}
+    excluded_reasons: Dict[str, int] = {}
+    for item in item_snapshots:
+        tier = getattr(item, "selection_tier", "primary") or "primary"
+        tier_counts[tier] = tier_counts.get(tier, 0) + 1
+        if tier != "primary":
+            reason = getattr(item, "excluded_reason", None) or "unspecified"
+            excluded_reasons[reason] = excluded_reasons.get(reason, 0) + 1
+    return tier_counts, excluded_reasons
+
+
+def _count_reranked_requirements(match_dtos: List[MatchResultDTO]) -> int:
+    return sum(
+        1
+        for dto in match_dtos
+        for req in (getattr(dto, "requirement_matches", []) or [])
+        if getattr(req, "evidence_score", None) is not None
+    )
+
+
+def _degraded_reason_breakdown(match_dtos: List[MatchResultDTO]) -> Dict[str, int]:
+    degraded: Dict[str, int] = {}
+    for dto in match_dtos:
+        components = getattr(dto, "fit_components", None)
+        if not isinstance(components, dict):
+            continue
+        raw = components.get("semantic_fit_fallback_reason")
+        if raw:
+            key = str(raw)
+            degraded[key] = degraded.get(key, 0) + 1
+    return degraded
+
+
+def _truncated_excluded_count(
+    policy_snapshot: Optional[MatchSelectionPolicySnapshot],
+) -> int:
+    if policy_snapshot is None:
+        return 0
+    snapshot = getattr(policy_snapshot, "ranking_config_snapshot", None) or {}
+    return int(snapshot.get("excluded_truncated_count", 0) or 0)
+
+
+def _log_pipeline_run_summary(
+    *,
+    match_dtos: List[MatchResultDTO],
+    item_snapshots: List[MatchSelectionItemSnapshot],
+    preference_status: PreferenceStatus,
+    policy_snapshot: Optional[MatchSelectionPolicySnapshot],
+) -> None:
+    """Emit one structured-log line per pipeline run.
+
+    Captures the observability surface §I asks for without taking a metrics
+    dependency: tier counts, evidence rerank coverage, scorer degraded reason,
+    and preference-reranker status. `extra` keys land in structured-log sinks
+    (JSON formatter / Loki) as queryable fields.
+    """
+    tier_counts, excluded_reasons = _tier_breakdown(item_snapshots)
+    evidence_rerank_count = _count_reranked_requirements(match_dtos)
+    degraded_reasons = _degraded_reason_breakdown(match_dtos)
+    truncated_excluded = _truncated_excluded_count(policy_snapshot)
+
+    logger.info(
+        "pipeline.run_summary selected=%d tier_counts=%s excluded_reasons=%s "
+        "evidence_rerank_scored=%d degraded_reasons=%s preference_applied=%s "
+        "preference_reason=%s excluded_truncated=%d",
+        len(match_dtos),
+        tier_counts,
+        excluded_reasons,
+        evidence_rerank_count,
+        degraded_reasons,
+        preference_status.applied,
+        preference_status.reason,
+        truncated_excluded,
+        extra={
+            "event": "pipeline.run_summary",
+            "selected_count": len(match_dtos),
+            "tier_counts": tier_counts,
+            "excluded_reasons": excluded_reasons,
+            "evidence_rerank_scored": evidence_rerank_count,
+            "degraded_reasons": degraded_reasons,
+            "preference_applied": preference_status.applied,
+            "preference_reason": preference_status.reason,
+            "excluded_truncated": truncated_excluded,
+        },
+    )
 
 
 def _log_match_results(match_dtos: List[MatchResultDTO]) -> None:
@@ -830,15 +965,23 @@ def _run_matching_and_scoring(
             scorer, preliminary_matches, matching_config, stop_event,
         )
         rerank_start = time.time()
-        scored_matches = apply_preference_semantic_reranking(
+        rerank_result = apply_preference_semantic_reranking(
             scored_matches,
             candidate_preferences,
             config=_resolve_preferences_config(ctx),
         )
+        if isinstance(rerank_result, PreferenceRerankResult):
+            scored_matches = rerank_result.matches
+            preference_status = rerank_result.status
+        else:
+            scored_matches = rerank_result
+            preference_status = PreferenceStatus(applied=False, reason="unknown")
         logger.info(
-            "Preference reranking completed in %.2fs for %d matches",
+            "Preference reranking completed in %.2fs for %d matches (applied=%s reason=%s)",
             time.time() - rerank_start,
             len(scored_matches),
+            preference_status.applied,
+            preference_status.reason,
         )
         selection_result = _prepare_selection_result(
             scored_matches,
@@ -852,11 +995,20 @@ def _run_matching_and_scoring(
         policy_snapshot = selection_result.policy_snapshot
         item_snapshots = selection_result.item_snapshots
 
-        match_dtos = _convert_matches_to_dtos(selection_result.selected_matches)
+        match_dtos = _convert_matches_to_dtos(
+            selection_result.selected_matches,
+            preference_status=preference_status,
+        )
 
     step_elapsed = time.time() - scoring_start
     logger.info("MATCHING Step 2 completed: Scored %d matches in %.2fs", len(match_dtos), step_elapsed)
     _log_match_results(match_dtos)
+    _log_pipeline_run_summary(
+        match_dtos=match_dtos,
+        item_snapshots=item_snapshots,
+        preference_status=preference_status,
+        policy_snapshot=policy_snapshot,
+    )
     if policy_snapshot is None:
         raise RuntimeError("Selection policy snapshot was not created")
     return PreparedSelectionResult(
@@ -890,6 +1042,7 @@ def _matched_req_to_dto(req) -> RequirementMatchDTO:
         evidence=_build_evidence_dto(req.evidence),
         similarity=req.similarity,
         is_covered=req.is_covered,
+        evidence_score=getattr(req, "evidence_score", None),
     )
 
 
@@ -901,17 +1054,43 @@ def _missing_req_to_dto(req) -> RequirementMatchDTO:
         ),
         similarity=req.similarity,
         is_covered=False,
+        evidence_score=getattr(req, "evidence_score", None),
     )
 
 
-def _ranking_snapshot_from_match(match) -> dict:
+def _scoring_degraded_reason(match) -> Optional[str]:
+    fit_components = getattr(match, "fit_components", {}) or {}
+    if not isinstance(fit_components, dict):
+        return None
+    raw = fit_components.get("semantic_fit_fallback_reason")
+    if not raw:
+        return None
+    text = str(raw).lower()
+    if "remote" in text:
+        return "remote_unavailable"
+    if "local" in text:
+        return "local_unavailable"
+    if "disabled" in text:
+        return "provider_disabled"
+    return "degraded"
+
+
+def _ranking_snapshot_from_match(match, preference_status: PreferenceStatus | None = None) -> dict:
     explanation = getattr(match, "ranking_explanation", None)
-    if explanation is None:
-        return {}
-    return asdict(explanation)
+    snapshot = asdict(explanation) if explanation is not None else {}
+    degraded_reason = _scoring_degraded_reason(match)
+    if degraded_reason:
+        snapshot["scoring"] = {"degraded_reason": degraded_reason}
+    if preference_status is not None:
+        snapshot["preference_status"] = preference_status.to_dict()
+    return snapshot
 
 
-def _convert_matches_to_dtos(scored_matches) -> List[MatchResultDTO]:
+def _convert_matches_to_dtos(
+    scored_matches,
+    *,
+    preference_status: PreferenceStatus | None = None,
+) -> List[MatchResultDTO]:
     """Convert ORM match objects to DTOs.
 
     Uses direct attribute access instead of getattr-with-defaults so that
@@ -939,7 +1118,7 @@ def _convert_matches_to_dtos(scored_matches) -> List[MatchResultDTO]:
             resume_fingerprint=match.resume_fingerprint,
             fit_components=match.fit_components,
             preference_components=getattr(match, "preference_components", {}) or {},
-            ranking_snapshot=_ranking_snapshot_from_match(match),
+            ranking_snapshot=_ranking_snapshot_from_match(match, preference_status),
             base_score=match.base_score,
             penalties=match.penalties,
             penalty_details=penalty_details_from_orm(

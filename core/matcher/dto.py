@@ -31,6 +31,7 @@ class RequirementMatchDTO:
     evidence: Optional[JobEvidenceDTO] = None
     similarity: float = 0.0
     is_covered: bool = False
+    evidence_score: Optional[float] = None
 
 
 @dataclass

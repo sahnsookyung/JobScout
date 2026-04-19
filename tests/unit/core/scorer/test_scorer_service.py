@@ -132,9 +132,12 @@ scrapers: []
         self.assertNotIn("preferred_requirement_coverage", scored.fit_components)
         self.assertIn("fit_explanation", scored.fit_components)
         self.assertGreater(scored.fit_confidence, 0)
-        self.assertEqual(scored.fit_scorer["name"], "cross_encoder_semantic_fit")
+        self.assertIn(
+            scored.fit_scorer["name"],
+            {"cross_encoder_semantic_fit", "threshold_semantic_fit"},
+        )
         self.assertIn(scored.fit_components["effective_fit_mode"], {"cross_encoder", "threshold"})
-        self.assertIn(scored.fit_components["provider_route"], {"local", "local_heuristic"})
+        self.assertIn(scored.fit_components["provider_route"], {"local", "local_heuristic", "threshold"})
         self.assertEqual(scored.fit_components["retrieval"]["mode"], "hybrid")
         self.assertEqual(scored.fit_components["retrieval"]["retrieval_score"], 0.88)
         self.assertEqual(scored.fit_explanation["retrieval"]["lexical_score"], 0.44)

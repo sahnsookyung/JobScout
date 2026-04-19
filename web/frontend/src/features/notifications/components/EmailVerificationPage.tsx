@@ -1,25 +1,30 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, TriangleAlert } from 'lucide-react';
 
-import { useNotificationSettings } from '@/hooks/useNotificationSettings';
+import { notificationSettingsApi } from '@/services/notificationSettingsApi';
 
 type VerificationState = 'verifying' | 'success' | 'error';
 
 export function EmailVerificationPage() {
-    const { verifyEmailOverride } = useNotificationSettings();
     const [state, setState] = useState<VerificationState>('verifying');
     const [message, setMessage] = useState('Verifying your email override...');
 
     useEffect(() => {
         const params = new URLSearchParams(globalThis.location.search);
-        const token = params.get('token');
+        const hash = globalThis.location.hash.startsWith('#')
+            ? globalThis.location.hash.slice(1)
+            : globalThis.location.hash;
+        const hashParams = new URLSearchParams(hash);
+        const token = hashParams.get('token') ?? params.get('token');
+        const nextUrl = globalThis.location.pathname;
+        globalThis.history.replaceState({}, globalThis.document.title, nextUrl);
         if (!token) {
             setState('error');
             setMessage('Verification token is missing.');
             return;
         }
 
-        void verifyEmailOverride(token)
+        void notificationSettingsApi.verifyEmailOverride({ token })
             .then((response) => {
                 setState('success');
                 setMessage(response.data.message);
@@ -28,14 +33,14 @@ export function EmailVerificationPage() {
                 setState('error');
                 setMessage(error instanceof Error ? error.message : 'Verification failed.');
             });
-    }, [verifyEmailOverride]);
+    }, []);
 
-    let heading = 'Verifying';
-    if (state === 'success') {
-        heading = 'Email verified';
-    } else if (state === 'error') {
-        heading = 'Verification didn’t complete';
-    }
+    const HEADINGS: Record<typeof state, string> = {
+        verifying: 'Verifying',
+        success: 'Email verified',
+        error: 'Verification didn’t complete',
+    };
+    const heading = HEADINGS[state];
 
     return (
         <main className="flex min-h-screen items-center justify-center bg-canvas px-4 py-12 text-ink">

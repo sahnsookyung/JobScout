@@ -12,10 +12,12 @@ from notification.secrets import EncryptedSecret
 from notification.user_settings import (
     UserNotificationSettingsService,
     _channel_available,
+    _email_override_status,
     _mask_channel_recipient,
     _mask_email,
     _mask_telegram,
     _mask_webhook,
+    _resolved_email_recipient,
     _validate_secret_value,
 )
 
@@ -375,6 +377,17 @@ class TestUserNotificationSettingsService:
         assert email_target.recipient == user.email
         assert in_app_target.recipient == str(user.id)
 
+    def test_resolved_recipient_requires_email_target(self):
+        user = _make_user(email="")
+        service, _, _ = _make_service(
+            user=user,
+            settings=None,
+            channels={"email": _make_channel("email")},
+        )
+
+        with pytest.raises(NotificationConfigurationError, match="Email recipient is missing"):
+            service._resolved_recipient(user, "email")
+
     def test_resolve_delivery_target_decrypts_secret_channels(self):
         user = _make_user()
         discord_channel = _make_channel(
@@ -423,6 +436,16 @@ class TestUserNotificationSettingsService:
         assert channel.configured is True
         assert channel.masked_recipient == "https://hooks.example.com/h"
 
+    def test_apply_channel_update_marks_email_unconfigured_without_recipient(self):
+        user = _make_user(email="")
+        service, _, _ = _make_service(user=user, settings=None, channels={})
+        channel = _make_channel("email")
+
+        service._apply_channel_update(user, channel, {})
+
+        assert channel.configured is False
+        assert channel.masked_recipient is None
+
     @patch("notification.user_settings._channel_available", return_value=(True, None))
     def test_channel_snapshot_uses_channel_state(self, mock_available):
         user = _make_user()
@@ -445,3 +468,75 @@ class TestUserNotificationSettingsService:
         assert snapshot.enabled is True
         assert snapshot.config_json == {"x": 1}
         assert snapshot.last_test_status == "sent"
+
+
+from datetime import timedelta
+
+
+class TestEmailOverrideStatus:
+    """Pure resolver: maps a UserNotificationChannel into the UI status string."""
+
+    def test_returns_none_when_channel_is_none(self):
+        assert _email_override_status(None) == "none"
+
+    def test_returns_none_when_no_override_address(self):
+        ch = SimpleNamespace(
+            override_address=None,
+            override_verified_at=None,
+            verification_token_expires_at=None,
+        )
+        assert _email_override_status(ch) == "none"
+
+    def test_returns_verified_when_verified_at_set(self):
+        ch = SimpleNamespace(
+            override_address="alerts@example.com",
+            override_verified_at=datetime.now(timezone.utc),
+            verification_token_expires_at=None,
+        )
+        assert _email_override_status(ch) == "verified"
+
+    def test_returns_expired_when_token_past_expiry(self):
+        ch = SimpleNamespace(
+            override_address="alerts@example.com",
+            override_verified_at=None,
+            verification_token_expires_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        )
+        assert _email_override_status(ch) == "expired"
+
+    def test_returns_pending_when_token_not_yet_expired(self):
+        ch = SimpleNamespace(
+            override_address="alerts@example.com",
+            override_verified_at=None,
+            verification_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        assert _email_override_status(ch) == "pending"
+
+    def test_returns_pending_when_no_expiry_set(self):
+        ch = SimpleNamespace(
+            override_address="alerts@example.com",
+            override_verified_at=None,
+            verification_token_expires_at=None,
+        )
+        assert _email_override_status(ch) == "pending"
+
+
+class TestResolvedEmailRecipient:
+    def _user(self, email):
+        return SimpleNamespace(email=email)
+
+    def test_uses_account_email_when_no_channel(self):
+        assert _resolved_email_recipient(self._user("u@x"), None) == "u@x"
+
+    def test_uses_account_email_when_override_unverified(self):
+        ch = SimpleNamespace(override_address="alt@x", override_verified_at=None)
+        assert _resolved_email_recipient(self._user("u@x"), ch) == "u@x"
+
+    def test_uses_override_when_verified(self):
+        ch = SimpleNamespace(
+            override_address="alt@x", override_verified_at=datetime.now(timezone.utc)
+        )
+        assert _resolved_email_recipient(self._user("u@x"), ch) == "alt@x"
+
+    def test_uses_account_email_when_override_address_blank(self):
+        ch = SimpleNamespace(override_address="", override_verified_at=None)
+        assert _resolved_email_recipient(self._user("u@x"), ch) == "u@x"

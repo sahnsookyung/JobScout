@@ -39,6 +39,11 @@ class NotificationTracker(Base):
         UniqueConstraint('dedup_hash', name='uq_notification_dedup'),
         Index('idx_notification_owner', 'owner_id', 'first_sent_at'),
         Index('idx_notification_recent', 'dedup_hash', 'last_sent_at'),
+        Index(
+            'idx_notification_failure_class',
+            'failure_class',
+            postgresql_where=sql_text('failure_class IS NOT NULL'),
+        ),
     )
 
     def __init__(self, **kwargs):

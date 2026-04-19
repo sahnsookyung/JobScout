@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""
-Notification service wrapper for the web application.
-"""
+"""Notification service wrapper for the web application."""
 
+import hashlib
 import logging
+import re
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 from sqlalchemy.orm import Session
 
+from database.models import User, UserNotificationChannel
 from notification import NotificationService, NotificationPriority
 from notification.exceptions import NotificationConfigurationError
 from notification.user_settings import (
@@ -17,6 +20,19 @@ from database.repository import JobRepository
 from web.backend.config import get_config
 
 logger = logging.getLogger(__name__)
+_EMAIL_LOCAL = r"[^@\s]{1,64}"
+_EMAIL_DOMAIN_LABEL = r"[^@\s\.]{1,63}"
+EMAIL_RE = re.compile(
+    rf"^{_EMAIL_LOCAL}@{_EMAIL_DOMAIN_LABEL}(?:\.{_EMAIL_DOMAIN_LABEL}){{1,10}}$"
+)
+
+
+class NotificationRateLimitError(Exception):
+    """Raised when email override verification is rate-limited."""
+
+    def __init__(self, message: str, *, retry_after: int | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class NotificationServiceWrapper:
@@ -35,6 +51,33 @@ class NotificationServiceWrapper:
             channel_configs=notification_config.channels,
         )
         self.settings_service = UserNotificationSettingsService(db)
+
+    @staticmethod
+    def _hash_token(token: str) -> str:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _email_channel(channel_payload: Dict[str, Any]) -> Dict[str, Any] | None:
+        channels = channel_payload.get("channels", {})
+        email_channel = channels.get("email")
+        return email_channel if isinstance(email_channel, dict) else None
+
+    @staticmethod
+    def _verification_window(config_json: Dict[str, Any], now: datetime) -> tuple[datetime, int]:
+        started_at_raw = config_json.get("verification_window_started_at")
+        count = int(config_json.get("verification_send_count", 0) or 0)
+        if isinstance(started_at_raw, str):
+            try:
+                started_at = datetime.fromisoformat(started_at_raw)
+            except ValueError:
+                started_at = now
+        else:
+            started_at = now
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        if now - started_at >= timedelta(hours=24):
+            return now, 0
+        return started_at, count
     
     def send_notification(
         self,
@@ -141,6 +184,123 @@ class NotificationServiceWrapper:
             status="queued",
         )
         return notification_id
+
+    def send_email_override_verification(self, user, address: str) -> Dict[str, Any]:
+        normalized = address.strip().lower()
+        if len(normalized) > 320 or not EMAIL_RE.match(normalized):
+            raise NotificationConfigurationError(
+                "Enter a valid email address",
+                failure_class="email_invalid",
+            )
+        if normalized == (user.email or "").strip().lower():
+            raise NotificationConfigurationError(
+                "Override email must be different from the account email",
+                failure_class="email_override_same_as_account",
+            )
+
+        channel = self.repo.notification_settings.get_or_create_channel(user.id, "email")
+        now = datetime.now(timezone.utc)
+        if channel.verification_sent_at is not None:
+            elapsed = (now - channel.verification_sent_at).total_seconds()
+            if elapsed < 60:
+                raise NotificationRateLimitError(
+                    "Verification email was sent recently. Please wait before retrying.",
+                    retry_after=max(1, int(60 - elapsed)),
+                )
+
+        config_json = dict(channel.config_json or {})
+        window_started_at, send_count = self._verification_window(config_json, now)
+        if send_count >= 5:
+            retry_after = int((window_started_at + timedelta(hours=24) - now).total_seconds())
+            raise NotificationRateLimitError(
+                "Verification email rate limit reached. Try again later.",
+                retry_after=max(1, retry_after),
+            )
+
+        token = secrets.token_urlsafe(32)
+        verify_link = f"{self.notification_service.base_url.rstrip('/')}/verify-email#token={token}"
+
+        channel.override_address = normalized
+        channel.override_verified_at = None
+        channel.verification_token_hash = self._hash_token(token)
+        channel.verification_token_expires_at = now + timedelta(hours=24)
+        channel.verification_sent_at = now
+        channel.config_json = {
+            **config_json,
+            "verification_window_started_at": window_started_at.isoformat(),
+            "verification_send_count": send_count + 1,
+        }
+
+        try:
+            self.notification_service.send_notification(
+                channel_type="email",
+                recipient=normalized,
+                subject="Verify your JobScout notification email",
+                body=(
+                    "Confirm this email address for JobScout notifications.\n\n"
+                    f"Verify: {verify_link}\n\n"
+                    "This link expires in 24 hours."
+                ),
+                user_id=str(user.id),
+                priority=NotificationPriority.NORMAL,
+                event_type="email_override_verification",
+                allow_resend=True,
+                skip_dedup=True,
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        return self._snapshot_to_response(
+            self.settings_service.get_settings_snapshot(user)
+        )["channels"]["email"]
+
+    def verify_email_override(self, token: str) -> Dict[str, Any]:
+        token_hash = self._hash_token(token.strip())
+        channel = (
+            self.db.query(UserNotificationChannel)
+            .filter(UserNotificationChannel.verification_token_hash == token_hash)
+            .one_or_none()
+        )
+        if channel is None or not channel.override_address:
+            raise NotificationConfigurationError(
+                "Verification link is invalid",
+                failure_class="verification_invalid",
+            )
+        now = datetime.now(timezone.utc)
+        if channel.verification_token_expires_at is None or channel.verification_token_expires_at < now:
+            raise NotificationConfigurationError(
+                "Verification link has expired",
+                failure_class="verification_expired",
+            )
+
+        channel.override_verified_at = now
+        channel.verification_token_hash = None
+        channel.verification_token_expires_at = None
+        channel.masked_recipient = None
+        self.db.commit()
+        user = self.db.get(User, channel.owner_id)
+        if user is None:
+            raise NotificationConfigurationError(
+                "Notification user does not exist",
+                failure_class="user_missing",
+            )
+        return self._snapshot_to_response(
+            self.settings_service.get_settings_snapshot(user)
+        )["channels"]["email"]
+
+    def clear_email_override(self, user) -> Dict[str, Any]:
+        channel = self.repo.notification_settings.get_or_create_channel(user.id, "email")
+        channel.override_address = None
+        channel.override_verified_at = None
+        channel.verification_token_hash = None
+        channel.verification_token_expires_at = None
+        channel.verification_sent_at = None
+        channel.masked_recipient = None
+        self.db.commit()
+        return self._snapshot_to_response(
+            self.settings_service.get_settings_snapshot(user)
+        )["channels"]["email"]
     
     def get_queue_status(self) -> Dict[str, Any]:
         """
@@ -167,6 +327,14 @@ class NotificationServiceWrapper:
                 "last_test_status": channel.last_test_status,
                 "last_tested_at": channel.last_tested_at.isoformat() if channel.last_tested_at else None,
                 "last_test_error": channel.last_test_error,
+                "effective_recipient": getattr(channel, "effective_recipient", None),
+                "override_address": getattr(channel, "override_address", None),
+                "override_status": getattr(channel, "override_status", None),
+                "override_verified_at": (
+                    getattr(channel, "override_verified_at").isoformat()
+                    if getattr(channel, "override_verified_at", None)
+                    else None
+                ),
             }
         return {
             "notifications_enabled": snapshot.notifications_enabled,

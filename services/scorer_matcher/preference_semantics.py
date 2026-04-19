@@ -721,13 +721,18 @@ def build_preference_semantic_reranker(
         if not ce_config.enabled:
             logger.info("Cross-encoder preference reranker disabled")
             return None
-        from core.scorer.semantic_fit import LocalCrossEncoderProvider
-        cross_encoder = LocalCrossEncoderProvider(
+        from core.scorer.semantic_fit import get_shared_local_cross_encoder_provider
+
+        # Reuse the scorer's shared provider so we do not load the same model twice.
+        # The heuristic runtime remains opt-in and is only enabled when the explicit
+        # preference config asks for it (for example, the deterministic E2E stack).
+        cross_encoder = get_shared_local_cross_encoder_provider(
             model_name=ce_config.model_name,
             cache_path=ce_config.cache_path,
             runtime=ce_config.runtime,
             max_batch_size=ce_config.max_batch_size,
             trust_remote_code=ce_config.trust_remote_code,
+            allow_heuristic=ce_config.runtime == "heuristic",
         )
         return CrossEncoderPreferenceReranker(cross_encoder)
     llm = build_preference_llm(config.semantic_reranker)
