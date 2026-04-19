@@ -414,7 +414,7 @@ export function NotificationSettingsPanel() {
                         const canTest = !hasUnsavedChanges && channel.available && channel.configured && !isTesting;
                         const Icon = CHANNEL_ICONS[channelType] ?? Mail;
                         const channelLabel = CHANNEL_LABELS[channelType] ?? channelType;
-                        const availabilityReason = !channel.available ? channel.availability_reason : null;
+                        const availabilityReason = channel.available ? null : channel.availability_reason;
 
                         if (channelType === 'email') {
                             return (

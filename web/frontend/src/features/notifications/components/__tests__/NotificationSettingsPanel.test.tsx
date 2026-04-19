@@ -60,7 +60,7 @@ const makeSettings = (overrides: Partial<NotificationSettings> = {}): Notificati
         ...overrides,
         channels: {
             ...base.channels,
-            ...(overrides.channels ?? {}),
+            ...(overrides.channels || undefined),
         },
     };
 };
