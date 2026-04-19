@@ -133,3 +133,28 @@ def test_select_matches_truncates_excluded_by_best_fit_not_input_order() -> None
 
     assert [item.job_id for item in result.item_snapshots] == ["primary", "excluded-high"]
     assert result.policy_snapshot.ranking_config_snapshot["excluded_truncated_count"] == 1
+
+
+def test_select_matches_disabled_two_tier_does_not_report_truncation() -> None:
+    ranking_context = RankingContext(
+        mode=RankingMode.FIT_FIRST,
+        config=RankingConfig(active_default_mode="fit_first"),
+    )
+    matches = [
+        _match("primary", fit_score=90.0, preference_score=0.2, job_similarity=0.8, required_coverage=0.9),
+        _match("excluded", fit_score=45.0, preference_score=0.2, job_similarity=0.4, required_coverage=0.9),
+    ]
+
+    result = select_matches(
+        matches,
+        ranking_context=ranking_context,
+        fit_floor_used=50.0,
+        required_coverage_floor_used=None,
+        top_k_used=5,
+        notification_fit_floor_used=70.0,
+        resume_resolution_reason="test",
+        two_tier_enabled=False,
+    )
+
+    assert [item.job_id for item in result.item_snapshots] == ["primary"]
+    assert "excluded_truncated_count" not in result.policy_snapshot.ranking_config_snapshot

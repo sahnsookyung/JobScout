@@ -206,6 +206,52 @@ class TestThreeStagePipeline:
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
+    def test_tier_all_without_explicit_top_k_returns_primary_and_excluded(
+        self, mock_store, mock_rank, mock_db, service
+    ):
+        from core.ranking.policy import RankingConfig
+        cfg = RankingConfig(
+            balanced_w_pref=0.6, balanced_w_fit=0.4,
+            max_ranking_candidates=500, default_top_k=2, max_top_k=100,
+        )
+        mock_store.return_value.get_current_config.return_value = cfg
+
+        primary = [_make_match(f"p{i}") for i in range(2)]
+        excluded = [_make_match(f"e{i}") for i in range(3)]
+        for match in excluded:
+            match.selection_tier = "excluded"
+        _wire_rankable_pool(service, primary + excluded)
+        mock_rank.side_effect = lambda p, ctx: p
+
+        results = service.get_matches(tier="all", top_k=None)
+
+        assert len(results) == 5
+
+    @patch("web.backend.services.match_service.rank_matches")
+    @patch("web.backend.services.match_service.get_ranking_policy_store")
+    def test_tier_all_with_explicit_top_k_caps_final_combined_results(
+        self, mock_store, mock_rank, mock_db, service
+    ):
+        from core.ranking.policy import RankingConfig
+        cfg = RankingConfig(
+            balanced_w_pref=0.6, balanced_w_fit=0.4,
+            max_ranking_candidates=500, default_top_k=2, max_top_k=4,
+        )
+        mock_store.return_value.get_current_config.return_value = cfg
+
+        primary = [_make_match(f"p{i}") for i in range(2)]
+        excluded = [_make_match(f"e{i}") for i in range(3)]
+        for match in excluded:
+            match.selection_tier = "excluded"
+        _wire_rankable_pool(service, primary + excluded)
+        mock_rank.side_effect = lambda p, ctx: p
+
+        results = service.get_matches(tier="all", top_k=4)
+
+        assert len(results) == 4
+
+    @patch("web.backend.services.match_service.rank_matches")
+    @patch("web.backend.services.match_service.get_ranking_policy_store")
     def test_missing_canonical_resume_returns_empty_list(
         self, mock_store, mock_rank, mock_db, service
     ):

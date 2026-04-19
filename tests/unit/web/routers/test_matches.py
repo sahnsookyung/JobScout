@@ -170,6 +170,15 @@ class TestMatchesRouter:
         assert call_kwargs['min_fit'] is None
         assert call_kwargs['top_k'] == 100  # From policy
 
+    def test_get_matches_tier_all_without_explicit_top_k_returns_full_run(self, client, mock_match_service, mock_policy_service):
+        mock_match_service.get_matches.return_value = []
+        cfg = SimpleNamespace(matching=SimpleNamespace(two_tier_selection_enabled=True))
+        with patch("core.config_loader.load_config", return_value=cfg):
+            response = client.get('/api/matches', params={'tier': 'all'})
+
+        assert response.status_code == 200
+        assert mock_match_service.get_matches.call_args.kwargs["top_k"] is None
+
     def test_get_matches_invalid_status(self, client):
         """Test get matches with invalid status parameter."""
         response = client.get('/api/matches', params={'status': 'invalid_status'})
@@ -192,6 +201,9 @@ class TestMatchesRouter:
 
         assert schema['paths']['/api/matches/{match_id}']['get']['responses']['400']['description'] == 'Invalid match ID'
         assert schema['paths']['/api/matches/{match_id}/hide']['post']['responses']['400']['description'] == 'Invalid match ID'
+        assert schema['paths']['/api/matches/{match_id}/hide']['post']['responses']['409']['description'] == (
+            'Match cannot be hidden in its current selection tier'
+        )
         assert schema['paths']['/api/matches/{match_id}/explanation']['get']['responses']['400']['description'] == 'Invalid match ID'
 
     def test_get_matches_min_fit_bounds(self, client, mock_match_service, mock_policy_service):

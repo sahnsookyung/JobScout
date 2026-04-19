@@ -81,8 +81,9 @@ def select_matches(
     excluded_candidates: list[tuple[Any, str, int]] = [
         (match, "beyond_top_k", index) for index, match in enumerate(beyond_top_k)
     ]
+    base_offset = len(excluded_candidates)
     excluded_candidates.extend(
-        (match, reason, len(excluded_candidates) + index)
+        (match, reason, base_offset + index)
         for index, (match, reason) in enumerate(excluded_by_floor)
     )
     excluded_candidates.sort(
@@ -96,7 +97,8 @@ def select_matches(
     truncated_count = 0
     for match, reason, _original_order in excluded_candidates:
         if excluded_budget <= 0:
-            truncated_count += 1
+            if two_tier_enabled:
+                truncated_count += 1
             continue
         item_snapshots.append(
             _item_snapshot_from_match(
@@ -125,7 +127,7 @@ def select_matches(
         resume_resolution_reason=resume_resolution_reason,
         task_id=task_id,
     )
-    if truncated_count:
+    if two_tier_enabled and truncated_count:
         # Surface truncation in the policy snapshot via ranking_config_snapshot
         # piggyback. Auditable in the run row without a new column.
         policy_snapshot.ranking_config_snapshot["excluded_truncated_count"] = truncated_count

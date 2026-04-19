@@ -94,8 +94,11 @@ class MatchService:
             match set after request filters are applied.
         Stage 2 — Python rank: rank_matches() applies the declared mode
             with NULL-aware sort keys; attaches RankingExplanation per item.
-        Stage 3 — Truncate: [:effective_top_k] applied after ranking so
-            the global ordering is always correct before pagination.
+        Stage 3 — Truncate:
+            - tier='primary': [:effective_top_k] applied after ranking.
+            - tier='all': excluded items append after ranked primary items;
+              omitted top_k returns the full combined set and explicit top_k
+              caps the final combined result count.
 
         Args:
             status: Match status filter ("active", "stale", or "all").
@@ -143,10 +146,13 @@ class MatchService:
         ctx = RankingContext(mode=mode, config=ranking_config)
         rank_matches(primary_pool, ctx)
 
-        # Stage 3: Truncate primary to top-K, then append excluded (already
-        # ordered by persisted rank_position).
-        effective_k = ranking_config.effective_top_k(top_k)
-        ranked = primary_pool[:effective_k] + excluded_pool
+        if tier == "all":
+            ranked = primary_pool + excluded_pool
+            if top_k is not None:
+                ranked = ranked[:ranking_config.effective_top_k(top_k)]
+        else:
+            effective_k = ranking_config.effective_top_k(top_k)
+            ranked = primary_pool[:effective_k]
 
         return [self._to_match_summary(m) for m in ranked]
 
@@ -218,8 +224,8 @@ class MatchService:
         tier: str = "primary",
     ) -> bool:
         # Status/hidden filters only apply to primary-tier items. Excluded
-        # items are browse-only (no hide/unhide), so these knobs are a no-op
-        # for that tier — the whole tier is "below the fold".
+        # items are browse-only and do not expose status semantics in the API,
+        # so those knobs are intentionally no-ops for tier='excluded'.
         if tier == "primary":
             if status != "all" and match.status != status:
                 return False

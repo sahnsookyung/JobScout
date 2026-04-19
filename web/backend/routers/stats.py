@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from core.match_selection import resolve_canonical_resume_selection
-from database.models import JobMatch, StructuredResume
+from database.models import JobMatch
 from database.uow import job_uow
 
 from ..dependencies import get_current_user, get_db
@@ -16,17 +16,6 @@ from ..models.responses import StatsResponse
 from ..services.policy_service import get_policy_service
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
-
-
-def _owner_scoped_match_query(db: Session, owner_id: object | None):
-    query = db.query(JobMatch)
-    if owner_id is None:
-        return query
-    return query.join(
-        StructuredResume,
-        StructuredResume.resume_fingerprint == JobMatch.resume_fingerprint,
-    ).filter(StructuredResume.owner_id == owner_id)
-
 
 @router.get("", response_model=StatsResponse)
 def get_stats(
@@ -36,10 +25,9 @@ def get_stats(
     """
     Get statistics about matches for the user's canonical selection run.
 
-    Reports totals and tier counts scoped to the latest selection run, so
-    `total_scored` reconciles with `GET /api/matches?tier=all` and
-    `primary_count` matches `?tier=primary`. Legacy fields remain for
-    backwards-compat with existing UI code.
+    Reports totals and tier counts scoped to the latest canonical selection run.
+    Legacy dashboard fields remain for backwards-compat, but are also derived
+    from that same canonical run so the payload does not mix scopes.
     """
     policy_service = get_policy_service()
     current_policy = policy_service.get_current_policy()
@@ -47,8 +35,17 @@ def get_stats(
 
     owner_id = getattr(user, "id", None)
 
-    # Canonical-run scoped tier counts (primary source of truth).
     total_scored = 0
+    total_matches = 0
+    active_matches = 0
+    hidden_count = 0
+    below_threshold_count = 0
+    score_dist = {
+        'excellent': 0,
+        'good': 0,
+        'average': 0,
+        'poor': 0,
+    }
     primary_count = 0
     excluded_count = 0
     excluded_by_reason: dict[str, int] = {}
@@ -71,39 +68,33 @@ def get_stats(
                     canonical.selection_run_id,
                     tier="all",
                 )
+                total_matches = total_scored
+                below_threshold_count = int(excluded_by_reason.get("below_min_fit", 0))
                 for item in items:
+                    tier = getattr(item, "selection_tier", "primary") or "primary"
+                    fit_score = getattr(item, "fit_score_at_selection", None)
+                    is_hidden = bool(getattr(item.job_match, "is_hidden", False))
+                    if tier == "primary" and is_hidden:
+                        hidden_count += 1
                     ranking_snapshot = getattr(item.job_match, "ranking_snapshot", None)
                     if isinstance(ranking_snapshot, dict):
                         status = ranking_snapshot.get("preference_status")
                         if isinstance(status, dict):
                             preference_status = status
-                            break
+                    if fit_score is None:
+                        continue
+                    if fit_score >= 80:
+                        score_dist['excellent'] += 1
+                    elif fit_score >= 60:
+                        score_dist['good'] += 1
+                    elif fit_score >= 40:
+                        score_dist['average'] += 1
+                    else:
+                        score_dist['poor'] += 1
+                active_matches = max(primary_count - hidden_count, 0)
     except Exception:
-        # Stats should never fail the page; fall back to DB-wide numbers.
+        # Stats should never fail the page; canonical-run fields fall back to 0.
         pass
-
-    # Legacy dashboard fields stay available, but they must remain user-scoped.
-    base_query = _owner_scoped_match_query(db, owner_id)
-    total_matches = base_query.count()
-    hidden_count = base_query.filter(JobMatch.is_hidden.is_(True)).count()
-    below_threshold_count = base_query.filter(
-        (JobMatch.fit_score < min_fit) | (JobMatch.fit_score.is_(None)),
-        JobMatch.is_hidden.is_(False)
-    ).count()
-    active_matches = total_matches - hidden_count - below_threshold_count
-
-    score_dist = {
-        'excellent': base_query.filter(JobMatch.fit_score >= 80).count(),
-        'good': base_query.filter(
-            JobMatch.fit_score >= 60,
-            JobMatch.fit_score < 80
-        ).count(),
-        'average': base_query.filter(
-            JobMatch.fit_score >= 40,
-            JobMatch.fit_score < 60
-        ).count(),
-        'poor': base_query.filter(JobMatch.fit_score < 40).count(),
-    }
 
     return StatsResponse(
         success=True,
