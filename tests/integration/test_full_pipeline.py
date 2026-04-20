@@ -32,14 +32,12 @@ import numpy as np
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
-# Use testcontainers fixtures from conftest.py.  The test_database fixture sets
-# TEST_DATABASE_URL before setUpClass runs; the redis_container fixture sets
-# TEST_REDIS_URL.  Both are session-scoped, so containers start once per run.
+# Use the database fixture module-wide. Redis is only needed for the
+# notification step and is started lazily there.
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.db,
-    pytest.mark.redis,
-    pytest.mark.usefixtures("test_database", "redis_container"),
+    pytest.mark.usefixtures("test_database"),
 ]
 
 # All necessary imports are defined before MockAIService
@@ -115,9 +113,8 @@ class TestFullPipelineIntegration(unittest.TestCase):
     """
     End-to-end integration test of the complete JobScout pipeline.
 
-    Requires the test_database and redis_container fixtures (injected via
-    pytestmark at module level).  TEST_DATABASE_URL and TEST_REDIS_URL are set
-    by those fixtures before setUpClass runs.
+    Requires the test_database fixture (injected via pytestmark at module level).
+    Redis is only started for the notification step.
     """
 
     @classmethod
@@ -135,7 +132,6 @@ class TestFullPipelineIntegration(unittest.TestCase):
         cls.engine = create_engine(test_db_url)
         cls._setup_database()
 
-        # Redis (optional — set by redis_container fixture)
         cls.redis_url = os.environ.get('TEST_REDIS_URL')
         if cls.redis_url:
             print(f"Using test Redis: {cls.redis_url[:30]}...")  # codeql[py/clear-text-logging-sensitive-data] no credentials in test redis_url
@@ -147,34 +143,15 @@ class TestFullPipelineIntegration(unittest.TestCase):
         cls.session = SessionLocal()
         cls.repo = JobRepository(cls.session)
         
-        # AI Service (mock for speed, but use real embeddings)
+        # AI Service (mock for speed)
         cls.mock_ai = MockAIService()
-        
-        # ETL Service (repo passed per-operation in UoW)
-        cls.etl_service = JobETLService(ai_service=cls.mock_ai)
-
-        # Resume Profiler - with store to save embeddings
-        from etl.resume.embedding_store import JobRepositoryAdapter
-        embedding_store = JobRepositoryAdapter(cls.repo)
-        cls.resume_profiler = ResumeProfiler(ai_service=cls.mock_ai, store=embedding_store)
-
-        # Matching Service
-        cls.matcher_config = MatcherConfig(
-            similarity_threshold=0.5
-        )
-        cls.matcher = MatcherService(cls.resume_profiler, cls.matcher_config)
-        
-        cls.scorer_config = ScorerConfig(
-            weight_required=0.7,
-            wants_remote=True
-        )
-        cls.scorer = ScoringService(cls.repo, cls.scorer_config)
-        
-        # Notification Service (if Redis available)
-        if cls.redis_url:
-            cls.notification_service = NotificationService(cls.repo, cls.redis_url)
-        else:
-            cls.notification_service = None
+        cls.etl_service = None
+        cls.resume_profiler = None
+        cls.matcher_config = None
+        cls.matcher = None
+        cls.scorer_config = None
+        cls.scorer = None
+        cls.notification_service = None
         
         # Test resume data - new schema format
         cls.resume_data = {
@@ -262,6 +239,42 @@ class TestFullPipelineIntegration(unittest.TestCase):
         cls._create_test_jobs()
         
         print("✓ Pipeline services initialized")
+
+    @classmethod
+    def _get_resume_profiler(cls):
+        if cls.resume_profiler is None:
+            from etl.resume.embedding_store import JobRepositoryAdapter
+
+            embedding_store = JobRepositoryAdapter(cls.repo)
+            cls.resume_profiler = ResumeProfiler(ai_service=cls.mock_ai, store=embedding_store)
+        return cls.resume_profiler
+
+    @classmethod
+    def _get_matcher(cls):
+        if cls.matcher is None:
+            cls.matcher_config = MatcherConfig(similarity_threshold=0.5)
+            cls.matcher = MatcherService(cls._get_resume_profiler(), cls.matcher_config)
+        return cls.matcher
+
+    @classmethod
+    def _get_scorer(cls):
+        if cls.scorer is None:
+            cls.scorer_config = ScorerConfig(
+                weight_required=0.7,
+                wants_remote=True
+            )
+            cls.scorer = ScoringService(cls.repo, cls.scorer_config)
+        return cls.scorer
+
+    @classmethod
+    def _get_notification_service(cls):
+        redis_url = os.environ.get('TEST_REDIS_URL')
+        if not redis_url:
+            return None
+        if cls.notification_service is None or cls.redis_url != redis_url:
+            cls.redis_url = redis_url
+            cls.notification_service = NotificationService(cls.repo, redis_url)
+        return cls.notification_service
     
     @classmethod
     def _setup_database(cls):
@@ -271,7 +284,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
             conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
             conn.execute(text("CREATE SCHEMA public"))
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            bootstrap_database(engine=cls.engine)
+        bootstrap_database(engine=cls.engine)
     
     @classmethod
     def tearDownClass(cls):
@@ -398,7 +411,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
         resume = ResumeSchema.model_validate(self.resume_data)
         
         # Use resume_profiler to extract evidence from the profile
-        evidence_units = self.resume_profiler.extract_resume_evidence(resume.profile)
+        evidence_units = self._get_resume_profiler().extract_resume_evidence(resume.profile)
 
         self.assertGreater(len(evidence_units), 0)
         print(f"  ✓ Extracted {len(evidence_units)} evidence units from resume")
@@ -419,13 +432,16 @@ class TestFullPipelineIntegration(unittest.TestCase):
         # Profile resume to save embeddings (required for two-stage matching)
         print("  Processing resume to create embeddings...")
         test_fingerprint = f"test-pipeline-{datetime.now().timestamp()}"
-        profile, _, _ = self.resume_profiler.profile_resume(self.resume_data, resume_fingerprint=test_fingerprint)
+        profile, _, _ = self._get_resume_profiler().profile_resume(
+            self.resume_data,
+            resume_fingerprint=test_fingerprint,
+        )
         
         self.assertIsNotNone(profile, "Resume profiling should return a profile")
         print(f"  ✓ Resume profiled successfully")
         
         # Run matching using two-stage pipeline
-        preliminary_matches = self.matcher.match_resume_two_stage(
+        preliminary_matches = self._get_matcher().match_resume_two_stage(
             repo=self.repo,
             resume_data=self.resume_data,
             resume_fingerprint=test_fingerprint,
@@ -452,7 +468,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
         from core.config_loader import ResultPolicy
         result_policy = ResultPolicy()
         
-        scored_matches = self.scorer.score_matches(
+        scored_matches = self._get_scorer().score_matches(
             preliminary_matches=self.test_preliminary_matches,
             result_policy=result_policy,
             match_type="requirements_only"
@@ -508,11 +524,14 @@ class TestFullPipelineIntegration(unittest.TestCase):
         # Store as class attribute to persist across test instances
         type(self).test_fingerprint = fingerprint
     
+    @pytest.mark.redis
+    @pytest.mark.usefixtures("redis_container")
     def test_06_notification_triggering(self):
         """Step 6: Trigger notifications for alert-eligible saved matches."""
         print("\n[Step 6] Notification Triggering...")
         
-        if not self.redis_url or not self.notification_service:
+        notification_service = self._get_notification_service()
+        if not notification_service:
             self.skipTest("Redis not available - skipping notification test")
         
         if not hasattr(type(self), 'test_scored_matches') or not hasattr(type(self), 'test_fingerprint'):
@@ -556,7 +575,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
                             )
                             
                             # Queue notification
-                            job = self.notification_service.notify_new_match(
+                            job = notification_service.notify_new_match(
                                 user_id=user_id,
                                 match_id=str(match_id),
                                 content=content,
@@ -576,7 +595,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
             max_wait = 5.0
             start = time.time()
             while time.time() - start < max_wait:
-                queue_length = self.notification_service.get_queue_status().get('queue_length', 0)
+                queue_length = notification_service.get_queue_status().get('queue_length', 0)
                 if queue_length >= notification_count:
                     break
                 time.sleep(0.1)
@@ -597,7 +616,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
         print(f"     - Jobs processed: {jobs}")
         print(f"     - Matches created: {matches}")
         
-        if self.redis_url and self.notification_service:
+        if self.notification_service:
             status = self.notification_service.get_queue_status()
             print(f"     - Queue connected: {status.get('redis_connected', False)}")
         
