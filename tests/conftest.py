@@ -234,6 +234,44 @@ def redis_url(redis_container):
 
 
 @pytest.fixture(autouse=True)
+def _reset_prometheus_metrics():
+    """Zero Prometheus counter/histogram children between tests.
+
+    Module-scope Counter/Histogram singletons in ``core.metrics`` would
+    otherwise leak counts across tests. Walks the default REGISTRY and
+    resets every child sample value. O(metrics × children) per test — tiny.
+    """
+    from prometheus_client import REGISTRY
+
+    yield
+
+    def _reset_child(child) -> None:
+        value = getattr(child, "_value", None)
+        if value is not None and hasattr(value, "set"):
+            value.set(0)
+        # Histogram children expose _buckets (list of counters) and _sum.
+        buckets = getattr(child, "_buckets", None)
+        if buckets:
+            for bucket in buckets:
+                if hasattr(bucket, "set"):
+                    bucket.set(0)
+        bucket_sum = getattr(child, "_sum", None)
+        if bucket_sum is not None and hasattr(bucket_sum, "set"):
+            bucket_sum.set(0)
+
+    for collector in list(REGISTRY._collector_to_names):
+        children = getattr(collector, "_metrics", None)
+        if not children:
+            # Unlabeled metrics store their single child directly on the
+            # collector (no ``_metrics`` map).
+            _reset_child(collector)
+            continue
+        iterable = children.values() if isinstance(children, dict) else children
+        for child in iterable:
+            _reset_child(child)
+
+
+@pytest.fixture(autouse=True)
 def reset_redis_module_state():
     """Reset Redis module state between tests to prevent pollution.
 

@@ -26,6 +26,7 @@ from core.logging_utils import (
     is_nul_filter_active,
     setup_logging as setup_shared_logging,
 )
+from core.metrics_router import router as metrics_router
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -109,6 +110,7 @@ def create_app() -> FastAPI:
     _app.include_router(pipeline_router)
     _app.include_router(notifications_router)
     _app.include_router(candidate_preferences_router)
+    _app.include_router(metrics_router)
 
     # Mount static files if they exist
     static_dir = get_project_root() / 'web' / 'static'

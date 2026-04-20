@@ -506,7 +506,7 @@ class TestOrchestratorEndpoints:
         assert response.json()["redis"] == "error"
 
     def test_metrics_endpoint(self):
-        """Test metrics endpoint."""
+        """/metrics serves Prometheus text-format (replaces the deleted JSON stub)."""
         from fastapi.testclient import TestClient
         from services.orchestrator.main import app
 
@@ -514,9 +514,8 @@ class TestOrchestratorEndpoints:
             response = client.get("/metrics")
 
         assert response.status_code == 200
-        data = response.json()
-        assert data["service"] == "orchestrator"
-        assert data["version"] == "1.0.0"
+        assert "text/plain" in response.headers.get("content-type", "")
+        assert b"jobscout_scorer_route_total" in response.content
 
     def test_diagnostics_endpoint(self):
         """Test diagnostics endpoint."""

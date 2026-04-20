@@ -223,38 +223,13 @@ class TestMatcherEndpoints:
         assert data["status"] == "healthy"
         assert data["service"] == "matcher"
 
-    def test_metrics(self, app_with_state):
-        """Test /metrics endpoint."""
+    def test_metrics_endpoint_prometheus(self, app_with_state):
+        """/metrics serves Prometheus text-format (replaces the deleted JSON liveness dict)."""
         app, client = app_with_state
         r = client.get("/metrics")
         assert r.status_code == 200
-        data = r.json()
-        assert data["service"] == "matcher"
-        assert data["version"] == "1.0.0"
-
-    def test_metrics_consumer_done(self, app_with_state):
-        """Test /metrics with done consumer task."""
-        app, client = app_with_state
-        mock_task = Mock()
-        mock_task.done.return_value = True
-        app.state.matcher.consumer_task = mock_task
-
-        r = client.get("/metrics")
-        assert r.status_code == 200
-        data = r.json()
-        assert data["consumer_running"] is False
-
-    def test_metrics_consumer_running(self, app_with_state):
-        """Test /metrics with running consumer task."""
-        app, client = app_with_state
-        mock_task = Mock()
-        mock_task.done.return_value = False
-        app.state.matcher.consumer_task = mock_task
-
-        r = client.get("/metrics")
-        assert r.status_code == 200
-        data = r.json()
-        assert data["consumer_running"] is True
+        assert "text/plain" in r.headers.get("content-type", "")
+        assert b"jobscout_scorer_route_total" in r.content
 
     def test_stop_sets_stop_event(self, app_with_state):
         """Test /match/stop sets stop event."""

@@ -123,14 +123,13 @@ class TestEmbeddingsEndpoints:
         assert data["status"] == "healthy"
         assert data["service"] == "embeddings"
 
-    def test_metrics_endpoint(self, app_with_state):
-        """Test /metrics endpoint."""
+    def test_metrics_endpoint_prometheus(self, app_with_state):
+        """/metrics serves Prometheus text-format (replaces the deleted JSON liveness dict)."""
         app, client = app_with_state
         r = client.get("/metrics")
         assert r.status_code == 200
-        data = r.json()
-        assert data["service"] == "embeddings"
-        assert "consumer_running" in data
+        assert "text/plain" in r.headers.get("content-type", "")
+        assert b"jobscout_scorer_route_total" in r.content
 
     def test_embed_resume_endpoint(self, app_with_state):
         """Test /embed/resume endpoint."""
