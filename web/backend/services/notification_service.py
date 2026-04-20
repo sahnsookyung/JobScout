@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 from sqlalchemy.orm import Session
 
+from core.metrics import record_email_event
 from database.models import User, UserNotificationChannel
 from notification import NotificationService, NotificationPriority
 from notification.exceptions import NotificationConfigurationError
@@ -188,11 +189,13 @@ class NotificationServiceWrapper:
     def send_email_override_verification(self, user, address: str) -> Dict[str, Any]:
         normalized = address.strip().lower()
         if len(normalized) > 320 or not EMAIL_RE.match(normalized):
+            record_email_event("invalid_address")
             raise NotificationConfigurationError(
                 "Enter a valid email address",
                 failure_class="email_invalid",
             )
         if normalized == (user.email or "").strip().lower():
+            record_email_event("invalid_address")
             raise NotificationConfigurationError(
                 "Override email must be different from the account email",
                 failure_class="email_override_same_as_account",
@@ -203,6 +206,7 @@ class NotificationServiceWrapper:
         if channel.verification_sent_at is not None:
             elapsed = (now - channel.verification_sent_at).total_seconds()
             if elapsed < 60:
+                record_email_event("rate_limited")
                 raise NotificationRateLimitError(
                     "Verification email was sent recently. Please wait before retrying.",
                     retry_after=max(1, int(60 - elapsed)),
@@ -212,6 +216,7 @@ class NotificationServiceWrapper:
         window_started_at, send_count = self._verification_window(config_json, now)
         if send_count >= 5:
             retry_after = int((window_started_at + timedelta(hours=24) - now).total_seconds())
+            record_email_event("rate_limited")
             raise NotificationRateLimitError(
                 "Verification email rate limit reached. Try again later.",
                 retry_after=max(1, retry_after),
@@ -251,6 +256,7 @@ class NotificationServiceWrapper:
         except Exception:
             self.db.rollback()
             raise
+        record_email_event("sent")
         return self._snapshot_to_response(
             self.settings_service.get_settings_snapshot(user)
         )["channels"]["email"]
@@ -263,12 +269,14 @@ class NotificationServiceWrapper:
             .one_or_none()
         )
         if channel is None or not channel.override_address:
+            record_email_event("invalid_address")
             raise NotificationConfigurationError(
                 "Verification link is invalid",
                 failure_class="verification_invalid",
             )
         now = datetime.now(timezone.utc)
         if channel.verification_token_expires_at is None or channel.verification_token_expires_at < now:
+            record_email_event("expired")
             raise NotificationConfigurationError(
                 "Verification link has expired",
                 failure_class="verification_expired",
@@ -279,6 +287,7 @@ class NotificationServiceWrapper:
         channel.verification_token_expires_at = None
         channel.masked_recipient = None
         self.db.commit()
+        record_email_event("verified")
         user = self.db.get(User, channel.owner_id)
         if user is None:
             raise NotificationConfigurationError(
@@ -298,6 +307,7 @@ class NotificationServiceWrapper:
         channel.verification_sent_at = None
         channel.masked_recipient = None
         self.db.commit()
+        record_email_event("cleared")
         return self._snapshot_to_response(
             self.settings_service.get_settings_snapshot(user)
         )["channels"]["email"]

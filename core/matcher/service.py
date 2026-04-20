@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import logging
 import re
 import threading
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.config_loader import MatcherConfig
@@ -11,6 +12,7 @@ from core.matcher.evidence_reranker import (
 )
 from core.matcher.models import JobMatchPreliminary
 from core.matcher.requirement_matcher import RequirementMatcher
+from core.metrics import evidence_rerank_latency_ms
 from database.models import JobPost
 from database.repository import JobRepository
 from etl.resume import ResumeProfiler
@@ -285,10 +287,18 @@ class MatcherService:
             top_k=self.requirement_recall_top_k,
         )
         if self.cross_encoder_provider is not None:
-            rerank_requirement_evidence(
-                provider=self.cross_encoder_provider,
-                requirement_matches=list(matched) + list(missing),
-            )
+            rerank_start = time.perf_counter()
+            try:
+                rerank_requirement_evidence(
+                    provider=self.cross_encoder_provider,
+                    requirement_matches=list(matched) + list(missing),
+                )
+            finally:
+                # Histogram buckets are in ms; Histogram.time() records seconds,
+                # so measure manually and observe the ms value.
+                evidence_rerank_latency_ms.observe(
+                    (time.perf_counter() - rerank_start) * 1000.0
+                )
         return JobMatchPreliminary(
             job=job,
             job_similarity=job_similarity,
