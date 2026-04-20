@@ -1,17 +1,29 @@
-# Database Migrations
+# Database Bootstrap
 
-Migrations are append-only and checksum-validated by `database/migrate.py`. Never edit a migration file after it has been applied to any environment — the checksum guard in `_validate_applied_checksums` will reject the mismatch and refuse to start the app.
+JobScout no longer replays numbered Python migration scripts during startup.
+Instead, `database/migrate.py` bootstraps an empty database directly from the
+current ORM models, required bootstrap data, and the checked-in schema snapshot
+at `database/schema_snapshot.json`.
 
-## Authoring a new migration
+## Current contract
 
-1. Copy the next sequential filename (e.g. `015_my_change.py`).
-2. Expose two functions: `migrate(conn)` and `rollback(conn)`. `rollback` is for local-dev only — production never calls it.
-3. Mirror the change in the ORM models under `database/models/` so that `Base.metadata.create_all()` on a fresh DB produces the same schema as the migration chain. The `tests/integration/database/test_orm_schema_snapshot.py` test enforces this parity.
+1. The ORM models under `database/models/` define the current schema shape.
+2. `database.migrate.migrate_database()` creates an empty schema from those models,
+   ensures required bootstrap data exists, and stamps `schema_migrations` with the
+   checksum of `database/schema_snapshot.json`.
+3. `tests/integration/database/test_orm_schema_snapshot.py` enforces parity between
+   the ORM bootstrap path and the checked-in snapshot.
 
-## Known historical quirks
+## Changing the schema
 
-- **`004_candidate_preferences_fit_only.py` recreates `candidate_preferences`.** That table is already created by `001_initial_schema.py` at line 235. The `CREATE TABLE IF NOT EXISTS` guard in 004 makes the duplicate DDL a no-op in practice, but the table definition was copy-pasted rather than referenced. Do not repeat this pattern in new migrations; rely on prior migrations to have created their tables.
+1. Update the ORM models under `database/models/`.
+2. Bootstrap a fresh database with `uv run python -m database.migrate`.
+3. Regenerate the checked-in snapshot with:
+   `uv run python -m database.schema_snapshot --write --url=<db_url>`
+4. Run the schema snapshot tests and include the snapshot diff in your PR.
 
-## Baseline
+## Existing databases
 
-`001_initial_schema.py` is the immutable baseline. `BASELINE_VERSION` in `database/migrate.py` points at it. Any pre-cutover database must be rebuilt from this baseline; upgrade-in-place from pre-reset schemas is not supported.
+In-place upgrades from older stamped schemas are not supported by the current
+bootstrap flow. Recreate the database and rerun `uv run python -m database.migrate`
+when the checked-in schema snapshot changes.

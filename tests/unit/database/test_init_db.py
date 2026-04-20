@@ -2,7 +2,7 @@
 Unit Tests: database.init_db
 
 Tests the init_db() function in isolation, exercising both the success
-path (extension created, schema checked) and the error path (exception
+path (schema prepared) and the error path (exception
 logged and re-raised), without triggering the tenacity retry loop.
 """
 
@@ -13,19 +13,15 @@ from unittest.mock import MagicMock, patch
 class TestInitDb:
     """Tests for database.init_db.init_db()."""
 
-    def test_success_creates_extension_and_checks_schema(self):
-        """init_db executes the vector extension statement and validates schema."""
+    def test_success_bootstraps_schema(self):
+        """init_db prepares the schema through the shared bootstrap path."""
         import database.init_db as init_db_module
 
-        mock_conn = MagicMock()
         with patch.object(init_db_module, "engine") as mock_engine, \
-             patch.object(init_db_module, "check_database_schema") as mock_check:
-            mock_engine.connect.return_value = mock_conn
+             patch.object(init_db_module, "bootstrap_database") as mock_bootstrap:
             init_db_module.init_db()
 
-        mock_conn.__enter__.return_value.execute.assert_called_once()
-        mock_conn.__enter__.return_value.commit.assert_called_once()
-        mock_check.assert_called_once_with(engine=mock_engine)
+        mock_bootstrap.assert_called_once_with(engine=mock_engine)
 
     def test_error_is_logged_and_reraised(self):
         """init_db logs the error and re-raises it (bypasses retry via __wrapped__)."""

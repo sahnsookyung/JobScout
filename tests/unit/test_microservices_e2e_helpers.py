@@ -95,12 +95,48 @@ def test_compose_images_available_returns_true_when_all_images_exist(monkeypatch
         "tests.integration.test_microservices_resume_flow._run_compose",
         lambda *args, **kwargs: _Result(stdout="svc-a:latest\nsvc-b:latest\n"),
     )
+    commands: list[list[str]] = []
+
+    def fake_run(command, *args, **kwargs):
+        commands.append(command)
+        return _Result(returncode=0)
+
     monkeypatch.setattr(
         "tests.integration.test_microservices_resume_flow.subprocess.run",
-        lambda *args, **kwargs: _Result(returncode=0),
+        fake_run,
     )
 
     assert _compose_images_available(compose_args, compose_env) is True
+    assert any(command[:3] == ["docker", "image", "inspect"] for command in commands)
+
+
+def test_compose_images_available_returns_false_when_runtime_image_is_stale(monkeypatch) -> None:
+    compose_args = ("docker", "compose", "-p", "jobscout-e2e")
+    compose_env = {"WEB_BACKEND_PORT": "12345"}
+
+    class _Result:
+        def __init__(self, *, returncode: int = 0, stdout: str = "") -> None:
+            self.returncode = returncode
+            self.stdout = stdout
+
+    monkeypatch.setattr(
+        "tests.integration.test_microservices_resume_flow._run_compose",
+        lambda *args, **kwargs: _Result(stdout="jobscout-orchestrator:latest\n"),
+    )
+
+    def fake_run(command, *args, **kwargs):
+        if command[:3] == ["docker", "image", "inspect"]:
+            return _Result(returncode=0)
+        if command[:4] == ["docker", "run", "--rm", "--entrypoint"]:
+            return _Result(returncode=1)
+        raise AssertionError(f"Unexpected command: {command}")
+
+    monkeypatch.setattr(
+        "tests.integration.test_microservices_resume_flow.subprocess.run",
+        fake_run,
+    )
+
+    assert _compose_images_available(compose_args, compose_env) is False
 
 
 def test_resolve_build_images_prefers_cached_images(monkeypatch) -> None:

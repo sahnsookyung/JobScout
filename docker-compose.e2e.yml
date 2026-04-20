@@ -108,6 +108,7 @@ services:
       - FIT_LLM_PROVIDER=openai_compatible
       - FIT_LLM_BASE_URL=http://mock-llm:8090/v1
       - FIT_LLM_API_KEY=mock-key
+      - MATCHER_SKIP_WARMUP=true
       - PREFERENCES_RERANKER=cross_encoder
       - PREFERENCES_CROSS_ENCODER_ENABLED=true
       - PREFERENCES_CROSS_ENCODER_RUNTIME=heuristic

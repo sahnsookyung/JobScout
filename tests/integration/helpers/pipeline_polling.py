@@ -8,6 +8,26 @@ from typing import Callable, Optional
 import requests
 
 
+def _get_with_retry(
+    url: str,
+    *,
+    timeout: float,
+    attempts: int = 5,
+    retry_delay_s: float = 0.5,
+):
+    last_exc: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return requests.get(url, timeout=timeout)
+        except requests.exceptions.RequestException as exc:
+            last_exc = exc
+            if attempt == attempts - 1:
+                raise
+            time.sleep(retry_delay_s)
+    assert last_exc is not None
+    raise last_exc
+
+
 def _wait_for_terminal_state(
     *,
     url: str,
@@ -21,7 +41,11 @@ def _wait_for_terminal_state(
     last_status_code = None
 
     while time.time() < deadline:
-        response = requests.get(url, timeout=10)
+        try:
+            response = _get_with_retry(url, timeout=10)
+        except requests.exceptions.RequestException:
+            time.sleep(poll_interval_s)
+            continue
         last_status_code = response.status_code
         if response.status_code == 200:
             try:

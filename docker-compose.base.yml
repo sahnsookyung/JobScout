@@ -82,7 +82,7 @@ services:
       [
         "sh",
         "-c",
-        "mkdir -p /data/resume_uploads && chmod 1777 /data/resume_uploads && python -m database.migrate",
+        "mkdir -p /data/resume_uploads && chmod 1777 /data/resume_uploads && python -m database.bootstrap",
       ]
     restart: "no"
 

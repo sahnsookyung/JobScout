@@ -290,7 +290,37 @@ def _compose_images_available(
         timeout=120,
         check=False,
     )
-    return inspect.returncode == 0
+    if inspect.returncode != 0:
+        return False
+
+    runtime_images = [
+        image_name
+        for image_name in image_names
+        if image_name.startswith("jobscout-")
+        and "frontend" not in image_name
+        and "mock-llm" not in image_name
+    ]
+    for image_name in runtime_images:
+        import_check = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--entrypoint",
+                "python",
+                image_name,
+                "-c",
+                "import database.bootstrap",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        if import_check.returncode != 0:
+            return False
+
+    return True
 
 
 def _resolve_build_images(
@@ -383,7 +413,7 @@ def _wait_for_http_health(url: str, *, timeout_s: float) -> None:
     last_error = None
     while time.time() < deadline:
         try:
-            response = requests.get(url, timeout=5)
+            response = _request_with_retry("get", url, timeout=5)
             if response.status_code == 200:
                 return
             last_error = f"{url} returned {response.status_code}: {response.text}"
@@ -391,6 +421,28 @@ def _wait_for_http_health(url: str, *, timeout_s: float) -> None:
             last_error = str(exc)
         time.sleep(1)
     raise AssertionError(f"Service healthcheck did not pass for {url}: {last_error}")
+
+
+def _request_with_retry(
+    method: str,
+    url: str,
+    *,
+    timeout: float,
+    attempts: int = 5,
+    retry_delay_s: float = 0.5,
+    **kwargs,
+) -> requests.Response:
+    last_exc: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return requests.request(method, url, timeout=timeout, **kwargs)
+        except requests.exceptions.RequestException as exc:
+            last_exc = exc
+            if attempt == attempts - 1:
+                raise
+            time.sleep(retry_delay_s)
+    assert last_exc is not None
+    raise last_exc
 
 
 def _parse_ps_json(raw_output: str) -> list[dict]:
@@ -509,7 +561,7 @@ def _stack_diagnostics(context: MicroservicesContext) -> str:
     health = {}
     for name, url in health_urls.items():
         try:
-            response = requests.get(url, timeout=5)
+            response = _request_with_retry("get", url, timeout=5)
             health[name] = {"status_code": response.status_code, "body": response.text[:500]}
         except Exception as exc:  # noqa: BLE001
             health[name] = {"error": str(exc)}
@@ -611,7 +663,8 @@ def _session_for(database_url: str):
 
 def _upload_resume(base_url: str, resume_path: Path) -> dict:
     with resume_path.open("rb") as handle:
-        response = requests.post(
+        response = _request_with_retry(
+            "post",
             f"{base_url}/api/pipeline/upload-resume",
             files={"file": (resume_path.name, handle.read(), "application/json")},
             timeout=30,
@@ -625,13 +678,14 @@ def _upload_resume(base_url: str, resume_path: Path) -> dict:
 
 
 def _get_notification_settings(base_url: str) -> dict:
-    response = requests.get(f"{base_url}/api/v1/notification-settings", timeout=15)
+    response = _request_with_retry("get", f"{base_url}/api/v1/notification-settings", timeout=15)
     assert response.status_code == 200, response.text
     return response.json()
 
 
 def _update_notification_settings(base_url: str, payload: dict) -> dict:
-    response = requests.put(
+    response = _request_with_retry(
+        "put",
         f"{base_url}/api/v1/notification-settings",
         json=payload,
         timeout=15,
@@ -641,13 +695,14 @@ def _update_notification_settings(base_url: str, payload: dict) -> dict:
 
 
 def _get_candidate_preferences(base_url: str) -> dict:
-    response = requests.get(f"{base_url}/api/v1/candidate-preferences", timeout=15)
+    response = _request_with_retry("get", f"{base_url}/api/v1/candidate-preferences", timeout=15)
     assert response.status_code == 200, response.text
     return response.json()
 
 
 def _update_candidate_preferences(base_url: str, payload: dict) -> dict:
-    response = requests.put(
+    response = _request_with_retry(
+        "put",
         f"{base_url}/api/v1/candidate-preferences",
         json=payload,
         timeout=15,
@@ -672,7 +727,8 @@ def _get_matches(
         params["ranking_mode"] = ranking_mode
     if min_fit is not None:
         params["min_fit"] = min_fit
-    response = requests.get(
+    response = _request_with_retry(
+        "get",
         f"{base_url}/api/matches",
         params=params,
         timeout=15,
@@ -681,7 +737,8 @@ def _get_matches(
     return response.json()
 
 def _toggle_match_hidden(base_url: str, match_id: str) -> dict:
-    response = requests.post(
+    response = _request_with_retry(
+        "post",
         f"{base_url}/api/matches/{match_id}/hide",
         timeout=15,
     )
@@ -690,7 +747,8 @@ def _toggle_match_hidden(base_url: str, match_id: str) -> dict:
 
 
 def _get_match_explanation(base_url: str, match_id: str) -> dict:
-    response = requests.get(
+    response = _request_with_retry(
+        "get",
         f"{base_url}/api/matches/{match_id}/explanation",
         timeout=15,
     )
@@ -699,7 +757,8 @@ def _get_match_explanation(base_url: str, match_id: str) -> dict:
 
 
 def _send_notification_settings_test(base_url: str, channel_type: str) -> dict:
-    response = requests.post(
+    response = _request_with_retry(
+        "post",
         f"{base_url}/api/v1/notification-settings/test",
         json={"channel_type": channel_type},
         timeout=15,
@@ -793,7 +852,8 @@ def test_resume_upload_completes_then_matching_completes(microservices_stack: Mi
 
     assert resume_state["status"] == "completed", resume_state
 
-    eligibility = requests.get(
+    eligibility = _request_with_retry(
+        "get",
         f"{microservices_stack.base_url}/api/pipeline/resume-eligibility",
         timeout=15,
     )
@@ -825,7 +885,8 @@ def test_resume_upload_completes_then_matching_completes(microservices_stack: Mi
         session.close()
         engine.dispose()
 
-    run_response = requests.post(
+    run_response = _request_with_retry(
+        "post",
         f"{microservices_stack.base_url}/api/pipeline/run-matching",
         timeout=30,
     )
@@ -912,7 +973,8 @@ def test_matching_flow_triggers_email_notifications(microservices_stack: Microse
     )
     assert resume_state["status"] == "completed", resume_state
 
-    run_response = requests.post(
+    run_response = _request_with_retry(
+        "post",
         f"{microservices_stack.base_url}/api/pipeline/run-matching",
         timeout=30,
     )
@@ -1061,7 +1123,8 @@ def test_candidate_preferences_round_trip_updates_matching_behavior(
     )
     assert resume_state["status"] == "completed", resume_state
 
-    run_response = requests.post(
+    run_response = _request_with_retry(
+        "post",
         f"{microservices_stack.base_url}/api/pipeline/run-matching",
         timeout=30,
     )
@@ -1122,7 +1185,8 @@ def test_candidate_preferences_round_trip_updates_matching_behavior(
     )
     assert remote_preferences["revision"] >= onsite_preferences["revision"] + 1
 
-    rerun_response = requests.post(
+    rerun_response = _request_with_retry(
+        "post",
         f"{microservices_stack.base_url}/api/pipeline/run-matching",
         timeout=30,
     )
@@ -1193,7 +1257,8 @@ def test_preference_cross_encoder_reranking_emits_detail_codes(microservices_sta
     )
     assert resume_state["status"] == "completed", resume_state
 
-    run_response = requests.post(
+    run_response = _request_with_retry(
+        "post",
         f"{microservices_stack.base_url}/api/pipeline/run-matching",
         timeout=30,
     )

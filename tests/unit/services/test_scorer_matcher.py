@@ -92,6 +92,20 @@ class TestMatcherLogging:
         _setup_logging()
 
 
+class TestMatcherWarmUp:
+    def test_warm_up_cross_encoder_skips_when_env_flag_set(self, monkeypatch):
+        from services.scorer_matcher.main import _warm_up_cross_encoder
+
+        monkeypatch.setenv("MATCHER_SKIP_WARMUP", "true")
+
+        with patch("services.scorer_matcher.main.logger") as mock_logger:
+            _warm_up_cross_encoder(Mock())
+
+        mock_logger.info.assert_called_once_with(
+            "Cross-encoder warm-up skipped via MATCHER_SKIP_WARMUP"
+        )
+
+
 class TestMatcherHelpers:
     def test_serialize_task_state_coerces_non_json_values(self):
         from services.scorer_matcher.main import _serialize_task_state
