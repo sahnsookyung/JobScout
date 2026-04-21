@@ -937,7 +937,7 @@ class TestWarmUpCrossEncoder:
     def test_skipped_when_local_provider_disabled(self, caplog):
         from services.scorer_matcher.main import _warm_up_cross_encoder
         with patch(
-            "core.scorer.semantic_fit.LocalCrossEncoderProvider"
+            "core.scorer.semantic_fit.get_shared_local_cross_encoder_provider"
         ) as mock_provider_cls:
             _warm_up_cross_encoder(self._config(enabled=False))
         mock_provider_cls.assert_not_called()
@@ -945,7 +945,7 @@ class TestWarmUpCrossEncoder:
     def test_skipped_when_max_batch_size_unparseable(self):
         from services.scorer_matcher.main import _warm_up_cross_encoder
         with patch(
-            "core.scorer.semantic_fit.LocalCrossEncoderProvider"
+            "core.scorer.semantic_fit.get_shared_local_cross_encoder_provider"
         ) as mock_provider_cls:
             _warm_up_cross_encoder(self._config(batch_size="not-an-int"))
         mock_provider_cls.assert_not_called()
@@ -959,10 +959,17 @@ class TestWarmUpCrossEncoder:
             "canary_score": 0.42,
         }
         with patch(
-            "core.scorer.semantic_fit.LocalCrossEncoderProvider",
+            "core.scorer.semantic_fit.get_shared_local_cross_encoder_provider",
             return_value=provider,
-        ), caplog.at_level(_logging.INFO, logger="services.scorer_matcher.main"):
+        ) as mock_get_provider, caplog.at_level(_logging.INFO, logger="services.scorer_matcher.main"):
             _warm_up_cross_encoder(self._config())
+        mock_get_provider.assert_called_once_with(
+            model_name="bge-test",
+            cache_path=None,
+            runtime="auto",
+            max_batch_size=8,
+            trust_remote_code=False,
+        )
         provider.warm_up.assert_called_once()
         assert any("Cross-encoder warm-up succeeded" in r.getMessage() for r in caplog.records)
 
@@ -972,7 +979,7 @@ class TestWarmUpCrossEncoder:
         provider = Mock()
         provider.warm_up.side_effect = RuntimeError("boom")
         with patch(
-            "core.scorer.semantic_fit.LocalCrossEncoderProvider",
+            "core.scorer.semantic_fit.get_shared_local_cross_encoder_provider",
             return_value=provider,
         ), pytest.raises(RuntimeError, match="boom"):
             _warm_up_cross_encoder(self._config())
@@ -984,7 +991,7 @@ class TestWarmUpCrossEncoder:
         provider = Mock()
         provider.warm_up.side_effect = RuntimeError("boom")
         with patch(
-            "core.scorer.semantic_fit.LocalCrossEncoderProvider",
+            "core.scorer.semantic_fit.get_shared_local_cross_encoder_provider",
             return_value=provider,
         ), caplog.at_level(_logging.WARNING, logger="services.scorer_matcher.main"):
             _warm_up_cross_encoder(self._config())  # must not raise

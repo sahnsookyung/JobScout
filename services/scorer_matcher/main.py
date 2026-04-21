@@ -330,7 +330,7 @@ def _warm_up_cross_encoder(config) -> None:
         logger.info("Cross-encoder warm-up skipped via MATCHER_SKIP_WARMUP")
         return
 
-    from core.scorer.semantic_fit import LocalCrossEncoderProvider
+    from core.scorer.semantic_fit import get_shared_local_cross_encoder_provider
 
     semantic_fit = getattr(getattr(config, "matching", None), "scorer", None)
     semantic_fit = getattr(semantic_fit, "semantic_fit", None) if semantic_fit else None
@@ -344,7 +344,7 @@ def _warm_up_cross_encoder(config) -> None:
     except (TypeError, ValueError):
         logger.info("Cross-encoder warm-up skipped: local config is not fully materialized")
         return
-    provider = LocalCrossEncoderProvider(
+    provider = get_shared_local_cross_encoder_provider(
         model_name=local_cfg.model_name,
         cache_path=local_cfg.model_cache_path,
         runtime=local_cfg.runtime,
