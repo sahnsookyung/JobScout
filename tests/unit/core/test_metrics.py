@@ -163,11 +163,11 @@ class TestRecordHelpers:
         )
 
     def test_record_worker_running(self):
-        m.record_worker_running("extraction", "consumer", True)
+        m.record_worker_running("mystery", "consumer", True)
         assert (
             self._sample(
                 "jobscout_worker_running",
-                {"service": "extraction", "worker": "consumer"},
+                {"service": "other", "worker": "consumer"},
             )
             == 1
         )
