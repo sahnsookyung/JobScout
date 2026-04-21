@@ -734,6 +734,9 @@ class LocalCrossEncoderProvider:
         self._model: Any = None
         self._provider_id = "heuristic-local"
         self._effective_route_name = self.route_name
+        self._loaded_runtime_name: Optional[str] = None
+        self._failed_runtime_names: set[str] = set()
+        self._last_runtime_error: Optional[Exception] = None
 
     @property
     def provider_id(self) -> str:
@@ -762,6 +765,13 @@ class LocalCrossEncoderProvider:
         if self.allow_heuristic:
             runtimes.append("heuristic")
         return runtimes
+
+    def _available_runtimes(self) -> List[str]:
+        return [
+            runtime_name
+            for runtime_name in self._candidate_runtimes()
+            if runtime_name not in self._failed_runtime_names
+        ]
 
     @staticmethod
     def _filter_supported_kwargs(factory: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -877,11 +887,13 @@ class LocalCrossEncoderProvider:
     def _load_model(self):
         if self._model is not None:
             return self._model
-        last_error: Optional[Exception] = None
-        for runtime_name in self._candidate_runtimes():
+        last_error: Optional[Exception] = self._last_runtime_error
+        for runtime_name in self._available_runtimes():
             if runtime_name == "heuristic":
                 self._provider_id = "heuristic-local"
                 self._effective_route_name = "local_heuristic"
+                self._loaded_runtime_name = runtime_name
+                self._last_runtime_error = None
                 self._model = False
                 return self._model
             try:
@@ -891,6 +903,8 @@ class LocalCrossEncoderProvider:
                 continue
             try:
                 self._model = loader()
+                self._loaded_runtime_name = runtime_name
+                self._last_runtime_error = None
                 return self._model
             except Exception as exc:  # noqa: BLE001 - try the next supported local runtime
                 last_error = exc
@@ -903,6 +917,7 @@ class LocalCrossEncoderProvider:
         if self.allow_heuristic:
             self._provider_id = "heuristic-local"
             self._effective_route_name = "local_heuristic"
+            self._loaded_runtime_name = "heuristic"
             self._model = False
             if last_error is not None:
                 logger.warning(
@@ -917,6 +932,15 @@ class LocalCrossEncoderProvider:
             "if downloading weights at boot. Heuristic fallback is disabled by default; "
             "pass allow_heuristic=True explicitly only for unit tests."
         ) from last_error
+
+    def _should_retry_runtime(self, runtime_name: Optional[str]) -> bool:
+        return self.runtime == "auto" and runtime_name not in {None, "heuristic"}
+
+    def _mark_runtime_failed(self, runtime_name: str, exc: Exception) -> None:
+        self._failed_runtime_names.add(runtime_name)
+        self._last_runtime_error = exc
+        self._loaded_runtime_name = None
+        self._model = None
 
     def warm_up(self) -> Dict[str, Any]:
         """Force model load + a single canned inference. Call at service startup.
@@ -943,112 +967,142 @@ class LocalCrossEncoderProvider:
 
     def score_pairs(self, pairs: List[SerializedPair]) -> tuple[List[PairAssessment], Dict[str, Any]]:
         started_at = time.perf_counter()
-        model = self._load_model()
-        assessments: List[PairAssessment] = []
-        if model is False:
-            assessments = [_pair_assessment_from_heuristic(pair) for pair in pairs]
-        else:
-            left_right = [
-                (
-                    "\n".join(
-                        [
-                            f"Requirement: {pair.fields['requirement_text']}",
-                            f"Requirement Type: {pair.fields['req_type']}",
-                            f"Job Title: {pair.fields['job_title']}",
-                            f"Company: {pair.fields['job_company']}",
-                            f"Job Summary: {pair.fields['job_summary']}",
-                        ]
-                    ),
-                    "\n".join(
-                        [
-                            f"Evidence: {pair.fields['evidence_text']}",
-                            f"Evidence Section: {pair.fields['evidence_section']}",
-                        ]
-                    ),
+        while True:
+            model = self._load_model()
+            runtime_name = self._loaded_runtime_name
+            assessments: List[PairAssessment] = []
+            try:
+                if model is False:
+                    assessments = [_pair_assessment_from_heuristic(pair) for pair in pairs]
+                else:
+                    left_right = [
+                        (
+                            "\n".join(
+                                [
+                                    f"Requirement: {pair.fields['requirement_text']}",
+                                    f"Requirement Type: {pair.fields['req_type']}",
+                                    f"Job Title: {pair.fields['job_title']}",
+                                    f"Company: {pair.fields['job_company']}",
+                                    f"Job Summary: {pair.fields['job_summary']}",
+                                ]
+                            ),
+                            "\n".join(
+                                [
+                                    f"Evidence: {pair.fields['evidence_text']}",
+                                    f"Evidence Section: {pair.fields['evidence_section']}",
+                                ]
+                            ),
+                        )
+                        for pair in pairs
+                    ]
+                    if hasattr(model, "compute_score"):
+                        compute_score = getattr(model, "compute_score")
+                        raw_scores = compute_score(
+                            left_right,
+                            **self._filter_supported_kwargs(
+                                compute_score,
+                                {"batch_size": self.max_batch_size},
+                            ),
+                        )
+                    elif hasattr(model, "predict"):
+                        predict = getattr(model, "predict")
+                        raw_scores = predict(
+                            left_right,
+                            **self._filter_supported_kwargs(
+                                predict,
+                                {
+                                    "batch_size": self.max_batch_size,
+                                    "show_progress_bar": False,
+                                },
+                            ),
+                        )
+                    else:
+                        raise TypeError(
+                            f"Unsupported local cross-encoder runtime for {self.model_name}: {type(model)!r}"
+                        )
+                    raw_scores = self._normalize_runtime_scores(raw_scores)
+                    for pair, raw_score in zip(pairs, raw_scores):
+                        semantic_score = _normalize_semantic_score(raw_score)
+                        coverage_level, reason = _coverage_level_and_reason(semantic_score)
+                        confidence = _clamp01(abs(semantic_score - 0.55) / 0.45)
+                        assessments.append(
+                            PairAssessment(
+                                pair_id=pair.pair_id,
+                                requirement_id=pair.requirement_id,
+                                coverage_level=coverage_level,
+                                semantic_score=round(semantic_score, 4),
+                                confidence=round(confidence, 4),
+                                reason=reason,
+                            )
+                        )
+                diagnostics = {
+                    "provider_id": self.provider_id,
+                    "provider_route": self.effective_route_name,
+                    "latency_ms": round((time.perf_counter() - started_at) * 1000.0, 3),
+                }
+                return assessments, diagnostics
+            except Exception as exc:
+                if not self._should_retry_runtime(runtime_name):
+                    raise
+                logger.warning(
+                    "Local cross-encoder runtime %s failed during pair scoring for model %s; "
+                    "trying the next available runtime: %s",
+                    runtime_name,
+                    self.model_name,
+                    exc,
+                    exc_info=True,
                 )
-                for pair in pairs
-            ]
-            if hasattr(model, "compute_score"):
-                compute_score = getattr(model, "compute_score")
-                raw_scores = compute_score(
-                    left_right,
-                    **self._filter_supported_kwargs(
-                        compute_score,
-                        {"batch_size": self.max_batch_size},
-                    ),
-                )
-            elif hasattr(model, "predict"):
-                predict = getattr(model, "predict")
-                raw_scores = predict(
-                    left_right,
-                    **self._filter_supported_kwargs(
-                        predict,
-                        {
-                            "batch_size": self.max_batch_size,
-                            "show_progress_bar": False,
-                        },
-                    ),
-                )
-            else:
-                raise TypeError(
-                    f"Unsupported local cross-encoder runtime for {self.model_name}: {type(model)!r}"
-                )
-            raw_scores = self._normalize_runtime_scores(raw_scores)
-            for pair, raw_score in zip(pairs, raw_scores):
-                semantic_score = _normalize_semantic_score(raw_score)
-                coverage_level, reason = _coverage_level_and_reason(semantic_score)
-                confidence = _clamp01(abs(semantic_score - 0.55) / 0.45)
-                assessments.append(
-                    PairAssessment(
-                        pair_id=pair.pair_id,
-                        requirement_id=pair.requirement_id,
-                        coverage_level=coverage_level,
-                        semantic_score=round(semantic_score, 4),
-                        confidence=round(confidence, 4),
-                        reason=reason,
-                    )
-                )
-        diagnostics = {
-            "provider_id": self.provider_id,
-            "provider_route": self.effective_route_name,
-            "latency_ms": round((time.perf_counter() - started_at) * 1000.0, 3),
-        }
-        return assessments, diagnostics
+                self._mark_runtime_failed(runtime_name, exc)
 
     def score_text_pairs(self, pairs: List[tuple[str, str]]) -> List[float]:
         """Score raw (left, right) string pairs and return one normalized [0, 1] score per pair."""
         if not pairs:
             return []
-        model = self._load_model()
-        if model is False:
-            # Heuristic fallback when model load fails; warning already logged by _load_model().
-            # Mirrors _pair_assessment_from_heuristic: 0.0 = no overlap, > 0 = overlap exists.
-            scores = []
-            for left, right in pairs:
-                overlap = _meaningful_overlap(left, right)
-                scores.append(min(0.85, 0.45 + 0.1 * len(overlap)) if overlap else 0.0)
-            return scores
-        if hasattr(model, "compute_score"):
-            compute_score = getattr(model, "compute_score")
-            raw_scores = compute_score(
-                pairs,
-                **self._filter_supported_kwargs(compute_score, {"batch_size": self.max_batch_size}),
-            )
-        elif hasattr(model, "predict"):
-            predict = getattr(model, "predict")
-            raw_scores = predict(
-                pairs,
-                **self._filter_supported_kwargs(
-                    predict,
-                    {"batch_size": self.max_batch_size, "show_progress_bar": False},
-                ),
-            )
-        else:
-            raise TypeError(
-                f"Unsupported local cross-encoder runtime for {self.model_name}: {type(model)!r}"
-            )
-        raw_scores = self._normalize_runtime_scores(raw_scores)
-        return [_normalize_semantic_score(s) for s in raw_scores]
+        while True:
+            model = self._load_model()
+            runtime_name = self._loaded_runtime_name
+            try:
+                if model is False:
+                    # Heuristic fallback when model load fails; warning already logged by _load_model().
+                    # Mirrors _pair_assessment_from_heuristic: 0.0 = no overlap, > 0 = overlap exists.
+                    scores = []
+                    for left, right in pairs:
+                        overlap = _meaningful_overlap(left, right)
+                        scores.append(min(0.85, 0.45 + 0.1 * len(overlap)) if overlap else 0.0)
+                    return scores
+                if hasattr(model, "compute_score"):
+                    compute_score = getattr(model, "compute_score")
+                    raw_scores = compute_score(
+                        pairs,
+                        **self._filter_supported_kwargs(compute_score, {"batch_size": self.max_batch_size}),
+                    )
+                elif hasattr(model, "predict"):
+                    predict = getattr(model, "predict")
+                    raw_scores = predict(
+                        pairs,
+                        **self._filter_supported_kwargs(
+                            predict,
+                            {"batch_size": self.max_batch_size, "show_progress_bar": False},
+                        ),
+                    )
+                else:
+                    raise TypeError(
+                        f"Unsupported local cross-encoder runtime for {self.model_name}: {type(model)!r}"
+                    )
+                raw_scores = self._normalize_runtime_scores(raw_scores)
+                return [_normalize_semantic_score(s) for s in raw_scores]
+            except Exception as exc:
+                if not self._should_retry_runtime(runtime_name):
+                    raise
+                logger.warning(
+                    "Local cross-encoder runtime %s failed during text scoring for model %s; "
+                    "trying the next available runtime: %s",
+                    runtime_name,
+                    self.model_name,
+                    exc,
+                    exc_info=True,
+                )
+                self._mark_runtime_failed(runtime_name, exc)
 
 
 class RemoteCrossEncoderProvider:
