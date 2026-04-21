@@ -43,16 +43,20 @@ If a managed service is desired later, Grafana Cloud also has a free tier, but t
 
 ## JobScout Current State
 
-Current service metrics endpoints already exist on the split-stack microservices:
+Current service metrics endpoints already exist on the split-stack services:
 
 - `extraction` -> `/metrics`
 - `embeddings` -> `/metrics`
 - `scorer-matcher` -> `/metrics`
 - `orchestrator` -> `/metrics`
+- `web-backend` -> `/metrics`
+
+Current worker metrics exposure also exists:
+
+- `notification-worker` -> Prometheus scrape endpoint on port `9464`
 
 Current gaps:
 
-- `web-backend` does not currently expose `/metrics`
 - `web-frontend` is a static frontend container and does not expose Prometheus app metrics
 - `postgres`, `redis`, and `jobspy` do not currently have dedicated exporters wired into compose
 - fit diagnostics are persisted and logged, but not yet surfaced in a real observability dashboard
@@ -90,14 +94,10 @@ Current gaps:
 - `embeddings:8082/metrics`
 - `scorer-matcher:8083/metrics`
 - `orchestrator:8084/metrics`
+- `web-backend:8080/metrics`
+- `notification-worker:9464`
 
 ### Recommended next additions
-
-- `web-backend:8080/metrics`
-  - request counts
-  - request latency
-  - upstream dependency failures
-  - fit-mode selection counts if the backend becomes the central place for those counters
 
 ### Infrastructure exporters
 
@@ -142,7 +142,7 @@ Some of these currently exist only in persisted diagnostics. To show them in Gra
 ### Phase 1
 
 - Add `prometheus` and `grafana` services to a dedicated compose overlay
-- Scrape the four existing microservice `/metrics` endpoints
+- Scrape the existing service `/metrics` endpoints plus the notification worker scrape target
 - Add dashboards for service health and request volume
 
 ### Phase 2
