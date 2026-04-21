@@ -461,6 +461,75 @@ def test_local_cross_encoder_provider_raises_when_runtimes_fail_and_heuristic_di
         provider._load_model()
 
 
+def test_local_cross_encoder_provider_auto_retries_next_runtime_after_inference_failure():
+    provider = LocalCrossEncoderProvider(
+        model_name="BAAI/bge-reranker-v2-m3",
+        runtime="auto",
+    )
+    requirement_match = _make_requirement_match()
+    preliminary = _make_preliminary(requirement_matches=[requirement_match])
+    pair = _serialize_pair(
+        preliminary,
+        requirement_match,
+        requirement_match.evidence_candidates[0],
+        config=ScorerConfig(),
+    )
+
+    flag_runtime = MagicMock()
+    flag_runtime.compute_score.side_effect = RuntimeError("flag runtime failed")
+    sentence_runtime = type(
+        "SentenceRuntime",
+        (),
+        {"predict": MagicMock(return_value=[0.95])},
+    )()
+
+    def load_sentence_runtime():
+        provider._provider_id = "sentence_transformers:BAAI/bge-reranker-v2-m3"
+        provider._effective_route_name = "local"
+        return sentence_runtime
+
+    provider._load_flag_embedding_runtime = MagicMock(return_value=flag_runtime)
+    provider._load_sentence_transformers_runtime = MagicMock(side_effect=load_sentence_runtime)
+
+    assessments, diagnostics = provider.score_pairs([pair])
+
+    assert assessments[0].coverage_level == "covered"
+    assert diagnostics["provider_id"] == "sentence_transformers:BAAI/bge-reranker-v2-m3"
+    assert diagnostics["provider_route"] == "local"
+    provider._load_flag_embedding_runtime.assert_called_once()
+    provider._load_sentence_transformers_runtime.assert_called_once()
+
+
+def test_local_cross_encoder_provider_score_text_pairs_retries_next_runtime_after_inference_failure():
+    provider = LocalCrossEncoderProvider(
+        model_name="BAAI/bge-reranker-v2-m3",
+        runtime="auto",
+    )
+
+    flag_runtime = MagicMock()
+    flag_runtime.compute_score.side_effect = RuntimeError("flag runtime failed")
+    sentence_runtime = type(
+        "SentenceRuntime",
+        (),
+        {"predict": MagicMock(return_value=[0.7])},
+    )()
+
+    def load_sentence_runtime():
+        provider._provider_id = "sentence_transformers:BAAI/bge-reranker-v2-m3"
+        provider._effective_route_name = "local"
+        return sentence_runtime
+
+    provider._load_flag_embedding_runtime = MagicMock(return_value=flag_runtime)
+    provider._load_sentence_transformers_runtime = MagicMock(side_effect=load_sentence_runtime)
+
+    scores = provider.score_text_pairs([("requirement", "evidence")])
+
+    assert len(scores) == 1
+    assert 0.0 <= scores[0] <= 1.0
+    provider._load_flag_embedding_runtime.assert_called_once()
+    provider._load_sentence_transformers_runtime.assert_called_once()
+
+
 def test_serialize_pair_records_truncation_details():
     preliminary = _make_preliminary(
         requirement_matches=[
