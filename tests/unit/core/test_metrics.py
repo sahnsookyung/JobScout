@@ -13,7 +13,7 @@ from core import metrics as m
 
 
 class TestMetricDeclarations:
-    def test_all_six_metrics_registered(self):
+    def test_all_seven_metrics_registered(self):
         """Registry exposes each declared metric by name (even at zero).
 
         ``collect()`` returns family names *without* the ``_total`` suffix
@@ -27,6 +27,7 @@ class TestMetricDeclarations:
             "jobscout_selection_tier_items",
             "jobscout_preference_reranker_status",
             "jobscout_email_verification_events",
+            "jobscout_worker_running",
         }
         exposed = set()
         for collector in REGISTRY._collector_to_names:
@@ -159,6 +160,26 @@ class TestRecordHelpers:
         assert (
             self._sample("jobscout_email_verification_events_total", {"event": "other"})
             == 1
+        )
+
+    def test_record_worker_running(self):
+        m.record_worker_running("extraction", "consumer", True)
+        assert (
+            self._sample(
+                "jobscout_worker_running",
+                {"service": "extraction", "worker": "consumer"},
+            )
+            == 1
+        )
+
+    def test_record_worker_running_unknown_collapses(self):
+        m.record_worker_running("mystery", "queue", False)
+        assert (
+            self._sample(
+                "jobscout_worker_running",
+                {"service": "other", "worker": "other"},
+            )
+            == 0
         )
 
     def test_evidence_rerank_histogram_observes(self):

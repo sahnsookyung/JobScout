@@ -17,9 +17,9 @@ is correct.
 
 from __future__ import annotations
 
-from typing import Union
+from typing import Callable, Union
 
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 NAMESPACE = "jobscout"
 
@@ -55,6 +55,8 @@ _EMAIL_EVENTS = frozenset({
     "invalid_address",
     "cleared",
 })
+_WORKER_SERVICES = frozenset({"extraction", "embeddings", "matcher"})
+_WORKER_NAMES = frozenset({"consumer", "batch_consumer"})
 
 
 def _safe(value: str, allowed: frozenset[str]) -> str:
@@ -100,6 +102,12 @@ email_verification_events_total = Counter(
     f"{NAMESPACE}_email_verification_events_total",
     "Lifecycle events for the user's notification email override.",
     labelnames=("event",),
+)
+
+worker_running = Gauge(
+    f"{NAMESPACE}_worker_running",
+    "Whether a background worker loop is currently running (1) or stopped (0).",
+    labelnames=("service", "worker"),
 )
 
 
@@ -170,3 +178,18 @@ def record_preference_status(applied: bool, reason: Union[str, None]) -> None:
 
 def record_email_event(event: str) -> None:
     email_verification_events_total.labels(event=_safe(event, _EMAIL_EVENTS)).inc()
+
+
+def record_worker_running(service: str, worker: str, running: bool) -> None:
+    worker_running.labels(
+        service=_safe(service, _WORKER_SERVICES),
+        worker=_safe(worker, _WORKER_NAMES),
+    ).set(1 if running else 0)
+
+
+def bind_worker_running(service: str, worker: str, callback: Callable[[], bool]) -> None:
+    """Expose worker liveness as a scrape-time callback-backed gauge."""
+    worker_running.labels(
+        service=_safe(service, _WORKER_SERVICES),
+        worker=_safe(worker, _WORKER_NAMES),
+    ).set_function(lambda: 1 if callback() else 0)

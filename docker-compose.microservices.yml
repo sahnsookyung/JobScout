@@ -40,7 +40,13 @@ services:
     ports:
       - "${EXTRACTION_PORT:-8081}:8081"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=5)"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json, sys, urllib.request; data=json.load(urllib.request.urlopen('http://localhost:8081/health', timeout=5)); sys.exit(0 if data.get('status') == 'healthy' else 1)",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -56,7 +62,13 @@ services:
     ports:
       - "${EMBEDDINGS_PORT:-8082}:8082"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=5)"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json, sys, urllib.request; data=json.load(urllib.request.urlopen('http://localhost:8082/health', timeout=5)); sys.exit(0 if data.get('status') == 'healthy' else 1)",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -113,7 +125,13 @@ services:
     ports:
       - "${SCORER_MATCHER_PORT:-8083}:8083"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/health', timeout=5)"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json, sys, urllib.request; data=json.load(urllib.request.urlopen('http://localhost:8083/health', timeout=5)); sys.exit(0 if data.get('status') == 'healthy' else 1)",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
