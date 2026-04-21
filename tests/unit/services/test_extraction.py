@@ -164,31 +164,13 @@ class TestExtractionEndpoints:
         data = r.json()
         assert data["status"] == "healthy"
 
-    def test_metrics_consumer_none(self, app_with_state):
-        """Test /metrics with no consumer task."""
+    def test_metrics_endpoint_prometheus(self, app_with_state):
+        """/metrics serves Prometheus text-format (replaces the deleted JSON liveness dict)."""
         app, client = app_with_state
         r = client.get("/metrics")
         assert r.status_code == 200
-
-    def test_metrics_consumer_done(self, app_with_state):
-        """Test /metrics with done consumer task."""
-        app, client = app_with_state
-        mock_task = Mock()
-        mock_task.done.return_value = True
-        app.state.extraction.consumer_task = mock_task
-
-        r = client.get("/metrics")
-        assert r.status_code == 200
-
-    def test_metrics_consumer_running(self, app_with_state):
-        """Test /metrics with running consumer task."""
-        app, client = app_with_state
-        mock_task = Mock()
-        mock_task.done.return_value = False
-        app.state.extraction.consumer_task = mock_task
-
-        r = client.get("/metrics")
-        assert r.status_code == 200
+        assert "text/plain" in r.headers.get("content-type", "")
+        assert b"jobscout_scorer_route_total" in r.content
 
     def test_stop_sets_stop_event(self, app_with_state):
         """Test /extract/stop sets stop event."""

@@ -19,6 +19,10 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from prometheus_client import start_http_server as start_metrics_server
+# Import for side effect: registers all JobScout Counter/Histogram singletons
+# so start_http_server(9464) below exposes them (at zero) immediately.
+from core import metrics as _metrics_declarations  # noqa: F401
 from redis import Redis
 from rq import Worker, Queue
 from rq.registry import FailedJobRegistry
@@ -40,6 +44,18 @@ except ValueError:
         os.environ.get('NOTIFICATION_DLQ_POLL_INTERVAL'),
     )
     _DLQ_POLL_INTERVAL = 60
+
+# Prometheus scrape port for this worker. RQ's work() loop is blocking and
+# synchronous, so we spin up prometheus_client's built-in daemon-thread HTTP
+# server on a dedicated port rather than embed in an async app.
+try:
+    _METRICS_PORT = int(os.environ.get('NOTIFICATION_METRICS_PORT', '9464'))
+except ValueError:
+    logger.warning(
+        "Invalid NOTIFICATION_METRICS_PORT value %r — defaulting to 9464",
+        os.environ.get('NOTIFICATION_METRICS_PORT'),
+    )
+    _METRICS_PORT = 9464
 
 
 def _monitor_dlq(redis_conn: Redis, queue_name: str, stop: threading.Event) -> None:
@@ -98,6 +114,18 @@ def start_worker(burst: bool = False, queues: list = None):
     logger.info("Burst mode: %s", burst)
 
     stop_event = threading.Event()
+
+    if not burst:
+        # Burst runs exit after draining; no value in standing up a scrape
+        # endpoint the caller won't poll.
+        try:
+            start_metrics_server(_METRICS_PORT)
+            logger.info("Prometheus metrics server listening on :%d", _METRICS_PORT)
+        except OSError as exc:
+            logger.warning(
+                "Could not bind Prometheus metrics server on :%d (%s) — continuing without /metrics",
+                _METRICS_PORT, exc,
+            )
 
     try:
         redis_conn = Redis.from_url(redis_url)

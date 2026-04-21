@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from core.config_loader import load_config
 from core.app_context import AppContext
 from core.logging_utils import setup_service_logging
+from core.metrics_router import router as metrics_router
 from services.base.service_state import BaseServiceState
 from core.stream_consumer import StreamConsumerWithCompletion, validate_message
 from core.redis_streams import (
@@ -208,6 +209,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+app.include_router(metrics_router)
 
 
 # ---------------------------------------------------------------------------
@@ -232,22 +234,6 @@ class EmbedResponse(BaseModel):
 @app.get("/health")
 async def health():
     return {"status": "healthy", "service": "embeddings"}
-
-
-@app.get("/metrics")
-async def metrics(request: Request):
-    state: EmbeddingsState = request.app.state.embeddings
-    return {
-        "service": "embeddings",
-        "version": "1.0.0",
-        "consumer_running": (
-            state.consumer_task is not None and not state.consumer_task.done()
-        ),
-        "batch_consumer_running": (
-            state.batch_consumer_task is not None
-            and not state.batch_consumer_task.done()
-        ),
-    }
 
 
 @app.post("/embed/resume", response_model=EmbedResponse)

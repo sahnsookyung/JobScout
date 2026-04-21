@@ -31,6 +31,7 @@ from core.matcher import (
     RequirementEvidenceCandidate,
     RequirementMatchResult,
 )
+from core.metrics import record_scorer_degraded, record_scorer_route
 from core.scorer.coverage import calculate_requirement_coverage
 from core.scorer import fit_score
 
@@ -496,6 +497,7 @@ class ThresholdSemanticFitScorer:
         owner_id: Any | None = None,
     ) -> SemanticFitScoreResult:
         del owner_id
+        record_scorer_route("threshold")
         return _build_threshold_result(
             preliminary,
             fit_penalties=fit_penalties,
@@ -1140,11 +1142,15 @@ class LLMSemanticFitScorer:
             return self.fallback_scorer.score(preliminary, fit_penalties=fit_penalties, config=config)
 
         try:
-            return self._score_with_llm(preliminary, fit_penalties=fit_penalties, config=config)
+            result = self._score_with_llm(preliminary, fit_penalties=fit_penalties, config=config)
+            record_scorer_route("llm")
+            return result
         except Exception as exc:
             if not getattr(config.semantic_fit, "threshold_fallback_enabled", True):
                 raise
             logger.warning("Semantic fit scoring failed; falling back to threshold scorer: %s", exc, exc_info=True)
+            record_scorer_degraded(exc)
+            record_scorer_route("threshold")
             return _build_threshold_result(
                 preliminary,
                 fit_penalties=fit_penalties,
@@ -1660,6 +1666,8 @@ class CrossEncoderSemanticFitScorer:
                 raise last_error
             raise RuntimeError("No cross-encoder provider was available")
 
+        record_scorer_degraded(last_error if last_error is not None else "no_provider_available")
+        record_scorer_route("threshold")
         return _build_threshold_result(
             preliminary,
             fit_penalties=fit_penalties,
@@ -1718,6 +1726,9 @@ class CrossEncoderSemanticFitScorer:
                     preliminary=preliminary,
                     result=result,
                     config=config,
+                )
+                record_scorer_route(
+                    provider_diagnostics.get("provider_route", provider.route_name)
                 )
                 return result
             except Exception as exc:

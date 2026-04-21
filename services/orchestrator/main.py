@@ -31,6 +31,7 @@ from sqlalchemy.orm import sessionmaker
 from core.app_context import AppContext
 from core.auth import _auth_mode, _ensure_dev_bypass_allowed, _ensure_dev_user
 from core.config_loader import load_config
+from core.metrics_router import router as metrics_router
 from core.redis_streams import (
     _sanitize_log,
     enqueue_job,
@@ -241,6 +242,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+app.include_router(metrics_router)
 
 # ---------------------------------------------------------------------------
 # Models
@@ -1544,11 +1546,6 @@ async def health(request: Request):
         "downstream_config_errors": downstream_config_errors,
         "downstream_ready": not downstream_config_errors,
     }
-
-
-@app.get("/metrics")
-async def metrics():
-    return {"service": "orchestrator", "version": "1.0.0"}
 
 
 async def _get_existing_task_snapshot(

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from core.config_loader import PreferencesConfig
+from core.metrics import record_preference_status
 from services.scorer_matcher.preference_semantics import (
     PreferenceAssessment,
     PreferenceProfile,
@@ -406,6 +407,21 @@ def apply_preference_semantic_reranking(
     config: PreferencesConfig,
 ):
     """Apply semantic preference reranking after fit-qualified scoring."""
+    result = _apply_preference_semantic_reranking(
+        scored_matches,
+        preferences,
+        config=config,
+    )
+    record_preference_status(result.status.applied, result.status.reason)
+    return result
+
+
+def _apply_preference_semantic_reranking(
+    scored_matches,
+    preferences: Optional[Dict[str, Any]],
+    *,
+    config: PreferencesConfig,
+):
     if not preferences:
         return PreferenceRerankResult(
             matches=scored_matches,

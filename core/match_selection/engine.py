@@ -23,6 +23,7 @@ from core.match_selection.contracts import (
     MatchSelectionPolicySnapshot,
     MatchSelectionResult,
 )
+from core.metrics import record_selection_tier_item
 from core.ranking import RankingContext, rank_matches
 
 EXCLUDED_STORAGE_CAP = 500
@@ -124,7 +125,7 @@ def _primary_item_snapshots(
     *,
     notification_fit_floor_used: float,
 ) -> list[MatchSelectionItemSnapshot]:
-    return [
+    snapshots = [
         _item_snapshot_from_match(
             match,
             rank_position=index,
@@ -134,6 +135,9 @@ def _primary_item_snapshots(
         )
         for index, match in enumerate(selected_matches, start=1)
     ]
+    for snapshot in snapshots:
+        record_selection_tier_item(snapshot.selection_tier, snapshot.excluded_reason)
+    return snapshots
 
 
 def _sorted_excluded_candidates(
@@ -164,7 +168,9 @@ def _append_excluded_item_snapshots(
     truncated_count = 0
     for match, reason, _original_order in excluded_candidates:
         if excluded_budget <= 0:
-            truncated_count += int(two_tier_enabled)
+            if two_tier_enabled:
+                truncated_count += 1
+                record_selection_tier_item("excluded", "truncated")
             continue
         item_snapshots.append(
             _item_snapshot_from_match(
@@ -175,6 +181,7 @@ def _append_excluded_item_snapshots(
                 excluded_reason=reason,
             )
         )
+        record_selection_tier_item("excluded", reason)
         next_rank += 1
         excluded_budget -= 1
     return truncated_count

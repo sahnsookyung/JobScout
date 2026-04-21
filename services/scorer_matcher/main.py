@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from core.config_loader import load_config
 from core.app_context import AppContext
+from core.metrics_router import router as metrics_router
 from core.stream_consumer import StreamConsumerWithCompletion, validate_message
 from core.redis_streams import (
     CHANNEL_MATCHING_DONE,
@@ -413,6 +414,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+app.include_router(metrics_router)
 
 
 # ---------------------------------------------------------------------------
@@ -441,18 +443,6 @@ class MatchResponse(BaseModel):
 @app.get("/health")
 async def health():
     return {"status": "healthy", "service": "matcher"}
-
-
-@app.get("/metrics")
-async def metrics(request: Request):
-    state: MatcherState = request.app.state.matcher
-    return {
-        "service": "matcher",
-        "version": "1.0.0",
-        "consumer_running": (
-            state.consumer_task is not None and not state.consumer_task.done()
-        ),
-    }
 
 
 @app.post("/match/resume", response_model=MatchResponse)
