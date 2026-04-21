@@ -790,6 +790,8 @@ def test_cross_encoder_route_policy_remote_without_remote_provider_uses_threshol
 
     assert result.fit_components["provider_route"] == "threshold"
     assert result.fit_components["effective_fit_mode"] == "threshold"
+    assert result.fit_components["fit_scorer"]["name"] == "cross_encoder_semantic_fit"
+    assert result.fit_explanation["fit_scorer"]["name"] == "cross_encoder_semantic_fit"
     assert "remote provider" in result.fit_components["semantic_fit_fallback_reason"]
 
 def test_cross_encoder_without_available_local_provider_uses_threshold_fallback():
@@ -827,6 +829,8 @@ def test_cross_encoder_without_available_local_provider_uses_threshold_fallback(
 
     assert result.fit_components["effective_fit_mode"] == "threshold"
     assert result.fit_components["provider_route"] == "threshold"
+    assert result.fit_components["fit_scorer"]["name"] == "cross_encoder_semantic_fit"
+    assert result.fit_explanation["fit_scorer"]["name"] == "cross_encoder_semantic_fit"
     assert "disabled" in result.fit_components["semantic_fit_fallback_reason"]
 
 def test_cross_encoder_local_policy_does_not_fall_through_to_remote_provider():
