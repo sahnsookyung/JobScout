@@ -16,6 +16,7 @@ dependencies = [
     "tenacity>=8.5.0",
     "redis>=7.1.0",
     "rq>=1.15.0",
+    "lxml>=6.1.0",
     "python-docx>=1.1.0",
     "pypdf>=6.10.2",
     "xxhash>=3.5.0",
@@ -38,7 +39,7 @@ web = [
     "pydantic>=2.12.5",
     "python-multipart>=0.0.26",
     "slowapi>=0.1.9",
-    "python-dotenv>=1.0.0",
+    "python-dotenv>=1.2.2",
 ]
 fit-models = [
     # Cross-encoder triplet pinned to a known-good combination. FlagEmbedding
