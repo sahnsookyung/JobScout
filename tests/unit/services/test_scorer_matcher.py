@@ -210,6 +210,8 @@ class TestMatcherEndpoints:
         mock_ctx = Mock()
         mock_consumer = Mock(spec=MatcherConsumer)
         state = MatcherState(mock_ctx, mock_consumer)
+        state.consumer_task = Mock()
+        state.consumer_task.done.return_value = False
         app.state.matcher = state
 
         return app, TestClient(app)
@@ -222,14 +224,26 @@ class TestMatcherEndpoints:
         data = r.json()
         assert data["status"] == "healthy"
         assert data["service"] == "matcher"
+        assert data["consumer_running"] is True
 
     def test_metrics_endpoint_prometheus(self, app_with_state):
-        """/metrics serves Prometheus text-format (replaces the deleted JSON liveness dict)."""
+        """/metrics serves Prometheus text including worker-liveness gauges."""
         app, client = app_with_state
         r = client.get("/metrics")
         assert r.status_code == 200
         assert "text/plain" in r.headers.get("content-type", "")
         assert b"jobscout_scorer_route_total" in r.content
+        assert b'jobscout_worker_running{service="matcher",worker="consumer"} 1.0' in r.content
+
+    def test_health_degraded_when_consumer_stops(self, app_with_state):
+        """Health reflects stopped worker loops."""
+        app, client = app_with_state
+        app.state.matcher.consumer_task.done.return_value = True
+        r = client.get("/health")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["status"] == "degraded"
+        assert data["consumer_running"] is False
 
     def test_stop_sets_stop_event(self, app_with_state):
         """Test /match/stop sets stop event."""

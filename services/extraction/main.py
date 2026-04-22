@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from core.config_loader import load_config
 from core.app_context import AppContext
 from core.logging_utils import setup_service_logging
+from core.metrics import bind_worker_running
 from core.metrics_router import router as metrics_router
 from services.base.service_state import BaseServiceState
 from core.stream_consumer import StreamConsumerWithCompletion, validate_message
@@ -244,6 +245,21 @@ app = FastAPI(
 app.include_router(metrics_router)
 
 
+def _task_running(task: Optional[asyncio.Task]) -> bool:
+    return task is not None and not task.done()
+
+
+def _worker_running(worker_attr: str) -> bool:
+    state = getattr(app.state, "extraction", None)
+    if state is None:
+        return False
+    return _task_running(getattr(state, worker_attr, None))
+
+
+bind_worker_running("extraction", "consumer", lambda: _worker_running("consumer_task"))
+bind_worker_running("extraction", "batch_consumer", lambda: _worker_running("batch_consumer_task"))
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -267,7 +283,14 @@ class ExtractResponse(BaseModel):
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "service": "extraction"}
+    consumer_running = _worker_running("consumer_task")
+    batch_consumer_running = _worker_running("batch_consumer_task")
+    return {
+        "status": "healthy" if consumer_running and batch_consumer_running else "degraded",
+        "service": "extraction",
+        "consumer_running": consumer_running,
+        "batch_consumer_running": batch_consumer_running,
+    }
 
 
 @app.post("/extract/resume", response_model=ExtractResponse)

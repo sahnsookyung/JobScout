@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from core.config_loader import load_config
 from core.app_context import AppContext
+from core.metrics import bind_worker_running
 from core.metrics_router import router as metrics_router
 from core.stream_consumer import StreamConsumerWithCompletion, validate_message
 from core.redis_streams import (
@@ -417,6 +418,20 @@ app = FastAPI(
 app.include_router(metrics_router)
 
 
+def _task_running(task: Optional[asyncio.Task]) -> bool:
+    return task is not None and not task.done()
+
+
+def _worker_running() -> bool:
+    state = getattr(app.state, "matcher", None)
+    if state is None:
+        return False
+    return _task_running(getattr(state, "consumer_task", None))
+
+
+bind_worker_running("matcher", "consumer", _worker_running)
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -442,7 +457,12 @@ class MatchResponse(BaseModel):
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "service": "matcher"}
+    consumer_running = _worker_running()
+    return {
+        "status": "healthy" if consumer_running else "degraded",
+        "service": "matcher",
+        "consumer_running": consumer_running,
+    }
 
 
 @app.post("/match/resume", response_model=MatchResponse)

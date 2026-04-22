@@ -24,5 +24,6 @@ def test_metrics_endpoint_returns_prometheus_text():
         "jobscout_selection_tier_items_total",
         "jobscout_preference_reranker_status_total",
         "jobscout_email_verification_events_total",
+        "jobscout_worker_running",
     ):
         assert name in body, f"missing metric in /metrics output: {name}"
