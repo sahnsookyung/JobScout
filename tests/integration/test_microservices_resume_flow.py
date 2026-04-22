@@ -1041,16 +1041,8 @@ def test_matching_flow_triggers_email_notifications(microservices_stack: Microse
     assert explanation_payload["success"] is True, explanation_payload
     explanation = explanation_payload["explanation"]
     assert explanation is not None
-    fit_scorer_name = explanation["fit_scorer"]["name"]
-    effective_fit_mode = explanation["diagnostics"]["effective_fit_mode"]
-    assert fit_scorer_name in {"cross_encoder_semantic_fit", "threshold_semantic_fit"}
-    assert effective_fit_mode in {"cross_encoder", "threshold"}
-    expected_scorer_name = (
-        "threshold_semantic_fit"
-        if effective_fit_mode == "threshold"
-        else "cross_encoder_semantic_fit"
-    )
-    assert fit_scorer_name == expected_scorer_name
+    assert explanation["fit_scorer"]["name"] == "cross_encoder_semantic_fit"
+    assert explanation["diagnostics"]["effective_fit_mode"] in {"cross_encoder", "threshold"}
     assert explanation["diagnostics"]["provider_route"] in {"local", "local_heuristic", "remote", "threshold"}
     assert explanation["retrieval"]["mode"] in {"dense", "hybrid"}
 
