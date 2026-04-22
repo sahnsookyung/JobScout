@@ -213,6 +213,7 @@ jobs:
           services=(
             db-migrate
             mock-llm
+            scorer-model-bootstrap
             notification-worker
             extraction
             embeddings
