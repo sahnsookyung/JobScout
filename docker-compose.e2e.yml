@@ -67,18 +67,6 @@ services:
       - ETL_EMBEDDING_BASE_URL=http://mock-llm:8090/v1
       - ETL_EMBEDDING_API_KEY=mock-key
 
-  # E2E uses PREFERENCES_CROSS_ENCODER_RUNTIME=heuristic (no real BGE weights
-  # needed) and has no HF network/token, so the bootstrap step must be a no-op.
-  # !reset clears the inherited build/volumes/env from microservices so compose
-  # pulls busybox instead of trying to build a service that is not prebuilt.
-  scorer-model-bootstrap:
-    image: busybox:1.36
-    build: !reset null
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["echo '[bootstrap] skipped in E2E (heuristic runtime)' && exit 0"]
-    volumes: !reset []
-    environment: !reset []
-
   scorer-matcher:
     depends_on:
       mock-llm:
