@@ -330,10 +330,11 @@ def _resolve_build_images(
     override = _env_flag("JOBSCOUT_E2E_BUILD_IMAGES")
     if override is not None:
         return override
+    images_available = _compose_images_available(compose_args, compose_env)
     skip_build = _env_flag("JOBSCOUT_E2E_SKIP_BUILD")
     if skip_build is not None:
-        return not skip_build
-    return not _compose_images_available(compose_args, compose_env)
+        return (not skip_build) or (not images_available)
+    return not images_available
 
 
 def _compose_up_with_retries(
