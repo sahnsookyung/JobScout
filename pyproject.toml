@@ -46,7 +46,7 @@ fit-models = [
     # and sentence-transformers both pull in transformers; we pin it explicitly
     # so the reranker route does not silently degrade when a transitive bump
     # breaks FlagAutoReranker or CrossEncoder import paths.
-    "FlagEmbedding==1.3.5",
+    "FlagEmbedding==1.4.0",
     "sentence-transformers==5.4.1",
     "transformers==5.5.4",
 ]
