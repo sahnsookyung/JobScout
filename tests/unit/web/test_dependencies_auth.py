@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
 import pytest
+from sqlalchemy.exc import OperationalError
 
 
 def test_dev_bypass_is_rejected_outside_dev_test(monkeypatch):
@@ -94,6 +95,31 @@ def test_get_current_user_returns_seeded_user_in_dev_bypass(monkeypatch):
     assert result is fake_user
     mock_ensure_user.assert_called_once_with(fake_session)
     fake_session.expunge.assert_called_once_with(fake_user)
+    fake_session.close.assert_called_once()
+
+
+def test_get_current_user_falls_back_when_dev_database_unavailable(monkeypatch):
+    monkeypatch.setenv("AUTH_MODE", "dev-bypass")
+    monkeypatch.setenv("JOBSCOUT_ENV", "test")
+    monkeypatch.setenv("DEV_BYPASS_EMAIL", "offline-dev@example.com")
+    monkeypatch.setenv("DEV_BYPASS_NAME", "Offline Dev")
+    monkeypatch.setenv("DEV_BYPASS_USER_ID", "00000000-0000-0000-0000-000000000456")
+
+    module = importlib.import_module("web.backend.dependencies")
+    fake_session = MagicMock()
+    db_error = OperationalError("SELECT 1", {}, Exception("database unavailable"))
+
+    with patch.object(module, "_ensure_dev_user", side_effect=db_error) as mock_ensure_user:
+        module._db_manager = SimpleNamespace(session_local=lambda: fake_session)
+        result = module.get_current_user()
+
+    assert str(result.id) == "00000000-0000-0000-0000-000000000456"
+    assert result.email == "offline-dev@example.com"
+    assert result.display_name == "Offline Dev"
+    assert result.is_active is True
+    assert result.email_verified_at is not None
+    mock_ensure_user.assert_called_once_with(fake_session)
+    fake_session.expunge.assert_not_called()
     fake_session.close.assert_called_once()
 
 

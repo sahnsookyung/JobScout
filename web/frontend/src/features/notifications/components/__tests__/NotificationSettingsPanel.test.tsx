@@ -49,7 +49,7 @@ const makeSettings = (overrides: Partial<NotificationSettings> = {}): Notificati
             email: makeChannel(),
             discord: makeChannel({
                 enabled: false,
-                masked_recipient: 'https://discord.com/api/webhooks/...',
+                masked_recipient: 'https://discord.com/***',
                 last_test_status: 'queued',
             }),
         },
@@ -108,7 +108,7 @@ describe('NotificationSettingsPanel', () => {
 
         expect(screen.getByText('Alert rules')).toBeInTheDocument();
         expect(screen.getByText('***@example.com')).toBeInTheDocument();
-        expect(screen.getByText('https://discord.com/api/webhooks/...')).toBeInTheDocument();
+        expect(screen.getByText('https://discord.com/***')).toBeInTheDocument();
         expect(screen.queryByText('In-App')).not.toBeInTheDocument();
         expect(screen.queryByText('Webhook')).not.toBeInTheDocument();
     });
@@ -489,7 +489,7 @@ describe('NotificationSettingsPanel', () => {
                     }),
                     discord: makeChannel({
                         enabled: false,
-                        masked_recipient: 'https://discord.com/api/webhooks/...',
+                        masked_recipient: 'https://discord.com/***',
                         last_test_status: null,
                     }),
                 },

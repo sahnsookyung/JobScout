@@ -61,6 +61,30 @@ describe('pipelineApi', () => {
         });
     });
 
+    describe('getSources', () => {
+        it('calls GET /pipeline/sources with empty params by default', () => {
+            mockGet.mockResolvedValueOnce({ data: { sources: [] } } as any);
+            pipelineApi.getSources();
+            expect(mockGet).toHaveBeenCalledWith('/pipeline/sources', {
+                params: {
+                    search: undefined,
+                    include_status: undefined,
+                },
+            });
+        });
+
+        it('passes search and include_status query params', () => {
+            mockGet.mockResolvedValueOnce({ data: { sources: [] } } as any);
+            pipelineApi.getSources({ search: ' tokyo api ', includeStatus: true });
+            expect(mockGet).toHaveBeenCalledWith('/pipeline/sources', {
+                params: {
+                    search: 'tokyo api',
+                    include_status: true,
+                },
+            });
+        });
+    });
+
     describe('getResumeEligibility', () => {
         it('calls GET /pipeline/resume-eligibility', () => {
             mockGet.mockResolvedValueOnce({ data: { can_run: true } } as any);

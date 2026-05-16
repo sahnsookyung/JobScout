@@ -229,5 +229,6 @@ def get_queue_status(notification_service: Annotated[NotificationServiceWrapper,
         success=True,
         status=status.get('status', 'unknown'),
         queue_length=status.get('queue_length', 0),
+        failed_job_count=status.get('failed_job_count', 0),
         redis_connected=status.get('redis_connected', False)
     )

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Annotated, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Request, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Request, Depends, Query
 from fastapi.responses import StreamingResponse, JSONResponse
 
 from slowapi import Limiter
@@ -28,6 +28,7 @@ from core.resume_selection import (
     resolve_owner_id,
     serialize_owner_id,
 )
+from core.scraper.jobspy_client import JobSpyClient
 from core.redis_streams import (
     _sanitize_log,
     clear_task_cancellation_requested,
@@ -61,8 +62,12 @@ from web.backend.api_error_codes import (
     PIPELINE_TASK_NOT_FOUND,
 )
 from ..dependencies import get_current_user
+from ..config import get_config
 from ..models.responses import (
     ApiError,
+    FetchSourceHealthResponse,
+    FetchSourceResponse,
+    FetchSourcesResponse,
     PipelineTaskResponse,
     PipelineStatusResponse,
     ResumeEligibilityResponse,
@@ -119,6 +124,52 @@ router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 # Pre-compiled pattern for task_id validation
 # Format used by orchestrator: "match-{8 hex chars}" e.g., "match-a1b2c3d4"
 TASK_ID_PATTERN = re.compile(r'^[a-zA-Z0-9-]{1,50}$')
+JOB_BOARD_TAG = "job board"
+
+SOURCE_METADATA: dict[str, dict[str, object]] = {
+    "tokyodev": {
+        "display_name": "TokyoDev",
+        "seed_url": "https://www.tokyodev.com/jobs",
+        "description": "English-friendly software roles in Japan.",
+        "tags": ["japan", "tokyo", "english", "startup", "software"],
+    },
+    "japandev": {
+        "display_name": "Japan Dev",
+        "seed_url": "https://japan-dev.com/jobs",
+        "description": "Japan-focused developer roles with language and seniority filters.",
+        "tags": ["japan", "developer", "english", "visa", "software"],
+    },
+    "indeed": {
+        "display_name": "Indeed",
+        "seed_url": "https://www.indeed.com",
+        "description": "Broad job-board search through the JobSpy API.",
+        "tags": ["general", JOB_BOARD_TAG, "api", "global"],
+    },
+    "glassdoor": {
+        "display_name": "Glassdoor",
+        "seed_url": "https://www.glassdoor.com/Job",
+        "description": "Company and salary-aware listings through the JobSpy API.",
+        "tags": ["company", "salary", JOB_BOARD_TAG, "global"],
+    },
+    "linkedin": {
+        "display_name": "LinkedIn",
+        "seed_url": "https://www.linkedin.com/jobs",
+        "description": "Professional network job listings with optional descriptions.",
+        "tags": ["network", "professional", JOB_BOARD_TAG, "global"],
+    },
+    "google": {
+        "display_name": "Google Jobs",
+        "seed_url": "https://www.google.com/search?q=jobs",
+        "description": "Aggregated search results when configured in JobSpy.",
+        "tags": ["aggregator", "search", "global"],
+    },
+    "zip_recruiter": {
+        "display_name": "ZipRecruiter",
+        "seed_url": "https://www.ziprecruiter.com/jobs-search",
+        "description": "General job-board listings when configured in JobSpy.",
+        "tags": ["general", JOB_BOARD_TAG, "global"],
+    },
+}
 
 
 class PipelineApiError(HTTPException):
@@ -180,6 +231,141 @@ def _validate_task_id(task_id: str) -> bool:
         return False
     return bool(TASK_ID_PATTERN.match(task_id))
 
+def _dedupe_strings(values: list[object]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(text)
+    return deduped
+
+def _source_metadata(site_type: str) -> dict[str, object]:
+    metadata = SOURCE_METADATA.get(site_type, {})
+    return {
+        "display_name": metadata.get("display_name") or site_type.replace("_", " ").title(),
+        "seed_url": metadata.get("seed_url"),
+        "description": metadata.get("description"),
+        "tags": list(metadata.get("tags") or []),
+    }
+
+def _source_option_keywords(options: dict[str, object]) -> list[str]:
+    keywords: list[object] = []
+    for key, value in options.items():
+        keywords.append(key)
+        if isinstance(value, list):
+            keywords.extend(value)
+        elif isinstance(value, dict):
+            keywords.extend(value.keys())
+            keywords.extend(value.values())
+        else:
+            keywords.append(value)
+    return _dedupe_strings(keywords)
+
+def _source_search_keywords(
+    *,
+    site_type: str,
+    display_name: str,
+    seed_url: Optional[str],
+    description: Optional[str],
+    tags: list[str],
+    scraper_cfg,
+) -> list[str]:
+    return _dedupe_strings([
+        site_type,
+        display_name,
+        seed_url,
+        description,
+        scraper_cfg.search_term,
+        scraper_cfg.location,
+        scraper_cfg.country,
+        *tags,
+        *_source_option_keywords(dict(scraper_cfg.options or {})),
+    ])
+
+def _build_fetch_source_response(
+    scraper_cfg,
+    *,
+    api_health: Optional[FetchSourceHealthResponse] = None,
+) -> FetchSourceResponse:
+    site_types = list(scraper_cfg.site_type or [])
+    site_type = str(next(iter(site_types), "unknown"))
+    metadata = _source_metadata(site_type)
+    display_name = scraper_cfg.display_name or str(metadata["display_name"])
+    seed_url = scraper_cfg.seed_url or metadata.get("seed_url")
+    description = scraper_cfg.description or metadata.get("description")
+    tags = _dedupe_strings([*list(metadata.get("tags") or []), *list(scraper_cfg.tags or [])])
+    return FetchSourceResponse(
+        site_type=site_type,
+        display_name=display_name,
+        seed_url=str(seed_url) if seed_url else None,
+        description=str(description) if description else None,
+        tags=tags,
+        search_keywords=_source_search_keywords(
+            site_type=site_type,
+            display_name=display_name,
+            seed_url=str(seed_url) if seed_url else None,
+            description=str(description) if description else None,
+            tags=tags,
+            scraper_cfg=scraper_cfg,
+        ),
+        fetch_mode="jobspy_api",
+        search_term=scraper_cfg.search_term,
+        location=scraper_cfg.location,
+        country=scraper_cfg.country,
+        results_wanted=scraper_cfg.results_wanted,
+        hours_old=scraper_cfg.hours_old,
+        options=dict(scraper_cfg.options or {}),
+        api_health=api_health,
+    )
+
+def _source_matches_query(source: FetchSourceResponse, search: Optional[str]) -> bool:
+    terms = [
+        term
+        for term in re.split(r"\s+", (search or "").strip().lower())
+        if term
+    ]
+    if not terms:
+        return True
+
+    haystack = " ".join(
+        [
+            source.site_type,
+            source.display_name,
+            source.seed_url or "",
+            source.description or "",
+            source.search_term or "",
+            source.location or "",
+            source.country or "",
+            *source.tags,
+            *source.search_keywords,
+        ]
+    ).lower()
+    return all(term in haystack for term in terms)
+
+def _jobspy_health(config) -> Optional[FetchSourceHealthResponse]:
+    if not config.jobspy or not config.jobspy.url:
+        return FetchSourceHealthResponse(
+            available=False,
+            status="not_configured",
+            error="JobSpy API URL is not configured",
+        )
+
+    client = JobSpyClient(
+        base_url=config.jobspy.url,
+        request_timeout_seconds=config.jobspy.request_timeout_seconds,
+    )
+    try:
+        result = client.check_health(
+            timeout_seconds=getattr(config.jobspy, "health_timeout_seconds", 2.0),
+        )
+        return FetchSourceHealthResponse(**result)
+    finally:
+        client.close()
+
 def _active_task_key(owner_id: str) -> str:
     return f"{ACTIVE_TASK_ID_KEY_PREFIX}:{owner_id}"
 
@@ -205,6 +391,46 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
     return JSONResponse(
         status_code=429,
         content={"detail": str(exc)}
+    )
+
+
+@router.get("/sources", response_model=FetchSourcesResponse)
+def get_fetch_sources(
+    search: Annotated[
+        Optional[str],
+        Query(max_length=120, description="Optional whitespace-delimited source search"),
+    ] = None,
+    include_status: Annotated[
+        bool,
+        Query(description="Check the configured JobSpy API health endpoint"),
+    ] = False,
+):
+    """Return configured seed websites and API-backed fetch source metadata."""
+    config = get_config()
+    api_health = _jobspy_health(config) if include_status else None
+    all_sources = [
+        _build_fetch_source_response(scraper_cfg, api_health=api_health)
+        for scraper_cfg in config.scrapers
+    ]
+    sources = [
+        source
+        for source in all_sources
+        if _source_matches_query(source, search)
+    ]
+    seed_websites = [
+        source.seed_url
+        for source in sources
+        if source.seed_url is not None
+    ]
+    return FetchSourcesResponse(
+        success=True,
+        jobspy_url=config.jobspy.url if config.jobspy else None,
+        api_based_fetching=bool(config.jobspy and config.jobspy.url),
+        search_query=search,
+        total_count=len(all_sources),
+        filtered_count=len(sources),
+        seed_websites=seed_websites,
+        sources=sources,
     )
 
 

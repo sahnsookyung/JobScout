@@ -5,7 +5,7 @@ Configuration management for JobScout web application.
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -19,6 +19,7 @@ from core.config_loader import (
     MatchingConfig,
     NotificationConfig,
     PreferencesConfig,
+    ScraperConfig,
     load_config_data,
 )
 
@@ -48,6 +49,7 @@ class AppConfig(BaseModel):
     matching: MatchingConfig = Field(default_factory=MatchingConfig)
     preferences: PreferencesConfig = Field(default_factory=PreferencesConfig)
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
+    scrapers: List[ScraperConfig] = Field(default_factory=list)
 
 
 WEB_ENV_MAPPINGS: tuple[tuple[Sequence[str], Sequence[str]], ...] = (

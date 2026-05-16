@@ -266,8 +266,11 @@ uv run python -m pytest tests/ -v
 # Unit tests only (no database required)
 uv run python -m pytest tests/ -v -m "not db"
 
-# Start test database for integration tests
-docker-compose -f docker-compose.test.yml up -d
+# Start the transient test database for integration tests
+docker compose -f docker-compose.test.yml up -d
+
+# Remove the test container and tmpfs-backed state after testing
+docker compose -f docker-compose.test.yml down --remove-orphans --volumes
 ```
 
 ## Dependencies

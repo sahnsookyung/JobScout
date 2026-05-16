@@ -7,9 +7,15 @@ import { toast } from 'sonner';
 import { DashboardControls } from '../DashboardControls';
 import { usePipeline } from '@/hooks/usePipeline';
 import { useStats } from '@/hooks/useStats';
+import { pipelineApi } from '@/services/pipelineApi';
 
 vi.mock('@/hooks/usePipeline');
 vi.mock('@/hooks/useStats');
+vi.mock('@/services/pipelineApi', () => ({
+    pipelineApi: {
+        getSources: vi.fn(),
+    },
+}));
 vi.mock('sonner');
 vi.mock('@shared/constants', () => ({
     RESUME_MAX_SIZE_MB: 2,
@@ -24,6 +30,7 @@ vi.mock('@/utils/indexedDB', () => ({
 
 const mockUsePipeline = usePipeline as ReturnType<typeof vi.fn>;
 const mockUseStats = useStats as ReturnType<typeof vi.fn>;
+const mockPipelineApi = pipelineApi as unknown as { getSources: ReturnType<typeof vi.fn> };
 
 const createWrapper = () => {
     const queryClient = new QueryClient({
@@ -55,6 +62,66 @@ describe('DashboardControls', () => {
         });
 
         mockUseStats.mockReturnValue({ data: null });
+
+        mockPipelineApi.getSources.mockResolvedValue({
+            data: {
+                success: true,
+                jobspy_url: 'https://jobspy.example',
+                api_based_fetching: true,
+                search_query: null,
+                total_count: 2,
+                filtered_count: 2,
+                seed_websites: ['https://www.tokyodev.com/jobs'],
+                sources: [
+                    {
+                        site_type: 'tokyodev',
+                        display_name: 'TokyoDev',
+                        seed_url: 'https://www.tokyodev.com/jobs',
+                        description: 'English-friendly software roles in Japan.',
+                        tags: ['japan', 'startup'],
+                        search_keywords: ['tokyodev', 'japan', 'startup'],
+                        fetch_mode: 'jobspy_api',
+                        search_term: '',
+                        location: null,
+                        country: null,
+                        results_wanted: 5,
+                        hours_old: null,
+                        options: { seniorities: ['junior'] },
+                        api_health: {
+                            available: true,
+                            status: 'available',
+                            endpoint: 'https://jobspy.example/health',
+                            status_code: 200,
+                            response_time_ms: 10,
+                            error: null,
+                        },
+                    },
+                    {
+                        site_type: 'internal_feed',
+                        display_name: 'Internal Feed',
+                        seed_url: null,
+                        description: 'Private source.',
+                        tags: ['internal'],
+                        search_keywords: ['internal', 'platform engineer'],
+                        fetch_mode: 'jobspy_api',
+                        search_term: 'platform engineer',
+                        location: null,
+                        country: null,
+                        results_wanted: 3,
+                        hours_old: null,
+                        options: {},
+                        api_health: {
+                            available: false,
+                            status: 'not_configured',
+                            endpoint: null,
+                            status_code: null,
+                            response_time_ms: null,
+                            error: 'JobSpy API URL is not configured',
+                        },
+                    },
+                ],
+            },
+        });
 
         mockUploadResume.mockResolvedValue({
             alreadyExists: false,
@@ -322,6 +389,47 @@ describe('DashboardControls', () => {
             render(<DashboardControls />, { wrapper: createWrapper() });
             expect(screen.getByText('Complete')).toBeInTheDocument();
             expect(screen.getByText('Run matching')).toBeInTheDocument();
+        });
+
+        it('renders configured fetch sources', async () => {
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+            expect(screen.getByText('JobSpy API')).toBeInTheDocument();
+            expect(screen.getByText('API online')).toBeInTheDocument();
+            expect(mockPipelineApi.getSources).toHaveBeenCalledWith({
+                includeStatus: true,
+            });
+        });
+
+        it('does not render private or missing source URLs as empty links', async () => {
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Internal Feed')).toBeInTheDocument();
+            });
+            expect(screen.getByText('Internal Feed').closest('a')).toBeNull();
+        });
+
+        it('filters source search locally without refetching API status', async () => {
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+
+            await userEvent.type(screen.getByLabelText('Search sources'), 'internal');
+
+            await waitFor(() => {
+                expect(screen.queryByText('TokyoDev')).not.toBeInTheDocument();
+            });
+            expect(screen.getByText('Internal Feed')).toBeInTheDocument();
+            expect(mockPipelineApi.getSources).toHaveBeenCalledTimes(1);
+            expect(mockPipelineApi.getSources).not.toHaveBeenCalledWith(
+                expect.objectContaining({ search: 'internal' })
+            );
         });
     });
 });

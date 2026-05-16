@@ -212,6 +212,7 @@ class TestNotificationsRouter:
         mock_notification_service.get_queue_status.return_value = {
             "status": "healthy",
             "queue_length": 5,
+            "failed_job_count": 2,
             "redis_connected": True,
         }
 
@@ -219,6 +220,7 @@ class TestNotificationsRouter:
 
         assert response.status_code == 200
         assert response.json()["queue_length"] == 5
+        assert response.json()["failed_job_count"] == 2
         mock_notification_service.get_queue_status.assert_called_once()
 
     def test_send_notification_documents_invalid_priority_response(self, app):

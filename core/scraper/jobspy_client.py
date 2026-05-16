@@ -1,6 +1,7 @@
 """JobSpy API Client with connection reuse and retry logic."""
 import logging
 import threading
+import time
 from typing import Optional, Dict, Any, List
 
 import requests
@@ -107,7 +108,53 @@ class JobSpyClient:
         task_id = response.json().get("task_id")
         logger.info(f"Job submitted for {site_name}: task_id={task_id}")
         return task_id
-    
+
+    def check_health(
+        self,
+        *,
+        timeout_seconds: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Check whether the JobSpy API is reachable without starting a scrape."""
+        timeout = timeout_seconds or self.request_timeout_seconds
+        endpoint = f"{self.base_url.rstrip('/')}/health"
+        started = time.monotonic()
+
+        try:
+            response = self.session.get(  # codeql[py/partial-ssrf] URL is config-driven, not user input
+                endpoint,
+                timeout=timeout,
+            )
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            available = 200 <= response.status_code < 400
+            return {
+                "available": available,
+                "status": "available" if available else "unavailable",
+                "endpoint": endpoint,
+                "status_code": response.status_code,
+                "response_time_ms": elapsed_ms,
+                "error": None if available else f"HTTP {response.status_code}",
+            }
+        except requests.Timeout:
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            return {
+                "available": False,
+                "status": "timeout",
+                "endpoint": endpoint,
+                "status_code": None,
+                "response_time_ms": elapsed_ms,
+                "error": "JobSpy health check timed out",
+            }
+        except requests.RequestException as exc:
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            return {
+                "available": False,
+                "status": "unavailable",
+                "endpoint": endpoint,
+                "status_code": getattr(getattr(exc, "response", None), "status_code", None),
+                "response_time_ms": elapsed_ms,
+                "error": exc.__class__.__name__,
+            }
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_fixed(1),

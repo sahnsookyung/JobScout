@@ -9,6 +9,7 @@ import { ResumeUploadSection } from './ResumeUploadSection';
 import { StatsPanel } from './StatsPanel';
 import { ActionButton } from './ActionButton';
 import { StatusBanner } from './StatusBanner';
+import { FetchSourcesPanel } from './FetchSourcesPanel';
 
 export const DashboardControls: React.FC = () => {
     const {
@@ -122,6 +123,7 @@ export const DashboardControls: React.FC = () => {
                     />
                 </div>
             </div>
+            <FetchSourcesPanel />
             {showStatusBanner && statusData && <StatusBanner {...statusData} />}
         </DashboardWrapper>
     );

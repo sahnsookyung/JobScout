@@ -40,6 +40,7 @@ from email.mime.multipart import MIMEMultipart
 import urllib.parse
 import ipaddress
 import socket
+from urllib.parse import urljoin
 
 from core.auth import _current_environment
 from notification.exceptions import NotificationConfigurationError, TerminalNotificationError, TransientNotificationError
@@ -160,6 +161,17 @@ def _is_dry_run_mode() -> bool:
     return get_notification_runtime_config().dry_run
 
 
+def _log_dry_run_send(channel_type: str, recipient: str, subject: str) -> bool:
+    """Log a notification delivery attempt without calling external services."""
+    logger.info(
+        "[DRY_RUN] %s notification would send to %s: %s",
+        channel_type,
+        _masked_recipient_for_log(channel_type, recipient),
+        subject,
+    )
+    return True
+
+
 def _configured_channel_recipient(channel_type: str) -> str:
     """Resolve a configured channel recipient from the shared runtime config."""
     config = get_notification_runtime_config().channels.get(channel_type, {})
@@ -178,6 +190,23 @@ def _mask_email(email: str) -> str:
         return "***"
     _, domain = email.rsplit('@', 1)
     return f"***@{domain}"
+
+
+def _masked_recipient_for_log(channel_type: str, recipient: str) -> str:
+    """Return a safe recipient label for operational logs."""
+    if not recipient:
+        return "<unresolved>"
+    if channel_type == "email":
+        return _mask_email(recipient)
+    if channel_type in {"discord", "webhook"}:
+        parsed = urllib.parse.urlparse(recipient)
+        if parsed.scheme and parsed.hostname:
+            return f"{parsed.scheme}://{parsed.hostname}/***"
+        return "***"
+    if channel_type == "telegram":
+        suffix = recipient[-4:] if len(recipient) > 4 else recipient
+        return f"chat-***{suffix}"
+    return "***"
 
 
 def _notification_job_parts(job: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
@@ -242,11 +271,20 @@ def _build_email_job_links(job: Dict[str, Any], metadata: Dict[str, Any]) -> Lis
     match_id = metadata.get('match_id')
     if match_id:
         safe_match_id = html.escape(str(match_id), quote=True)
+        details_url = _app_url(f"/matches/{safe_match_id}", metadata)
         links.append(
-            f'            <div class="job-detail"><strong>🔍 <a href="/api/matches/{safe_match_id}">View Details</a></strong></div>\n'
+            f'            <div class="job-detail"><strong>🔍 <a href="{details_url}">View Details</a></strong></div>\n'
         )
 
     return links
+
+
+def _app_url(path: str, metadata: Dict[str, Any]) -> str:
+    """Build an app URL from metadata base_url, falling back to a relative path."""
+    base_url = str(metadata.get("base_url") or "").strip()
+    if not base_url:
+        return html.escape(path, quote=True)
+    return html.escape(urljoin(base_url.rstrip("/") + "/", path.lstrip("/")), quote=True)
 
 
 def _build_email_job_card(job: Dict[str, Any], metadata: Dict[str, Any]) -> str:
@@ -312,7 +350,8 @@ def _build_telegram_job_links(job: Dict[str, Any], metadata: Dict[str, Any]) -> 
     match_id = metadata.get('match_id')
     if match_id:
         safe_match_id = _escape_html(str(match_id))
-        links.append(f"🔍 <a href=\"/api/matches/{safe_match_id}\">View Details</a>")
+        details_url = _app_url(f"/matches/{safe_match_id}", metadata)
+        links.append(f"🔍 <a href=\"{details_url}\">View Details</a>")
 
     return links
 
@@ -393,6 +432,9 @@ class EmailChannel(NotificationChannel):
         return bool(username) == bool(password)
     
     def send(self, recipient: str, subject: str, body: str, metadata: Dict[str, Any]) -> bool:
+        if _is_dry_run_mode():
+            return _log_dry_run_send(self.channel_type, recipient, subject)
+
         if not self.validate_config():
             raise NotificationConfigurationError(
                 "Email not configured — SMTP runtime settings not set"
@@ -548,6 +590,9 @@ class DiscordChannel(NotificationChannel):
             or metadata.get('discord_webhook_url')
             or _configured_channel_recipient('discord')
         )
+
+        if _is_dry_run_mode():
+            return _log_dry_run_send(self.channel_type, webhook_url, subject)
         
         if not webhook_url:
             raise NotificationConfigurationError(
@@ -657,6 +702,9 @@ class TelegramChannel(NotificationChannel):
     
     def send(self, recipient: str, subject: str, body: str, metadata: Dict[str, Any]) -> bool:
         bot_token = get_notification_runtime_config().telegram_bot_token
+
+        if _is_dry_run_mode():
+            return _log_dry_run_send(self.channel_type, recipient, subject)
         
         if not bot_token:
             raise NotificationConfigurationError(
@@ -756,6 +804,9 @@ class WebhookChannel(NotificationChannel):
         """Send webhook POST request."""
         try:
             webhook_url = recipient
+
+            if _is_dry_run_mode():
+                return _log_dry_run_send(self.channel_type, webhook_url, subject)
             
             if not _validate_webhook_url(webhook_url):
                 raise NotificationConfigurationError(

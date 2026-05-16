@@ -470,6 +470,7 @@ class NotificationService:
                     'job_contents': [content.model_dump()],  # Serialize to plain dict for safe JSON/RQ serialization
                     'match_id': match_id,
                     'user_id': user_id,
+                    'base_url': self.base_url,
                 }
                 if task_id:
                     metadata['task_id'] = task_id
@@ -540,6 +541,7 @@ JobScout
                         'min_fit_for_alerts': min_fit_for_alerts,
                         'task_id': task_id,
                         'user_id': user_id,
+                        'base_url': self.base_url,
                     },
                     allow_resend=True,  # Allow daily batch notifications
                     resolve_user_settings=self._should_resolve_user_settings(user_id),

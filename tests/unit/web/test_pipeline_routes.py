@@ -24,6 +24,142 @@ class TestPipelineRoutes(unittest.TestCase):
         self.app.include_router(router)
         self.client = TestClient(self.app, raise_server_exceptions=False)
 
+    @patch("web.backend.routers.pipeline.get_config")
+    def test_fetch_sources_endpoint_returns_seed_websites_and_api_metadata(self, mock_config):
+        from core.config_loader import ScraperConfig
+
+        mock_config.return_value = SimpleNamespace(
+            jobspy=SimpleNamespace(url="http://jobspy:8000"),
+            scrapers=[
+                ScraperConfig(
+                    site_type=["tokyodev"],
+                    description="English-friendly Japan startup roles",
+                    tags=["japan", "startup"],
+                    search_term="",
+                    results_wanted=5,
+                    options={"seniorities": ["junior"]},
+                ),
+                ScraperConfig(
+                    site_type=["indeed"],
+                    search_term="software engineer",
+                    location="Tokyo",
+                    country="Japan",
+                    results_wanted=10,
+                    hours_old=168,
+                ),
+            ],
+        )
+
+        response = self.client.get("/api/pipeline/sources")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["api_based_fetching"])
+        self.assertEqual(data["jobspy_url"], "http://jobspy:8000")
+        self.assertIn("https://www.tokyodev.com/jobs", data["seed_websites"])
+        self.assertEqual(data["total_count"], 2)
+        self.assertEqual(data["filtered_count"], 2)
+        self.assertEqual(data["sources"][0]["display_name"], "TokyoDev")
+        self.assertIn("startup", data["sources"][0]["search_keywords"])
+        self.assertEqual(data["sources"][1]["fetch_mode"], "jobspy_api")
+
+    @patch("web.backend.routers.pipeline.get_config")
+    def test_fetch_sources_endpoint_filters_searchable_metadata(self, mock_config):
+        from core.config_loader import ScraperConfig
+
+        mock_config.return_value = SimpleNamespace(
+            jobspy=SimpleNamespace(url="http://jobspy:8000"),
+            scrapers=[
+                ScraperConfig(
+                    site_type=["tokyodev"],
+                    tags=["japan", "startup"],
+                    search_term="",
+                    results_wanted=5,
+                ),
+                ScraperConfig(
+                    site_type=["indeed"],
+                    search_term="platform engineer",
+                    location="Berlin",
+                    country="Germany",
+                    results_wanted=10,
+                ),
+            ],
+        )
+
+        response = self.client.get("/api/pipeline/sources?search=berlin platform")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["search_query"], "berlin platform")
+        self.assertEqual(data["total_count"], 2)
+        self.assertEqual(data["filtered_count"], 1)
+        self.assertEqual(data["sources"][0]["display_name"], "Indeed")
+        self.assertEqual(data["seed_websites"], ["https://www.indeed.com"])
+
+    @patch("web.backend.routers.pipeline.JobSpyClient")
+    @patch("web.backend.routers.pipeline.get_config")
+    def test_fetch_sources_endpoint_checks_jobspy_health_when_requested(self, mock_config, mock_client_cls):
+        from core.config_loader import JobSpyConfig, ScraperConfig
+
+        client = MagicMock()
+        client.check_health.return_value = {
+            "available": True,
+            "status": "available",
+            "endpoint": "http://jobspy:8000/health",
+            "status_code": 200,
+            "response_time_ms": 12,
+            "error": None,
+        }
+        mock_client_cls.return_value = client
+        mock_config.return_value = SimpleNamespace(
+            jobspy=JobSpyConfig(url="http://jobspy:8000", health_timeout_seconds=0.25),
+            scrapers=[
+                ScraperConfig(site_type=["linkedin"], search_term="software engineer"),
+            ],
+        )
+
+        response = self.client.get("/api/pipeline/sources?include_status=true")
+
+        self.assertEqual(response.status_code, 200)
+        health = response.json()["sources"][0]["api_health"]
+        self.assertTrue(health["available"])
+        self.assertEqual(health["status_code"], 200)
+        client.check_health.assert_called_once_with(timeout_seconds=0.25)
+        client.close.assert_called_once()
+
+    @patch("web.backend.routers.pipeline.get_config")
+    def test_fetch_sources_endpoint_reports_unconfigured_jobspy_status(self, mock_config):
+        from core.config_loader import ScraperConfig
+
+        mock_config.return_value = SimpleNamespace(
+            jobspy=None,
+            scrapers=[ScraperConfig(site_type=["internal_feed"], search_term="platform")],
+        )
+
+        response = self.client.get("/api/pipeline/sources?include_status=true")
+
+        self.assertEqual(response.status_code, 200)
+        health = response.json()["sources"][0]["api_health"]
+        self.assertFalse(health["available"])
+        self.assertEqual(health["status"], "not_configured")
+
+    @patch("web.backend.routers.pipeline.get_config")
+    def test_fetch_sources_endpoint_does_not_require_database_auth(self, mock_config):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from web.backend.routers.pipeline import router
+
+        mock_config.return_value = SimpleNamespace(jobspy=None, scrapers=[])
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app, raise_server_exceptions=False)
+
+        response = client.get("/api/pipeline/sources")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["sources"], [])
+
     @patch("web.backend.routers.pipeline.enqueue_job")
     @patch("web.backend.routers.pipeline.evaluate_resume_eligibility")
     @patch("web.backend.routers.pipeline.get_redis_client", return_value=None)

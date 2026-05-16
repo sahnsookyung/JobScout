@@ -241,6 +241,50 @@ class TestDryRunMode:
         assert _is_dry_run_mode() is True
 
 
+class TestDryRunDelivery:
+    """Dry-run delivery should not require credentials or call external transports."""
+
+    @patch('notification.channels.smtplib.SMTP')
+    def test_email_dry_run_skips_smtp(self, mock_smtp_class):
+        os.environ['NOTIFICATION_DRY_RUN'] = 'true'
+        clear_notification_runtime_config_cache()
+
+        result = EmailChannel().send('user@example.com', 'Subject', 'Body', {})
+
+        assert result is True
+        mock_smtp_class.assert_not_called()
+
+    @patch('notification.channels.requests.post')
+    def test_discord_dry_run_skips_webhook_post(self, mock_post):
+        os.environ['NOTIFICATION_DRY_RUN'] = 'true'
+        clear_notification_runtime_config_cache()
+
+        result = DiscordChannel().send('', 'Subject', 'Body', {})
+
+        assert result is True
+        mock_post.assert_not_called()
+
+    @patch('notification.channels.requests.post')
+    def test_telegram_dry_run_skips_bot_api(self, mock_post):
+        os.environ['NOTIFICATION_DRY_RUN'] = 'true'
+        clear_notification_runtime_config_cache()
+
+        result = TelegramChannel().send('@channel', 'Subject', 'Body', {})
+
+        assert result is True
+        mock_post.assert_not_called()
+
+    @patch('notification.channels.requests.post')
+    def test_webhook_dry_run_skips_url_validation_and_post(self, mock_post):
+        os.environ['NOTIFICATION_DRY_RUN'] = 'true'
+        clear_notification_runtime_config_cache()
+
+        result = WebhookChannel().send('http://127.0.0.1/hook', 'Subject', 'Body', {})
+
+        assert result is True
+        mock_post.assert_not_called()
+
+
 class TestEmailMasking:
     """Test email masking for PII-safe logging."""
 
@@ -947,6 +991,23 @@ class TestEmailChannelUncoveredPaths:
         assert 'javascript' not in html
         assert 'View Details' in html
 
+    def test_email_build_html_body_uses_absolute_match_link(self):
+        """_build_html_body uses base_url for app detail links."""
+        channel = EmailChannel()
+        job_contents = [{
+            'job': {'title': 'Dev', 'company': 'Corp'},
+            'match': {'fit_score': 75},
+            'requirements': {'total': 5, 'matched': 4},
+        }]
+
+        html = channel._build_html_body(
+            'Subject',
+            job_contents,
+            {'match_id': 'mid-1', 'base_url': 'https://jobscout.example'},
+        )
+
+        assert 'https://jobscout.example/matches/mid-1' in html
+
 
 class TestDiscordChannelUncoveredPaths:
     """Cover remaining Discord channel branches."""
@@ -1070,6 +1131,23 @@ class TestTelegramChannelUncoveredPaths:
         }
         msg = channel._build_rich_message('Alert', [job, job], {})
         assert '─' * 10 in msg
+
+    def test_telegram_build_rich_message_uses_absolute_match_link(self):
+        """Telegram details link is usable outside the web app."""
+        channel = TelegramChannel()
+        job_contents = [{
+            'job': {'title': 'Dev', 'company': 'Corp'},
+            'match': {'fit_score': 75},
+            'requirements': {'total': 5, 'matched': 4},
+        }]
+
+        msg = channel._build_rich_message(
+            'Alert',
+            job_contents,
+            {'match_id': 'mid-1', 'base_url': 'https://jobscout.example'},
+        )
+
+        assert 'https://jobscout.example/matches/mid-1' in msg
 
 
 class TestWebhookChannelUncoveredPaths:
