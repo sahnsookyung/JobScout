@@ -102,10 +102,10 @@ jobs:
           docker build -t jobscout-orchestrator:ci-local .
 
           # Start Redis test container on port 6380 using digest-pinned image (policy §11.4).
-          docker run -d --name redis-test -p 6380:6379 \
+          docker run -d --rm --name jobscout-redis-test -p 6380:6379 \
             redis@sha256:8b81dd37ff027bec4e516d41acfbe9fe2460070dc6d4a4570a2ac5b9d59df065
           sleep 2
-          docker exec redis-test redis-cli ping
+          docker exec jobscout-redis-test redis-cli ping
 
       - name: Run backend tests with coverage
         run: |
@@ -141,8 +141,8 @@ jobs:
       - name: Cleanup test containers
         if: always()
         run: |
-          docker stop redis-test || true
-          docker rm redis-test || true
+          docker stop jobscout-redis-test || true
+          docker rm jobscout-redis-test || true
           docker rmi jobscout-orchestrator:ci-local || true
 
       - name: SonarQube Scan

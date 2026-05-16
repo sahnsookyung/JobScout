@@ -21,6 +21,7 @@ x-redis-healthcheck: &redis-healthcheck
 services:
   postgres:
     image: pgvector/pgvector:pg17
+    container_name: ${POSTGRES_CONTAINER_NAME:-jobscout-postgres}
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
@@ -34,6 +35,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    container_name: ${REDIS_CONTAINER_NAME:-jobscout-redis}
     command: redis-server --requirepass ${REDIS_PASSWORD:-jobscoutredis}
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-jobscoutredis}
@@ -47,12 +49,14 @@ services:
   mailpit:
     profiles: ["web"]
     image: axllent/mailpit:latest
+    container_name: ${MAILPIT_CONTAINER_NAME:-jobscout-mailpit}
     ports:
       - "${MAILPIT_SMTP_PORT:-1025}:1025"
       - "${MAILPIT_UI_PORT:-8025}:8025"
 
   jobspy:
     image: sahnsookyung/jobspy:1.0.1
+    container_name: ${JOBSPY_CONTAINER_NAME:-jobscout-jobspy}
     platform: linux/amd64
     ports:
       - "${JOBSPY_PORT:-8000}:8000"
@@ -64,6 +68,7 @@ services:
       start_period: 10s
 
   db-migrate:
+    container_name: ${DB_MIGRATE_CONTAINER_NAME:-jobscout-db-migrate}
     build:
       context: .
       dockerfile: Dockerfile

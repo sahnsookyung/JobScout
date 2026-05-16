@@ -15,6 +15,8 @@ import time
 import argparse
 from pathlib import Path
 
+REDIS_TEST_CONTAINER_NAME = os.getenv("JOBSCOUT_TEST_REDIS_CONTAINER_NAME", "jobscout-redis-test")
+
 
 def run_command(cmd, capture=False):
     """Run a shell command."""
@@ -35,7 +37,7 @@ def start_redis():
     
     # Check if Redis container already exists on test port
     returncode, stdout, _ = run_command(
-        ["docker", "ps", "-q", "-f", "name=redis-test"],
+        ["docker", "ps", "-q", "-f", f"name=^/{REDIS_TEST_CONTAINER_NAME}$"],
         capture=True
     )
     
@@ -45,27 +47,20 @@ def start_redis():
     
     # Check if container exists but is stopped
     returncode, stdout, _ = run_command(
-        ["docker", "ps", "-a", "-q", "-f", "name=redis-test"],
+        ["docker", "ps", "-a", "-q", "-f", f"name=^/{REDIS_TEST_CONTAINER_NAME}$"],
         capture=True
     )
     
     if stdout.strip():
-        print("🔄 Starting existing Redis test container...")
-        returncode, _, _ = run_command(["docker", "start", "redis-test"])
-        if returncode == 0:
-            time.sleep(2)
-            print("✅ Redis test container started on port 6380")
-            return True, test_port
-        else:
-            print("⚠️  Failed to start existing container, removing...")
-            run_command(["docker", "rm", "-f", "redis-test"])
+        print("🧹 Removing stale stopped Redis test container...")
+        run_command(["docker", "rm", "-f", REDIS_TEST_CONTAINER_NAME])
     
     # Start new container on port 6380
     print("📦 Creating new Redis test container on port 6380...")
     returncode, _, _ = run_command([
         "docker", "run", "-d",
         "-p", f"{test_port}:6379",
-        "--name", "redis-test",
+        "--name", REDIS_TEST_CONTAINER_NAME,
         "--rm",  # Auto-remove on stop
         "redis:7-alpine"
     ])
@@ -80,7 +75,7 @@ def start_redis():
     
     # Verify Redis is running
     returncode, stdout, _ = run_command(
-        ["docker", "exec", "redis-test", "redis-cli", "ping"],
+        ["docker", "exec", REDIS_TEST_CONTAINER_NAME, "redis-cli", "ping"],
         capture=True
     )
     
@@ -95,7 +90,7 @@ def start_redis():
 def stop_redis():
     """Stop Redis test container."""
     print("\n🛑 Stopping Redis test container...")
-    returncode, _, _ = run_command(["docker", "stop", "redis-test"])
+    returncode, _, _ = run_command(["docker", "stop", REDIS_TEST_CONTAINER_NAME])
     if returncode == 0:
         print("✅ Redis container stopped")
     else:
@@ -206,7 +201,7 @@ def main():
                 print("\n❌ Failed to start Redis test container")
                 print("\n💡 Solutions:")
                 print("   1. Install Docker: https://docs.docker.com/get-docker/")
-                print("   2. Start Redis manually: docker run -d -p 6380:6379 --name redis-test redis:7-alpine")
+                print(f"   2. Start Redis manually: docker run -d --rm -p 6380:6379 --name {REDIS_TEST_CONTAINER_NAME} redis:7-alpine")
                 print("   3. Run unit tests only: uv run pytest tests/unit/services/test_orchestrator.py -v")
                 sys.exit(1)
     
@@ -230,7 +225,7 @@ def main():
         elif redis_port == "6380" and not redis_started:
             # We used existing test Redis, remind user they can stop it
             print("\n💡 Test Redis container still running on port 6380")
-            print("   To stop it: docker stop redis-test")
+            print(f"   To stop it: docker stop {REDIS_TEST_CONTAINER_NAME}")
 
 
 if __name__ == "__main__":

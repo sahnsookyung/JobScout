@@ -1,7 +1,10 @@
+name: ${COMPOSE_PROJECT_NAME:-jobscout-test}
+
 services:
   postgres-test:
     image: pgvector/pgvector:pg17
-    container_name: jobscout-test-db
+    container_name: ${JOBSCOUT_TEST_DB_CONTAINER_NAME:-jobscout-test-db}
+    restart: "no"
     environment:
       POSTGRES_USER: testuser
       POSTGRES_PASSWORD: testpass
@@ -9,8 +12,9 @@ services:
     ports:
       - "5433:5432"  # Use 5433 to avoid conflict with local PostgreSQL
     volumes:
-      - postgres_test_data:/var/lib/postgresql/data
       - ./tests/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    tmpfs:
+      - /var/lib/postgresql/data:size=512m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U testuser -d jobscout_test"]
       interval: 5s
@@ -20,10 +24,7 @@ services:
     networks:
       - jobscout-test-network
 
-volumes:
-  postgres_test_data:
-    driver: local
-
 networks:
   jobscout-test-network:
+    name: ${JOBSCOUT_TEST_NETWORK_NAME:-jobscout-test-network}
     driver: bridge

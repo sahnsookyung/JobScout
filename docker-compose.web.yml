@@ -7,6 +7,7 @@
 services:
   web-backend:
     profiles: ["web"]
+    container_name: ${WEB_BACKEND_CONTAINER_NAME:-jobscout-web-backend}
     build:
       context: .
       dockerfile: web/backend/Dockerfile
@@ -45,6 +46,7 @@ services:
 
   web-frontend:
     profiles: ["web"]
+    container_name: ${WEB_FRONTEND_CONTAINER_NAME:-jobscout-web-frontend}
     build:
       context: .
       dockerfile: web/frontend/Dockerfile

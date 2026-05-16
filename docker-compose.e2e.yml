@@ -3,6 +3,7 @@
 services:
   mock-llm:
     profiles: ["web"]
+    container_name: ${MOCK_LLM_CONTAINER_NAME:-jobscout-mock-llm}
     build:
       context: .
       dockerfile: tests/services/mock_llm/Dockerfile
