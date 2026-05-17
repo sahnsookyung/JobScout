@@ -109,6 +109,32 @@ def test_bootstrap_returns_empty_when_schema_is_current() -> None:
         assert bootstrap_module.bootstrap_database(engine=engine) == []
 
 
+def test_bootstrap_adopts_matching_legacy_migration_history() -> None:
+    """bootstrap_database should stamp old numbered migrations after snapshot verification."""
+    import database.bootstrap as bootstrap_module
+
+    engine, _ = _mock_engine_with_connection()
+    with (
+        patch.object(bootstrap_module, "_schema_migrations_exists", return_value=True),
+        patch.object(bootstrap_module, "_app_tables_present", return_value={"job_post"}),
+        patch.object(
+            bootstrap_module,
+            "_applied_migrations",
+            return_value={"001_initial_schema.py": "legacy-checksum"},
+        ),
+        patch.object(bootstrap_module, "_upgrade_legacy_schema_to_current") as upgrade_schema,
+        patch.object(bootstrap_module, "_verify_bootstrapped_schema") as verify_schema,
+        patch.object(bootstrap_module, "_stamp_current_schema") as stamp_schema,
+    ):
+        assert bootstrap_module.bootstrap_database(engine=engine) == [
+            bootstrap_module.CURRENT_SCHEMA_VERSION
+        ]
+
+    upgrade_schema.assert_called_once()
+    verify_schema.assert_called_once()
+    stamp_schema.assert_called_once()
+
+
 def test_validate_known_versions_rejects_unknown_schema_versions() -> None:
     import database.bootstrap as bootstrap_module
 

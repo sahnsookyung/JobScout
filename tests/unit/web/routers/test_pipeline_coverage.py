@@ -19,6 +19,8 @@ from uuid import UUID
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+OWNER_ID = "00000000-0000-0000-0000-000000000001"
+
 
 @pytest.fixture
 def pipeline_client():
@@ -26,10 +28,14 @@ def pipeline_client():
     from web.backend.dependencies import get_current_user
     app = FastAPI()
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
-        id=UUID("00000000-0000-0000-0000-000000000001")
+        id=UUID(OWNER_ID)
     )
     app.include_router(router)
     return TestClient(app, raise_server_exceptions=False)
+
+
+def _owned_state(**values):
+    return {"owner_id": OWNER_ID, **values}
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +111,7 @@ class TestValidateTaskId:
 
 class TestGetPipelineStatus:
     def test_returns_status_from_redis(self, pipeline_client):
-        state = {"status": "completed"}
+        state = _owned_state(status="completed")
         with patch.dict("os.environ", {"ORCHESTRATOR_URL": ""}, clear=False), \
              patch("web.backend.routers.pipeline.get_task_state", return_value=state):
             response = pipeline_client.get("/api/pipeline/status/task-123")
@@ -117,6 +123,7 @@ class TestGetPipelineStatus:
         state = {
             "status": "completed",
             "step": "saving_results",
+            "owner_id": OWNER_ID,
             "result": {"matches_count": 10, "saved_count": 8, "execution_time": 2.5}
         }
         with patch.dict("os.environ", {"ORCHESTRATOR_URL": ""}, clear=False), \
@@ -130,7 +137,7 @@ class TestGetPipelineStatus:
         assert data["step"] == "saving_results"
 
     def test_normalizes_redis_step_for_active_status(self, pipeline_client):
-        state = {"status": "running", "step": "matching"}
+        state = _owned_state(status="running", step="matching")
         with patch.dict("os.environ", {"ORCHESTRATOR_URL": ""}, clear=False), \
              patch("web.backend.routers.pipeline.get_task_state", return_value=state):
             response = pipeline_client.get("/api/pipeline/status/task-123")
@@ -139,7 +146,7 @@ class TestGetPipelineStatus:
         assert data["step"] == "vector_matching"
 
     def test_with_error_field(self, pipeline_client):
-        state = {"status": "failed", "error": "something broke"}
+        state = _owned_state(status="failed", error="something broke")
         with patch.dict("os.environ", {"ORCHESTRATOR_URL": ""}, clear=False), \
              patch("web.backend.routers.pipeline.get_task_state", return_value=state):
             response = pipeline_client.get("/api/pipeline/status/task-123")
@@ -282,7 +289,10 @@ class TestPipelineEvents:
 
     def test_returns_200_streaming(self, pipeline_client):
         with patch.dict("os.environ", {"ORCHESTRATOR_URL": ""}, clear=False), \
-             patch("web.backend.routers.pipeline.get_task_state", return_value={"status": "completed"}):
+             patch(
+                 "web.backend.routers.pipeline.get_task_state",
+                 return_value=_owned_state(status="completed"),
+             ):
             response = pipeline_client.get("/api/pipeline/events/task-abc")
         assert response.status_code == 200
 

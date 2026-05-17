@@ -256,6 +256,7 @@ class TestPipelineRoutes(unittest.TestCase):
         mock_get_task_state.return_value = {
             "status": "cancelled",
             "step": "scoring",
+            "owner_id": "00000000-0000-0000-0000-000000000001",
             "result": {
                 "matches_count": 2,
                 "saved_count": 1,
@@ -280,6 +281,7 @@ class TestPipelineRoutes(unittest.TestCase):
             "step": "notifying",
             "upload_id": "upload-old",
             "resume_fingerprint": "fp-old",
+            "owner_id": "00000000-0000-0000-0000-000000000001",
             "stale_due_to_newer_upload": True,
             "latest_upload_id": "upload-new",
             "latest_resume_fingerprint": "fp-new",
@@ -468,10 +470,12 @@ class TestPipelineRoutes(unittest.TestCase):
     @patch.dict("os.environ", {"ORCHESTRATOR_URL": "http://localhost:8084"}, clear=False)
     @patch("web.backend.routers.pipeline._stream_orchestrator_sse")
     @patch("web.backend.routers.pipeline._preflight_task_check", new_callable=AsyncMock)
+    @patch("web.backend.routers.pipeline._active_task_id_for_owner", return_value="task-orchestrator")
     @patch("web.backend.routers.pipeline.get_task_state", return_value=None)
     def test_pipeline_events_falls_back_to_orchestrator_stream_when_redis_missing(
         self,
         _mock_get_task_state,
+        _mock_active_task_id,
         mock_preflight,
         mock_stream,
     ):
@@ -498,10 +502,12 @@ class TestPipelineRoutes(unittest.TestCase):
     )
     @patch("web.backend.routers.pipeline._stream_orchestrator_sse")
     @patch("web.backend.routers.pipeline._preflight_task_check", new_callable=AsyncMock)
+    @patch("web.backend.routers.pipeline._active_task_id_for_owner", return_value="task-orchestrator")
     @patch("web.backend.routers.pipeline.get_task_state", return_value=None)
     def test_pipeline_events_prefers_internal_orchestrator_url_inside_container(
         self,
         _mock_get_task_state,
+        _mock_active_task_id,
         mock_preflight,
         mock_stream,
     ):

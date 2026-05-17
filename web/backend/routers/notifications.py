@@ -217,7 +217,10 @@ def delete_email_override(
 
 
 @router.get("/api/notifications/queue-status", response_model=QueueStatusResponse)
-def get_queue_status(notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)]):
+def get_queue_status(
+    notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)],
+    _user: Annotated[object, Depends(get_current_user)],
+):
     """
     Get the status of the notification queue.
     

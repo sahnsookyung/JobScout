@@ -3,15 +3,20 @@
 Policy endpoints - manage result filtering policies.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from typing import cast
 
+from ..dependencies import get_current_user
 from ..services.policy_service import get_policy_service
 from ..models.requests import PolicyUpdate
 from ..models.responses import PolicyResponse, ScoringWeightsResponse
 from ..config import get_config
 
-router = APIRouter(prefix="/api", tags=["policy"])
+router = APIRouter(
+    prefix="/api",
+    tags=["policy"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.get("/v1/policy", response_model=PolicyResponse)

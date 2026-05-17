@@ -396,6 +396,7 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
 
 @router.get("/sources", response_model=FetchSourcesResponse)
 def get_fetch_sources(
+    _user: Annotated[None, Depends(get_current_user)] = None,
     search: Annotated[
         Optional[str],
         Query(max_length=120, description="Optional whitespace-delimited source search"),
@@ -547,6 +548,38 @@ def _resume_task_belongs_to_owner(state: dict, owner_id) -> bool:
     except Exception:
         logger.warning("Failed to verify resume task ownership for %s", upload_id, exc_info=True)
         return False
+
+
+def _task_state_belongs_to_owner(state: dict, owner_id) -> bool:
+    """Return True when generic task state belongs to the authenticated user."""
+    state_owner = state.get("owner_id")
+    if state_owner is None:
+        return False
+    return serialize_owner_id(state_owner) == serialize_owner_id(owner_id)
+
+
+def _ensure_task_visible_to_owner(state: dict, owner_id) -> None:
+    """Hide task state unless Redis says it belongs to the authenticated owner."""
+    if _task_state_belongs_to_owner(state, owner_id):
+        return
+    _raise_pipeline_error(
+        status_code=404,
+        code=PIPELINE_TASK_NOT_FOUND,
+        message=TASK_NOT_FOUND_OR_EXPIRED_DETAIL,
+    )
+
+
+def _active_task_id_for_owner(owner_id) -> str | None:
+    """Return the active matching task id for an owner when Redis is reachable."""
+    try:
+        redis = get_redis_client()
+        task_id_raw = redis.get(_active_task_key(serialize_owner_id(owner_id)))
+    except Exception:
+        logger.warning("Failed to load active task marker for owner", exc_info=True)
+        return None
+    if not task_id_raw:
+        return None
+    return _decode_redis_value(task_id_raw)
 
 
 def _get_owned_resume_task_state(task_id: str, owner_id) -> dict:
@@ -1079,7 +1112,10 @@ def _stop_matching(user) -> PipelineTaskResponse:
         500: {"model": ApiError, "description": "Internal server error"},
     },
 )
-def get_pipeline_status(task_id: str):
+def get_pipeline_status(
+    task_id: str,
+    user: Annotated[None, Depends(get_current_user)] = None,
+):
     """
     Get the status of a pipeline task.
 
@@ -1089,13 +1125,27 @@ def get_pipeline_status(task_id: str):
     - completed: Pipeline finished successfully
     - failed: Pipeline encountered an error
     """
+    owner_id = resolve_owner_id(user)
     # Check Redis first — task state is written by the scorer-matcher consumer
     try:
         state = get_task_state(task_id)
-        if state:
-            return _build_pipeline_status_response(task_id, state)
     except Exception:
-        pass  # fall through to orchestrator
+        state = None
+    if state:
+        try:
+            _ensure_task_visible_to_owner(state, owner_id)
+        except PipelineApiError as exc:
+            return _pipeline_error_response(exc)
+        return _build_pipeline_status_response(task_id, state)
+
+    if _active_task_id_for_owner(owner_id) != task_id:
+        return _pipeline_error_response(
+            PipelineApiError(
+                status_code=404,
+                code=PIPELINE_TASK_NOT_FOUND,
+                message=TASK_NOT_FOUND_DETAIL,
+            )
+        )
 
     # Proxy to orchestrator for tasks not yet reflected in Redis
     try:
@@ -1460,7 +1510,10 @@ async def _stream_local_task_sse(task_id: str):
         400: {"description": "Invalid task_id format"},
     }
 )
-async def pipeline_events(task_id: str):
+async def pipeline_events(
+    task_id: str,
+    user: Annotated[None, Depends(get_current_user)] = None,
+):
     """
     Server-Sent Events endpoint for real-time pipeline status updates.
 
@@ -1486,6 +1539,11 @@ async def pipeline_events(task_id: str):
         state = None
 
     if state is not None:
+        owner_id = resolve_owner_id(user)
+        try:
+            _ensure_task_visible_to_owner(state, owner_id)
+        except PipelineApiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
         return StreamingResponse(
             _stream_local_task_sse(task_id),
             media_type="text/event-stream",
@@ -1502,6 +1560,10 @@ async def pipeline_events(task_id: str):
         ORCHESTRATOR_URL_ENV,
     )
     if not orchestrator_url:
+        raise HTTPException(status_code=404, detail=TASK_NOT_FOUND_DETAIL)
+
+    owner_id = resolve_owner_id(user)
+    if _active_task_id_for_owner(owner_id) != task_id:
         raise HTTPException(status_code=404, detail=TASK_NOT_FOUND_DETAIL)
 
     await _preflight_task_check(orchestrator_url, task_id)
