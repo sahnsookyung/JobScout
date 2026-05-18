@@ -177,6 +177,12 @@ def _upgrade_legacy_schema_to_current(conn: Connection) -> None:
             CREATE INDEX IF NOT EXISTS idx_msi_run_tier
             ON match_selection_item (selection_run_id, selection_tier);
 
+            CREATE INDEX IF NOT EXISTS idx_notification_owner_last_sent
+            ON notification_tracker (owner_id, last_sent_at);
+
+            CREATE INDEX IF NOT EXISTS idx_notification_owner_channel_last_sent
+            ON notification_tracker (owner_id, channel_type, last_sent_at);
+
             CREATE INDEX IF NOT EXISTS idx_unc_verif_hash_pending
             ON user_notification_channel (verification_token_hash)
             WHERE verification_token_hash IS NOT NULL;

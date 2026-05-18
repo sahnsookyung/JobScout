@@ -92,9 +92,51 @@ class TestNotificationServiceWrapper:
             user_id="user-123",
             priority=NotificationPriority.HIGH,
             event_type="manual_send",
+            metadata=None,
             allow_resend=True,
             skip_dedup=True,
         )
+
+    @patch("web.backend.services.notification_service.NotificationService")
+    @patch("web.backend.services.notification_service.JobRepository")
+    @patch("web.backend.services.notification_service.get_config")
+    def test_send_notification_uses_idempotency_key_for_dedupe(
+        self,
+        mock_get_config,
+        mock_repo_class,
+        mock_notification_service_class,
+    ):
+        db = Mock()
+        service = Mock()
+        service.send_notification.return_value = None
+        mock_notification_service_class.return_value = service
+        mock_repo_class.return_value = Mock()
+        mock_get_config.return_value = SimpleNamespace(
+            notifications=SimpleNamespace(
+                redis_url="redis://example/0",
+                base_url="https://jobscout.app",
+                use_async_queue=True,
+                channels={},
+            )
+        )
+
+        wrapper = NotificationServiceWrapper(db)
+        result = wrapper.send_notification(
+            channel_type="email",
+            recipient="user@example.com",
+            subject="Test",
+            body="Body",
+            user_id="user-123",
+            priority=NotificationPriority.HIGH,
+            idempotency_key="client-key",
+        )
+
+        assert result is None
+        call = service.send_notification.call_args.kwargs
+        assert call["event_type"].startswith("manual_send:")
+        assert call["metadata"]["idempotency_key_digest"] in call["event_type"]
+        assert call["allow_resend"] is False
+        assert call["skip_dedup"] is False
 
     @patch("web.backend.services.notification_service.NotificationService")
     @patch("web.backend.services.notification_service.JobRepository")
@@ -122,6 +164,64 @@ class TestNotificationServiceWrapper:
 
         assert wrapper.get_queue_status() == {"status": "healthy", "queue_length": 2}
         service.get_queue_status.assert_called_once_with()
+
+    @patch("web.backend.services.notification_service.NotificationService")
+    @patch("web.backend.services.notification_service.JobRepository")
+    @patch("web.backend.services.notification_service.get_config")
+    def test_list_deliveries_filters_and_sanitizes_rows(
+        self,
+        mock_get_config,
+        mock_repo_class,
+        mock_notification_service_class,
+    ):
+        row = SimpleNamespace(
+            id="delivery-1",
+            job_match_id=None,
+            channel_type="email",
+            event_type="manual_send:abcdef",
+            recipient="***@example.com",
+            subject="Subject",
+            sent_successfully=True,
+            failure_class=None,
+            error_message=None,
+            first_sent_at=datetime(2026, 5, 18, 0, 0, tzinfo=timezone.utc),
+            last_sent_at=datetime(2026, 5, 18, 0, 1, tzinfo=timezone.utc),
+            send_count=2,
+            event_data={
+                "idempotency_key_digest": "abcdef",
+                "resolved_recipient_masked": "***@example.com",
+                "secret": "must-not-leak",
+            },
+        )
+        scalars = Mock()
+        scalars.all.return_value = [row]
+        db = Mock()
+        db.execute.return_value.scalars.return_value = scalars
+        mock_notification_service_class.return_value = Mock()
+        mock_repo_class.return_value = Mock()
+        mock_get_config.return_value = SimpleNamespace(
+            notifications=SimpleNamespace(
+                redis_url="redis://example/0",
+                base_url="https://jobscout.app",
+                use_async_queue=True,
+                channels={},
+            )
+        )
+
+        wrapper = NotificationServiceWrapper(db)
+        result = wrapper.list_deliveries(
+            SimpleNamespace(id="user-123"),
+            channel_type="email",
+            event_type="manual_send",
+            status="sent",
+        )
+
+        assert result[0]["event_type"] == "manual_send"
+        assert result[0]["recipient_masked"] == "***@example.com"
+        assert result[0]["metadata_summary"] == {
+            "idempotency_key_digest": "abcdef",
+            "resolved_recipient_masked": "***@example.com",
+        }
 
     @patch("web.backend.services.notification_service.UserNotificationSettingsService")
     @patch("web.backend.services.notification_service.NotificationService")

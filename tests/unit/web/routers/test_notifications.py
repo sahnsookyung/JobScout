@@ -66,6 +66,7 @@ class TestNotificationsRouter:
             body="You have a new job match!",
             user_id="user-123",
             priority=NotificationPriority.NORMAL,
+            idempotency_key=None,
         )
 
     def test_send_notification_success_discord(self, client, mock_notification_service):
@@ -90,6 +91,30 @@ class TestNotificationsRouter:
             body="{\"event\": \"match_complete\"}",
             user_id="user-123",
             priority=NotificationPriority.URGENT,
+            idempotency_key=None,
+        )
+
+    def test_send_notification_passes_idempotency_key(self, client, mock_notification_service):
+        mock_notification_service.send_notification.return_value = None
+
+        response = client.post(
+            "/api/notifications/send",
+            json={
+                "type": "email",
+                "recipient": "user@example.com",
+                "subject": "New Job Match",
+                "body": "You have a new job match!",
+                "priority": "normal",
+                "idempotency_key": "client-generated-key",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["notification_id"] is None
+        assert "Duplicate" in response.json()["message"]
+        assert (
+            mock_notification_service.send_notification.call_args.kwargs["idempotency_key"]
+            == "client-generated-key"
         )
 
     def test_send_notification_invalid_channel_returns_400(self, client, mock_notification_service):
@@ -222,6 +247,47 @@ class TestNotificationsRouter:
         assert response.json()["queue_length"] == 5
         assert response.json()["failed_job_count"] == 2
         mock_notification_service.get_queue_status.assert_called_once()
+
+    def test_list_notification_deliveries_success(self, client, mock_notification_service):
+        mock_notification_service.list_deliveries.return_value = [
+            {
+                "id": "00000000-0000-0000-0000-000000000001",
+                "job_match_id": None,
+                "channel_type": "email",
+                "event_type": "manual_send",
+                "recipient_masked": "***@example.com",
+                "subject": "Test",
+                "sent_successfully": True,
+                "failure_class": None,
+                "error_message": None,
+                "first_sent_at": "2026-05-18T00:00:00+00:00",
+                "last_sent_at": "2026-05-18T00:00:00+00:00",
+                "send_count": 1,
+                "metadata_summary": {"idempotency_key_digest": "abc"},
+            }
+        ]
+
+        response = client.get(
+            "/api/v1/notification-deliveries",
+            params={
+                "channel_type": "email",
+                "event_type": "manual_send",
+                "status": "sent",
+                "limit": 25,
+                "offset": 5,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()[0]["recipient_masked"] == "***@example.com"
+        mock_notification_service.list_deliveries.assert_called_once()
+        assert mock_notification_service.list_deliveries.call_args.kwargs == {
+            "channel_type": "email",
+            "event_type": "manual_send",
+            "status": "sent",
+            "limit": 25,
+            "offset": 5,
+        }
 
     def test_send_notification_documents_invalid_priority_response(self, app):
         schema = app.openapi()

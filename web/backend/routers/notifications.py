@@ -5,7 +5,7 @@ Notification endpoints - send and manage notifications.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,7 @@ from ..models.requests import (
 from ..models.responses import (
     NotificationResponse,
     NotificationEmailOverrideResponse,
+    NotificationDeliveryResponse,
     NotificationSettingsResponse,
     NotificationSettingsTestResponse,
     QueueStatusResponse,
@@ -69,6 +70,7 @@ def send_notification(
             body=request.body,
             user_id=str(user.id),
             priority=priority,
+            idempotency_key=request.idempotency_key,
         )
     except NotificationConfigurationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -76,8 +78,38 @@ def send_notification(
     return NotificationResponse(
         success=True,
         notification_id=notification_id,
-        message=f"Notification queued successfully ({request.type})"
+        message=(
+            f"Notification queued successfully ({request.type})"
+            if notification_id
+            else f"Duplicate notification suppressed ({request.type})"
+        )
     )
+
+@router.get("/api/v1/notification-deliveries", response_model=list[NotificationDeliveryResponse])
+def list_notification_deliveries(
+    notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)],
+    user: Annotated[object, Depends(get_current_user)],
+    channel_type: Annotated[str | None, Query(min_length=1)] = None,
+    event_type: Annotated[str | None, Query(min_length=1)] = None,
+    status_filter: Annotated[
+        str | None,
+        Query(alias="status", pattern="^(sent|failed)$"),
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0, le=10_000)] = 0,
+):
+    """Fetch sanitized delivery history for the authenticated user."""
+    return [
+        NotificationDeliveryResponse(**item)
+        for item in notification_service.list_deliveries(
+            user,
+            channel_type=channel_type,
+            event_type=event_type,
+            status=status_filter,
+            limit=limit,
+            offset=offset,
+        )
+    ]
 
 
 @router.get("/api/v1/notification-settings", response_model=NotificationSettingsResponse)

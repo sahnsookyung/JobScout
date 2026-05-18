@@ -255,8 +255,25 @@ class FetchSourcesResponse(BaseModel):
 class NotificationResponse(BaseModel):
     """Response after sending notification."""
     success: bool
-    notification_id: str
+    notification_id: Optional[str] = None
     message: str
+
+class NotificationDeliveryResponse(BaseModel):
+    """Sanitized notification delivery history row."""
+
+    id: str
+    job_match_id: Optional[str] = None
+    channel_type: str
+    event_type: str
+    recipient_masked: str
+    subject: Optional[str] = None
+    sent_successfully: bool
+    failure_class: Optional[str] = None
+    error_message: Optional[str] = None
+    first_sent_at: Optional[str] = None
+    last_sent_at: Optional[str] = None
+    send_count: int = 0
+    metadata_summary: Dict[str, Any] = Field(default_factory=dict)
 
 
 class NotificationChannelSettingsResponse(BaseModel):
