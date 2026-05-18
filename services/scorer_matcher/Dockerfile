@@ -15,7 +15,7 @@ RUN apt-get update && \
 
 # Install dependencies first for layer caching
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project --group web --group fit-models
+RUN uv sync --frozen --no-dev --no-install-project --group web
 
 # Copy application source
 COPY core/ ./core/
@@ -27,7 +27,7 @@ COPY web/backend/models/ ./web/backend/models/
 COPY services/scorer_matcher/ ./services/scorer_matcher/
 COPY config.yaml ./
 
-RUN uv sync --frozen --no-dev --group web --group fit-models
+RUN uv sync --frozen --no-dev --group web
 
 # ---------------------------------------------------------
 # Runtime Stage
