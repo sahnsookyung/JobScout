@@ -102,6 +102,17 @@ services:
       - PREFERENCES_CROSS_ENCODER_ENABLED=true
       - PREFERENCES_CROSS_ENCODER_RUNTIME=heuristic
 
+  scorer-model-bootstrap:
+    command:
+      - python
+      - -c
+      - |
+        from pathlib import Path
+
+        cache_dir = Path("/home/appuser/.cache/huggingface")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        print("[bootstrap] skipped model download for E2E heuristic reranker", flush=True)
+
   notification-worker:
     environment:
       - JOBSCOUT_ENV=test

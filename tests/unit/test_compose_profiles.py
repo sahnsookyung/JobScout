@@ -45,6 +45,16 @@ def test_microservices_all_depend_on_redis_healthy() -> None:
         )
 
 
+def test_e2e_scorer_bootstrap_skips_huggingface_download() -> None:
+    compose = _load_compose("docker-compose.e2e.yml")
+    service = compose["services"]["scorer-model-bootstrap"]
+
+    command = "\n".join(str(part) for part in service["command"])
+
+    assert "snapshot_download" not in command
+    assert "skipped model download for E2E heuristic reranker" in command
+
+
 def test_web_services_support_web_profile() -> None:
     compose = _load_compose("docker-compose.web.yml")
     services = compose["services"]
