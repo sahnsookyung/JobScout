@@ -1,3 +1,11 @@
+function stripTrailingSlashes(value: string): string {
+    let end = value.length;
+    while (end > 0 && value[end - 1] === '/') {
+        end -= 1;
+    }
+    return value.slice(0, end);
+}
+
 export function normalizeAppBasePath(
     rawBasePath: string | undefined = import.meta.env.VITE_APP_BASE_PATH
 ): string {
@@ -7,7 +15,7 @@ export function normalizeAppBasePath(
     }
 
     const withLeadingSlash = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
-    return withLeadingSlash.replace(/\/+$/u, '');
+    return stripTrailingSlashes(withLeadingSlash);
 }
 
 export function withAppBasePath(
