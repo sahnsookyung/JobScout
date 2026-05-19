@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Build stage
-FROM node:20-alpine AS builder
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
 
 WORKDIR /app
 
@@ -15,14 +15,16 @@ RUN npm ci --ignore-scripts
 COPY web/frontend/ ./
 
 # Copy shared folder at correct relative path (../shared from frontend perspective)
-COPY web/shared/ shared
+COPY web/shared/ /shared/
 
 # Build the application
+ARG VITE_APP_BASE_PATH=/
+ENV VITE_APP_BASE_PATH=${VITE_APP_BASE_PATH}
 RUN npm run build
 
 # ---------------------------------------------------------
 # Production stage with Nginx
-FROM nginx:alpine
+FROM nginx:alpine@sha256:dc48b7a872a79fb541ba5081d320b11b549231bc63ba465a7495afaa7d2ebcb8
 
 # Fix ownership of runtime dirs nginx needs to write to and switch listen port
 RUN chown -R nginx:nginx \

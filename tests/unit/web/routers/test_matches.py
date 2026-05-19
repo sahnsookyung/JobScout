@@ -134,6 +134,7 @@ class TestMatchesRouter:
         assert 'matches' in data
         mock_match_service.get_matches.assert_called_once()
         assert mock_match_service.get_matches.call_args.kwargs["owner_id"] == "user-123"
+        assert mock_match_service.get_matches.call_args.kwargs["tenant_id"] is None
 
     def test_get_matches_with_filters(self, client, mock_match_service, mock_policy_service):
         """Test get matches with query filters."""
@@ -159,6 +160,22 @@ class TestMatchesRouter:
         assert call_kwargs['top_k'] == 50
         assert call_kwargs['remote_only'] is True
         assert call_kwargs['show_hidden'] is True
+
+    def test_get_matches_passes_tenant_header(self, client, mock_match_service, mock_policy_service):
+        mock_match_service.get_matches.return_value = []
+        tenant_id = "00000000-0000-4000-8000-000000000201"
+
+        response = client.get('/api/matches?tier=all', headers={"X-Tenant-Id": tenant_id})
+
+        assert response.status_code == 200
+        assert str(mock_match_service.get_matches.call_args.kwargs["tenant_id"]) == tenant_id
+
+    def test_get_matches_rejects_invalid_tenant_header(self, client, mock_match_service):
+        response = client.get('/api/matches', headers={"X-Tenant-Id": "not-a-uuid"})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "X-Tenant-Id must be a UUID."
+        mock_match_service.get_matches.assert_not_called()
 
     def test_get_matches_uses_only_top_k_policy_default(self, client, mock_match_service, mock_policy_service):
         """Test get matches only uses policy defaults for top_k when not specified."""
@@ -323,7 +340,11 @@ class TestMatchesRouter:
         assert response.status_code == 200
         data = response.json()
         assert data['success'] is True
-        mock_match_service.get_match_detail.assert_called_once_with(match_id, owner_id="user-123")
+        mock_match_service.get_match_detail.assert_called_once_with(
+            match_id,
+            owner_id="user-123",
+            tenant_id=None,
+        )
 
     def test_get_match_details_invalid_uuid(self, client):
         """Test get match details with invalid UUID."""
@@ -356,7 +377,11 @@ class TestMatchesRouter:
         assert data['success'] is True
         assert data['match_id'] == match_id
         assert data['is_hidden'] is True
-        mock_match_service.toggle_hidden.assert_called_once_with(match_id, owner_id="user-123")
+        mock_match_service.toggle_hidden.assert_called_once_with(
+            match_id,
+            owner_id="user-123",
+            tenant_id=None,
+        )
 
     def test_toggle_match_hidden_unhide(self, client, mock_match_service):
         """Test toggle match hidden to unhide."""
@@ -416,7 +441,11 @@ class TestMatchesRouter:
         data = response.json()
         assert data['success'] is True
         assert 'explanation' in data
-        mock_match_service.get_match_explanation.assert_called_once_with(match_id, owner_id="user-123")
+        mock_match_service.get_match_explanation.assert_called_once_with(
+            match_id,
+            owner_id="user-123",
+            tenant_id=None,
+        )
 
     def test_get_match_explanation_invalid_uuid(self, client):
         """Test get match explanation with invalid UUID."""

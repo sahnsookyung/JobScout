@@ -113,6 +113,18 @@ def test_get_latest_current_run_for_owner_executes_current_committed_query():
 
     assert repo.get_latest_current_run_for_owner("user-1") is expected
 
+def test_get_latest_current_run_for_owner_can_filter_by_tenant():
+    session = MagicMock()
+    expected = SimpleNamespace(id="run-1")
+    session.execute.return_value.scalar_one_or_none.return_value = expected
+    repo = MatchSelectionRepository(session)
+
+    assert repo.get_latest_current_run_for_owner("user-1", tenant_id="tenant-1") is expected
+
+    sql = str(session.execute.call_args.args[0])
+    assert "job_post" in sql
+    assert "tenant_id" in sql
+
 
 def test_get_committed_run_for_task_executes_task_scoped_query():
     session = MagicMock()
@@ -159,6 +171,17 @@ def test_get_items_for_run_default_tier_filters_to_primary():
 
     sql = str(session.execute.call_args.args[0])
     assert "selection_tier" in sql
+
+def test_get_items_for_run_can_filter_by_tenant():
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.all.return_value = []
+    repo = MatchSelectionRepository(session)
+
+    repo.get_items_for_run("run-1", tier="all", tenant_id="tenant-1")
+
+    sql = str(session.execute.call_args.args[0])
+    assert "job_post" in sql
+    assert "tenant_id" in sql
 
 
 def test_count_items_for_run_by_tier_groups_rows():

@@ -54,6 +54,22 @@ FAIL_EMBEDDING_RESUME_FIXTURE = (
 )
 DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
 E2E_COMPOSE_PROJECT_NAME = "jobscout-e2e"
+E2E_CONTAINER_NAMES = {
+    "POSTGRES_CONTAINER_NAME": "jobscout-e2e-postgres",
+    "REDIS_CONTAINER_NAME": "jobscout-e2e-redis",
+    "MAILPIT_CONTAINER_NAME": "jobscout-e2e-mailpit",
+    "JOBSPY_CONTAINER_NAME": "jobscout-e2e-jobspy",
+    "DB_MIGRATE_CONTAINER_NAME": "jobscout-e2e-db-migrate",
+    "MOCK_LLM_CONTAINER_NAME": "jobscout-e2e-mock-llm",
+    "EXTRACTION_CONTAINER_NAME": "jobscout-e2e-extraction",
+    "EMBEDDINGS_CONTAINER_NAME": "jobscout-e2e-embeddings",
+    "SCORER_MODEL_BOOTSTRAP_CONTAINER_NAME": "jobscout-e2e-scorer-model-bootstrap",
+    "SCORER_MATCHER_CONTAINER_NAME": "jobscout-e2e-scorer-matcher",
+    "NOTIFICATION_WORKER_CONTAINER_NAME": "jobscout-e2e-notification-worker",
+    "ORCHESTRATOR_CONTAINER_NAME": "jobscout-e2e-orchestrator",
+    "WEB_BACKEND_CONTAINER_NAME": "jobscout-e2e-web-backend",
+    "WEB_FRONTEND_CONTAINER_NAME": "jobscout-e2e-web-frontend",
+}
 # Cold boots now include the scorer-model bootstrap + a real local reranker
 # warm-up inference. On unauthenticated HF Hub pulls this can exceed 3 minutes,
 # so the E2E harness needs a larger startup window than the pre-hardening stack.
@@ -95,6 +111,7 @@ def _compose_env() -> dict[str, str]:
     env = os.environ.copy()
     env.update(
         {
+            "COMPOSE_PROJECT_NAME": E2E_COMPOSE_PROJECT_NAME,
             "POSTGRES_PORT": reserve_port(),
             "REDIS_PORT": reserve_port(),
             "JOBSPY_PORT": reserve_port(),
@@ -107,6 +124,7 @@ def _compose_env() -> dict[str, str]:
             "ORCHESTRATOR_PORT": reserve_port(),
             "RESUME_ETL_WAIT_TIMEOUT_SECONDS": "120",
             "LISTENER_TIMEOUT_SECONDS": "120",
+            **E2E_CONTAINER_NAMES,
         }
     )
     return env
@@ -167,9 +185,6 @@ def _compose_down(
         timeout=600,
     )
     project_name = _compose_project_name(compose_args)
-    if not _compose_project_container_ids(project_name):
-        return
-
     _force_remove_compose_project_resources(project_name)
 
 
@@ -195,11 +210,39 @@ def _compose_project_container_ids(project_name: str) -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
+def _compose_project_volume_names(project_name: str) -> list[str]:
+    result = subprocess.run(
+        [
+            "docker",
+            "volume",
+            "ls",
+            "--filter",
+            f"label=com.docker.compose.project={project_name}",
+            "--format",
+            "{{.Name}}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
 def _force_remove_compose_project_resources(project_name: str) -> None:
     container_ids = _compose_project_container_ids(project_name)
     if container_ids:
         subprocess.run(
             ["docker", "rm", "-f", "-v", *container_ids],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    volume_names = _compose_project_volume_names(project_name)
+    if volume_names:
+        subprocess.run(
+            ["docker", "volume", "rm", *volume_names],
             capture_output=True,
             text=True,
             timeout=120,

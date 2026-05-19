@@ -21,7 +21,7 @@ from notification.channels import (
     DiscordChannel, TelegramChannel, EmailChannel, WebhookChannel,
     RateLimitException, NotificationChannel,
     _validate_webhook_url, _sanitize_url, _escape_html, _is_dry_run_mode,
-    _mask_email, _validate_channel_file_path,
+    _mask_email, _matches_url, _validate_channel_file_path,
     NotificationChannelFactory, InAppChannel
 )
 from notification.exceptions import NotificationConfigurationError, TransientNotificationError
@@ -501,39 +501,41 @@ class TestDiscordChannelRichContent:
         mock_post.return_value = mock_response
 
         channel = DiscordChannel()
-        result = channel.send(
-            recipient='',
-            subject='Job Alert',
-            body='',
-            metadata={
-                'discord_webhook_url': 'https://discord.com/api/webhooks/test/test',
-                'job_contents': [
-                    {
-                        'job': {
-                            'title': 'Senior Developer',
-                            'company': 'TechCorp',
-                            'location': 'San Francisco, CA',
-                            'is_remote': True,
-                            'salary': '$150k - $200k',
-                            'job_type': 'Full-time',
-                            'description': 'We are hiring...'
-                        },
-                        'match': {
-                            'fit_score': 88,
-                            'required_coverage': 0.9
-                        },
-                        'requirements': {
-                            'total': 10,
-                            'matched': 9,
-                            'key_matches': ['Python', 'React']
-                        },
-                        'apply_url': 'https://example.com/apply'
-                    }
-                ],
-                'match_id': 'match-123',
-                'created_at': datetime.now(timezone.utc).isoformat()
-            }
-        )
+        with patch('notification.channels._validate_webhook_url', return_value=True):
+            result = channel.send(
+                recipient='',
+                subject='Job Alert',
+                body='',
+                metadata={
+                    'discord_webhook_url': 'https://discord.com/api/webhooks/test/test',
+                    'base_url': 'https://jobscout.example',
+                    'job_contents': [
+                        {
+                            'job': {
+                                'title': 'Senior Developer',
+                                'company': 'TechCorp',
+                                'location': 'San Francisco, CA',
+                                'is_remote': True,
+                                'salary': '$150k - $200k',
+                                'job_type': 'Full-time',
+                                'description': 'We are hiring...'
+                            },
+                            'match': {
+                                'fit_score': 88,
+                                'required_coverage': 0.9
+                            },
+                            'requirements': {
+                                'total': 10,
+                                'matched': 9,
+                                'key_matches': ['Python', 'React']
+                            },
+                            'apply_url': 'https://example.com/apply'
+                        }
+                    ],
+                    'match_id': 'match-123',
+                    'created_at': datetime.now(timezone.utc).isoformat()
+                }
+            )
 
         assert result is True
         call_args = mock_post.call_args[1]['json']
@@ -544,6 +546,10 @@ class TestDiscordChannelRichContent:
         assert embed['title'] == '🎯 Strong match'
         assert 'Senior Developer at TechCorp' == embed['description']
         assert embed['color'] == 0x28A745  # Green for high score
+        assert any(
+            field['value'] == '[View all matches](https://jobscout.example/?tier=all)'
+            for field in embed['fields']
+        )
 
     @patch('notification.channels.requests.post')
     def test_discord_send_rate_limit_exception(self, mock_post):
@@ -555,13 +561,14 @@ class TestDiscordChannelRichContent:
 
         channel = DiscordChannel()
 
-        with pytest.raises(RateLimitException) as exc_info:
-            channel.send(
-                recipient='',
-                subject='Test',
-                body='Body',
-                metadata={'discord_webhook_url': 'https://discord.com/webhook'}
-            )
+        with patch('notification.channels._validate_webhook_url', return_value=True):
+            with pytest.raises(RateLimitException) as exc_info:
+                channel.send(
+                    recipient='',
+                    subject='Test',
+                    body='Body',
+                    metadata={'discord_webhook_url': 'https://discord.com/webhook'}
+                )
 
         assert 'rate limited' in str(exc_info.value).lower()
         assert exc_info.value.retry_after == 30
@@ -1021,12 +1028,13 @@ class TestDiscordChannelUncoveredPaths:
         mock_post.return_value = mock_response
 
         channel = DiscordChannel()
-        result = channel.send(
-            'https://discord.com/api/webhooks/explicit/test',
-            'Subject',
-            'Body',
-            {'discord_webhook_url': 'https://discord.com/api/webhooks/metadata/test'},
-        )
+        with patch('notification.channels._validate_webhook_url', return_value=True):
+            result = channel.send(
+                'https://discord.com/api/webhooks/explicit/test',
+                'Subject',
+                'Body',
+                {'discord_webhook_url': 'https://discord.com/api/webhooks/metadata/test'},
+            )
 
         assert result is True
         assert mock_post.call_args[0][0] == 'https://discord.com/api/webhooks/explicit/test'
@@ -1047,21 +1055,59 @@ class TestDiscordChannelUncoveredPaths:
         mock_post.return_value = mock_response
 
         channel = DiscordChannel()
-        result = channel.send('', 'Alert Subject', 'Alert body', {
-            'discord_webhook_url': 'https://discord.com/api/webhooks/test/test'
-        })
+        with patch('notification.channels._validate_webhook_url', return_value=True):
+            result = channel.send('', 'Alert Subject', 'Alert body', {
+                'discord_webhook_url': 'https://discord.com/api/webhooks/test/test',
+                'matches_url': 'https://jobscout.example/?tier=all',
+            })
         assert result is True
         payload = mock_post.call_args[1]['json']
         assert payload['embeds'][0]['title'] == 'Alert Subject'
+        assert payload['embeds'][0]['fields'][0]['value'] == '[View all matches](https://jobscout.example/?tier=all)'
 
     @patch('notification.channels.requests.post', side_effect=Exception("network error"))
     def test_discord_exception_raises_transient_error(self, mock_post, caplog):
         """DiscordChannel.send raises transient error on exception."""
         channel = DiscordChannel()
-        with pytest.raises(TransientNotificationError):
-            channel.send('', 'Subject', 'Body', {
-                'discord_webhook_url': 'https://discord.com/api/webhooks/test/test'
-            })
+        with patch('notification.channels._validate_webhook_url', return_value=True):
+            with pytest.raises(TransientNotificationError):
+                channel.send('', 'Subject', 'Body', {
+                    'discord_webhook_url': 'https://discord.com/api/webhooks/test/test'
+                })
+
+    @patch('notification.channels.requests.post')
+    def test_discord_rejects_unsafe_webhook_url_before_post(self, mock_post):
+        channel = DiscordChannel()
+        with patch('notification.channels._validate_webhook_url', return_value=False):
+            with pytest.raises(NotificationConfigurationError, match="unsafe or invalid"):
+                channel.send(
+                    'https://discord.com/api/webhooks/private/test',
+                    'Subject',
+                    'Body',
+                    {},
+                )
+        mock_post.assert_not_called()
+
+    @patch('notification.channels.requests.post')
+    def test_discord_rejects_non_https_webhook_url_before_post(self, mock_post):
+        channel = DiscordChannel()
+        with pytest.raises(NotificationConfigurationError, match="unsafe or invalid"):
+            channel.send(
+                'http://discord.com/api/webhooks/private/test',
+                'Subject',
+                'Body',
+                {},
+            )
+        mock_post.assert_not_called()
+
+    def test_matches_url_prefers_explicit_public_url(self):
+        assert _matches_url({
+            'base_url': 'https://jobscout.example',
+            'matches_url': 'https://sookyungahn.com/jobscout/?tier=all',
+        }) == 'https://sookyungahn.com/jobscout/?tier=all'
+
+    def test_matches_url_falls_back_to_base_url(self):
+        assert _matches_url({'base_url': 'https://jobscout.example'}) == 'https://jobscout.example/?tier=all'
 
 
 class TestTelegramChannelUncoveredPaths:

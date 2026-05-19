@@ -18,9 +18,13 @@ class CanonicalResumeSelection:
 def resolve_canonical_resume_selection(
     repo,
     owner_id: Optional[Any],
+    tenant_id: Optional[Any] = None,
 ) -> Optional[CanonicalResumeSelection]:
     selection_owner_id = owner_id or SYSTEM_OWNER_ID
-    current_run = repo.match_selection.get_latest_current_run_for_owner(selection_owner_id)
+    current_run = repo.match_selection.get_latest_current_run_for_owner(
+        selection_owner_id,
+        tenant_id=tenant_id,
+    )
     if current_run is None:
         return None
 

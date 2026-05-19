@@ -6,7 +6,7 @@ Match endpoints - view and manage job matches.
 import uuid
 import logging
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from ..dependencies import get_current_user, get_db
@@ -43,12 +43,28 @@ _VALID_RANKING_MODES = {"preference_first", "fit_first", "balanced"}
 _VALID_TIERS = {"primary", "all"}
 
 
+def _request_tenant_id(request: Request):
+    """Return the cloud-selected tenant ID when the SaaS wrapper set one."""
+    state_tenant_id = getattr(request.state, "tenant_id", None)
+    if state_tenant_id is not None:
+        return state_tenant_id
+
+    tenant_header = request.headers.get("X-Tenant-Id", "").strip()
+    if not tenant_header:
+        return None
+    try:
+        return uuid.UUID(tenant_header)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="X-Tenant-Id must be a UUID.") from exc
+
+
 @router.get(
     "",
     response_model=MatchesResponse,
     responses={422: {"description": "Invalid query parameter"}}
 )
 def get_matches(
+    request: Request,
     db: DbSession,
     user: Annotated[object, Depends(get_current_user)],
     status: Annotated[str, Query(description="Match status for primary-tier matches: active, stale, or all")] = "active",
@@ -117,6 +133,7 @@ def get_matches(
         show_hidden=show_hidden,
         ranking_mode=ranking_mode,
         tier=tier,
+        tenant_id=_request_tenant_id(request),
     )
 
     return MatchesResponse(
@@ -133,6 +150,7 @@ def get_matches(
 )
 def get_match_details(
     match_id: str,
+    request: Request,
     db: DbSession,
     user: Annotated[object, Depends(get_current_user)],
 ):
@@ -143,7 +161,11 @@ def get_match_details(
     """
     validate_uuid(match_id)
     service = MatchService(db)
-    return service.get_match_detail(match_id, owner_id=getattr(user, "id", None))
+    return service.get_match_detail(
+        match_id,
+        owner_id=getattr(user, "id", None),
+        tenant_id=_request_tenant_id(request),
+    )
 
 
 @router.post(
@@ -156,6 +178,7 @@ def get_match_details(
 )
 def toggle_match_hidden(
     match_id: str,
+    request: Request,
     db: DbSession,
     user: Annotated[object, Depends(get_current_user)],
 ):
@@ -167,7 +190,11 @@ def toggle_match_hidden(
     validate_uuid(match_id)
     service = MatchService(db)
     try:
-        new_status = service.toggle_hidden(match_id, owner_id=getattr(user, "id", None))
+        new_status = service.toggle_hidden(
+            match_id,
+            owner_id=getattr(user, "id", None),
+            tenant_id=_request_tenant_id(request),
+        )
     except InvalidMatchOperationException as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     
@@ -185,6 +212,7 @@ def toggle_match_hidden(
 )
 def get_match_explanation(
     match_id: str,
+    request: Request,
     db: DbSession,
     user: Annotated[object, Depends(get_current_user)],
 ):
@@ -195,6 +223,10 @@ def get_match_explanation(
     """
     validate_uuid(match_id)
     service = MatchService(db)
-    result = service.get_match_explanation(match_id, owner_id=getattr(user, "id", None))
+    result = service.get_match_explanation(
+        match_id,
+        owner_id=getattr(user, "id", None),
+        tenant_id=_request_tenant_id(request),
+    )
     
     return MatchExplanationResponse(**result)

@@ -10,7 +10,7 @@ from core.match_selection.contracts import (
     MatchSelectionItemSnapshot,
     MatchSelectionPolicySnapshot,
 )
-from database.models import JobMatch, MatchSelectionItem, MatchSelectionRun
+from database.models import JobMatch, JobPost, MatchSelectionItem, MatchSelectionRun
 from database.repositories.base import BaseRepository
 
 
@@ -34,6 +34,8 @@ class MatchSelectionRepository(BaseRepository):
     def get_latest_current_run_for_owner(
         self,
         owner_id: Any,
+        *,
+        tenant_id: Any | None = None,
     ) -> Optional[MatchSelectionRun]:
         stmt = (
             select(MatchSelectionRun)
@@ -45,6 +47,17 @@ class MatchSelectionRepository(BaseRepository):
             .order_by(MatchSelectionRun.created_at.desc())
             .limit(1)
         )
+        if tenant_id is not None:
+            tenant_item_exists = (
+                select(MatchSelectionItem.id)
+                .join(JobMatch, JobMatch.id == MatchSelectionItem.job_match_id)
+                .join(JobPost, JobPost.id == JobMatch.job_post_id)
+                .where(
+                    MatchSelectionItem.selection_run_id == MatchSelectionRun.id,
+                    JobPost.tenant_id == tenant_id,
+                )
+            )
+            stmt = stmt.where(tenant_item_exists.exists())
         return self.db.execute(stmt).scalar_one_or_none()
 
     def get_committed_run_for_task(
@@ -72,6 +85,7 @@ class MatchSelectionRepository(BaseRepository):
         selection_run_id: Any,
         *,
         tier: Optional[str] = "primary",
+        tenant_id: Any | None = None,
     ) -> list[MatchSelectionItem]:
         """Fetch selection items for a run.
 
@@ -90,6 +104,12 @@ class MatchSelectionRepository(BaseRepository):
         )
         if tier == "primary":
             stmt = stmt.where(MatchSelectionItem.selection_tier == "primary")
+        if tenant_id is not None:
+            stmt = (
+                stmt.join(JobMatch, JobMatch.id == MatchSelectionItem.job_match_id)
+                .join(JobPost, JobPost.id == JobMatch.job_post_id)
+                .where(JobPost.tenant_id == tenant_id)
+            )
         return list(self.db.execute(stmt).scalars().all())
 
     def count_items_for_run_by_tier(

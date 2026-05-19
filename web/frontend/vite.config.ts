@@ -6,8 +6,19 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function normalizeBasePath(rawBasePath: string | undefined): string {
+    const trimmed = rawBasePath?.trim();
+    if (!trimmed || trimmed === '/') {
+        return '/';
+    }
+
+    const withLeadingSlash = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+    return `${withLeadingSlash.replace(/\/+$/u, '')}/`;
+}
+
 export default defineConfig({
     plugins: [react()],
+    base: normalizeBasePath(process.env.VITE_APP_BASE_PATH),
     build: {
         cssMinify: false,
     },

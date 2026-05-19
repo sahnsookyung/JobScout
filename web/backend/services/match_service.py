@@ -79,6 +79,7 @@ class MatchService:
     def get_matches(
         self,
         owner_id: Optional[Any] = None,
+        tenant_id: Optional[Any] = None,
         status: str = "active",
         min_fit: Optional[float] = None,
         top_k: Optional[int] = None,
@@ -120,7 +121,10 @@ class MatchService:
         except ValueError:
             mode = RankingMode(ranking_config.active_default_mode)
 
-        canonical_selection = self._resolve_canonical_selection(owner_id=owner_id)
+        canonical_selection = self._resolve_canonical_selection(
+            owner_id=owner_id,
+            tenant_id=tenant_id,
+        )
         if canonical_selection is None:
             return []
 
@@ -131,6 +135,7 @@ class MatchService:
             remote_only=remote_only,
             show_hidden=show_hidden,
             tier=tier,
+            tenant_id=tenant_id,
         )
 
         # Stage 2: Python rank the primary tier only. Excluded items were
@@ -159,10 +164,15 @@ class MatchService:
     def _resolve_canonical_selection(
         self,
         owner_id: Optional[Any] = None,
+        tenant_id: Optional[Any] = None,
     ):
         try:
             with job_uow() as repo:
-                return resolve_canonical_resume_selection(repo, owner_id)
+                return resolve_canonical_resume_selection(
+                    repo,
+                    owner_id,
+                    tenant_id=tenant_id,
+                )
         except Exception as exc:
             logger.warning("Could not resolve canonical resume fingerprint: %s", exc)
             return None
@@ -176,12 +186,14 @@ class MatchService:
         remote_only: bool,
         show_hidden: bool,
         tier: str = "primary",
+        tenant_id: Optional[Any] = None,
     ) -> List[Any]:
         with job_uow() as repo:
             repo_tier = "primary" if tier == "primary" else "all"
             items = repo.match_selection.get_items_for_run(
                 canonical_selection.selection_run_id,
                 tier=repo_tier,
+                tenant_id=tenant_id,
             )
             pool: List[Any] = []
             for item in items:
@@ -270,6 +282,7 @@ class MatchService:
         self,
         match_id: str,
         owner_id: Optional[Any] = None,
+        tenant_id: Optional[Any] = None,
     ) -> JobMatch:
         query = self.db.query(JobMatch)
         if owner_id is not None:
@@ -277,6 +290,10 @@ class MatchService:
                 StructuredResume,
                 StructuredResume.resume_fingerprint == JobMatch.resume_fingerprint,
             ).filter(StructuredResume.owner_id == owner_id)
+        if tenant_id is not None:
+            query = query.join(JobPost, JobPost.id == JobMatch.job_post_id).filter(
+                JobPost.tenant_id == tenant_id
+            )
 
         match = query.filter(JobMatch.id == match_id).one_or_none()
         if not match:
@@ -287,6 +304,7 @@ class MatchService:
         self,
         match_id: str,
         owner_id: Optional[Any] = None,
+        tenant_id: Optional[Any] = None,
     ) -> MatchDetailResponse:
         """
         Get detailed information about a specific match.
@@ -301,7 +319,11 @@ class MatchService:
             MatchNotFoundException: If match is not found.
             Exception: If a database error occurs (maps to 500).
         """
-        match = self._get_match_for_owner(match_id, owner_id=owner_id)
+        match = self._get_match_for_owner(
+            match_id,
+            owner_id=owner_id,
+            tenant_id=tenant_id,
+        )
 
         try:
             job = self.db.query(JobPost).get(match.job_post_id)
@@ -325,7 +347,12 @@ class MatchService:
             logger.error("Database error fetching match details for %s: %s", _sanitize_log(match_id), e, exc_info=True)
             raise
     
-    def toggle_hidden(self, match_id: str, owner_id: Optional[Any] = None) -> bool:
+    def toggle_hidden(
+        self,
+        match_id: str,
+        owner_id: Optional[Any] = None,
+        tenant_id: Optional[Any] = None,
+    ) -> bool:
         """
         Toggle the hidden status of a match.
         
@@ -349,6 +376,10 @@ class MatchService:
 
         if not match:
             raise MatchNotFoundException(f"Match {match_id} not found")
+        if tenant_id is not None:
+            job = getattr(match, "job_post", None) or self.db.query(JobPost).get(match.job_post_id)
+            if job is None or str(getattr(job, "tenant_id", "")) != str(tenant_id):
+                raise MatchNotFoundException(f"Match {match_id} not found")
 
         if owner_id is not None and self._selection_tier_for_current_owner_run(
             match_id,
@@ -394,6 +425,7 @@ class MatchService:
         self,
         match_id: str,
         owner_id: Optional[Any] = None,
+        tenant_id: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Get explainability details for a specific match.
@@ -407,7 +439,11 @@ class MatchService:
         Raises:
             MatchNotFoundException: If match is not found.
         """
-        match = self._get_match_for_owner(match_id, owner_id=owner_id)
+        match = self._get_match_for_owner(
+            match_id,
+            owner_id=owner_id,
+            tenant_id=tenant_id,
+        )
 
         fit_components = match.fit_components if isinstance(match.fit_components, dict) else {}
         explanation = fit_components.get("fit_explanation")

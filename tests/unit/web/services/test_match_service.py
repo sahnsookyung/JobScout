@@ -127,7 +127,10 @@ class TestThreeStagePipeline:
 
         service.get_matches(top_k=5)
 
-        service._resolve_canonical_selection.assert_called_once_with(owner_id=None)
+        service._resolve_canonical_selection.assert_called_once_with(
+            owner_id=None,
+            tenant_id=None,
+        )
         service._load_rankable_pool.assert_called_once()
         mock_db.query.assert_not_called()
 

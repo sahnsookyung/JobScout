@@ -231,15 +231,16 @@ class TestDiscordChannel:
         mock_post.return_value.raise_for_status = Mock()
         mock_post.return_value.status_code = 204
 
-        result = DiscordChannel().send(
-            recipient='https://discord.com/api/webhooks/test',
-            subject='Test Notification',
-            body='This is a test message',
-            metadata={
-                'discord_webhook_url': 'https://discord.com/api/webhooks/ignored',
-                'score': 85.5, 'company': 'TechCorp',
-            },
-        )
+        with patch('notification.channels._validate_webhook_url', return_value=True):
+            result = DiscordChannel().send(
+                recipient='https://discord.com/api/webhooks/test',
+                subject='Test Notification',
+                body='This is a test message',
+                metadata={
+                    'discord_webhook_url': 'https://discord.com/api/webhooks/ignored',
+                    'score': 85.5, 'company': 'TechCorp',
+                },
+            )
 
         assert result is True
         call_args = mock_post.call_args
@@ -258,32 +259,39 @@ class TestDiscordChannel:
     @patch('notification.channels.requests.post')
     def test_send_network_failure_raises_transient_error(self, mock_post):
         mock_post.side_effect = Exception('Network error')
-        with pytest.raises(TransientNotificationError):
-            DiscordChannel().send(
-                recipient='', subject='Test', body='Body',
-                metadata={'discord_webhook_url': 'https://test.com/webhook'},
-            )
+        with patch('notification.channels._validate_webhook_url', return_value=True):
+            with pytest.raises(TransientNotificationError):
+                DiscordChannel().send(
+                    recipient='', subject='Test', body='Body',
+                    metadata={'discord_webhook_url': 'https://test.com/webhook'},
+                )
 
     @patch('notification.channels.requests.post')
     def test_rate_limit_429_raises_with_retry_after(self, mock_post):
         mock_post.return_value = Mock(
             status_code=429, headers={'Retry-After': '30'}
         )
-        with pytest.raises(RateLimitException) as exc_info:
-            DiscordChannel().send(
-                recipient='test', subject='Test', body='Body',
-                metadata={'discord_webhook_url': 'https://test.com/webhook'},
-            )
+        with patch('notification.channels._validate_webhook_url', return_value=True):
+            with pytest.raises(RateLimitException) as exc_info:
+                DiscordChannel().send(
+                    recipient='https://discord.com/api/webhooks/test/test',
+                    subject='Test',
+                    body='Body',
+                    metadata={'discord_webhook_url': 'https://test.com/webhook'},
+                )
         assert exc_info.value.retry_after == 30
 
     @patch('notification.channels.requests.post')
     def test_rate_limit_429_defaults_to_60_when_no_header(self, mock_post):
         mock_post.return_value = Mock(status_code=429, headers={})
-        with pytest.raises(RateLimitException) as exc_info:
-            DiscordChannel().send(
-                recipient='test', subject='Test', body='Body',
-                metadata={'discord_webhook_url': 'https://test.com/webhook'},
-            )
+        with patch('notification.channels._validate_webhook_url', return_value=True):
+            with pytest.raises(RateLimitException) as exc_info:
+                DiscordChannel().send(
+                    recipient='https://discord.com/api/webhooks/test/test',
+                    subject='Test',
+                    body='Body',
+                    metadata={'discord_webhook_url': 'https://test.com/webhook'},
+                )
         assert exc_info.value.retry_after == 60
 
 
@@ -652,6 +660,35 @@ class TestNotificationService:
         assert mock_process.call_args[0][0]['recipient'] == 'https://config.example/hook'
 
     @patch('notification.service.process_notification_task', return_value='notif-123')
+    def test_send_notification_adds_tenant_bound_matches_url_for_ats_digest(
+        self,
+        mock_process,
+        mock_repo,
+    ):
+        service = NotificationService(
+            mock_repo,
+            base_url='https://sookyungahn.com/jobscout',
+            use_async_queue=False,
+            skip_dedup=True,
+        )
+
+        result = service.send_notification(
+            channel_type='discord',
+            recipient='https://discord.com/api/webhooks/123/token',
+            subject='ATS digest',
+            body='Body',
+            user_id='user1',
+            event_type='ats_sync_digest:integration-1',
+            metadata={'tenant_id': '00000000-0000-4000-8000-000000000201'},
+        )
+
+        metadata = mock_process.call_args[0][0]['metadata']
+        assert result == 'notif-123'
+        assert metadata['matches_url'] == (
+            'https://sookyungahn.com/jobscout/?tier=all&tenant_id=00000000-0000-4000-8000-000000000201'
+        )
+
+    @patch('notification.service.process_notification_task', return_value='notif-123')
     def test_send_notification_uses_object_configured_recipient(self, mock_process, mock_repo):
         service = NotificationService(
             mock_repo,
@@ -782,11 +819,12 @@ class TestNotificationService:
         metadata = mock_send.call_args[1]['metadata']
         assert metadata['task_id'] == 'task-123'
         assert metadata['user_id'] == 'user1'
+        assert metadata['matches_url'].endswith('/?tier=all')
 
     @patch('notification.service.NotificationService.send_notification')
     def test_notify_batch_complete_includes_task_id_metadata(self, mock_send, mock_repo):
         mock_send.return_value = 'notif-123'
-        service = NotificationService(mock_repo)
+        service = NotificationService(mock_repo, base_url='https://jobscout.example')
 
         service.notify_batch_complete(
             user_id='user1',
@@ -803,8 +841,24 @@ class TestNotificationService:
         assert kwargs['metadata']['user_id'] == 'user1'
         assert kwargs['metadata']['alert_eligible_matches'] == 2
         assert kwargs['metadata']['min_fit_for_alerts'] == 70
+        assert kwargs['metadata']['matches_url'] == 'https://jobscout.example/?tier=all'
+        assert 'https://jobscout.example/?tier=all' in kwargs['body']
         assert kwargs['allow_resend'] is True
         assert kwargs['resolve_user_settings'] is False
+
+    def test_matches_url_includes_below_threshold_jobs(self, mock_repo):
+        service = NotificationService(
+            mock_repo,
+            base_url='https://sookyungahn.com/jobscout',
+            use_async_queue=False,
+            skip_dedup=True,
+        )
+
+        assert service._matches_url() == 'https://sookyungahn.com/jobscout/?tier=all'
+        assert (
+            service._matches_url('00000000-0000-4000-8000-000000000201')
+            == 'https://sookyungahn.com/jobscout/?tier=all&tenant_id=00000000-0000-4000-8000-000000000201'
+        )
 
     @patch('notification.service.UserNotificationSettingsService')
     @patch('notification.service.db_session_scope')
