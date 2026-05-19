@@ -149,7 +149,7 @@ jobs:
         # SonarSource/sonarqube-scan-action — SHA-pinned (policy §11.1).
         # Exception: wrapper action used in place of sonar-scanner CLI (policy §7.4).
         # See exception note at top of this file. Reviewed 2026-03-30.
-        uses: SonarSource/sonarqube-scan-action@299e4b793aaa83bf2aba7c9c14bedbb485688ec4
+        uses: SonarSource/sonarqube-scan-action@59db25f34e16620e48ab4bb9e4a5dce155cb5432
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
