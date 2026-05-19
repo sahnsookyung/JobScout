@@ -313,5 +313,40 @@ export interface PipelineStatusResponse {
     stale_message?: string;
 }
 
+export interface FetchSource {
+    site_type: string;
+    display_name: string;
+    seed_url?: string | null;
+    description?: string | null;
+    tags: string[];
+    search_keywords: string[];
+    fetch_mode: string;
+    search_term?: string | null;
+    location?: string | null;
+    country?: string | null;
+    results_wanted: number;
+    hours_old?: number | null;
+    options: Record<string, any>;
+    api_health?: {
+        available: boolean;
+        status: string;
+        endpoint?: string | null;
+        status_code?: number | null;
+        response_time_ms?: number | null;
+        error?: string | null;
+    } | null;
+}
+
+export interface FetchSourcesResponse {
+    success: boolean;
+    jobspy_url?: string | null;
+    api_based_fetching: boolean;
+    search_query?: string | null;
+    total_count: number;
+    filtered_count: number;
+    seed_websites: string[];
+    sources: FetchSource[];
+}
+
 export type MatchStatus = 'active' | 'stale' | 'all';
 export type PolicyPreset = 'strict' | 'balanced' | 'discovery';

@@ -739,6 +739,24 @@
     },
     {
       "access_method": "btree",
+      "definition": "CREATE INDEX idx_notification_owner_channel_last_sent ON public.notification_tracker USING btree (owner_id, channel_type, last_sent_at)",
+      "name": "idx_notification_owner_channel_last_sent",
+      "predicate": null,
+      "reloptions": null,
+      "table": "notification_tracker",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_notification_owner_last_sent ON public.notification_tracker USING btree (owner_id, last_sent_at)",
+      "name": "idx_notification_owner_last_sent",
+      "predicate": null,
+      "reloptions": null,
+      "table": "notification_tracker",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
       "definition": "CREATE INDEX idx_notification_recent ON public.notification_tracker USING btree (dedup_hash, last_sent_at)",
       "name": "idx_notification_recent",
       "predicate": null,

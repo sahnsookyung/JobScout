@@ -10,6 +10,7 @@ web:
 jobspy:
   # JobSpy scraping service URL (can be overridden by JOBSPY_URL env var)
   url: "http://localhost:8000" 
+  health_timeout_seconds: 2.0
 
 etl:
   # Resume processing configuration
@@ -304,6 +305,8 @@ schedule:
 
 scrapers:
   - site_type: ["tokyodev"]
+    description: "English-friendly software roles in Japan."
+    tags: ["japan", "tokyo", "english", "software", "startup"]
     search_term: ""
     results_wanted: 5
     options:
@@ -311,6 +314,8 @@ scrapers:
       seniorities: ["intern", "junior", "intermediate"]
       
   - site_type: ["japandev"]
+    description: "Japan-focused developer roles with language and seniority filters."
+    tags: ["japan", "developer", "english", "visa", "software"]
     search_term: ""
     results_wanted: 5
     options:
@@ -319,6 +324,8 @@ scrapers:
       applicant_locations: ["candidate_location_anywhere"]
 
   - site_type: ["indeed"]
+    description: "Broad JobSpy API job-board search for Tokyo software roles."
+    tags: ["job board", "tokyo", "japan", "api", "software"]
     search_term: "software engineer"
     location: "Tokyo"
     country: "Japan"
@@ -326,6 +333,8 @@ scrapers:
     hours_old: 168 # 24 * 7
   
   - site_type: ["glassdoor"]
+    description: "Company and salary-aware JobSpy API listings for Tokyo roles."
+    tags: ["job board", "tokyo", "company", "salary", "software"]
     search_term: "software engineer"
     location: "Tokyo"
     results_wanted: 5
@@ -333,6 +342,8 @@ scrapers:
     request_timeout: 300 # 5 mins
 
   - site_type: ["linkedin"]
+    description: "Professional network listings through the JobSpy API."
+    tags: ["job board", "tokyo", "professional", "network", "software"]
     search_term: "software engineer"
     location: "Tokyo"
     results_wanted: 5

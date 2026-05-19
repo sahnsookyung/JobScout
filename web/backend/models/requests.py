@@ -31,6 +31,12 @@ class NotificationRequest(BaseModel):
     subject: str = Field(..., description="Notification subject")
     body: str = Field(..., description="Notification body")
     priority: str = Field(default="normal", description="Priority: low, normal, high, urgent")
+    idempotency_key: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="Optional client idempotency key for manual sends",
+    )
 
 
 class NotificationChannelSettingsUpdate(BaseModel):

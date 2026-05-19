@@ -96,7 +96,8 @@ def _make_service(*, user=None, settings=None, channels=None):
 class TestNotificationUserSettingsHelpers:
     def test_mask_helpers(self):
         assert _mask_email("user@example.com") == "***@example.com"
-        assert _mask_webhook("https://example.com/path") == "https://example.com/path"
+        assert _mask_webhook("https://example.com/path") == "https://example.com/***"
+        assert _mask_webhook("https://example.com:8443/path") == "https://example.com:8443/***"
         assert _mask_telegram("12345678") == "chat-***5678"
         assert _mask_channel_recipient("in_app", None) == "In-app inbox"
 
@@ -184,6 +185,8 @@ class TestUserNotificationSettingsService:
             enabled=True,
             configured=True,
             masked_recipient="https://discord.com/api/webhooks/example",
+            secret_ciphertext="enc:https://discord.com/api/webhooks/example",
+            secret_key_version="v1",
             last_test_status="queued",
             config_json={"x": 1},
         )
@@ -198,7 +201,7 @@ class TestUserNotificationSettingsService:
 
         assert snapshot.revision == 3
         assert snapshot.channels["discord"].enabled is True
-        assert snapshot.channels["discord"].masked_recipient.endswith("/example")
+        assert snapshot.channels["discord"].masked_recipient == "https://discord.com/***"
         assert snapshot.channels["discord"].config_json == {"x": 1}
 
     @patch("notification.user_settings._channel_available", return_value=(True, None))
@@ -231,7 +234,7 @@ class TestUserNotificationSettingsService:
         assert settings.min_fit_for_alerts == 85
         assert discord_channel.enabled is True
         assert discord_channel.secret_ciphertext == "enc:https://discord.com/api/webhooks/test"
-        assert discord_channel.masked_recipient.endswith("/test")
+        assert discord_channel.masked_recipient == "https://discord.com/***"
         db.commit.assert_called_once()
         db.refresh.assert_called_once_with(settings)
 
@@ -434,7 +437,7 @@ class TestUserNotificationSettingsService:
         channel.masked_recipient = None
         service._apply_channel_update(user, channel, {})
         assert channel.configured is True
-        assert channel.masked_recipient == "https://hooks.example.com/h"
+        assert channel.masked_recipient == "https://hooks.example.com/***"
 
     def test_apply_channel_update_marks_email_unconfigured_without_recipient(self):
         user = _make_user(email="")

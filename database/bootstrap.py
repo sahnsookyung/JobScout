@@ -25,6 +25,7 @@ CURRENT_SCHEMA_VERSION = "orm_bootstrap"
 CURRENT_SCHEMA_CHECKSUM_SOURCE = SNAPSHOT_PATH
 APP_TABLE_NAMES = set(Base.metadata.tables.keys())
 DEV_BYPASS_IDENTITY_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
+LEGACY_MIGRATION_SUFFIXES = (".py", ".sql")
 
 
 class DatabaseSchemaError(RuntimeError):
@@ -115,6 +116,128 @@ def _validate_applied_checksums(applied: dict[str, str]) -> None:
             "Database schema stamp does not match the current checked-in schema. "
             "Recreate the database and rerun `uv run python -m database.bootstrap`."
         )
+
+
+def _is_legacy_migration_version(version: str) -> bool:
+    prefix, separator, _ = version.partition("_")
+    return (
+        separator == "_"
+        and len(prefix) == 3
+        and prefix.isdigit()
+        and version.endswith(LEGACY_MIGRATION_SUFFIXES)
+    )
+
+
+def _can_adopt_legacy_migration_history(applied: dict[str, str]) -> bool:
+    return (
+        CURRENT_SCHEMA_VERSION not in applied
+        and bool(applied)
+        and all(_is_legacy_migration_version(version) for version in applied)
+    )
+
+
+def _upgrade_legacy_schema_to_current(conn: Connection) -> None:
+    conn.execute(
+        text(
+            """
+            ALTER TABLE job_match_requirement
+            ADD COLUMN IF NOT EXISTS evidence_score NUMERIC(5, 4);
+
+            ALTER TABLE match_selection_item
+            ADD COLUMN IF NOT EXISTS excluded_reason TEXT;
+
+            ALTER TABLE match_selection_item
+            ADD COLUMN IF NOT EXISTS selection_tier TEXT;
+
+            UPDATE match_selection_item
+            SET selection_tier = 'primary'
+            WHERE selection_tier IS NULL;
+
+            ALTER TABLE match_selection_item
+            ALTER COLUMN selection_tier SET DEFAULT 'primary';
+
+            ALTER TABLE match_selection_item
+            ALTER COLUMN selection_tier SET NOT NULL;
+
+            ALTER TABLE user_notification_channel
+            ADD COLUMN IF NOT EXISTS override_address TEXT;
+
+            ALTER TABLE user_notification_channel
+            ADD COLUMN IF NOT EXISTS override_verified_at TIMESTAMPTZ;
+
+            ALTER TABLE user_notification_channel
+            ADD COLUMN IF NOT EXISTS verification_sent_at TIMESTAMPTZ;
+
+            ALTER TABLE user_notification_channel
+            ADD COLUMN IF NOT EXISTS verification_token_expires_at TIMESTAMPTZ;
+
+            ALTER TABLE user_notification_channel
+            ADD COLUMN IF NOT EXISTS verification_token_hash TEXT;
+
+            CREATE INDEX IF NOT EXISTS idx_msi_run_tier
+            ON match_selection_item (selection_run_id, selection_tier);
+
+            CREATE INDEX IF NOT EXISTS idx_notification_owner_last_sent
+            ON notification_tracker (owner_id, last_sent_at);
+
+            CREATE INDEX IF NOT EXISTS idx_notification_owner_channel_last_sent
+            ON notification_tracker (owner_id, channel_type, last_sent_at);
+
+            CREATE INDEX IF NOT EXISTS idx_unc_verif_hash_pending
+            ON user_notification_channel (verification_token_hash)
+            WHERE verification_token_hash IS NOT NULL;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'msi_selection_tier_chk'
+                      AND conrelid = 'match_selection_item'::regclass
+                ) THEN
+                    ALTER TABLE match_selection_item
+                    ADD CONSTRAINT msi_selection_tier_chk
+                    CHECK (selection_tier = ANY (ARRAY['primary'::text, 'excluded'::text]));
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'msi_excluded_reason_chk'
+                      AND conrelid = 'match_selection_item'::regclass
+                ) THEN
+                    ALTER TABLE match_selection_item
+                    ADD CONSTRAINT msi_excluded_reason_chk
+                    CHECK (
+                        (
+                            selection_tier = 'primary'::text
+                            AND excluded_reason IS NULL
+                        )
+                        OR (
+                            selection_tier = 'excluded'::text
+                            AND excluded_reason IS NOT NULL
+                        )
+                    );
+                END IF;
+            END $$;
+            """
+        )
+    )
+
+
+def _adopt_legacy_schema_if_current(conn: Connection, applied: dict[str, str]) -> bool:
+    if not _can_adopt_legacy_migration_history(applied):
+        return False
+
+    _upgrade_legacy_schema_to_current(conn)
+    _verify_bootstrapped_schema(conn)
+    _stamp_current_schema(conn)
+    return True
 
 
 def _validate_schema_state(conn: Connection) -> None:
@@ -252,6 +375,12 @@ def bootstrap_database(*, engine: Engine | None = None) -> list[str]:
                 if not app_tables and not has_schema_table:
                     logger.info("Bootstrapping database schema from ORM metadata")
                     _bootstrap_schema(conn)
+                    conn.commit()
+                    return [CURRENT_SCHEMA_VERSION]
+
+                applied = _applied_migrations(conn)
+                if _adopt_legacy_schema_if_current(conn, applied):
+                    logger.info("Adopted legacy migration history as %s", CURRENT_SCHEMA_VERSION)
                     conn.commit()
                     return [CURRENT_SCHEMA_VERSION]
 

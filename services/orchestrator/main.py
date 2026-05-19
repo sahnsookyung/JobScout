@@ -71,6 +71,8 @@ SCRAPER_RETRY_INTERVALS = [1, 6, 60, 600, 6000]  # Exponential backoff in second
 SCRAPER_EXTRACTION_LIMIT = int(os.getenv("SCRAPER_EXTRACTION_LIMIT", "200"))
 SCRAPER_EMBEDDING_LIMIT = int(os.getenv("SCRAPER_EMBEDDING_LIMIT", "100"))
 BATCH_STAGE_TIMEOUT_SECONDS = float(os.getenv("BATCH_STAGE_TIMEOUT_SECONDS", "600"))
+RECENT_TASK_LIMIT = 10
+RECENT_TASK_SCAN_LIMIT = 50
 
 # Holds references to fire-and-forget background tasks to prevent premature GC.
 _etl_tasks: set = set()
@@ -2021,9 +2023,19 @@ async def _get_active_orchestration_states(
 def _get_recent_tasks(redis_client) -> list | dict:
     """Return status snapshots of the 10 most recent tasks from Redis."""
     try:
-        keys = redis_client.keys("task:*:state")
+        scan_iter = getattr(redis_client, "scan_iter", None)
+        if callable(scan_iter):
+            keys = scan_iter(match="task:*:state", count=RECENT_TASK_SCAN_LIMIT)
+        else:
+            keys = redis_client.keys("task:*:state")
+
         recent = []
-        for key in keys[:10]:
+        for scanned_count, key in enumerate(keys):
+            if scanned_count >= RECENT_TASK_SCAN_LIMIT:
+                break
+            if isinstance(key, bytes):
+                key = key.decode("utf-8", errors="replace")
+
             # expected format: task:<task_id>:state
             task_id = key.removeprefix("task:").removesuffix(":state")
             task_data = get_task_state(task_id)
@@ -2035,6 +2047,8 @@ def _get_recent_tasks(redis_client) -> list | dict:
                         "error": task_data.get("error"),
                     }
                 )
+            if len(recent) >= RECENT_TASK_LIMIT:
+                break
         return recent
     except Exception as e:
         logger.error("Failed to retrieve recent tasks from Redis: %s", e)

@@ -1,9 +1,8 @@
 @import "tailwindcss" source("../");
 
 /* ============================================================
-   JobScout — "A warm workshop for a hard season"
-   Design tokens: warm neutrals, one accent (terracotta), hairline
-   rules, no red, AAA contrast, dark is warm not OLED-cold.
+   JobScout design tokens: quiet neutrals, one clear action accent,
+   hairline rules, strong contrast, and restrained dark mode.
    ============================================================ */
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
@@ -11,36 +10,36 @@
 :root {
     color-scheme: light;
 
-    /* Surfaces — warm paper */
-    --canvas: #F2EEE5;
-    --surface: #FAF6EC;
-    --surface-raised: #FFFBF1;
-    --surface-sunk: #EAE4D5;
+    /* Surfaces */
+    --canvas: #F4F7F2;
+    --surface: #FFFFFF;
+    --surface-raised: #FCFEFC;
+    --surface-sunk: #E8EFE8;
 
-    /* Ink — warm near-black */
-    --ink: #17140F;
-    --ink-soft: #544B3F;
-    --ink-muted: #8A7F6E;
-    --ink-faint: #B3A895;
+    /* Ink */
+    --ink: #15211B;
+    --ink-soft: #3F5149;
+    --ink-muted: #6D7C74;
+    --ink-faint: #A2AEA7;
 
-    /* Rules — hairlines on warm paper */
-    --rule: #DFD7C5;
-    --rule-strong: #CBC1AB;
+    /* Rules */
+    --rule: #D6E0D8;
+    --rule-strong: #BFCBC2;
 
-    /* Accent — terracotta, used ONLY for action */
-    --accent: #C84B31;
-    --accent-ink: #8B2E1C;
-    --accent-hover: #B03E28;
-    --accent-soft: #F1DFD7;
-    --accent-ring: rgba(200, 75, 49, 0.32);
+    /* Accent */
+    --accent: #2F7D6B;
+    --accent-ink: #145344;
+    --accent-hover: #276B5D;
+    --accent-soft: #DDEFEA;
+    --accent-ring: rgba(47, 125, 107, 0.32);
 
-    /* Warn — clay/ochre, never red */
-    --warn: #8A6A24;
-    --warn-soft: #EFE3C4;
+    /* Warn */
+    --warn: #9A6B1F;
+    --warn-soft: #F1E6C9;
 
-    /* Positive — restraint; affirmation is a warmer ink, not a hue */
-    --affirm: #3F5A3C;
-    --affirm-soft: #DFE4D5;
+    /* Positive */
+    --affirm: #3D7047;
+    --affirm-soft: #DFEBDC;
 
     /* Data */
     --data-strong: var(--ink);
@@ -60,31 +59,30 @@
 [data-theme="dark"] {
     color-scheme: dark;
 
-    /* Warm dark — library at night, not void */
-    --canvas: #15130F;
-    --surface: #1E1B16;
-    --surface-raised: #26221C;
-    --surface-sunk: #0E0C09;
+    --canvas: #101611;
+    --surface: #171E19;
+    --surface-raised: #202923;
+    --surface-sunk: #0B100D;
 
-    --ink: #F2EDE2;
-    --ink-soft: #C2B9A8;
-    --ink-muted: #8A8273;
-    --ink-faint: #5C5648;
+    --ink: #EFF6EF;
+    --ink-soft: #C0CEC5;
+    --ink-muted: #829188;
+    --ink-faint: #56645C;
 
-    --rule: #2B2720;
-    --rule-strong: #3A352C;
+    --rule: #27332C;
+    --rule-strong: #35453C;
 
-    --accent: #E06A4E;
-    --accent-ink: #F18A70;
-    --accent-hover: #ED7B5F;
-    --accent-soft: #3A1F17;
-    --accent-ring: rgba(224, 106, 78, 0.36);
+    --accent: #54B79F;
+    --accent-ink: #8DDEC9;
+    --accent-hover: #6BC8B2;
+    --accent-soft: #17332C;
+    --accent-ring: rgba(84, 183, 159, 0.36);
 
-    --warn: #D4A05E;
-    --warn-soft: #3C2E18;
+    --warn: #D6A24B;
+    --warn-soft: #3B2D16;
 
-    --affirm: #9BB595;
-    --affirm-soft: #283023;
+    --affirm: #9BCB9D;
+    --affirm-soft: #243525;
 
     --data-strong: var(--ink);
     --data-bar: var(--ink-soft);

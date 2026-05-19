@@ -1,11 +1,14 @@
 import axios, { type AxiosError } from 'axios';
 
+import { withAppBasePath } from '@/config/publicPath';
 import type { ApiErrorResponse, ApiFieldError } from '@/types/api';
 
 const AUTH_STORAGE_KEY = 'jobscout_auth';
+const TENANT_STORAGE_KEY = 'jobscout_tenant_id';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export const apiClient = axios.create({
-    baseURL: import.meta.env.VITE_API_URL || '/api',
+    baseURL: import.meta.env.VITE_API_URL || withAppBasePath('/api'),
     timeout: 30000,
     withCredentials: true,
     headers: {
@@ -33,6 +36,52 @@ function readStoredToken(): string | null {
     }
 }
 
+function safeLocalStorageGet(key: string): string | null {
+    if (globalThis.window === undefined) {
+        return null;
+    }
+
+    try {
+        return globalThis.localStorage.getItem(key);
+    } catch {
+        return null;
+    }
+}
+
+function safeLocalStorageSet(key: string, value: string): void {
+    if (globalThis.window === undefined) {
+        return;
+    }
+
+    try {
+        globalThis.localStorage.setItem(key, value);
+    } catch {
+        // Storage may be unavailable in privacy-restricted browser contexts.
+    }
+}
+
+function normalizedTenantId(value: string | null): string | null {
+    const candidate = value?.trim();
+    return candidate && UUID_PATTERN.test(candidate) ? candidate : null;
+}
+
+function readSelectedTenantId(): string | null {
+    if (globalThis.window === undefined) {
+        return null;
+    }
+
+    const search = globalThis.window?.location?.search ?? globalThis.location?.search ?? '';
+    const urlTenantId = normalizedTenantId(
+        new URLSearchParams(search).get('tenant_id')
+    );
+    if (urlTenantId) {
+        safeLocalStorageSet(TENANT_STORAGE_KEY, urlTenantId);
+        return urlTenantId;
+    }
+
+    return normalizedTenantId(safeLocalStorageGet(TENANT_STORAGE_KEY));
+}
+
 // Request interceptor for logging
 apiClient.interceptors.request.use(
     (config) => {
@@ -40,6 +89,11 @@ apiClient.interceptors.request.use(
         if (token) {
             config.headers = config.headers ?? {};
             config.headers.Authorization = `Bearer ${token}`;
+        }
+        const tenantId = readSelectedTenantId();
+        if (tenantId) {
+            config.headers = config.headers ?? {};
+            config.headers['X-Tenant-Id'] = tenantId;
         }
         console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`);
         return config;

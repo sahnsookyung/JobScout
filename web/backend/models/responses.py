@@ -209,11 +209,71 @@ class PipelineStatusResponse(BaseModel):
     stale_message: Optional[str] = None
 
 
+class FetchSourceHealthResponse(BaseModel):
+    """Reachability status for the API backing a fetch source."""
+
+    available: bool
+    status: str
+    endpoint: Optional[str] = None
+    status_code: Optional[int] = None
+    response_time_ms: Optional[int] = None
+    error: Optional[str] = None
+
+
+class FetchSourceResponse(BaseModel):
+    """Configured job source exposed to the dashboard."""
+
+    site_type: str
+    display_name: str
+    seed_url: Optional[str] = None
+    description: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    search_keywords: List[str] = Field(default_factory=list)
+    fetch_mode: str = "jobspy_api"
+    search_term: Optional[str] = None
+    location: Optional[str] = None
+    country: Optional[str] = None
+    results_wanted: int = 0
+    hours_old: Optional[int] = None
+    options: Dict[str, Any] = Field(default_factory=dict)
+    api_health: Optional[FetchSourceHealthResponse] = None
+
+
+class FetchSourcesResponse(BaseModel):
+    """Response containing configured seed websites and API fetch metadata."""
+
+    success: bool
+    jobspy_url: Optional[str] = None
+    api_based_fetching: bool
+    search_query: Optional[str] = None
+    total_count: int = 0
+    filtered_count: int = 0
+    seed_websites: List[str] = Field(default_factory=list)
+    sources: List[FetchSourceResponse] = Field(default_factory=list)
+
+
 class NotificationResponse(BaseModel):
     """Response after sending notification."""
     success: bool
-    notification_id: str
+    notification_id: Optional[str] = None
     message: str
+
+class NotificationDeliveryResponse(BaseModel):
+    """Sanitized notification delivery history row."""
+
+    id: str
+    job_match_id: Optional[str] = None
+    channel_type: str
+    event_type: str
+    recipient_masked: str
+    subject: Optional[str] = None
+    sent_successfully: bool
+    failure_class: Optional[str] = None
+    error_message: Optional[str] = None
+    first_sent_at: Optional[str] = None
+    last_sent_at: Optional[str] = None
+    send_count: int = 0
+    metadata_summary: Dict[str, Any] = Field(default_factory=dict)
 
 
 class NotificationChannelSettingsResponse(BaseModel):
@@ -281,6 +341,7 @@ class QueueStatusResponse(BaseModel):
     success: bool
     status: str
     queue_length: int
+    failed_job_count: int = 0
     redis_connected: bool
 
 

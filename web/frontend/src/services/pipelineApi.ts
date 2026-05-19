@@ -1,5 +1,6 @@
 import { apiClient } from './api';
 import type {
+    FetchSourcesResponse,
     PipelineTaskResponse,
     PipelineStatusResponse,
     ResumeEligibilityResponse,
@@ -13,6 +14,11 @@ interface ResumeHashCheckResponse {
     resume_hash: string;
 }
 
+interface FetchSourcesParams {
+    search?: string;
+    includeStatus?: boolean;
+}
+
 export const pipelineApi = {
     runMatching: () =>
         apiClient.post<PipelineTaskResponse>('/pipeline/run-matching'),
@@ -22,6 +28,14 @@ export const pipelineApi = {
 
     getActivePipeline: () =>
         apiClient.get<PipelineStatusResponse | null>('/pipeline/active'),
+
+    getSources: (params: FetchSourcesParams = {}) =>
+        apiClient.get<FetchSourcesResponse>('/pipeline/sources', {
+            params: {
+                search: params.search?.trim() || undefined,
+                include_status: params.includeStatus || undefined,
+            },
+        }),
 
     getResumeEligibility: () =>
         apiClient.get<ResumeEligibilityResponse>('/pipeline/resume-eligibility'),

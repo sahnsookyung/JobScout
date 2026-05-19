@@ -161,6 +161,55 @@ class TestSubmitScrape:
 # _poll_status
 # ---------------------------------------------------------------------------
 
+class TestCheckHealth:
+    def test_check_health_returns_available_for_200(self):
+        client = JobSpyClient(base_url="http://jobspy:8000")
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        client.session = MagicMock()
+        client.session.get.return_value = mock_response
+
+        result = client.check_health(timeout_seconds=0.5)
+
+        assert result["available"] is True
+        assert result["status"] == "available"
+        assert result["endpoint"] == "http://jobspy:8000/health"
+        assert result["status_code"] == 200
+        client.session.get.assert_called_once_with(
+            "http://jobspy:8000/health",
+            timeout=0.5,
+        )
+
+    def test_check_health_reports_http_unavailable(self):
+        client = JobSpyClient(base_url="http://jobspy:8000")
+        mock_response = MagicMock()
+        mock_response.status_code = 503
+        client.session = MagicMock()
+        client.session.get.return_value = mock_response
+
+        result = client.check_health(timeout_seconds=0.5)
+
+        assert result["available"] is False
+        assert result["status"] == "unavailable"
+        assert result["status_code"] == 503
+        assert result["error"] == "HTTP 503"
+
+    def test_check_health_reports_timeout(self):
+        client = JobSpyClient(base_url="http://jobspy:8000")
+        client.session = MagicMock()
+        client.session.get.side_effect = requests.Timeout()
+
+        result = client.check_health(timeout_seconds=0.5)
+
+        assert result["available"] is False
+        assert result["status"] == "timeout"
+        assert result["error"] == "JobSpy health check timed out"
+
+
+# ---------------------------------------------------------------------------
+# _poll_status
+# ---------------------------------------------------------------------------
+
 class TestPollStatus:
     def test_200_returns_json(self):
         client = JobSpyClient()

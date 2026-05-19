@@ -133,6 +133,71 @@ describe('apiClient', () => {
             expect(result.headers.Authorization).toBe('Bearer test-session-token');
         });
 
+        it('should attach and persist tenant id from the notification URL', () => {
+            const setItem = vi.fn();
+            Object.defineProperty(globalThis, 'window', {
+                value: {
+                    location: {
+                        search: '?tier=all&tenant_id=00000000-0000-4000-8000-000000000201',
+                    },
+                },
+                configurable: true,
+            });
+            Object.defineProperty(globalThis, 'localStorage', {
+                value: {
+                    getItem: vi.fn(() => null),
+                    setItem,
+                },
+                configurable: true,
+            });
+            const mockConfig = {
+                method: 'get',
+                url: '/matches',
+                headers: {} as Record<string, string>,
+            };
+
+            const { requestHandler } = getMockHandlers();
+            const result = requestHandler.fulfilled(mockConfig);
+
+            expect(result.headers['X-Tenant-Id']).toBe(
+                '00000000-0000-4000-8000-000000000201'
+            );
+            expect(setItem).toHaveBeenCalledWith(
+                'jobscout_tenant_id',
+                '00000000-0000-4000-8000-000000000201'
+            );
+        });
+
+        it('should attach stored tenant id when the URL has no tenant id', () => {
+            Object.defineProperty(globalThis, 'window', {
+                value: { location: { search: '?tier=all' } },
+                configurable: true,
+            });
+            Object.defineProperty(globalThis, 'localStorage', {
+                value: {
+                    getItem: vi.fn((key: string) =>
+                        key === 'jobscout_tenant_id'
+                            ? '00000000-0000-4000-8000-000000000202'
+                            : null
+                    ),
+                    setItem: vi.fn(),
+                },
+                configurable: true,
+            });
+            const mockConfig = {
+                method: 'get',
+                url: '/matches',
+                headers: {} as Record<string, string>,
+            };
+
+            const { requestHandler } = getMockHandlers();
+            const result = requestHandler.fulfilled(mockConfig);
+
+            expect(result.headers['X-Tenant-Id']).toBe(
+                '00000000-0000-4000-8000-000000000202'
+            );
+        });
+
         it('should skip token lookup when window is unavailable', () => {
             const getItem = vi.fn();
             Object.defineProperty(globalThis, 'window', {

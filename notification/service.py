@@ -30,6 +30,7 @@ import time
 import uuid
 from datetime import timedelta
 from typing import Any, Dict, Optional
+from urllib.parse import urlencode, urljoin
 
 from enum import Enum
 from uuid import UUID
@@ -285,6 +286,14 @@ class NotificationService:
         else:
             logger.warning("RQ not available. Using sync mode.")
             self.async_mode = False
+
+    def _matches_url(self, tenant_id: Any | None = None) -> str:
+        """Return the public matches page URL that includes below-threshold jobs."""
+        base_url = self.base_url.rstrip("/") + "/"
+        params = {"tier": "all"}
+        if tenant_id:
+            params["tenant_id"] = str(tenant_id)
+        return urljoin(base_url, "?" + urlencode(params))
     
     def send_notification(
         self,
@@ -328,6 +337,17 @@ class NotificationService:
             )
         metadata_payload = dict(metadata or {})
         metadata_payload.setdefault("user_id", user_id)
+        metadata_payload.setdefault("base_url", self.base_url)
+        include_matches_url = (
+            job_match_id is not None
+            or event_type in {"new_match_alert", "batch_complete"}
+            or event_type.startswith("ats_sync_digest:")
+        )
+        if include_matches_url:
+            metadata_payload.setdefault(
+                "matches_url",
+                self._matches_url(metadata_payload.get("tenant_id")),
+            )
 
         # Check deduplication with fresh session (avoid stale long-lived session issues)
         if not self.skip_dedup and not skip_dedup:
@@ -453,6 +473,7 @@ class NotificationService:
             priority = NotificationPriority.LOW
 
         subject = f"🎯 {content.job.title} at {content.job.company}"
+        all_matches_url = self._matches_url()
 
         results = {}
 
@@ -470,6 +491,8 @@ class NotificationService:
                     'job_contents': [content.model_dump()],  # Serialize to plain dict for safe JSON/RQ serialization
                     'match_id': match_id,
                     'user_id': user_id,
+                    'base_url': self.base_url,
+                    'matches_url': all_matches_url,
                 }
                 if task_id:
                     metadata['task_id'] = task_id
@@ -509,13 +532,14 @@ class NotificationService:
             channels = ['email']
 
         subject = f"✅ Job matching complete: {alert_eligible_matches} alert-eligible saved matches"
+        all_matches_url = self._matches_url()
         body = f"""Your job matching batch is complete!
 
 Results Summary:
 - Saved top matches: {total_matches}
 - Saved matches above your alert fit floor ({min_fit_for_alerts}%): {alert_eligible_matches}
 
-View all your matches at: {self.base_url}
+View all matches, including below-threshold jobs, at: {all_matches_url}
 
 ---
 JobScout
@@ -540,6 +564,8 @@ JobScout
                         'min_fit_for_alerts': min_fit_for_alerts,
                         'task_id': task_id,
                         'user_id': user_id,
+                        'base_url': self.base_url,
+                        'matches_url': all_matches_url,
                     },
                     allow_resend=True,  # Allow daily batch notifications
                     resolve_user_settings=self._should_resolve_user_settings(user_id),

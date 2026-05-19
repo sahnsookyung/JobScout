@@ -38,6 +38,8 @@ class NotificationTracker(Base):
     __table_args__ = (
         UniqueConstraint('dedup_hash', name='uq_notification_dedup'),
         Index('idx_notification_owner', 'owner_id', 'first_sent_at'),
+        Index('idx_notification_owner_last_sent', 'owner_id', 'last_sent_at'),
+        Index('idx_notification_owner_channel_last_sent', 'owner_id', 'channel_type', 'last_sent_at'),
         Index('idx_notification_recent', 'dedup_hash', 'last_sent_at'),
         Index(
             'idx_notification_failure_class',

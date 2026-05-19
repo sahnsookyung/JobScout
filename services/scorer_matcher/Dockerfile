@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 
-FROM python:3.14-slim AS builder
+FROM python@sha256:7a500125bc50693f2214e842a621440a1b1b9cbb2188f74ab045d29ed2ea5856 AS builder
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv@sha256:c4f5de312ee66d46810635ffc5df34a1973ba753e7241ce3a08ef979ddd7bea5 /uv /uvx /bin/
 
 WORKDIR /app
 
@@ -15,7 +15,7 @@ RUN apt-get update && \
 
 # Install dependencies first for layer caching
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project --group web --group fit-models
+RUN uv sync --frozen --no-dev --no-install-project --group web
 
 # Copy application source
 COPY core/ ./core/
@@ -27,11 +27,11 @@ COPY web/backend/models/ ./web/backend/models/
 COPY services/scorer_matcher/ ./services/scorer_matcher/
 COPY config.yaml ./
 
-RUN uv sync --frozen --no-dev --group web --group fit-models
+RUN uv sync --frozen --no-dev --group web
 
 # ---------------------------------------------------------
 # Runtime Stage
-FROM python:3.14-slim AS runtime
+FROM python@sha256:7a500125bc50693f2214e842a621440a1b1b9cbb2188f74ab045d29ed2ea5856 AS runtime
 
 RUN useradd --create-home --shell /bin/bash appuser
 

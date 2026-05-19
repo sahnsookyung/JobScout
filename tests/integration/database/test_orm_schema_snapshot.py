@@ -11,6 +11,8 @@ command instead of failing silently.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from sqlalchemy import create_engine, text
 
@@ -29,7 +31,7 @@ def _start_pg():
         password=TEST_DB_PASSWORD,
         dbname=TEST_DB_NAME,
         port=5432,
-    )
+    ).with_name(f"jobscout-schema-snapshot-{uuid.uuid4().hex[:12]}")
     postgres.start()
     return postgres
 

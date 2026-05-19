@@ -8,6 +8,7 @@ import { PolicyPanel } from '@/features/config/components/PolicyPanel';
 import { DashboardControls } from '@/features/dashboard/components/DashboardControls';
 import { DashboardHeader } from '@/features/dashboard/components/DashboardHeader';
 import { ToastProvider } from '@/components/ui/Toast';
+import { stripAppBasePath } from '@/config/publicPath';
 
 const queryClient = new QueryClient({
     defaultOptions: {
@@ -52,7 +53,8 @@ function AppContent() {
 }
 
 function App() {
-    const isEmailVerificationRoute = globalThis.location.pathname === '/verify-email';
+    const isEmailVerificationRoute =
+        stripAppBasePath(globalThis.location.pathname) === '/verify-email';
 
     return (
         <QueryClientProvider client={queryClient}>

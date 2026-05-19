@@ -10,6 +10,7 @@ from tests.integration.test_microservices_resume_flow import (
     _clear_active_e2e_cleanup,
     _compose_images_available,
     _compose_down,
+    _compose_project_volume_names,
     _compose_up_with_retries,
     _compose_env,
     _compose_up_args,
@@ -65,6 +66,8 @@ def test_compose_env_reserves_mailpit_ports() -> None:
 
     assert env["MAILPIT_SMTP_PORT"].isdigit()
     assert env["MAILPIT_UI_PORT"].isdigit()
+    assert env["COMPOSE_PROJECT_NAME"] == "jobscout-e2e"
+    assert env["WEB_BACKEND_CONTAINER_NAME"] == "jobscout-e2e-web-backend"
 
 
 def test_env_flag_parses_bool_values(monkeypatch) -> None:
@@ -228,6 +231,10 @@ def test_compose_down_force_removes_leftover_project_containers(monkeypatch) -> 
         "tests.integration.test_microservices_resume_flow._compose_project_container_ids",
         lambda project_name: ["abc123"] if not commands else [],
     )
+    monkeypatch.setattr(
+        "tests.integration.test_microservices_resume_flow._compose_project_volume_names",
+        lambda project_name: ["jobscout-e2e_resume_uploads"],
+    )
 
     def fake_run(command: list[str], **kwargs) -> _Result:
         commands.append(command)
@@ -242,7 +249,40 @@ def test_compose_down_force_removes_leftover_project_containers(monkeypatch) -> 
 
     assert commands == [
         ["docker", "rm", "-f", "-v", "abc123"],
+        ["docker", "volume", "rm", "jobscout-e2e_resume_uploads"],
         ["docker", "network", "rm", "jobscout-e2e_default"],
+    ]
+
+
+def test_compose_project_volume_names_uses_project_label(monkeypatch) -> None:
+    commands: list[list[str]] = []
+
+    class _Result:
+        returncode = 0
+        stdout = "jobscout-e2e_resume_uploads\n"
+
+    def fake_run(command: list[str], **kwargs) -> _Result:
+        commands.append(command)
+        return _Result()
+
+    monkeypatch.setattr(
+        "tests.integration.test_microservices_resume_flow.subprocess.run",
+        fake_run,
+    )
+
+    assert _compose_project_volume_names("jobscout-e2e") == [
+        "jobscout-e2e_resume_uploads"
+    ]
+    assert commands == [
+        [
+            "docker",
+            "volume",
+            "ls",
+            "--filter",
+            "label=com.docker.compose.project=jobscout-e2e",
+            "--format",
+            "{{.Name}}",
+        ]
     ]
 
 

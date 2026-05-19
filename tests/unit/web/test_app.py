@@ -33,6 +33,7 @@ class TestCreateApp:
         assert "/health" in route_paths
         assert "/" in route_paths
         assert "/dashboard" in route_paths
+        assert "/verify-email" in route_paths
 
     def test_static_dir_not_mounted_when_missing(self):
         """No StaticFiles mount added when the static directory doesn't exist."""
@@ -51,6 +52,19 @@ class TestCreateApp:
             app = create_app()
         mount_paths = [getattr(r, 'path', '') for r in app.routes]
         assert any('/static' in p for p in mount_paths)
+
+    def test_frontend_dist_assets_are_mounted_when_built(self, tmp_path):
+        """Vite build assets are mounted when the frontend dist directory exists."""
+        assets_dir = tmp_path / 'web' / 'frontend' / 'dist' / 'assets'
+        assets_dir.mkdir(parents=True)
+        (assets_dir / 'app.js').write_text('console.log("ok")')
+        (tmp_path / 'web' / 'frontend' / 'dist' / 'favicon.svg').write_text('<svg />')
+        from web.backend.app import create_app
+        with patch('web.backend.app.get_project_root', return_value=tmp_path):
+            app = create_app()
+        route_paths = [getattr(r, 'path', '') for r in app.routes]
+        assert "/assets" in route_paths
+        assert "/favicon.svg" in route_paths
 
     def test_exception_handlers_registered(self):
         """ServiceException, HTTPException, and Exception handlers must be registered."""
@@ -103,7 +117,7 @@ class TestReadRootEndpoint:
         from web.backend.app import create_app
         with patch('web.backend.app.get_project_root', return_value=Path('/nonexistent_xyz_abc_123')):
             client = TestClient(create_app())
-        resp = client.get("/")
+            resp = client.get("/")
         assert resp.status_code == 404
         assert b"Dashboard not found" in resp.content
 
@@ -130,14 +144,40 @@ class TestReadRootEndpoint:
         assert resp.status_code == 200
         assert resp.text == html
 
+    def test_frontend_dist_index_is_preferred_when_built(self, tmp_path):
+        (tmp_path / 'web' / 'templates').mkdir(parents=True)
+        (tmp_path / 'web' / 'templates' / 'index.html').write_text('<html><body>Legacy Template</body></html>')
+        (tmp_path / 'web' / 'frontend' / 'dist').mkdir(parents=True)
+        html = '<html><body>Built Frontend</body></html>'
+        (tmp_path / 'web' / 'frontend' / 'dist' / 'index.html').write_text(html)
+        from fastapi.testclient import TestClient
+        from web.backend.app import create_app
+        with patch('web.backend.app.get_project_root', return_value=tmp_path):
+            client = TestClient(create_app())
+            resp = client.get("/")
+        assert resp.status_code == 200
+        assert resp.text == html
+
     def test_dashboard_route_404_when_template_missing(self):
         from fastapi.testclient import TestClient
         from web.backend.app import create_app
         with patch('web.backend.app.get_project_root', return_value=Path('/nonexistent_xyz_abc_123')):
             client = TestClient(create_app())
-        resp = client.get("/dashboard")
+            resp = client.get("/dashboard")
         assert resp.status_code == 404
         assert b"Dashboard not found" in resp.content
+
+    def test_verify_email_route_serves_spa_shell_when_template_exists(self, tmp_path):
+        (tmp_path / 'web' / 'templates').mkdir(parents=True)
+        html = '<html><body>Email Verification Shell</body></html>'
+        (tmp_path / 'web' / 'templates' / 'index.html').write_text(html)
+        from fastapi.testclient import TestClient
+        from web.backend.app import create_app
+        with patch('web.backend.app.get_project_root', return_value=tmp_path):
+            client = TestClient(create_app())
+            resp = client.get("/verify-email#token=abc")
+        assert resp.status_code == 200
+        assert resp.text == html
 
     def test_content_type_is_html(self, tmp_path):
         (tmp_path / 'web' / 'templates').mkdir(parents=True)

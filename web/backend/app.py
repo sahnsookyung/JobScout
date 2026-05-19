@@ -16,6 +16,7 @@ Then open:
 import sys
 import logging
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from pathlib import Path
 
 # Add project root to path
@@ -28,7 +29,7 @@ from core.logging_utils import (
 )
 from core.metrics_router import router as metrics_router
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_config, get_project_root
@@ -57,18 +58,34 @@ logger.debug("NUL log sanitization active=%s", is_nul_filter_active())
 config = get_config()
 
 
+@lru_cache(maxsize=8)
+def _read_dashboard_html(path: str, mtime_ns: int, size: int) -> str:
+    """Read dashboard HTML with a cache key that refreshes when the file changes."""
+    del mtime_ns, size
+    with open(path, 'r', encoding='utf-8') as f:
+        return f.read()
+
+
 def _dashboard_response() -> HTMLResponse:
     """Serve the dashboard shell used by both `/` and `/dashboard`."""
-    html_path = get_project_root() / 'web' / 'templates' / 'index.html'
+    project_root = get_project_root()
+    html_candidates = (
+        project_root / 'web' / 'frontend' / 'dist' / 'index.html',
+        project_root / 'web' / 'templates' / 'index.html',
+    )
 
-    if not html_path.exists():
+    html_path = next((path for path in html_candidates if path.exists()), None)
+
+    if html_path is None:
         return HTMLResponse(
-            content="<h1>Dashboard not found</h1><p>Please ensure web/templates/index.html exists</p>",
-            status_code=404
+            content="<h1>Dashboard not found</h1><p>Please run the frontend build or provide web/templates/index.html</p>",
+            status_code=404,
         )
 
-    with open(html_path, 'r', encoding='utf-8') as f:
-        return HTMLResponse(content=f.read())
+    stat = html_path.stat()
+    return HTMLResponse(
+        content=_read_dashboard_html(str(html_path), stat.st_mtime_ns, stat.st_size)
+    )
 
 
 @asynccontextmanager
@@ -117,6 +134,21 @@ def create_app() -> FastAPI:
     if static_dir.exists():
         _app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+    frontend_dist_dir = get_project_root() / 'web' / 'frontend' / 'dist'
+    frontend_assets_dir = frontend_dist_dir / 'assets'
+    if frontend_assets_dir.exists():
+        _app.mount(
+            "/assets",
+            StaticFiles(directory=str(frontend_assets_dir)),
+            name="frontend-assets",
+        )
+
+    favicon_path = frontend_dist_dir / 'favicon.svg'
+    if favicon_path.exists():
+        @_app.get("/favicon.svg", include_in_schema=False)
+        def read_favicon():
+            return FileResponse(favicon_path)
+
     @_app.get("/", response_class=HTMLResponse)
     def read_root():
         """Serve the main dashboard HTML page."""
@@ -125,6 +157,11 @@ def create_app() -> FastAPI:
     @_app.get("/dashboard", response_class=HTMLResponse)
     def read_dashboard():
         """Serve the dashboard shell from an explicit dashboard URL."""
+        return _dashboard_response()
+
+    @_app.get("/verify-email", response_class=HTMLResponse)
+    def read_verify_email():
+        """Serve the dashboard shell for the React email verification route."""
         return _dashboard_response()
 
     @_app.get("/health")

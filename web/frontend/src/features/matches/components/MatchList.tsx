@@ -17,11 +17,16 @@ function degradedSummary(reason: string): string {
     return `Fallback scoring is active (${reason}).`;
 }
 
+function initialShowExcluded(): boolean {
+    const params = new URLSearchParams(globalThis.location.search);
+    return params.get('tier') === 'all' || params.get('showExcluded') === 'true';
+}
+
 export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
     const [status, setStatus] = useState<MatchStatus>('active');
     const [remoteOnly, setRemoteOnly] = useState(false);
     const [rankingMode, setRankingMode] = useState<RankingMode>('balanced');
-    const [showExcluded, setShowExcluded] = useState(false);
+    const [showExcluded, setShowExcluded] = useState(initialShowExcluded);
     const [showHidden, setShowHidden] = useState(() => {
         const saved = localStorage.getItem('jobscout_show_hidden');
         return saved === 'true';

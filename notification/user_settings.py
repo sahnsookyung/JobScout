@@ -17,6 +17,7 @@ from notification.channels import (
     EmailChannel,
     NotificationChannelFactory,
     TelegramChannel,
+    _is_dry_run_mode,
     _validate_webhook_url,
 )
 from notification.exceptions import NotificationConfigurationError
@@ -41,7 +42,10 @@ def _mask_webhook(url: str | None) -> str | None:
     parsed = urllib.parse.urlparse(url)
     if not parsed.scheme or not parsed.hostname:
         return None
-    return f"{parsed.scheme}://{parsed.hostname}{parsed.path}"
+    host = parsed.hostname
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    return f"{parsed.scheme}://{host}/***"
 
 
 def _mask_telegram(chat_id: str | None) -> str | None:
@@ -93,6 +97,7 @@ def _channel_available(
     user: User,
     settings_channel: UserNotificationChannel | None = None,
 ) -> tuple[bool, Optional[str]]:
+    dry_run = _is_dry_run_mode()
     if channel_type == "email":
         recipient = _resolved_email_recipient(user, settings_channel)
         if not recipient:
@@ -102,12 +107,12 @@ def _channel_available(
             or getattr(settings_channel, "override_verified_at", None) is None
         ) and _auth_mode() != DEV_BYPASS_AUTH_MODE and user.email_verified_at is None:
             return False, "A verified account email is required for email notifications"
-        if not EmailChannel().validate_config():
+        if not dry_run and not EmailChannel().validate_config():
             return False, "SMTP is not configured in this runtime"
         return True, None
 
     if channel_type == "telegram":
-        if not TelegramChannel().validate_config():
+        if not dry_run and not TelegramChannel().validate_config():
             return False, "Telegram bot credentials are not configured"
         return True, None
 
@@ -430,6 +435,15 @@ class UserNotificationSettingsService:
             override_address = getattr(settings_channel, "override_address", None)
             override_status = _email_override_status(settings_channel)
             override_verified_at = getattr(settings_channel, "override_verified_at", None)
+            if channel_type in SECRET_CHANNELS and settings_channel.secret_ciphertext:
+                try:
+                    decrypted = self.encryption_provider.decrypt(
+                        settings_channel.secret_ciphertext,
+                        settings_channel.secret_key_version,
+                    )
+                    masked_recipient = _mask_channel_recipient(channel_type, decrypted, user)
+                except Exception:
+                    masked_recipient = None
 
         if channel_type == "email":
             configured = bool(_resolved_email_recipient(user, settings_channel))

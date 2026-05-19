@@ -7,10 +7,11 @@ import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from core.metrics import record_email_event
-from database.models import User, UserNotificationChannel
+from database.models import NotificationTracker, User, UserNotificationChannel
 from notification import NotificationService, NotificationPriority
 from notification.exceptions import NotificationConfigurationError
 from notification.user_settings import (
@@ -88,7 +89,8 @@ class NotificationServiceWrapper:
         body: str,
         user_id: str,
         priority: NotificationPriority = NotificationPriority.NORMAL,
-    ) -> str:
+        idempotency_key: str | None = None,
+    ) -> str | None:
         """
         Queue a notification for sending.
         
@@ -109,6 +111,16 @@ class NotificationServiceWrapper:
                 f"Unsupported notification channel '{channel_type}'",
                 failure_class="channel_unsupported",
             )
+        event_type = "manual_send"
+        metadata = None
+        skip_dedup = True
+        allow_resend = True
+        if idempotency_key:
+            digest = hashlib.sha256(idempotency_key.strip().encode("utf-8")).hexdigest()[:32]
+            event_type = f"manual_send:{digest}"
+            metadata = {"idempotency_key_digest": digest}
+            skip_dedup = False
+            allow_resend = False
         return self.notification_service.send_notification(
             channel_type=channel_type,
             recipient=recipient,
@@ -116,10 +128,89 @@ class NotificationServiceWrapper:
             body=body,
             user_id=user_id,
             priority=priority,
-            event_type="manual_send",
-            allow_resend=True,
-            skip_dedup=True,
+            event_type=event_type,
+            metadata=metadata,
+            allow_resend=allow_resend,
+            skip_dedup=skip_dedup,
         )
+
+    @staticmethod
+    def _public_event_type(event_type: str) -> str:
+        return "manual_send" if event_type.startswith("manual_send:") else event_type
+
+    @staticmethod
+    def _metadata_summary(metadata: Dict[str, Any] | None) -> Dict[str, Any]:
+        if not isinstance(metadata, dict):
+            return {}
+        allowed_keys = {
+            "alert_eligible_matches",
+            "channel_type",
+            "company",
+            "fit_score",
+            "idempotency_key_digest",
+            "job_title",
+            "match_id",
+            "resolved_recipient_masked",
+            "settings_revision",
+            "task_id",
+            "test_notification",
+            "total_matches",
+        }
+        return {key: metadata[key] for key in sorted(allowed_keys & set(metadata))}
+
+    @classmethod
+    def _delivery_to_response(cls, delivery: NotificationTracker) -> Dict[str, Any]:
+        return {
+            "id": str(delivery.id),
+            "job_match_id": str(delivery.job_match_id) if delivery.job_match_id else None,
+            "channel_type": delivery.channel_type,
+            "event_type": cls._public_event_type(delivery.event_type),
+            "recipient_masked": delivery.recipient,
+            "subject": delivery.subject,
+            "sent_successfully": bool(delivery.sent_successfully),
+            "failure_class": delivery.failure_class,
+            "error_message": delivery.error_message,
+            "first_sent_at": delivery.first_sent_at.isoformat() if delivery.first_sent_at else None,
+            "last_sent_at": delivery.last_sent_at.isoformat() if delivery.last_sent_at else None,
+            "send_count": int(delivery.send_count or 0),
+            "metadata_summary": cls._metadata_summary(delivery.event_data),
+        }
+
+    def list_deliveries(
+        self,
+        user,
+        *,
+        channel_type: str | None = None,
+        event_type: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Dict[str, Any]]:
+        """Return sanitized notification delivery history for a user."""
+        stmt = select(NotificationTracker).where(NotificationTracker.owner_id == user.id)
+        if channel_type:
+            stmt = stmt.where(NotificationTracker.channel_type == channel_type.lower())
+        if event_type:
+            normalized_event_type = event_type.strip()
+            if normalized_event_type == "manual_send":
+                stmt = stmt.where(
+                    or_(
+                        NotificationTracker.event_type == "manual_send",
+                        NotificationTracker.event_type.like("manual_send:%"),
+                    )
+                )
+            else:
+                stmt = stmt.where(NotificationTracker.event_type == normalized_event_type)
+        if status == "sent":
+            stmt = stmt.where(NotificationTracker.sent_successfully.is_(True))
+        elif status == "failed":
+            stmt = stmt.where(NotificationTracker.sent_successfully.is_(False))
+        rows = self.db.execute(
+            stmt.order_by(NotificationTracker.last_sent_at.desc())
+            .limit(limit)
+            .offset(offset)
+        ).scalars().all()
+        return [self._delivery_to_response(row) for row in rows]
 
     def get_settings(self, user) -> Dict[str, Any]:
         """Return effective per-user notification settings."""

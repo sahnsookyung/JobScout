@@ -17,12 +17,16 @@ DEFAULT_CONFIG_FILENAME = "config.yaml"
 
 class ScraperConfig(BaseModel):
     site_type: List[str]
+    display_name: Optional[str] = None
+    seed_url: Optional[str] = None
+    description: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
     search_term: Optional[str] = None
     location: Optional[str] = None
     country: Optional[str] = None
     results_wanted: int = 10
     hours_old: Optional[int] = None
-    options: Optional[Dict[str, Any]] = {}
+    options: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ScheduleConfig(BaseModel):
@@ -38,6 +42,7 @@ class JobSpyConfig(BaseModel):
     poll_interval_seconds: int = 10
     job_timeout_seconds: int = 300
     request_timeout_seconds: int = 30
+    health_timeout_seconds: float = 2.0
 
 
 class LlmConfig(BaseModel):

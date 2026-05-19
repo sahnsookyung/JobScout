@@ -1863,7 +1863,7 @@ class TestDiagnosticHelpers:
         from services.orchestrator.main import _get_recent_tasks
 
         mock_redis = Mock()
-        mock_redis.keys.return_value = ["task:task-1:state"]
+        mock_redis.scan_iter.return_value = iter([b"task:task-1:state"])
 
         mock_task_data = {"status": "completed", "error": None}
 
@@ -1872,14 +1872,18 @@ class TestDiagnosticHelpers:
         ):
             result = _get_recent_tasks(mock_redis)
 
-        assert isinstance(result, list)
+        assert result == [
+            {"task_id": "task-1", "status": "completed", "error": None}
+        ]
+        mock_redis.scan_iter.assert_called_once_with(match="task:*:state", count=50)
+        mock_redis.keys.assert_not_called()
 
     def test_get_recent_tasks_exception(self):
         """Test _get_recent_tasks with exception."""
         from services.orchestrator.main import _get_recent_tasks
 
         mock_redis = Mock()
-        mock_redis.keys.side_effect = Exception("Redis error")
+        mock_redis.scan_iter.side_effect = Exception("Redis error")
 
         result = _get_recent_tasks(mock_redis)
 
