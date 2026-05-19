@@ -177,6 +177,11 @@ class TestMatchesRouter:
         assert response.json()["detail"] == "X-Tenant-Id must be a UUID."
         mock_match_service.get_matches.assert_not_called()
 
+    def test_get_matches_documents_tenant_header_validation(self, app):
+        responses = app.openapi()["paths"]["/api/matches"]["get"]["responses"]
+
+        assert responses["400"]["description"] == "Invalid tenant header"
+
     def test_get_matches_uses_only_top_k_policy_default(self, client, mock_match_service, mock_policy_service):
         """Test get matches only uses policy defaults for top_k when not specified."""
         mock_match_service.get_matches.return_value = []

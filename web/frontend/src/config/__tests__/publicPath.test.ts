@@ -6,7 +6,9 @@ import {
 
 describe('public path helpers', () => {
     it('normalizes empty and root base paths to an empty prefix', () => {
-        expect(normalizeAppBasePath(undefined)).toBe('');
+        let unsetBasePath: string | undefined;
+
+        expect(normalizeAppBasePath(unsetBasePath)).toBe('');
         expect(normalizeAppBasePath('')).toBe('');
         expect(normalizeAppBasePath('/')).toBe('');
     });

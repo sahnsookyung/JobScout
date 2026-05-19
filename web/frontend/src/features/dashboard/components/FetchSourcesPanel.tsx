@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Globe2, MapPin, Search, Server } from 'lucide-react';
 
 import { pipelineApi } from '@/services/pipelineApi';
@@ -173,6 +174,30 @@ export function FetchSourcesPanel() {
     const emptyMessage = sourceSearch.trim()
         ? 'No sources match that search.'
         : 'No fetch sources configured.';
+    let sourcesContent: ReactNode;
+    if (isLoading) {
+        sourcesContent = (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {[0, 1, 2].map((item) => (
+                    <div key={item} className="h-24 animate-pulse border border-rule bg-surface-sunk" />
+                ))}
+            </div>
+        );
+    } else if (sources.length === 0) {
+        sourcesContent = (
+            <div className="border border-dashed border-rule bg-surface px-4 py-5 text-[13px] text-ink-muted">
+                {emptyMessage}
+            </div>
+        );
+    } else {
+        sourcesContent = (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {sources.map((source, index) => (
+                    <SourceCard key={`${source.site_type}-${index}`} source={source} index={index} />
+                ))}
+            </div>
+        );
+    }
 
     return (
         <section className="border-t border-rule pt-6">
@@ -206,23 +231,7 @@ export function FetchSourcesPanel() {
                 </div>
             </div>
 
-            {isLoading ? (
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    {[0, 1, 2].map((item) => (
-                        <div key={item} className="h-24 animate-pulse border border-rule bg-surface-sunk" />
-                    ))}
-                </div>
-            ) : sources.length === 0 ? (
-                <div className="border border-dashed border-rule bg-surface px-4 py-5 text-[13px] text-ink-muted">
-                    {emptyMessage}
-                </div>
-            ) : (
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    {sources.map((source, index) => (
-                        <SourceCard key={`${source.site_type}-${index}`} source={source} index={index} />
-                    ))}
-                </div>
-            )}
+            {sourcesContent}
         </section>
     );
 }

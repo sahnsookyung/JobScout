@@ -61,7 +61,10 @@ def _request_tenant_id(request: Request):
 @router.get(
     "",
     response_model=MatchesResponse,
-    responses={422: {"description": "Invalid query parameter"}}
+    responses={
+        400: {"description": "Invalid tenant header"},
+        422: {"description": "Invalid query parameter"},
+    }
 )
 def get_matches(
     request: Request,
