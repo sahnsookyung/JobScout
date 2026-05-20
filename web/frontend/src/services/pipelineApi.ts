@@ -1,5 +1,8 @@
 import { apiClient } from './api';
 import type {
+    AtsSourceCreateRequest,
+    AtsSourceDiscoveryCandidate,
+    AtsSourceUpdateRequest,
     CloudIntegration,
     FetchSourcesResponse,
     PipelineTaskResponse,
@@ -9,6 +12,8 @@ import type {
     ResumeStatusResponse,
     ResumeUploadResponse,
     SourceFetchResponse,
+    SyncRunResponse,
+    UserAtsSource,
 } from '@/types/api';
 
 interface ResumeHashCheckResponse {
@@ -49,6 +54,26 @@ export const pipelineApi = {
         apiClient.get<CloudIntegration[]>('/cloud/integrations', {
             validateStatus: (status) => status < 500,
         }),
+
+    getUserAtsSources: () =>
+        apiClient.get<UserAtsSource[]>('/cloud/integrations/sources', {
+            validateStatus: (status) => status < 500,
+        }),
+
+    discoverAtsSources: (payload: AtsSourceCreateRequest) =>
+        apiClient.post<AtsSourceDiscoveryCandidate[]>('/cloud/integrations/sources/discover', payload),
+
+    createUserAtsSource: (payload: AtsSourceCreateRequest) =>
+        apiClient.post<UserAtsSource>('/cloud/integrations/sources', payload),
+
+    updateUserAtsSource: (sourceId: string, payload: AtsSourceUpdateRequest) =>
+        apiClient.patch<UserAtsSource>(`/cloud/integrations/sources/${sourceId}`, payload),
+
+    deleteUserAtsSource: (sourceId: string) =>
+        apiClient.delete(`/cloud/integrations/sources/${sourceId}`),
+
+    syncUserAtsSource: (sourceId: string, force = false) =>
+        apiClient.post<SyncRunResponse>(`/cloud/integrations/sources/${sourceId}/sync`, { force }),
 
     getResumeEligibility: () =>
         apiClient.get<ResumeEligibilityResponse>('/pipeline/resume-eligibility'),

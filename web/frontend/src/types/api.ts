@@ -395,6 +395,59 @@ export interface CloudIntegration {
     validation_status: string;
     last_validated_at: string | null;
     last_error: string | null;
+    is_user_source?: boolean;
+    owner_user_id?: string | null;
+    source_url?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+}
+
+export interface AtsSourceDiscoveryCandidate {
+    provider: string;
+    identifier: string;
+    config_key: string;
+    config: Record<string, any>;
+    display_name: string;
+    source_url: string | null;
+    jobs_seen: number;
+    match_reason: string;
+}
+
+export interface UserAtsSource extends CloudIntegration {
+    is_user_source: true;
+    owner_user_id: string;
+    source_url: string | null;
+}
+
+export interface AtsSourceCreateRequest {
+    display_name?: string;
+    source_url?: string;
+    provider?: string;
+    identifier?: string;
+    providers?: string[];
+    status?: string;
+    sync_interval_minutes?: number;
+}
+
+export interface AtsSourceUpdateRequest {
+    display_name?: string;
+    status?: string;
+    sync_interval_minutes?: number;
+}
+
+export interface SyncRunResponse {
+    run_id: string;
+    status: string;
+    jobs_seen: number;
+    jobs_imported: number;
+    jobs_deactivated: number;
+    provider: string;
+    started_at?: string | null;
+    completed_at?: string | null;
+    duration_seconds?: number | null;
+    error_summary?: string | null;
+    is_manual?: boolean | null;
+    dedupe_fingerprint_count: number;
 }
 
 export type MatchStatus = 'active' | 'stale' | 'all';
