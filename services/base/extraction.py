@@ -177,8 +177,8 @@ def run_resume_extraction(
             with open(resume_file, 'rb') as f:
                 file_bytes = f.read()
             fingerprint = generate_file_fingerprint(file_bytes)
-        except (FileNotFoundError, IOError, PermissionError) as e:
-            logger.error(f"Failed to read resume file {resume_file}: {e}")
+        except (FileNotFoundError, IOError, PermissionError):
+            logger.exception("Failed to read resume file %s", resume_file)
             return None, ""
 
     # Load and parse resume with error handling
@@ -186,11 +186,11 @@ def run_resume_extraction(
         resume_data = load_resume_with_parser(resume_file)
         if not resume_data:
             return None, fingerprint
-    except (FileNotFoundError, IOError, PermissionError) as e:
-        logger.error(f"Failed to read resume file {resume_file}: {e}")
+    except (FileNotFoundError, IOError, PermissionError):
+        logger.exception("Failed to read resume file %s", resume_file)
         return None, fingerprint
-    except Exception as e:
-        logger.error(f"Failed to parse resume file {resume_file}: {e}")
+    except Exception:
+        logger.exception("Failed to parse resume file %s", resume_file)
         return None, fingerprint
 
     return resume_data, fingerprint

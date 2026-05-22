@@ -127,9 +127,9 @@ def _reschedule_notification(
             failure_ttl=604800,
         )
     except Exception as exc:
-        logger.error(
-            "Failed to reschedule notification via %s in %ds (%s): %s",
-            current_job.origin, delay_seconds, reason, exc, exc_info=True,
+        logger.exception(
+            "Failed to reschedule notification via %s in %ds (%s)",
+            current_job.origin, delay_seconds, reason,
         )
         raise RuntimeError(f"Reschedule failed: {exc}") from exc
     logger.info(
@@ -278,8 +278,8 @@ class NotificationService:
                 self.queue = Queue('notifications', connection=self.redis_conn)
                 self.async_mode = True
                 logger.info("Notification service connected to Redis")
-            except Exception as e:
-                logger.error(f"Redis connection failed: {e}. Falling back to sync mode.")
+            except Exception:
+                logger.exception("Redis connection failed. Falling back to sync mode.")
                 self.redis_conn = None
                 self.queue = None
                 self.async_mode = False
@@ -401,11 +401,8 @@ class NotificationService:
                 )
                 notification_id = job.id
                 logger.info(f"Queued notification as job {job.id}")
-            except Exception as e:
-                logger.error(
-                    f"Redis enqueue failed ({e}), falling back to synchronous send",
-                    exc_info=True,
-                )
+            except Exception:
+                logger.exception("Redis enqueue failed, falling back to synchronous send")
                 notification_id = process_notification_task(notification_data)
         else:
             # Process synchronously
@@ -512,8 +509,8 @@ class NotificationService:
 
                 results[channel] = notification_id
 
-            except Exception as e:
-                logger.error(f"Failed to send {channel} notification: {e}")
+            except Exception:
+                logger.exception("Failed to send %s notification", channel)
                 results[channel] = None
 
         return results
@@ -573,8 +570,8 @@ JobScout
                 
                 results[channel] = notification_id
                 
-            except Exception as e:
-                logger.error(f"Failed to send {channel} notification: {e}")
+            except Exception:
+                logger.exception("Failed to send %s notification", channel)
                 results[channel] = None
         
         return results
@@ -816,7 +813,7 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
         )
 
     except TerminalNotificationError as e:
-        logger.error("Terminal failure for %s: %s", notification_id, e, exc_info=True)
+        logger.exception("Terminal failure for %s", notification_id)
         _record_notification_failure(notification_id, notification_data, str(e), failure_class=e.failure_class)
         raise
 
@@ -827,7 +824,7 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
         )
 
     except Exception as e:
-        logger.error("Unexpected failure for %s: %s", notification_id, e, exc_info=True)
+        logger.exception("Unexpected failure for %s", notification_id)
         _record_notification_failure(
             notification_id, notification_data, str(e),
             failure_class=getattr(e, 'failure_class', 'unknown'),
@@ -941,7 +938,5 @@ def _record_notification_failure(
                 allow_resend=True,  # Always allow retry of undelivered notifications
             )
         _mark_settings_test_result(notification_data, status='failed', error_message=error_message)
-    except Exception as db_error:
-        logger.error(
-            f"Failed to record failure for notification {notification_id}: {db_error}"
-        )
+    except Exception:
+        logger.exception("Failed to record failure for notification %s", notification_id)

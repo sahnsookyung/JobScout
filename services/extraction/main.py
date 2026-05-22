@@ -327,7 +327,7 @@ async def extract_resume(request: Request, body: ExtractResumeRequest):
             fingerprint=fingerprint,
         )
     except Exception:
-        logger.error("Resume extraction failed", exc_info=True)
+        logger.exception("Resume extraction failed")
         return ExtractResponse(
             success=False,
             message="Resume extraction failed",

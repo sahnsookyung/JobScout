@@ -413,8 +413,8 @@ def main() -> int:
             else:
                 logger.info("Database schema is already up to date.")
         return 0
-    except DatabaseSchemaError as exc:
-        logger.error(str(exc))
+    except DatabaseSchemaError:
+        logger.exception("Database schema bootstrap failed")
         return 1
 
 

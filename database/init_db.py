@@ -14,8 +14,8 @@ def init_db():
     try:
         bootstrap_database(engine=engine)
         logger.info("Database schema ready.")
-    except Exception as e:
-        logger.error(f"Error initializing DB: {e}")
+    except Exception:
+        logger.exception("Error initializing DB")
         raise
 
 if __name__ == "__main__":  # pragma: no cover

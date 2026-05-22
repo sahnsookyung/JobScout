@@ -1,4 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
+import { AxiosHeaders, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 
 vi.mock('@/services/cloudAuthApi', () => ({
     cloudAuthApi: {
@@ -8,16 +9,22 @@ vi.mock('@/services/cloudAuthApi', () => ({
 }));
 
 import { cloudAuthApi } from '@/services/cloudAuthApi';
+import type { CloudAuthExchangeResponse, CloudUser } from '@/types/api';
 import { useAuth, __resetAuthForTests } from '../useAuth';
 
 const STORAGE_KEY = 'jobscout_auth';
+
+function axiosResponse<T>(data: T): AxiosResponse<T> {
+    const config: InternalAxiosRequestConfig = { headers: new AxiosHeaders() };
+    return { data, status: 200, statusText: 'OK', headers: {}, config };
+}
 
 function buildCloudUser(overrides: Partial<{
     id: string;
     email: string;
     name: string;
     picture?: string;
-}> = {}) {
+}> = {}): CloudUser {
     return {
         id: overrides.id ?? 'user-1',
         email: overrides.email ?? 'user@example.com',
@@ -53,13 +60,7 @@ function makeBase64UrlJwt(payload: Record<string, unknown>): string {
     return `header.${encoded}.sig`;
 }
 
-type RefreshSessionResponse = {
-    data: {
-        access_token: string;
-        token_type: string;
-        user: ReturnType<typeof buildCloudUser>;
-    };
-};
+type RefreshSessionResponse = AxiosResponse<CloudAuthExchangeResponse>;
 
 const REFRESH_USER = {
     email: 'refresh@example.com',
@@ -97,9 +98,18 @@ function mockCurrentUser(overrides: Partial<{
     name: string;
     picture?: string;
 }> = {}): void {
-    vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValue({
-        data: buildCloudUser(overrides),
-    } as never);
+    vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValue(axiosResponse(buildCloudUser(overrides)));
+}
+
+function refreshResponse(
+    token: string,
+    user: Partial<{ id: string; email: string; name: string; picture?: string }> = REFRESH_USER,
+): RefreshSessionResponse {
+    return axiosResponse({
+        access_token: token,
+        token_type: 'Bearer',
+        user: buildCloudUser(user),
+    });
 }
 
 function seedRefreshableSession(
@@ -124,7 +134,7 @@ async function advanceRefreshWindow(): Promise<void> {
 
 async function renderAuthWithRefreshFailure(error: unknown) {
     seedRefreshableSession();
-    vi.mocked(cloudAuthApi.refreshSession).mockRejectedValue(error as never);
+    vi.mocked(cloudAuthApi.refreshSession).mockRejectedValue(error);
 
     const hook = renderHook(() => useAuth());
 
@@ -141,7 +151,7 @@ function createRefreshDeferred() {
 async function startPendingRefresh() {
     const refresh = createRefreshDeferred();
     seedRefreshableSession();
-    vi.mocked(cloudAuthApi.refreshSession).mockReturnValue(refresh.promise as never);
+    vi.mocked(cloudAuthApi.refreshSession).mockReturnValue(refresh.promise);
 
     const hook = renderHook(() => useAuth());
 
@@ -627,7 +637,7 @@ describe('useAuth', () => {
             });
             vi.mocked(cloudAuthApi.getCurrentUser).mockRejectedValue({
                 response: { status: 503 },
-            } as never);
+            });
 
             const { result } = renderHook(() => useAuth());
 
@@ -642,7 +652,7 @@ describe('useAuth', () => {
         it('marks a freshly logged-in session as pending when bootstrap later hits a transient error', async () => {
             vi.mocked(cloudAuthApi.getCurrentUser).mockRejectedValue({
                 response: { status: 503 },
-            } as never);
+            });
 
             const initial = renderHook(() => useAuth());
 
@@ -669,13 +679,13 @@ describe('useAuth', () => {
                 token: VALID_APP_TOKEN,
             });
             vi.mocked(cloudAuthApi.getCurrentUser)
-                .mockRejectedValueOnce({ response: { status: 503 } } as never)
-                .mockResolvedValueOnce({
-                    data: buildCloudUser({
+                .mockRejectedValueOnce({ response: { status: 503 } })
+                .mockResolvedValueOnce(axiosResponse(
+                    buildCloudUser({
                         email: 'retry@example.com',
                         name: 'Retry User',
                     }),
-                } as never);
+                ));
 
             const { result } = renderHook(() => useAuth());
 
@@ -698,7 +708,7 @@ describe('useAuth', () => {
             });
             vi.mocked(cloudAuthApi.getCurrentUser).mockRejectedValue({
                 response: { status: 503 },
-            } as never);
+            });
 
             const { result } = renderHook(() => useAuth());
 
@@ -724,7 +734,7 @@ describe('useAuth', () => {
             });
             vi.mocked(cloudAuthApi.getCurrentUser).mockRejectedValue({
                 response: { status: 503 },
-            } as never);
+            });
 
             const { result } = renderHook(() => useAuth());
 
@@ -750,14 +760,14 @@ describe('useAuth', () => {
                 token: VALID_APP_TOKEN,
             });
             vi.mocked(cloudAuthApi.getCurrentUser)
-                .mockRejectedValueOnce({ response: { status: 503 } } as never)
-                .mockRejectedValueOnce({ response: { status: 503 } } as never)
-                .mockResolvedValueOnce({
-                    data: buildCloudUser({
+                .mockRejectedValueOnce({ response: { status: 503 } })
+                .mockRejectedValueOnce({ response: { status: 503 } })
+                .mockResolvedValueOnce(axiosResponse(
+                    buildCloudUser({
                         email: 'retry@example.com',
                         name: 'Retry User',
                     }),
-                } as never);
+                ));
 
             const { result } = renderHook(() => useAuth());
 
@@ -782,16 +792,16 @@ describe('useAuth', () => {
         it('treats manual retry as a new session boundary for stale refresh responses', async () => {
             const refresh = createRefreshDeferred();
             seedRefreshableSession();
-            vi.mocked(cloudAuthApi.refreshSession).mockReturnValue(refresh.promise as never);
+            vi.mocked(cloudAuthApi.refreshSession).mockReturnValue(refresh.promise);
 
             const { result } = renderHook(() => useAuth());
 
             await flushAuthEffects();
             await advanceRefreshWindow();
 
-            vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValueOnce({
-                data: buildCloudUser(REFRESH_USER),
-            } as never);
+            vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValueOnce(
+                axiosResponse(buildCloudUser(REFRESH_USER)),
+            );
 
             act(() => {
                 result.current.retrySession();
@@ -799,16 +809,10 @@ describe('useAuth', () => {
             await flushAuthEffects();
 
             await act(async () => {
-                refresh.resolve({
-                    data: {
-                        access_token: 'stale-refresh-token',
-                        token_type: 'Bearer',
-                        user: buildCloudUser({
-                            email: 'old@example.com',
-                            name: 'Old User',
-                        }),
-                    },
-                });
+                refresh.resolve(refreshResponse('stale-refresh-token', {
+                    email: 'old@example.com',
+                    name: 'Old User',
+                }));
                 await Promise.resolve();
             });
 
@@ -824,7 +828,7 @@ describe('useAuth', () => {
             });
             vi.mocked(cloudAuthApi.getCurrentUser).mockRejectedValue({
                 response: { status: 403 },
-            } as never);
+            });
 
             const { result } = renderHook(() => useAuth());
             await flushAuthEffects();
@@ -836,19 +840,7 @@ describe('useAuth', () => {
 
         it('refreshes the token before expiry', async () => {
             seedRefreshableSession();
-            vi.mocked(cloudAuthApi.refreshSession).mockResolvedValue({
-                data: {
-                    access_token: 'new-app-token',
-                    token_type: 'Bearer',
-                    user: {
-                        id: 'user-1',
-                        email: REFRESH_USER.email,
-                        name: REFRESH_USER.name,
-                        provider: 'google',
-                        token_kind: 'app_jwt',
-                    },
-                },
-            } as never);
+            vi.mocked(cloudAuthApi.refreshSession).mockResolvedValue(refreshResponse('new-app-token'));
 
             const { result } = renderHook(() => useAuth());
 
@@ -878,7 +870,7 @@ describe('useAuth', () => {
             seedRefreshableSession();
             vi.mocked(cloudAuthApi.refreshSession).mockRejectedValue({
                 response: { status: 401 },
-            } as never);
+            });
 
             const { result } = renderHook(() => useAuth());
 
@@ -892,13 +884,13 @@ describe('useAuth', () => {
         });
 
         it('does not let a stale bootstrap response restore a logged-out session', async () => {
-            const bootstrap = createDeferred<{ data: ReturnType<typeof buildCloudUser> }>();
+            const bootstrap = createDeferred<AxiosResponse<CloudUser>>();
             storeAuthSession({
                 user: { ...STALE_BOOTSTRAP_USER },
                 token: VALID_APP_TOKEN,
             });
             vi.mocked(cloudAuthApi.getCurrentUser).mockReturnValue(
-                bootstrap.promise as never
+                bootstrap.promise
             );
 
             const { result } = renderHook(() => useAuth());
@@ -908,12 +900,12 @@ describe('useAuth', () => {
             });
 
             await act(async () => {
-                bootstrap.resolve({
-                    data: buildCloudUser({
+                bootstrap.resolve(axiosResponse(
+                    buildCloudUser({
                         email: 'old@example.com',
                         name: 'Old User',
                     }),
-                });
+                ));
                 await Promise.resolve();
             });
 
@@ -922,13 +914,13 @@ describe('useAuth', () => {
         });
 
         it('does not let a stale bootstrap error clear a newer login', async () => {
-            const bootstrap = createDeferred<{ data: ReturnType<typeof buildCloudUser> }>();
+            const bootstrap = createDeferred<AxiosResponse<CloudUser>>();
             storeAuthSession({
                 user: { ...STALE_BOOTSTRAP_USER },
                 token: VALID_APP_TOKEN,
             });
             vi.mocked(cloudAuthApi.getCurrentUser).mockReturnValue(
-                bootstrap.promise as never
+                bootstrap.promise
             );
 
             const { result } = renderHook(() => useAuth());
@@ -950,13 +942,13 @@ describe('useAuth', () => {
         });
 
         it('deduplicates concurrent bootstrap requests across hook instances', async () => {
-            const bootstrap = createDeferred<{ data: ReturnType<typeof buildCloudUser> }>();
+            const bootstrap = createDeferred<AxiosResponse<CloudUser>>();
             storeAuthSession({
                 user: { ...STALE_BOOTSTRAP_USER },
                 token: VALID_APP_TOKEN,
             });
             vi.mocked(cloudAuthApi.getCurrentUser).mockReturnValue(
-                bootstrap.promise as never
+                bootstrap.promise
             );
 
             renderHook(() => useAuth());
@@ -967,12 +959,12 @@ describe('useAuth', () => {
             expect(cloudAuthApi.getCurrentUser).toHaveBeenCalledTimes(1);
 
             await act(async () => {
-                bootstrap.resolve({
-                    data: buildCloudUser({
+                bootstrap.resolve(axiosResponse(
+                    buildCloudUser({
                         email: 'stale@example.com',
                         name: 'Stale User',
                     }),
-                });
+                ));
                 await Promise.resolve();
             });
         });
@@ -981,16 +973,10 @@ describe('useAuth', () => {
             const { refresh, result } = await startPendingRefresh();
 
             await act(async () => {
-                refresh.resolve({
-                    data: {
-                        access_token: 'stale-refresh-token',
-                        token_type: 'Bearer',
-                        user: buildCloudUser({
-                            email: 'old@example.com',
-                            name: 'Old User',
-                        }),
-                    },
-                });
+                refresh.resolve(refreshResponse('stale-refresh-token', {
+                    email: 'old@example.com',
+                    name: 'Old User',
+                }));
                 await Promise.resolve();
             });
 
@@ -1011,7 +997,7 @@ describe('useAuth', () => {
         it('ignores a second refresh trigger while one is already in flight', async () => {
             const refresh = createRefreshDeferred();
             seedRefreshableSession();
-            vi.mocked(cloudAuthApi.refreshSession).mockReturnValue(refresh.promise as never);
+            vi.mocked(cloudAuthApi.refreshSession).mockReturnValue(refresh.promise);
 
             renderHook(() => useAuth());
             await flushAuthEffects();
@@ -1027,16 +1013,7 @@ describe('useAuth', () => {
             expect(cloudAuthApi.refreshSession).toHaveBeenCalledTimes(1);
 
             await act(async () => {
-                refresh.resolve({
-                    data: {
-                        access_token: 'new-app-token',
-                        token_type: 'Bearer',
-                        user: buildCloudUser({
-                            email: 'refresh@example.com',
-                            name: 'Refresh User',
-                        }),
-                    },
-                });
+                refresh.resolve(refreshResponse('new-app-token'));
                 await Promise.resolve();
             });
         });

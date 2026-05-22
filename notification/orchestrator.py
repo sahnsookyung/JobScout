@@ -342,8 +342,8 @@ def send_notifications(
                     min_fit_for_alerts=min_fit_for_alerts,
                     task_id=task_id,
                 )
-            except Exception as e:
-                logger.error("Failed to send batch summary: %s", e)
+            except Exception:
+                logger.exception("Failed to send batch summary")
 
         step_elapsed = time.time() - step_start
         logger.info(
@@ -352,6 +352,6 @@ def send_notifications(
         )
         return notified_count
 
-    except Exception as e:
-        logger.error("Error in notification step: %s", e, exc_info=True)
+    except Exception:
+        logger.exception("Error in notification step")
         return 0

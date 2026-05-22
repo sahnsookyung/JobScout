@@ -16,9 +16,9 @@ def load_resume_with_parser(resume_file_path: str) -> Optional[dict]:
     except FileNotFoundError:
         logger.error("Resume file not found: %s", resume_file_path)
         return None
-    except ValueError as e:
-        logger.error("Failed to parse resume: %s", e)
+    except ValueError:
+        logger.exception("Failed to parse resume")
         return None
-    except Exception as e:
-        logger.error("Unexpected error loading resume: %s", e)
+    except Exception:
+        logger.exception("Unexpected error loading resume")
         return None

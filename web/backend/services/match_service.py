@@ -343,8 +343,8 @@ class MatchService:
                 job=self._to_job_details(job),
                 requirements=requirements
             )
-        except Exception as e:
-            logger.error("Database error fetching match details for %s: %s", _sanitize_log(match_id), e, exc_info=True)
+        except Exception:
+            logger.exception("Database error fetching match details for %s", _sanitize_log(match_id))
             raise
     
     def toggle_hidden(

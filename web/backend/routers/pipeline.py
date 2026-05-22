@@ -9,6 +9,7 @@ import asyncio
 import logging
 import re
 import uuid
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Optional
@@ -354,17 +355,14 @@ def _jobspy_health(config) -> Optional[FetchSourceHealthResponse]:
             error="JobSpy API URL is not configured",
         )
 
-    client = JobSpyClient(
+    with closing(JobSpyClient(
         base_url=config.jobspy.url,
         request_timeout_seconds=config.jobspy.request_timeout_seconds,
-    )
-    try:
+    )) as client:
         result = client.check_health(
             timeout_seconds=getattr(config.jobspy, "health_timeout_seconds", 2.0),
         )
         return FetchSourceHealthResponse(**result)
-    finally:
-        client.close()
 
 def _active_task_key(owner_id: str) -> str:
     return f"{ACTIVE_TASK_ID_KEY_PREFIX}:{owner_id}"

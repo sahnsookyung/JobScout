@@ -12,7 +12,7 @@ ENV UV_LINK_MODE=copy
 
 # Install dependencies first for layer caching
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project --group web
+RUN uv sync --frozen --no-build --no-dev --no-install-project --group web
 
 # Copy source code and install the project
 # Core utilities: config loading, matcher explainability, app context
@@ -33,7 +33,7 @@ COPY services/base/ ./services/base/
 COPY services/scorer_matcher/ ./services/scorer_matcher/
 COPY config.yaml ./
 
-RUN uv sync --frozen --no-dev --group web
+RUN uv sync --frozen --no-build --no-dev --no-install-project --group web
 
 # ---------------------------------------------------------
 # Runtime Stage

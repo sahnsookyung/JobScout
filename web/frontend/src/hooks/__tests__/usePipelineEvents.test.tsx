@@ -269,9 +269,10 @@ describe('usePipelineEvents', () => {
 
     describe('cleanup', () => {
         it('should disconnect when taskId becomes null', async () => {
+            const initialProps: { taskId: string | null } = { taskId: 'test-123' };
             const { result, rerender } = renderHook(
                 ({ taskId }: { taskId: string | null }) => usePipelineEvents(taskId),
-                { initialProps: { taskId: 'test-123' as string | null } }
+                { initialProps }
             );
 
             await waitForConnection();

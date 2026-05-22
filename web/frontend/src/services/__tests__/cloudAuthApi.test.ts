@@ -31,7 +31,7 @@ describe('cloudAuthApi', () => {
                     token_kind: 'google_id_token',
                 },
             },
-        } as never);
+        });
 
         await cloudAuthApi.exchangeGoogleCredential('google-credential');
 
@@ -49,7 +49,7 @@ describe('cloudAuthApi', () => {
                 provider: 'google',
                 token_kind: 'app_jwt',
             },
-        } as never);
+        });
 
         const result = await cloudAuthApi.getCurrentUser();
 
@@ -70,7 +70,7 @@ describe('cloudAuthApi', () => {
                     token_kind: 'app_jwt',
                 },
             },
-        } as never);
+        });
 
         const result = await cloudAuthApi.refreshSession();
 

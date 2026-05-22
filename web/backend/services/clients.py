@@ -76,13 +76,13 @@ class ServiceClient:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
-            logger.error(f"Service returned error: {method} {url} - {e.response.status_code}")
+            logger.exception("Service returned error: %s %s - %s", method, url, e.response.status_code)
             raise
-        except httpx.RequestError as e:
-            logger.error(f"Service call failed: {method} {url} - {e}")
+        except httpx.RequestError:
+            logger.exception("Service call failed: %s %s", method, url)
             raise
-        except ValueError as e:
-            logger.error(f"Invalid JSON response: {method} {url} - {e}")
+        except ValueError:
+            logger.exception("Invalid JSON response: %s %s", method, url)
             raise
     
     def get(self, path: str, **kwargs) -> dict:

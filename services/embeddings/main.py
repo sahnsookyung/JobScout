@@ -104,10 +104,7 @@ class EmbeddingsConsumer(StreamConsumerWithCompletion):
                 "owner_id": owner_id,
             }
         except Exception as e:
-            logger.error(
-                "❌ Embeddings failed: task_id=%s, error=%s: %s",
-                task_id, type(e).__name__, e, exc_info=True,
-            )
+            logger.exception("❌ Embeddings failed: task_id=%s", task_id)
             return False, {"status": "failed", "error": str(e)}
 
 
@@ -275,7 +272,7 @@ async def embed_resume(request: Request, body: EmbedResumeRequest):
         )
         return EmbedResponse(success=True, message="Resume embedding completed", processed=1)
     except Exception:
-        logger.error("Resume embedding failed", exc_info=True)
+        logger.exception("Resume embedding failed")
         return EmbedResponse(success=False, message="Resume embedding failed", processed=0)
 
 

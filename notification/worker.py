@@ -163,8 +163,8 @@ def start_worker(burst: bool = False, queues: list = None):
 
     except KeyboardInterrupt:
         logger.info("\nWorker stopped")
-    except Exception as e:
-        logger.error("Error: %s", e)
+    except Exception:
+        logger.exception("Error")
         sys.exit(1)
     finally:
         stop_event.set()

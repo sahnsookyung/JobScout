@@ -275,10 +275,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                 "matches_count": saved_count,
             }
         except Exception as e:
-            logger.error(
-                "❌ Matching failed: task_id=%s, error=%s: %s",
-                task_id, type(e).__name__, e, exc_info=True,
-            )
+            logger.exception("❌ Matching failed: task_id=%s, error=%s", task_id, type(e).__name__)
             self._write_task_state(
                 task_id,
                 self._failed_task_state(
@@ -368,9 +365,9 @@ def _warm_up_cross_encoder(config) -> None:
             "MATCHER_STRICT_WARMUP=false."
         )
         if strict:
-            logger.error("%s Error: %s", msg, exc)
+            logger.exception("%s Error", msg)
             raise
-        logger.warning("%s Error: %s (continuing because MATCHER_STRICT_WARMUP=false)", msg, exc)
+        logger.exception("%s Error (continuing because MATCHER_STRICT_WARMUP=false)", msg)
 
 
 @asynccontextmanager
@@ -483,7 +480,7 @@ async def match_resume(request: Request, body: MatchResumeRequest):
         return MatchResponse(success=True, message=msg, matches=matches, task_id=task_id)
 
     except Exception:
-        logger.error("Matching failed", exc_info=True)
+        logger.exception("Matching failed")
         return MatchResponse(
             success=False,
             message="Matching failed",

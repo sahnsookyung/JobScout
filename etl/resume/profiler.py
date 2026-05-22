@@ -59,8 +59,8 @@ class ResumeProfiler:
             )
             return resume
 
-        except Exception as e:
-            logger.error(f"Error extracting structured resume: {e}")
+        except Exception:
+            logger.exception("Error extracting structured resume")
             return None
 
     def extract_resume_evidence(self, profile: Profile) -> List[ResumeEvidenceUnit]:

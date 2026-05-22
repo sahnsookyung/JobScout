@@ -269,9 +269,8 @@ function RequirementCard({
     const evidenceText = verdict?.evidence_text ?? req.evidence_text;
     const evidenceSection = verdict?.evidence_section ?? req.evidence_section;
     const reason = typeof verdict?.reason === 'string' ? verdict.reason : null;
-    const evidenceScore = typeof req.evidence_score === 'number'
-        ? req.evidence_score
-        : (typeof verdict?.semantic_score === 'number' ? verdict.semantic_score : null);
+    const semanticScore = typeof verdict?.semantic_score === 'number' ? verdict.semantic_score : null;
+    const evidenceScore = typeof req.evidence_score === 'number' ? req.evidence_score : semanticScore;
     const vectorScore = typeof req.similarity_score === 'number' ? req.similarity_score : null;
     const toneLabel = evidenceToneLabel(evidenceScore);
 
@@ -299,7 +298,7 @@ function RequirementCard({
                 {typeof evidenceScore === 'number' && (
                     <span
                         className="caption tabular-nums"
-                        title={vectorScore !== null ? `Vector similarity ${vectorScore.toFixed(2)}` : undefined}
+                        title={vectorScore === null ? undefined : `Vector similarity ${vectorScore.toFixed(2)}`}
                     >
                         Evidence <span className="text-ink">{evidenceScore.toFixed(2)}</span> · {toneLabel}
                     </span>

@@ -16,7 +16,7 @@ import { usePolicy } from '@/hooks/usePolicy';
 const mockUsePolicy = vi.mocked(usePolicy);
 
 const defaultHook = {
-    policy: null,
+    policy: undefined,
     isLoading: false,
     updatePolicy: vi.fn(),
     applyPreset: vi.fn(),
@@ -26,7 +26,7 @@ describe('PolicyPanel', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.useFakeTimers();
-        mockUsePolicy.mockReturnValue(defaultHook as never);
+        mockUsePolicy.mockReturnValue(defaultHook);
     });
 
     afterEach(() => {
@@ -35,13 +35,13 @@ describe('PolicyPanel', () => {
 
     describe('loading state', () => {
         it('renders loading skeleton when isLoading is true', () => {
-            mockUsePolicy.mockReturnValue({ ...defaultHook, isLoading: true } as never);
+            mockUsePolicy.mockReturnValue({ ...defaultHook, isLoading: true });
             const { container } = render(<PolicyPanel />);
             expect(container.querySelector('.animate-pulse')).toBeTruthy();
         });
 
         it('does not render sliders content while loading', () => {
-            mockUsePolicy.mockReturnValue({ ...defaultHook, isLoading: true } as never);
+            mockUsePolicy.mockReturnValue({ ...defaultHook, isLoading: true });
             render(<PolicyPanel />);
             expect(screen.queryByText('Result Policy')).toBeNull();
         });
@@ -93,7 +93,7 @@ describe('PolicyPanel', () => {
             mockUsePolicy.mockReturnValue({
                 ...defaultHook,
                 policy: { min_fit: 70, top_k: 100, min_jd_required_coverage: null },
-            } as never);
+            });
             render(<PolicyPanel />);
             const slider = screen.getByRole('slider', { name: /minimum fit score/i });
             expect((slider as HTMLInputElement).value).toBe('70');
@@ -103,7 +103,7 @@ describe('PolicyPanel', () => {
             mockUsePolicy.mockReturnValue({
                 ...defaultHook,
                 policy: { min_fit: 70, top_k: 150, min_jd_required_coverage: null },
-            } as never);
+            });
             render(<PolicyPanel />);
             const slider = screen.getByRole('slider', { name: /maximum number of results/i });
             expect((slider as HTMLInputElement).value).toBe('150');
@@ -113,7 +113,7 @@ describe('PolicyPanel', () => {
             mockUsePolicy.mockReturnValue({
                 ...defaultHook,
                 policy: { min_fit: 70, top_k: 150, min_jd_required_coverage: null },
-            } as never);
+            });
             render(<PolicyPanel />);
 
             await act(async () => {
@@ -155,7 +155,7 @@ describe('PolicyPanel', () => {
             mockUsePolicy.mockReturnValue({
                 ...defaultHook,
                 policy: { min_fit: 55, top_k: 50, min_jd_required_coverage: null },
-            } as never);
+            });
             render(<PolicyPanel />);
             const slider = screen.getByRole('slider', { name: /minimum fit score/i });
             fireEvent.change(slider, { target: { value: '80' } });
@@ -169,7 +169,7 @@ describe('PolicyPanel', () => {
             mockUsePolicy.mockReturnValue({
                 ...defaultHook,
                 policy: { min_fit: 55, top_k: 50, min_jd_required_coverage: null },
-            } as never);
+            });
             render(<PolicyPanel />);
             const slider = screen.getByRole('slider', { name: /maximum number of results/i });
             fireEvent.change(slider, { target: { value: '120' } });

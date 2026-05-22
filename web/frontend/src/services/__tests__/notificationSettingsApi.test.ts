@@ -44,7 +44,7 @@ describe('notificationSettingsApi', () => {
         mockPut.mockResolvedValue(expected);
         const { notificationSettingsApi } = await import('../notificationSettingsApi');
 
-        const result = await notificationSettingsApi.updateSettings(payload as never);
+        const result = await notificationSettingsApi.updateSettings(payload);
 
         expect(mockPut).toHaveBeenCalledWith('/v1/notification-settings', payload);
         expect(result).toEqual(expected);
@@ -56,7 +56,7 @@ describe('notificationSettingsApi', () => {
         mockPost.mockResolvedValue(expected);
         const { notificationSettingsApi } = await import('../notificationSettingsApi');
 
-        const result = await notificationSettingsApi.sendTest(payload as never);
+        const result = await notificationSettingsApi.sendTest(payload);
 
         expect(mockPost).toHaveBeenCalledWith('/v1/notification-settings/test', payload);
         expect(result).toEqual(expected);
@@ -70,8 +70,8 @@ describe('notificationSettingsApi', () => {
         mockDelete.mockResolvedValueOnce({ data: { success: true, message: 'Cleared' } });
         const { notificationSettingsApi } = await import('../notificationSettingsApi');
 
-        await notificationSettingsApi.sendEmailOverrideVerification(overridePayload as never);
-        await notificationSettingsApi.verifyEmailOverride(verificationPayload as never);
+        await notificationSettingsApi.sendEmailOverrideVerification(overridePayload);
+        await notificationSettingsApi.verifyEmailOverride(verificationPayload);
         await notificationSettingsApi.clearEmailOverride();
 
         expect(mockPost).toHaveBeenCalledWith(

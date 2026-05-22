@@ -143,8 +143,8 @@ class JobETLService:
             try:
                 job_extraction = JobExtraction.model_validate(extraction_result)
                 data = job_extraction.model_dump()
-            except ValidationError as e:
-                logger.error(f"Failed to validate job extraction: {e}")
+            except ValidationError:
+                logger.exception("Failed to validate job extraction")
                 data = extraction_result
         else:
             data = {}
@@ -238,8 +238,8 @@ class JobETLService:
                 with open(resume_file, 'rb') as f:
                     file_bytes = f.read()
                 fingerprint = generate_file_fingerprint(file_bytes)
-            except IOError as e:
-                logger.error(f"Failed to read resume file: {e}")
+            except IOError:
+                logger.exception("Failed to read resume file")
                 return False, "", None
 
         logger.info(f"Resume fingerprint: {fingerprint}")
@@ -254,8 +254,8 @@ class JobETLService:
             parser = ResumeParser()
             parsed = parser.parse(resume_file)
             resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
-        except (ValueError, IOError) as e:
-            logger.error(f"Failed to parse resume file: {e}")
+        except (ValueError, IOError):
+            logger.exception("Failed to parse resume file")
             return False, fingerprint, None
 
         logger.info(f"Resume changed (fingerprint: {fingerprint}), processing...")
@@ -278,8 +278,8 @@ class JobETLService:
         try:
             with open(resume_file, 'rb') as handle:
                 fingerprint = generate_file_fingerprint(handle.read())
-        except IOError as exc:
-            logger.error(f"Failed to read resume file: {exc}")
+        except IOError:
+            logger.exception("Failed to read resume file")
             return False, "", None
 
         logger.info(f"Resume fingerprint: {fingerprint[:16]}...")
@@ -314,7 +314,7 @@ class JobETLService:
                 owner_id=owner_id,
                 error=str(exc),
             )
-            logger.error(f"Failed to parse resume file: {exc}")
+            logger.exception("Failed to parse resume file")
             return False, "", None
 
         if (
@@ -344,7 +344,7 @@ class JobETLService:
                     owner_id=owner_id,
                     error=str(exc),
                 )
-                logger.error(f"Failed to resume embedding for resume: {exc}")
+                logger.exception("Failed to resume embedding for resume")
                 raise
 
         if force_re_extraction:
@@ -377,7 +377,7 @@ class JobETLService:
                 owner_id=owner_id,
                 error=str(exc),
             )
-            logger.error(f"Failed to process resume: {exc}")
+            logger.exception("Failed to process resume")
             raise
 
     def extract_resume_one(
@@ -554,8 +554,8 @@ class JobETLService:
             self.embed_resume(repo, fingerprint, owner_id=owner_id)
             logger.info(f"Resume ETL completed for fingerprint: {fingerprint}")
             return True, fingerprint, resume_data
-        except Exception as e:
-            logger.error(f"Failed to process resume: {e}")
+        except Exception:
+            logger.exception("Failed to process resume")
             raise
 
     def _extract_resume_data(
@@ -608,8 +608,8 @@ class JobETLService:
             else:
                 logger.error("Failed to extract schema from resume")
                 return False, fingerprint, None
-        except Exception as e:
-            logger.error(f"Failed to extract resume: {e}")
+        except Exception:
+            logger.exception("Failed to extract resume")
             raise
 
     def extract_resume(
@@ -656,7 +656,7 @@ class JobETLService:
                     owner_id=owner_id,
                     error=str(e),
                 )
-                logger.error(f"Failed to parse resume file: {e}")
+                logger.exception("Failed to parse resume file")
                 return False, fingerprint, None
 
             logger.info(f"Resume changed (fingerprint: {fingerprint}), processing...")
@@ -727,7 +727,7 @@ class JobETLService:
                 owner_id=owner_id,
                 error=str(e),
             )
-            logger.error(f"Failed to embed resume: {e}")
+            logger.exception("Failed to embed resume")
             raise
 
     def extract_resume_stage(

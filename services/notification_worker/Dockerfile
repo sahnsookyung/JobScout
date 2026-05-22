@@ -10,7 +10,7 @@ ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-build --no-dev --no-install-project
 
 COPY core/ ./core/
 COPY database/ ./database/
@@ -18,7 +18,7 @@ COPY migrations/ ./migrations/
 COPY notification/ ./notification/
 COPY config.yaml ./
 
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-build --no-dev --no-install-project
 
 FROM python@sha256:7a500125bc50693f2214e842a621440a1b1b9cbb2188f74ab045d29ed2ea5856 AS runtime
 
