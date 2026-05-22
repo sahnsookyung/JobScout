@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
-import { ExternalLink, Globe2, MapPin, RefreshCw, Search, Server } from 'lucide-react';
+import type { FormEvent, ReactNode } from 'react';
+import { ExternalLink, Globe2, MapPin, PauseCircle, Plus, RefreshCw, Search, Server, Trash2, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { pipelineApi } from '@/services/pipelineApi';
-import type { CloudIntegration, FetchSource } from '@/types/api';
+import type { AtsSourceCreateRequest, CloudIntegration, FetchSource } from '@/types/api';
 
 const OPERATIONAL_OPTION_KEYS = new Set([
     'status',
@@ -96,18 +96,33 @@ function atsInterval(source: FetchSource): number | null {
     return typeof interval === 'number' && Number.isFinite(interval) ? interval : null;
 }
 
+function userSourceId(source: FetchSource): string | null {
+    const sourceId = source.options?.user_source_id;
+    return typeof sourceId === 'string' && sourceId ? sourceId : null;
+}
+
 function cloudIntegrationSource(integration: CloudIntegration): FetchSource {
     const providerLabel = toTitleCase(integration.provider);
     const status = integration.status || 'unknown';
+    const isUserSource = integration.is_user_source === true;
     return {
         site_type: integration.provider,
         display_name: integration.display_name,
-        seed_url: null,
-        description: `${providerLabel} ATS sync for tenant company jobs.`,
-        tags: compactStrings(['ats', integration.provider, status, integration.validation_status]),
+        seed_url: integration.source_url ?? null,
+        description: isUserSource
+            ? `${providerLabel} ATS source from your board list.`
+            : `${providerLabel} ATS sync for tenant company jobs.`,
+        tags: compactStrings([
+            'ats',
+            integration.provider,
+            status,
+            integration.validation_status,
+            isUserSource ? 'user' : null,
+        ]),
         search_keywords: compactStrings([
             integration.provider,
             integration.display_name,
+            integration.source_url,
             'ats',
             integration.status,
             integration.validation_status,
@@ -125,6 +140,10 @@ function cloudIntegrationSource(integration: CloudIntegration): FetchSource {
             validation_status: integration.validation_status,
             sync_interval_minutes: integration.sync_interval_minutes,
             last_error: integration.last_error,
+            user_source_id: isUserSource ? integration.id : undefined,
+            is_user_source: isUserSource || undefined,
+            owner_user_id: integration.owner_user_id || undefined,
+            source_url: integration.source_url || undefined,
         },
         api_health: null,
     };
@@ -209,17 +228,32 @@ function SourceCard({
     index,
     onFetchSource,
     isFetchingSource,
+    onSyncAtsSource,
+    onToggleAtsSource,
+    onDeleteAtsSource,
+    isSyncingAtsSource,
+    isUpdatingAtsSource,
+    isDeletingAtsSource,
 }: Readonly<{
     source: FetchSource;
     index: number;
     onFetchSource: (source: string) => void;
     isFetchingSource: boolean;
+    onSyncAtsSource: (sourceId: string) => void;
+    onToggleAtsSource: (sourceId: string, status: string) => void;
+    onDeleteAtsSource: (source: FetchSource) => void;
+    isSyncingAtsSource: boolean;
+    isUpdatingAtsSource: boolean;
+    isDeletingAtsSource: boolean;
 }>) {
     const healthText = healthLabel(source);
     const externalText = externalSeedLabel(source);
     const statusText = atsStatus(source);
     const intervalMinutes = atsInterval(source);
     const canFetch = canFetchExternalSeed(source);
+    const managedSourceId = userSourceId(source);
+    const isDisabled = statusText === 'disabled';
+    const isMutatingAtsSource = isSyncingAtsSource || isUpdatingAtsSource || isDeletingAtsSource;
     const content = (
         <>
             <div className="flex items-start justify-between gap-3">
@@ -314,6 +348,44 @@ function SourceCard({
                     </button>
                 </div>
             ) : null}
+            {managedSourceId ? (
+                <div className="mt-3 flex flex-wrap justify-end gap-2 border-t border-rule pt-3">
+                    <button
+                        type="button"
+                        onClick={() => onSyncAtsSource(managedSourceId)}
+                        disabled={isDisabled || isSyncingAtsSource}
+                        className="inline-flex min-h-8 items-center gap-1.5 border border-accent px-2.5 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                    >
+                        <RefreshCw
+                            className={`h-3.5 w-3.5 ${isSyncingAtsSource ? 'animate-spin' : ''}`}
+                            aria-hidden="true"
+                        />
+                        Sync
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => onToggleAtsSource(managedSourceId, isDisabled ? 'active' : 'disabled')}
+                        disabled={isMutatingAtsSource}
+                        className="inline-flex min-h-8 items-center gap-1.5 border border-rule px-2.5 py-1 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
+                    >
+                        {isDisabled ? (
+                            <Zap className="h-3.5 w-3.5" aria-hidden="true" />
+                        ) : (
+                            <PauseCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                        )}
+                        {isDisabled ? 'Enable' : 'Disable'}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => onDeleteAtsSource(source)}
+                        disabled={isMutatingAtsSource}
+                        className="inline-flex min-h-8 items-center gap-1.5 border border-warn/50 px-2.5 py-1 text-[12px] font-medium text-warn transition-colors hover:bg-warn-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                    >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        Delete
+                    </button>
+                </div>
+            ) : null}
         </>
     );
     const className = 'group min-h-36 border border-rule bg-surface px-4 py-3 transition-colors hover:border-rule-strong';
@@ -327,6 +399,11 @@ function SourceCard({
 
 export function FetchSourcesPanel() {
     const [sourceSearch, setSourceSearch] = useState('');
+    const [isAddingSource, setIsAddingSource] = useState(false);
+    const [newSourceName, setNewSourceName] = useState('');
+    const [newSourceUrl, setNewSourceUrl] = useState('');
+    const [newSourceProvider, setNewSourceProvider] = useState('');
+    const [newSourceIdentifier, setNewSourceIdentifier] = useState('');
     const queryClient = useQueryClient();
     const { data, isLoading } = useQuery({
         queryKey: ['pipeline', 'sources'],
@@ -359,10 +436,84 @@ export function FetchSourcesPanel() {
         },
         staleTime: 5 * 60 * 1000,
     });
+    const { data: userAtsSources = [], isLoading: isLoadingUserSources } = useQuery({
+        queryKey: ['cloud', 'integrations', 'user-sources'],
+        queryFn: async () => {
+            const response = await pipelineApi.getUserAtsSources();
+            return response.status === 200 && Array.isArray(response.data) ? response.data : [];
+        },
+        staleTime: 60 * 1000,
+    });
+    const createUserSourceMutation = useMutation({
+        mutationFn: async (payload: AtsSourceCreateRequest) => {
+            const response = await pipelineApi.createUserAtsSource(payload);
+            return response.data;
+        },
+        onSuccess: (source) => {
+            toast.success(`${source.display_name} added`);
+            setIsAddingSource(false);
+            setNewSourceName('');
+            setNewSourceUrl('');
+            setNewSourceProvider('');
+            setNewSourceIdentifier('');
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources'] });
+        },
+        onError: (error) => {
+            toast.error(`ATS source add failed: ${apiErrorMessage(error)}`);
+        },
+    });
+    const updateUserSourceMutation = useMutation({
+        mutationFn: async ({ sourceId, status }: { sourceId: string; status: string }) => {
+            const response = await pipelineApi.updateUserAtsSource(sourceId, { status });
+            return response.data;
+        },
+        onSuccess: (source) => {
+            toast.success(`${source.display_name} ${source.status === 'disabled' ? 'disabled' : 'enabled'}`);
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources'] });
+        },
+        onError: (error) => {
+            toast.error(`ATS source update failed: ${apiErrorMessage(error)}`);
+        },
+    });
+    const deleteUserSourceMutation = useMutation({
+        mutationFn: async (sourceId: string) => {
+            await pipelineApi.deleteUserAtsSource(sourceId);
+            return sourceId;
+        },
+        onSuccess: () => {
+            toast.success('ATS source deleted');
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources'] });
+        },
+        onError: (error) => {
+            toast.error(`ATS source delete failed: ${apiErrorMessage(error)}`);
+        },
+    });
+    const syncUserSourceMutation = useMutation({
+        mutationFn: async (sourceId: string) => {
+            const response = await pipelineApi.syncUserAtsSource(sourceId, true);
+            return response.data;
+        },
+        onSuccess: (result) => {
+            toast.success(`${result.jobs_imported} jobs imported from ${toTitleCase(result.provider)}`);
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources'] });
+        },
+        onError: (error) => {
+            toast.error(`ATS source sync failed: ${apiErrorMessage(error)}`);
+        },
+    });
 
     const cloudSources = useMemo(
-        () => cloudIntegrations.map(cloudIntegrationSource),
-        [cloudIntegrations]
+        () => [
+            ...cloudIntegrations
+                .filter((integration) => integration.is_user_source !== true)
+                .map(cloudIntegrationSource),
+            ...userAtsSources.map(cloudIntegrationSource),
+        ],
+        [cloudIntegrations, userAtsSources]
     );
     const allSources = useMemo(
         () => [...(data?.sources ?? []), ...cloudSources],
@@ -376,8 +527,34 @@ export function FetchSourcesPanel() {
     const emptyMessage = sourceSearch.trim()
         ? 'No sources match that search.'
         : 'No fetch sources configured.';
+
+    function submitUserSource(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        const provider = newSourceProvider.trim() || undefined;
+        const identifier = newSourceIdentifier.trim() || undefined;
+        const payload: AtsSourceCreateRequest = {
+            display_name: newSourceName.trim() || undefined,
+            source_url: newSourceUrl.trim() || undefined,
+            provider,
+            identifier,
+            providers: provider && !identifier ? [provider] : undefined,
+        };
+        if (!payload.display_name && !payload.source_url && !(payload.provider && payload.identifier)) {
+            toast.error('Add a source name, careers URL, or provider board identifier.');
+            return;
+        }
+        createUserSourceMutation.mutate(payload);
+    }
+
+    function deleteUserSource(source: FetchSource) {
+        const sourceId = userSourceId(source);
+        if (!sourceId) return;
+        if (!window.confirm(`Delete ${source.display_name}?`)) return;
+        deleteUserSourceMutation.mutate(sourceId);
+    }
+
     let sourcesContent: ReactNode;
-    if (isLoading || isLoadingCloud) {
+    if (isLoading || isLoadingCloud || isLoadingUserSources) {
         sourcesContent = (
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {[0, 1, 2].map((item) => (
@@ -404,6 +581,21 @@ export function FetchSourcesPanel() {
                             fetchSourceMutation.isPending
                             && fetchSourceMutation.variables === source.site_type
                         }
+                        onSyncAtsSource={(sourceId) => syncUserSourceMutation.mutate(sourceId)}
+                        onToggleAtsSource={(sourceId, status) => updateUserSourceMutation.mutate({ sourceId, status })}
+                        onDeleteAtsSource={deleteUserSource}
+                        isSyncingAtsSource={
+                            syncUserSourceMutation.isPending
+                            && syncUserSourceMutation.variables === userSourceId(source)
+                        }
+                        isUpdatingAtsSource={
+                            updateUserSourceMutation.isPending
+                            && updateUserSourceMutation.variables?.sourceId === userSourceId(source)
+                        }
+                        isDeletingAtsSource={
+                            deleteUserSourceMutation.isPending
+                            && deleteUserSourceMutation.variables === userSourceId(source)
+                        }
                     />
                 ))}
             </div>
@@ -425,6 +617,14 @@ export function FetchSourcesPanel() {
                     </h3>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <button
+                        type="button"
+                        onClick={() => setIsAddingSource((value) => !value)}
+                        className="inline-flex h-9 items-center justify-center gap-1.5 border border-accent px-3 text-[13px] font-medium text-accent transition-colors hover:bg-accent-soft"
+                    >
+                        <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                        Add source
+                    </button>
                     <label className="relative block">
                         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-soft" aria-hidden="true" />
                         <input
@@ -441,6 +641,63 @@ export function FetchSourcesPanel() {
                     </div>
                 </div>
             </div>
+
+            {isAddingSource ? (
+                <form
+                    onSubmit={submitUserSource}
+                    className="mb-4 grid gap-3 border border-rule bg-surface px-4 py-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_9rem_minmax(0,1fr)_auto]"
+                >
+                    <label className="grid gap-1 text-[12px] text-ink-soft">
+                        Name
+                        <input
+                            value={newSourceName}
+                            onChange={(event) => setNewSourceName(event.target.value)}
+                            placeholder="Company or board"
+                            className="h-9 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
+                        />
+                    </label>
+                    <label className="grid gap-1 text-[12px] text-ink-soft">
+                        Careers URL
+                        <input
+                            value={newSourceUrl}
+                            onChange={(event) => setNewSourceUrl(event.target.value)}
+                            placeholder="https://boards.greenhouse.io/acme"
+                            className="h-9 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
+                        />
+                    </label>
+                    <label className="grid gap-1 text-[12px] text-ink-soft">
+                        Provider
+                        <select
+                            value={newSourceProvider}
+                            onChange={(event) => setNewSourceProvider(event.target.value)}
+                            className="h-9 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
+                        >
+                            <option value="">Auto</option>
+                            <option value="greenhouse">Greenhouse</option>
+                            <option value="lever">Lever</option>
+                            <option value="ashby">Ashby</option>
+                        </select>
+                    </label>
+                    <label className="grid gap-1 text-[12px] text-ink-soft">
+                        Board ID
+                        <input
+                            value={newSourceIdentifier}
+                            onChange={(event) => setNewSourceIdentifier(event.target.value)}
+                            placeholder="acme"
+                            className="h-9 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
+                        />
+                    </label>
+                    <div className="flex items-end gap-2">
+                        <button
+                            type="submit"
+                            disabled={createUserSourceMutation.isPending}
+                            className="inline-flex h-9 items-center justify-center border border-accent px-3 text-[13px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                        >
+                            {createUserSourceMutation.isPending ? 'Adding' : 'Add'}
+                        </button>
+                    </div>
+                </form>
+            ) : null}
 
             {sourcesContent}
         </section>
