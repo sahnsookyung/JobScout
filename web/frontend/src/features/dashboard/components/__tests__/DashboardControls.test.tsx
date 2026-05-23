@@ -16,6 +16,11 @@ vi.mock('@/services/pipelineApi', () => ({
             getSources: vi.fn(),
             fetchSource: vi.fn(),
             getCloudIntegrations: vi.fn(),
+            getUserAtsSources: vi.fn(),
+            createUserAtsSource: vi.fn(),
+            updateUserAtsSource: vi.fn(),
+            deleteUserAtsSource: vi.fn(),
+            syncUserAtsSource: vi.fn(),
         },
 }));
 vi.mock('sonner');
@@ -36,6 +41,11 @@ const mockPipelineApi = pipelineApi as unknown as {
     getSources: ReturnType<typeof vi.fn>;
     fetchSource: ReturnType<typeof vi.fn>;
     getCloudIntegrations: ReturnType<typeof vi.fn>;
+    getUserAtsSources: ReturnType<typeof vi.fn>;
+    createUserAtsSource: ReturnType<typeof vi.fn>;
+    updateUserAtsSource: ReturnType<typeof vi.fn>;
+    deleteUserAtsSource: ReturnType<typeof vi.fn>;
+    syncUserAtsSource: ReturnType<typeof vi.fn>;
 };
 
 const createWrapper = () => {
@@ -168,6 +178,62 @@ describe('DashboardControls', () => {
                     last_error: null,
                 },
             ],
+        });
+        mockPipelineApi.getUserAtsSources.mockResolvedValue({
+            status: 200,
+            data: [],
+        });
+        mockPipelineApi.createUserAtsSource.mockResolvedValue({
+            data: {
+                id: 'source-1',
+                tenant_id: 'tenant-1',
+                provider: 'lever',
+                display_name: 'Acme Lever',
+                status: 'active',
+                sync_interval_minutes: 120,
+                config: {},
+                capabilities: ['list_jobs'],
+                validation_status: 'pending',
+                last_validated_at: null,
+                last_error: null,
+                is_user_source: true,
+                owner_user_id: 'user-1',
+                source_url: 'https://jobs.lever.co/acme',
+                created_at: null,
+                updated_at: null,
+            },
+        });
+        mockPipelineApi.updateUserAtsSource.mockResolvedValue({
+            data: {
+                id: 'source-1',
+                tenant_id: 'tenant-1',
+                provider: 'lever',
+                display_name: 'Acme Lever',
+                status: 'disabled',
+                sync_interval_minutes: 120,
+                config: {},
+                capabilities: ['list_jobs'],
+                validation_status: 'pending',
+                last_validated_at: null,
+                last_error: null,
+                is_user_source: true,
+                owner_user_id: 'user-1',
+                source_url: 'https://jobs.lever.co/acme',
+                created_at: null,
+                updated_at: null,
+            },
+        });
+        mockPipelineApi.deleteUserAtsSource.mockResolvedValue({});
+        mockPipelineApi.syncUserAtsSource.mockResolvedValue({
+            data: {
+                run_id: 'run-1',
+                status: 'completed',
+                jobs_seen: 4,
+                jobs_imported: 2,
+                jobs_deactivated: 0,
+                provider: 'lever',
+                dedupe_fingerprint_count: 2,
+            },
         });
         mockPipelineApi.fetchSource.mockResolvedValue({
             data: {
@@ -468,6 +534,7 @@ describe('DashboardControls', () => {
                 includeStatus: true,
             });
             expect(mockPipelineApi.getCloudIntegrations).toHaveBeenCalledTimes(1);
+            expect(mockPipelineApi.getUserAtsSources).toHaveBeenCalledTimes(1);
         });
 
         it('lets admins trigger a Worker-backed seed fetch from the source card', async () => {
@@ -511,6 +578,31 @@ describe('DashboardControls', () => {
             expect(mockPipelineApi.getSources).not.toHaveBeenCalledWith(
                 expect.objectContaining({ search: 'internal' })
             );
+        });
+
+        it('lets users add their own ATS source from the fetch panel', async () => {
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+
+            await userEvent.click(screen.getByRole('button', { name: /add source/i }));
+            await userEvent.type(screen.getByLabelText('Name'), 'Acme Lever');
+            await userEvent.type(screen.getByLabelText('Careers URL'), 'https://jobs.lever.co/acme');
+            await userEvent.selectOptions(screen.getByLabelText('Provider'), 'lever');
+            await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+
+            await waitFor(() => {
+                expect(mockPipelineApi.createUserAtsSource).toHaveBeenCalledWith({
+                    display_name: 'Acme Lever',
+                    source_url: 'https://jobs.lever.co/acme',
+                    provider: 'lever',
+                    providers: ['lever'],
+                    identifier: undefined,
+                });
+            });
+            expect(toast.success).toHaveBeenCalledWith('Acme Lever added');
         });
     });
 });
