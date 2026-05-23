@@ -24,6 +24,10 @@ vi.mock('@/features/preferences/components/CandidatePreferencesPanel', () => ({
     CandidatePreferencesPanel: () => <div>Candidate preferences content</div>,
 }));
 
+vi.mock('../OperationsStatusPanel', () => ({
+    OperationsStatusPanel: () => <div>Operations status content</div>,
+}));
+
 const mockUseAuth = vi.mocked(useAuth);
 
 function makeAuthState(overrides: Partial<ReturnType<typeof useAuth>> = {}) {
@@ -114,6 +118,17 @@ describe('DashboardHeader', () => {
                 screen.queryByRole('dialog', { name: /candidate preferences/i }),
             ).not.toBeInTheDocument();
         });
+    });
+
+    it('opens tenant diagnostics from the profile panel', async () => {
+        render(<DashboardHeader />);
+
+        await userEvent.click(screen.getByRole('button', { name: /open profile menu/i }));
+        await userEvent.click(screen.getByRole('button', { name: /diagnostics/i }));
+
+        expect(screen.getByRole('dialog', { name: /tenant diagnostics/i })).toBeInTheDocument();
+        expect(screen.getByText('Operations status content')).toBeInTheDocument();
+        expect(screen.queryByLabelText('Profile panel')).not.toBeInTheDocument();
     });
 
     it('signs out from the profile panel', async () => {

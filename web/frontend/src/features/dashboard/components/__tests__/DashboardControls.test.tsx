@@ -605,6 +605,29 @@ describe('DashboardControls', () => {
             expect(toast.success).toHaveBeenCalledWith('Acme Lever added');
         });
 
+        it('lets users add a provider board identifier without a careers URL', async () => {
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+
+            await userEvent.click(screen.getByRole('button', { name: /add source/i }));
+            await userEvent.selectOptions(screen.getByLabelText('Provider'), 'ashby');
+            await userEvent.type(screen.getByLabelText('Board ID'), 'acme-board');
+            await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+
+            await waitFor(() => {
+                expect(mockPipelineApi.createUserAtsSource).toHaveBeenCalledWith({
+                    display_name: undefined,
+                    source_url: undefined,
+                    provider: 'ashby',
+                    providers: undefined,
+                    identifier: 'acme-board',
+                });
+            });
+        });
+
         it('validates empty user ATS source submissions before calling the API', async () => {
             render(<DashboardControls />, { wrapper: createWrapper() });
 
@@ -922,6 +945,64 @@ describe('DashboardControls', () => {
                     status: 'active',
                 });
             });
+        });
+
+        it('surfaces managed ATS source action failures', async () => {
+            mockPipelineApi.getUserAtsSources.mockResolvedValue({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-errors',
+                        tenant_id: 'tenant-1',
+                        provider: 'greenhouse',
+                        display_name: 'Error Source',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://boards.greenhouse.io/acme',
+                        created_at: null,
+                        updated_at: null,
+                    },
+                ],
+            });
+            mockPipelineApi.syncUserAtsSource.mockRejectedValueOnce({
+                response: { data: { message: 'sync offline' } },
+            });
+            mockPipelineApi.updateUserAtsSource.mockRejectedValueOnce({
+                response: { data: { error: 'update rejected' } },
+            });
+            mockPipelineApi.deleteUserAtsSource.mockRejectedValueOnce(new Error('delete failed'));
+            const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Error Source')).toBeInTheDocument();
+            });
+            const sourceCard = screen.getByText('Error Source').closest('div[class*="group"]') as HTMLElement;
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /sync/i }));
+            await waitFor(() => {
+                expect(toast.error).toHaveBeenCalledWith('ATS source sync failed: sync offline');
+            });
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /disable/i }));
+            await waitFor(() => {
+                expect(toast.error).toHaveBeenCalledWith('ATS source update failed: update rejected');
+            });
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /delete/i }));
+            await waitFor(() => {
+                expect(toast.error).toHaveBeenCalledWith('ATS source delete failed: delete failed');
+            });
+
+            confirmSpy.mockRestore();
         });
     });
 });

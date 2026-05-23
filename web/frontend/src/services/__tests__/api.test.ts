@@ -230,6 +230,23 @@ describe('apiClient', () => {
             expect(getItem).toHaveBeenCalledWith('jobscout_auth');
         });
 
+        it('should omit csrf headers on mutation requests when the cookie is absent', () => {
+            Object.defineProperty(globalThis.document, 'cookie', {
+                value: 'theme=dark',
+                configurable: true,
+            });
+            const mockConfig = {
+                method: 'delete',
+                url: '/matches/hidden',
+                headers: {} as Record<string, string>,
+            };
+
+            const { requestHandler } = getMockHandlers();
+            const result = requestHandler.fulfilled(mockConfig);
+
+            expect(result.headers['X-CSRF-Token']).toBeUndefined();
+        });
+
         it('should remove persisted tenant id when clearing verified tenant state', () => {
             const removeItem = vi.fn();
             Object.defineProperty(globalThis, 'localStorage', {
@@ -244,6 +261,22 @@ describe('apiClient', () => {
             setVerifiedTenantId(null);
 
             expect(removeItem).toHaveBeenCalledWith('jobscout_tenant_id');
+        });
+
+        it('should not persist tenant ids when window storage is unavailable', () => {
+            const setItem = vi.fn();
+            Object.defineProperty(globalThis, 'window', {
+                value: undefined,
+                configurable: true,
+            });
+            Object.defineProperty(globalThis, 'localStorage', {
+                value: { setItem },
+                configurable: true,
+            });
+
+            setVerifiedTenantId('00000000-0000-4000-8000-000000000205');
+
+            expect(setItem).not.toHaveBeenCalled();
         });
 
         it('should ignore invalid tenant ids from the URL and storage', () => {

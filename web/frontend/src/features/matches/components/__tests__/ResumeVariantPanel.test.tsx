@@ -98,6 +98,35 @@ describe('ResumeVariantPanel', () => {
         expect(toast.success).toHaveBeenCalledWith('Resume draft generated.');
     });
 
+    it('renders fallback copy and filters unsupported download formats', async () => {
+        const variant = makeVariant({
+            content: {
+                summary: [{ text: '   ' }],
+                targeted_evidence: [],
+                skills: [{ text: '' }],
+                experience: [],
+            },
+            evidence_map: {},
+            warnings: [],
+            download_formats: ['markdown', 'pdf' as any],
+            reused: true,
+        });
+        vi.mocked(resumeVariantsApi.createForMatch).mockResolvedValueOnce({
+            data: { success: true, variant },
+        } as never);
+
+        render(<ResumeVariantPanel matchId="match-1" />, { wrapper: makeQueryWrapper() });
+        fireEvent.click(screen.getByRole('button', { name: /generate draft/i }));
+
+        expect(await screen.findByText('No summary text generated.')).toBeInTheDocument();
+        expect(screen.getByText('No targeted evidence generated.')).toBeInTheDocument();
+        expect(screen.getByText('Sourced claims')).toBeInTheDocument();
+        expect(screen.getByText('Current draft reused.')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /download markdown/i })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /download pdf/i })).not.toBeInTheDocument();
+        expect(toast.success).toHaveBeenCalledWith('Resume draft already current.');
+    });
+
     it('surfaces generation failures without leaving a blank panel', async () => {
         vi.mocked(resumeVariantsApi.createForMatch).mockRejectedValueOnce(new Error('Quota exceeded.'));
 

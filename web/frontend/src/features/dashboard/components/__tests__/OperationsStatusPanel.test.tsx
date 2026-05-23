@@ -78,4 +78,16 @@ describe('OperationsStatusPanel', () => {
         expect(screen.getByText('redis_eviction_policy')).toBeInTheDocument();
         expect(screen.getByText('Redis eviction policy should be noeviction.')).toBeInTheDocument();
     });
+
+    it('renders an unavailable state when diagnostics fail to load', async () => {
+        mockGetStatus.mockRejectedValue(new Error('forbidden'));
+
+        renderPanel();
+
+        expect(
+            await screen.findByRole('alert', undefined, { timeout: 4000 })
+        ).toHaveTextContent(
+            'Diagnostics are unavailable for this account.'
+        );
+    });
 });
