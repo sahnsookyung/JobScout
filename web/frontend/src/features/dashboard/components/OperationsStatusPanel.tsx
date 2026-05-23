@@ -30,10 +30,10 @@ export function OperationsStatusPanel() {
 
     const status = statusQuery.data;
     const quotaBackend = status.quotas && typeof status.quotas === 'object'
-        ? (status.quotas as Record<string, unknown>)['backend']
+        ? status.quotas['backend']
         : undefined;
     const notificationDryRun = status.notifications && typeof status.notifications === 'object'
-        ? (status.notifications as Record<string, unknown>)['dry_run']
+        ? status.notifications['dry_run']
         : undefined;
     const warnings = status.warnings ?? [];
 

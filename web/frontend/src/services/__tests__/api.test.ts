@@ -63,7 +63,7 @@ vi.mock('axios', () => {
     };
 });
 
-import { apiClient } from '../api';
+import { apiClient, readRequestedTenantId, setVerifiedTenantId } from '../api';
 
 describe('apiClient', () => {
     const originalWindow = globalThis.window;
@@ -71,6 +71,7 @@ describe('apiClient', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        setVerifiedTenantId(null);
         Object.defineProperty(globalThis, 'window', {
             value: originalWindow,
             configurable: true,
@@ -196,6 +197,68 @@ describe('apiClient', () => {
             expect(result.headers['X-Tenant-Id']).toBe(
                 '00000000-0000-4000-8000-000000000202'
             );
+        });
+
+        it('should attach verified tenant id and csrf token to mutation requests', () => {
+            const getItem = vi.fn(() => null);
+            Object.defineProperty(globalThis, 'localStorage', {
+                value: {
+                    getItem,
+                    setItem: vi.fn(),
+                    removeItem: vi.fn(),
+                },
+                configurable: true,
+            });
+            Object.defineProperty(globalThis.document, 'cookie', {
+                value: 'theme=dark; __Host-jobscout_csrf=csrf-token-123',
+                configurable: true,
+            });
+            setVerifiedTenantId('00000000-0000-4000-8000-000000000203');
+            const mockConfig = {
+                method: 'post',
+                url: '/matches',
+                headers: {} as Record<string, string>,
+            };
+
+            const { requestHandler } = getMockHandlers();
+            const result = requestHandler.fulfilled(mockConfig);
+
+            expect(result.headers['X-Tenant-Id']).toBe(
+                '00000000-0000-4000-8000-000000000203'
+            );
+            expect(result.headers['X-CSRF-Token']).toBe('csrf-token-123');
+            expect(getItem).toHaveBeenCalledWith('jobscout_auth');
+        });
+
+        it('should remove persisted tenant id when clearing verified tenant state', () => {
+            const removeItem = vi.fn();
+            Object.defineProperty(globalThis, 'localStorage', {
+                value: {
+                    setItem: vi.fn(),
+                    removeItem,
+                },
+                configurable: true,
+            });
+
+            setVerifiedTenantId('00000000-0000-4000-8000-000000000204');
+            setVerifiedTenantId(null);
+
+            expect(removeItem).toHaveBeenCalledWith('jobscout_tenant_id');
+        });
+
+        it('should ignore invalid tenant ids from the URL and storage', () => {
+            Object.defineProperty(globalThis, 'window', {
+                value: { location: { search: '?tenant_id=not-a-uuid' } },
+                configurable: true,
+            });
+            Object.defineProperty(globalThis, 'localStorage', {
+                value: {
+                    getItem: vi.fn(() => 'also-not-a-uuid'),
+                },
+                configurable: true,
+            });
+
+            expect(readRequestedTenantId()).toBeNull();
         });
 
         it('should skip token lookup when window is unavailable', () => {

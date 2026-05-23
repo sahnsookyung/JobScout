@@ -23,6 +23,7 @@ from etl.resume.embedding_store import JobRepositoryAdapter
 
 logger = logging.getLogger(__name__)
 SYSTEM_OWNER_ID = "00000000-0000-0000-0000-000000000001"
+FAILED_PARSE_RESUME_FILE = "Failed to parse resume file"
 def _effective_owner_id(owner_id: Optional[Any]) -> Any:
     return owner_id or SYSTEM_OWNER_ID
 
@@ -255,7 +256,7 @@ class JobETLService:
             parsed = parser.parse(resume_file)
             resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
         except (ValueError, IOError):
-            logger.exception("Failed to parse resume file")
+            logger.exception(FAILED_PARSE_RESUME_FILE)
             return False, fingerprint, None
 
         logger.info(f"Resume changed (fingerprint: {fingerprint}), processing...")
@@ -314,7 +315,7 @@ class JobETLService:
                 owner_id=owner_id,
                 error=str(exc),
             )
-            logger.exception("Failed to parse resume file")
+            logger.exception(FAILED_PARSE_RESUME_FILE)
             return False, "", None
 
         if (
@@ -656,7 +657,7 @@ class JobETLService:
                     owner_id=owner_id,
                     error=str(e),
                 )
-                logger.exception("Failed to parse resume file")
+                logger.exception(FAILED_PARSE_RESUME_FILE)
                 return False, fingerprint, None
 
             logger.info(f"Resume changed (fingerprint: {fingerprint}), processing...")

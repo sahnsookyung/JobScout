@@ -104,7 +104,7 @@ apiClient.interceptors.request.use(
             config.headers = config.headers ?? {};
             config.headers.Authorization = `Bearer ${storedToken}`;
         }
-        const tenantId = verifiedTenantId ?? (!isProductionLike() ? readRequestedTenantId() : null);
+        const tenantId = verifiedTenantId ?? (isProductionLike() ? null : readRequestedTenantId());
         if (tenantId) {
             if (!verifiedTenantId && !isProductionLike()) {
                 safeLocalStorageSet(TENANT_STORAGE_KEY, tenantId);
