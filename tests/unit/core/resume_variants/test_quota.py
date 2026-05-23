@@ -52,6 +52,25 @@ class _FakeRedis:
             self.counts[hourly_key] = hourly_count
             return [1, "ok", daily_limit - daily_count, hourly_limit - hourly_count]
 
+class _EvalFailureRedis(_FakeRedis):
+    def __init__(self, *, fail_release: bool = False) -> None:
+        super().__init__()
+        self.fail_release = fail_release
+        self.release_attempts = 0
+
+    def eval(self, script: str, numkeys: int, *args):
+        if numkeys == 1:
+            self.release_attempts += 1
+            if self.fail_release:
+                raise RuntimeError("release unavailable")
+            return super().eval(script, numkeys, *args)
+        raise RuntimeError("quota unavailable")
+
+class _BytesQuotaExceededRedis(_FakeRedis):
+    def eval(self, script: str, numkeys: int, *args):
+        del script, numkeys, args
+        return [0, b"hourly", 3, 45]
+
 
 @pytest.mark.concurrency
 def test_quota_enforces_hourly_limit_under_parallel_consumers() -> None:
@@ -119,3 +138,43 @@ def test_quota_backend_unavailable_fails_closed_before_generation() -> None:
 
     with pytest.raises(ResumeVariantQuotaUnavailable):
         quota.lease("owner-1").__enter__()
+
+@pytest.mark.security
+def test_quota_consume_generation_fails_closed_when_redis_eval_fails() -> None:
+    quota = ResumeVariantQuota(lambda: _EvalFailureRedis())
+
+    with pytest.raises(ResumeVariantQuotaUnavailable):
+        quota.consume_generation(owner_id="owner-1")
+
+@pytest.mark.security
+def test_lease_releases_lock_when_quota_consume_fails() -> None:
+    fake = _EvalFailureRedis()
+    quota = ResumeVariantQuota(lambda: fake)
+
+    with pytest.raises(ResumeVariantQuotaUnavailable):
+        quota.lease("owner-1").__enter__()
+
+    assert fake.release_attempts == 1
+    assert fake.values == {}
+
+@pytest.mark.security
+def test_lease_exit_swallows_release_backend_errors() -> None:
+    fake = _EvalFailureRedis(fail_release=True)
+    quota = ResumeVariantQuota(lambda: fake)
+    lease = quota.lease("owner-1")
+    lease.token = "token"
+    fake.values[lease.lock_key] = lease.token
+
+    lease.__exit__(None, None, None)
+
+    assert fake.release_attempts == 1
+    assert fake.values[lease.lock_key] == "token"
+
+def test_quota_exceeded_decodes_byte_bucket_and_retry_after() -> None:
+    quota = ResumeVariantQuota(lambda: _BytesQuotaExceededRedis())
+
+    with pytest.raises(ResumeVariantQuotaExceeded) as exc_info:
+        quota.consume_generation(owner_id="owner-1")
+
+    assert exc_info.value.bucket == "hourly"
+    assert exc_info.value.retry_after == 45

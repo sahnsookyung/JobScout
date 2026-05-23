@@ -77,4 +77,34 @@ describe('cloudAuthApi', () => {
         expect(mockPost).toHaveBeenCalledWith('/cloud/auth/refresh');
         expect(result.data.access_token).toBe('refreshed-token');
     });
+
+    it('logs out the current browser session', async () => {
+        const expected = { data: undefined };
+        mockPost.mockResolvedValueOnce(expected);
+
+        const result = await cloudAuthApi.logout();
+
+        expect(mockPost).toHaveBeenCalledWith('/cloud/auth/logout');
+        expect(result).toEqual(expected);
+    });
+
+    it('lists tenants visible to the authenticated user', async () => {
+        const expected = {
+            data: [
+                {
+                    id: 'tenant-1',
+                    slug: 'personal',
+                    display_name: 'Personal',
+                    role: 'owner',
+                    is_default: true,
+                },
+            ],
+        };
+        mockGet.mockResolvedValueOnce(expected);
+
+        const result = await cloudAuthApi.listTenants();
+
+        expect(mockGet).toHaveBeenCalledWith('/cloud/auth/tenants');
+        expect(result.data[0].id).toBe('tenant-1');
+    });
 });

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { vi } from 'vitest';
@@ -603,6 +603,325 @@ describe('DashboardControls', () => {
                 });
             });
             expect(toast.success).toHaveBeenCalledWith('Acme Lever added');
+        });
+
+        it('validates empty user ATS source submissions before calling the API', async () => {
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+
+            await userEvent.click(screen.getByRole('button', { name: /add source/i }));
+            await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+
+            expect(toast.error).toHaveBeenCalledWith(
+                'Add a source name, careers URL, or provider board identifier.'
+            );
+            expect(mockPipelineApi.createUserAtsSource).not.toHaveBeenCalled();
+        });
+
+        it('renders seed, JobSpy, custom, and degraded source status labels', async () => {
+            mockPipelineApi.getCloudIntegrations.mockResolvedValue({ status: 200, data: [] });
+            mockPipelineApi.getUserAtsSources.mockResolvedValue({ status: 200, data: [] });
+            mockPipelineApi.getSources.mockResolvedValue({
+                data: {
+                    success: true,
+                    jobspy_url: null,
+                    api_based_fetching: false,
+                    search_query: null,
+                    total_count: 8,
+                    filtered_count: 8,
+                    seed_websites: [],
+                    sources: [
+                        {
+                            site_type: 'rate_limited_seed',
+                            display_name: 'Rate Limited Seed',
+                            seed_url: 'https://example.com/jobs',
+                            description: null,
+                            tags: [],
+                            search_keywords: ['rate'],
+                            fetch_mode: 'seed_website',
+                            provider_name: null,
+                            search_term: null,
+                            location: null,
+                            country: null,
+                            results_wanted: 1,
+                            hours_old: null,
+                            options: {},
+                            api_health: null,
+                            external_fetch_status: { enabled: true, configured: true, status: 'rate_limited' },
+                        },
+                        {
+                            site_type: 'degraded_seed',
+                            display_name: 'Degraded Seed',
+                            seed_url: null,
+                            description: null,
+                            tags: [],
+                            search_keywords: ['degraded'],
+                            fetch_mode: 'seed_website',
+                            provider_name: null,
+                            search_term: null,
+                            location: null,
+                            country: null,
+                            results_wanted: 1,
+                            hours_old: null,
+                            options: {},
+                            api_health: null,
+                            external_fetch_status: { enabled: true, configured: true, status: 'degraded' },
+                        },
+                        {
+                            site_type: 'disabled_seed',
+                            display_name: 'Disabled Seed',
+                            seed_url: null,
+                            description: null,
+                            tags: [],
+                            search_keywords: ['disabled'],
+                            fetch_mode: 'seed_website',
+                            provider_name: null,
+                            search_term: null,
+                            location: null,
+                            country: null,
+                            results_wanted: 1,
+                            hours_old: null,
+                            options: {},
+                            api_health: null,
+                            external_fetch_status: { enabled: false, configured: true, status: 'disabled' },
+                        },
+                        {
+                            site_type: 'unconfigured_seed',
+                            display_name: 'Unconfigured Seed',
+                            seed_url: null,
+                            description: null,
+                            tags: [],
+                            search_keywords: ['unconfigured'],
+                            fetch_mode: 'seed_website',
+                            provider_name: null,
+                            search_term: null,
+                            location: null,
+                            country: null,
+                            results_wanted: 1,
+                            hours_old: null,
+                            options: {},
+                            api_health: null,
+                            external_fetch_status: { enabled: false, configured: false, status: 'not_configured' },
+                        },
+                        {
+                            site_type: 'jobspy_missing',
+                            display_name: 'JobSpy Missing',
+                            seed_url: null,
+                            description: null,
+                            tags: [],
+                            search_keywords: ['jobspy'],
+                            fetch_mode: 'jobspy_api',
+                            provider_name: null,
+                            search_term: null,
+                            location: null,
+                            country: null,
+                            results_wanted: 1,
+                            hours_old: null,
+                            options: {},
+                            api_health: { available: false, status: 'not_configured' },
+                        },
+                        {
+                            site_type: 'jobspy_timeout',
+                            display_name: 'JobSpy Timeout',
+                            seed_url: null,
+                            description: null,
+                            tags: [],
+                            search_keywords: ['jobspy'],
+                            fetch_mode: 'jobspy_api',
+                            provider_name: null,
+                            search_term: null,
+                            location: null,
+                            country: null,
+                            results_wanted: 1,
+                            hours_old: null,
+                            options: {},
+                            api_health: { available: false, status: 'timeout' },
+                        },
+                        {
+                            site_type: 'jobspy_offline',
+                            display_name: 'JobSpy Offline',
+                            seed_url: null,
+                            description: null,
+                            tags: [],
+                            search_keywords: ['jobspy'],
+                            fetch_mode: 'jobspy_api',
+                            provider_name: null,
+                            search_term: null,
+                            location: null,
+                            country: null,
+                            results_wanted: 1,
+                            hours_old: null,
+                            options: {},
+                            api_health: { available: false, status: 'error' },
+                        },
+                        {
+                            site_type: 'rss',
+                            display_name: 'RSS Board',
+                            seed_url: null,
+                            description: null,
+                            tags: [],
+                            search_keywords: ['rss'],
+                            fetch_mode: 'rss_feed',
+                            provider_name: null,
+                            search_term: null,
+                            location: null,
+                            country: null,
+                            results_wanted: 1,
+                            hours_old: null,
+                            options: { nested: { source: 'rss' }, enabled: true },
+                            api_health: null,
+                        },
+                    ],
+                },
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Rate Limited Seed')).toBeInTheDocument();
+            });
+            expect(screen.getByText('Worker cooling down')).toBeInTheDocument();
+            expect(screen.getByText('Worker degraded')).toBeInTheDocument();
+            expect(screen.getByText('Worker disabled')).toBeInTheDocument();
+            expect(screen.getByText('Worker unconfigured')).toBeInTheDocument();
+            expect(screen.getByText('JobSpy not configured')).toBeInTheDocument();
+            expect(screen.getByText('JobSpy timeout')).toBeInTheDocument();
+            expect(screen.getByText('JobSpy offline')).toBeInTheDocument();
+            expect(screen.getByText('rss feed')).toBeInTheDocument();
+            expect(screen.getByText('Seed and custom sources')).toBeInTheDocument();
+        });
+
+        it('surfaces source fetch and user source mutation failures', async () => {
+            mockPipelineApi.fetchSource.mockRejectedValueOnce({
+                response: { data: { warnings: ['worker quota exhausted'] } },
+            });
+            mockPipelineApi.createUserAtsSource.mockRejectedValueOnce({
+                response: { data: { error: 'duplicate source' } },
+            });
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+
+            await userEvent.click(screen.getByRole('button', { name: /fetch/i }));
+            await waitFor(() => {
+                expect(toast.error).toHaveBeenCalledWith(
+                    'Source fetch failed: worker quota exhausted'
+                );
+            });
+
+            await userEvent.click(screen.getByRole('button', { name: /add source/i }));
+            await userEvent.type(screen.getByLabelText('Name'), 'Duplicate Source');
+            await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+
+            await waitFor(() => {
+                expect(toast.error).toHaveBeenCalledWith(
+                    'ATS source add failed: duplicate source'
+                );
+            });
+        });
+
+        it('lets users sync, disable, and delete managed ATS sources', async () => {
+            mockPipelineApi.getUserAtsSources.mockResolvedValue({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-1',
+                        tenant_id: 'tenant-1',
+                        provider: 'lever',
+                        display_name: 'Acme Lever',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://jobs.lever.co/acme',
+                        created_at: null,
+                        updated_at: null,
+                    },
+                ],
+            });
+            const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Acme Lever')).toBeInTheDocument();
+            });
+            const sourceCard = screen.getByText('Acme Lever').closest('div[class*="group"]') as HTMLElement;
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /sync/i }));
+            await waitFor(() => {
+                expect(mockPipelineApi.syncUserAtsSource).toHaveBeenCalledWith('source-1', true);
+            });
+            expect(toast.success).toHaveBeenCalledWith('2 jobs imported from Lever');
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /disable/i }));
+            await waitFor(() => {
+                expect(mockPipelineApi.updateUserAtsSource).toHaveBeenCalledWith('source-1', {
+                    status: 'disabled',
+                });
+            });
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /delete/i }));
+            expect(mockPipelineApi.deleteUserAtsSource).not.toHaveBeenCalled();
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /delete/i }));
+            await waitFor(() => {
+                expect(mockPipelineApi.deleteUserAtsSource).toHaveBeenCalledWith('source-1');
+            });
+            expect(confirmSpy).toHaveBeenCalledWith('Delete Acme Lever?');
+
+            confirmSpy.mockRestore();
+        });
+
+        it('lets users re-enable a disabled managed ATS source', async () => {
+            mockPipelineApi.getUserAtsSources.mockResolvedValue({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-disabled',
+                        tenant_id: 'tenant-1',
+                        provider: 'ashby',
+                        display_name: 'Disabled Ashby',
+                        status: 'disabled',
+                        sync_interval_minutes: 240,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://jobs.ashbyhq.com/acme',
+                        created_at: null,
+                        updated_at: null,
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Disabled Ashby')).toBeInTheDocument();
+            });
+            const sourceCard = screen.getByText('Disabled Ashby').closest('div[class*="group"]') as HTMLElement;
+
+            expect(within(sourceCard).getByRole('button', { name: /sync/i })).toBeDisabled();
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /enable/i }));
+
+            await waitFor(() => {
+                expect(mockPipelineApi.updateUserAtsSource).toHaveBeenCalledWith('source-disabled', {
+                    status: 'active',
+                });
+            });
         });
     });
 });

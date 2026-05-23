@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
+import requests
 
 import etl.external_seed_fetcher as external_seed_fetcher
 from etl.external_seed_fetcher import (
@@ -300,3 +301,297 @@ def test_external_seed_payload_preserves_import_identity() -> None:
     assert job_data["source_key"] == "tokyodev"
     assert job_data["source_metadata"]["ingest_mode"] == "external_seed_fetch"
     assert job_data["source_metadata"]["request_id"] == "request-1"
+
+
+def test_catalog_status_and_small_helpers_handle_edge_cases(monkeypatch) -> None:
+    config = _config(enabled=False, sources=("tokyodev",))
+
+    assert external_seed_fetcher.external_seed_fetcher_catalog_status("unknown", config=config) is None
+    assert external_seed_fetcher.external_seed_fetcher_catalog_status("japandev", config=config)["status"] == "unconfigured"
+    assert external_seed_fetcher.external_seed_fetcher_catalog_status("tokyodev", config=config)["status"] == "disabled"
+    assert external_seed_fetcher._normalize_url("", base_url="https://example.com") is None
+    assert external_seed_fetcher._normalize_url("mailto:dev@example.com", base_url="https://example.com") is None
+    assert external_seed_fetcher._normalize_url("https://evil.example", base_url="https://example.com", allowed_netloc="example.com") is None
+    assert external_seed_fetcher._parse_posted_at(None) is None
+    assert external_seed_fetcher._parse_posted_at("not-a-date") is None
+    assert external_seed_fetcher._parse_posted_at("2026-05-23").tzinfo == timezone.utc
+    assert external_seed_fetcher._coerce_bool(True) is True
+    assert external_seed_fetcher._coerce_bool(None) is None
+    assert external_seed_fetcher._coerce_bool("remote") is True
+    assert external_seed_fetcher._coerce_bool("onsite") is False
+    assert external_seed_fetcher._coerce_bool("maybe") is None
+
+    with pytest.raises(ExternalSeedFetchError, match="body exceeds"):
+        external_seed_fetcher._canonical_body({"source": "x" * 3000})
+
+
+def test_capped_response_skips_empty_chunks_and_rejects_large_body() -> None:
+    class Response:
+        def __init__(self, chunks):
+            self.chunks = chunks
+
+        def iter_content(self, chunk_size: int):
+            return self.chunks
+
+    assert external_seed_fetcher._read_capped_response(Response([b"", b"ok"]), 4) == b"ok"
+    with pytest.raises(ExternalSeedFetchError, match="safety cap"):
+        external_seed_fetcher._read_capped_response(Response([b"abc", b"def"]), 4)
+
+
+@pytest.mark.parametrize(
+    "payload,expected_code",
+    [
+        ([], "external_seed_invalid_payload"),
+        ({"schema_version": 999}, "external_seed_invalid_schema"),
+        ({**_worker_payload("tokyodev"), "source": "japandev"}, "external_seed_source_mismatch"),
+        ({**_worker_payload("tokyodev"), "upstream_url": "https://www.tokyodev.com/other"}, "external_seed_upstream_mismatch"),
+        ({**_worker_payload("tokyodev"), "jobs": {}}, "external_seed_invalid_jobs"),
+    ],
+)
+def test_validate_fetch_payload_rejects_invalid_worker_payloads(payload, expected_code) -> None:
+    with pytest.raises(ExternalSeedFetchError) as exc_info:
+        external_seed_fetcher._validate_fetch_payload(
+            payload,
+            expected_source="tokyodev",
+            config=_config(),
+        )
+
+    assert exc_info.value.code == expected_code
+
+
+def test_validate_job_handles_invalid_shapes_and_non_string_description() -> None:
+    seen: set[tuple[str, str]] = set()
+    job, warning = external_seed_fetcher._validate_job(
+        123,
+        source="tokyodev",
+        upstream_url=external_seed_fetcher.SOURCE_URLS["tokyodev"],
+        max_age_days=45,
+        seen=seen,
+    )
+    assert job is None
+    assert warning == "invalid_job_shape"
+
+    payload = _worker_payload("tokyodev")["jobs"][0]
+    payload["description"] = {"unsafe": "shape"}
+    payload["metadata"] = {"ok": "kept", 123: "dropped", "x" * 90: "dropped"}
+    job, warning = external_seed_fetcher._validate_job(
+        payload,
+        source="tokyodev",
+        upstream_url=external_seed_fetcher.SOURCE_URLS["tokyodev"],
+        max_age_days=45,
+        seen=seen,
+    )
+
+    assert warning is None
+    assert job.description is None
+    assert job.metadata == {"ok": "kept"}
+
+
+def test_external_seed_client_rejects_disabled_unallowed_and_unconfigured_sources() -> None:
+    for config, source, expected_code in [
+        (_config(enabled=False), "tokyodev", "external_seed_disabled"),
+        (_config(sources=("japandev",)), "tokyodev", "external_seed_source_not_allowed"),
+        (_config(worker_url=None), "tokyodev", "external_seed_unconfigured"),
+    ]:
+        with pytest.raises(ExternalSeedFetchError) as exc_info:
+            ExternalSeedFetcherClient(config).fetch_source(source)
+        assert exc_info.value.code == expected_code
+
+
+def test_external_seed_client_maps_worker_failures(monkeypatch) -> None:
+    client = ExternalSeedFetcherClient(_config())
+
+    monkeypatch.setattr(
+        external_seed_fetcher.requests,
+        "post",
+        lambda *args, **kwargs: (_ for _ in ()).throw(requests.Timeout("slow")),
+    )
+    with pytest.raises(ExternalSeedFetchError) as exc_info:
+        client.fetch_source("tokyodev")
+    assert exc_info.value.code == "external_seed_request_failed"
+    assert exc_info.value.failure_class == "Timeout"
+
+    monkeypatch.setattr(external_seed_fetcher.requests, "post", lambda *args, **kwargs: _FakeResponse({}, status_code=429))
+    with pytest.raises(ExternalSeedFetchError) as exc_info:
+        client.fetch_source("tokyodev")
+    assert exc_info.value.failure_class == "worker_http_429"
+
+    class InvalidJsonResponse:
+        status_code = 200
+
+        def iter_content(self, chunk_size: int):
+            return [b"not-json"]
+
+    monkeypatch.setattr(external_seed_fetcher.requests, "post", lambda *args, **kwargs: InvalidJsonResponse())
+    with pytest.raises(ExternalSeedFetchError) as exc_info:
+        client.fetch_source("tokyodev")
+    assert exc_info.value.failure_class == "invalid_json"
+
+
+def test_redis_controls_fail_closed_only_in_production(monkeypatch) -> None:
+    monkeypatch.setattr("core.redis_streams.get_redis_client", lambda: (_ for _ in ()).throw(RuntimeError("down")))
+    monkeypatch.delenv("JOBSCOUT_ENV", raising=False)
+
+    assert external_seed_fetcher._redis_or_error() is None
+
+    monkeypatch.setenv("JOBSCOUT_ENV", "production")
+    with pytest.raises(ExternalSeedFetchError) as exc_info:
+        external_seed_fetcher._redis_or_error()
+    assert exc_info.value.code == "external_seed_quota_unavailable"
+
+
+def test_status_recording_and_loading_handles_absent_or_invalid_state() -> None:
+    redis = _FakeRedis()
+
+    assert external_seed_fetcher._load_status(None, "tenant-1", "tokyodev") == {}
+    assert external_seed_fetcher._load_status(redis, "tenant-1", "tokyodev") == {}
+
+    external_seed_fetcher._record_status(
+        redis,
+        tenant_id="tenant-1",
+        source="tokyodev",
+        status="ok",
+        fetched_count=2,
+        imported_count=1,
+        skipped_count=1,
+        warnings=tuple(f"warning-{index}" for index in range(12)),
+        budget_remaining=7,
+    )
+    status = external_seed_fetcher._load_status(redis, "tenant-1", "tokyodev")
+    assert status["status"] == "ok"
+    assert status["last_success_at"]
+    assert len(status["warnings"]) == 10
+
+    redis.setex(external_seed_fetcher._status_key("tenant-1", "tokyodev"), 60, "{bad-json")
+    assert external_seed_fetcher._load_status(redis, "tenant-1", "tokyodev") == {"status": "invalid_status"}
+
+
+def test_reserve_budget_ignores_invalid_interval_marker(monkeypatch) -> None:
+    redis = _FakeRedis()
+    redis.setex(
+        f"external_seed_fetch:interval:{external_seed_fetcher._tenant_key('tenant-1')}:tokyodev",
+        60,
+        "not-a-float",
+    )
+
+    remaining, next_eligible_at = external_seed_fetcher._reserve_budget(
+        redis,
+        tenant_id="tenant-1",
+        source="tokyodev",
+        config=_config(),
+    )
+
+    assert remaining == 49
+    assert next_eligible_at is not None
+
+
+def test_import_jobs_streams_records_through_etl_service(monkeypatch) -> None:
+    imported_records: list[NormalizedJobRecord] = []
+
+    class FakeService:
+        def __init__(self, ai_service):
+            assert ai_service is None
+
+        def import_record(self, repo, record):
+            imported_records.append(record)
+
+    class FakeUow:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    result = ExternalSeedFetchResult(
+        source="tokyodev",
+        fetched_at="2026-05-23T00:00:00+00:00",
+        upstream_url=external_seed_fetcher.SOURCE_URLS["tokyodev"],
+        jobs=(
+            ExternalSeedJob(
+                source_job_id="job-1",
+                title="Platform Engineer",
+                company_name="Acme",
+                job_url="https://www.tokyodev.com/jobs/job-1",
+            ),
+        ),
+        request_id="request-1",
+    )
+    monkeypatch.setattr(external_seed_fetcher, "JobETLService", FakeService)
+    monkeypatch.setattr(external_seed_fetcher, "job_uow", lambda: FakeUow())
+
+    assert external_seed_fetcher._import_jobs(result, tenant_id="tenant-1") == 1
+    assert imported_records[0].source.provider == external_seed_fetcher.PROVIDER_NAME
+
+
+def test_fetch_and_import_external_seed_source_validates_and_records_failures(monkeypatch) -> None:
+    redis = _FakeRedis()
+    statuses: list[dict[str, Any]] = []
+    metrics: list[tuple[str, str]] = []
+    monkeypatch.setattr(external_seed_fetcher, "_redis_or_error", lambda: redis)
+    monkeypatch.setattr(external_seed_fetcher, "_record_metric", lambda source, outcome: metrics.append((source, outcome)))
+    monkeypatch.setattr(
+        external_seed_fetcher,
+        "_record_status",
+        lambda redis_client, **kwargs: statuses.append(kwargs),
+    )
+
+    with pytest.raises(ExternalSeedFetchError) as exc_info:
+        fetch_and_import_external_seed_source("unknown", config=_config())
+    assert exc_info.value.status_code == 404
+
+    for config, expected_code in [
+        (_config(enabled=False), "external_seed_disabled"),
+        (_config(sources=("japandev",)), "external_seed_source_not_allowed"),
+        (_config(secret=None), "external_seed_unconfigured"),
+    ]:
+        with pytest.raises(ExternalSeedFetchError) as exc_info:
+            fetch_and_import_external_seed_source("tokyodev", config=config)
+        assert exc_info.value.code == expected_code
+
+    class FailingClient:
+        def fetch_source(self, source: str, *, limit: int | None = None):
+            raise ExternalSeedFetchError("external_seed_worker_error", "down", status_code=502, failure_class="worker_http_502")
+
+    with pytest.raises(ExternalSeedFetchError):
+        fetch_and_import_external_seed_source("tokyodev", config=_config(), client=FailingClient())
+
+    assert metrics[-1] == ("tokyodev", "failed")
+    assert statuses[-1]["status"] == "degraded"
+
+
+def test_fetch_and_import_external_seed_source_returns_rate_limited_summary(monkeypatch) -> None:
+    redis = _FakeRedis()
+    metrics: list[tuple[str, str]] = []
+    statuses: list[dict[str, Any]] = []
+    monkeypatch.setattr(external_seed_fetcher, "_redis_or_error", lambda: redis)
+    monkeypatch.setattr(external_seed_fetcher, "_reserve_budget", lambda *args, **kwargs: (None, "2026-05-24T00:00:00+00:00"))
+    monkeypatch.setattr(external_seed_fetcher, "_record_metric", lambda source, outcome: metrics.append((source, outcome)))
+    monkeypatch.setattr(external_seed_fetcher, "_record_status", lambda redis_client, **kwargs: statuses.append(kwargs))
+
+    summary = fetch_and_import_external_seed_source("tokyodev", config=_config())
+
+    assert summary.success is False
+    assert summary.status == "rate_limited"
+    assert summary.failure_class == "min_interval"
+    assert metrics == [("tokyodev", "rate_limited")]
+    assert statuses[0]["status"] == "rate_limited"
+
+
+def test_external_seed_fetcher_status_merges_catalog_and_runtime_status(monkeypatch) -> None:
+    redis = _FakeRedis()
+    external_seed_fetcher._record_status(
+        redis,
+        tenant_id="tenant-1",
+        source="tokyodev",
+        status="ok",
+        fetched_count=1,
+    )
+    monkeypatch.setattr(external_seed_fetcher, "get_external_seed_fetcher_config", lambda: _config(sources=("tokyodev",)))
+    monkeypatch.setattr(external_seed_fetcher, "_redis_or_error", lambda: redis)
+
+    status = external_seed_fetcher.get_external_seed_fetcher_status("tenant-1")
+
+    assert status["enabled"] is True
+    assert status["configured"] is True
+    assert status["sources"]["tokyodev"]["status"] == "ok"
+    assert status["sources"]["japandev"]["configured"] is False

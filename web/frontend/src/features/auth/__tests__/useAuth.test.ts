@@ -4,12 +4,14 @@ import { AxiosHeaders, type AxiosResponse, type InternalAxiosRequestConfig } fro
 vi.mock('@/services/cloudAuthApi', () => ({
     cloudAuthApi: {
         getCurrentUser: vi.fn(),
+        listTenants: vi.fn(),
+        logout: vi.fn(),
         refreshSession: vi.fn(),
     },
 }));
 
 import { cloudAuthApi } from '@/services/cloudAuthApi';
-import type { CloudAuthExchangeResponse, CloudUser } from '@/types/api';
+import type { CloudAuthExchangeResponse, CloudTenant, CloudUser } from '@/types/api';
 import { useAuth, __resetAuthForTests } from '../useAuth';
 
 const STORAGE_KEY = 'jobscout_auth';
@@ -203,6 +205,7 @@ afterAll(() => {
 
 describe('useAuth', () => {
     beforeEach(() => {
+        vi.unstubAllEnvs();
         vi.stubGlobal('localStorage', storageMock);
         storageMock.clear();
         __resetAuthForTests();
@@ -498,6 +501,22 @@ describe('useAuth', () => {
             expect(second.result.current.user?.email).toBe('sync@example.com');
             expect(second.result.current.token).toBe('shared-token');
         });
+
+        it('accepts browser-cookie tenant sessions without an app token', () => {
+            const tenants: CloudTenant[] = [
+                { id: 'tenant-default', name: 'Default Tenant', role: 'owner', is_default: true },
+                { id: 'tenant-other', name: 'Other Tenant', role: 'member', is_default: false },
+            ];
+            const { result } = renderHook(() => useAuth());
+
+            act(() => {
+                result.current.login({ email: 'tenant@example.com', name: 'Tenant User' }, tenants);
+            });
+
+            expect(result.current.token).toBeNull();
+            expect(result.current.tenants).toEqual(tenants);
+            expect(result.current.selectedTenantId).toBe('tenant-default');
+        });
     });
 
     describe('logout', () => {
@@ -569,6 +588,23 @@ describe('useAuth', () => {
             expect(first.result.current.token).toBeNull();
         });
 
+        it('calls the hosted logout endpoint and still clears state when it fails', async () => {
+            vi.mocked(cloudAuthApi.logout).mockRejectedValueOnce(new Error('offline'));
+            const { result } = renderHook(() => useAuth());
+
+            act(() => {
+                result.current.login({ email: 'a@b.com', name: 'A' }, 'tok');
+            });
+            act(() => {
+                result.current.logout();
+            });
+            await flushAuthEffects();
+
+            expect(cloudAuthApi.logout).toHaveBeenCalled();
+            expect(result.current.user).toBeNull();
+            expect(result.current.token).toBeNull();
+        });
+
         it('clears auth state even when localStorage becomes unavailable before logout', () => {
             const { result } = renderHook(() => useAuth());
 
@@ -628,6 +664,67 @@ describe('useAuth', () => {
             expect(cloudAuthApi.getCurrentUser).toHaveBeenCalled();
             expect(result.current.user?.name).toBe('Fresh User');
             expect(result.current.isReady).toBe(true);
+        });
+
+        it('bootstraps a hosted cookie session when auth is required', async () => {
+            vi.stubEnv('VITE_AUTH_REQUIRED', 'true');
+            vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValue(
+                axiosResponse(buildCloudUser({ email: 'cookie@example.com', name: 'Cookie User' }))
+            );
+            vi.mocked(cloudAuthApi.listTenants).mockResolvedValue(
+                axiosResponse<CloudTenant[]>([
+                    { id: 'tenant-cookie', name: 'Cookie Tenant', role: 'owner', is_default: true },
+                ])
+            );
+
+            const { result } = renderHook(() => useAuth());
+            await flushAuthEffects();
+            await flushAuthEffects();
+
+            expect(cloudAuthApi.getCurrentUser).toHaveBeenCalled();
+            expect(cloudAuthApi.listTenants).toHaveBeenCalled();
+            expect(result.current.token).toBeNull();
+            expect(result.current.selectedTenantId).toBe('tenant-cookie');
+            expect(result.current.isReady).toBe(true);
+        });
+
+        it('clears hosted cookie state when bootstrap fails', async () => {
+            vi.stubEnv('VITE_AUTH_REQUIRED', 'true');
+            vi.mocked(cloudAuthApi.getCurrentUser).mockRejectedValue(new Error('unauthorized'));
+
+            const { result } = renderHook(() => useAuth());
+            await flushAuthEffects();
+            await flushAuthEffects();
+
+            expect(result.current.user).toBeNull();
+            expect(result.current.isReady).toBe(true);
+        });
+
+        it('retries hosted cookie bootstrap when no token is present', async () => {
+            vi.stubEnv('VITE_AUTH_REQUIRED', 'true');
+            vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValue(
+                axiosResponse(buildCloudUser({ email: 'retry-cookie@example.com', name: 'Cookie Retry' }))
+            );
+            vi.mocked(cloudAuthApi.listTenants).mockResolvedValue(
+                axiosResponse<CloudTenant[]>([
+                    { id: 'tenant-cookie', name: 'Cookie Tenant', role: 'owner', is_default: true },
+                ])
+            );
+            const { result } = renderHook(() => useAuth());
+            await flushAuthEffects();
+            await flushAuthEffects();
+
+            act(() => {
+                result.current.logout();
+            });
+            act(() => {
+                result.current.retrySession();
+            });
+            await flushAuthEffects();
+            await flushAuthEffects();
+
+            expect(cloudAuthApi.getCurrentUser).toHaveBeenCalledTimes(2);
+            expect(result.current.user?.email).toBe('retry-cookie@example.com');
         });
 
         it('keeps the stored session pending when bootstrap hits a transient error', async () => {
