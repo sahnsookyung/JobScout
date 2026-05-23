@@ -162,6 +162,108 @@ def test_bootstrap_upgrades_stamped_schema_checksum_mismatch() -> None:
     stamp_schema.assert_called_once()
 
 
+def test_verify_bootstrapped_schema_ignores_non_oss_tables() -> None:
+    """OSS schema verification should tolerate private SaaS tables in the same DB."""
+    import database.bootstrap as bootstrap_module
+
+    expected = {
+        "extensions": ["vector"],
+        "enums": [{"name": "file_type", "labels": ["resume"]}],
+        "tables": {
+            "users": {
+                "columns": [
+                    {
+                        "name": "id",
+                        "type": "uuid",
+                        "nullable": False,
+                        "default": None,
+                    }
+                ]
+            }
+        },
+        "indexes": [
+            {
+                "name": "idx_users_email",
+                "table": "users",
+                "access_method": "btree",
+                "unique": True,
+                "predicate": None,
+                "reloptions": None,
+                "definition": "CREATE UNIQUE INDEX idx_users_email ON public.users USING btree (email)",
+            }
+        ],
+        "constraints": [
+            {
+                "table": "users",
+                "name": "users_pkey",
+                "type": "PRIMARY KEY",
+                "definition": "PRIMARY KEY (id)",
+            }
+        ],
+    }
+    actual = {
+        **expected,
+        "enums": [
+            *expected["enums"],
+            {"name": "saas_status", "labels": ["active"]},
+        ],
+        "tables": {
+            **expected["tables"],
+            "tenant_integration": {"columns": []},
+        },
+        "indexes": [
+            *expected["indexes"],
+            {
+                "name": "idx_tenant_integration",
+                "table": "tenant_integration",
+                "access_method": "btree",
+                "unique": False,
+                "predicate": None,
+                "reloptions": None,
+                "definition": "CREATE INDEX idx_tenant_integration ON public.tenant_integration USING btree (tenant_id)",
+            },
+        ],
+        "constraints": [
+            *expected["constraints"],
+            {
+                "table": "tenant_integration",
+                "name": "tenant_integration_pkey",
+                "type": "PRIMARY KEY",
+                "definition": "PRIMARY KEY (id)",
+            },
+        ],
+    }
+
+    with (
+        patch.object(bootstrap_module, "load", return_value=expected),
+        patch.object(bootstrap_module, "capture", return_value=actual),
+    ):
+        bootstrap_module._verify_bootstrapped_schema(MagicMock())
+
+
+def test_verify_bootstrapped_schema_still_detects_oss_drift() -> None:
+    import database.bootstrap as bootstrap_module
+
+    expected = {
+        "extensions": ["vector"],
+        "enums": [],
+        "tables": {"users": {"columns": [{"name": "id", "type": "uuid"}]}},
+        "indexes": [],
+        "constraints": [],
+    }
+    actual = {
+        **expected,
+        "tables": {"users": {"columns": [{"name": "email", "type": "text"}]}},
+    }
+
+    with (
+        patch.object(bootstrap_module, "load", return_value=expected),
+        patch.object(bootstrap_module, "capture", return_value=actual),
+    ):
+        with pytest.raises(bootstrap_module.DatabaseSchemaError, match="schema drifted"):
+            bootstrap_module._verify_bootstrapped_schema(MagicMock())
+
+
 def test_validate_known_versions_rejects_unknown_schema_versions() -> None:
     import database.bootstrap as bootstrap_module
 
