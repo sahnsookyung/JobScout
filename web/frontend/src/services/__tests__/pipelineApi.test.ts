@@ -4,12 +4,16 @@ import { apiClient } from '../api';
 
 vi.mock('../api', () => ({
     apiClient: {
+        delete: vi.fn(),
         get: vi.fn(),
+        patch: vi.fn(),
         post: vi.fn(),
     },
 }));
 
+const mockDelete = vi.mocked(apiClient.delete);
 const mockGet = vi.mocked(apiClient.get);
+const mockPatch = vi.mocked(apiClient.patch);
 const mockPost = vi.mocked(apiClient.post);
 
 describe('pipelineApi', () => {
@@ -81,6 +85,80 @@ describe('pipelineApi', () => {
                     search: 'tokyo api',
                     include_status: true,
                 },
+            });
+        });
+    });
+
+    describe('fetchSource', () => {
+        it('calls POST /pipeline/source-fetch with source and limit', () => {
+            mockPost.mockResolvedValueOnce({ data: { success: true } } as any);
+            pipelineApi.fetchSource('tokyodev', 10);
+            expect(mockPost).toHaveBeenCalledWith('/pipeline/source-fetch', {
+                source: 'tokyodev',
+                limit: 10,
+            });
+        });
+
+        it('omits limit when not provided', () => {
+            mockPost.mockResolvedValueOnce({ data: { success: true } } as any);
+            pipelineApi.fetchSource('japandev');
+            expect(mockPost).toHaveBeenCalledWith('/pipeline/source-fetch', {
+                source: 'japandev',
+            });
+        });
+    });
+
+    describe('cloud integrations', () => {
+        it('loads tenant integrations with non-500 validation', () => {
+            mockGet.mockResolvedValueOnce({ data: [] } as any);
+
+            pipelineApi.getCloudIntegrations();
+
+            expect(mockGet).toHaveBeenCalledWith('/cloud/integrations', {
+                validateStatus: expect.any(Function),
+            });
+            const config = mockGet.mock.calls[0][1] as { validateStatus: (status: number) => boolean };
+            expect(config.validateStatus(499)).toBe(true);
+            expect(config.validateStatus(500)).toBe(false);
+        });
+
+        it('loads user ATS sources with non-500 validation', () => {
+            mockGet.mockResolvedValueOnce({ data: [] } as any);
+
+            pipelineApi.getUserAtsSources();
+
+            expect(mockGet).toHaveBeenCalledWith('/cloud/integrations/sources', {
+                validateStatus: expect.any(Function),
+            });
+            const config = mockGet.mock.calls[0][1] as { validateStatus: (status: number) => boolean };
+            expect(config.validateStatus(404)).toBe(true);
+            expect(config.validateStatus(500)).toBe(false);
+        });
+
+        it('discovers, creates, updates, deletes, and syncs user ATS sources', () => {
+            const payload = {
+                display_name: 'Acme',
+                provider: 'lever' as const,
+                identifier: 'acme',
+            };
+            mockPost.mockResolvedValue({ data: {} } as any);
+            mockPatch.mockResolvedValue({ data: {} } as any);
+            mockDelete.mockResolvedValue({ data: {} } as any);
+
+            pipelineApi.discoverAtsSources(payload);
+            pipelineApi.createUserAtsSource(payload);
+            pipelineApi.updateUserAtsSource('source-1', { status: 'disabled' });
+            pipelineApi.deleteUserAtsSource('source-1');
+            pipelineApi.syncUserAtsSource('source-1', true);
+
+            expect(mockPost).toHaveBeenCalledWith('/cloud/integrations/sources/discover', payload);
+            expect(mockPost).toHaveBeenCalledWith('/cloud/integrations/sources', payload);
+            expect(mockPatch).toHaveBeenCalledWith('/cloud/integrations/sources/source-1', {
+                status: 'disabled',
+            });
+            expect(mockDelete).toHaveBeenCalledWith('/cloud/integrations/sources/source-1');
+            expect(mockPost).toHaveBeenCalledWith('/cloud/integrations/sources/source-1/sync', {
+                force: true,
             });
         });
     });

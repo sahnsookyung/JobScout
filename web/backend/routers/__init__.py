@@ -6,3 +6,4 @@ from .policy import router as policy_router
 from .pipeline import router as pipeline_router
 from .notifications import router as notifications_router
 from .candidate_preferences import router as candidate_preferences_router
+from .resume_variants import router as resume_variants_router

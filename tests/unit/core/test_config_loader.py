@@ -103,6 +103,14 @@ class TestConfigLoader(unittest.TestCase):
                     config = load_config("dummy_path.yaml")
                     self.assertEqual(config.jobspy.url, "http://env-jobspy:8000")
 
+    def test_blank_jobspy_env_disables_optional_api(self):
+        with patch("builtins.open", mock_open(read_data=self.config_yaml)):
+            with patch("os.path.exists", return_value=True):
+                with patch.dict(os.environ, {"JOBSPY_URL": ""}, clear=False):
+                    config = load_config("dummy_path.yaml")
+
+        self.assertIsNone(config.jobspy)
+
     def test_llm_config_defaults(self):
         # Test loading a config without explicit LLM settings (should use defaults from pydantic model)
         minimal_config_yaml = yaml.dump({

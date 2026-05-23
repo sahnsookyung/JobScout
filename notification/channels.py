@@ -81,8 +81,8 @@ def _validate_channel_file_path(file_path: str) -> bool:
         logger.error(f"Channel file path not in allowed directories: {file_path}")
         logger.error(f"Allowed directories: {ALLOWED_CHANNEL_DIRS}")
         return False
-    except Exception as e:
-        logger.error(f"Path validation error: {e}")
+    except Exception:
+        logger.exception("Path validation error")
         return False
 
 
@@ -128,8 +128,8 @@ def _validate_webhook_url(url: str) -> bool:
             return False
         
         return True
-    except Exception as e:
-        logger.error(f"URL validation error: {e}")
+    except Exception:
+        logger.exception("URL validation error")
         return False
 
 
@@ -1029,11 +1029,11 @@ class NotificationChannelFactory:
                         if isinstance(channel_type, str):
                             cls._channels[channel_type] = obj
                             logger.info(f"Loaded custom channel '{channel_type}' from {file_path}")
-                    except Exception as e:
-                        logger.warning(f"Could not instantiate channel class {name}: {e}")
+                    except Exception:
+                        logger.exception("Could not instantiate channel class %s", name)
                     
-        except Exception as e:
-            logger.error(f"Failed to load custom channel from {file_path}: {e}")
+        except Exception:
+            logger.exception("Failed to load custom channel from %s", file_path)
     
     @classmethod
     def _load_channel_from_module(cls, module_path: str):
@@ -1077,8 +1077,8 @@ class NotificationChannelFactory:
                         cls._channels[channel_type] = obj
                         logger.info(f"Loaded custom channel '{channel_type}' from {module_name}")
                         
-        except Exception as e:
-            logger.error(f"Failed to load custom channel from module {module_path}: {e}")
+        except Exception:
+            logger.exception("Failed to load custom channel from module %s", module_path)
     
     @classmethod
     def get_channel(cls, channel_type: str) -> NotificationChannel:

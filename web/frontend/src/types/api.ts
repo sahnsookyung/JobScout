@@ -281,12 +281,22 @@ export interface CloudUser {
     picture?: string | null;
     provider: string;
     token_kind: string;
+    session_expires_at?: number | null;
+}
+
+export interface CloudTenant {
+    id: string;
+    name: string;
+    role: 'owner' | 'admin' | 'member';
+    is_default: boolean;
 }
 
 export interface CloudAuthExchangeResponse {
-    access_token: string;
+    access_token?: string | null;
     token_type: string;
     user: CloudUser;
+    tenants?: CloudTenant[];
+    selected_tenant_id?: string | null;
 }
 
 export interface PipelineStatusResponse {
@@ -321,6 +331,7 @@ export interface FetchSource {
     tags: string[];
     search_keywords: string[];
     fetch_mode: string;
+    provider_name?: string | null;
     search_term?: string | null;
     location?: string | null;
     country?: string | null;
@@ -335,6 +346,17 @@ export interface FetchSource {
         response_time_ms?: number | null;
         error?: string | null;
     } | null;
+    external_fetch_status?: {
+        enabled: boolean;
+        configured: boolean;
+        status: string;
+        provider?: string | null;
+        last_attempt_at?: string | null;
+        last_success_at?: string | null;
+        next_eligible_at?: string | null;
+        failure_class?: string | null;
+        budget_remaining?: number | null;
+    } | null;
 }
 
 export interface FetchSourcesResponse {
@@ -346,6 +368,142 @@ export interface FetchSourcesResponse {
     filtered_count: number;
     seed_websites: string[];
     sources: FetchSource[];
+}
+
+export interface SourceFetchResponse {
+    success: boolean;
+    source: string;
+    status: string;
+    fetched_count: number;
+    imported_count: number;
+    skipped_count: number;
+    warnings: string[];
+    next_eligible_at?: string | null;
+    failure_class?: string | null;
+    budget_remaining?: number | null;
+}
+
+export interface CloudIntegration {
+    id: string;
+    tenant_id: string;
+    provider: string;
+    display_name: string;
+    status: string;
+    sync_interval_minutes: number;
+    config: Record<string, any>;
+    capabilities: string[];
+    validation_status: string;
+    last_validated_at: string | null;
+    last_error: string | null;
+    is_user_source?: boolean;
+    owner_user_id?: string | null;
+    source_url?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+}
+
+export interface AtsSourceDiscoveryCandidate {
+    provider: string;
+    identifier: string;
+    config_key: string;
+    config: Record<string, any>;
+    display_name: string;
+    source_url: string | null;
+    jobs_seen: number;
+    match_reason: string;
+}
+
+export interface UserAtsSource extends CloudIntegration {
+    is_user_source: true;
+    owner_user_id: string;
+    source_url: string | null;
+}
+
+export interface AtsSourceCreateRequest {
+    display_name?: string;
+    source_url?: string;
+    provider?: string;
+    identifier?: string;
+    providers?: string[];
+    status?: string;
+    sync_interval_minutes?: number;
+}
+
+export interface AtsSourceUpdateRequest {
+    display_name?: string;
+    status?: string;
+    sync_interval_minutes?: number;
+}
+
+export interface SyncRunResponse {
+    run_id: string;
+    status: string;
+    jobs_seen: number;
+    jobs_imported: number;
+    jobs_deactivated: number;
+    provider: string;
+    started_at?: string | null;
+    completed_at?: string | null;
+    duration_seconds?: number | null;
+    error_summary?: string | null;
+    is_manual?: boolean | null;
+    dedupe_fingerprint_count: number;
+}
+
+export type ResumeVariantDownloadFormat = 'markdown' | 'html' | 'docx';
+
+export interface ResumeVariantClaim {
+    text: string;
+    sources?: Array<Record<string, any>>;
+}
+
+export interface ResumeVariantExperience {
+    title?: string | null;
+    company?: string | null;
+    bullets?: ResumeVariantClaim[];
+    sources?: Array<Record<string, any>>;
+}
+
+export interface ResumeVariantContent {
+    template_key?: string;
+    tone?: string;
+    job?: {
+        title?: string | null;
+        company?: string | null;
+    };
+    summary?: ResumeVariantClaim[];
+    targeted_evidence?: ResumeVariantClaim[];
+    skills?: ResumeVariantClaim[];
+    experience?: ResumeVariantExperience[];
+}
+
+export interface ResumeVariant {
+    id: string;
+    match_id: string;
+    job_post_id: string;
+    template_key: string;
+    generation_mode: string;
+    created_at: string | null;
+    content: ResumeVariantContent;
+    evidence_map: Record<string, any>;
+    warnings: string[];
+    download_formats: ResumeVariantDownloadFormat[];
+    reused?: boolean | null;
+    quota_status?: {
+        daily_remaining?: number;
+        hourly_remaining?: number;
+    } | null;
+}
+
+export interface ResumeVariantEnvelope {
+    success: boolean;
+    variant: ResumeVariant;
+}
+
+export interface ResumeVariantListResponse {
+    success: boolean;
+    count: number;
+    variants: ResumeVariant[];
 }
 
 export type MatchStatus = 'active' | 'stale' | 'all';

@@ -110,3 +110,17 @@ class ResumeSelectRequest(BaseModel):
 class ResumeRetryRequest(BaseModel):
     """Retry a failed upload attempt."""
     upload_id: str = Field(..., description="Upload attempt identifier to retry")
+
+class SourceFetchRequest(BaseModel):
+    """Request to fetch a configured seed website source."""
+
+    source: Literal["tokyodev", "japandev"] = Field(
+        ...,
+        description="Configured seed website source to fetch",
+    )
+    limit: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=25,
+        description="Optional source-specific max jobs to fetch, capped at 25",
+    )

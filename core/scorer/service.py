@@ -15,7 +15,6 @@ from core.scorer import penalties as penalty_calculations
 from core.scorer.semantic_fit import (
     CrossEncoderSemanticFitScorer,
     LLMSemanticFitScorer,
-    LocalCrossEncoderProvider,
     get_shared_local_cross_encoder_provider,
     RemoteCrossEncoderProvider,
     SemanticFitScorer,

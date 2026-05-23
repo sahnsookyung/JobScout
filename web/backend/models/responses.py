@@ -220,6 +220,20 @@ class FetchSourceHealthResponse(BaseModel):
     error: Optional[str] = None
 
 
+class FetchSourceExternalStatusResponse(BaseModel):
+    """Non-secret status for the external seed fetcher backing a source."""
+
+    enabled: bool = False
+    configured: bool = False
+    status: str = "unconfigured"
+    provider: Optional[str] = None
+    last_attempt_at: Optional[str] = None
+    last_success_at: Optional[str] = None
+    next_eligible_at: Optional[str] = None
+    failure_class: Optional[str] = None
+    budget_remaining: Optional[int] = None
+
+
 class FetchSourceResponse(BaseModel):
     """Configured job source exposed to the dashboard."""
 
@@ -230,6 +244,7 @@ class FetchSourceResponse(BaseModel):
     tags: List[str] = Field(default_factory=list)
     search_keywords: List[str] = Field(default_factory=list)
     fetch_mode: str = "jobspy_api"
+    provider_name: Optional[str] = None
     search_term: Optional[str] = None
     location: Optional[str] = None
     country: Optional[str] = None
@@ -237,6 +252,7 @@ class FetchSourceResponse(BaseModel):
     hours_old: Optional[int] = None
     options: Dict[str, Any] = Field(default_factory=dict)
     api_health: Optional[FetchSourceHealthResponse] = None
+    external_fetch_status: Optional[FetchSourceExternalStatusResponse] = None
 
 
 class FetchSourcesResponse(BaseModel):
@@ -257,6 +273,20 @@ class NotificationResponse(BaseModel):
     success: bool
     notification_id: Optional[str] = None
     message: str
+
+class SourceFetchResponse(BaseModel):
+    """Response after a hosted seed website fetch attempt."""
+
+    success: bool
+    source: str
+    status: str
+    fetched_count: int = 0
+    imported_count: int = 0
+    skipped_count: int = 0
+    warnings: List[str] = Field(default_factory=list)
+    next_eligible_at: Optional[str] = None
+    failure_class: Optional[str] = None
+    budget_remaining: Optional[int] = None
 
 class NotificationDeliveryResponse(BaseModel):
     """Sanitized notification delivery history row."""

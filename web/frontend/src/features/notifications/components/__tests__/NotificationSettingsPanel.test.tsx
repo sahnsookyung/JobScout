@@ -71,12 +71,16 @@ describe('NotificationSettingsPanel', () => {
     const sendEmailOverrideVerification = vi.fn();
     const clearEmailOverride = vi.fn();
     const verifyEmailOverride = vi.fn();
+    const refetch = vi.fn();
 
     const makeHookState = (
         overrides: Partial<ReturnType<typeof useNotificationSettings>> = {}
     ): ReturnType<typeof useNotificationSettings> => ({
         settings: makeSettings(),
         isLoading: false,
+        isError: false,
+        error: null,
+        refetch,
         isSaving: false,
         isTesting: false,
         isSendingEmailVerification: false,
@@ -101,6 +105,7 @@ describe('NotificationSettingsPanel', () => {
         sendEmailOverrideVerification.mockResolvedValue({ data: { message: 'Verification email sent' } });
         clearEmailOverride.mockResolvedValue({ data: { message: 'Email override cleared' } });
         verifyEmailOverride.mockResolvedValue({ data: { message: 'Email override verified' } });
+        refetch.mockResolvedValue({ data: makeSettings() });
     });
 
     it('renders saved channel state', () => {
@@ -307,6 +312,22 @@ describe('NotificationSettingsPanel', () => {
         const { container } = renderPanel();
 
         expect(container.querySelectorAll('.animate-pulse')).toHaveLength(3);
+    });
+
+    it('renders a retryable error instead of permanent skeletons', async () => {
+        setHookState({
+            settings: undefined,
+            isLoading: false,
+            isError: true,
+            error: new Error('Internal server error'),
+        });
+
+        renderPanel();
+
+        expect(screen.getByText('Notification preferences are unavailable')).toBeInTheDocument();
+        expect(screen.getByText('Internal server error')).toBeInTheDocument();
+        await userEvent.click(screen.getByRole('button', { name: /retry/i }));
+        expect(refetch).toHaveBeenCalledTimes(1);
     });
 
     it('renders email fallback copy and blocks unavailable email toggles', () => {

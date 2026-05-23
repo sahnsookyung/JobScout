@@ -124,6 +124,20 @@ class TestNotificationUserSettingsHelpers:
         assert available is False
         assert "SMTP" in reason
 
+    @patch("notification.user_settings.EmailChannel.validate_config", return_value=True)
+    @patch("notification.user_settings._auth_mode", return_value="cloud-jwt")
+    def test_channel_available_accepts_verified_cloud_principal(self, mock_auth_mode, mock_validate):
+        user = SimpleNamespace(
+            id=uuid4(),
+            email="user@example.com",
+            token_kind="browser_session",
+        )
+
+        available, reason = _channel_available("email", user)
+
+        assert available is True
+        assert reason is None
+
     @patch("notification.user_settings.TelegramChannel.validate_config", return_value=True)
     def test_channel_available_telegram(self, mock_validate):
         available, reason = _channel_available("telegram", _make_user())

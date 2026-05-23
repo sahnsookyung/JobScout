@@ -4,6 +4,7 @@ import { ModalShell } from '@/components/ui/ModalShell';
 import { useMatchDetails } from '@/hooks/useMatchDetails';
 import { Badge } from '@/components/ui/Badge';
 import { formatScore, formatSalary } from '@/utils/formatters';
+import { ResumeVariantPanel } from './ResumeVariantPanel';
 
 type MatchDetailsModalProps = Readonly<{
     matchId: string | null;
@@ -269,9 +270,8 @@ function RequirementCard({
     const evidenceText = verdict?.evidence_text ?? req.evidence_text;
     const evidenceSection = verdict?.evidence_section ?? req.evidence_section;
     const reason = typeof verdict?.reason === 'string' ? verdict.reason : null;
-    const evidenceScore = typeof req.evidence_score === 'number'
-        ? req.evidence_score
-        : (typeof verdict?.semantic_score === 'number' ? verdict.semantic_score : null);
+    const semanticScore = typeof verdict?.semantic_score === 'number' ? verdict.semantic_score : null;
+    const evidenceScore = typeof req.evidence_score === 'number' ? req.evidence_score : semanticScore;
     const vectorScore = typeof req.similarity_score === 'number' ? req.similarity_score : null;
     const toneLabel = evidenceToneLabel(evidenceScore);
 
@@ -299,7 +299,7 @@ function RequirementCard({
                 {typeof evidenceScore === 'number' && (
                     <span
                         className="caption tabular-nums"
-                        title={vectorScore !== null ? `Vector similarity ${vectorScore.toFixed(2)}` : undefined}
+                        title={vectorScore === null ? undefined : `Vector similarity ${vectorScore.toFixed(2)}`}
                     >
                         Evidence <span className="text-ink">{evidenceScore.toFixed(2)}</span> · {toneLabel}
                     </span>
@@ -421,7 +421,7 @@ function JobDescriptionSection({ description }: Readonly<{ description: string }
     );
 }
 
-function ModalBody({ isLoading, data }: Readonly<{ isLoading: boolean; data: any }>) {
+function ModalBody({ isLoading, data, matchId }: Readonly<{ isLoading: boolean; data: any; matchId: string }>) {
     if (isLoading) return <LoadingState />;
     if (!data) return <ErrorState message="Failed to load match details" />;
 
@@ -429,6 +429,7 @@ function ModalBody({ isLoading, data }: Readonly<{ isLoading: boolean; data: any
         <div className="space-y-10">
             <JobInfoSection job={data.job} />
             <ScoresSection match={data.match} />
+            <ResumeVariantPanel matchId={matchId} />
             <RequirementsSection requirements={data.requirements} fitExplanation={data.match.fit_explanation} />
             {data.job.description && <JobDescriptionSection description={data.job.description} />}
         </div>
@@ -436,11 +437,12 @@ function ModalBody({ isLoading, data }: Readonly<{ isLoading: boolean; data: any
 }
 
 export const MatchDetailsModal: React.FC<MatchDetailsModalProps> = ({ matchId, onClose }) => {
-    const isOpen = Boolean(matchId);
+    const activeMatchId = matchId;
+    const isOpen = Boolean(activeMatchId);
 
-    const { data, isLoading } = useMatchDetails(matchId);
+    const { data, isLoading } = useMatchDetails(activeMatchId);
 
-    if (!isOpen) return null;
+    if (!activeMatchId) return null;
 
     return (
         <ModalShell
@@ -452,7 +454,7 @@ export const MatchDetailsModal: React.FC<MatchDetailsModalProps> = ({ matchId, o
             closeLabel="Close match details"
             maxWidth="max-w-5xl"
         >
-            <ModalBody isLoading={isLoading} data={data} />
+            <ModalBody isLoading={isLoading} data={data} matchId={activeMatchId} />
         </ModalShell>
     );
 };

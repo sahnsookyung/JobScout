@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,8 +24,29 @@ function normalizeBasePath(rawBasePath: string | undefined): string {
     return `${stripTrailingSlashes(withLeadingSlash)}/`;
 }
 
+function cloudflareRocketLoaderOptOut(): Plugin {
+    return {
+        name: 'cloudflare-rocket-loader-opt-out',
+        transformIndexHtml: {
+            order: 'post',
+            handler(html: string): string {
+                return html.replace(
+                    /<script\b([^>]*\btype=["']module["'][^>]*)>/g,
+                    (scriptTag: string): string => {
+                        if (scriptTag.includes('data-cfasync=') || !scriptTag.includes('src=')) {
+                            return scriptTag;
+                        }
+
+                        return scriptTag.replace('<script', '<script data-cfasync="false"');
+                    },
+                );
+            },
+        },
+    };
+}
+
 export default defineConfig({
-    plugins: [react()],
+    plugins: [react(), cloudflareRocketLoaderOptOut()],
     base: normalizeBasePath(process.env.VITE_APP_BASE_PATH),
     build: {
         cssMinify: false,

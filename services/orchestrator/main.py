@@ -367,8 +367,8 @@ class OrchestrationState:
         for queue in set(self._subscribers):
             try:
                 await queue.put(data)
-            except Exception as e:
-                logger.error("Failed to notify subscriber: %s", e)
+            except Exception:
+                logger.exception("Failed to notify subscriber")
                 self._subscribers.discard(queue)
 
     async def close(self, registry: OrchestratorRegistry) -> None:
@@ -531,9 +531,7 @@ async def _wait_for_scrape_with_retry(
             return []
         except Exception as e:
             if attempt == max_retries - 1:
-                logger.error(
-                    f"Scraper retry exhausted for task {task_id}: {e}"
-                )
+                logger.exception("Scraper retry exhausted for task %s", task_id)
                 raise
             wait_time = SCRAPER_RETRY_INTERVALS[attempt] * random.uniform(0.5, 1.5)
             logger.warning(
@@ -590,14 +588,14 @@ async def _scrape_single_scraper(
                 try:
                     with job_uow() as repo:
                         ctx.job_etl_service.ingest_one(repo, job, scraper_id)
-                except Exception as e:
-                    logger.error(f"Ingest failed for {scraper_id}: {e}")
+                except Exception:
+                    logger.exception("Ingest failed for %s", scraper_id)
         
         logger.info(f"Scraped {len(jobs)} jobs from {scraper_id}")
         return {"scraper_id": scraper_id, "jobs_scraped": len(jobs), "error": None}
         
     except Exception as e:
-        logger.error(f"Scraper {scraper_id} failed: {e}")
+        logger.exception("Scraper %s failed", scraper_id)
         return {"scraper_id": scraper_id, "jobs_scraped": 0, "error": str(e)}
         
     finally:
@@ -777,8 +775,8 @@ async def scraper_scheduler_loop(
                     pipeline_result["stage_errors"],
                 )
                 
-        except Exception as e:
-            logger.error(f"Scheduled scrape failed: {e}")
+        except Exception:
+            logger.exception("Scheduled scrape failed")
         
         await asyncio.sleep(interval_seconds)
     
@@ -1192,11 +1190,10 @@ async def orchestrate_match(
         await _complete_match_task(state, task_id, matching_data)
 
     except asyncio.TimeoutError:
-        logger.error(
+        logger.exception(
             "❌ Orchestration timeout for task %s: %s",
             task_id,
             "stage timeout exceeded",
-            exc_info=True,
         )
         state.status = "failed"
         state.error = "Stage timeout"
@@ -1206,12 +1203,10 @@ async def orchestrate_match(
         )
 
     except Exception as e:  # generic safety net
-        logger.error(
-            "❌ Orchestration failed for task %s: %s: %s",
+        logger.exception(
+            "❌ Orchestration failed for task %s: %s",
             task_id,
             type(e).__name__,
-            e,
-            exc_info=True,
         )
         state.status = "failed"
         state.error = str(e)
@@ -1528,11 +1523,11 @@ async def health(request: Request):
         client = get_redis_client()
         client.ping()
         redis_status = "connected"
-    except redis.ConnectionError as e:
-        logger.error("Redis connection error in health check: %s", e)
+    except redis.ConnectionError:
+        logger.exception("Redis connection error in health check")
         redis_status = "connection_error"
-    except Exception as e:
-        logger.error("Redis error in health check: %s", e)
+    except Exception:
+        logger.exception("Redis error in health check")
         redis_status = "error"
 
     registry: OrchestratorRegistry = request.app.state.registry
@@ -1994,13 +1989,13 @@ def _get_stream_diagnostic(stream_name: str) -> dict:
                 }
                 for g in groups
             ]
-        except Exception as e:
-            logger.error("Consumer groups error for stream %s: %s", stream_name, e)
+        except Exception:
+            logger.exception("Consumer groups error for stream %s", stream_name)
             result["consumer_groups_error"] = "Failed to retrieve consumer groups"
 
         return result
-    except Exception as e:
-        logger.error("Stream diagnostic error for %s: %s", stream_name, e)
+    except Exception:
+        logger.exception("Stream diagnostic error for %s", stream_name)
         return {"error": "Failed to retrieve stream info"}
 
 
@@ -2050,8 +2045,8 @@ def _get_recent_tasks(redis_client) -> list | dict:
             if len(recent) >= RECENT_TASK_LIMIT:
                 break
         return recent
-    except Exception as e:
-        logger.error("Failed to retrieve recent tasks from Redis: %s", e)
+    except Exception:
+        logger.exception("Failed to retrieve recent tasks from Redis")
         return {"error": "Failed to retrieve recent tasks"}
 
 

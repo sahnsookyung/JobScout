@@ -296,8 +296,8 @@ class OpenAIService(LLMProvider):
         try:
             content = response.choices[0].message.content
             data = json.loads(content)
-        except (json.JSONDecodeError, IndexError, AttributeError) as e:
-            logger.error(f"Failed to parse structured data response: {e}")
+        except (json.JSONDecodeError, IndexError, AttributeError):
+            logger.exception("Failed to parse structured data response")
             raise
 
         thought_process = data.get('thought_process', 'No reasoning provided.')

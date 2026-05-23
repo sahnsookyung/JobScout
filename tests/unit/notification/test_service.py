@@ -947,6 +947,54 @@ class TestNotificationService:
         assert result == 'sync-fallback-id'
         mock_process.assert_called_once()
 
+    @patch('notification.service.process_notification_task')
+    @patch('notification.service.db_session_scope')
+    @patch('notification.service.JobRepository')
+    @patch('notification.service.NotificationTrackerService')
+    @patch('notification.service.Queue')
+    @patch('notification.service.Redis')
+    def test_enqueue_failure_records_dead_letter_without_sync_fallback_in_production(
+        self,
+        mock_redis,
+        mock_queue_class,
+        mock_tracker_class,
+        mock_job_repo_class,
+        mock_db_scope,
+        mock_process,
+        mock_repo,
+    ):
+        """Production queue enqueue failures are visible and do not bypass Redis with sync sends."""
+        os.environ['JOBSCOUT_ENV'] = 'production'
+        mock_redis.from_url.return_value.ping.return_value = True
+        mock_queue = Mock()
+        mock_queue.enqueue.side_effect = Exception("Redis connection lost")
+        mock_queue_class.return_value = mock_queue
+        mock_tracker = Mock()
+        mock_tracker_class.return_value = mock_tracker
+        mock_job_repo_class.return_value = mock_repo
+        make_db_scope_mock(mock_db_scope)
+
+        service = NotificationService(mock_repo, skip_dedup=True)
+        result = service.send_notification(
+            channel_type='email',
+            recipient='test@example.com',
+            subject='Test',
+            body='Body',
+            user_id='user1',
+            job_match_id='match1',
+            event_type='new_match',
+        )
+
+        assert result is None
+        mock_process.assert_not_called()
+        mock_tracker.record_notification.assert_called_once()
+        kwargs = mock_tracker.record_notification.call_args.kwargs
+        assert kwargs['success'] is False
+        assert kwargs['failure_class'] == 'notification_enqueue_failed'
+        assert kwargs['metadata']['delivery_state'] == 'enqueue_failed'
+        assert kwargs['metadata']['retry_state'] == 'dead_letter'
+        assert kwargs['metadata']['queue'] == 'notifications'
+
 
 # ---------------------------------------------------------------------------
 # NotificationService — queue status

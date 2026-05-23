@@ -1,5 +1,5 @@
 import { apiClient } from './api';
-import type { CloudAuthExchangeResponse, CloudUser } from '@/types/api';
+import type { CloudAuthExchangeResponse, CloudTenant, CloudUser } from '@/types/api';
 
 export interface GoogleCredentialExchangeRequest {
     credential: string;
@@ -16,4 +16,10 @@ export const cloudAuthApi = {
 
     refreshSession: () =>
         apiClient.post<CloudAuthExchangeResponse>('/cloud/auth/refresh'),
+
+    logout: () =>
+        apiClient.post<void>('/cloud/auth/logout'),
+
+    listTenants: () =>
+        apiClient.get<CloudTenant[]>('/cloud/auth/tenants'),
 };

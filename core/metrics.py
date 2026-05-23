@@ -17,7 +17,7 @@ is correct.
 
 from __future__ import annotations
 
-from typing import Callable, Union
+from typing import Callable
 
 from prometheus_client import Counter, Gauge, Histogram
 
@@ -126,7 +126,7 @@ _DEGRADE_SUBSTRINGS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _classify_degrade_reason(value: Union[str, BaseException, None]) -> str:
+def _classify_degrade_reason(value: str | BaseException | None) -> str:
     """Map a free-form degrade reason to the canonical enum.
 
     ``core/scorer/semantic_fit.py:_fallback_result`` records raw exception
@@ -151,21 +151,21 @@ def record_scorer_route(route: str) -> None:
     scorer_route_total.labels(route=_safe(route, _ROUTE_VALUES)).inc()
 
 
-def record_scorer_degraded(reason: Union[str, BaseException, None]) -> None:
+def record_scorer_degraded(reason: str | BaseException | None) -> None:
     canonical = _classify_degrade_reason(reason)
     scorer_degraded_reason_total.labels(
         reason=_safe(canonical, _DEGRADED_REASONS),
     ).inc()
 
 
-def record_selection_tier_item(tier: str, reason: Union[str, None] = None) -> None:
+def record_selection_tier_item(tier: str, reason: str | None = None) -> None:
     selection_tier_items_total.labels(
         tier=_safe(tier, _TIER_VALUES),
         reason=_safe(reason or "none", _EXCLUSION_REASONS),
     ).inc()
 
 
-def record_preference_status(applied: bool, reason: Union[str, None]) -> None:
+def record_preference_status(applied: bool, reason: str | None) -> None:
     # Strip the ``runtime_error:ExceptionName`` suffix that
     # candidate_preferences.py attaches so it collapses to the ``runtime_error``
     # bucket instead of ``other``.

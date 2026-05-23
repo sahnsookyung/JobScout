@@ -8,7 +8,6 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from core.match_selection import resolve_canonical_resume_selection
-from database.models import JobMatch
 from database.uow import job_uow
 
 from ..dependencies import get_current_user, get_db

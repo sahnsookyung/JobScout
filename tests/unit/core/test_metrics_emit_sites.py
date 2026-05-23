@@ -11,6 +11,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
 from prometheus_client import REGISTRY
 
 
@@ -209,10 +210,8 @@ class TestEmailEventEmits:
 
         user = MagicMock()
         user.email = "me@example.com"
-        try:
+        with pytest.raises(NotificationConfigurationError):
             wrapper.send_email_override_verification(user, "not-an-email")
-        except NotificationConfigurationError:
-            pass
         assert self._email_sample("invalid_address") - before == 1
 
 

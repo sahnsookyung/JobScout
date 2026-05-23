@@ -3,6 +3,7 @@ from database.repositories.job_post import JobPostRepository
 from database.repositories.resume import ResumeRepository
 from database.repositories.match import MatchRepository
 from database.repositories.embedding import EmbeddingRepository
+from database.repositories.resume_variant import ResumeVariantRepository
 
 __all__ = [
     'BaseRepository',
@@ -10,4 +11,5 @@ __all__ = [
     'ResumeRepository',
     'MatchRepository',
     'EmbeddingRepository',
+    'ResumeVariantRepository',
 ]

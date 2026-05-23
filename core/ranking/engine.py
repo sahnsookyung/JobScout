@@ -158,7 +158,7 @@ def _build_sort_key(
     # balanced
     pref_for_blend = pref if pref is not None else 0.0
     primary = config.balanced_w_pref * pref_for_blend + config.balanced_w_fit * fit
-    return (-primary, -sim, stable)
+    return (-primary, False, 0.0, -sim, stable)
 
 
 def _attach_explanation(

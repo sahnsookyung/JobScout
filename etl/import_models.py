@@ -90,6 +90,49 @@ class NormalizedJobRecord:
             raw_payload=payload,
         )
 
+    @classmethod
+    def from_external_seed_payload(
+        cls,
+        job_data: dict[str, Any],
+        site_name: str,
+        *,
+        provider: str,
+        tenant_id: Any | None = None,
+        fetched_at: str | None = None,
+        request_id: str | None = None,
+    ) -> "NormalizedJobRecord":
+        payload = dict(job_data)
+        metadata = dict(payload.get("metadata") or {})
+        source = ImportSourceDescriptor(
+            provider=provider,
+            site_name=site_name,
+            source_key=site_name,
+            external_job_id=_fallback_external_id(payload),
+            source_url=payload.get("job_url"),
+            apply_url=payload.get("job_url_direct") or payload.get("job_url"),
+            metadata={
+                "ingest_mode": "external_seed_fetch",
+                "fetched_at": fetched_at,
+                "request_id": request_id,
+            },
+        )
+        return cls(
+            title=str(payload.get("title") or ""),
+            company_name=str(payload.get("company_name") or ""),
+            location=payload.get("location"),
+            description=payload.get("description"),
+            source=source,
+            tenant_id=tenant_id,
+            is_remote=payload.get("is_remote"),
+            skills=list(payload.get("skills") or []),
+            company_url=payload.get("company_url"),
+            posted_at=payload.get("date_posted"),
+            employment_type=payload.get("employment_type"),
+            compensation=dict(payload.get("compensation") or {}),
+            metadata=metadata,
+            raw_payload=payload,
+        )
+
     def as_job_data(self) -> dict[str, Any]:
         payload = dict(self.raw_payload)
         payload.update(

@@ -53,14 +53,14 @@ export function GoogleLoginScreen() {
                             response.credential
                         );
                         if (!isMountedRef.current || attemptId !== exchangeAttemptRef.current) return;
-                        const { user, access_token: accessToken } = exchange.data;
+                        const { user, access_token: accessToken, tenants = [] } = exchange.data;
                         login(
                             {
                                 email: user.email,
                                 name: user.name,
                                 picture: user.picture ?? undefined,
                             },
-                            accessToken
+                            accessToken ?? tenants
                         );
                     } catch {
                         if (!isMountedRef.current || attemptId !== exchangeAttemptRef.current) return;

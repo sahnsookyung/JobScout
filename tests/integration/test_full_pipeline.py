@@ -56,7 +56,6 @@ from notification import NotificationService
 from notification.message_builder import (
     NotificationMessageBuilder
 )
-from etl.orchestrator import JobETLService
 
 
 class MockAIService(LLMProvider):

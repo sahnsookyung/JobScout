@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Mail, MessageSquare, Send, type LucideIcon } from 'lucide-react';
+import { AlertCircle, Mail, MessageSquare, Send, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/Button';
@@ -117,6 +117,10 @@ function buildPayload(draft: EditableSettings): NotificationSettingsUpdateReques
     };
 }
 
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : 'Notification preferences could not be loaded.';
+}
+
 function ToggleRow({
     label,
     description,
@@ -230,6 +234,9 @@ export function NotificationSettingsPanel() {
     const {
         settings,
         isLoading,
+        isError,
+        error,
+        refetch,
         isSaving,
         isTesting,
         isSendingEmailVerification,
@@ -257,6 +264,31 @@ export function NotificationSettingsPanel() {
             settings.channels[channelType] ? [[channelType, settings.channels[channelType]] as const] : []
         );
     }, [settings]);
+
+    if (isError) {
+        return (
+            <div className="border border-warn/40 bg-warn-soft px-5 py-5 text-ink">
+                <div className="flex items-start gap-3">
+                    <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
+                    <div className="min-w-0">
+                        <h3 className="text-[15px] font-medium">Notification preferences are unavailable</h3>
+                        <p className="mt-1 text-[13px] leading-5 text-ink-soft">
+                            {errorMessage(error)}
+                        </p>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            className="mt-4"
+                            onClick={() => void refetch()}
+                        >
+                            Retry
+                        </Button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     if (isLoading || !draft || !settings) {
         return (

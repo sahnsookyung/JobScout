@@ -27,6 +27,7 @@ from .match import JobMatch, JobMatchRequirement
 from .match_selection import MatchSelectionRun, MatchSelectionItem
 from .notification import NotificationTracker
 from .notification_settings import UserNotificationSettings, UserNotificationChannel
+from .resume_variant import ResumeVariant
 from .settings import AppSettings
 from .user import User, UserAuthIdentity, UserFile
 from .user_feature_capability import UserFeatureCapability
@@ -66,6 +67,7 @@ __all__ = [
     'NotificationTracker',
     'UserNotificationSettings',
     'UserNotificationChannel',
+    'ResumeVariant',
     'AppSettings',
     'User',
     'UserAuthIdentity',

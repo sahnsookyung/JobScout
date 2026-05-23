@@ -74,7 +74,121 @@ jobs:
       - name: Run Python unit tests
         run: |
           uv run python -m pytest tests/ -q \
-            -m "not db and not redis and not integration and not slow"
+            -m "not db and not redis and not integration and not slow and not security and not concurrency and not performance"
+
+  python-security-concurrency:
+    name: Python Security and Concurrency Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      JOBSCOUT_ENV: test
+      AUTH_MODE: dev-bypass
+
+    steps:
+      - name: Checkout
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.2"
+
+      - name: Set up Python
+        # actions/setup-python v6.2.0 — verified 2026-03-30
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.14.3"
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Run security and concurrency tests
+        run: |
+          uv run python -m pytest tests/ -q \
+            -m "security or concurrency"
+
+  python-db-redis:
+    name: Python DB and Redis Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      JOBSCOUT_ENV: test
+      AUTH_MODE: dev-bypass
+
+    steps:
+      - name: Checkout
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.2"
+
+      - name: Set up Python
+        # actions/setup-python v6.2.0 — verified 2026-03-30
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.14.3"
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Run DB and Redis tests
+        run: |
+          uv run python -m pytest tests/ -q \
+            -m "db or redis"
+
+  python-performance:
+    name: Python Bounded Performance Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      JOBSCOUT_ENV: test
+      AUTH_MODE: dev-bypass
+
+    steps:
+      - name: Checkout
+        # actions/checkout v4.2.2 — verified 2026-03-30
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.2"
+
+      - name: Set up Python
+        # actions/setup-python v6.2.0 — verified 2026-03-30
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.14.3"
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Run bounded performance tests
+        run: |
+          uv run python -m pytest tests/ -q \
+            -m "performance"
 
   frontend-unit:
     name: Frontend Tests
@@ -320,7 +434,7 @@ jobs:
   ci-gate:
     name: CI Gate
     runs-on: ubuntu-latest
-    needs: [python-unit, frontend-unit, integration, docker-compose-config, e2e-resume-flow]
+    needs: [python-unit, python-security-concurrency, python-db-redis, python-performance, frontend-unit, integration, docker-compose-config, e2e-resume-flow]
     if: always()
     timeout-minutes: 5
     permissions: {}
@@ -328,6 +442,9 @@ jobs:
       - name: Evaluate CI job results
         env:
           PYTHON_UNIT:   ${{ needs.python-unit.result }}
+          PYTHON_SECURITY_CONCURRENCY: ${{ needs.python-security-concurrency.result }}
+          PYTHON_DB_REDIS: ${{ needs.python-db-redis.result }}
+          PYTHON_PERFORMANCE: ${{ needs.python-performance.result }}
           FRONTEND_UNIT: ${{ needs.frontend-unit.result }}
           INTEGRATION:   ${{ needs.integration.result }}
           COMPOSE_CONFIG: ${{ needs.docker-compose-config.result }}
@@ -338,11 +455,14 @@ jobs:
           # python-unit, frontend-unit, integration must always succeed.
           declare -A RESULTS=(
             [python-unit]="$PYTHON_UNIT"
+            [python-security-concurrency]="$PYTHON_SECURITY_CONCURRENCY"
+            [python-db-redis]="$PYTHON_DB_REDIS"
+            [python-performance]="$PYTHON_PERFORMANCE"
             [frontend-unit]="$FRONTEND_UNIT"
             [integration]="$INTEGRATION"
             [docker-compose-config]="$COMPOSE_CONFIG"
           )
-          for job in python-unit frontend-unit integration docker-compose-config; do
+          for job in python-unit python-security-concurrency python-db-redis python-performance frontend-unit integration docker-compose-config; do
             result="${RESULTS[$job]}"
             if [[ "$result" != "success" ]]; then
               echo "::error::${job}: ${result} (expected: success)"

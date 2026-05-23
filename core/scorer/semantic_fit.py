@@ -942,6 +942,59 @@ class LocalCrossEncoderProvider:
         self._loaded_runtime_name = None
         self._model = None
 
+    def _serialized_pair_texts(self, pair: SerializedPair) -> tuple[str, str]:
+        left = "\n".join(
+            [
+                f"Requirement: {pair.fields['requirement_text']}",
+                f"Requirement Type: {pair.fields['req_type']}",
+                f"Job Title: {pair.fields['job_title']}",
+                f"Company: {pair.fields['job_company']}",
+                f"Job Summary: {pair.fields['job_summary']}",
+            ]
+        )
+        right = "\n".join(
+            [
+                f"Evidence: {pair.fields['evidence_text']}",
+                f"Evidence Section: {pair.fields['evidence_section']}",
+            ]
+        )
+        return left, right
+
+    def _score_with_loaded_runtime(self, model: Any, pairs: List[tuple[str, str]]) -> List[float]:
+        if hasattr(model, "compute_score"):
+            compute_score = getattr(model, "compute_score")
+            return self._normalize_runtime_scores(
+                compute_score(
+                    pairs,
+                    **self._filter_supported_kwargs(
+                        compute_score,
+                        {"batch_size": self.max_batch_size},
+                    ),
+                )
+            )
+        if hasattr(model, "predict"):
+            predict = getattr(model, "predict")
+            return self._normalize_runtime_scores(
+                predict(
+                    pairs,
+                    **self._filter_supported_kwargs(
+                        predict,
+                        {
+                            "batch_size": self.max_batch_size,
+                            "show_progress_bar": False,
+                        },
+                    ),
+                )
+            )
+        raise TypeError(f"Unsupported local cross-encoder runtime for {self.model_name}: {type(model)!r}")
+
+    def _heuristic_text_scores(self, pairs: List[tuple[str, str]]) -> List[float]:
+        scores = []
+        for left, right in pairs:
+            overlap = _meaningful_overlap(left, right)
+            scores.append(min(0.85, 0.45 + 0.1 * len(overlap)) if overlap else 0.0)
+        return scores
+
     def warm_up(self) -> Dict[str, Any]:
         """Force model load + a single canned inference. Call at service startup.
 
@@ -975,52 +1028,10 @@ class LocalCrossEncoderProvider:
                 if model is False:
                     assessments = [_pair_assessment_from_heuristic(pair) for pair in pairs]
                 else:
-                    left_right = [
-                        (
-                            "\n".join(
-                                [
-                                    f"Requirement: {pair.fields['requirement_text']}",
-                                    f"Requirement Type: {pair.fields['req_type']}",
-                                    f"Job Title: {pair.fields['job_title']}",
-                                    f"Company: {pair.fields['job_company']}",
-                                    f"Job Summary: {pair.fields['job_summary']}",
-                                ]
-                            ),
-                            "\n".join(
-                                [
-                                    f"Evidence: {pair.fields['evidence_text']}",
-                                    f"Evidence Section: {pair.fields['evidence_section']}",
-                                ]
-                            ),
-                        )
-                        for pair in pairs
-                    ]
-                    if hasattr(model, "compute_score"):
-                        compute_score = getattr(model, "compute_score")
-                        raw_scores = compute_score(
-                            left_right,
-                            **self._filter_supported_kwargs(
-                                compute_score,
-                                {"batch_size": self.max_batch_size},
-                            ),
-                        )
-                    elif hasattr(model, "predict"):
-                        predict = getattr(model, "predict")
-                        raw_scores = predict(
-                            left_right,
-                            **self._filter_supported_kwargs(
-                                predict,
-                                {
-                                    "batch_size": self.max_batch_size,
-                                    "show_progress_bar": False,
-                                },
-                            ),
-                        )
-                    else:
-                        raise TypeError(
-                            f"Unsupported local cross-encoder runtime for {self.model_name}: {type(model)!r}"
-                        )
-                    raw_scores = self._normalize_runtime_scores(raw_scores)
+                    raw_scores = self._score_with_loaded_runtime(
+                        model,
+                        [self._serialized_pair_texts(pair) for pair in pairs],
+                    )
                     for pair, raw_score in zip(pairs, raw_scores):
                         semantic_score = _normalize_semantic_score(raw_score)
                         coverage_level, reason = _coverage_level_and_reason(semantic_score)
@@ -1065,31 +1076,8 @@ class LocalCrossEncoderProvider:
                 if model is False:
                     # Heuristic fallback when model load fails; warning already logged by _load_model().
                     # Mirrors _pair_assessment_from_heuristic: 0.0 = no overlap, > 0 = overlap exists.
-                    scores = []
-                    for left, right in pairs:
-                        overlap = _meaningful_overlap(left, right)
-                        scores.append(min(0.85, 0.45 + 0.1 * len(overlap)) if overlap else 0.0)
-                    return scores
-                if hasattr(model, "compute_score"):
-                    compute_score = getattr(model, "compute_score")
-                    raw_scores = compute_score(
-                        pairs,
-                        **self._filter_supported_kwargs(compute_score, {"batch_size": self.max_batch_size}),
-                    )
-                elif hasattr(model, "predict"):
-                    predict = getattr(model, "predict")
-                    raw_scores = predict(
-                        pairs,
-                        **self._filter_supported_kwargs(
-                            predict,
-                            {"batch_size": self.max_batch_size, "show_progress_bar": False},
-                        ),
-                    )
-                else:
-                    raise TypeError(
-                        f"Unsupported local cross-encoder runtime for {self.model_name}: {type(model)!r}"
-                    )
-                raw_scores = self._normalize_runtime_scores(raw_scores)
+                    return self._heuristic_text_scores(pairs)
+                raw_scores = self._score_with_loaded_runtime(model, pairs)
                 return [_normalize_semantic_score(s) for s in raw_scores]
             except Exception as exc:
                 if not self._should_retry_runtime(runtime_name):

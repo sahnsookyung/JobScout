@@ -69,6 +69,15 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "slow: marks tests as slower end-to-end or container-backed coverage"
     )
+    config.addinivalue_line(
+        "markers", "security: marks tests as security or tenant-isolation coverage"
+    )
+    config.addinivalue_line(
+        "markers", "concurrency: marks tests as race/concurrency coverage"
+    )
+    config.addinivalue_line(
+        "markers", "performance: marks tests as bounded scalability/performance coverage"
+    )
 
 
 @pytest.fixture(scope="session")

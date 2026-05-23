@@ -75,8 +75,8 @@ def enqueue_job(stream: str, payload: dict) -> str:
     try:
         msg_id = client.xadd(stream, serialized, maxlen=STREAM_MAX_LEN, approximate=True)
         logger.info(f"📤 Enqueued job to {stream}: msg_id={msg_id}, task_id={payload.get('task_id')}")
-    except (redis.ConnectionError, redis.TimeoutError) as e:
-        logger.error(f"❌ Redis error enqueuing job to {stream}: {type(e).__name__}: {e}")
+    except (redis.ConnectionError, redis.TimeoutError):
+        logger.exception("❌ Redis error enqueuing job to %s", stream)
         raise
 
     return msg_id
@@ -169,8 +169,8 @@ def _yield_claimed_messages(
         for msg_id, msg in _claim_stale_messages(stream, group, consumer, count):
             logger.info("🔄 Claimed stale message %s from %s", msg_id, stream)
             yield msg_id, _deserialize_message(msg)
-    except Exception as e:
-        logger.error("❌ Error claiming stale messages: %s: %s", type(e).__name__, e)
+    except Exception:
+        logger.exception("❌ Error claiming stale messages")
 
 
 def _yield_new_messages(
@@ -212,14 +212,14 @@ def _read_stream_loop(
 
             yield from _yield_new_messages(messages, stream)
 
-        except redis.ConnectionError as e:                          # +2 (+1 nest)
-            logger.error("❌ Connection error reading from %s: %s: %s", stream, type(e).__name__, e)
+        except redis.ConnectionError:                              # +2 (+1 nest)
+            logger.exception("❌ Connection error reading from %s", stream)
             time.sleep(1)
-        except redis.TimeoutError as e:                             # +2 (+1 nest)
-            logger.warning("⚠️ Timeout reading from %s: %s: %s", stream, type(e).__name__, e)
+        except redis.TimeoutError:                                  # +2 (+1 nest)
+            logger.exception("⚠️ Timeout reading from %s", stream)
             time.sleep(1)
-        except Exception as e:                                      # +2 (+1 nest)
-            logger.error("❌ Fatal error reading from %s: %s: %s", stream, type(e).__name__, e)
+        except Exception:                                           # +2 (+1 nest)
+            logger.exception("❌ Fatal error reading from %s", stream)
             raise
 
 
@@ -251,9 +251,9 @@ def read_stream(
     try:
         client.xgroup_create(stream, group, id="0", mkstream=True)
         logger.info("✅ Created/verified consumer group %s for stream %s", group, stream)
-    except redis.ResponseError as e:
-        if "BUSYGROUP" not in str(e):
-            logger.error("❌ Failed to create consumer group: %s: %s", type(e).__name__, e)
+    except redis.ResponseError as exc:
+        if "BUSYGROUP" not in str(exc):
+            logger.exception("❌ Failed to create consumer group")
             raise
         logger.debug("ℹ️ Consumer group %s already exists for stream %s", group, stream)
 
@@ -329,10 +329,10 @@ def listen_for_messages(
                 try:
                     data = json.loads(message["data"])
                     yield data
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to decode message: {e}")
-        except redis.ConnectionError as e:
-            logger.error(f"Connection error in pubsub listener: {e}")
+                except json.JSONDecodeError:
+                    logger.exception("Failed to decode message")
+        except redis.ConnectionError:
+            logger.exception("Connection error in pubsub listener")
             pubsub.close()
             return  # Exit generator; caller should handle reconnection
 

@@ -127,8 +127,8 @@ def _load_resume_from_db(resume_fingerprint: str) -> Optional[dict]:
                 logger.error("Resume found but no extracted_data for fingerprint: %s...", resume_fingerprint[:16])
                 return None
             return structured_resume.extracted_data
-    except Exception as e:
-        logger.error("Error loading resume from DB: %s", e)
+    except Exception:
+        logger.exception("Error loading resume from DB")
         return None
 
 
@@ -436,7 +436,7 @@ def run_matching_pipeline(
         )
 
     except Exception as e:
-        logger.error("Error in matching pipeline: %s: %s", type(e).__name__, e, exc_info=True)
+        logger.exception("Error in matching pipeline")
         execution_time = time.time() - pipeline_start_time
         return MatchingPipelineResult(
             success=False, matches_count=0, saved_count=0, notified_count=0,

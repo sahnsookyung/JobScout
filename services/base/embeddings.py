@@ -101,7 +101,7 @@ def _process_job_embedding_batch(
     try:
         vectors = ctx.job_etl_service.ai.generate_embeddings_batch(list(job_texts))
     except Exception as exc:
-        logger.error("Batch job embedding API failed: %s", exc, exc_info=True)
+        logger.exception("Batch job embedding API failed")
         _mark_job_embedding_batch_failed(job_ids, f"{type(exc).__name__}: {exc}")
         return 0
 
@@ -114,7 +114,7 @@ def _process_job_embedding_batch(
                 job_success += 1
         except Exception as exc:
             _persist_job_embedding_failure(job_id, exc)
-            logger.error("Failed job embedding write-back job_id=%s", job_id, exc_info=True)
+            logger.exception("Failed job embedding write-back job_id=%s", job_id)
     return job_success
 
 
@@ -139,10 +139,10 @@ def _process_requirement_embedding_batch(
                     repo.save_requirement_embedding(req_id, vector)
                 req_success += 1
             except Exception:
-                logger.error("Failed requirement embedding write-back req_id=%s", req_id, exc_info=True)
+                logger.exception("Failed requirement embedding write-back req_id=%s", req_id)
         return req_success
     except Exception:
-        logger.error("Batch requirement embedding API failed, falling back to per-item", exc_info=True)
+        logger.exception("Batch requirement embedding API failed, falling back to per-item")
 
     req_success = 0
     for req_id in req_ids:
@@ -155,7 +155,7 @@ def _process_requirement_embedding_batch(
                     ctx.job_etl_service.embed_requirement_one(repo, req)
             req_success += 1
         except Exception:
-            logger.error("Failed requirement embedding req_id=%s", req_id, exc_info=True)
+            logger.exception("Failed requirement embedding req_id=%s", req_id)
     return req_success
 
 
