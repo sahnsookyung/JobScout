@@ -70,6 +70,39 @@ def _capture_create_all_path() -> dict:
         postgres.stop()
 
 
+def _capture_additive_upgrade_path() -> dict:
+    postgres = _start_pg()
+    try:
+        from database import bootstrap as bootstrap_module
+        from database.models import Base
+
+        url = postgres.get_connection_url()
+        engine = create_engine(url)
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                bootstrap_module._ensure_schema_migrations_table(conn)
+                conn.execute(
+                    text(bootstrap_module.INSERT_SCHEMA_MIGRATIONS_SQL),
+                    {
+                        "version": bootstrap_module.CURRENT_SCHEMA_VERSION,
+                        "checksum": "previous-schema-checksum",
+                    },
+                )
+
+            previous_tables = [
+                table for table in Base.metadata.sorted_tables if table.name != "resume_variant"
+            ]
+            Base.metadata.create_all(engine, tables=previous_tables)
+
+            bootstrap_module.bootstrap_database(engine=engine)
+            return schema_snapshot.capture(engine)
+        finally:
+            engine.dispose()
+    finally:
+        postgres.stop()
+
+
 def test_migration_path_matches_create_all_path():
     """Dropping the DB and running create_all() produces the same schema as migrations."""
     pytest.importorskip("testcontainers")
@@ -99,4 +132,21 @@ def test_migration_path_matches_checked_in_snapshot():
         "If the change is intentional, regenerate the snapshot with: "
         "`uv run python -m database.schema_snapshot --write --url=<db_url>` "
         "and include the diff in your PR description."
+    )
+
+
+def test_stamped_additive_upgrade_matches_checked_in_snapshot():
+    """A stamped DB from the previous additive schema can upgrade without recreation."""
+    pytest.importorskip("testcontainers")
+    if not schema_snapshot.SNAPSHOT_PATH.exists():
+        pytest.skip(
+            "Baseline snapshot missing. Generate via: "
+            "`uv run python -m database.schema_snapshot --write --url=$TEST_DATABASE_URL`"
+        )
+
+    current = _capture_additive_upgrade_path()
+    checked_in = schema_snapshot.load()
+    assert current == checked_in, (
+        "Additive schema upgrade drifted from the checked-in snapshot. "
+        "Keep bootstrap upgrades idempotent and snapshot-verified before deployment."
     )

@@ -135,6 +135,33 @@ def test_bootstrap_adopts_matching_legacy_migration_history() -> None:
     stamp_schema.assert_called_once()
 
 
+def test_bootstrap_upgrades_stamped_schema_checksum_mismatch() -> None:
+    """bootstrap_database should apply safe additive ORM upgrades for stamped schemas."""
+    import database.bootstrap as bootstrap_module
+
+    engine, _ = _mock_engine_with_connection()
+    with (
+        patch.object(bootstrap_module, "_schema_migrations_exists", return_value=True),
+        patch.object(bootstrap_module, "_app_tables_present", return_value={"job_post"}),
+        patch.object(
+            bootstrap_module,
+            "_applied_migrations",
+            return_value={bootstrap_module.CURRENT_SCHEMA_VERSION: "old-checksum"},
+        ),
+        patch.object(bootstrap_module, "_schema_checksum", return_value="expected-checksum"),
+        patch.object(bootstrap_module.Base.metadata, "create_all") as create_all,
+        patch.object(bootstrap_module, "_verify_bootstrapped_schema") as verify_schema,
+        patch.object(bootstrap_module, "_stamp_current_schema") as stamp_schema,
+    ):
+        assert bootstrap_module.bootstrap_database(engine=engine) == [
+            bootstrap_module.CURRENT_SCHEMA_VERSION
+        ]
+
+    create_all.assert_called_once()
+    verify_schema.assert_called_once()
+    stamp_schema.assert_called_once()
+
+
 def test_validate_known_versions_rejects_unknown_schema_versions() -> None:
     import database.bootstrap as bootstrap_module
 
