@@ -223,6 +223,15 @@ def test_verify_bootstrapped_schema_ignores_non_oss_tables() -> None:
                 "reloptions": None,
                 "definition": "CREATE INDEX idx_tenant_integration ON public.tenant_integration USING btree (tenant_id)",
             },
+            {
+                "name": "idx_users_saas_shadow",
+                "table": "users",
+                "access_method": "btree",
+                "unique": False,
+                "predicate": None,
+                "reloptions": None,
+                "definition": "CREATE INDEX idx_users_saas_shadow ON public.users USING btree (created_at)",
+            },
         ],
         "constraints": [
             *expected["constraints"],
@@ -231,6 +240,12 @@ def test_verify_bootstrapped_schema_ignores_non_oss_tables() -> None:
                 "name": "tenant_integration_pkey",
                 "type": "PRIMARY KEY",
                 "definition": "PRIMARY KEY (id)",
+            },
+            {
+                "table": "users",
+                "name": "users_saas_shadow_chk",
+                "type": "CHECK",
+                "definition": "CHECK (email IS NOT NULL)",
             },
         ],
     }
@@ -253,6 +268,36 @@ def test_verify_bootstrapped_schema_still_detects_missing_extension() -> None:
         "constraints": [],
     }
     actual = {**expected, "extensions": ["plpgsql"]}
+
+    with (
+        patch.object(bootstrap_module, "load", return_value=expected),
+        patch.object(bootstrap_module, "capture", return_value=actual),
+    ):
+        with pytest.raises(bootstrap_module.DatabaseSchemaError, match="schema drifted"):
+            bootstrap_module._verify_bootstrapped_schema(MagicMock())
+
+
+def test_verify_bootstrapped_schema_still_detects_missing_index() -> None:
+    import database.bootstrap as bootstrap_module
+
+    expected = {
+        "extensions": ["vector"],
+        "enums": [],
+        "tables": {"users": {"columns": [{"name": "id", "type": "uuid"}]}},
+        "indexes": [
+            {
+                "name": "idx_users_email",
+                "table": "users",
+                "access_method": "btree",
+                "unique": True,
+                "predicate": None,
+                "reloptions": None,
+                "definition": "CREATE UNIQUE INDEX idx_users_email ON public.users USING btree (email)",
+            }
+        ],
+        "constraints": [],
+    }
+    actual = {**expected, "indexes": []}
 
     with (
         patch.object(bootstrap_module, "load", return_value=expected),

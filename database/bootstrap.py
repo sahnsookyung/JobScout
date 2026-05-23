@@ -332,6 +332,16 @@ def _snapshot_limited_to_expected_tables(
         for enum in expected.get("enums", [])
         if isinstance(enum, dict) and isinstance(enum.get("name"), str)
     }
+    expected_indexes = {
+        index["name"]
+        for index in expected.get("indexes", [])
+        if isinstance(index, dict) and isinstance(index.get("name"), str)
+    }
+    expected_constraints = {
+        constraint["name"]
+        for constraint in expected.get("constraints", [])
+        if isinstance(constraint, dict) and isinstance(constraint.get("name"), str)
+    }
     actual_tables = snapshot.get("tables") or {}
     return {
         "extensions": [
@@ -352,13 +362,16 @@ def _snapshot_limited_to_expected_tables(
         "indexes": [
             index
             for index in snapshot.get("indexes", [])
-            if isinstance(index, dict) and index.get("table") in expected_tables
+            if isinstance(index, dict)
+            and index.get("table") in expected_tables
+            and index.get("name") in expected_indexes
         ],
         "constraints": [
             constraint
             for constraint in snapshot.get("constraints", [])
             if isinstance(constraint, dict)
             and constraint.get("table") in expected_tables
+            and constraint.get("name") in expected_constraints
         ],
     }
 
