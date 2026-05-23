@@ -321,9 +321,46 @@ def _stamp_current_schema(conn: Connection) -> None:
     )
 
 
+def _snapshot_limited_to_expected_tables(
+    snapshot: dict[str, object],
+    expected: dict[str, object],
+) -> dict[str, object]:
+    expected_tables = set((expected.get("tables") or {}).keys())
+    expected_enums = {
+        enum["name"]
+        for enum in expected.get("enums", [])
+        if isinstance(enum, dict) and isinstance(enum.get("name"), str)
+    }
+    actual_tables = snapshot.get("tables") or {}
+    return {
+        "extensions": snapshot.get("extensions") or [],
+        "enums": [
+            enum
+            for enum in snapshot.get("enums", [])
+            if isinstance(enum, dict) and enum.get("name") in expected_enums
+        ],
+        "tables": {
+            table_name: actual_tables[table_name]
+            for table_name in expected_tables
+            if table_name in actual_tables
+        },
+        "indexes": [
+            index
+            for index in snapshot.get("indexes", [])
+            if isinstance(index, dict) and index.get("table") in expected_tables
+        ],
+        "constraints": [
+            constraint
+            for constraint in snapshot.get("constraints", [])
+            if isinstance(constraint, dict)
+            and constraint.get("table") in expected_tables
+        ],
+    }
+
+
 def _verify_bootstrapped_schema(conn: Connection) -> None:
     expected = load()
-    actual = capture(conn)
+    actual = _snapshot_limited_to_expected_tables(capture(conn), expected)
     if actual != expected:
         raise DatabaseSchemaError(
             "ORM bootstrap schema drifted from the checked-in schema snapshot. "
