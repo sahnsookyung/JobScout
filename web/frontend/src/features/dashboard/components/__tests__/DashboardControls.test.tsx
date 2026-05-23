@@ -14,6 +14,7 @@ vi.mock('@/hooks/useStats');
 vi.mock('@/services/pipelineApi', () => ({
     pipelineApi: {
         getSources: vi.fn(),
+        getCloudIntegrations: vi.fn(),
     },
 }));
 vi.mock('sonner');
@@ -30,7 +31,10 @@ vi.mock('@/utils/indexedDB', () => ({
 
 const mockUsePipeline = usePipeline as ReturnType<typeof vi.fn>;
 const mockUseStats = useStats as ReturnType<typeof vi.fn>;
-const mockPipelineApi = pipelineApi as unknown as { getSources: ReturnType<typeof vi.fn> };
+const mockPipelineApi = pipelineApi as unknown as {
+    getSources: ReturnType<typeof vi.fn>;
+    getCloudIntegrations: ReturnType<typeof vi.fn>;
+};
 
 const createWrapper = () => {
     const queryClient = new QueryClient({
@@ -69,8 +73,8 @@ describe('DashboardControls', () => {
                 jobspy_url: 'https://jobspy.example',
                 api_based_fetching: true,
                 search_query: null,
-                total_count: 2,
-                filtered_count: 2,
+                total_count: 3,
+                filtered_count: 3,
                 seed_websites: ['https://www.tokyodev.com/jobs'],
                 sources: [
                     {
@@ -80,13 +84,31 @@ describe('DashboardControls', () => {
                         description: 'English-friendly software roles in Japan.',
                         tags: ['japan', 'startup'],
                         search_keywords: ['tokyodev', 'japan', 'startup'],
-                        fetch_mode: 'jobspy_api',
+                        fetch_mode: 'seed_website',
+                        provider_name: 'Seed website',
                         search_term: '',
                         location: null,
                         country: null,
                         results_wanted: 5,
                         hours_old: null,
                         options: { seniorities: ['junior'] },
+                        api_health: null,
+                    },
+                    {
+                        site_type: 'indeed',
+                        display_name: 'Indeed',
+                        seed_url: 'https://www.indeed.com',
+                        description: 'Broad job-board search through JobSpy.',
+                        tags: ['job board'],
+                        search_keywords: ['indeed', 'platform engineer'],
+                        fetch_mode: 'jobspy_api',
+                        provider_name: 'JobSpy',
+                        search_term: 'platform engineer',
+                        location: null,
+                        country: null,
+                        results_wanted: 3,
+                        hours_old: null,
+                        options: {},
                         api_health: {
                             available: true,
                             status: 'available',
@@ -103,24 +125,36 @@ describe('DashboardControls', () => {
                         description: 'Private source.',
                         tags: ['internal'],
                         search_keywords: ['internal', 'platform engineer'],
-                        fetch_mode: 'jobspy_api',
+                        fetch_mode: 'custom_source',
+                        provider_name: 'Custom source',
                         search_term: 'platform engineer',
                         location: null,
                         country: null,
                         results_wanted: 3,
                         hours_old: null,
                         options: {},
-                        api_health: {
-                            available: false,
-                            status: 'not_configured',
-                            endpoint: null,
-                            status_code: null,
-                            response_time_ms: null,
-                            error: 'JobSpy API URL is not configured',
-                        },
+                        api_health: null,
                     },
                 ],
             },
+        });
+        mockPipelineApi.getCloudIntegrations.mockResolvedValue({
+            status: 200,
+            data: [
+                {
+                    id: 'integration-1',
+                    tenant_id: 'tenant-1',
+                    provider: 'greenhouse',
+                    display_name: 'HubSpot',
+                    status: 'active',
+                    sync_interval_minutes: 120,
+                    config: {},
+                    capabilities: ['list_jobs'],
+                    validation_status: 'pending',
+                    last_validated_at: null,
+                    last_error: null,
+                },
+            ],
         });
 
         mockUploadResume.mockResolvedValue({
@@ -397,11 +431,15 @@ describe('DashboardControls', () => {
             await waitFor(() => {
                 expect(screen.getByText('TokyoDev')).toBeInTheDocument();
             });
-            expect(screen.getByText('JobSpy API')).toBeInTheDocument();
-            expect(screen.getByText('API online')).toBeInTheDocument();
+            expect(screen.getByText('JobSpy + ATS')).toBeInTheDocument();
+            expect(screen.getByText('Seed website')).toBeInTheDocument();
+            expect(screen.getByText('JobSpy online')).toBeInTheDocument();
+            expect(screen.getByText('Greenhouse ATS')).toBeInTheDocument();
+            expect(screen.getByText('HubSpot')).toBeInTheDocument();
             expect(mockPipelineApi.getSources).toHaveBeenCalledWith({
                 includeStatus: true,
             });
+            expect(mockPipelineApi.getCloudIntegrations).toHaveBeenCalledTimes(1);
         });
 
         it('does not render private or missing source URLs as empty links', async () => {

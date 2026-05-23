@@ -1,10 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Globe2, MapPin, Search, Server } from 'lucide-react';
+import { ExternalLink, Globe2, MapPin, Search, Server } from 'lucide-react';
 
 import { pipelineApi } from '@/services/pipelineApi';
-import type { FetchSource } from '@/types/api';
+import type { CloudIntegration, FetchSource } from '@/types/api';
+
+const OPERATIONAL_OPTION_KEYS = new Set([
+    'status',
+    'validation_status',
+    'sync_interval_minutes',
+    'last_error',
+]);
 
 function sourceScope(source: FetchSource): string {
     const parts = [source.location, source.country].filter(Boolean);
@@ -16,18 +23,100 @@ function sourceQuery(source: FetchSource): string {
 }
 
 function optionCount(source: FetchSource): number {
-    return Object.values(source.options || {}).reduce((count, value) => {
+    return Object.entries(source.options || {}).reduce((count, [key, value]) => {
+        if (OPERATIONAL_OPTION_KEYS.has(key)) return count;
         if (Array.isArray(value)) return count + value.length;
         return value === undefined || value === null || value === '' ? count : count + 1;
     }, 0);
 }
 
 function healthLabel(source: FetchSource): string {
-    if (!source.api_health) return 'API status off';
-    if (source.api_health.available) return 'API online';
-    if (source.api_health.status === 'not_configured') return 'API not configured';
-    if (source.api_health.status === 'timeout') return 'API timeout';
-    return 'API offline';
+    if (source.fetch_mode !== 'jobspy_api') return '';
+    if (!source.api_health) return 'JobSpy status off';
+    if (source.api_health.available) return 'JobSpy online';
+    if (source.api_health.status === 'not_configured') return 'JobSpy not configured';
+    if (source.api_health.status === 'timeout') return 'JobSpy timeout';
+    return 'JobSpy offline';
+}
+
+function modeLabel(source: FetchSource): string {
+    if (source.fetch_mode === 'seed_website') return 'Seed website';
+    if (source.fetch_mode === 'ats_api') return source.provider_name || 'ATS API';
+    if (source.fetch_mode === 'custom_source') return source.provider_name || 'Custom source';
+    if (source.fetch_mode === 'jobspy_api') return source.provider_name || 'JobSpy API';
+    return source.fetch_mode.replace(/_/g, ' ');
+}
+
+function healthTone(source: FetchSource): string {
+    if (!source.api_health) return 'border-rule bg-surface-sunk text-ink-soft';
+    if (source.api_health.available) return 'border-success/40 bg-success-soft text-ink';
+    if (source.api_health.status === 'not_configured') return 'border-rule bg-surface-sunk text-ink-soft';
+    return 'border-warn/40 bg-warn-soft text-ink';
+}
+
+function metaChipClasses(extra = ''): string {
+    return `inline-flex min-h-7 items-center gap-1.5 border border-rule bg-surface-raised px-2 py-1 text-[12px] leading-none text-ink-soft ${extra}`;
+}
+
+function toTitleCase(value: string): string {
+    return value
+        .replace(/[_-]/g, ' ')
+        .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function compactStrings(values: Array<string | null | undefined>): string[] {
+    return values.filter((value): value is string => Boolean(value));
+}
+
+function atsStatus(source: FetchSource): string | null {
+    const status = source.options?.status;
+    return typeof status === 'string' && status.trim() ? status.trim() : null;
+}
+
+function atsInterval(source: FetchSource): number | null {
+    const interval = source.options?.sync_interval_minutes;
+    return typeof interval === 'number' && Number.isFinite(interval) ? interval : null;
+}
+
+function cloudIntegrationSource(integration: CloudIntegration): FetchSource {
+    const providerLabel = toTitleCase(integration.provider);
+    const status = integration.status || 'unknown';
+    return {
+        site_type: integration.provider,
+        display_name: integration.display_name,
+        seed_url: null,
+        description: `${providerLabel} ATS sync for tenant company jobs.`,
+        tags: compactStrings(['ats', integration.provider, status, integration.validation_status]),
+        search_keywords: compactStrings([
+            integration.provider,
+            integration.display_name,
+            'ats',
+            integration.status,
+            integration.validation_status,
+            ...(integration.capabilities || []),
+        ]),
+        fetch_mode: 'ats_api',
+        provider_name: `${providerLabel} ATS`,
+        search_term: null,
+        location: null,
+        country: null,
+        results_wanted: 0,
+        hours_old: null,
+        options: {
+            status,
+            validation_status: integration.validation_status,
+            sync_interval_minutes: integration.sync_interval_minutes,
+            last_error: integration.last_error,
+        },
+        api_health: null,
+    };
+}
+
+function sourceCatalogLabel(apiBasedFetching?: boolean, cloudCount = 0): string {
+    if (apiBasedFetching && cloudCount > 0) return 'JobSpy + ATS';
+    if (apiBasedFetching) return 'JobSpy API enabled';
+    if (cloudCount > 0) return 'Seed + ATS sources';
+    return 'Seed and custom sources';
 }
 
 function optionSearchValues(value: unknown): string[] {
@@ -58,6 +147,7 @@ function sourceSearchText(source: FetchSource): string {
         source.seed_url,
         source.description,
         source.fetch_mode,
+        source.provider_name,
         source.search_term,
         source.location,
         source.country,
@@ -85,35 +175,61 @@ function SourceCard({
     source: FetchSource;
     index: number;
 }>) {
+    const healthText = healthLabel(source);
+    const statusText = atsStatus(source);
+    const intervalMinutes = atsInterval(source);
     const content = (
         <>
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                    <div className="truncate text-[14px] font-medium text-ink">
-                        {source.display_name}
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <div className="truncate text-[14px] font-medium text-ink">
+                            {source.display_name}
+                        </div>
+                        <span className="inline-flex min-h-6 items-center border border-rule bg-surface-sunk px-2 py-0.5 text-[11px] leading-none text-ink-soft">
+                            {modeLabel(source)}
+                        </span>
                     </div>
                     <div className="mt-1 flex items-center gap-1.5 text-[12px] text-ink-muted">
                         <Search className="h-3 w-3" aria-hidden="true" />
                         <span className="truncate">{sourceQuery(source)}</span>
                     </div>
                 </div>
-                <Globe2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-ink-muted transition-colors group-hover:text-accent" aria-hidden="true" />
+                {source.seed_url ? (
+                    <ExternalLink className="mt-0.5 h-4 w-4 flex-shrink-0 text-ink-muted transition-colors group-hover:text-accent" aria-hidden="true" />
+                ) : (
+                    <Globe2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-ink-muted transition-colors group-hover:text-accent" aria-hidden="true" />
+                )}
             </div>
             {source.description ? (
                 <p className="mt-2 line-clamp-2 text-[12px] leading-5 text-ink-muted">
                     {source.description}
                 </p>
             ) : null}
-            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink-soft">
-                <span className="inline-flex items-center gap-1">
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                <span className={metaChipClasses()}>
                     <MapPin className="h-3 w-3" aria-hidden="true" />
                     {sourceScope(source)}
                 </span>
-                <span className="num">{source.results_wanted} jobs</span>
+                <span className={metaChipClasses('tabular-nums')}>{source.results_wanted} jobs</span>
                 {optionCount(source) > 0 ? (
-                    <span className="num">{optionCount(source)} filters</span>
+                    <span className={metaChipClasses('tabular-nums')}>{optionCount(source)} filters</span>
                 ) : null}
-                <span className="num">{healthLabel(source)}</span>
+                {healthText ? (
+                    <span className={metaChipClasses(`${healthTone(source)} tabular-nums`)}>
+                        {healthText}
+                    </span>
+                ) : null}
+                {statusText ? (
+                    <span className={metaChipClasses('capitalize tabular-nums')}>
+                        {statusText}
+                    </span>
+                ) : null}
+                {intervalMinutes ? (
+                    <span className={metaChipClasses('tabular-nums')}>
+                        {intervalMinutes}m sync
+                    </span>
+                ) : null}
             </div>
             {source.tags.length > 0 ? (
                 <div className="mt-3 flex flex-wrap gap-1">
@@ -129,7 +245,7 @@ function SourceCard({
             ) : null}
         </>
     );
-    const className = 'group min-h-32 border border-rule bg-surface px-4 py-3 transition-colors hover:border-rule-strong';
+    const className = 'group min-h-36 border border-rule bg-surface px-4 py-3 transition-colors hover:border-rule-strong';
 
     if (!source.seed_url) {
         return (
@@ -164,18 +280,33 @@ export function FetchSourcesPanel() {
         },
         staleTime: 5 * 60 * 1000,
     });
+    const { data: cloudIntegrations = [], isLoading: isLoadingCloud } = useQuery({
+        queryKey: ['cloud', 'integrations', 'source-panel'],
+        queryFn: async () => {
+            const response = await pipelineApi.getCloudIntegrations();
+            return response.status === 200 && Array.isArray(response.data) ? response.data : [];
+        },
+        staleTime: 5 * 60 * 1000,
+    });
 
-    const allSources = data?.sources ?? [];
+    const cloudSources = useMemo(
+        () => cloudIntegrations.map(cloudIntegrationSource),
+        [cloudIntegrations]
+    );
+    const allSources = useMemo(
+        () => [...(data?.sources ?? []), ...cloudSources],
+        [data?.sources, cloudSources]
+    );
     const sources = useMemo(
         () => allSources.filter((source) => sourceMatchesSearch(source, sourceSearch)),
         [allSources, sourceSearch]
     );
-    const totalCount = data?.total_count ?? allSources.length;
+    const totalCount = (data?.total_count ?? (data?.sources ?? []).length) + cloudSources.length;
     const emptyMessage = sourceSearch.trim()
         ? 'No sources match that search.'
         : 'No fetch sources configured.';
     let sourcesContent: ReactNode;
-    if (isLoading) {
+    if (isLoading || isLoadingCloud) {
         sourcesContent = (
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {[0, 1, 2].map((item) => (
@@ -226,7 +357,7 @@ export function FetchSourcesPanel() {
                     </label>
                     <div className="inline-flex items-center gap-2 self-start border border-rule bg-surface px-2.5 py-1.5 text-[12px] text-ink-soft">
                         <Server className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
-                        <span>{data?.api_based_fetching ? 'JobSpy API' : 'Local config'}</span>
+                        <span>{sourceCatalogLabel(data?.api_based_fetching, cloudSources.length)}</span>
                     </div>
                 </div>
             </div>

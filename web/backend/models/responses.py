@@ -230,6 +230,7 @@ class FetchSourceResponse(BaseModel):
     tags: List[str] = Field(default_factory=list)
     search_keywords: List[str] = Field(default_factory=list)
     fetch_mode: str = "jobspy_api"
+    provider_name: Optional[str] = None
     search_term: Optional[str] = None
     location: Optional[str] = None
     country: Optional[str] = None

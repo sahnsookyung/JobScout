@@ -74,7 +74,20 @@ describe('useNotificationSettings', () => {
         await waitFor(() => expect(result.current.isLoading).toBe(false));
 
         expect(result.current.settings).toEqual(settings);
+        expect(result.current.isError).toBe(false);
         expect(notificationSettingsApi.getSettings).toHaveBeenCalledTimes(1);
+    });
+
+    it('exposes loading errors and refetch', async () => {
+        vi.mocked(notificationSettingsApi.getSettings).mockRejectedValueOnce(
+            new Error('Internal server error') as never
+        );
+        const { result } = renderHook(() => useNotificationSettings(), { wrapper: createWrapper() });
+
+        await waitFor(() => expect(result.current.isError).toBe(true));
+
+        expect(result.current.error).toBeInstanceOf(Error);
+        expect(typeof result.current.refetch).toBe('function');
     });
 
     it('saves settings through the API', async () => {

@@ -1,5 +1,6 @@
 import { apiClient } from './api';
 import type {
+    CloudIntegration,
     FetchSourcesResponse,
     PipelineTaskResponse,
     PipelineStatusResponse,
@@ -35,6 +36,11 @@ export const pipelineApi = {
                 search: params.search?.trim() || undefined,
                 include_status: params.includeStatus || undefined,
             },
+        }),
+
+    getCloudIntegrations: () =>
+        apiClient.get<CloudIntegration[]>('/cloud/integrations', {
+            validateStatus: (status) => status < 500,
         }),
 
     getResumeEligibility: () =>

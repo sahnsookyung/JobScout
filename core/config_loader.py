@@ -628,6 +628,20 @@ DEFAULT_HEADER_MAPPINGS: tuple[HeaderMapping, ...] = (
 )
 
 
+def _apply_jobspy_env_override(data: Dict[str, Any]) -> None:
+    if "JOBSPY_URL" not in os.environ:
+        return
+
+    value = os.environ.get("JOBSPY_URL", "").strip()
+    if value:
+        _set_nested(data, ["jobspy", "url"], value)
+        return
+
+    # A deliberately empty JOBSPY_URL disables the optional JobSpy service.
+    # This keeps lean deployments from inheriting the local-dev localhost default.
+    data["jobspy"] = None
+
+
 def resolve_config_path(
     config_path: ConfigPath = DEFAULT_CONFIG_FILENAME,
     *,
@@ -653,7 +667,10 @@ def apply_env_overrides(
     header_mappings: Sequence[HeaderMapping] = DEFAULT_HEADER_MAPPINGS,
 ) -> Dict[str, Any]:
     """Apply environment-variable overrides to a raw config dictionary."""
+    _apply_jobspy_env_override(data)
     for env_vars, keys in env_mappings:
+        if "JOBSPY_URL" in env_vars:
+            continue
         val = next((os.environ.get(env_var) for env_var in env_vars if os.environ.get(env_var)), None)
         if val:
             _set_nested(data, list(keys), val)

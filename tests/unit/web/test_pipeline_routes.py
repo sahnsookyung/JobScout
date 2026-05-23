@@ -60,8 +60,12 @@ class TestPipelineRoutes(unittest.TestCase):
         self.assertEqual(data["total_count"], 2)
         self.assertEqual(data["filtered_count"], 2)
         self.assertEqual(data["sources"][0]["display_name"], "TokyoDev")
+        self.assertEqual(data["sources"][0]["fetch_mode"], "seed_website")
+        self.assertEqual(data["sources"][0]["provider_name"], "Seed website")
+        self.assertIsNone(data["sources"][0]["api_health"])
         self.assertIn("startup", data["sources"][0]["search_keywords"])
         self.assertEqual(data["sources"][1]["fetch_mode"], "jobspy_api")
+        self.assertEqual(data["sources"][1]["provider_name"], "JobSpy")
 
     @patch("web.backend.routers.pipeline.get_config")
     def test_fetch_sources_endpoint_filters_searchable_metadata(self, mock_config):
@@ -133,7 +137,7 @@ class TestPipelineRoutes(unittest.TestCase):
 
         mock_config.return_value = SimpleNamespace(
             jobspy=None,
-            scrapers=[ScraperConfig(site_type=["internal_feed"], search_term="platform")],
+            scrapers=[ScraperConfig(site_type=["indeed"], search_term="platform")],
         )
 
         response = self.client.get("/api/pipeline/sources?include_status=true")
@@ -142,6 +146,28 @@ class TestPipelineRoutes(unittest.TestCase):
         health = response.json()["sources"][0]["api_health"]
         self.assertFalse(health["available"])
         self.assertEqual(health["status"], "not_configured")
+
+    @patch("web.backend.routers.pipeline.get_config")
+    def test_fetch_sources_endpoint_marks_ats_and_custom_sources_without_jobspy_health(self, mock_config):
+        from core.config_loader import ScraperConfig
+
+        mock_config.return_value = SimpleNamespace(
+            jobspy=None,
+            scrapers=[
+                ScraperConfig(site_type=["hubspot"], display_name="HubSpot Careers"),
+                ScraperConfig(site_type=["internal_feed"], search_term="platform"),
+            ],
+        )
+
+        response = self.client.get("/api/pipeline/sources?include_status=true")
+
+        self.assertEqual(response.status_code, 200)
+        sources = response.json()["sources"]
+        self.assertEqual(sources[0]["fetch_mode"], "ats_api")
+        self.assertEqual(sources[0]["provider_name"], "HubSpot ATS")
+        self.assertIsNone(sources[0]["api_health"])
+        self.assertEqual(sources[1]["fetch_mode"], "custom_source")
+        self.assertIsNone(sources[1]["api_health"])
 
     @patch("web.backend.routers.pipeline.get_config")
     def test_fetch_sources_endpoint_does_not_require_database_auth(self, mock_config):

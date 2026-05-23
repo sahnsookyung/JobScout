@@ -58,6 +58,9 @@ export const useNotificationSettings = () => {
     return {
         settings: query.data,
         isLoading: query.isLoading,
+        isError: query.isError,
+        error: query.error,
+        refetch: query.refetch,
         isSaving: updateMutation.isPending,
         isTesting: testMutation.isPending,
         isSendingEmailVerification: emailOverrideMutation.isPending,

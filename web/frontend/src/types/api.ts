@@ -331,6 +331,7 @@ export interface FetchSource {
     tags: string[];
     search_keywords: string[];
     fetch_mode: string;
+    provider_name?: string | null;
     search_term?: string | null;
     location?: string | null;
     country?: string | null;
@@ -356,6 +357,20 @@ export interface FetchSourcesResponse {
     filtered_count: number;
     seed_websites: string[];
     sources: FetchSource[];
+}
+
+export interface CloudIntegration {
+    id: string;
+    tenant_id: string;
+    provider: string;
+    display_name: string;
+    status: string;
+    sync_interval_minutes: number;
+    config: Record<string, any>;
+    capabilities: string[];
+    validation_status: string;
+    last_validated_at: string | null;
+    last_error: string | null;
 }
 
 export type MatchStatus = 'active' | 'stale' | 'all';

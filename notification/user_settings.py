@@ -27,6 +27,7 @@ SUPPORTED_CHANNELS = ("email", "discord", "telegram", "webhook", "in_app")
 USER_FACING_CHANNELS = ("email", "discord", "telegram")
 SECRET_CHANNELS = {"discord", "telegram", "webhook"}
 IN_APP_INBOX_LABEL = "In-app inbox"
+CLOUD_VERIFIED_TOKEN_KINDS = {"google_id_token", "app_jwt", "browser_session"}
 
 
 def _mask_email(email: str | None) -> str | None:
@@ -92,6 +93,16 @@ def _resolved_email_recipient(
     return user.email
 
 
+def _has_verified_email(user: User) -> bool:
+    verified_at = getattr(user, "email_verified_at", None)
+    if verified_at is not None:
+        return True
+
+    # The SaaS layer passes a lightweight auth principal instead of the ORM User.
+    # Those tokens are only issued after Google verification and allow-list checks.
+    return getattr(user, "token_kind", None) in CLOUD_VERIFIED_TOKEN_KINDS
+
+
 def _channel_available(
     channel_type: str,
     user: User,
@@ -105,7 +116,7 @@ def _channel_available(
         if (
             settings_channel is None
             or getattr(settings_channel, "override_verified_at", None) is None
-        ) and _auth_mode() != DEV_BYPASS_AUTH_MODE and user.email_verified_at is None:
+        ) and _auth_mode() != DEV_BYPASS_AUTH_MODE and not _has_verified_email(user):
             return False, "A verified account email is required for email notifications"
         if not dry_run and not EmailChannel().validate_config():
             return False, "SMTP is not configured in this runtime"

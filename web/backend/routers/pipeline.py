@@ -126,6 +126,14 @@ router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 # Format used by orchestrator: "match-{8 hex chars}" e.g., "match-a1b2c3d4"
 TASK_ID_PATTERN = re.compile(r'^[a-zA-Z0-9-]{1,50}$')
 JOB_BOARD_TAG = "job board"
+JOBSPY_SITE_TYPES = {"indeed", "glassdoor", "linkedin", "google", "zip_recruiter"}
+ATS_SITE_TYPES = {"greenhouse", "lever", "ashby", "hubspot", "workday"}
+PROVIDER_NAMES = {
+    "jobspy_api": "JobSpy",
+    "seed_website": "Seed website",
+    "custom_source": "Custom source",
+    "ats_api": "ATS API",
+}
 
 SOURCE_METADATA: dict[str, dict[str, object]] = {
     "tokyodev": {
@@ -169,6 +177,26 @@ SOURCE_METADATA: dict[str, dict[str, object]] = {
         "seed_url": "https://www.ziprecruiter.com/jobs-search",
         "description": "General job-board listings when configured in JobSpy.",
         "tags": ["general", JOB_BOARD_TAG, "global"],
+    },
+    "greenhouse": {
+        "display_name": "Greenhouse",
+        "description": "Tenant ATS API sync through the SaaS integration scheduler.",
+        "tags": ["ats", "api", "company careers"],
+    },
+    "lever": {
+        "display_name": "Lever",
+        "description": "Tenant ATS API sync through the SaaS integration scheduler.",
+        "tags": ["ats", "api", "company careers"],
+    },
+    "ashby": {
+        "display_name": "Ashby",
+        "description": "Tenant ATS API sync through the SaaS integration scheduler.",
+        "tags": ["ats", "api", "company careers"],
+    },
+    "hubspot": {
+        "display_name": "HubSpot",
+        "description": "HubSpot ATS API source when configured by the deployment.",
+        "tags": ["ats", "api", "company careers"],
     },
 }
 
@@ -287,6 +315,28 @@ def _source_search_keywords(
         *_source_option_keywords(dict(scraper_cfg.options or {})),
     ])
 
+def _source_fetch_mode(site_type: str, scraper_cfg, seed_url: Optional[str]) -> str:
+    explicit_mode = str(
+        getattr(scraper_cfg, "fetch_mode", None)
+        or dict(scraper_cfg.options or {}).get("fetch_mode")
+        or ""
+    ).strip().lower()
+    if explicit_mode in {"seed_website", "jobspy_api", "ats_api", "custom_source"}:
+        return explicit_mode
+    if site_type in ATS_SITE_TYPES:
+        return "ats_api"
+    if site_type in JOBSPY_SITE_TYPES:
+        return "jobspy_api"
+    if seed_url:
+        return "seed_website"
+    return "custom_source"
+
+def _source_provider_name(site_type: str, fetch_mode: str) -> str:
+    if fetch_mode == "ats_api":
+        display_name = SOURCE_METADATA.get(site_type, {}).get("display_name")
+        return f"{display_name or site_type.replace('_', ' ').title()} ATS"
+    return PROVIDER_NAMES.get(fetch_mode, fetch_mode.replace("_", " ").title())
+
 def _build_fetch_source_response(
     scraper_cfg,
     *,
@@ -299,6 +349,7 @@ def _build_fetch_source_response(
     seed_url = scraper_cfg.seed_url or metadata.get("seed_url")
     description = scraper_cfg.description or metadata.get("description")
     tags = _dedupe_strings([*list(metadata.get("tags") or []), *list(scraper_cfg.tags or [])])
+    fetch_mode = _source_fetch_mode(site_type, scraper_cfg, str(seed_url) if seed_url else None)
     return FetchSourceResponse(
         site_type=site_type,
         display_name=display_name,
@@ -313,14 +364,15 @@ def _build_fetch_source_response(
             tags=tags,
             scraper_cfg=scraper_cfg,
         ),
-        fetch_mode="jobspy_api",
+        fetch_mode=fetch_mode,
+        provider_name=_source_provider_name(site_type, fetch_mode),
         search_term=scraper_cfg.search_term,
         location=scraper_cfg.location,
         country=scraper_cfg.country,
         results_wanted=scraper_cfg.results_wanted,
         hours_old=scraper_cfg.hours_old,
         options=dict(scraper_cfg.options or {}),
-        api_health=api_health,
+        api_health=api_health if fetch_mode == "jobspy_api" else None,
     )
 
 def _source_matches_query(source: FetchSourceResponse, search: Optional[str]) -> bool:
@@ -338,6 +390,8 @@ def _source_matches_query(source: FetchSourceResponse, search: Optional[str]) ->
             source.display_name,
             source.seed_url or "",
             source.description or "",
+            source.fetch_mode,
+            source.provider_name or "",
             source.search_term or "",
             source.location or "",
             source.country or "",
