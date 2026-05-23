@@ -2,6 +2,7 @@
 """Unit tests for pipeline router lifecycle edge cases."""
 
 import json
+import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -63,6 +64,7 @@ class TestPipelineRoutes(unittest.TestCase):
         self.assertEqual(data["sources"][0]["fetch_mode"], "seed_website")
         self.assertEqual(data["sources"][0]["provider_name"], "Seed website")
         self.assertIsNone(data["sources"][0]["api_health"])
+        self.assertEqual(data["sources"][0]["external_fetch_status"]["status"], "unconfigured")
         self.assertIn("startup", data["sources"][0]["search_keywords"])
         self.assertEqual(data["sources"][1]["fetch_mode"], "jobspy_api")
         self.assertEqual(data["sources"][1]["provider_name"], "JobSpy")
@@ -169,6 +171,41 @@ class TestPipelineRoutes(unittest.TestCase):
         self.assertEqual(sources[1]["fetch_mode"], "custom_source")
         self.assertIsNone(sources[1]["api_health"])
 
+    @patch("web.backend.routers.pipeline.get_external_seed_fetcher_status")
+    @patch("web.backend.routers.pipeline.get_config")
+    def test_fetch_sources_endpoint_reports_external_worker_status(
+        self,
+        mock_config,
+        mock_external_status,
+    ):
+        from core.config_loader import ScraperConfig
+
+        mock_config.return_value = SimpleNamespace(
+            jobspy=None,
+            scrapers=[
+                ScraperConfig(site_type=["tokyodev"], search_term="", results_wanted=5),
+            ],
+        )
+        mock_external_status.return_value = {
+            "sources": {
+                "tokyodev": {
+                    "enabled": True,
+                    "configured": True,
+                    "status": "configured",
+                    "provider": "cloudflare_worker_seed",
+                    "budget_remaining": 42,
+                }
+            }
+        }
+
+        response = self.client.get("/api/pipeline/sources?include_status=true")
+
+        self.assertEqual(response.status_code, 200)
+        source = response.json()["sources"][0]
+        self.assertEqual(source["provider_name"], "Worker seed fetcher")
+        self.assertEqual(source["external_fetch_status"]["status"], "configured")
+        self.assertEqual(source["external_fetch_status"]["budget_remaining"], 42)
+
     @patch("web.backend.routers.pipeline.get_config")
     def test_fetch_sources_endpoint_does_not_require_database_auth(self, mock_config):
         from fastapi import FastAPI
@@ -185,6 +222,125 @@ class TestPipelineRoutes(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["sources"], [])
+
+    @patch("web.backend.routers.pipeline.fetch_and_import_external_seed_source")
+    def test_source_fetch_endpoint_returns_external_fetch_summary(self, mock_fetch):
+        mock_fetch.return_value = SimpleNamespace(
+            success=True,
+            as_dict=lambda: {
+                "success": True,
+                "source": "tokyodev",
+                "status": "ok",
+                "fetched_count": 2,
+                "imported_count": 2,
+                "skipped_count": 0,
+                "warnings": [],
+                "next_eligible_at": "2026-05-23T00:00:00+00:00",
+                "failure_class": None,
+                "budget_remaining": 9,
+            },
+        )
+
+        response = self.client.post(
+            "/api/pipeline/source-fetch",
+            json={"source": "tokyodev", "limit": 2},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["imported_count"], 2)
+        mock_fetch.assert_called_once_with("tokyodev", tenant_id=None, limit=2)
+
+    @patch("web.backend.routers.pipeline.fetch_and_import_external_seed_source")
+    def test_source_fetch_endpoint_maps_rate_limited_summary_to_429(self, mock_fetch):
+        mock_fetch.return_value = SimpleNamespace(
+            success=False,
+            as_dict=lambda: {
+                "success": False,
+                "source": "japandev",
+                "status": "rate_limited",
+                "fetched_count": 0,
+                "imported_count": 0,
+                "skipped_count": 0,
+                "warnings": [],
+                "next_eligible_at": "2026-05-23T04:00:00+00:00",
+                "failure_class": "min_interval",
+                "budget_remaining": None,
+            },
+        )
+
+        response = self.client.post(
+            "/api/pipeline/source-fetch",
+            json={"source": "japandev"},
+        )
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json()["failure_class"], "min_interval")
+
+    def test_source_fetch_endpoint_requires_admin_in_production_without_tenant_context(self):
+        with patch.dict(os.environ, {"JOBSCOUT_ENV": "production"}):
+            response = self.client.post(
+                "/api/pipeline/source-fetch",
+                json={"source": "tokyodev"},
+            )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json()["code"],
+            "pipeline.source_fetch_admin_required",
+        )
+
+    @patch("web.backend.routers.pipeline.fetch_and_import_external_seed_source")
+    def test_source_fetch_endpoint_rejects_non_admin_tenant_role(self, mock_fetch):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from web.backend.dependencies import get_current_user
+        from web.backend.routers.pipeline import router
+
+        app = FastAPI()
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id=UUID("00000000-0000-0000-0000-000000000001")
+        )
+
+        @app.middleware("http")
+        async def add_member_tenant_context(request, call_next):
+            request.state.tenant_id = UUID("00000000-0000-0000-0000-000000000201")
+            request.state.tenant_role = "member"
+            return await call_next(request)
+
+        app.include_router(router)
+        client = TestClient(app, raise_server_exceptions=False)
+
+        response = client.post(
+            "/api/pipeline/source-fetch",
+            json={"source": "tokyodev"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        mock_fetch.assert_not_called()
+
+    @patch("web.backend.routers.pipeline.fetch_and_import_external_seed_source")
+    def test_source_fetch_endpoint_returns_external_fetch_error_without_500(self, mock_fetch):
+        from etl.external_seed_fetcher import ExternalSeedFetchError
+
+        mock_fetch.side_effect = ExternalSeedFetchError(
+            "external_seed_unconfigured",
+            "External seed fetcher URL or secret is not configured.",
+            status_code=503,
+            failure_class="external_seed_unconfigured",
+        )
+
+        response = self.client.post(
+            "/api/pipeline/source-fetch",
+            json={"source": "tokyodev"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["failure_class"], "external_seed_unconfigured")
 
     @patch("web.backend.routers.pipeline.enqueue_job")
     @patch("web.backend.routers.pipeline.evaluate_resume_eligibility")

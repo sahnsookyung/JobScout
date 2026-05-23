@@ -12,10 +12,11 @@ import { pipelineApi } from '@/services/pipelineApi';
 vi.mock('@/hooks/usePipeline');
 vi.mock('@/hooks/useStats');
 vi.mock('@/services/pipelineApi', () => ({
-    pipelineApi: {
-        getSources: vi.fn(),
-        getCloudIntegrations: vi.fn(),
-    },
+        pipelineApi: {
+            getSources: vi.fn(),
+            fetchSource: vi.fn(),
+            getCloudIntegrations: vi.fn(),
+        },
 }));
 vi.mock('sonner');
 vi.mock('@shared/constants', () => ({
@@ -33,6 +34,7 @@ const mockUsePipeline = usePipeline as ReturnType<typeof vi.fn>;
 const mockUseStats = useStats as ReturnType<typeof vi.fn>;
 const mockPipelineApi = pipelineApi as unknown as {
     getSources: ReturnType<typeof vi.fn>;
+    fetchSource: ReturnType<typeof vi.fn>;
     getCloudIntegrations: ReturnType<typeof vi.fn>;
 };
 
@@ -85,7 +87,7 @@ describe('DashboardControls', () => {
                         tags: ['japan', 'startup'],
                         search_keywords: ['tokyodev', 'japan', 'startup'],
                         fetch_mode: 'seed_website',
-                        provider_name: 'Seed website',
+                        provider_name: 'Worker seed fetcher',
                         search_term: '',
                         location: null,
                         country: null,
@@ -93,6 +95,17 @@ describe('DashboardControls', () => {
                         hours_old: null,
                         options: { seniorities: ['junior'] },
                         api_health: null,
+                        external_fetch_status: {
+                            enabled: true,
+                            configured: true,
+                            status: 'configured',
+                            provider: 'cloudflare_worker_seed',
+                            last_attempt_at: null,
+                            last_success_at: null,
+                            next_eligible_at: null,
+                            failure_class: null,
+                            budget_remaining: 42,
+                        },
                     },
                     {
                         site_type: 'indeed',
@@ -155,6 +168,20 @@ describe('DashboardControls', () => {
                     last_error: null,
                 },
             ],
+        });
+        mockPipelineApi.fetchSource.mockResolvedValue({
+            data: {
+                success: true,
+                source: 'tokyodev',
+                status: 'ok',
+                fetched_count: 2,
+                imported_count: 2,
+                skipped_count: 0,
+                warnings: [],
+                next_eligible_at: null,
+                failure_class: null,
+                budget_remaining: 8,
+            },
         });
 
         mockUploadResume.mockResolvedValue({
@@ -432,7 +459,8 @@ describe('DashboardControls', () => {
                 expect(screen.getByText('TokyoDev')).toBeInTheDocument();
             });
             expect(screen.getByText('JobSpy + ATS')).toBeInTheDocument();
-            expect(screen.getByText('Seed website')).toBeInTheDocument();
+            expect(screen.getByText('Worker seed fetcher')).toBeInTheDocument();
+            expect(screen.getByText('Worker ready')).toBeInTheDocument();
             expect(screen.getByText('JobSpy online')).toBeInTheDocument();
             expect(screen.getByText('Greenhouse ATS')).toBeInTheDocument();
             expect(screen.getByText('HubSpot')).toBeInTheDocument();
@@ -440,6 +468,21 @@ describe('DashboardControls', () => {
                 includeStatus: true,
             });
             expect(mockPipelineApi.getCloudIntegrations).toHaveBeenCalledTimes(1);
+        });
+
+        it('lets admins trigger a Worker-backed seed fetch from the source card', async () => {
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+
+            await userEvent.click(screen.getByRole('button', { name: /fetch/i }));
+
+            expect(mockPipelineApi.fetchSource).toHaveBeenCalledWith('tokyodev');
+            await waitFor(() => {
+                expect(toast.success).toHaveBeenCalledWith('2 jobs imported from Tokyodev');
+            });
         });
 
         it('does not render private or missing source URLs as empty links', async () => {

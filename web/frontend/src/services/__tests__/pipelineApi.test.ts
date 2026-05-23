@@ -85,6 +85,25 @@ describe('pipelineApi', () => {
         });
     });
 
+    describe('fetchSource', () => {
+        it('calls POST /pipeline/source-fetch with source and limit', () => {
+            mockPost.mockResolvedValueOnce({ data: { success: true } } as any);
+            pipelineApi.fetchSource('tokyodev', 10);
+            expect(mockPost).toHaveBeenCalledWith('/pipeline/source-fetch', {
+                source: 'tokyodev',
+                limit: 10,
+            });
+        });
+
+        it('omits limit when not provided', () => {
+            mockPost.mockResolvedValueOnce({ data: { success: true } } as any);
+            pipelineApi.fetchSource('japandev');
+            expect(mockPost).toHaveBeenCalledWith('/pipeline/source-fetch', {
+                source: 'japandev',
+            });
+        });
+    });
+
     describe('getResumeEligibility', () => {
         it('calls GET /pipeline/resume-eligibility', () => {
             mockGet.mockResolvedValueOnce({ data: { can_run: true } } as any);

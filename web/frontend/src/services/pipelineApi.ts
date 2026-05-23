@@ -8,6 +8,7 @@ import type {
     ResumePreflightResponse,
     ResumeStatusResponse,
     ResumeUploadResponse,
+    SourceFetchResponse,
 } from '@/types/api';
 
 interface ResumeHashCheckResponse {
@@ -36,6 +37,12 @@ export const pipelineApi = {
                 search: params.search?.trim() || undefined,
                 include_status: params.includeStatus || undefined,
             },
+        }),
+
+    fetchSource: (source: string, limit?: number) =>
+        apiClient.post<SourceFetchResponse>('/pipeline/source-fetch', {
+            source,
+            ...(limit === undefined ? {} : { limit }),
         }),
 
     getCloudIntegrations: () =>

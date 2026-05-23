@@ -66,6 +66,7 @@ from ..dependencies import get_current_user
 from ..config import get_config
 from ..models.responses import (
     ApiError,
+    FetchSourceExternalStatusResponse,
     FetchSourceHealthResponse,
     FetchSourceResponse,
     FetchSourcesResponse,
@@ -74,6 +75,7 @@ from ..models.responses import (
     ResumeEligibilityResponse,
     ResumeHashCheckResponse,
     ResumePreflightResponse,
+    SourceFetchResponse,
     ResumeUploadResponse,
     ResumeStatusResponse,
 )
@@ -82,6 +84,14 @@ from ..models.requests import (
     ResumePreflightRequest,
     ResumeRetryRequest,
     ResumeSelectRequest,
+    SourceFetchRequest,
+)
+from etl.external_seed_fetcher import (
+    ExternalSeedFetchError,
+    external_seed_fetcher_catalog_status,
+    fetch_and_import_external_seed_source,
+    get_external_seed_fetcher_config,
+    get_external_seed_fetcher_status,
 )
 from etl.resume import ResumeParser
 from web.backend.services.clients import (
@@ -331,7 +341,15 @@ def _source_fetch_mode(site_type: str, scraper_cfg, seed_url: Optional[str]) -> 
         return "seed_website"
     return "custom_source"
 
-def _source_provider_name(site_type: str, fetch_mode: str) -> str:
+def _source_provider_name(
+    site_type: str,
+    fetch_mode: str,
+    external_status: dict[str, object] | None = None,
+) -> str:
+    if fetch_mode == "seed_website" and external_status:
+        status = str(external_status.get("status") or "")
+        if external_status.get("configured") or status in {"configured", "degraded", "ok", "rate_limited"}:
+            return "Worker seed fetcher"
     if fetch_mode == "ats_api":
         display_name = SOURCE_METADATA.get(site_type, {}).get("display_name")
         return f"{display_name or site_type.replace('_', ' ').title()} ATS"
@@ -341,6 +359,7 @@ def _build_fetch_source_response(
     scraper_cfg,
     *,
     api_health: Optional[FetchSourceHealthResponse] = None,
+    external_statuses: Optional[dict[str, dict[str, object]]] = None,
 ) -> FetchSourceResponse:
     site_types = list(scraper_cfg.site_type or [])
     site_type = str(next(iter(site_types), "unknown"))
@@ -350,6 +369,11 @@ def _build_fetch_source_response(
     description = scraper_cfg.description or metadata.get("description")
     tags = _dedupe_strings([*list(metadata.get("tags") or []), *list(scraper_cfg.tags or [])])
     fetch_mode = _source_fetch_mode(site_type, scraper_cfg, str(seed_url) if seed_url else None)
+    external_status = (
+        (external_statuses or {}).get(site_type)
+        if fetch_mode == "seed_website"
+        else None
+    )
     return FetchSourceResponse(
         site_type=site_type,
         display_name=display_name,
@@ -365,7 +389,7 @@ def _build_fetch_source_response(
             scraper_cfg=scraper_cfg,
         ),
         fetch_mode=fetch_mode,
-        provider_name=_source_provider_name(site_type, fetch_mode),
+        provider_name=_source_provider_name(site_type, fetch_mode, external_status),
         search_term=scraper_cfg.search_term,
         location=scraper_cfg.location,
         country=scraper_cfg.country,
@@ -373,6 +397,11 @@ def _build_fetch_source_response(
         hours_old=scraper_cfg.hours_old,
         options=dict(scraper_cfg.options or {}),
         api_health=api_health if fetch_mode == "jobspy_api" else None,
+        external_fetch_status=(
+            FetchSourceExternalStatusResponse(**external_status)
+            if external_status
+            else None
+        ),
     )
 
 def _source_matches_query(source: FetchSourceResponse, search: Optional[str]) -> bool:
@@ -448,6 +477,7 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
 
 @router.get("/sources", response_model=FetchSourcesResponse)
 def get_fetch_sources(
+    request: Request,
     _user: Annotated[None, Depends(get_current_user)] = None,
     search: Annotated[
         Optional[str],
@@ -461,8 +491,24 @@ def get_fetch_sources(
     """Return configured seed websites and API-backed fetch source metadata."""
     config = get_config()
     api_health = _jobspy_health(config) if include_status else None
+    external_statuses: dict[str, dict[str, object]] = {}
+    external_config = get_external_seed_fetcher_config()
+    if include_status:
+        tenant_id = getattr(request.state, "tenant_id", None)
+        external_statuses = dict(
+            get_external_seed_fetcher_status(tenant_id=tenant_id).get("sources") or {}
+        )
+    else:
+        external_statuses = {
+            source: external_seed_fetcher_catalog_status(source, config=external_config) or {}
+            for source in ("tokyodev", "japandev")
+        }
     all_sources = [
-        _build_fetch_source_response(scraper_cfg, api_health=api_health)
+        _build_fetch_source_response(
+            scraper_cfg,
+            api_health=api_health,
+            external_statuses=external_statuses,
+        )
         for scraper_cfg in config.scrapers
     ]
     sources = [
@@ -485,6 +531,53 @@ def get_fetch_sources(
         seed_websites=seed_websites,
         sources=sources,
     )
+
+def _require_source_fetch_admin(request: Request) -> None:
+    tenant_role = getattr(request.state, "tenant_role", None)
+    if tenant_role is None:
+        if os.getenv("JOBSCOUT_ENV", "").strip().lower() in {"production", "prod", "staging"}:
+            raise PipelineApiError(
+                status_code=403,
+                code="pipeline.source_fetch_admin_required",
+                message="Tenant admin access is required for hosted source fetching.",
+            )
+        return
+    if tenant_role not in {"owner", "admin"}:
+        raise PipelineApiError(
+            status_code=403,
+            code="pipeline.source_fetch_admin_required",
+            message="Tenant admin access is required for hosted source fetching.",
+        )
+
+@router.post("/source-fetch", response_model=SourceFetchResponse)
+def fetch_seed_source_endpoint(
+    request: Request,
+    body: SourceFetchRequest,
+    _user: Annotated[None, Depends(get_current_user)] = None,
+):
+    """Fetch one configured seed website through the external Worker-backed path."""
+    try:
+        _require_source_fetch_admin(request)
+        summary = fetch_and_import_external_seed_source(
+            body.source,
+            tenant_id=getattr(request.state, "tenant_id", None),
+            limit=body.limit,
+        )
+        status_code = 200 if summary.success else 429
+        return JSONResponse(status_code=status_code, content=summary.as_dict())
+    except PipelineApiError as exc:
+        return _pipeline_error_response(exc)
+    except ExternalSeedFetchError as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=SourceFetchResponse(
+                success=False,
+                source=body.source,
+                status="degraded",
+                failure_class=exc.failure_class,
+                warnings=[exc.message],
+            ).model_dump(),
+        )
 
 
 @router.post(

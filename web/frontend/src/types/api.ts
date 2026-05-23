@@ -346,6 +346,17 @@ export interface FetchSource {
         response_time_ms?: number | null;
         error?: string | null;
     } | null;
+    external_fetch_status?: {
+        enabled: boolean;
+        configured: boolean;
+        status: string;
+        provider?: string | null;
+        last_attempt_at?: string | null;
+        last_success_at?: string | null;
+        next_eligible_at?: string | null;
+        failure_class?: string | null;
+        budget_remaining?: number | null;
+    } | null;
 }
 
 export interface FetchSourcesResponse {
@@ -357,6 +368,19 @@ export interface FetchSourcesResponse {
     filtered_count: number;
     seed_websites: string[];
     sources: FetchSource[];
+}
+
+export interface SourceFetchResponse {
+    success: boolean;
+    source: string;
+    status: string;
+    fetched_count: number;
+    imported_count: number;
+    skipped_count: number;
+    warnings: string[];
+    next_eligible_at?: string | null;
+    failure_class?: string | null;
+    budget_remaining?: number | null;
 }
 
 export interface CloudIntegration {

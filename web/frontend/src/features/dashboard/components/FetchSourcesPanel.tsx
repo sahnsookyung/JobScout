@@ -1,7 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ExternalLink, Globe2, MapPin, Search, Server } from 'lucide-react';
+import { ExternalLink, Globe2, MapPin, RefreshCw, Search, Server } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { pipelineApi } from '@/services/pipelineApi';
 import type { CloudIntegration, FetchSource } from '@/types/api';
@@ -39,8 +40,18 @@ function healthLabel(source: FetchSource): string {
     return 'JobSpy offline';
 }
 
+function externalSeedLabel(source: FetchSource): string {
+    if (source.fetch_mode !== 'seed_website' || !source.external_fetch_status) return '';
+    if (source.external_fetch_status.status === 'ok') return 'Worker updated';
+    if (source.external_fetch_status.status === 'rate_limited') return 'Worker cooling down';
+    if (source.external_fetch_status.status === 'configured') return 'Worker ready';
+    if (source.external_fetch_status.status === 'degraded') return 'Worker degraded';
+    if (source.external_fetch_status.status === 'disabled') return 'Worker disabled';
+    return 'Worker unconfigured';
+}
+
 function modeLabel(source: FetchSource): string {
-    if (source.fetch_mode === 'seed_website') return 'Seed website';
+    if (source.fetch_mode === 'seed_website') return source.provider_name || 'Seed website';
     if (source.fetch_mode === 'ats_api') return source.provider_name || 'ATS API';
     if (source.fetch_mode === 'custom_source') return source.provider_name || 'Custom source';
     if (source.fetch_mode === 'jobspy_api') return source.provider_name || 'JobSpy API';
@@ -52,6 +63,13 @@ function healthTone(source: FetchSource): string {
     if (source.api_health.available) return 'border-success/40 bg-success-soft text-ink';
     if (source.api_health.status === 'not_configured') return 'border-rule bg-surface-sunk text-ink-soft';
     return 'border-warn/40 bg-warn-soft text-ink';
+}
+
+function externalSeedTone(source: FetchSource): string {
+    const status = source.external_fetch_status?.status;
+    if (status === 'configured' || status === 'ok') return 'border-success/40 bg-success-soft text-ink';
+    if (status === 'degraded' || status === 'rate_limited') return 'border-warn/40 bg-warn-soft text-ink';
+    return 'border-rule bg-surface-sunk text-ink-soft';
 }
 
 function metaChipClasses(extra = ''): string {
@@ -168,16 +186,40 @@ function sourceMatchesSearch(source: FetchSource, query: string): boolean {
     return terms.every((term) => haystack.includes(term));
 }
 
+function canFetchExternalSeed(source: FetchSource): boolean {
+    const status = source.external_fetch_status;
+    return source.fetch_mode === 'seed_website' && Boolean(status?.enabled && status.configured);
+}
+
+function apiErrorMessage(error: unknown): string {
+    const data = (error as {
+        response?: {
+            data?: {
+                error?: string;
+                message?: string;
+                warnings?: string[];
+            };
+        };
+    }).response?.data;
+    return data?.warnings?.[0] || data?.error || data?.message || (error instanceof Error ? error.message : 'Unknown error');
+}
+
 function SourceCard({
     source,
     index,
+    onFetchSource,
+    isFetchingSource,
 }: Readonly<{
     source: FetchSource;
     index: number;
+    onFetchSource: (source: string) => void;
+    isFetchingSource: boolean;
 }>) {
     const healthText = healthLabel(source);
+    const externalText = externalSeedLabel(source);
     const statusText = atsStatus(source);
     const intervalMinutes = atsInterval(source);
+    const canFetch = canFetchExternalSeed(source);
     const content = (
         <>
             <div className="flex items-start justify-between gap-3">
@@ -196,7 +238,15 @@ function SourceCard({
                     </div>
                 </div>
                 {source.seed_url ? (
-                    <ExternalLink className="mt-0.5 h-4 w-4 flex-shrink-0 text-ink-muted transition-colors group-hover:text-accent" aria-hidden="true" />
+                    <a
+                        href={source.seed_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label={`Open ${source.display_name}`}
+                        className="mt-0.5 inline-flex h-7 w-7 flex-shrink-0 items-center justify-center border border-transparent text-ink-muted transition-colors hover:border-rule hover:text-accent"
+                    >
+                        <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                    </a>
                 ) : (
                     <Globe2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-ink-muted transition-colors group-hover:text-accent" aria-hidden="true" />
                 )}
@@ -218,6 +268,11 @@ function SourceCard({
                 {healthText ? (
                     <span className={metaChipClasses(`${healthTone(source)} tabular-nums`)}>
                         {healthText}
+                    </span>
+                ) : null}
+                {externalText ? (
+                    <span className={metaChipClasses(`${externalSeedTone(source)} tabular-nums`)}>
+                        {externalText}
                     </span>
                 ) : null}
                 {statusText ? (
@@ -243,33 +298,36 @@ function SourceCard({
                     ))}
                 </div>
             ) : null}
+            {canFetch ? (
+                <div className="mt-3 flex justify-end">
+                    <button
+                        type="button"
+                        onClick={() => onFetchSource(source.site_type)}
+                        disabled={isFetchingSource}
+                        className="inline-flex min-h-8 items-center gap-1.5 border border-accent px-2.5 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                    >
+                        <RefreshCw
+                            className={`h-3.5 w-3.5 ${isFetchingSource ? 'animate-spin' : ''}`}
+                            aria-hidden="true"
+                        />
+                        Fetch
+                    </button>
+                </div>
+            ) : null}
         </>
     );
     const className = 'group min-h-36 border border-rule bg-surface px-4 py-3 transition-colors hover:border-rule-strong';
 
-    if (!source.seed_url) {
-        return (
-            <div key={`${source.site_type}-${index}`} className={className}>
-                {content}
-            </div>
-        );
-    }
-
     return (
-        <a
-            key={`${source.site_type}-${index}`}
-            href={source.seed_url}
-            className={className}
-            target="_blank"
-            rel="noreferrer"
-        >
+        <div key={`${source.site_type}-${index}`} className={className}>
             {content}
-        </a>
+        </div>
     );
 }
 
 export function FetchSourcesPanel() {
     const [sourceSearch, setSourceSearch] = useState('');
+    const queryClient = useQueryClient();
     const { data, isLoading } = useQuery({
         queryKey: ['pipeline', 'sources'],
         queryFn: async () => {
@@ -279,6 +337,19 @@ export function FetchSourcesPanel() {
             return response.data;
         },
         staleTime: 5 * 60 * 1000,
+    });
+    const fetchSourceMutation = useMutation({
+        mutationFn: async (source: string) => {
+            const response = await pipelineApi.fetchSource(source);
+            return response.data;
+        },
+        onSuccess: (result) => {
+            toast.success(`${result.imported_count} jobs imported from ${toTitleCase(result.source)}`);
+            void queryClient.invalidateQueries({ queryKey: ['pipeline', 'sources'] });
+        },
+        onError: (error) => {
+            toast.error(`Source fetch failed: ${apiErrorMessage(error)}`);
+        },
     });
     const { data: cloudIntegrations = [], isLoading: isLoadingCloud } = useQuery({
         queryKey: ['cloud', 'integrations', 'source-panel'],
@@ -324,7 +395,16 @@ export function FetchSourcesPanel() {
         sourcesContent = (
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {sources.map((source, index) => (
-                    <SourceCard key={`${source.site_type}-${index}`} source={source} index={index} />
+                    <SourceCard
+                        key={`${source.site_type}-${index}`}
+                        source={source}
+                        index={index}
+                        onFetchSource={(siteType) => fetchSourceMutation.mutate(siteType)}
+                        isFetchingSource={
+                            fetchSourceMutation.isPending
+                            && fetchSourceMutation.variables === source.site_type
+                        }
+                    />
                 ))}
             </div>
         );
