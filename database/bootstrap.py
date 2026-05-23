@@ -325,6 +325,7 @@ def _snapshot_limited_to_expected_tables(
     snapshot: dict[str, object],
     expected: dict[str, object],
 ) -> dict[str, object]:
+    expected_extensions = set(expected.get("extensions") or [])
     expected_tables = set((expected.get("tables") or {}).keys())
     expected_enums = {
         enum["name"]
@@ -333,7 +334,11 @@ def _snapshot_limited_to_expected_tables(
     }
     actual_tables = snapshot.get("tables") or {}
     return {
-        "extensions": snapshot.get("extensions") or [],
+        "extensions": [
+            extension
+            for extension in snapshot.get("extensions", [])
+            if extension in expected_extensions
+        ],
         "enums": [
             enum
             for enum in snapshot.get("enums", [])

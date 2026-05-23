@@ -203,6 +203,7 @@ def test_verify_bootstrapped_schema_ignores_non_oss_tables() -> None:
     }
     actual = {
         **expected,
+        "extensions": ["plpgsql", *expected["extensions"]],
         "enums": [
             *expected["enums"],
             {"name": "saas_status", "labels": ["active"]},
@@ -238,7 +239,27 @@ def test_verify_bootstrapped_schema_ignores_non_oss_tables() -> None:
         patch.object(bootstrap_module, "load", return_value=expected),
         patch.object(bootstrap_module, "capture", return_value=actual),
     ):
-        bootstrap_module._verify_bootstrapped_schema(MagicMock())
+            bootstrap_module._verify_bootstrapped_schema(MagicMock())
+
+
+def test_verify_bootstrapped_schema_still_detects_missing_extension() -> None:
+    import database.bootstrap as bootstrap_module
+
+    expected = {
+        "extensions": ["vector"],
+        "enums": [],
+        "tables": {"users": {"columns": [{"name": "id", "type": "uuid"}]}},
+        "indexes": [],
+        "constraints": [],
+    }
+    actual = {**expected, "extensions": ["plpgsql"]}
+
+    with (
+        patch.object(bootstrap_module, "load", return_value=expected),
+        patch.object(bootstrap_module, "capture", return_value=actual),
+    ):
+        with pytest.raises(bootstrap_module.DatabaseSchemaError, match="schema drifted"):
+            bootstrap_module._verify_bootstrapped_schema(MagicMock())
 
 
 def test_verify_bootstrapped_schema_still_detects_oss_drift() -> None:
