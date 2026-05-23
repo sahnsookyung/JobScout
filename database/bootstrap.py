@@ -239,6 +239,17 @@ def _adopt_legacy_schema_if_current(conn: Connection, applied: dict[str, str]) -
     return True
 
 
+def _upgrade_stamped_schema_if_current(conn: Connection, applied: dict[str, str]) -> bool:
+    _validate_known_versions(applied)
+    if applied[CURRENT_SCHEMA_VERSION] == _schema_checksum():
+        return False
+
+    Base.metadata.create_all(bind=conn)
+    _verify_bootstrapped_schema(conn)
+    _stamp_current_schema(conn)
+    return True
+
+
 def _validate_schema_state(conn: Connection) -> None:
     applied = _applied_migrations(conn)
     app_tables = _app_tables_present(conn)
@@ -375,6 +386,11 @@ def bootstrap_database(*, engine: Engine | None = None) -> list[str]:
                 applied = _applied_migrations(conn)
                 if _adopt_legacy_schema_if_current(conn, applied):
                     logger.info("Adopted legacy migration history as %s", CURRENT_SCHEMA_VERSION)
+                    conn.commit()
+                    return [CURRENT_SCHEMA_VERSION]
+
+                if _upgrade_stamped_schema_if_current(conn, applied):
+                    logger.info("Upgraded stamped schema to %s", CURRENT_SCHEMA_VERSION)
                     conn.commit()
                     return [CURRENT_SCHEMA_VERSION]
 
