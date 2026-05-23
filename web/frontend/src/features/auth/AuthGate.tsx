@@ -8,8 +8,23 @@ interface AuthGateProps {
 
 export function AuthGate({ children }: AuthGateProps) {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
+    const authRequired = String(import.meta.env.VITE_AUTH_REQUIRED ?? '').toLowerCase() === 'true'
+        || import.meta.env.PROD;
 
     if (!clientId) {
+        if (authRequired) {
+            return (
+                <main className="flex min-h-screen items-center justify-center bg-canvas px-4 text-ink">
+                    <div className="w-full max-w-md border border-rule bg-surface px-7 py-6">
+                        <p className="caption">Configuration</p>
+                        <h1 className="mt-1 text-[18px] font-medium text-ink">Sign-in is not configured</h1>
+                        <p className="mt-3 text-[13px] leading-relaxed text-ink-soft" role="alert">
+                            This hosted JobScout build is missing its Google web client ID.
+                        </p>
+                    </div>
+                </main>
+            );
+        }
         return <>{children}</>;
     }
 

@@ -26,6 +26,7 @@ Usage:
 
 import logging
 import math
+import os
 import time
 import uuid
 from datetime import timedelta
@@ -69,6 +70,20 @@ MAX_RATE_LIMIT_RETRIES = 3
 # Maximum seconds to block a sync-mode thread waiting out a rate limit.
 # Beyond this threshold the notification is recorded as failed immediately.
 SYNC_MODE_MAX_WAIT_SECONDS = 30
+PRODUCTION_ENVIRONMENTS = {"production", "prod", "staging"}
+
+
+def _sync_notification_fallback_enabled() -> bool:
+    raw_value = os.getenv("JOBSCOUT_CLOUD_SYNC_NOTIFICATION_FALLBACK")
+    if raw_value is not None:
+        return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+    environment = (
+        os.getenv("JOBSCOUT_ENV")
+        or os.getenv("APP_ENV")
+        or os.getenv("ENVIRONMENT")
+        or "development"
+    ).strip().lower()
+    return environment not in PRODUCTION_ENVIRONMENTS
 
 
 def _parse_uuid(value: Any) -> Optional[UUID]:
@@ -402,13 +417,44 @@ class NotificationService:
                 notification_id = job.id
                 logger.info(f"Queued notification as job {job.id}")
             except Exception:
-                logger.exception("Redis enqueue failed, falling back to synchronous send")
+                logger.exception("Redis enqueue failed")
+                self._record_enqueue_failure(notification_data)
+                if not _sync_notification_fallback_enabled():
+                    return None
+                logger.warning("Falling back to synchronous notification send outside production")
                 notification_id = process_notification_task(notification_data)
         else:
             # Process synchronously
             notification_id = process_notification_task(notification_data)
         
         return notification_id
+
+    def _record_enqueue_failure(self, notification_data: Dict[str, Any]) -> None:
+        """Persist queue enqueue failures so operational diagnostics survive restarts."""
+        metadata = dict(notification_data.get("metadata") or {})
+        metadata.setdefault("queue", "notifications")
+        metadata["delivery_state"] = "enqueue_failed"
+        metadata["retry_state"] = "dead_letter"
+        try:
+            with db_session_scope() as session:
+                repo = JobRepository(session)
+                tracker = NotificationTrackerService(repo)
+                tracker.record_notification(
+                    user_id=str(notification_data.get("user_id") or ""),
+                    job_match_id=notification_data.get("job_match_id"),
+                    event_type=str(notification_data.get("event_type") or "general"),
+                    channel_type=str(notification_data.get("channel_type") or "unknown"),
+                    recipient=str(notification_data.get("recipient") or ""),
+                    subject=str(notification_data.get("subject") or ""),
+                    body=str(notification_data.get("body") or ""),
+                    success=False,
+                    error_message="Redis enqueue failed before notification dispatch.",
+                    failure_class="notification_enqueue_failed",
+                    metadata=metadata,
+                    allow_resend=bool(notification_data.get("allow_resend", True)),
+                )
+        except Exception:
+            logger.exception("Failed to persist notification enqueue failure")
 
     def get_user_notification_snapshot(self, user) -> Any:
         """Return the effective per-user notification settings snapshot."""

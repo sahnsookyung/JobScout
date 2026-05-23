@@ -281,12 +281,22 @@ export interface CloudUser {
     picture?: string | null;
     provider: string;
     token_kind: string;
+    session_expires_at?: number | null;
+}
+
+export interface CloudTenant {
+    id: string;
+    name: string;
+    role: 'owner' | 'admin' | 'member';
+    is_default: boolean;
 }
 
 export interface CloudAuthExchangeResponse {
-    access_token: string;
+    access_token?: string | null;
     token_type: string;
     user: CloudUser;
+    tenants?: CloudTenant[];
+    selected_tenant_id?: string | null;
 }
 
 export interface PipelineStatusResponse {

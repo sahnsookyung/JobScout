@@ -1,5 +1,5 @@
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
-import { Bell, LogOut, SlidersHorizontal, UserCircle2 } from 'lucide-react';
+import { Activity, Bell, LogOut, SlidersHorizontal, UserCircle2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/Button';
 import { ModalShell } from '@/components/ui/ModalShell';
@@ -7,6 +7,7 @@ import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { useAuth } from '@/features/auth/useAuth';
 import { CandidatePreferencesPanel } from '@/features/preferences/components/CandidatePreferencesPanel';
 import { NotificationSettingsPanel } from '@/features/notifications/components/NotificationSettingsPanel';
+import { OperationsStatusPanel } from './OperationsStatusPanel';
 
 function useDismissOnOutsideClick(
     ref: RefObject<HTMLElement | null>,
@@ -48,8 +49,9 @@ function initialsFor(name: string, email: string) {
 }
 
 export function DashboardHeader() {
-    const { user, logout } = useAuth();
+    const { user, logout, tenants = [], selectedTenantId = null } = useAuth();
     const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
+    const [isOperationsModalOpen, setIsOperationsModalOpen] = useState(false);
     const [isPreferencesModalOpen, setIsPreferencesModalOpen] = useState(false);
     const [isProfileOpen, setIsProfileOpen] = useState(false);
     const profilePanelRef = useRef<HTMLDivElement>(null);
@@ -75,20 +77,30 @@ export function DashboardHeader() {
     }, [user]);
 
     const avatarInitials = initialsFor(identity.name, identity.email);
+    const selectedTenant = tenants.find((tenant) => tenant.id === selectedTenantId);
 
     const openNotifications = () => {
         setIsProfileOpen(false);
         setIsPreferencesModalOpen(false);
+        setIsOperationsModalOpen(false);
         setIsNotificationModalOpen(true);
     };
     const openPreferences = () => {
         setIsProfileOpen(false);
         setIsNotificationModalOpen(false);
+        setIsOperationsModalOpen(false);
         setIsPreferencesModalOpen(true);
+    };
+    const openOperations = () => {
+        setIsProfileOpen(false);
+        setIsNotificationModalOpen(false);
+        setIsPreferencesModalOpen(false);
+        setIsOperationsModalOpen(true);
     };
     const toggleProfile = () => {
         setIsNotificationModalOpen(false);
         setIsPreferencesModalOpen(false);
+        setIsOperationsModalOpen(false);
         setIsProfileOpen((current) => !current);
     };
 
@@ -189,20 +201,38 @@ export function DashboardHeader() {
                                             <p className="caption">Session</p>
                                             <p className="text-[13px] text-ink-soft">{identity.subtitle}</p>
                                         </div>
+                                        {selectedTenant && (
+                                            <div className="rounded-sm border border-rule bg-surface px-3 py-2 text-[13px] text-ink-soft">
+                                                <div className="text-ink">{selectedTenant.name}</div>
+                                                <div className="caption mt-1">{selectedTenant.role}</div>
+                                            </div>
+                                        )}
                                         {user ? (
-                                            <Button
-                                                type="button"
-                                                variant="secondary"
-                                                size="sm"
-                                                className="w-full justify-center"
-                                                onClick={() => {
-                                                    logout();
-                                                    setIsProfileOpen(false);
-                                                }}
-                                            >
-                                                <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
-                                                Sign out
-                                            </Button>
+                                            <>
+                                                <Button
+                                                    type="button"
+                                                    variant="secondary"
+                                                    size="sm"
+                                                    className="w-full justify-center"
+                                                    onClick={openOperations}
+                                                >
+                                                    <Activity className="h-3.5 w-3.5" aria-hidden="true" />
+                                                    Diagnostics
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    variant="secondary"
+                                                    size="sm"
+                                                    className="w-full justify-center"
+                                                    onClick={() => {
+                                                        logout();
+                                                        setIsProfileOpen(false);
+                                                    }}
+                                                >
+                                                    <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+                                                    Sign out
+                                                </Button>
+                                            </>
                                         ) : (
                                             <div className="flex items-center gap-2 rounded-sm border border-dashed border-rule px-3 py-2.5 text-[13px] text-ink-muted">
                                                 <UserCircle2 className="h-4 w-4" aria-hidden="true" />
@@ -228,6 +258,19 @@ export function DashboardHeader() {
                 maxWidth="max-w-4xl"
             >
                 <NotificationSettingsPanel />
+            </ModalShell>
+
+            <ModalShell
+                isOpen={isOperationsModalOpen}
+                onClose={() => setIsOperationsModalOpen(false)}
+                titleId="operations-status-title"
+                eyebrow="Operations"
+                title="Tenant diagnostics"
+                description="A tenant-safe health view for auth, quota, notifications, and syncs."
+                closeLabel="Close diagnostics"
+                maxWidth="max-w-4xl"
+            >
+                <OperationsStatusPanel />
             </ModalShell>
 
             <ModalShell

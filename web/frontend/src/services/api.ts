@@ -3,9 +3,13 @@ import axios, { type AxiosError } from 'axios';
 import { withAppBasePath } from '@/config/publicPath';
 import type { ApiErrorResponse, ApiFieldError } from '@/types/api';
 
-const AUTH_STORAGE_KEY = 'jobscout_auth';
 const TENANT_STORAGE_KEY = 'jobscout_tenant_id';
+const AUTH_STORAGE_KEY = 'jobscout_auth';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const CSRF_COOKIE_NAME = '__Host-jobscout_csrf';
+const MUTATION_METHODS = new Set(['post', 'put', 'patch', 'delete']);
+
+let verifiedTenantId: string | null = null;
 
 export const apiClient = axios.create({
     baseURL: import.meta.env.VITE_API_URL || withAppBasePath('/api'),
@@ -15,26 +19,6 @@ export const apiClient = axios.create({
         'Content-Type': 'application/json',
     },
 });
-
-function readStoredToken(): string | null {
-    if (globalThis.window === undefined) {
-        return null;
-    }
-
-    try {
-        const raw = globalThis.localStorage.getItem(AUTH_STORAGE_KEY);
-        if (!raw) {
-            return null;
-        }
-
-        const parsed = JSON.parse(raw) as { token?: unknown };
-        return typeof parsed.token === 'string' && parsed.token.length > 0
-            ? parsed.token
-            : null;
-    } catch {
-        return null;
-    }
-}
 
 function safeLocalStorageGet(key: string): string | null {
     if (globalThis.window === undefined) {
@@ -60,42 +44,85 @@ function safeLocalStorageSet(key: string, value: string): void {
     }
 }
 
+function safeLocalStorageRemove(key: string): void {
+    if (globalThis.window === undefined) {
+        return;
+    }
+
+    try {
+        globalThis.localStorage.removeItem(key);
+    } catch {
+        // Storage may be unavailable in privacy-restricted browser contexts.
+    }
+}
+
 function normalizedTenantId(value: string | null): string | null {
     const candidate = value?.trim();
     return candidate && UUID_PATTERN.test(candidate) ? candidate : null;
 }
 
-function readSelectedTenantId(): string | null {
+export function readRequestedTenantId(): string | null {
     if (globalThis.window === undefined) {
         return null;
     }
 
     const search = globalThis.window?.location?.search ?? globalThis.location?.search ?? '';
-    const urlTenantId = normalizedTenantId(
+    return normalizedTenantId(
         new URLSearchParams(search).get('tenant_id')
-    );
-    if (urlTenantId) {
-        safeLocalStorageSet(TENANT_STORAGE_KEY, urlTenantId);
-        return urlTenantId;
-    }
-
-    return normalizedTenantId(safeLocalStorageGet(TENANT_STORAGE_KEY));
+    ) ?? normalizedTenantId(safeLocalStorageGet(TENANT_STORAGE_KEY));
 }
 
-// Request interceptor for logging
+export function setVerifiedTenantId(tenantId: string | null): void {
+    verifiedTenantId = normalizedTenantId(tenantId);
+    if (verifiedTenantId) {
+        safeLocalStorageSet(TENANT_STORAGE_KEY, verifiedTenantId);
+    } else {
+        safeLocalStorageRemove(TENANT_STORAGE_KEY);
+    }
+}
+
+function readCsrfCookie(): string | null {
+    if (globalThis.document === undefined) {
+        return null;
+    }
+    const prefix = `${CSRF_COOKIE_NAME}=`;
+    const cookie = globalThis.document.cookie
+        .split(';')
+        .map((part) => part.trim())
+        .find((part) => part.startsWith(prefix));
+    return cookie ? decodeURIComponent(cookie.slice(prefix.length)) : null;
+}
+
+function isProductionLike(): boolean {
+    return import.meta.env.PROD;
+}
+
 apiClient.interceptors.request.use(
     (config) => {
-        const token = readStoredToken();
-        if (token) {
+        const storedToken = readStoredToken();
+        if (storedToken) {
             config.headers = config.headers ?? {};
-            config.headers.Authorization = `Bearer ${token}`;
+            config.headers.Authorization = `Bearer ${storedToken}`;
         }
-        const tenantId = readSelectedTenantId();
+        const tenantId = verifiedTenantId ?? (!isProductionLike() ? readRequestedTenantId() : null);
         if (tenantId) {
+            if (!verifiedTenantId && !isProductionLike()) {
+                safeLocalStorageSet(TENANT_STORAGE_KEY, tenantId);
+            }
             config.headers = config.headers ?? {};
             config.headers['X-Tenant-Id'] = tenantId;
         }
-        console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`);
+        const method = config.method?.toLowerCase() ?? 'get';
+        if (MUTATION_METHODS.has(method)) {
+            const csrfToken = readCsrfCookie();
+            if (csrfToken) {
+                config.headers = config.headers ?? {};
+                config.headers['X-CSRF-Token'] = csrfToken;
+            }
+        }
+        if (!isProductionLike()) {
+            console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`);
+        }
         return config;
     },
     (error) => Promise.reject(error)
@@ -200,7 +227,28 @@ apiClient.interceptors.response.use(
     (response) => response,
     (error: AxiosError) => {
         const normalised = normalizeApiError(error);
-        console.error(`[API Error] ${normalised.status ?? 'network'}: ${normalised.message}`);
+        if (!isProductionLike()) {
+            console.error(`[API Error] ${normalised.status ?? 'network'}: ${normalised.message}`);
+        }
         return Promise.reject(normalised);
     }
 );
+function readStoredToken(): string | null {
+    if (isProductionLike() || globalThis.window === undefined) {
+        return null;
+    }
+
+    try {
+        const raw = globalThis.localStorage.getItem(AUTH_STORAGE_KEY);
+        if (!raw) {
+            return null;
+        }
+
+        const parsed = JSON.parse(raw) as { token?: unknown };
+        return typeof parsed.token === 'string' && parsed.token.length > 0
+            ? parsed.token
+            : null;
+    } catch {
+        return null;
+    }
+}

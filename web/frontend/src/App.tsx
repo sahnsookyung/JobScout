@@ -8,6 +8,7 @@ import { PolicyPanel } from '@/features/config/components/PolicyPanel';
 import { DashboardControls } from '@/features/dashboard/components/DashboardControls';
 import { DashboardHeader } from '@/features/dashboard/components/DashboardHeader';
 import { ToastProvider } from '@/components/ui/Toast';
+import { AppErrorBoundary } from '@/components/AppErrorBoundary';
 import { stripAppBasePath } from '@/config/publicPath';
 
 const queryClient = new QueryClient({
@@ -58,14 +59,16 @@ function App() {
 
     return (
         <QueryClientProvider client={queryClient}>
-            <ToastProvider />
-            {isEmailVerificationRoute ? (
-                <EmailVerificationPage />
-            ) : (
-                <AuthGate>
-                    <AppContent />
-                </AuthGate>
-            )}
+            <AppErrorBoundary>
+                <ToastProvider />
+                {isEmailVerificationRoute ? (
+                    <EmailVerificationPage />
+                ) : (
+                    <AuthGate>
+                        <AppContent />
+                    </AuthGate>
+                )}
+            </AppErrorBoundary>
         </QueryClientProvider>
     );
 }
