@@ -4,6 +4,7 @@ import { ModalShell } from '@/components/ui/ModalShell';
 import { useMatchDetails } from '@/hooks/useMatchDetails';
 import { Badge } from '@/components/ui/Badge';
 import { formatScore, formatSalary } from '@/utils/formatters';
+import { ResumeVariantPanel } from './ResumeVariantPanel';
 
 type MatchDetailsModalProps = Readonly<{
     matchId: string | null;
@@ -420,7 +421,7 @@ function JobDescriptionSection({ description }: Readonly<{ description: string }
     );
 }
 
-function ModalBody({ isLoading, data }: Readonly<{ isLoading: boolean; data: any }>) {
+function ModalBody({ isLoading, data, matchId }: Readonly<{ isLoading: boolean; data: any; matchId: string }>) {
     if (isLoading) return <LoadingState />;
     if (!data) return <ErrorState message="Failed to load match details" />;
 
@@ -428,6 +429,7 @@ function ModalBody({ isLoading, data }: Readonly<{ isLoading: boolean; data: any
         <div className="space-y-10">
             <JobInfoSection job={data.job} />
             <ScoresSection match={data.match} />
+            <ResumeVariantPanel matchId={matchId} />
             <RequirementsSection requirements={data.requirements} fitExplanation={data.match.fit_explanation} />
             {data.job.description && <JobDescriptionSection description={data.job.description} />}
         </div>
@@ -435,11 +437,12 @@ function ModalBody({ isLoading, data }: Readonly<{ isLoading: boolean; data: any
 }
 
 export const MatchDetailsModal: React.FC<MatchDetailsModalProps> = ({ matchId, onClose }) => {
-    const isOpen = Boolean(matchId);
+    const activeMatchId = matchId;
+    const isOpen = Boolean(activeMatchId);
 
-    const { data, isLoading } = useMatchDetails(matchId);
+    const { data, isLoading } = useMatchDetails(activeMatchId);
 
-    if (!isOpen) return null;
+    if (!activeMatchId) return null;
 
     return (
         <ModalShell
@@ -451,7 +454,7 @@ export const MatchDetailsModal: React.FC<MatchDetailsModalProps> = ({ matchId, o
             closeLabel="Close match details"
             maxWidth="max-w-5xl"
         >
-            <ModalBody isLoading={isLoading} data={data} />
+            <ModalBody isLoading={isLoading} data={data} matchId={activeMatchId} />
         </ModalShell>
     );
 };

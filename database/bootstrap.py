@@ -26,6 +26,19 @@ CURRENT_SCHEMA_CHECKSUM_SOURCE = SNAPSHOT_PATH
 APP_TABLE_NAMES = set(Base.metadata.tables.keys())
 DEV_BYPASS_IDENTITY_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 LEGACY_MIGRATION_SUFFIXES = (".py", ".sql")
+CREATE_SCHEMA_MIGRATIONS_SQL = """
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+        version TEXT PRIMARY KEY,
+        checksum TEXT NOT NULL,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT timezone('UTC', now())
+    )
+"""
+SELECT_SCHEMA_MIGRATIONS_SQL = "SELECT version, checksum FROM schema_migrations ORDER BY version"
+DELETE_SCHEMA_MIGRATIONS_SQL = "DELETE FROM schema_migrations"
+INSERT_SCHEMA_MIGRATIONS_SQL = """
+    INSERT INTO schema_migrations (version, checksum)
+    VALUES (:version, :checksum)
+"""
 
 
 class DatabaseSchemaError(RuntimeError):
@@ -49,17 +62,7 @@ def _ensure_extension(conn: Connection) -> None:
 
 
 def _ensure_schema_migrations_table(conn: Connection) -> None:
-    conn.execute(
-        text(
-            f"""
-            CREATE TABLE IF NOT EXISTS {SCHEMA_MIGRATIONS_TABLE} (
-                version TEXT PRIMARY KEY,
-                checksum TEXT NOT NULL,
-                applied_at TIMESTAMPTZ NOT NULL DEFAULT timezone('UTC', now())
-            )
-            """
-        )
-    )
+    conn.execute(text(CREATE_SCHEMA_MIGRATIONS_SQL))
 
 
 def _release_migration_lock(conn: Connection) -> None:
@@ -73,11 +76,7 @@ def _applied_migrations(conn: Connection) -> dict[str, str]:
     if not _schema_migrations_exists(conn):
         return {}
 
-    rows = conn.execute(
-        text(
-            f"SELECT version, checksum FROM {SCHEMA_MIGRATIONS_TABLE} ORDER BY version"
-        )
-    ).fetchall()
+    rows = conn.execute(text(SELECT_SCHEMA_MIGRATIONS_SQL)).fetchall()
     return {row.version: row.checksum for row in rows}
 
 
@@ -301,14 +300,9 @@ def _seed_dev_bypass_user(conn: Connection) -> None:
 
 
 def _stamp_current_schema(conn: Connection) -> None:
-    conn.execute(text(f"DELETE FROM {SCHEMA_MIGRATIONS_TABLE}"))
+    conn.execute(text(DELETE_SCHEMA_MIGRATIONS_SQL))
     conn.execute(
-        text(
-            f"""
-            INSERT INTO {SCHEMA_MIGRATIONS_TABLE} (version, checksum)
-            VALUES (:version, :checksum)
-            """
-        ),
+        text(INSERT_SCHEMA_MIGRATIONS_SQL),
         {
             "version": CURRENT_SCHEMA_VERSION,
             "checksum": _schema_checksum(),

@@ -235,6 +235,36 @@
       "type": "PRIMARY KEY"
     },
     {
+      "definition": "FOREIGN KEY (job_post_id) REFERENCES job_post(id) ON DELETE CASCADE",
+      "name": "resume_variant_job_post_id_fkey",
+      "table": "resume_variant",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (match_id) REFERENCES job_match(id) ON DELETE CASCADE",
+      "name": "resume_variant_match_id_fkey",
+      "table": "resume_variant",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
+      "name": "resume_variant_owner_id_fkey",
+      "table": "resume_variant",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "resume_variant_pkey",
+      "table": "resume_variant",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE",
+      "name": "resume_variant_tenant_id_fkey",
+      "table": "resume_variant",
+      "type": "FOREIGN KEY"
+    },
+    {
       "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
       "name": "structured_resume_owner_id_fkey",
       "table": "structured_resume",
@@ -931,6 +961,51 @@
       "reloptions": null,
       "table": "resume_upload",
       "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_resume_variant_match ON public.resume_variant USING btree (match_id)",
+      "name": "idx_resume_variant_match",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_variant",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_resume_variant_owner_created ON public.resume_variant USING btree (owner_id, created_at)",
+      "name": "idx_resume_variant_owner_created",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_variant",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_resume_variant_owner_tenant_match ON public.resume_variant USING btree (owner_id, tenant_id, match_id)",
+      "name": "idx_resume_variant_owner_tenant_match",
+      "predicate": null,
+      "reloptions": null,
+      "table": "resume_variant",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE UNIQUE INDEX uq_resume_variant_current_global ON public.resume_variant USING btree (owner_id, match_id, template_key, template_version, generation_mode, tone, generator_version, renderer_version, evidence_policy_version, source_match_updated_at, source_match_calculated_at, source_job_content_hash, source_resume_updated_at, source_resume_content_hash) WHERE (tenant_id IS NULL)",
+      "name": "uq_resume_variant_current_global",
+      "predicate": "(tenant_id IS NULL)",
+      "reloptions": null,
+      "table": "resume_variant",
+      "unique": true
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE UNIQUE INDEX uq_resume_variant_current_tenant ON public.resume_variant USING btree (owner_id, tenant_id, match_id, template_key, template_version, generation_mode, tone, generator_version, renderer_version, evidence_policy_version, source_match_updated_at, source_match_calculated_at, source_job_content_hash, source_resume_updated_at, source_resume_content_hash) WHERE (tenant_id IS NOT NULL)",
+      "name": "uq_resume_variant_current_tenant",
+      "predicate": "(tenant_id IS NOT NULL)",
+      "reloptions": null,
+      "table": "resume_variant",
+      "unique": true
     },
     {
       "access_method": "btree",
@@ -2582,6 +2657,148 @@
           "name": "user_safe_message",
           "nullable": true,
           "type": "text"
+        }
+      ]
+    },
+    "resume_variant": {
+      "columns": [
+        {
+          "default": null,
+          "name": "content_json",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "evidence_map",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "evidence_policy_version",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "generation_mode",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "generator_version",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "job_post_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "match_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "owner_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "renderer_version",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "resume_fingerprint",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "source_job_content_hash",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "source_match_calculated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "source_match_updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "source_resume_content_hash",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "source_resume_updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "template_key",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "template_version",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "tenant_id",
+          "nullable": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "tone",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "warnings",
+          "nullable": false,
+          "type": "jsonb"
         }
       ]
     },

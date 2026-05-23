@@ -450,5 +450,61 @@ export interface SyncRunResponse {
     dedupe_fingerprint_count: number;
 }
 
+export type ResumeVariantDownloadFormat = 'markdown' | 'html' | 'docx';
+
+export interface ResumeVariantClaim {
+    text: string;
+    sources?: Array<Record<string, any>>;
+}
+
+export interface ResumeVariantExperience {
+    title?: string | null;
+    company?: string | null;
+    bullets?: ResumeVariantClaim[];
+    sources?: Array<Record<string, any>>;
+}
+
+export interface ResumeVariantContent {
+    template_key?: string;
+    tone?: string;
+    job?: {
+        title?: string | null;
+        company?: string | null;
+    };
+    summary?: ResumeVariantClaim[];
+    targeted_evidence?: ResumeVariantClaim[];
+    skills?: ResumeVariantClaim[];
+    experience?: ResumeVariantExperience[];
+}
+
+export interface ResumeVariant {
+    id: string;
+    match_id: string;
+    job_post_id: string;
+    template_key: string;
+    generation_mode: string;
+    created_at: string | null;
+    content: ResumeVariantContent;
+    evidence_map: Record<string, any>;
+    warnings: string[];
+    download_formats: ResumeVariantDownloadFormat[];
+    reused?: boolean | null;
+    quota_status?: {
+        daily_remaining?: number;
+        hourly_remaining?: number;
+    } | null;
+}
+
+export interface ResumeVariantEnvelope {
+    success: boolean;
+    variant: ResumeVariant;
+}
+
+export interface ResumeVariantListResponse {
+    success: boolean;
+    count: number;
+    variants: ResumeVariant[];
+}
+
 export type MatchStatus = 'active' | 'stale' | 'all';
 export type PolicyPreset = 'strict' | 'balanced' | 'discovery';

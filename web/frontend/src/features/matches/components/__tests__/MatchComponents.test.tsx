@@ -17,6 +17,9 @@ vi.mock('lucide-react', () => ({
     Eye: ({ className }: any) => <svg data-testid="eye" className={className} />,
     EyeOff: ({ className }: any) => <svg data-testid="eye-off" className={className} />,
     X: ({ className }: any) => <svg data-testid="x-icon" className={className} />,
+    Download: ({ className }: any) => <svg data-testid="download-icon" className={className} />,
+    RefreshCw: ({ className }: any) => <svg data-testid="refresh-icon" className={className} />,
+    Wand2: ({ className }: any) => <svg data-testid="wand-icon" className={className} />,
 }));
 
 vi.mock('@/utils/formatters', () => ({
@@ -432,12 +435,12 @@ describe('MatchDetailsModal', () => {
     });
 
     it('renders nothing when matchId is null', () => {
-        const { container } = render(<MatchDetailsModal matchId={null} onClose={vi.fn()} />);
+        const { container } = render(<MatchDetailsModal matchId={null} onClose={vi.fn()} />, { wrapper: makeQueryWrapper() });
         expect(container.firstChild).toBeNull();
     });
 
     it('shows loading and error states', () => {
-        const { rerender } = render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        const { rerender } = render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />, { wrapper: makeQueryWrapper() });
         expect(screen.getByText(/Failed to load match details/i)).toBeInTheDocument();
 
         mockUseMatchDetails.mockReturnValue({ data: undefined, isLoading: true });
@@ -448,7 +451,7 @@ describe('MatchDetailsModal', () => {
     it('closes from the close button, escape, and backdrop', () => {
         mockUseMatchDetails.mockReturnValue({ data: makeModalData(), isLoading: false });
         const onClose = vi.fn();
-        const { container } = render(<MatchDetailsModal matchId="match-1" onClose={onClose} />);
+        const { container } = render(<MatchDetailsModal matchId="match-1" onClose={onClose} />, { wrapper: makeQueryWrapper() });
 
         fireEvent.click(screen.getAllByLabelText('Close match details')[0]);
         fireEvent.keyDown(document, { key: 'Escape' });
@@ -464,7 +467,8 @@ describe('MatchDetailsModal', () => {
             <>
                 <button type="button">Open match</button>
                 <MatchDetailsModal matchId="match-1" onClose={onClose} />
-            </>
+            </>,
+            { wrapper: makeQueryWrapper() }
         );
 
         const opener = screen.getByRole('button', { name: /open match/i });
@@ -484,7 +488,7 @@ describe('MatchDetailsModal', () => {
 
     it('renders the main job details', () => {
         mockUseMatchDetails.mockReturnValue({ data: makeModalData(), isLoading: false });
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />, { wrapper: makeQueryWrapper() });
         expect(screen.getByText('Match details')).toBeInTheDocument();
         expect(screen.getByText('Staff Engineer')).toBeInTheDocument();
         expect(screen.getByText('Acme')).toBeInTheDocument();
@@ -513,7 +517,7 @@ describe('MatchDetailsModal', () => {
             isLoading: false,
         });
 
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />, { wrapper: makeQueryWrapper() });
         expect(screen.getByText('Semantic fit')).toBeInTheDocument();
         expect(
             screen.getByText((_, node) => node?.textContent === 'Confidence 84%')
@@ -560,7 +564,7 @@ describe('MatchDetailsModal', () => {
             isLoading: false,
         });
 
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />, { wrapper: makeQueryWrapper() });
         expect(screen.getByText('Salary')).toBeInTheDocument();
         expect(screen.getByText('5+ years')).toBeInTheDocument();
         expect(screen.getByText('Senior')).toBeInTheDocument();
@@ -606,7 +610,7 @@ describe('MatchDetailsModal', () => {
             isLoading: false,
         });
 
-        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />);
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />, { wrapper: makeQueryWrapper() });
         expect(screen.getByText('Partial')).toBeInTheDocument();
         expect(screen.getByText('Why')).toBeInTheDocument();
         expect(screen.queryByText('92% match')).not.toBeInTheDocument();

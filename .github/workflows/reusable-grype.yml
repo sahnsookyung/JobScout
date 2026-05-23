@@ -63,9 +63,11 @@ jobs:
         # Scans the checked-out source tree as a filesystem target.
         # Container-image scanning (release gate path) uses a separate caller workflow.
         # Thresholds are explicitly defined (policy §18.4).
+        env:
+          GRYPE_FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
         run: |
           grype dir:. \
-            --fail-on "${{ inputs.fail-on-severity }}" \
+            --fail-on "$GRYPE_FAIL_ON_SEVERITY" \
             --output sarif \
             --file grype.sarif || GRYPE_EXIT=$?
 
@@ -73,7 +75,7 @@ jobs:
           echo "### Grype Vulnerability Scan" >> "$GITHUB_STEP_SUMMARY"
           if [ -f grype.sarif ]; then
             FINDINGS=$(python3 -c "import json; d=json.load(open('grype.sarif')); print(sum(len(r.get('results',[]))for r in d.get('runs',[])))" 2>/dev/null || echo "?")
-            echo "- Findings (\`${{ inputs.fail-on-severity }}\`+ severity): ${FINDINGS}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Findings (\`${GRYPE_FAIL_ON_SEVERITY}\`+ severity): ${FINDINGS}" >> "$GITHUB_STEP_SUMMARY"
           fi
           if [ "${GRYPE_EXIT:-0}" -ne 0 ]; then
             echo "- **Result: FAIL**" >> "$GITHUB_STEP_SUMMARY"
