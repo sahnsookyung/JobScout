@@ -853,6 +853,214 @@ describe('DashboardControls', () => {
             });
         });
 
+        it('labels source job limits as fetch caps instead of current job counts', async () => {
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+
+            const tokyoDevCard = screen.getByText('TokyoDev').closest('div[class*="group"]') as HTMLElement;
+            expect(within(tokyoDevCard).getByText('Fetch cap')).toBeInTheDocument();
+            expect(within(tokyoDevCard).getByText('Max 5/fetch')).toBeInTheDocument();
+        });
+
+        it('renders distinct source health, outcome, and paused states', async () => {
+            mockPipelineApi.getSources.mockResolvedValueOnce({
+                data: {
+                    success: true,
+                    jobspy_url: null,
+                    api_based_fetching: true,
+                    search_query: null,
+                    total_count: 5,
+                    filtered_count: 5,
+                    seed_websites: [],
+                    sources: [
+                        {
+                            site_type: 'worker_ok',
+                            display_name: 'Worker OK',
+                            seed_url: 'https://www.tokyodev.com/jobs',
+                            description: 'Updated worker feed.',
+                            tags: ['seed'],
+                            search_keywords: ['worker'],
+                            fetch_mode: 'seed_website',
+                            provider_name: 'Worker seed fetcher',
+                            search_term: '',
+                            location: null,
+                            country: null,
+                            results_wanted: 7,
+                            hours_old: null,
+                            options: {},
+                            api_health: null,
+                            external_fetch_status: {
+                                enabled: true,
+                                configured: true,
+                                status: 'ok',
+                                provider: 'cloudflare_worker_seed',
+                                last_attempt_at: null,
+                                last_success_at: null,
+                                next_eligible_at: null,
+                                failure_class: null,
+                                budget_remaining: null,
+                            },
+                        },
+                        {
+                            site_type: 'worker_degraded',
+                            display_name: 'Worker Degraded',
+                            seed_url: 'https://japan-dev.com/jobs',
+                            description: 'Worker has warnings.',
+                            tags: ['seed'],
+                            search_keywords: ['worker'],
+                            fetch_mode: 'seed_website',
+                            provider_name: 'Worker seed fetcher',
+                            search_term: '',
+                            location: null,
+                            country: null,
+                            results_wanted: 7,
+                            hours_old: null,
+                            options: {},
+                            api_health: null,
+                            external_fetch_status: {
+                                enabled: true,
+                                configured: true,
+                                status: 'degraded',
+                                provider: 'cloudflare_worker_seed',
+                                last_attempt_at: null,
+                                last_success_at: null,
+                                next_eligible_at: null,
+                                failure_class: null,
+                                budget_remaining: undefined,
+                            },
+                        },
+                        {
+                            site_type: 'worker_paused',
+                            display_name: 'Worker Paused',
+                            seed_url: 'https://www.tokyodev.com/jobs',
+                            description: 'Worker is disabled.',
+                            tags: ['seed'],
+                            search_keywords: ['worker'],
+                            fetch_mode: 'seed_website',
+                            provider_name: 'Worker seed fetcher',
+                            search_term: '',
+                            location: null,
+                            country: null,
+                            results_wanted: 7,
+                            hours_old: null,
+                            options: {},
+                            api_health: null,
+                            external_fetch_status: {
+                                enabled: false,
+                                configured: true,
+                                status: 'disabled',
+                                provider: 'cloudflare_worker_seed',
+                                last_attempt_at: null,
+                                last_success_at: null,
+                                next_eligible_at: null,
+                                failure_class: null,
+                                budget_remaining: 0,
+                            },
+                        },
+                        {
+                            site_type: 'jobspy_timeout',
+                            display_name: 'JobSpy Timeout',
+                            seed_url: 'https://www.indeed.com',
+                            description: 'API timeout.',
+                            tags: ['api'],
+                            search_keywords: ['jobspy'],
+                            fetch_mode: 'jobspy_api',
+                            provider_name: 'JobSpy',
+                            search_term: 'engineer',
+                            location: null,
+                            country: null,
+                            results_wanted: 4,
+                            hours_old: null,
+                            options: {},
+                            api_health: {
+                                available: false,
+                                status: 'timeout',
+                                endpoint: 'https://jobspy.example/health',
+                                status_code: null,
+                                response_time_ms: null,
+                                error: 'timeout',
+                            },
+                        },
+                        {
+                            site_type: 'jobspy_unconfigured',
+                            display_name: 'JobSpy Unconfigured',
+                            seed_url: 'https://www.linkedin.com/jobs',
+                            description: 'API not configured.',
+                            tags: ['api'],
+                            search_keywords: ['jobspy'],
+                            fetch_mode: 'jobspy_api',
+                            provider_name: 'JobSpy',
+                            search_term: 'engineer',
+                            location: null,
+                            country: null,
+                            results_wanted: 4,
+                            hours_old: null,
+                            options: {},
+                            api_health: {
+                                available: false,
+                                status: 'not_configured',
+                                endpoint: null,
+                                status_code: null,
+                                response_time_ms: null,
+                                error: null,
+                            },
+                        },
+                    ],
+                },
+            });
+            mockPipelineApi.getUserAtsSources.mockResolvedValueOnce({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-initial-outcome',
+                        tenant_id: 'tenant-1',
+                        provider: 'greenhouse',
+                        display_name: 'Initial Outcome Source',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: 'invalid-date',
+                        last_error: 'Provider returned a warning',
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://boards.greenhouse.io/initial-outcome',
+                        created_at: null,
+                        updated_at: null,
+                        initial_sync: {
+                            status: 'completed',
+                            provider: 'greenhouse',
+                            run_id: 'run-initial',
+                            jobs_seen: 9,
+                            jobs_imported: 3,
+                            jobs_deactivated: 0,
+                            error_summary: null,
+                            retry_after_seconds: null,
+                        },
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Worker OK')).toBeInTheDocument();
+            });
+            expect(screen.getByText('Worker updated')).toBeInTheDocument();
+            expect(screen.getByText('Worker degraded')).toBeInTheDocument();
+            expect(screen.getByText('Worker disabled')).toBeInTheDocument();
+            expect(screen.getByText('JobSpy timeout')).toBeInTheDocument();
+            expect(screen.getByText('JobSpy not configured')).toBeInTheDocument();
+            expect(screen.getAllByText('Ready to fetch').length).toBeGreaterThan(0);
+            expect(screen.getAllByText('Check API health').length).toBeGreaterThan(0);
+            expect(screen.getByText('3 imported / 9 seen')).toBeInTheDocument();
+            expect(screen.getByText('Provider returned a warning')).toBeInTheDocument();
+        });
+
         it('shows discovery empty and error states without creating a source', async () => {
             mockPipelineApi.discoverAtsSources
                 .mockResolvedValueOnce({ data: [] })
@@ -976,6 +1184,18 @@ describe('DashboardControls', () => {
                         occurred_at: '2026-05-23T00:00:00Z',
                         readd_payload: null,
                     },
+                    {
+                        id: 'history-3',
+                        action: 'integration.user_source_sync_triggered',
+                        resource_id: 'source-synced',
+                        provider: 'ashby',
+                        display_name: 'Synced Gamma',
+                        identifier: 'gamma',
+                        source_url: 'https://jobs.ashbyhq.com/gamma',
+                        status: 'active',
+                        occurred_at: '2026-05-22T00:00:00Z',
+                        readd_payload: null,
+                    },
                 ],
             });
 
@@ -990,15 +1210,23 @@ describe('DashboardControls', () => {
                 expect(screen.getByText('Deleted Acme')).toBeInTheDocument();
             });
             expect(screen.getByText('Updated Beta')).toBeInTheDocument();
+            expect(screen.getByText('Synced Gamma')).toBeInTheDocument();
 
             await userEvent.click(screen.getByRole('button', { name: /deleted/i }));
             expect(screen.getByText('Deleted Acme')).toBeInTheDocument();
             expect(screen.queryByText('Updated Beta')).not.toBeInTheDocument();
+            expect(screen.queryByText('Synced Gamma')).not.toBeInTheDocument();
 
             await userEvent.click(screen.getByRole('button', { name: /recoverable/i }));
             expect(screen.getByText('Deleted Acme')).toBeInTheDocument();
             expect(screen.queryByText('Updated Beta')).not.toBeInTheDocument();
+            expect(screen.queryByText('Synced Gamma')).not.toBeInTheDocument();
 
+            await userEvent.click(screen.getByRole('button', { name: /synced/i }));
+            expect(screen.getByText('Synced Gamma')).toBeInTheDocument();
+            expect(screen.queryByText('Deleted Acme')).not.toBeInTheDocument();
+
+            await userEvent.click(screen.getByRole('button', { name: /recoverable/i }));
             await userEvent.click(screen.getByRole('button', { name: /re-add/i }));
 
             await waitFor(() => {
@@ -1350,6 +1578,44 @@ describe('DashboardControls', () => {
                 expect(mockPipelineApi.deleteCloudIntegration).toHaveBeenCalledWith('integration-1');
             });
             expect(mockPipelineApi.deleteUserAtsSource).not.toHaveBeenCalled();
+        });
+
+        it('hides workspace source actions when the API denies management', async () => {
+            mockPipelineApi.getCloudIntegrations.mockResolvedValueOnce({
+                status: 200,
+                data: [
+                    {
+                        id: 'integration-readonly',
+                        tenant_id: 'tenant-1',
+                        provider: 'greenhouse',
+                        display_name: 'Read Only ATS',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        source_kind: 'workspace',
+                        can_manage: false,
+                        allowed_actions: [],
+                        status_reason: 'Tenant admin required',
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Read Only ATS')).toBeInTheDocument();
+            });
+            const sourceCard = screen.getByText('Read Only ATS').closest('div[class*="group"]') as HTMLElement;
+
+            expect(within(sourceCard).getByText('Tenant admin required')).toBeInTheDocument();
+            expect(within(sourceCard).queryByRole('button', { name: /sync/i })).not.toBeInTheDocument();
+            expect(within(sourceCard).queryByRole('button', { name: /disable/i })).not.toBeInTheDocument();
+            expect(within(sourceCard).queryByRole('button', { name: /edit/i })).not.toBeInTheDocument();
+            expect(within(sourceCard).queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
         });
 
         it('lets users update a managed ATS source name and sync interval', async () => {
