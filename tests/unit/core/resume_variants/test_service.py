@@ -252,11 +252,10 @@ def test_load_sources_rejects_cross_tenant_job(monkeypatch) -> None:
     job = SimpleNamespace(tenant_id=other_tenant_id)
 
     class _MatchRepo:
-        def __init__(self, db):
-            del db
+        def __init__(self, _db):
+            pass
 
         def get_match_by_id_for_owner(self, match_id, owner_id):
-            del match_id, owner_id
             return match
 
     monkeypatch.setattr("core.resume_variants.service.MatchRepository", _MatchRepo)
@@ -271,8 +270,8 @@ def test_load_sources_rejects_missing_inactive_or_unowned_sources(monkeypatch) -
     match_id = uuid4()
 
     class _MissingMatchRepo:
-        def __init__(self, db):
-            del db
+        def __init__(self, _db):
+            pass
 
         def get_match_by_id_for_owner(self, requested_match_id, requested_owner_id):
             return None
@@ -290,8 +289,8 @@ def test_load_sources_rejects_missing_inactive_or_unowned_sources(monkeypatch) -
     )
 
     class _InactiveMatchRepo:
-        def __init__(self, db):
-            del db
+        def __init__(self, _db):
+            pass
 
         def get_match_by_id_for_owner(self, requested_match_id, requested_owner_id):
             return inactive_match
@@ -308,8 +307,8 @@ def test_load_sources_rejects_missing_inactive_or_unowned_sources(monkeypatch) -
     )
 
     class _ActiveMatchRepo:
-        def __init__(self, db):
-            del db
+        def __init__(self, _db):
+            pass
 
         def get_match_by_id_for_owner(self, requested_match_id, requested_owner_id):
             return active_match
@@ -401,8 +400,8 @@ def test_list_for_match_allows_stale_match_history(monkeypatch) -> None:
     resume = SimpleNamespace(extracted_data={"profile": {}}, updated_at=now, created_at=now)
 
     class _MatchRepo:
-        def __init__(self, db):
-            del db
+        def __init__(self, _db):
+            pass
 
         def get_match_by_id_for_owner(self, requested_match_id, requested_owner_id):
             assert requested_match_id == match_id

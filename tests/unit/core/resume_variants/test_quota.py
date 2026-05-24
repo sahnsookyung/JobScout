@@ -141,7 +141,7 @@ def test_quota_backend_unavailable_fails_closed_before_generation() -> None:
 
 @pytest.mark.security
 def test_quota_consume_generation_fails_closed_when_redis_eval_fails() -> None:
-    quota = ResumeVariantQuota(lambda: _EvalFailureRedis())
+    quota = ResumeVariantQuota(_EvalFailureRedis)
 
     with pytest.raises(ResumeVariantQuotaUnavailable):
         quota.consume_generation(owner_id="owner-1")
@@ -171,7 +171,7 @@ def test_lease_exit_swallows_release_backend_errors() -> None:
     assert fake.values[lease.lock_key] == "token"
 
 def test_quota_exceeded_decodes_byte_bucket_and_retry_after() -> None:
-    quota = ResumeVariantQuota(lambda: _BytesQuotaExceededRedis())
+    quota = ResumeVariantQuota(_BytesQuotaExceededRedis)
 
     with pytest.raises(ResumeVariantQuotaExceeded) as exc_info:
         quota.consume_generation(owner_id="owner-1")

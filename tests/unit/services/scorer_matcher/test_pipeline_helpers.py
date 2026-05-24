@@ -77,12 +77,18 @@ def _persistable_dto(job_id: str = "job-1", *, content_hash: str = "hash-1"):
     return dto
 
 
-def _prepared_selection_result(*dtos, owner_id: str | None = "user-1") -> PreparedSelectionResult:
+def _prepared_selection_result(
+    *dtos,
+    owner_id: str | None = "user-1",
+    persist_dtos: list | None = None,
+    item_snapshots: list | None = None,
+) -> PreparedSelectionResult:
     return PreparedSelectionResult(
         match_dtos=list(dtos),
-        item_snapshots=[],
+        item_snapshots=list(item_snapshots or []),
         policy_snapshot=SimpleNamespace(),
         owner_id=owner_id,
+        persist_match_dtos=list(persist_dtos or []),
     )
 
 
@@ -836,6 +842,82 @@ class TestRunMatchingAndScoring:
         assert len(filtered_preliminaries) == 1
         assert filtered_preliminaries[0].job.id == "job-keep"
 
+    @patch(
+        "services.scorer_matcher.pipeline._convert_matches_to_dtos",
+        side_effect=[
+            [_dto(job_id="job-primary")],
+            [_dto(job_id="job-primary"), _dto(job_id="job-excluded")],
+        ],
+    )
+    @patch(
+        "services.scorer_matcher.pipeline._prepare_selection_result",
+        return_value=SimpleNamespace(
+            selected_matches=[
+                SimpleNamespace(job=SimpleNamespace(id="job-primary")),
+            ],
+            item_snapshots=[
+                SimpleNamespace(job_id="job-primary"),
+                SimpleNamespace(job_id="job-excluded"),
+            ],
+            policy_snapshot=SimpleNamespace(),
+            owner_id="user-1",
+        ),
+    )
+    @patch(
+        "services.scorer_matcher.pipeline.apply_preference_semantic_reranking",
+        return_value=[
+            SimpleNamespace(job=SimpleNamespace(id="job-primary")),
+            SimpleNamespace(job=SimpleNamespace(id="job-excluded")),
+        ],
+    )
+    @patch(
+        "services.scorer_matcher.pipeline._run_scorer_service",
+        return_value=[
+            SimpleNamespace(job=SimpleNamespace(id="job-primary")),
+            SimpleNamespace(job=SimpleNamespace(id="job-excluded")),
+        ],
+    )
+    @patch("services.scorer_matcher.pipeline.ScoringService")
+    @patch("services.scorer_matcher.pipeline._run_preliminary_matching", return_value=["prelim"])
+    @patch("services.scorer_matcher.pipeline._prepare_matching_run")
+    @patch("services.scorer_matcher.pipeline.job_uow")
+    def test_prepares_persistence_dtos_for_excluded_selection_snapshots(
+        self,
+        mock_uow,
+        mock_prepare,
+        _mock_preliminary,
+        _mock_scorer_cls,
+        _mock_run_scorer,
+        _mock_apply_preferences,
+        _mock_prepare_selection,
+        mock_convert,
+    ):
+        repo = MagicMock()
+        repo.candidate_preferences.get_preferences.return_value = None
+        mock_uow.return_value = _uow(repo)
+        mock_prepare.return_value = (
+            SimpleNamespace(extracted_data={}, total_experience_years=3),
+            MagicMock(),
+        )
+
+        result = _run_matching_and_scoring(
+            ctx=SimpleNamespace(config=SimpleNamespace(preferences=SimpleNamespace()), ai_service=None),
+            resume_data={"profile": {}},
+            resume_fingerprint="fp-123",
+            should_re_extract=False,
+            matching_config=SimpleNamespace(scorer=MagicMock()),
+            stop_event=threading.Event(),
+            status_callback=None,
+            owner_id="user-1",
+        )
+
+        assert [dto.job.id for dto in result.match_dtos] == ["job-primary"]
+        assert [dto.job.id for dto in result.persist_match_dtos] == [
+            "job-primary",
+            "job-excluded",
+        ]
+        assert mock_convert.call_count == 2
+
 
 class TestRunMatchingPipeline:
     def test_disabled_matching_returns_early(self):
@@ -1115,6 +1197,52 @@ class TestPipelineNotificationAndPublicationHelpers:
         )
 
         assert mock_publish.call_args.kwargs["owner_id"] == "resume-owner-1"
+
+    @patch("services.scorer_matcher.pipeline._publish_match_selection_run", return_value="run-1")
+    @patch("services.scorer_matcher.pipeline._refresh_resume_match_set")
+    @patch("services.scorer_matcher.pipeline._save_matches_batch")
+    def test_save_results_and_publish_selection_saves_persistence_dtos(
+        self,
+        mock_save,
+        mock_refresh,
+        mock_publish,
+    ):
+        primary = _dto(job_id="job-primary")
+        excluded = _dto(job_id="job-excluded")
+        mock_save.return_value = SaveMatchesBatchResult(
+            saved_count=2,
+            failed_count=0,
+            active_job_ids=frozenset({"job-primary", "job-excluded"}),
+            job_match_ids_by_job_id={
+                "job-primary": "match-primary",
+                "job-excluded": "match-excluded",
+            },
+        )
+
+        save_result, selection_run_id = _save_results_and_publish_selection(
+            match_dtos=[primary],
+            resume_fingerprint="fp-123",
+            matching_config=SimpleNamespace(),
+            prepared_selection=_prepared_selection_result(
+                primary,
+                persist_dtos=[primary, excluded],
+                item_snapshots=[
+                    SimpleNamespace(job_id="job-primary"),
+                    SimpleNamespace(job_id="job-excluded"),
+                ],
+            ),
+            task_id="task-1",
+        )
+
+        assert save_result.saved_count == 2
+        assert selection_run_id == "run-1"
+        saved_dtos = mock_save.call_args.args[0]
+        assert [dto.job.id for dto in saved_dtos] == ["job-primary", "job-excluded"]
+        mock_refresh.assert_called_once_with(
+            "fp-123",
+            active_job_ids=frozenset({"job-primary", "job-excluded"}),
+        )
+        mock_publish.assert_called_once()
 
     @patch("services.scorer_matcher.pipeline._publish_match_selection_run")
     @patch("services.scorer_matcher.pipeline._refresh_resume_match_set")

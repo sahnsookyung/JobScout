@@ -10,7 +10,7 @@ import logging
 import threading
 from typing import List, Optional, Dict, Any, Callable
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
 from core.app_context import AppContext
@@ -62,6 +62,7 @@ class PreparedSelectionResult:
     item_snapshots: List[MatchSelectionItemSnapshot]
     policy_snapshot: MatchSelectionPolicySnapshot
     owner_id: Optional[str]
+    persist_match_dtos: List[MatchResultDTO] = field(default_factory=list)
 
 
 def _cancelled_prepared_selection_result(
@@ -453,7 +454,12 @@ def _save_results_and_publish_selection(
     task_id: Optional[str],
 ) -> tuple[SaveMatchesBatchResult, Optional[str]]:
     """Persist the selected match set and publish its immutable run artifact."""
-    save_batch_result = _save_matches_batch(match_dtos, resume_fingerprint, matching_config)
+    persist_match_dtos = prepared_selection.persist_match_dtos or match_dtos
+    save_batch_result = _save_matches_batch(
+        persist_match_dtos,
+        resume_fingerprint,
+        matching_config,
+    )
     if save_batch_result.failed_count > 0:
         logger.warning(
             "Skipping active-match refresh for %s because %d match saves failed",
@@ -999,6 +1005,19 @@ def _run_matching_and_scoring(
             selection_result.selected_matches,
             preference_status=preference_status,
         )
+        persist_matches = _matches_for_selection_persistence(
+            scored_matches,
+            item_snapshots,
+            selected_matches=selection_result.selected_matches,
+        )
+        persist_match_dtos = (
+            match_dtos
+            if persist_matches is selection_result.selected_matches
+            else _convert_matches_to_dtos(
+                persist_matches,
+                preference_status=preference_status,
+            )
+        )
 
     step_elapsed = time.time() - scoring_start
     logger.info("MATCHING Step 2 completed: Scored %d matches in %.2fs", len(match_dtos), step_elapsed)
@@ -1016,12 +1035,30 @@ def _run_matching_and_scoring(
         item_snapshots=item_snapshots,
         policy_snapshot=policy_snapshot,
         owner_id=(str(resolved_owner_id) if resolved_owner_id is not None else None),
+        persist_match_dtos=persist_match_dtos,
     )
 
 
 # ---------------------------------------------------------------------------
 # DTO conversion
 # ---------------------------------------------------------------------------
+
+def _matches_for_selection_persistence(
+    scored_matches,
+    item_snapshots: List[MatchSelectionItemSnapshot],
+    *,
+    selected_matches,
+):
+    """Return every scored match needed by persisted selection snapshots."""
+    if not item_snapshots:
+        return selected_matches
+
+    snapshot_job_ids = {str(item.job_id) for item in item_snapshots}
+    return [
+        match
+        for match in scored_matches
+        if str(match.job.id) in snapshot_job_ids
+    ]
 
 def _build_evidence_dto(evidence) -> Optional[JobEvidenceDTO]:
     if evidence is None:

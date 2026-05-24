@@ -91,24 +91,30 @@ def _validate_webhook_url(url: str) -> bool:
     Validate webhook URL to prevent SSRF attacks.
     
     Checks:
-    - Scheme is http or https
+    - Scheme is https outside development/test
     - Hostname resolves to public IP (not private/loopback)
     """
     try:
         parsed = urllib.parse.urlparse(url)
-        
-        # Check scheme
-        if parsed.scheme not in ('http', 'https'):
+
+        environment = _current_environment()
+        allow_dev_http = environment in {"development", "dev", "test"}
+        allowed_schemes = ("http", "https") if allow_dev_http else ("https",)
+
+        if parsed.scheme not in allowed_schemes:
             logger.error(f"Invalid URL scheme: {parsed.scheme}")
             return False
-        
+
         # Check hostname
         if not parsed.hostname:
             logger.error("URL missing hostname")
             return False
-        
-        environment = _current_environment()
-        allow_private_hosts = environment in {"development", "dev", "test"}
+
+        if parsed.username or parsed.password:
+            logger.error("Webhook URL must not include credentials")
+            return False
+
+        allow_private_hosts = allow_dev_http
 
         # Resolve hostname to IP
         try:
@@ -137,7 +143,7 @@ def _sanitize_url(url: str) -> Optional[str]:
     """Sanitize and validate URL, returning None if invalid."""
     try:
         parsed = urllib.parse.urlparse(url)
-        if parsed.scheme not in ('http', 'https'):
+        if parsed.scheme not in ('http', 'https') or not parsed.hostname:
             return None
         escaped = html.escape(url, quote=True)
         return escaped
@@ -682,7 +688,8 @@ class DiscordChannel(NotificationChannel):
             payload = {
                 'username': 'JobScout',
                 'avatar_url': 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
-                'embeds': embeds
+                'embeds': embeds,
+                'allowed_mentions': {'parse': []},
             }
             
             response = requests.post(webhook_url, json=payload, timeout=30)
