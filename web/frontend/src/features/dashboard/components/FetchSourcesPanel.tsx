@@ -33,6 +33,7 @@ import type {
     AtsSourceUpdateRequest,
     CloudIntegration,
     FetchSource,
+    IntegrationUpdateRequest,
 } from '@/types/api';
 
 const OPERATIONAL_OPTION_KEYS = new Set([
@@ -197,6 +198,19 @@ function sourceVolumeLabel(source: FetchSource): string {
 function userSourceId(source: FetchSource): string | null {
     const sourceId = source.options?.user_source_id;
     return typeof sourceId === 'string' && sourceId ? sourceId : null;
+}
+
+function tenantIntegrationId(source: FetchSource): string | null {
+    const integrationId = source.options?.tenant_integration_id;
+    return typeof integrationId === 'string' && integrationId ? integrationId : null;
+}
+
+function managedSourceId(source: FetchSource): string | null {
+    return userSourceId(source) ?? tenantIntegrationId(source);
+}
+
+function sourceManagementLabel(source: FetchSource): string {
+    return userSourceId(source) ? 'User-managed ATS source' : 'Workspace ATS source';
 }
 
 function sourceIsPaused(source: FetchSource): boolean {
@@ -370,6 +384,8 @@ function cloudIntegrationSource(integration: CloudIntegration): FetchSource {
             sync_interval_minutes: integration.sync_interval_minutes,
             last_validated_at: integration.last_validated_at,
             last_error: integration.last_error,
+            tenant_integration_id: integration.id,
+            is_tenant_integration: !isUserSource || undefined,
             user_source_id: isUserSource ? integration.id : undefined,
             is_user_source: isUserSource || undefined,
             owner_user_id: integration.owner_user_id || undefined,
@@ -537,7 +553,8 @@ function SourceCard({
     const statusText = atsStatus(source);
     const intervalMinutes = atsInterval(source);
     const canFetch = canFetchExternalSeed(source);
-    const managedSourceId = userSourceId(source);
+    const managedId = managedSourceId(source);
+    const isUserManagedSource = Boolean(userSourceId(source));
     const isDisabled = statusText === 'disabled';
     const isMutatingAtsSource = isSyncingAtsSource || isUpdatingAtsSource || isDeletingAtsSource;
     const providerLabel = modeLabel(source);
@@ -682,13 +699,13 @@ function SourceCard({
                 </div>
             ) : null}
 
-            {managedSourceId ? (
+            {managedId ? (
                 <div className="mt-3 border-t border-rule pt-3">
                     {isEditing ? (
                         <form
                             onSubmit={(event) => {
                                 event.preventDefault();
-                                onSubmitEdit(managedSourceId);
+                                onSubmitEdit(managedId);
                             }}
                             className="mb-4 grid gap-3 border border-rule bg-surface-sunk p-3 sm:grid-cols-2"
                         >
@@ -700,35 +717,39 @@ function SourceCard({
                                     className="h-9 min-w-0 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
                                 />
                             </label>
-                            <label className="grid gap-1 text-[12px] text-ink-soft">
-                                Careers URL
-                                <input
-                                    value={editSourceUrl}
-                                    onChange={(event) => onEditSourceUrlChange(event.target.value)}
-                                    className="h-9 min-w-0 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
-                                />
-                            </label>
-                            <label className="grid gap-1 text-[12px] text-ink-soft">
-                                Provider
-                                <select
-                                    value={editSourceProvider}
-                                    onChange={(event) => onEditSourceProviderChange(event.target.value)}
-                                    className="h-9 min-w-0 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
-                                >
-                                    <option value="">Auto</option>
-                                    <option value="greenhouse">Greenhouse</option>
-                                    <option value="lever">Lever</option>
-                                    <option value="ashby">Ashby</option>
-                                </select>
-                            </label>
-                            <label className="grid gap-1 text-[12px] text-ink-soft">
-                                Board ID
-                                <input
-                                    value={editSourceIdentifier}
-                                    onChange={(event) => onEditSourceIdentifierChange(event.target.value)}
-                                    className="h-9 min-w-0 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
-                                />
-                            </label>
+                            {isUserManagedSource ? (
+                                <>
+                                    <label className="grid gap-1 text-[12px] text-ink-soft">
+                                        Careers URL
+                                        <input
+                                            value={editSourceUrl}
+                                            onChange={(event) => onEditSourceUrlChange(event.target.value)}
+                                            className="h-9 min-w-0 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
+                                        />
+                                    </label>
+                                    <label className="grid gap-1 text-[12px] text-ink-soft">
+                                        Provider
+                                        <select
+                                            value={editSourceProvider}
+                                            onChange={(event) => onEditSourceProviderChange(event.target.value)}
+                                            className="h-9 min-w-0 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
+                                        >
+                                            <option value="">Auto</option>
+                                            <option value="greenhouse">Greenhouse</option>
+                                            <option value="lever">Lever</option>
+                                            <option value="ashby">Ashby</option>
+                                        </select>
+                                    </label>
+                                    <label className="grid gap-1 text-[12px] text-ink-soft">
+                                        Board ID
+                                        <input
+                                            value={editSourceIdentifier}
+                                            onChange={(event) => onEditSourceIdentifierChange(event.target.value)}
+                                            className="h-9 min-w-0 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
+                                        />
+                                    </label>
+                                </>
+                            ) : null}
                             <label className="grid gap-1 text-[12px] text-ink-soft">
                                 Sync minutes
                                 <input
@@ -764,12 +785,12 @@ function SourceCard({
 
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <div className="text-[12px] leading-5 text-ink-soft">
-                            User-managed ATS source
+                            {sourceManagementLabel(source)}
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
                             <button
                                 type="button"
-                                onClick={() => onSyncAtsSource(managedSourceId)}
+                                onClick={() => onSyncAtsSource(managedId)}
                                 disabled={isDisabled || isSyncingAtsSource}
                                 className="inline-flex min-h-9 items-center gap-1.5 border border-accent px-3 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
                             >
@@ -781,7 +802,7 @@ function SourceCard({
                             </button>
                             <button
                                 type="button"
-                                onClick={() => onToggleAtsSource(managedSourceId, isDisabled ? 'active' : 'disabled')}
+                                onClick={() => onToggleAtsSource(managedId, isDisabled ? 'active' : 'disabled')}
                                 disabled={isMutatingAtsSource}
                                 className="inline-flex min-h-9 items-center gap-1.5 border border-rule px-3 py-1 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
                             >
@@ -1499,7 +1520,7 @@ function SourcesContent({
     return (
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {sources.map((source, index) => {
-                const managedSourceId = userSourceId(source);
+                const managedId = managedSourceId(source);
                 return (
                     <SourceCard
                         key={`${source.site_type}-${index}`}
@@ -1513,10 +1534,10 @@ function SourcesContent({
                         onDeleteAtsSource={onDeleteAtsSource}
                         onSubmitEdit={onSubmitEdit}
                         onCancelEdit={onCancelEdit}
-                        isSyncingAtsSource={syncingSourceId === managedSourceId}
-                        isUpdatingAtsSource={updatingSourceId === managedSourceId}
-                        isDeletingAtsSource={deletingSourceId === managedSourceId}
-                        isEditing={editingSourceId === managedSourceId}
+                        isSyncingAtsSource={syncingSourceId === managedId}
+                        isUpdatingAtsSource={updatingSourceId === managedId}
+                        isDeletingAtsSource={deletingSourceId === managedId}
+                        isEditing={editingSourceId === managedId}
                         editSourceName={editSourceName}
                         editSourceUrl={editSourceUrl}
                         editSourceProvider={editSourceProvider}
@@ -1707,6 +1728,26 @@ export function FetchSourcesPanel() {
             toast.error(`ATS source update failed: ${apiErrorMessage(error)}`);
         },
     });
+    const updateTenantIntegrationMutation = useMutation({
+        mutationFn: async ({ integrationId, payload }: { integrationId: string; payload: IntegrationUpdateRequest }) => {
+            const response = await pipelineApi.updateCloudIntegration(integrationId, payload);
+            return response.data;
+        },
+        onSuccess: (integration, variables) => {
+            const updatedStatus = variables.payload.status;
+            if (updatedStatus) {
+                toast.success(`${integration.display_name} ${integration.status === 'disabled' ? 'disabled' : 'enabled'}`);
+            } else {
+                toast.success(`${integration.display_name} updated`);
+                setEditingSourceId(null);
+                setEditOriginalSource(null);
+            }
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
+        },
+        onError: (error) => {
+            toast.error(`Workspace ATS source update failed: ${apiErrorMessage(error)}`);
+        },
+    });
     const deleteUserSourceMutation = useMutation({
         mutationFn: async (sourceId: string) => {
             await pipelineApi.deleteUserAtsSource(sourceId);
@@ -1723,6 +1764,20 @@ export function FetchSourcesPanel() {
             toast.error(`ATS source delete failed: ${apiErrorMessage(error)}`);
         },
     });
+    const deleteTenantIntegrationMutation = useMutation({
+        mutationFn: async (integrationId: string) => {
+            await pipelineApi.deleteCloudIntegration(integrationId);
+            return integrationId;
+        },
+        onSuccess: () => {
+            toast.success('Workspace ATS source deleted');
+            setSourcePendingDelete(null);
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
+        },
+        onError: (error) => {
+            toast.error(`Workspace ATS source delete failed: ${apiErrorMessage(error)}`);
+        },
+    });
     const syncUserSourceMutation = useMutation({
         mutationFn: async (sourceId: string) => {
             const response = await pipelineApi.syncUserAtsSource(sourceId, true);
@@ -1736,6 +1791,19 @@ export function FetchSourcesPanel() {
         },
         onError: (error) => {
             toast.error(`ATS source sync failed: ${apiErrorMessage(error)}`);
+        },
+    });
+    const syncTenantIntegrationMutation = useMutation({
+        mutationFn: async (integrationId: string) => {
+            const response = await pipelineApi.syncCloudIntegration(integrationId, true);
+            return response.data;
+        },
+        onSuccess: (result) => {
+            toast.success(`${result.jobs_imported} jobs imported from ${toTitleCase(result.provider)}`);
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
+        },
+        onError: (error) => {
+            toast.error(`Workspace ATS source sync failed: ${apiErrorMessage(error)}`);
         },
     });
 
@@ -1873,38 +1941,70 @@ export function FetchSourcesPanel() {
         createUserSourceMutation.mutate(event.readd_payload);
     }
 
-    function editUserSource(source: FetchSource) {
-        const sourceId = userSourceId(source);
+    function findManagedSource(sourceId: string): FetchSource | undefined {
+        return allSources.find((source) => managedSourceId(source) === sourceId);
+    }
+
+    function editManagedSource(source: FetchSource) {
+        const sourceId = managedSourceId(source);
         if (!sourceId) return;
         setEditingSourceId(sourceId);
         setEditSourceName(source.display_name);
-        setEditSourceUrl(String(source.options?.source_url || source.seed_url || ''));
-        setEditSourceProvider(String(source.options?.ats_provider || source.site_type || ''));
-        setEditSourceIdentifier(String(source.options?.ats_identifier || ''));
         setEditSyncInterval(String(atsInterval(source) ?? 120));
+        if (!userSourceId(source)) {
+            setEditSourceUrl('');
+            setEditSourceProvider('');
+            setEditSourceIdentifier('');
+            setEditOriginalSource(null);
+            return;
+        }
+        const sourceUrl = String(source.options?.source_url || source.seed_url || '');
+        const provider = String(source.options?.ats_provider || source.site_type || '');
+        const identifier = String(source.options?.ats_identifier || '');
+        setEditSourceUrl(sourceUrl);
+        setEditSourceProvider(provider);
+        setEditSourceIdentifier(identifier);
         setEditOriginalSource({
-            sourceUrl: String(source.options?.source_url || source.seed_url || ''),
-            provider: String(source.options?.ats_provider || source.site_type || ''),
-            identifier: String(source.options?.ats_identifier || ''),
+            sourceUrl,
+            provider,
+            identifier,
         });
     }
 
-    function submitUserSourceEdit(sourceId: string) {
+    function submitManagedSourceEdit(sourceId: string) {
+        const source = findManagedSource(sourceId);
+        if (!source) {
+            toast.error('ATS source is no longer available.');
+            return;
+        }
         const displayName = editSourceName.trim();
-        const sourceUrl = editSourceUrl.trim();
-        const provider = editSourceProvider.trim() || undefined;
-        const identifier = editSourceIdentifier.trim() || undefined;
         const interval = Number(editSyncInterval);
         if (!displayName) {
             toast.error('Source name cannot be blank.');
             return;
         }
-        if (sourceUrl && !isSupportedAtsUrl(sourceUrl)) {
-            toast.error('Use a Greenhouse, Lever, or Ashby board URL.');
-            return;
-        }
         if (!Number.isInteger(interval) || interval < 5 || interval > 1440) {
             toast.error('Sync interval must be between 5 and 1440 minutes.');
+            return;
+        }
+
+        const tenantId = tenantIntegrationId(source);
+        if (tenantId && !userSourceId(source)) {
+            updateTenantIntegrationMutation.mutate({
+                integrationId: tenantId,
+                payload: {
+                    display_name: displayName,
+                    sync_interval_minutes: interval,
+                },
+            });
+            return;
+        }
+
+        const sourceUrl = editSourceUrl.trim();
+        const provider = editSourceProvider.trim() || undefined;
+        const identifier = editSourceIdentifier.trim() || undefined;
+        if (sourceUrl && !isSupportedAtsUrl(sourceUrl)) {
+            toast.error('Use a Greenhouse, Lever, or Ashby board URL.');
             return;
         }
         const payload: AtsSourceUpdateRequest = {
@@ -1927,17 +2027,49 @@ export function FetchSourcesPanel() {
         });
     }
 
-    function deleteUserSource(source: FetchSource) {
-        const sourceId = userSourceId(source);
+    function deleteManagedSource(source: FetchSource) {
+        const sourceId = managedSourceId(source);
         if (!sourceId) return;
         setSourcePendingDelete(source);
     }
 
-    function confirmDeleteUserSource() {
+    function confirmDeleteManagedSource() {
         if (!sourcePendingDelete) return;
         const sourceId = userSourceId(sourcePendingDelete);
-        if (!sourceId) return;
-        deleteUserSourceMutation.mutate(sourceId);
+        if (sourceId) {
+            deleteUserSourceMutation.mutate(sourceId);
+            return;
+        }
+        const integrationId = tenantIntegrationId(sourcePendingDelete);
+        if (integrationId) {
+            deleteTenantIntegrationMutation.mutate(integrationId);
+        }
+    }
+
+    function syncManagedSource(sourceId: string) {
+        const source = findManagedSource(sourceId);
+        if (!source) {
+            toast.error('ATS source is no longer available.');
+            return;
+        }
+        if (userSourceId(source)) {
+            syncUserSourceMutation.mutate(sourceId);
+            return;
+        }
+        syncTenantIntegrationMutation.mutate(sourceId);
+    }
+
+    function toggleManagedSource(sourceId: string, status: string) {
+        const source = findManagedSource(sourceId);
+        if (!source) {
+            toast.error('ATS source is no longer available.');
+            return;
+        }
+        if (userSourceId(source)) {
+            updateUserSourceMutation.mutate({ sourceId, payload: { status } });
+            return;
+        }
+        updateTenantIntegrationMutation.mutate({ integrationId: sourceId, payload: { status } });
     }
 
     const sourceLoadErrors = sourceLoadMessages({
@@ -1956,6 +2088,27 @@ export function FetchSourcesPanel() {
         void refetchCloudIntegrations();
         void refetchUserSources();
         void refetchSourceHistory();
+    }
+
+    let syncingManagedSourceId: string | null = null;
+    if (syncUserSourceMutation.isPending) {
+        syncingManagedSourceId = syncUserSourceMutation.variables ?? null;
+    } else if (syncTenantIntegrationMutation.isPending) {
+        syncingManagedSourceId = syncTenantIntegrationMutation.variables ?? null;
+    }
+
+    let updatingManagedSourceId: string | null = null;
+    if (updateUserSourceMutation.isPending) {
+        updatingManagedSourceId = updateUserSourceMutation.variables?.sourceId ?? null;
+    } else if (updateTenantIntegrationMutation.isPending) {
+        updatingManagedSourceId = updateTenantIntegrationMutation.variables?.integrationId ?? null;
+    }
+
+    let deletingManagedSourceId: string | null = null;
+    if (deleteUserSourceMutation.isPending) {
+        deletingManagedSourceId = deleteUserSourceMutation.variables ?? null;
+    } else if (deleteTenantIntegrationMutation.isPending) {
+        deletingManagedSourceId = deleteTenantIntegrationMutation.variables ?? null;
     }
 
     return (
@@ -2018,9 +2171,9 @@ export function FetchSourcesPanel() {
                 sources={sources}
                 emptyMessage={emptyMessage}
                 fetchingSourceSiteType={fetchSourceMutation.isPending ? fetchSourceMutation.variables ?? null : null}
-                syncingSourceId={syncUserSourceMutation.isPending ? syncUserSourceMutation.variables ?? null : null}
-                updatingSourceId={updateUserSourceMutation.isPending ? updateUserSourceMutation.variables?.sourceId ?? null : null}
-                deletingSourceId={deleteUserSourceMutation.isPending ? deleteUserSourceMutation.variables ?? null : null}
+                syncingSourceId={syncingManagedSourceId}
+                updatingSourceId={updatingManagedSourceId}
+                deletingSourceId={deletingManagedSourceId}
                 editingSourceId={editingSourceId}
                 editSourceName={editSourceName}
                 editSourceUrl={editSourceUrl}
@@ -2028,11 +2181,11 @@ export function FetchSourcesPanel() {
                 editSourceIdentifier={editSourceIdentifier}
                 editSyncInterval={editSyncInterval}
                 onFetchSource={(siteType) => fetchSourceMutation.mutate(siteType)}
-                onSyncAtsSource={(sourceId) => syncUserSourceMutation.mutate(sourceId)}
-                onEditAtsSource={editUserSource}
-                onToggleAtsSource={(sourceId, status) => updateUserSourceMutation.mutate({ sourceId, payload: { status } })}
-                onDeleteAtsSource={deleteUserSource}
-                onSubmitEdit={submitUserSourceEdit}
+                onSyncAtsSource={syncManagedSource}
+                onEditAtsSource={editManagedSource}
+                onToggleAtsSource={toggleManagedSource}
+                onDeleteAtsSource={deleteManagedSource}
+                onSubmitEdit={submitManagedSourceEdit}
                 onCancelEdit={() => {
                     setEditingSourceId(null);
                     setEditOriginalSource(null);
@@ -2047,9 +2200,9 @@ export function FetchSourcesPanel() {
             {sourcePendingDelete ? (
                 <SourceDeleteDialog
                     source={sourcePendingDelete}
-                    isDeleting={deleteUserSourceMutation.isPending}
+                    isDeleting={deleteUserSourceMutation.isPending || deleteTenantIntegrationMutation.isPending}
                     onCancel={() => setSourcePendingDelete(null)}
-                    onConfirm={confirmDeleteUserSource}
+                    onConfirm={confirmDeleteManagedSource}
                 />
             ) : null}
         </section>

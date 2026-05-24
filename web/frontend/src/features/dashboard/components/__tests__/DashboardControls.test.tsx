@@ -16,6 +16,9 @@ vi.mock('@/services/pipelineApi', () => ({
             getSources: vi.fn(),
             fetchSource: vi.fn(),
             getCloudIntegrations: vi.fn(),
+            updateCloudIntegration: vi.fn(),
+            deleteCloudIntegration: vi.fn(),
+            syncCloudIntegration: vi.fn(),
             getUserAtsSources: vi.fn(),
             getUserAtsSourceHistory: vi.fn(),
             discoverAtsSources: vi.fn(),
@@ -43,6 +46,9 @@ const mockPipelineApi = pipelineApi as unknown as {
     getSources: ReturnType<typeof vi.fn>;
     fetchSource: ReturnType<typeof vi.fn>;
     getCloudIntegrations: ReturnType<typeof vi.fn>;
+    updateCloudIntegration: ReturnType<typeof vi.fn>;
+    deleteCloudIntegration: ReturnType<typeof vi.fn>;
+    syncCloudIntegration: ReturnType<typeof vi.fn>;
     getUserAtsSources: ReturnType<typeof vi.fn>;
     getUserAtsSourceHistory: ReturnType<typeof vi.fn>;
     discoverAtsSources: ReturnType<typeof vi.fn>;
@@ -182,6 +188,33 @@ describe('DashboardControls', () => {
                     last_error: null,
                 },
             ],
+        });
+        mockPipelineApi.updateCloudIntegration.mockResolvedValue({
+            data: {
+                id: 'integration-1',
+                tenant_id: 'tenant-1',
+                provider: 'greenhouse',
+                display_name: 'HubSpot',
+                status: 'disabled',
+                sync_interval_minutes: 120,
+                config: {},
+                capabilities: ['list_jobs'],
+                validation_status: 'pending',
+                last_validated_at: null,
+                last_error: null,
+            },
+        });
+        mockPipelineApi.deleteCloudIntegration.mockResolvedValue({});
+        mockPipelineApi.syncCloudIntegration.mockResolvedValue({
+            data: {
+                run_id: 'run-cloud-1',
+                status: 'completed',
+                jobs_seen: 3,
+                jobs_imported: 1,
+                jobs_deactivated: 0,
+                provider: 'greenhouse',
+                dedupe_fingerprint_count: 1,
+            },
         });
         mockPipelineApi.getUserAtsSources.mockResolvedValue({
             status: 200,
@@ -1269,6 +1302,54 @@ describe('DashboardControls', () => {
             await waitFor(() => {
                 expect(screen.queryByRole('dialog', { name: /delete ATS source/i })).not.toBeInTheDocument();
             });
+        });
+
+        it('lets admins manage workspace ATS integrations from source cards', async () => {
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('HubSpot')).toBeInTheDocument();
+            });
+            const sourceCard = screen.getByText('HubSpot').closest('div[class*="group"]') as HTMLElement;
+
+            expect(within(sourceCard).getByText('Workspace ATS source')).toBeInTheDocument();
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /sync/i }));
+            await waitFor(() => {
+                expect(mockPipelineApi.syncCloudIntegration).toHaveBeenCalledWith('integration-1', true);
+            });
+            expect(mockPipelineApi.syncUserAtsSource).not.toHaveBeenCalled();
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /disable/i }));
+            await waitFor(() => {
+                expect(mockPipelineApi.updateCloudIntegration).toHaveBeenCalledWith('integration-1', {
+                    status: 'disabled',
+                });
+            });
+            expect(mockPipelineApi.updateUserAtsSource).not.toHaveBeenCalled();
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /edit/i }));
+            expect(within(sourceCard).queryByLabelText('Careers URL')).not.toBeInTheDocument();
+            expect(within(sourceCard).queryByLabelText('Provider')).not.toBeInTheDocument();
+            expect(within(sourceCard).queryByLabelText('Board ID')).not.toBeInTheDocument();
+            await userEvent.clear(within(sourceCard).getByLabelText('Name'));
+            await userEvent.type(within(sourceCard).getByLabelText('Name'), 'HubSpot Japan');
+            await userEvent.clear(within(sourceCard).getByLabelText('Sync minutes'));
+            await userEvent.type(within(sourceCard).getByLabelText('Sync minutes'), '240');
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /save/i }));
+            await waitFor(() => {
+                expect(mockPipelineApi.updateCloudIntegration).toHaveBeenCalledWith('integration-1', {
+                    display_name: 'HubSpot Japan',
+                    sync_interval_minutes: 240,
+                });
+            });
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /delete/i }));
+            await userEvent.click(screen.getByRole('button', { name: /delete source/i }));
+            await waitFor(() => {
+                expect(mockPipelineApi.deleteCloudIntegration).toHaveBeenCalledWith('integration-1');
+            });
+            expect(mockPipelineApi.deleteUserAtsSource).not.toHaveBeenCalled();
         });
 
         it('lets users update a managed ATS source name and sync interval', async () => {
