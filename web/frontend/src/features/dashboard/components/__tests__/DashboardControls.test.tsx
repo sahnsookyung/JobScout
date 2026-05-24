@@ -767,14 +767,40 @@ describe('DashboardControls', () => {
                             status: 'active',
                         },
                     },
+                    {
+                        id: 'history-2',
+                        action: 'integration.user_source_updated',
+                        resource_id: 'source-updated',
+                        provider: 'lever',
+                        display_name: 'Updated Beta',
+                        identifier: 'beta',
+                        source_url: 'https://jobs.lever.co/beta',
+                        status: 'active',
+                        occurred_at: '2026-05-23T00:00:00Z',
+                        readd_payload: null,
+                    },
                 ],
             });
 
             render(<DashboardControls />, { wrapper: createWrapper() });
 
+            const activityButton = screen.getByRole('button', { name: /activity/i });
+            expect(activityButton).toHaveAttribute('aria-expanded', 'false');
+            await userEvent.click(activityButton);
+            expect(activityButton).toHaveAttribute('aria-expanded', 'true');
+
             await waitFor(() => {
                 expect(screen.getByText('Deleted Acme')).toBeInTheDocument();
             });
+            expect(screen.getByText('Updated Beta')).toBeInTheDocument();
+
+            await userEvent.click(screen.getByRole('button', { name: /deleted/i }));
+            expect(screen.getByText('Deleted Acme')).toBeInTheDocument();
+            expect(screen.queryByText('Updated Beta')).not.toBeInTheDocument();
+
+            await userEvent.click(screen.getByRole('button', { name: /recoverable/i }));
+            expect(screen.getByText('Deleted Acme')).toBeInTheDocument();
+            expect(screen.queryByText('Updated Beta')).not.toBeInTheDocument();
 
             await userEvent.click(screen.getByRole('button', { name: /re-add/i }));
 
@@ -1034,8 +1060,6 @@ describe('DashboardControls', () => {
                     },
                 ],
             });
-            const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
-
             render(<DashboardControls />, { wrapper: createWrapper() });
 
             await waitFor(() => {
@@ -1056,15 +1080,31 @@ describe('DashboardControls', () => {
                 });
             });
 
-            await userEvent.click(within(sourceCard).getByRole('button', { name: /delete/i }));
+            const deleteButton = within(sourceCard).getByRole('button', { name: /delete/i });
+            await userEvent.click(deleteButton);
             expect(mockPipelineApi.deleteUserAtsSource).not.toHaveBeenCalled();
-            await userEvent.click(within(sourceCard).getByRole('button', { name: /delete/i }));
+            expect(screen.getByRole('dialog', { name: /delete ATS source/i })).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /cancel/i })).toHaveFocus();
+            await userEvent.keyboard('{Escape}');
+            expect(screen.queryByRole('dialog', { name: /delete ATS source/i })).not.toBeInTheDocument();
+            expect(deleteButton).toHaveFocus();
+
+            let resolveDelete: (value?: unknown) => void = () => undefined;
+            mockPipelineApi.deleteUserAtsSource.mockImplementationOnce(() => new Promise((resolve) => {
+                resolveDelete = resolve;
+            }));
+
+            await userEvent.click(deleteButton);
+            await userEvent.click(screen.getByRole('button', { name: /delete source/i }));
             await waitFor(() => {
                 expect(mockPipelineApi.deleteUserAtsSource).toHaveBeenCalledWith('source-1');
             });
-            expect(confirmSpy).toHaveBeenCalledWith('Delete Acme Lever?');
-
-            confirmSpy.mockRestore();
+            await userEvent.keyboard('{Escape}');
+            expect(screen.getByRole('dialog', { name: /delete ATS source/i })).toBeInTheDocument();
+            resolveDelete({});
+            await waitFor(() => {
+                expect(screen.queryByRole('dialog', { name: /delete ATS source/i })).not.toBeInTheDocument();
+            });
         });
 
         it('lets users update a managed ATS source name and sync interval', async () => {
@@ -1260,7 +1300,6 @@ describe('DashboardControls', () => {
                 response: { data: { error: 'update rejected' } },
             });
             mockPipelineApi.deleteUserAtsSource.mockRejectedValueOnce(new Error('delete failed'));
-            const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
             render(<DashboardControls />, { wrapper: createWrapper() });
 
@@ -1280,11 +1319,10 @@ describe('DashboardControls', () => {
             });
 
             await userEvent.click(within(sourceCard).getByRole('button', { name: /delete/i }));
+            await userEvent.click(screen.getByRole('button', { name: /delete source/i }));
             await waitFor(() => {
                 expect(toast.error).toHaveBeenCalledWith('ATS source delete failed: delete failed');
             });
-
-            confirmSpy.mockRestore();
         });
     });
 });
