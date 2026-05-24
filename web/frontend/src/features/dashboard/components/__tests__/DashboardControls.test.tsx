@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { vi } from 'vitest';
@@ -602,6 +602,61 @@ describe('DashboardControls', () => {
             );
         });
 
+        it('filters source views and renders an empty filtered state', async () => {
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+
+            await userEvent.click(screen.getByRole('button', { name: /API/i }));
+            expect(screen.getByText('Indeed')).toBeInTheDocument();
+            expect(screen.queryByText('TokyoDev')).not.toBeInTheDocument();
+
+            await userEvent.click(screen.getByRole('button', { name: /Seed sites/i }));
+            expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            expect(screen.queryByText('Indeed')).not.toBeInTheDocument();
+
+            await userEvent.click(screen.getByRole('button', { name: /ATS boards/i }));
+            expect(screen.getByText('HubSpot')).toBeInTheDocument();
+            expect(screen.queryByText('TokyoDev')).not.toBeInTheDocument();
+
+            await userEvent.click(screen.getByRole('button', { name: /Paused/i }));
+            expect(screen.getByText('No sources in this view.')).toBeInTheDocument();
+        });
+
+        it('renders source loading placeholders while catalog data is pending', () => {
+            mockPipelineApi.getSources.mockReturnValue(new Promise(() => undefined));
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            expect(document.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0);
+        });
+
+        it('surfaces source status load errors and retries all source queries', async () => {
+            mockPipelineApi.getSources.mockRejectedValueOnce(new Error('catalog offline'));
+            mockPipelineApi.getCloudIntegrations.mockRejectedValueOnce(new Error('tenant offline'));
+            mockPipelineApi.getUserAtsSources.mockRejectedValueOnce(new Error('user offline'));
+            mockPipelineApi.getUserAtsSourceHistory.mockRejectedValueOnce(new Error('history offline'));
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            const alert = await screen.findByRole('alert');
+            expect(within(alert).getByText('Catalog: catalog offline')).toBeInTheDocument();
+            expect(within(alert).getByText('Tenant ATS sources: tenant offline')).toBeInTheDocument();
+            expect(within(alert).getByText('Your ATS sources: user offline')).toBeInTheDocument();
+            expect(within(alert).getByText('Activity: history offline')).toBeInTheDocument();
+
+            await userEvent.click(within(alert).getByRole('button', { name: /retry/i }));
+
+            await waitFor(() => {
+                expect(mockPipelineApi.getSources).toHaveBeenCalledTimes(2);
+            });
+            expect(mockPipelineApi.getCloudIntegrations).toHaveBeenCalledTimes(2);
+            expect(mockPipelineApi.getUserAtsSources).toHaveBeenCalledTimes(2);
+            expect(mockPipelineApi.getUserAtsSourceHistory).toHaveBeenCalledTimes(2);
+        });
+
         it('lets users add their own ATS source from the fetch panel', async () => {
             render(<DashboardControls />, { wrapper: createWrapper() });
 
@@ -626,6 +681,85 @@ describe('DashboardControls', () => {
             });
             expect(toast.success).toHaveBeenCalledWith('Acme Lever added');
             expect(mockPipelineApi.syncUserAtsSource).not.toHaveBeenCalled();
+        });
+
+        it('shows initial sync completion and warning outcomes after source creation', async () => {
+            mockPipelineApi.createUserAtsSource
+                .mockResolvedValueOnce({
+                    data: {
+                        id: 'source-sync-ok',
+                        tenant_id: 'tenant-1',
+                        provider: 'lever',
+                        display_name: 'Synced Lever',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://jobs.lever.co/synced',
+                        created_at: null,
+                        updated_at: null,
+                        initial_sync: {
+                            status: 'completed',
+                            jobs_seen: 4,
+                            jobs_imported: 3,
+                            jobs_deactivated: 0,
+                            provider: 'lever',
+                        },
+                    },
+                })
+                .mockResolvedValueOnce({
+                    data: {
+                        id: 'source-sync-warn',
+                        tenant_id: 'tenant-1',
+                        provider: 'ashby',
+                        display_name: 'Warned Ashby',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://jobs.ashbyhq.com/warned',
+                        created_at: null,
+                        updated_at: null,
+                        initial_sync: {
+                            status: 'failed',
+                            jobs_seen: 0,
+                            jobs_imported: 0,
+                            jobs_deactivated: 0,
+                            provider: 'ashby',
+                            error_summary: 'budget skipped',
+                        },
+                    },
+                });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+
+            await userEvent.click(screen.getByRole('button', { name: /add source/i }));
+            await userEvent.type(screen.getByLabelText('Name'), 'Synced Lever');
+            await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+            await waitFor(() => {
+                expect(toast.success).toHaveBeenCalledWith('3 jobs imported from Lever');
+            });
+
+            await userEvent.click(screen.getByRole('button', { name: /add source/i }));
+            await userEvent.type(screen.getByLabelText('Name'), 'Warned Ashby');
+            await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+            await waitFor(() => {
+                expect(toast).toHaveBeenCalledWith('Initial sync failed: budget skipped');
+            });
         });
 
         it('lets users add a provider board identifier without a careers URL', async () => {
@@ -684,6 +818,36 @@ describe('DashboardControls', () => {
                     identifier: 'acme',
                 });
             });
+        });
+
+        it('shows discovery empty and error states without creating a source', async () => {
+            mockPipelineApi.discoverAtsSources
+                .mockResolvedValueOnce({ data: [] })
+                .mockRejectedValueOnce(new Error('discovery offline'));
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+
+            await userEvent.click(screen.getByRole('button', { name: /add source/i }));
+            await userEvent.type(screen.getByLabelText('Name'), 'Missing Board');
+            await userEvent.click(screen.getByRole('button', { name: /check/i }));
+
+            await waitFor(() => {
+                expect(toast.error).toHaveBeenCalledWith('No supported ATS board found.');
+            });
+            expect(screen.getByText(/No supported ATS board matched/)).toBeInTheDocument();
+
+            await userEvent.type(screen.getByLabelText('Board ID'), 'retry');
+            await userEvent.click(screen.getByRole('button', { name: /check/i }));
+
+            await waitFor(() => {
+                expect(toast.error).toHaveBeenCalledWith('ATS source check failed: discovery offline');
+            });
+            expect(screen.getByText('discovery offline')).toBeInTheDocument();
+            expect(mockPipelineApi.createUserAtsSource).not.toHaveBeenCalled();
         });
 
         it('clears discovery candidates when source inputs change', async () => {
@@ -1173,6 +1337,91 @@ describe('DashboardControls', () => {
                 });
             });
             expect(toast.success).toHaveBeenCalledWith('Renamed Source updated');
+        });
+
+        it('validates managed source edits before sending updates', async () => {
+            mockPipelineApi.getUserAtsSources.mockResolvedValue({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-invalid-edit',
+                        tenant_id: 'tenant-1',
+                        provider: 'greenhouse',
+                        display_name: 'Invalid Edit Source',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://boards.greenhouse.io/invalid-edit',
+                        created_at: null,
+                        updated_at: null,
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Invalid Edit Source')).toBeInTheDocument();
+            });
+            const sourceCard = screen.getByText('Invalid Edit Source').closest('div[class*="group"]') as HTMLElement;
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /edit/i }));
+            await userEvent.clear(within(sourceCard).getByLabelText('Name'));
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /save/i }));
+            expect(toast.error).toHaveBeenCalledWith('Source name cannot be blank.');
+
+            await userEvent.type(within(sourceCard).getByLabelText('Name'), 'Invalid Edit Source');
+            await userEvent.clear(within(sourceCard).getByLabelText('Careers URL'));
+            await userEvent.type(within(sourceCard).getByLabelText('Careers URL'), 'https://careers.example.com/jobs');
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /save/i }));
+            expect(toast.error).toHaveBeenCalledWith('Use a Greenhouse, Lever, or Ashby board URL.');
+            expect(mockPipelineApi.updateUserAtsSource).not.toHaveBeenCalled();
+        });
+
+        it('validates managed source sync interval bounds before sending updates', async () => {
+            mockPipelineApi.getUserAtsSources.mockResolvedValue({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-invalid-interval',
+                        tenant_id: 'tenant-1',
+                        provider: 'greenhouse',
+                        display_name: 'Invalid Interval Source',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://boards.greenhouse.io/invalid-interval',
+                        created_at: null,
+                        updated_at: null,
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Invalid Interval Source')).toBeInTheDocument();
+            });
+            const sourceCard = screen.getByText('Invalid Interval Source').closest('div[class*="group"]') as HTMLElement;
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /edit/i }));
+            const syncInput = within(sourceCard).getByLabelText('Sync minutes');
+            fireEvent.change(syncInput, { target: { value: '1' } });
+            fireEvent.submit(syncInput.closest('form') as HTMLFormElement);
+            expect(toast.error).toHaveBeenCalledWith('Sync interval must be between 5 and 1440 minutes.');
+            expect(mockPipelineApi.updateUserAtsSource).not.toHaveBeenCalled();
         });
 
         it('lets users replace the ATS board for a managed source', async () => {

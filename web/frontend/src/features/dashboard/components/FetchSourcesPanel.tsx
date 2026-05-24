@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FormEvent, KeyboardEvent, ReactNode } from 'react';
+import type { FormEvent, KeyboardEvent, SyntheticEvent } from 'react';
 import {
     Activity,
     AlertTriangle,
@@ -831,17 +831,32 @@ function SourceDeleteDialog({
     onCancel: () => void;
     onConfirm: () => void;
 }>) {
-    const dialogRef = useRef<HTMLDivElement>(null);
+    const dialogRef = useRef<HTMLDialogElement>(null);
     const cancelButtonRef = useRef<HTMLButtonElement>(null);
     const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
     useEffect(() => {
+        const dialog = dialogRef.current;
         previouslyFocusedRef.current = document.activeElement instanceof HTMLElement
             ? document.activeElement
             : null;
+        if (dialog && !dialog.open) {
+            if (typeof dialog.showModal === 'function') {
+                dialog.showModal();
+            } else {
+                dialog.setAttribute('open', '');
+            }
+        }
         cancelButtonRef.current?.focus();
 
         return () => {
+            if (dialog?.open) {
+                if (typeof dialog.close === 'function') {
+                    dialog.close();
+                } else {
+                    dialog.removeAttribute('open');
+                }
+            }
             const previouslyFocused = previouslyFocusedRef.current;
             if (previouslyFocused && document.contains(previouslyFocused)) {
                 previouslyFocused.focus();
@@ -849,85 +864,660 @@ function SourceDeleteDialog({
         };
     }, []);
 
-    function focusableElements(): HTMLElement[] {
-        return Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
-            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-        ) ?? []).filter((element) => !element.hasAttribute('aria-hidden'));
+    function handleCancel(event: SyntheticEvent<HTMLDialogElement>) {
+        event.preventDefault();
+        if (!isDeleting) {
+            onCancel();
+        }
     }
 
-    function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    function handleKeyDown(event: KeyboardEvent<HTMLDialogElement>) {
         if (event.key === 'Escape') {
             event.preventDefault();
             if (isDeleting) return;
             onCancel();
-            return;
-        }
-        if (event.key !== 'Tab') return;
-
-        const elements = focusableElements();
-        if (elements.length === 0) return;
-        const firstElement = elements[0];
-        const lastElement = elements[elements.length - 1];
-
-        if (event.shiftKey && document.activeElement === firstElement) {
-            event.preventDefault();
-            lastElement.focus();
-        } else if (!event.shiftKey && document.activeElement === lastElement) {
-            event.preventDefault();
-            firstElement.focus();
         }
     }
 
     return (
-        <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-ink/20 px-4 py-6"
-            onMouseDown={(event) => {
-                if (event.target === event.currentTarget && !isDeleting) {
-                    onCancel();
-                }
-            }}
+        <dialog
+            ref={dialogRef}
+            aria-labelledby="delete-source-title"
+            aria-describedby="delete-source-description"
+            onCancel={handleCancel}
+            onKeyDown={handleKeyDown}
+            className="m-auto w-[calc(100%-2rem)] max-w-md border border-rule bg-surface px-5 py-4 text-ink shadow-lg backdrop:bg-ink/20"
         >
-            <div
-                ref={dialogRef}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="delete-source-title"
-                aria-describedby="delete-source-description"
-                onKeyDown={handleKeyDown}
-                className="w-full max-w-md border border-rule bg-surface px-5 py-4 shadow-lg"
-            >
-                <div className="flex items-start gap-3">
-                    <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-warn" aria-hidden="true" />
+            <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-warn" aria-hidden="true" />
+                <div>
+                    <h4 id="delete-source-title" className="text-[15px] font-medium text-ink">
+                        Delete ATS source?
+                    </h4>
+                    <p id="delete-source-description" className="mt-2 text-[13px] leading-5 text-ink-muted">
+                        {source.display_name} will be removed from active syncing. Its recent activity remains available so it can be re-added later.
+                    </p>
+                </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+                <button
+                    ref={cancelButtonRef}
+                    type="button"
+                    onClick={onCancel}
+                    disabled={isDeleting}
+                    className="inline-flex h-9 items-center justify-center border border-rule px-3 text-[13px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
+                >
+                    Cancel
+                </button>
+                <button
+                    type="button"
+                    onClick={onConfirm}
+                    disabled={isDeleting}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 border border-warn/50 px-3 text-[13px] font-medium text-warn transition-colors hover:bg-warn-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    {isDeleting ? 'Deleting' : 'Delete source'}
+                </button>
+            </div>
+        </dialog>
+    );
+}
+
+function sourceEmptyMessage(sourceSearch: string, sourceView: SourceView): string {
+    if (sourceSearch.trim()) return 'No sources match that search.';
+    if (sourceView !== 'all') return 'No sources in this view.';
+    return 'No job sources configured.';
+}
+
+function sourceLoadMessages(args: {
+    isSourcesError: boolean;
+    sourcesError: unknown;
+    isCloudError: boolean;
+    cloudError: unknown;
+    isUserSourcesError: boolean;
+    userSourcesError: unknown;
+    isHistoryError: boolean;
+    historyError: unknown;
+}): string[] {
+    const messages: string[] = [];
+    if (args.isSourcesError) messages.push(`Catalog: ${apiErrorMessage(args.sourcesError)}`);
+    if (args.isCloudError) messages.push(`Tenant ATS sources: ${apiErrorMessage(args.cloudError)}`);
+    if (args.isUserSourcesError) messages.push(`Your ATS sources: ${apiErrorMessage(args.userSourcesError)}`);
+    if (args.isHistoryError) messages.push(`Activity: ${apiErrorMessage(args.historyError)}`);
+    return messages;
+}
+
+function filterButtonClasses(isActive: boolean): string {
+    const activeClasses = 'border-accent bg-accent-soft text-accent';
+    const inactiveClasses = 'border-rule bg-surface text-ink-soft hover:border-accent hover:text-accent';
+    return `inline-flex min-h-8 items-center gap-1.5 border px-2.5 py-1 text-[12px] font-medium transition-colors ${
+        isActive ? activeClasses : inactiveClasses
+    }`;
+}
+
+function SourcePanelHeader({
+    visibleCount,
+    totalCount,
+    isAddingSource,
+    showHistory,
+    sourceSearch,
+    sourceView,
+    sourceViewCounts,
+    catalogLabel,
+    onToggleAddingSource,
+    onToggleHistory,
+    onSourceSearchChange,
+    onSourceViewChange,
+}: Readonly<{
+    visibleCount: number;
+    totalCount: number;
+    isAddingSource: boolean;
+    showHistory: boolean;
+    sourceSearch: string;
+    sourceView: SourceView;
+    sourceViewCounts: Record<SourceView, number>;
+    catalogLabel: string;
+    onToggleAddingSource: () => void;
+    onToggleHistory: () => void;
+    onSourceSearchChange: (value: string) => void;
+    onSourceViewChange: (view: SourceView) => void;
+}>) {
+    return (
+        <div className="mb-4 flex flex-col gap-4">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+                <div>
+                    <p className="caption">Provider management</p>
+                    <h3 className="mt-1 flex items-baseline gap-2 text-[16px] font-medium text-ink">
+                        <span>Job Sources</span>
+                        <span className="text-[12px] font-normal text-ink-soft">
+                            {visibleCount}/{totalCount}
+                        </span>
+                    </h3>
+                    <p className="mt-1 max-w-2xl text-[12px] leading-5 text-ink-muted">
+                        Add supported ATS boards, monitor seed/API health, and keep paused or deleted sources recoverable from activity.
+                    </p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <button
+                        type="button"
+                        onClick={onToggleAddingSource}
+                        aria-expanded={isAddingSource}
+                        aria-controls="add-source-form"
+                        className="inline-flex h-9 items-center justify-center gap-1.5 border border-accent px-3 text-[13px] font-medium text-accent transition-colors hover:bg-accent-soft"
+                    >
+                        <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                        Add source
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onToggleHistory}
+                        aria-expanded={showHistory}
+                        aria-controls="source-activity-panel"
+                        className="inline-flex h-9 items-center justify-center gap-1.5 border border-rule px-3 text-[13px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent"
+                    >
+                        <History className="h-3.5 w-3.5" aria-hidden="true" />
+                        Activity
+                    </button>
+                    <label className="relative block">
+                        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-soft" aria-hidden="true" />
+                        <input
+                            aria-label="Search sources"
+                            value={sourceSearch}
+                            onChange={(event) => onSourceSearchChange(event.target.value)}
+                            placeholder="Search sources"
+                            className="h-9 w-full border border-rule bg-surface pl-8 pr-3 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-soft focus:border-accent sm:w-52"
+                        />
+                    </label>
+                    <div className="inline-flex items-center gap-2 self-start border border-rule bg-surface px-2.5 py-1.5 text-[12px] text-ink-soft">
+                        <Server className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
+                        <span>{catalogLabel}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2" aria-label="Source views">
+                {SOURCE_VIEW_OPTIONS.map((option) => (
+                    <button
+                        key={option.key}
+                        type="button"
+                        aria-pressed={sourceView === option.key}
+                        onClick={() => onSourceViewChange(option.key)}
+                        className={filterButtonClasses(sourceView === option.key)}
+                    >
+                        {option.label}
+                        <span className="tabular-nums text-[11px]">{sourceViewCounts[option.key]}</span>
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function SourceLoadErrorBanner({
+    messages,
+    onRetry,
+}: Readonly<{
+    messages: string[];
+    onRetry: () => void;
+}>) {
+    return (
+        <div role="alert" className="mb-4 border border-warn/40 bg-warn-soft px-4 py-3 text-[12px] text-ink">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex gap-2">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-warn" aria-hidden="true" />
                     <div>
-                        <h4 id="delete-source-title" className="text-[15px] font-medium text-ink">
-                            Delete ATS source?
-                        </h4>
-                        <p id="delete-source-description" className="mt-2 text-[13px] leading-5 text-ink-muted">
-                            {source.display_name} will be removed from active syncing. Its recent activity remains available so it can be re-added later.
+                        <p className="font-medium">Some source status could not be loaded.</p>
+                        <ul className="mt-1 grid gap-1 text-ink-muted">
+                            {messages.map((message) => (
+                                <li key={message}>{message}</li>
+                            ))}
+                        </ul>
+                    </div>
+                </div>
+                <button
+                    type="button"
+                    onClick={onRetry}
+                    className="inline-flex h-8 items-center justify-center gap-1.5 border border-rule bg-surface px-2.5 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent"
+                >
+                    <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                    Retry
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function AddSourceForm({
+    newSourceName,
+    newSourceUrl,
+    newSourceProvider,
+    newSourceIdentifier,
+    discoveryError,
+    hasCheckedDiscovery,
+    discoveryCandidates,
+    isChecking,
+    isAdding,
+    onSubmit,
+    onCheck,
+    onNameChange,
+    onUrlChange,
+    onProviderChange,
+    onIdentifierChange,
+    onAddDiscoveredSource,
+}: Readonly<{
+    newSourceName: string;
+    newSourceUrl: string;
+    newSourceProvider: string;
+    newSourceIdentifier: string;
+    discoveryError: string | null;
+    hasCheckedDiscovery: boolean;
+    discoveryCandidates: AtsSourceDiscoveryCandidate[];
+    isChecking: boolean;
+    isAdding: boolean;
+    onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+    onCheck: () => void;
+    onNameChange: (value: string) => void;
+    onUrlChange: (value: string) => void;
+    onProviderChange: (value: string) => void;
+    onIdentifierChange: (value: string) => void;
+    onAddDiscoveredSource: (candidate: AtsSourceDiscoveryCandidate) => void;
+}>) {
+    return (
+        <form
+            id="add-source-form"
+            onSubmit={onSubmit}
+            className="mb-4 grid gap-4 border border-rule bg-surface px-4 py-4"
+        >
+            <div className="flex flex-col gap-3 border-b border-rule pb-4 md:flex-row md:items-start md:justify-between">
+                <div className="flex gap-3">
+                    <ShieldCheck className="mt-0.5 h-5 w-5 text-accent" aria-hidden="true" />
+                    <div>
+                        <p className="text-[14px] font-medium text-ink">Add a supported ATS board</p>
+                        <p className="mt-1 max-w-2xl text-[12px] leading-5 text-ink-muted">
+                            Enter a company name, supported careers URL, or board ID. Arbitrary websites are blocked; discovery checks supported ATS providers only.
                         </p>
                     </div>
                 </div>
-                <div className="mt-5 flex justify-end gap-2">
-                    <button
-                        ref={cancelButtonRef}
-                        type="button"
-                        onClick={onCancel}
-                        disabled={isDeleting}
-                        className="inline-flex h-9 items-center justify-center border border-rule px-3 text-[13px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        type="button"
-                        onClick={onConfirm}
-                        disabled={isDeleting}
-                        className="inline-flex h-9 items-center justify-center gap-1.5 border border-warn/50 px-3 text-[13px] font-medium text-warn transition-colors hover:bg-warn-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
-                    >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                        {isDeleting ? 'Deleting' : 'Delete source'}
-                    </button>
+                <div className="flex flex-wrap gap-1.5 text-[11px] text-ink-soft">
+                    <span className={metaChipClasses('uppercase tracking-[0.12em]')}>Search order</span>
+                    {ATS_PROVIDER_SEARCH_ORDER.map((provider) => (
+                        <span key={provider} className={metaChipClasses()}>
+                            {provider}
+                        </span>
+                    ))}
                 </div>
             </div>
+
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_10rem_minmax(0,1fr)]">
+                <div>
+                    <label htmlFor="new-source-name" className="text-[12px] text-ink-soft">
+                        Name
+                    </label>
+                    <input
+                        id="new-source-name"
+                        value={newSourceName}
+                        onChange={(event) => onNameChange(event.target.value)}
+                        placeholder="Company or board"
+                        className="mt-1 h-9 w-full border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
+                    />
+                    <p className="mt-1 text-[11px] leading-4 text-ink-soft">
+                        Works alone for discovery when the company name is distinctive.
+                    </p>
+                </div>
+                <div>
+                    <label htmlFor="new-source-url" className="text-[12px] text-ink-soft">
+                        Careers URL
+                    </label>
+                    <input
+                        id="new-source-url"
+                        value={newSourceUrl}
+                        onChange={(event) => onUrlChange(event.target.value)}
+                        placeholder="https://boards.greenhouse.io/acme"
+                        className="mt-1 h-9 w-full border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
+                    />
+                    <p className="mt-1 text-[11px] leading-4 text-ink-soft">
+                        Only Greenhouse, Lever, and Ashby board URLs are accepted.
+                    </p>
+                </div>
+                <div>
+                    <label htmlFor="new-source-provider" className="text-[12px] text-ink-soft">
+                        Provider
+                    </label>
+                    <select
+                        id="new-source-provider"
+                        value={newSourceProvider}
+                        onChange={(event) => onProviderChange(event.target.value)}
+                        className="mt-1 h-9 w-full border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
+                    >
+                        <option value="">Auto</option>
+                        <option value="greenhouse">Greenhouse</option>
+                        <option value="lever">Lever</option>
+                        <option value="ashby">Ashby</option>
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="new-source-identifier" className="text-[12px] text-ink-soft">
+                        Board ID
+                    </label>
+                    <input
+                        id="new-source-identifier"
+                        value={newSourceIdentifier}
+                        onChange={(event) => onIdentifierChange(event.target.value)}
+                        placeholder="acme"
+                        className="mt-1 h-9 w-full border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
+                    />
+                    <p className="mt-1 text-[11px] leading-4 text-ink-soft">
+                        Use with a provider, or leave provider on Auto to probe all supported boards.
+                    </p>
+                </div>
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                <button
+                    type="button"
+                    onClick={onCheck}
+                    disabled={isChecking}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 border border-rule px-3 text-[13px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                >
+                    <Search className="h-3.5 w-3.5" aria-hidden="true" />
+                    {isChecking ? 'Checking' : 'Check'}
+                </button>
+                <button
+                    type="submit"
+                    disabled={isAdding}
+                    className="inline-flex h-9 items-center justify-center border border-accent px-3 text-[13px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                >
+                    {isAdding ? 'Adding' : 'Add'}
+                </button>
+            </div>
+
+            {discoveryError ? (
+                <div className="flex gap-2 border border-warn/40 bg-warn-soft px-3 py-2 text-[12px] text-ink">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warn" aria-hidden="true" />
+                    <span>{discoveryError}</span>
+                </div>
+            ) : null}
+
+            {hasCheckedDiscovery && discoveryCandidates.length === 0 && !discoveryError ? (
+                <div className="border border-dashed border-rule bg-surface-sunk px-3 py-3 text-[12px] leading-5 text-ink-muted">
+                    No supported ATS board matched those inputs. Try a provider-specific board ID or a supported board URL.
+                </div>
+            ) : null}
+
+            {discoveryCandidates.length > 0 ? (
+                <div className="grid gap-2 border-t border-rule pt-4">
+                    <div className="flex items-center justify-between gap-3">
+                        <p className="caption">Discovery candidates</p>
+                        <span className="text-[12px] text-ink-soft">
+                            {discoveryCandidates.length} found
+                        </span>
+                    </div>
+                    {discoveryCandidates.map((candidate) => (
+                        <div
+                            key={`${candidate.provider}-${candidate.identifier}`}
+                            className="flex flex-col gap-3 border border-rule bg-surface-raised px-3 py-3 sm:flex-row sm:items-start sm:justify-between"
+                        >
+                            <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-[13px] font-medium text-ink">
+                                        {candidate.display_name}
+                                    </span>
+                                    <span className={metaChipClasses('capitalize')}>
+                                        {candidate.provider}
+                                    </span>
+                                    <span className={metaChipClasses('tabular-nums')}>
+                                        {candidate.jobs_seen} jobs
+                                    </span>
+                                </div>
+                                <p className="mt-1 break-all text-[12px] text-ink-soft">
+                                    {candidate.identifier}
+                                </p>
+                                {candidate.source_url ? (
+                                    <p className="mt-1 break-all text-[12px] text-ink-soft">
+                                        {candidate.source_url}
+                                    </p>
+                                ) : null}
+                                <p className="mt-2 text-[12px] leading-5 text-ink-muted">
+                                    {candidate.match_reason}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => onAddDiscoveredSource(candidate)}
+                                disabled={isAdding}
+                                className="inline-flex h-9 items-center justify-center border border-accent px-3 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                            >
+                                Add
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            ) : null}
+        </form>
+    );
+}
+
+function SourceActivityPanel({
+    sourceActivityFilter,
+    sourceActivityCounts,
+    sourceHistory,
+    filteredSourceHistory,
+    isAdding,
+    onFilterChange,
+    onHide,
+    onReaddSource,
+}: Readonly<{
+    sourceActivityFilter: SourceActivityFilter;
+    sourceActivityCounts: Record<SourceActivityFilter, number>;
+    sourceHistory: AtsSourceHistoryEvent[];
+    filteredSourceHistory: AtsSourceHistoryEvent[];
+    isAdding: boolean;
+    onFilterChange: (filter: SourceActivityFilter) => void;
+    onHide: () => void;
+    onReaddSource: (event: AtsSourceHistoryEvent) => void;
+}>) {
+    const emptyHistoryMessage = sourceHistory.length === 0
+        ? 'No source activity recorded yet.'
+        : 'No activity matches this filter.';
+
+    return (
+        <div id="source-activity-panel" className="mb-4 border border-rule bg-surface px-4 py-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                    <p className="caption">Source activity</p>
+                    <p className="mt-1 text-[12px] text-ink-muted">
+                        Recent add, update, pause, delete, and re-add events.
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    onClick={onHide}
+                    className="inline-flex h-8 w-8 items-center justify-center border border-rule text-ink-soft transition-colors hover:border-accent hover:text-accent"
+                    aria-label="Hide source activity"
+                >
+                    <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+            </div>
+            <div className="mb-3 flex flex-wrap gap-2" aria-label="Source activity filters">
+                {SOURCE_ACTIVITY_FILTER_OPTIONS.map((option) => (
+                    <button
+                        key={option.key}
+                        type="button"
+                        aria-pressed={sourceActivityFilter === option.key}
+                        onClick={() => onFilterChange(option.key)}
+                        className={filterButtonClasses(sourceActivityFilter === option.key)}
+                    >
+                        {option.label}
+                        <span className="tabular-nums text-[11px]">{sourceActivityCounts[option.key]}</span>
+                    </button>
+                ))}
+            </div>
+            {filteredSourceHistory.length > 0 ? (
+                <div className="grid gap-2">
+                    {filteredSourceHistory.map((event) => (
+                        <div
+                            key={event.id}
+                            className="flex flex-col gap-2 border border-rule bg-surface-raised px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                        >
+                            <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-[13px] font-medium text-ink">
+                                        {event.display_name || event.identifier || event.provider || 'ATS source'}
+                                    </span>
+                                    <span className={metaChipClasses()}>
+                                        {historyActionLabel(event.action)}
+                                    </span>
+                                    {event.provider ? (
+                                        <span className={metaChipClasses('capitalize')}>
+                                            {event.provider}
+                                        </span>
+                                    ) : null}
+                                    <span className={metaChipClasses('tabular-nums')}>
+                                        {formattedDateTime(event.occurred_at)}
+                                    </span>
+                                </div>
+                                {event.identifier ? (
+                                    <p className="mt-1 truncate text-[12px] text-ink-soft">
+                                        {event.identifier}
+                                    </p>
+                                ) : null}
+                            </div>
+                            {event.readd_payload ? (
+                                <button
+                                    type="button"
+                                    onClick={() => onReaddSource(event)}
+                                    disabled={isAdding}
+                                    className="inline-flex h-8 items-center justify-center gap-1.5 border border-rule px-2.5 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
+                                >
+                                    <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                                    Re-add
+                                </button>
+                            ) : null}
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                <div className="border border-dashed border-rule bg-surface-sunk px-3 py-4 text-[12px] text-ink-muted">
+                    {emptyHistoryMessage}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function SourcesContent({
+    isLoading,
+    sources,
+    emptyMessage,
+    fetchingSourceSiteType,
+    syncingSourceId,
+    updatingSourceId,
+    deletingSourceId,
+    editingSourceId,
+    editSourceName,
+    editSourceUrl,
+    editSourceProvider,
+    editSourceIdentifier,
+    editSyncInterval,
+    onFetchSource,
+    onSyncAtsSource,
+    onEditAtsSource,
+    onToggleAtsSource,
+    onDeleteAtsSource,
+    onSubmitEdit,
+    onCancelEdit,
+    onEditSourceNameChange,
+    onEditSourceUrlChange,
+    onEditSourceProviderChange,
+    onEditSourceIdentifierChange,
+    onEditSyncIntervalChange,
+}: Readonly<{
+    isLoading: boolean;
+    sources: FetchSource[];
+    emptyMessage: string;
+    fetchingSourceSiteType: string | null;
+    syncingSourceId: string | null;
+    updatingSourceId: string | null;
+    deletingSourceId: string | null;
+    editingSourceId: string | null;
+    editSourceName: string;
+    editSourceUrl: string;
+    editSourceProvider: string;
+    editSourceIdentifier: string;
+    editSyncInterval: string;
+    onFetchSource: (siteType: string) => void;
+    onSyncAtsSource: (sourceId: string) => void;
+    onEditAtsSource: (source: FetchSource) => void;
+    onToggleAtsSource: (sourceId: string, status: string) => void;
+    onDeleteAtsSource: (source: FetchSource) => void;
+    onSubmitEdit: (sourceId: string) => void;
+    onCancelEdit: () => void;
+    onEditSourceNameChange: (value: string) => void;
+    onEditSourceUrlChange: (value: string) => void;
+    onEditSourceProviderChange: (value: string) => void;
+    onEditSourceIdentifierChange: (value: string) => void;
+    onEditSyncIntervalChange: (value: string) => void;
+}>) {
+    if (isLoading) {
+        return (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {[0, 1, 2].map((item) => (
+                    <div key={item} className="h-48 animate-pulse border border-rule bg-surface-sunk" />
+                ))}
+            </div>
+        );
+    }
+
+    if (sources.length === 0) {
+        return (
+            <div className="border border-dashed border-rule bg-surface px-4 py-6 text-[13px] text-ink-muted">
+                <div className="flex items-start gap-3">
+                    <ListFilter className="mt-0.5 h-4 w-4 text-accent" aria-hidden="true" />
+                    <div>
+                        <p className="font-medium text-ink">{emptyMessage}</p>
+                        <p className="mt-1 leading-5">
+                            Add a supported ATS board or relax the current search and status filters.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {sources.map((source, index) => {
+                const managedSourceId = userSourceId(source);
+                return (
+                    <SourceCard
+                        key={`${source.site_type}-${index}`}
+                        source={source}
+                        index={index}
+                        onFetchSource={onFetchSource}
+                        isFetchingSource={fetchingSourceSiteType === source.site_type}
+                        onSyncAtsSource={onSyncAtsSource}
+                        onEditAtsSource={onEditAtsSource}
+                        onToggleAtsSource={onToggleAtsSource}
+                        onDeleteAtsSource={onDeleteAtsSource}
+                        onSubmitEdit={onSubmitEdit}
+                        onCancelEdit={onCancelEdit}
+                        isSyncingAtsSource={syncingSourceId === managedSourceId}
+                        isUpdatingAtsSource={updatingSourceId === managedSourceId}
+                        isDeletingAtsSource={deletingSourceId === managedSourceId}
+                        isEditing={editingSourceId === managedSourceId}
+                        editSourceName={editSourceName}
+                        editSourceUrl={editSourceUrl}
+                        editSourceProvider={editSourceProvider}
+                        editSourceIdentifier={editSourceIdentifier}
+                        editSyncInterval={editSyncInterval}
+                        onEditSourceNameChange={onEditSourceNameChange}
+                        onEditSourceUrlChange={onEditSourceUrlChange}
+                        onEditSourceProviderChange={onEditSourceProviderChange}
+                        onEditSourceIdentifierChange={onEditSourceIdentifierChange}
+                        onEditSyncIntervalChange={onEditSyncIntervalChange}
+                    />
+                );
+            })}
         </div>
     );
 }
@@ -1189,11 +1779,7 @@ export function FetchSourcesPanel() {
         [sourceActivityFilter, sourceHistory]
     );
     const totalCount = (data?.total_count ?? (data?.sources ?? []).length) + cloudSources.length;
-    const emptyMessage = sourceSearch.trim()
-        ? 'No sources match that search.'
-        : sourceView === 'all'
-            ? 'No job sources configured.'
-            : 'No sources in this view.';
+    const emptyMessage = sourceEmptyMessage(sourceSearch, sourceView);
 
     function buildUserSourcePayload(): AtsSourceCreateRequest | null {
         const provider = newSourceProvider.trim() || undefined;
@@ -1342,12 +1928,16 @@ export function FetchSourcesPanel() {
         deleteUserSourceMutation.mutate(sourceId);
     }
 
-    const sourceLoadErrors = [
-        isSourcesError ? `Catalog: ${apiErrorMessage(sourcesError)}` : null,
-        isCloudError ? `Tenant ATS sources: ${apiErrorMessage(cloudError)}` : null,
-        isUserSourcesError ? `Your ATS sources: ${apiErrorMessage(userSourcesError)}` : null,
-        isHistoryError ? `Activity: ${apiErrorMessage(historyError)}` : null,
-    ].filter((message): message is string => Boolean(message));
+    const sourceLoadErrors = sourceLoadMessages({
+        isSourcesError,
+        sourcesError,
+        isCloudError,
+        cloudError,
+        isUserSourcesError,
+        userSourcesError,
+        isHistoryError,
+        historyError,
+    });
 
     function retrySourceLoads() {
         void refetchSources();
@@ -1356,451 +1946,91 @@ export function FetchSourcesPanel() {
         void refetchSourceHistory();
     }
 
-    let sourcesContent: ReactNode;
-    if (isLoading || isLoadingCloud || isLoadingUserSources) {
-        sourcesContent = (
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {[0, 1, 2].map((item) => (
-                    <div key={item} className="h-48 animate-pulse border border-rule bg-surface-sunk" />
-                ))}
-            </div>
-        );
-    } else if (sources.length === 0) {
-        sourcesContent = (
-            <div className="border border-dashed border-rule bg-surface px-4 py-6 text-[13px] text-ink-muted">
-                <div className="flex items-start gap-3">
-                    <ListFilter className="mt-0.5 h-4 w-4 text-accent" aria-hidden="true" />
-                    <div>
-                        <p className="font-medium text-ink">{emptyMessage}</p>
-                        <p className="mt-1 leading-5">
-                            Add a supported ATS board or relax the current search and status filters.
-                        </p>
-                    </div>
-                </div>
-            </div>
-        );
-    } else {
-        sourcesContent = (
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {sources.map((source, index) => (
-                    <SourceCard
-                        key={`${source.site_type}-${index}`}
-                        source={source}
-                        index={index}
-                        onFetchSource={(siteType) => fetchSourceMutation.mutate(siteType)}
-                        isFetchingSource={
-                            fetchSourceMutation.isPending
-                            && fetchSourceMutation.variables === source.site_type
-                        }
-                        onSyncAtsSource={(sourceId) => syncUserSourceMutation.mutate(sourceId)}
-                        onEditAtsSource={editUserSource}
-                        onToggleAtsSource={(sourceId, status) => updateUserSourceMutation.mutate({ sourceId, payload: { status } })}
-                        onDeleteAtsSource={deleteUserSource}
-                        onSubmitEdit={submitUserSourceEdit}
-                        onCancelEdit={() => {
-                            setEditingSourceId(null);
-                            setEditOriginalSource(null);
-                        }}
-                        isSyncingAtsSource={
-                            syncUserSourceMutation.isPending
-                            && syncUserSourceMutation.variables === userSourceId(source)
-                        }
-                        isUpdatingAtsSource={
-                            updateUserSourceMutation.isPending
-                            && updateUserSourceMutation.variables?.sourceId === userSourceId(source)
-                        }
-                        isDeletingAtsSource={
-                            deleteUserSourceMutation.isPending
-                            && deleteUserSourceMutation.variables === userSourceId(source)
-                        }
-                        isEditing={editingSourceId === userSourceId(source)}
-                        editSourceName={editSourceName}
-                        editSourceUrl={editSourceUrl}
-                        editSourceProvider={editSourceProvider}
-                        editSourceIdentifier={editSourceIdentifier}
-                        editSyncInterval={editSyncInterval}
-                        onEditSourceNameChange={setEditSourceName}
-                        onEditSourceUrlChange={setEditSourceUrl}
-                        onEditSourceProviderChange={setEditSourceProvider}
-                        onEditSourceIdentifierChange={setEditSourceIdentifier}
-                        onEditSyncIntervalChange={setEditSyncInterval}
-                    />
-                ))}
-            </div>
-        );
-    }
-
     return (
         <section className="border-t border-rule pt-6">
-            <div className="mb-4 flex flex-col gap-4">
-                <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-                    <div>
-                        <p className="caption">Provider management</p>
-                        <h3 className="mt-1 text-[16px] font-medium text-ink">
-                            Job Sources
-                            <span className="ml-2 text-[12px] font-normal text-ink-soft">
-                                {sources.length}/{totalCount}
-                            </span>
-                        </h3>
-                        <p className="mt-1 max-w-2xl text-[12px] leading-5 text-ink-muted">
-                            Add supported ATS boards, monitor seed/API health, and keep paused or deleted sources recoverable from activity.
-                        </p>
-                    </div>
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                        <button
-                            type="button"
-                            onClick={() => setIsAddingSource((value) => !value)}
-                            aria-expanded={isAddingSource}
-                            aria-controls="add-source-form"
-                            className="inline-flex h-9 items-center justify-center gap-1.5 border border-accent px-3 text-[13px] font-medium text-accent transition-colors hover:bg-accent-soft"
-                        >
-                            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                            Add source
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setShowHistory((value) => !value)}
-                            aria-expanded={showHistory}
-                            aria-controls="source-activity-panel"
-                            className="inline-flex h-9 items-center justify-center gap-1.5 border border-rule px-3 text-[13px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent"
-                        >
-                            <History className="h-3.5 w-3.5" aria-hidden="true" />
-                            Activity
-                        </button>
-                        <label className="relative block">
-                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-soft" aria-hidden="true" />
-                            <input
-                                aria-label="Search sources"
-                                value={sourceSearch}
-                                onChange={(event) => setSourceSearch(event.target.value)}
-                                placeholder="Search sources"
-                                className="h-9 w-full border border-rule bg-surface pl-8 pr-3 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-soft focus:border-accent sm:w-52"
-                            />
-                        </label>
-                        <div className="inline-flex items-center gap-2 self-start border border-rule bg-surface px-2.5 py-1.5 text-[12px] text-ink-soft">
-                            <Server className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
-                            <span>{sourceCatalogLabel(data?.api_based_fetching, cloudSources.length)}</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="flex flex-wrap gap-2" aria-label="Source views">
-                    {SOURCE_VIEW_OPTIONS.map((option) => {
-                        const isActive = sourceView === option.key;
-                        return (
-                            <button
-                                key={option.key}
-                                type="button"
-                                aria-pressed={isActive}
-                                onClick={() => setSourceView(option.key)}
-                                className={`inline-flex min-h-8 items-center gap-1.5 border px-2.5 py-1 text-[12px] font-medium transition-colors ${
-                                    isActive
-                                        ? 'border-accent bg-accent-soft text-accent'
-                                        : 'border-rule bg-surface text-ink-soft hover:border-accent hover:text-accent'
-                                }`}
-                            >
-                                {option.label}
-                                <span className="tabular-nums text-[11px]">{sourceViewCounts[option.key]}</span>
-                            </button>
-                        );
-                    })}
-                </div>
-            </div>
+            <SourcePanelHeader
+                visibleCount={sources.length}
+                totalCount={totalCount}
+                isAddingSource={isAddingSource}
+                showHistory={showHistory}
+                sourceSearch={sourceSearch}
+                sourceView={sourceView}
+                sourceViewCounts={sourceViewCounts}
+                catalogLabel={sourceCatalogLabel(data?.api_based_fetching, cloudSources.length)}
+                onToggleAddingSource={() => setIsAddingSource((value) => !value)}
+                onToggleHistory={() => setShowHistory((value) => !value)}
+                onSourceSearchChange={setSourceSearch}
+                onSourceViewChange={setSourceView}
+            />
 
             {sourceLoadErrors.length > 0 ? (
-                <div role="alert" className="mb-4 border border-warn/40 bg-warn-soft px-4 py-3 text-[12px] text-ink">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="flex gap-2">
-                            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-warn" aria-hidden="true" />
-                            <div>
-                                <p className="font-medium">Some source status could not be loaded.</p>
-                                <ul className="mt-1 grid gap-1 text-ink-muted">
-                                    {sourceLoadErrors.map((message) => (
-                                        <li key={message}>{message}</li>
-                                    ))}
-                                </ul>
-                            </div>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={retrySourceLoads}
-                            className="inline-flex h-8 items-center justify-center gap-1.5 border border-rule bg-surface px-2.5 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent"
-                        >
-                            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-                            Retry
-                        </button>
-                    </div>
-                </div>
+                <SourceLoadErrorBanner messages={sourceLoadErrors} onRetry={retrySourceLoads} />
             ) : null}
 
             {isAddingSource ? (
-                <form
-                    id="add-source-form"
+                <AddSourceForm
+                    newSourceName={newSourceName}
+                    newSourceUrl={newSourceUrl}
+                    newSourceProvider={newSourceProvider}
+                    newSourceIdentifier={newSourceIdentifier}
+                    discoveryError={discoveryError}
+                    hasCheckedDiscovery={hasCheckedDiscovery}
+                    discoveryCandidates={discoveryCandidates}
+                    isChecking={discoverUserSourceMutation.isPending}
+                    isAdding={createUserSourceMutation.isPending}
                     onSubmit={submitUserSource}
-                    className="mb-4 grid gap-4 border border-rule bg-surface px-4 py-4"
-                >
-                    <div className="flex flex-col gap-3 border-b border-rule pb-4 md:flex-row md:items-start md:justify-between">
-                        <div className="flex gap-3">
-                            <ShieldCheck className="mt-0.5 h-5 w-5 text-accent" aria-hidden="true" />
-                            <div>
-                                <p className="text-[14px] font-medium text-ink">Add a supported ATS board</p>
-                                <p className="mt-1 max-w-2xl text-[12px] leading-5 text-ink-muted">
-                                    Enter a company name, supported careers URL, or board ID. Arbitrary websites are blocked; discovery checks supported ATS providers only.
-                                </p>
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap gap-1.5 text-[11px] text-ink-soft">
-                            <span className={metaChipClasses('uppercase tracking-[0.12em]')}>Search order</span>
-                            {ATS_PROVIDER_SEARCH_ORDER.map((provider) => (
-                                <span key={provider} className={metaChipClasses()}>
-                                    {provider}
-                                </span>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_10rem_minmax(0,1fr)]">
-                        <div>
-                            <label htmlFor="new-source-name" className="text-[12px] text-ink-soft">
-                                Name
-                            </label>
-                            <input
-                                id="new-source-name"
-                                value={newSourceName}
-                                onChange={(event) => updateNewSourceName(event.target.value)}
-                                placeholder="Company or board"
-                                className="mt-1 h-9 w-full border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
-                            />
-                            <p className="mt-1 text-[11px] leading-4 text-ink-soft">
-                                Works alone for discovery when the company name is distinctive.
-                            </p>
-                        </div>
-                        <div>
-                            <label htmlFor="new-source-url" className="text-[12px] text-ink-soft">
-                                Careers URL
-                            </label>
-                            <input
-                                id="new-source-url"
-                                value={newSourceUrl}
-                                onChange={(event) => updateNewSourceUrl(event.target.value)}
-                                placeholder="https://boards.greenhouse.io/acme"
-                                className="mt-1 h-9 w-full border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
-                            />
-                            <p className="mt-1 text-[11px] leading-4 text-ink-soft">
-                                Only Greenhouse, Lever, and Ashby board URLs are accepted.
-                            </p>
-                        </div>
-                        <div>
-                            <label htmlFor="new-source-provider" className="text-[12px] text-ink-soft">
-                                Provider
-                            </label>
-                            <select
-                                id="new-source-provider"
-                                value={newSourceProvider}
-                                onChange={(event) => updateNewSourceProvider(event.target.value)}
-                                className="mt-1 h-9 w-full border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
-                            >
-                                <option value="">Auto</option>
-                                <option value="greenhouse">Greenhouse</option>
-                                <option value="lever">Lever</option>
-                                <option value="ashby">Ashby</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label htmlFor="new-source-identifier" className="text-[12px] text-ink-soft">
-                                Board ID
-                            </label>
-                            <input
-                                id="new-source-identifier"
-                                value={newSourceIdentifier}
-                                onChange={(event) => updateNewSourceIdentifier(event.target.value)}
-                                placeholder="acme"
-                                className="mt-1 h-9 w-full border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
-                            />
-                            <p className="mt-1 text-[11px] leading-4 text-ink-soft">
-                                Use with a provider, or leave provider on Auto to probe all supported boards.
-                            </p>
-                        </div>
-                    </div>
-
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                        <button
-                            type="button"
-                            onClick={checkUserSource}
-                            disabled={discoverUserSourceMutation.isPending}
-                            className="inline-flex h-9 items-center justify-center gap-1.5 border border-rule px-3 text-[13px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
-                        >
-                            <Search className="h-3.5 w-3.5" aria-hidden="true" />
-                            {discoverUserSourceMutation.isPending ? 'Checking' : 'Check'}
-                        </button>
-                        <button
-                            type="submit"
-                            disabled={createUserSourceMutation.isPending}
-                            className="inline-flex h-9 items-center justify-center border border-accent px-3 text-[13px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
-                        >
-                            {createUserSourceMutation.isPending ? 'Adding' : 'Add'}
-                        </button>
-                    </div>
-
-                    {discoveryError ? (
-                        <div className="flex gap-2 border border-warn/40 bg-warn-soft px-3 py-2 text-[12px] text-ink">
-                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warn" aria-hidden="true" />
-                            <span>{discoveryError}</span>
-                        </div>
-                    ) : null}
-
-                    {hasCheckedDiscovery && discoveryCandidates.length === 0 && !discoveryError ? (
-                        <div className="border border-dashed border-rule bg-surface-sunk px-3 py-3 text-[12px] leading-5 text-ink-muted">
-                            No supported ATS board matched those inputs. Try a provider-specific board ID or a supported board URL.
-                        </div>
-                    ) : null}
-
-                    {discoveryCandidates.length > 0 ? (
-                        <div className="grid gap-2 border-t border-rule pt-4">
-                            <div className="flex items-center justify-between gap-3">
-                                <p className="caption">Discovery candidates</p>
-                                <span className="text-[12px] text-ink-soft">
-                                    {discoveryCandidates.length} found
-                                </span>
-                            </div>
-                            {discoveryCandidates.map((candidate) => (
-                                <div
-                                    key={`${candidate.provider}-${candidate.identifier}`}
-                                    className="flex flex-col gap-3 border border-rule bg-surface-raised px-3 py-3 sm:flex-row sm:items-start sm:justify-between"
-                                >
-                                    <div className="min-w-0">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                            <span className="text-[13px] font-medium text-ink">
-                                                {candidate.display_name}
-                                            </span>
-                                            <span className={metaChipClasses('capitalize')}>
-                                                {candidate.provider}
-                                            </span>
-                                            <span className={metaChipClasses('tabular-nums')}>
-                                                {candidate.jobs_seen} jobs
-                                            </span>
-                                        </div>
-                                        <p className="mt-1 break-all text-[12px] text-ink-soft">
-                                            {candidate.identifier}
-                                        </p>
-                                        {candidate.source_url ? (
-                                            <p className="mt-1 break-all text-[12px] text-ink-soft">
-                                                {candidate.source_url}
-                                            </p>
-                                        ) : null}
-                                        <p className="mt-2 text-[12px] leading-5 text-ink-muted">
-                                            {candidate.match_reason}
-                                        </p>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => addDiscoveredSource(candidate)}
-                                        disabled={createUserSourceMutation.isPending}
-                                        className="inline-flex h-9 items-center justify-center border border-accent px-3 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
-                                    >
-                                        Add
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-                    ) : null}
-                </form>
+                    onCheck={checkUserSource}
+                    onNameChange={updateNewSourceName}
+                    onUrlChange={updateNewSourceUrl}
+                    onProviderChange={updateNewSourceProvider}
+                    onIdentifierChange={updateNewSourceIdentifier}
+                    onAddDiscoveredSource={addDiscoveredSource}
+                />
             ) : null}
 
             {showHistory ? (
-                <div id="source-activity-panel" className="mb-4 border border-rule bg-surface px-4 py-3">
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                        <div>
-                            <p className="caption">Source activity</p>
-                            <p className="mt-1 text-[12px] text-ink-muted">
-                                Recent add, update, pause, delete, and re-add events.
-                            </p>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setShowHistory(false)}
-                            className="inline-flex h-8 w-8 items-center justify-center border border-rule text-ink-soft transition-colors hover:border-accent hover:text-accent"
-                            aria-label="Hide source activity"
-                        >
-                            <X className="h-3.5 w-3.5" aria-hidden="true" />
-                        </button>
-                    </div>
-                    <div className="mb-3 flex flex-wrap gap-2" aria-label="Source activity filters">
-                        {SOURCE_ACTIVITY_FILTER_OPTIONS.map((option) => {
-                            const isActive = sourceActivityFilter === option.key;
-                            return (
-                                <button
-                                    key={option.key}
-                                    type="button"
-                                    aria-pressed={isActive}
-                                    onClick={() => setSourceActivityFilter(option.key)}
-                                    className={`inline-flex min-h-8 items-center gap-1.5 border px-2.5 py-1 text-[12px] font-medium transition-colors ${
-                                        isActive
-                                            ? 'border-accent bg-accent-soft text-accent'
-                                            : 'border-rule bg-surface text-ink-soft hover:border-accent hover:text-accent'
-                                    }`}
-                                >
-                                    {option.label}
-                                    <span className="tabular-nums text-[11px]">{sourceActivityCounts[option.key]}</span>
-                                </button>
-                            );
-                        })}
-                    </div>
-                    {filteredSourceHistory.length > 0 ? (
-                        <div className="grid gap-2">
-                            {filteredSourceHistory.map((event) => (
-                                <div
-                                    key={event.id}
-                                    className="flex flex-col gap-2 border border-rule bg-surface-raised px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-                                >
-                                    <div className="min-w-0">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                            <span className="text-[13px] font-medium text-ink">
-                                                {event.display_name || event.identifier || event.provider || 'ATS source'}
-                                            </span>
-                                            <span className={metaChipClasses()}>
-                                                {historyActionLabel(event.action)}
-                                            </span>
-                                            {event.provider ? (
-                                                <span className={metaChipClasses('capitalize')}>
-                                                    {event.provider}
-                                                </span>
-                                            ) : null}
-                                            <span className={metaChipClasses('tabular-nums')}>
-                                                {formattedDateTime(event.occurred_at)}
-                                            </span>
-                                        </div>
-                                        {event.identifier ? (
-                                            <p className="mt-1 truncate text-[12px] text-ink-soft">
-                                                {event.identifier}
-                                            </p>
-                                        ) : null}
-                                    </div>
-                                    {event.readd_payload ? (
-                                        <button
-                                            type="button"
-                                            onClick={() => readdHistorySource(event)}
-                                            disabled={createUserSourceMutation.isPending}
-                                            className="inline-flex h-8 items-center justify-center gap-1.5 border border-rule px-2.5 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
-                                        >
-                                            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-                                            Re-add
-                                        </button>
-                                    ) : null}
-                                </div>
-                            ))}
-                        </div>
-                    ) : (
-                        <div className="border border-dashed border-rule bg-surface-sunk px-3 py-4 text-[12px] text-ink-muted">
-                            {sourceHistory.length === 0
-                                ? 'No source activity recorded yet.'
-                                : 'No activity matches this filter.'}
-                        </div>
-                    )}
-                </div>
+                <SourceActivityPanel
+                    sourceActivityFilter={sourceActivityFilter}
+                    sourceActivityCounts={sourceActivityCounts}
+                    sourceHistory={sourceHistory}
+                    filteredSourceHistory={filteredSourceHistory}
+                    isAdding={createUserSourceMutation.isPending}
+                    onFilterChange={setSourceActivityFilter}
+                    onHide={() => setShowHistory(false)}
+                    onReaddSource={readdHistorySource}
+                />
             ) : null}
 
-            {sourcesContent}
+            <SourcesContent
+                isLoading={isLoading || isLoadingCloud || isLoadingUserSources}
+                sources={sources}
+                emptyMessage={emptyMessage}
+                fetchingSourceSiteType={fetchSourceMutation.isPending ? fetchSourceMutation.variables ?? null : null}
+                syncingSourceId={syncUserSourceMutation.isPending ? syncUserSourceMutation.variables ?? null : null}
+                updatingSourceId={updateUserSourceMutation.isPending ? updateUserSourceMutation.variables?.sourceId ?? null : null}
+                deletingSourceId={deleteUserSourceMutation.isPending ? deleteUserSourceMutation.variables ?? null : null}
+                editingSourceId={editingSourceId}
+                editSourceName={editSourceName}
+                editSourceUrl={editSourceUrl}
+                editSourceProvider={editSourceProvider}
+                editSourceIdentifier={editSourceIdentifier}
+                editSyncInterval={editSyncInterval}
+                onFetchSource={(siteType) => fetchSourceMutation.mutate(siteType)}
+                onSyncAtsSource={(sourceId) => syncUserSourceMutation.mutate(sourceId)}
+                onEditAtsSource={editUserSource}
+                onToggleAtsSource={(sourceId, status) => updateUserSourceMutation.mutate({ sourceId, payload: { status } })}
+                onDeleteAtsSource={deleteUserSource}
+                onSubmitEdit={submitUserSourceEdit}
+                onCancelEdit={() => {
+                    setEditingSourceId(null);
+                    setEditOriginalSource(null);
+                }}
+                onEditSourceNameChange={setEditSourceName}
+                onEditSourceUrlChange={setEditSourceUrl}
+                onEditSourceProviderChange={setEditSourceProvider}
+                onEditSourceIdentifierChange={setEditSourceIdentifier}
+                onEditSyncIntervalChange={setEditSyncInterval}
+            />
 
             {sourcePendingDelete ? (
                 <SourceDeleteDialog
