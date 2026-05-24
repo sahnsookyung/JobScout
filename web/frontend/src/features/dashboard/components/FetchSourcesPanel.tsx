@@ -867,10 +867,10 @@ function SourceDeleteDialog({
             }
         }
 
-        window.addEventListener('keydown', handleWindowKeyDown);
+        globalThis.addEventListener('keydown', handleWindowKeyDown);
 
         return () => {
-            window.removeEventListener('keydown', handleWindowKeyDown);
+            globalThis.removeEventListener('keydown', handleWindowKeyDown);
             if (dialog?.open) {
                 if (typeof dialog.close === 'function') {
                     dialog.close();
