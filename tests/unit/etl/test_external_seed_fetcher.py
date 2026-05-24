@@ -9,15 +9,14 @@ import pytest
 import requests
 
 import etl.external_seed_fetcher as external_seed_fetcher
-from etl.external_seed_fetcher import (
-    ExternalSeedFetchError,
-    ExternalSeedFetchResult,
-    ExternalSeedFetcherClient,
-    ExternalSeedFetcherConfig,
-    ExternalSeedJob,
-    fetch_and_import_external_seed_source,
-)
 from etl.import_models import NormalizedJobRecord
+
+ExternalSeedFetchError = external_seed_fetcher.ExternalSeedFetchError
+ExternalSeedFetchResult = external_seed_fetcher.ExternalSeedFetchResult
+ExternalSeedFetcherClient = external_seed_fetcher.ExternalSeedFetcherClient
+ExternalSeedFetcherConfig = external_seed_fetcher.ExternalSeedFetcherConfig
+ExternalSeedJob = external_seed_fetcher.ExternalSeedJob
+fetch_and_import_external_seed_source = external_seed_fetcher.fetch_and_import_external_seed_source
 
 
 def _config(**overrides: Any) -> ExternalSeedFetcherConfig:

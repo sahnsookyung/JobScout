@@ -61,7 +61,6 @@ def _request_tenant_id(request: Request) -> uuid.UUID | None:
         return uuid.UUID(tenant_header)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="X-Tenant-Id must be a UUID.") from exc
-    return None
 
 
 def _service(db: Session) -> ResumeVariantService:
