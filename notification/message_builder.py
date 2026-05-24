@@ -1,5 +1,7 @@
+import html
 import re
 from typing import List, Optional, Dict, Any
+from urllib.parse import urlparse
 from database.models import JobMatch, JobPost
 from pydantic import BaseModel
 
@@ -42,6 +44,16 @@ JobNotificationContent.model_rebuild()
 
 class NotificationMessageBuilder:
     @staticmethod
+    def _safe_link_url(value: Optional[str]) -> Optional[str]:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        parsed = urlparse(raw)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        return raw
+
+    @staticmethod
     def _safe_optional_float(value: Any) -> Optional[float]:
         if value is None:
             return None
@@ -64,8 +76,9 @@ class NotificationMessageBuilder:
     @staticmethod
     def build_apply_section(apply_url: Optional[str], job_post: JobPost) -> str:
         """Build apply link section."""
-        if apply_url:
-            return f"🔗 [Apply Here]({apply_url})"
+        safe_apply_url = NotificationMessageBuilder._safe_link_url(apply_url)
+        if safe_apply_url:
+            return f"🔗 [Apply Here]({safe_apply_url})"
         
         if hasattr(job_post, 'emails') and job_post.emails:
             emails = job_post.emails if isinstance(job_post.emails, list) else [job_post.emails]
@@ -280,9 +293,10 @@ class NotificationMessageBuilder:
         else:
             lines.append(f"⚠️ **{req_matched}/{req_total}** requirements matched")
         
-        if content.apply_url:
+        safe_apply_url = NotificationMessageBuilder._safe_link_url(content.apply_url)
+        if safe_apply_url:
             lines.append("")
-            lines.append(f"🔗 [Apply Here]({content.apply_url})")
+            lines.append(f"🔗 [Apply Here]({safe_apply_url})")
 
         if content.job.description:
             lines.append("")
@@ -302,18 +316,13 @@ class NotificationMessageBuilder:
     def to_html(content: JobNotificationContent) -> str:
         """Convert notification content to HTML format (for Telegram/Email)."""
         markdown = NotificationMessageBuilder.to_markdown(content)
-        
-        html = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', markdown)
-        html = html.replace("🎯 ", "<b>🎯 ")
-        html = html.replace("🏢 ", "</b><br/>🏢 ")
-        html = html.replace("💰 ", "<br/>💰 ")
-        html = html.replace("📊 ", "<br/>📊 ")
-        html = html.replace("✅ ", "<br/>✅ ")
-        html = html.replace("🔗 ", "<br/>🔗 ")
-        html = html.replace("🔍 ", "<br/>🔍 ")
-        html = html.replace("─" * 40, "<hr/>")
-        
-        return html
+
+        rendered = html.escape(markdown, quote=False)
+        rendered = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', rendered)
+        rendered = rendered.replace("─" * 40, "<hr/>")
+        rendered = rendered.replace("\n", "<br/>")
+
+        return rendered
     
     @staticmethod
     def to_discord_embed(content: JobNotificationContent) -> Dict[str, Any]:
@@ -367,10 +376,11 @@ class NotificationMessageBuilder:
                 "inline": False
             })
         
-        if content.apply_url:
+        safe_apply_url = NotificationMessageBuilder._safe_link_url(content.apply_url)
+        if safe_apply_url:
             fields.append({
                 "name": "🔗 Apply",
-                "value": f"[Apply Here]({content.apply_url})",
+                "value": f"[Apply Here]({safe_apply_url})",
                 "inline": True
             })
         

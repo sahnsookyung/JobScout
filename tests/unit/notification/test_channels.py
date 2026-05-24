@@ -134,9 +134,15 @@ class TestURLValidation:
         """Test valid HTTPS URL passes validation."""
         assert _validate_webhook_url('https://example.com/webhook') is True
 
-    def test_validate_webhook_url_valid_http(self):
-        """Test valid HTTP URL passes validation."""
-        assert _validate_webhook_url('http://example.com/webhook') is True
+    def test_validate_webhook_url_rejects_http_in_production(self):
+        """Test plain HTTP is rejected outside local development."""
+        with patch('notification.channels._current_environment', return_value='production'):
+            assert _validate_webhook_url('http://example.com/webhook') is False
+
+    def test_validate_webhook_url_allows_http_in_development(self):
+        """Test local development can still use HTTP webhook sinks."""
+        with patch('notification.channels._current_environment', return_value='development'):
+            assert _validate_webhook_url('http://example.com/webhook') is True
 
     def test_validate_webhook_url_invalid_scheme(self):
         """Test invalid schemes are rejected."""
@@ -148,18 +154,22 @@ class TestURLValidation:
         """Test URLs without hostname are rejected."""
         assert _validate_webhook_url('https:///path') is False
 
+    def test_validate_webhook_url_rejects_credentials(self):
+        """Test URL userinfo is rejected to avoid confusing host parsing/logging."""
+        assert _validate_webhook_url('https://user:pass@example.com/webhook') is False
+
     def test_validate_webhook_url_private_ip_loopback(self):
         """Test private/loopback IPs are rejected (SSRF protection)."""
         with patch('notification.channels._current_environment', return_value='production'):
-            assert _validate_webhook_url('http://127.0.0.1/webhook') is False
-            assert _validate_webhook_url('http://localhost/webhook') is False
+            assert _validate_webhook_url('https://127.0.0.1/webhook') is False
+            assert _validate_webhook_url('https://localhost/webhook') is False
 
     def test_validate_webhook_url_private_ip_range(self):
         """Test private IP ranges are rejected."""
         with patch('notification.channels._current_environment', return_value='production'):
-            assert _validate_webhook_url('http://192.168.1.1/webhook') is False
-            assert _validate_webhook_url('http://10.0.0.1/webhook') is False
-            assert _validate_webhook_url('http://172.16.0.1/webhook') is False
+            assert _validate_webhook_url('https://192.168.1.1/webhook') is False
+            assert _validate_webhook_url('https://10.0.0.1/webhook') is False
+            assert _validate_webhook_url('https://172.16.0.1/webhook') is False
 
     def test_validate_webhook_url_invalid_hostname(self, caplog):
         """Test unresolvable hostnames are rejected."""
@@ -187,6 +197,7 @@ class TestHTMLSanitization:
         """Test malformed URL returns None."""
         result = _sanitize_url('not-a-url')
         assert result is None
+        assert _sanitize_url('https:///path') is None
 
     def test_escape_html_basic(self):
         """Test basic HTML escaping."""
@@ -1064,6 +1075,7 @@ class TestDiscordChannelUncoveredPaths:
         payload = mock_post.call_args[1]['json']
         assert payload['embeds'][0]['title'] == 'Alert Subject'
         assert payload['embeds'][0]['fields'][0]['value'] == '[View all matches](https://jobscout.example/?tier=all)'
+        assert payload['allowed_mentions'] == {'parse': []}
 
     @patch('notification.channels.requests.post', side_effect=Exception("network error"))
     def test_discord_exception_raises_transient_error(self, mock_post, caplog):

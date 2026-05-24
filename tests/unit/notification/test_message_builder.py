@@ -147,6 +147,25 @@ class TestHtmlFormatting:
         assert "<br/>📊 Fit: <b>82%</b>" in html
         assert "<br/>🔗 [Apply Here]" in html
 
+    def test_to_html_escapes_untrusted_job_fields(self):
+        html = NotificationMessageBuilder.to_html(
+            _content(
+                job=JobInfo(
+                    title="<img src=x onerror=alert(1)>",
+                    company="A&B <script>",
+                    location="Remote",
+                    is_remote=True,
+                    description="<script>alert(1)</script>",
+                ),
+                apply_url=None,
+            )
+        )
+
+        assert "<script>" not in html
+        assert "<img" not in html
+        assert "&lt;script&gt;" in html
+        assert "&lt;img src=x onerror=alert(1)&gt;" in html
+
 
 class TestDiscordEmbedFormatting:
     def test_to_discord_embed_basic(self):
@@ -183,6 +202,12 @@ class TestDiscordEmbedFormatting:
             field for field in embed["fields"] if field["name"] == "📝 Description"
         )
         assert len(description_field["value"]) <= 203
+
+    def test_to_discord_embed_omits_unsafe_apply_url(self):
+        embed = NotificationMessageBuilder.to_discord_embed(
+            _content(apply_url="javascript:alert(1)")
+        )
+        assert all(field["name"] != "🔗 Apply" for field in embed["fields"])
 
 
 class TestBatchFormatting:
@@ -233,6 +258,13 @@ class TestHelpers:
             _make_mock_job_post(),
         )
         assert "[Apply Here]" in apply
+
+    def test_build_apply_section_omits_unsafe_url(self):
+        apply = NotificationMessageBuilder.build_apply_section(
+            "javascript:alert(1)",
+            _make_mock_job_post(),
+        )
+        assert apply == ""
 
     def test_build_apply_section_with_email(self):
         apply = NotificationMessageBuilder.build_apply_section(
