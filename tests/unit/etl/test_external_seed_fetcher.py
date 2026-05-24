@@ -149,6 +149,7 @@ def test_external_seed_client_signs_worker_request(monkeypatch) -> None:
     body = captured["data"]
     headers = captured["headers"]
     assert json.loads(body)["limit"] == 5
+    assert headers["User-Agent"].startswith("JobScout external seed fetcher")
     assert headers["X-JobScout-Body-SHA256"] == hashlib.sha256(body).hexdigest()
     assert headers["X-JobScout-Signature"].startswith("v1=")
     assert captured["stream"] is True

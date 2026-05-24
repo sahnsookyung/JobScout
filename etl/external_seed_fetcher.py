@@ -310,6 +310,7 @@ def _signature_headers(
     signature = hmac.new(secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256)
     return {
         "Content-Type": "application/json",
+        "User-Agent": "JobScout external seed fetcher (+https://jobscout.sookyungahn.com)",
         "X-JobScout-Timestamp": str(timestamp),
         "X-JobScout-Request-Id": request_id,
         "X-JobScout-Body-SHA256": body_hash,
