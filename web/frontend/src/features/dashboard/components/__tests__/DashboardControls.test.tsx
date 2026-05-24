@@ -1618,6 +1618,240 @@ describe('DashboardControls', () => {
             expect(within(sourceCard).queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
         });
 
+        it('renders only backend-permitted managed source actions', async () => {
+            mockPipelineApi.getCloudIntegrations.mockResolvedValueOnce({ status: 200, data: [] });
+            mockPipelineApi.getUserAtsSources.mockResolvedValueOnce({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-sync-only',
+                        tenant_id: 'tenant-1',
+                        provider: 'lever',
+                        display_name: 'Sync Only Source',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://jobs.lever.co/sync-only',
+                        created_at: null,
+                        updated_at: null,
+                        can_manage: true,
+                        allowed_actions: ['sync'],
+                    },
+                    {
+                        id: 'source-edit-only',
+                        tenant_id: 'tenant-1',
+                        provider: 'greenhouse',
+                        display_name: 'Edit Only Source',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://boards.greenhouse.io/edit-only',
+                        created_at: null,
+                        updated_at: null,
+                        can_manage: true,
+                        allowed_actions: ['edit'],
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Sync Only Source')).toBeInTheDocument();
+            });
+            const syncCard = screen.getByText('Sync Only Source').closest('div[class*="group"]') as HTMLElement;
+            expect(within(syncCard).getByRole('button', { name: /sync/i })).toBeInTheDocument();
+            expect(within(syncCard).queryByRole('button', { name: /disable/i })).not.toBeInTheDocument();
+            expect(within(syncCard).queryByRole('button', { name: /edit/i })).not.toBeInTheDocument();
+            expect(within(syncCard).queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
+
+            const editCard = screen.getByText('Edit Only Source').closest('div[class*="group"]') as HTMLElement;
+            expect(within(editCard).queryByRole('button', { name: /sync/i })).not.toBeInTheDocument();
+            expect(within(editCard).queryByRole('button', { name: /disable/i })).not.toBeInTheDocument();
+            expect(within(editCard).getByRole('button', { name: /edit/i })).toBeInTheDocument();
+            expect(within(editCard).queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
+        });
+
+        it('guards stale managed source action clicks when permissions change under the rendered card', async () => {
+            const allowedActions = ['sync', 'edit', 'disable', 'delete'];
+            mockPipelineApi.getCloudIntegrations.mockResolvedValueOnce({ status: 200, data: [] });
+            mockPipelineApi.getUserAtsSources.mockResolvedValueOnce({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-stale-actions',
+                        tenant_id: 'tenant-1',
+                        provider: 'lever',
+                        display_name: 'Stale Action Source',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://jobs.lever.co/stale',
+                        created_at: null,
+                        updated_at: null,
+                        can_manage: true,
+                        allowed_actions: allowedActions,
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Stale Action Source')).toBeInTheDocument();
+            });
+            const sourceCard = screen.getByText('Stale Action Source').closest('div[class*="group"]') as HTMLElement;
+            const syncButton = within(sourceCard).getByRole('button', { name: /sync/i });
+            const disableButton = within(sourceCard).getByRole('button', { name: /disable/i });
+            const editButton = within(sourceCard).getByRole('button', { name: /edit/i });
+            const deleteButton = within(sourceCard).getByRole('button', { name: /delete/i });
+
+            allowedActions.length = 0;
+
+            await userEvent.click(editButton);
+            expect(toast.error).toHaveBeenCalledWith('You do not have permission to edit this source.');
+            await userEvent.click(deleteButton);
+            expect(toast.error).toHaveBeenCalledWith('You do not have permission to delete this source.');
+            await userEvent.click(syncButton);
+            expect(toast.error).toHaveBeenCalledWith('You do not have permission to sync this source.');
+            await userEvent.click(disableButton);
+            expect(toast.error).toHaveBeenCalledWith(
+                'You do not have permission to change this source status.'
+            );
+        });
+
+        it('guards stale edit submissions when source edit permission is revoked mid-edit', async () => {
+            const allowedActions = ['edit'];
+            mockPipelineApi.getCloudIntegrations.mockResolvedValueOnce({ status: 200, data: [] });
+            mockPipelineApi.getUserAtsSources.mockResolvedValueOnce({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-edit-revoked',
+                        tenant_id: 'tenant-1',
+                        provider: 'greenhouse',
+                        display_name: 'Revoked Edit Source',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://boards.greenhouse.io/revoked',
+                        created_at: null,
+                        updated_at: null,
+                        can_manage: true,
+                        allowed_actions: allowedActions,
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Revoked Edit Source')).toBeInTheDocument();
+            });
+            const sourceCard = screen.getByText('Revoked Edit Source').closest('div[class*="group"]') as HTMLElement;
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /edit/i }));
+
+            allowedActions.length = 0;
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /save/i }));
+            expect(toast.error).toHaveBeenCalledWith('You do not have permission to edit this source.');
+            expect(mockPipelineApi.updateUserAtsSource).not.toHaveBeenCalled();
+        });
+
+        it('guards stale delete confirmations for user and workspace sources', async () => {
+            const userAllowedActions = ['delete'];
+            const workspaceAllowedActions = ['delete'];
+            mockPipelineApi.getCloudIntegrations.mockResolvedValueOnce({
+                status: 200,
+                data: [
+                    {
+                        id: 'integration-delete-revoked',
+                        tenant_id: 'tenant-1',
+                        provider: 'ashby',
+                        display_name: 'Workspace Delete Revoked',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        can_manage: true,
+                        allowed_actions: workspaceAllowedActions,
+                    },
+                ],
+            });
+            mockPipelineApi.getUserAtsSources.mockResolvedValueOnce({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-delete-revoked',
+                        tenant_id: 'tenant-1',
+                        provider: 'greenhouse',
+                        display_name: 'User Delete Revoked',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://boards.greenhouse.io/delete-revoked',
+                        created_at: null,
+                        updated_at: null,
+                        can_manage: true,
+                        allowed_actions: userAllowedActions,
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('User Delete Revoked')).toBeInTheDocument();
+            });
+            const userCard = screen.getByText('User Delete Revoked').closest('div[class*="group"]') as HTMLElement;
+            await userEvent.click(within(userCard).getByRole('button', { name: /delete/i }));
+            userAllowedActions.length = 0;
+            await userEvent.click(screen.getByRole('button', { name: /delete source/i }));
+            expect(toast.error).toHaveBeenCalledWith('You do not have permission to delete this source.');
+            expect(mockPipelineApi.deleteUserAtsSource).not.toHaveBeenCalled();
+            await userEvent.click(screen.getByRole('button', { name: /cancel/i }));
+
+            const workspaceCard = screen.getByText('Workspace Delete Revoked').closest('div[class*="group"]') as HTMLElement;
+            await userEvent.click(within(workspaceCard).getByRole('button', { name: /delete/i }));
+            workspaceAllowedActions.length = 0;
+            await userEvent.click(screen.getByRole('button', { name: /delete source/i }));
+            expect(toast.error).toHaveBeenCalledWith('You do not have permission to delete this source.');
+            expect(mockPipelineApi.deleteCloudIntegration).not.toHaveBeenCalled();
+        });
+
         it('lets users update a managed ATS source name and sync interval', async () => {
             mockPipelineApi.getUserAtsSources.mockResolvedValue({
                 status: 200,
