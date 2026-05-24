@@ -52,7 +52,7 @@ jobs:
         run: |
           GRYPE_VERSION="0.110.0"
           GRYPE_EXPECTED_SHA256="aaa98d27d2d7efd9317c6a1ad6d9b15f3e65bab320e7d03bde41e251387bb71c"
-          curl -sSLo grype.tar.gz \
+          curl --retry 5 --retry-delay 2 --retry-all-errors -fsSLo grype.tar.gz \
             "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
           echo "${GRYPE_EXPECTED_SHA256}  grype.tar.gz" | sha256sum -c
           tar -xzf grype.tar.gz grype
@@ -95,10 +95,10 @@ jobs:
           retention-days: ${{ inputs.artifact-retention-days }}
 
       - name: Upload SARIF to GitHub Security tab
-        # github/codeql-action v3.28.13 — verified 2026-03-30 (same SHA as CodeQL steps).
+        # github/codeql-action v4.35.5 — verified 2026-05-24 (same SHA as CodeQL steps).
         # Skipped on fork PRs: the GITHUB_TOKEN in that context lacks security-events:write.
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225
+        uses: github/codeql-action/upload-sarif@9e0d7b8d25671d64c341c19c0152d693099fb5ba
         with:
           sarif_file: grype.sarif
           category: grype

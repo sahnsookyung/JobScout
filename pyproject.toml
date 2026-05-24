@@ -37,7 +37,7 @@ web = [
     "fastapi>=0.128.1",
     "uvicorn>=0.40.0",
     "pydantic>=2.12.5",
-    "python-multipart>=0.0.28",
+    "python-multipart>=0.0.29",
     "slowapi>=0.1.9",
     "python-dotenv>=1.2.2",
 ]
@@ -46,9 +46,9 @@ fit-models = [
     # and sentence-transformers both pull in transformers; we pin it explicitly
     # so the reranker route does not silently degrade when a transitive bump
     # breaks FlagAutoReranker or CrossEncoder import paths.
-    "FlagEmbedding==1.3.5",
-    "sentence-transformers==5.4.1",
-    "transformers==5.5.4",
+    "FlagEmbedding==1.4.0",
+    "sentence-transformers==5.5.0",
+    "transformers==5.8.1",
 ]
 
 [build-system]
