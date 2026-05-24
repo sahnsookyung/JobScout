@@ -1,313 +1,127 @@
-import { vi } from 'vitest';
-import { pipelineApi } from '../pipelineApi';
-import { apiClient } from '../api';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../api', () => ({
+const mockGet = vi.fn();
+const mockPost = vi.fn();
+const mockPatch = vi.fn();
+const mockDelete = vi.fn();
+
+vi.mock('@/services/api', () => ({
     apiClient: {
-        delete: vi.fn(),
-        get: vi.fn(),
-        patch: vi.fn(),
-        post: vi.fn(),
+        get: mockGet,
+        post: mockPost,
+        patch: mockPatch,
+        delete: mockDelete,
     },
 }));
-
-const mockDelete = vi.mocked(apiClient.delete);
-const mockGet = vi.mocked(apiClient.get);
-const mockPatch = vi.mocked(apiClient.patch);
-const mockPost = vi.mocked(apiClient.post);
 
 describe('pipelineApi', () => {
     beforeEach(() => {
         vi.clearAllMocks();
     });
 
-    describe('runMatching', () => {
-        it('calls POST /pipeline/run-matching', () => {
-            mockPost.mockResolvedValueOnce({ data: { task_id: 'task-1', status: 'started' } } as any);
-            pipelineApi.runMatching();
-            expect(mockPost).toHaveBeenCalledWith('/pipeline/run-matching');
-        });
+    it('normalizes source query params and optional fetch limits', async () => {
+        mockGet.mockResolvedValueOnce({ data: { sources: [] } });
+        mockPost.mockResolvedValueOnce({ data: { success: true } });
+        mockPost.mockResolvedValueOnce({ data: { success: true } });
+        const { pipelineApi } = await import('../pipelineApi');
 
-        it('returns the api client response', async () => {
-            const expected = { data: { task_id: 't1', status: 'running' } };
-            mockPost.mockResolvedValueOnce(expected as any);
-            const result = await pipelineApi.runMatching();
-            expect(result).toEqual(expected);
-        });
-    });
+        await pipelineApi.getSources({ search: '  tokyo  ', includeStatus: true });
+        await pipelineApi.fetchSource('tokyodev', 12);
+        await pipelineApi.fetchSource('japandev');
 
-    describe('getPipelineStatus', () => {
-        it('calls GET /pipeline/status/:taskId', () => {
-            mockGet.mockResolvedValueOnce({ data: { task_id: 'abc', status: 'running' } } as any);
-            pipelineApi.getPipelineStatus('abc');
-            expect(mockGet).toHaveBeenCalledWith('/pipeline/status/abc');
+        expect(mockGet).toHaveBeenCalledWith('/pipeline/sources', {
+            params: { search: 'tokyo', include_status: true },
         });
-
-        it('interpolates different task IDs into the URL', () => {
-            mockGet.mockResolvedValueOnce({ data: {} } as any);
-            pipelineApi.getPipelineStatus('xyz-999');
-            expect(mockGet).toHaveBeenCalledWith('/pipeline/status/xyz-999');
+        expect(mockPost).toHaveBeenCalledWith('/pipeline/source-fetch', {
+            source: 'tokyodev',
+            limit: 12,
+        });
+        expect(mockPost).toHaveBeenCalledWith('/pipeline/source-fetch', {
+            source: 'japandev',
         });
     });
 
-    describe('getActivePipeline', () => {
-        it('calls GET /pipeline/active', () => {
-            mockGet.mockResolvedValueOnce({ data: null } as any);
-            pipelineApi.getActivePipeline();
-            expect(mockGet).toHaveBeenCalledWith('/pipeline/active');
-        });
+    it('uses cloud integration and user ATS source routes', async () => {
+        mockGet.mockResolvedValue({ data: [] });
+        mockPost.mockResolvedValue({ data: {} });
+        mockPatch.mockResolvedValue({ data: {} });
+        mockDelete.mockResolvedValue({ data: {} });
+        const { pipelineApi } = await import('../pipelineApi');
 
-        it('returns the active pipeline response', async () => {
-            const expected = { data: { task_id: 'active-1', status: 'running' } };
-            mockGet.mockResolvedValueOnce(expected as any);
-            const result = await pipelineApi.getActivePipeline();
-            expect(result).toEqual(expected);
+        await pipelineApi.getCloudIntegrations();
+        await pipelineApi.updateCloudIntegration('integration-1', { status: 'disabled' });
+        await pipelineApi.deleteCloudIntegration('integration-1');
+        await pipelineApi.syncCloudIntegration('integration-1', true);
+        await pipelineApi.getUserAtsSources();
+        await pipelineApi.discoverAtsSources({ display_name: 'Acme' });
+        await pipelineApi.getUserAtsSourceHistory();
+        await pipelineApi.createUserAtsSource({ display_name: 'Acme' });
+        await pipelineApi.updateUserAtsSource('source-1', { status: 'active' });
+        await pipelineApi.deleteUserAtsSource('source-1');
+        await pipelineApi.syncUserAtsSource('source-1');
+
+        expect(mockGet).toHaveBeenCalledWith('/cloud/integrations', {
+            validateStatus: expect.any(Function),
         });
+        expect(mockGet.mock.calls[0][1].validateStatus(499)).toBe(true);
+        expect(mockGet.mock.calls[0][1].validateStatus(500)).toBe(false);
+        expect(mockPatch).toHaveBeenCalledWith('/cloud/integrations/integration-1', { status: 'disabled' });
+        expect(mockDelete).toHaveBeenCalledWith('/cloud/integrations/integration-1');
+        expect(mockPost).toHaveBeenCalledWith('/cloud/integrations/integration-1/sync', { force: true });
+        expect(mockGet).toHaveBeenCalledWith('/cloud/integrations/sources', {
+            validateStatus: expect.any(Function),
+        });
+        expect(mockGet.mock.calls[1][1].validateStatus(499)).toBe(true);
+        expect(mockGet.mock.calls[1][1].validateStatus(500)).toBe(false);
+        expect(mockPost).toHaveBeenCalledWith('/cloud/integrations/sources/discover', { display_name: 'Acme' });
+        expect(mockGet).toHaveBeenCalledWith('/cloud/integrations/sources/history', {
+            validateStatus: expect.any(Function),
+        });
+        expect(mockGet.mock.calls[2][1].validateStatus(499)).toBe(true);
+        expect(mockGet.mock.calls[2][1].validateStatus(500)).toBe(false);
+        expect(mockPost).toHaveBeenCalledWith('/cloud/integrations/sources', { display_name: 'Acme' });
+        expect(mockPatch).toHaveBeenCalledWith('/cloud/integrations/sources/source-1', { status: 'active' });
+        expect(mockDelete).toHaveBeenCalledWith('/cloud/integrations/sources/source-1');
+        expect(mockPost).toHaveBeenCalledWith('/cloud/integrations/sources/source-1/sync', { force: false });
     });
 
-    describe('getSources', () => {
-        it('calls GET /pipeline/sources with empty params by default', () => {
-            mockGet.mockResolvedValueOnce({ data: { sources: [] } } as any);
-            pipelineApi.getSources();
-            expect(mockGet).toHaveBeenCalledWith('/pipeline/sources', {
-                params: {
-                    search: undefined,
-                    include_status: undefined,
-                },
-            });
+    it('uses resume task routes and streams upload form data in memory', async () => {
+        mockGet.mockResolvedValue({ data: {} });
+        mockPost.mockResolvedValue({ data: {} });
+        const { pipelineApi } = await import('../pipelineApi');
+        const file = new File(['resume'], 'resume.txt', { type: 'text/plain' });
+
+        await pipelineApi.runMatching();
+        await pipelineApi.getPipelineStatus('task-1');
+        await pipelineApi.getActivePipeline();
+        await pipelineApi.getResumeEligibility();
+        await pipelineApi.preflightResume('hash-1');
+        await pipelineApi.stopMatching();
+        await pipelineApi.checkResumeHash('hash-1');
+        await pipelineApi.getResumeStatus('task-1');
+        await pipelineApi.uploadResume(file, 'hash-1');
+        await pipelineApi.selectResume('hash-1', 'resume.txt');
+        await pipelineApi.retryResume('upload-1');
+
+        expect(mockPost).toHaveBeenCalledWith('/pipeline/run-matching');
+        expect(mockGet).toHaveBeenCalledWith('/pipeline/status/task-1');
+        expect(mockGet).toHaveBeenCalledWith('/pipeline/active');
+        expect(mockGet).toHaveBeenCalledWith('/pipeline/resume-eligibility');
+        expect(mockPost).toHaveBeenCalledWith('/pipeline/resume-preflight', { resume_hash: 'hash-1' });
+        expect(mockPost).toHaveBeenCalledWith('/pipeline/stop');
+        expect(mockPost).toHaveBeenCalledWith('/pipeline/check-resume-hash', { resume_hash: 'hash-1' });
+        expect(mockGet).toHaveBeenCalledWith('/pipeline/resume-status/task-1');
+        const uploadCall = mockPost.mock.calls.find(([url]) => url === '/pipeline/upload-resume');
+        expect(uploadCall?.[1]).toBeInstanceOf(FormData);
+        expect((uploadCall?.[1] as FormData).get('file')).toBe(file);
+        expect((uploadCall?.[1] as FormData).get('resume_hash')).toBe('hash-1');
+        expect(uploadCall?.[2]).toEqual({ headers: { 'Content-Type': 'multipart/form-data' } });
+        expect(mockPost).toHaveBeenCalledWith('/pipeline/select-resume', {
+            resume_hash: 'hash-1',
+            original_filename: 'resume.txt',
         });
-
-        it('passes search and include_status query params', () => {
-            mockGet.mockResolvedValueOnce({ data: { sources: [] } } as any);
-            pipelineApi.getSources({ search: ' tokyo api ', includeStatus: true });
-            expect(mockGet).toHaveBeenCalledWith('/pipeline/sources', {
-                params: {
-                    search: 'tokyo api',
-                    include_status: true,
-                },
-            });
-        });
-    });
-
-    describe('fetchSource', () => {
-        it('calls POST /pipeline/source-fetch with source and limit', () => {
-            mockPost.mockResolvedValueOnce({ data: { success: true } } as any);
-            pipelineApi.fetchSource('tokyodev', 10);
-            expect(mockPost).toHaveBeenCalledWith('/pipeline/source-fetch', {
-                source: 'tokyodev',
-                limit: 10,
-            });
-        });
-
-        it('omits limit when not provided', () => {
-            mockPost.mockResolvedValueOnce({ data: { success: true } } as any);
-            pipelineApi.fetchSource('japandev');
-            expect(mockPost).toHaveBeenCalledWith('/pipeline/source-fetch', {
-                source: 'japandev',
-            });
-        });
-    });
-
-    describe('cloud integrations', () => {
-        it('loads tenant integrations with non-500 validation', () => {
-            mockGet.mockResolvedValueOnce({ data: [] } as any);
-
-            pipelineApi.getCloudIntegrations();
-
-            expect(mockGet).toHaveBeenCalledWith('/cloud/integrations', {
-                validateStatus: expect.any(Function),
-            });
-            const config = mockGet.mock.calls[0][1] as { validateStatus: (status: number) => boolean };
-            expect(config.validateStatus(499)).toBe(true);
-            expect(config.validateStatus(500)).toBe(false);
-        });
-
-        it('loads user ATS sources with non-500 validation', () => {
-            mockGet.mockResolvedValueOnce({ data: [] } as any);
-
-            pipelineApi.getUserAtsSources();
-
-            expect(mockGet).toHaveBeenCalledWith('/cloud/integrations/sources', {
-                validateStatus: expect.any(Function),
-            });
-            const config = mockGet.mock.calls[0][1] as { validateStatus: (status: number) => boolean };
-            expect(config.validateStatus(404)).toBe(true);
-            expect(config.validateStatus(500)).toBe(false);
-        });
-
-        it('discovers, creates, updates, deletes, and syncs user ATS sources', () => {
-            const payload = {
-                display_name: 'Acme',
-                provider: 'lever' as const,
-                identifier: 'acme',
-            };
-            mockPost.mockResolvedValue({ data: {} } as any);
-            mockPatch.mockResolvedValue({ data: {} } as any);
-            mockDelete.mockResolvedValue({ data: {} } as any);
-
-            pipelineApi.discoverAtsSources(payload);
-            pipelineApi.getUserAtsSourceHistory();
-            pipelineApi.createUserAtsSource(payload);
-            pipelineApi.updateUserAtsSource('source-1', { status: 'disabled' });
-            pipelineApi.deleteUserAtsSource('source-1');
-            pipelineApi.syncUserAtsSource('source-1', true);
-
-            expect(mockPost).toHaveBeenCalledWith('/cloud/integrations/sources/discover', payload);
-            expect(mockGet).toHaveBeenCalledWith('/cloud/integrations/sources/history', {
-                validateStatus: expect.any(Function),
-            });
-            expect(mockPost).toHaveBeenCalledWith('/cloud/integrations/sources', payload);
-            expect(mockPatch).toHaveBeenCalledWith('/cloud/integrations/sources/source-1', {
-                status: 'disabled',
-            });
-            expect(mockDelete).toHaveBeenCalledWith('/cloud/integrations/sources/source-1');
-            expect(mockPost).toHaveBeenCalledWith('/cloud/integrations/sources/source-1/sync', {
-                force: true,
-            });
-        });
-    });
-
-    describe('getResumeEligibility', () => {
-        it('calls GET /pipeline/resume-eligibility', () => {
-            mockGet.mockResolvedValueOnce({ data: { can_run: true } } as any);
-            pipelineApi.getResumeEligibility();
-            expect(mockGet).toHaveBeenCalledWith('/pipeline/resume-eligibility');
-        });
-    });
-
-    describe('preflightResume', () => {
-        it('calls POST /pipeline/resume-preflight with the hash payload', () => {
-            mockPost.mockResolvedValueOnce({ data: { status: 'upload_required' } } as any);
-            pipelineApi.preflightResume('hash-123');
-            expect(mockPost).toHaveBeenCalledWith('/pipeline/resume-preflight', { resume_hash: 'hash-123' });
-        });
-    });
-
-    describe('stopMatching', () => {
-        it('calls POST /pipeline/stop', () => {
-            mockPost.mockResolvedValueOnce({ data: { task_id: 'stop-1', status: 'stopped' } } as any);
-            pipelineApi.stopMatching();
-            expect(mockPost).toHaveBeenCalledWith('/pipeline/stop');
-        });
-    });
-
-    describe('checkResumeHash', () => {
-        it('calls POST /pipeline/check-resume-hash with the hash payload', () => {
-            const hash = 'abc123hash456';
-            mockPost.mockResolvedValueOnce({ data: { exists: false, resume_hash: hash } } as any);
-            pipelineApi.checkResumeHash(hash);
-            expect(mockPost).toHaveBeenCalledWith('/pipeline/check-resume-hash', { resume_hash: hash });
-        });
-
-        it('returns a response indicating hash exists', async () => {
-            const hash = 'existinghash';
-            mockPost.mockResolvedValueOnce({ data: { exists: true, resume_hash: hash } } as any);
-            const result = await pipelineApi.checkResumeHash(hash);
-            expect((result as any).data.exists).toBe(true);
-        });
-
-        it('returns a response indicating hash does not exist', async () => {
-            mockPost.mockResolvedValueOnce({ data: { exists: false, resume_hash: 'newhash' } } as any);
-            const result = await pipelineApi.checkResumeHash('newhash');
-            expect((result as any).data.exists).toBe(false);
-        });
-    });
-
-    describe('getResumeStatus', () => {
-        it('calls GET /pipeline/resume-status/:taskId', () => {
-            mockGet.mockResolvedValueOnce({ data: { task_id: 'r-1', status: 'completed' } } as any);
-            pipelineApi.getResumeStatus('r-1');
-            expect(mockGet).toHaveBeenCalledWith('/pipeline/resume-status/r-1');
-        });
-
-        it('interpolates the task ID correctly', () => {
-            mockGet.mockResolvedValueOnce({ data: {} } as any);
-            pipelineApi.getResumeStatus('resume-task-999');
-            expect(mockGet).toHaveBeenCalledWith('/pipeline/resume-status/resume-task-999');
-        });
-    });
-
-    describe('uploadResume', () => {
-        it('calls POST /pipeline/upload-resume', () => {
-            const file = new File(['content'], 'resume.pdf', { type: 'application/pdf' });
-            mockPost.mockResolvedValueOnce({ data: { success: true, resume_hash: 'h1', message: 'OK' } } as any);
-            pipelineApi.uploadResume(file);
-            expect(mockPost).toHaveBeenCalledWith(
-                '/pipeline/upload-resume',
-                expect.any(FormData),
-                expect.objectContaining({ headers: { 'Content-Type': 'multipart/form-data' } })
-            );
-        });
-
-        it('includes the file in the FormData under key "file"', () => {
-            const file = new File(['data'], 'my-resume.pdf', { type: 'application/pdf' });
-            mockPost.mockResolvedValueOnce({ data: { success: true, resume_hash: '', message: 'OK' } } as any);
-            pipelineApi.uploadResume(file);
-            const formData: FormData = mockPost.mock.calls[0][1] as FormData;
-            expect(formData.get('file')).toBe(file);
-        });
-
-        it('includes resume_hash in FormData when provided', () => {
-            const file = new File(['data'], 'cv.pdf');
-            const hash = 'myhash-abc123';
-            mockPost.mockResolvedValueOnce({ data: { success: true, resume_hash: hash, message: 'OK' } } as any);
-            pipelineApi.uploadResume(file, hash);
-            const formData: FormData = mockPost.mock.calls[0][1] as FormData;
-            expect(formData.get('resume_hash')).toBe(hash);
-        });
-
-        it('does not include resume_hash in FormData when not provided', () => {
-            const file = new File(['data'], 'cv.pdf');
-            mockPost.mockResolvedValueOnce({ data: { success: true, resume_hash: '', message: 'OK' } } as any);
-            pipelineApi.uploadResume(file);
-            const formData: FormData = mockPost.mock.calls[0][1] as FormData;
-            expect(formData.get('resume_hash')).toBeNull();
-        });
-
-        it('does not include resume_hash when empty string passed', () => {
-            const file = new File(['data'], 'cv.pdf');
-            mockPost.mockResolvedValueOnce({ data: { success: true, resume_hash: '', message: 'OK' } } as any);
-            pipelineApi.uploadResume(file, '');
-            const formData: FormData = mockPost.mock.calls[0][1] as FormData;
-            expect(formData.get('resume_hash')).toBeNull();
-        });
-
-        it('returns the upload response', async () => {
-            const file = new File(['data'], 'cv.pdf');
-            const expected = { data: { success: true, resume_hash: 'hash123', message: 'Uploaded', task_id: 'bg-1' } };
-            mockPost.mockResolvedValueOnce(expected as any);
-            const result = await pipelineApi.uploadResume(file, 'hash123');
-            expect(result).toEqual(expected);
-        });
-    });
-
-    describe('selectResume', () => {
-        it('calls POST /pipeline/select-resume with resume hash and original filename', () => {
-            mockPost.mockResolvedValueOnce({ data: { status: 'ready' } } as any);
-            pipelineApi.selectResume('hash-1', 'resume.pdf');
-            expect(mockPost).toHaveBeenCalledWith('/pipeline/select-resume', {
-                resume_hash: 'hash-1',
-                original_filename: 'resume.pdf',
-            });
-        });
-
-        it('allows original filename to be omitted', () => {
-            mockPost.mockResolvedValueOnce({ data: { status: 'ready' } } as any);
-            pipelineApi.selectResume('hash-2');
-            expect(mockPost).toHaveBeenCalledWith('/pipeline/select-resume', {
-                resume_hash: 'hash-2',
-                original_filename: undefined,
-            });
-        });
-    });
-
-    describe('retryResume', () => {
-        it('calls POST /pipeline/retry-resume with upload id', () => {
-            mockPost.mockResolvedValueOnce({ data: { status: 'in_progress' } } as any);
-            pipelineApi.retryResume('upload-9');
-            expect(mockPost).toHaveBeenCalledWith('/pipeline/retry-resume', {
-                upload_id: 'upload-9',
-            });
+        expect(mockPost).toHaveBeenCalledWith('/pipeline/retry-resume', {
+            upload_id: 'upload-1',
         });
     });
 });

@@ -853,6 +853,214 @@ describe('DashboardControls', () => {
             });
         });
 
+        it('labels source job limits as fetch caps instead of current job counts', async () => {
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+
+            const tokyoDevCard = screen.getByText('TokyoDev').closest('div[class*="group"]') as HTMLElement;
+            expect(within(tokyoDevCard).getByText('Fetch cap')).toBeInTheDocument();
+            expect(within(tokyoDevCard).getByText('Max 5/fetch')).toBeInTheDocument();
+        });
+
+        it('renders distinct source health, outcome, and paused states', async () => {
+            mockPipelineApi.getSources.mockResolvedValueOnce({
+                data: {
+                    success: true,
+                    jobspy_url: null,
+                    api_based_fetching: true,
+                    search_query: null,
+                    total_count: 5,
+                    filtered_count: 5,
+                    seed_websites: [],
+                    sources: [
+                        {
+                            site_type: 'worker_ok',
+                            display_name: 'Worker OK',
+                            seed_url: 'https://www.tokyodev.com/jobs',
+                            description: 'Updated worker feed.',
+                            tags: ['seed'],
+                            search_keywords: ['worker'],
+                            fetch_mode: 'seed_website',
+                            provider_name: 'Worker seed fetcher',
+                            search_term: '',
+                            location: null,
+                            country: null,
+                            results_wanted: 7,
+                            hours_old: null,
+                            options: {},
+                            api_health: null,
+                            external_fetch_status: {
+                                enabled: true,
+                                configured: true,
+                                status: 'ok',
+                                provider: 'cloudflare_worker_seed',
+                                last_attempt_at: null,
+                                last_success_at: null,
+                                next_eligible_at: null,
+                                failure_class: null,
+                                budget_remaining: null,
+                            },
+                        },
+                        {
+                            site_type: 'worker_degraded',
+                            display_name: 'Worker Degraded',
+                            seed_url: 'https://japan-dev.com/jobs',
+                            description: 'Worker has warnings.',
+                            tags: ['seed'],
+                            search_keywords: ['worker'],
+                            fetch_mode: 'seed_website',
+                            provider_name: 'Worker seed fetcher',
+                            search_term: '',
+                            location: null,
+                            country: null,
+                            results_wanted: 7,
+                            hours_old: null,
+                            options: {},
+                            api_health: null,
+                            external_fetch_status: {
+                                enabled: true,
+                                configured: true,
+                                status: 'degraded',
+                                provider: 'cloudflare_worker_seed',
+                                last_attempt_at: null,
+                                last_success_at: null,
+                                next_eligible_at: null,
+                                failure_class: null,
+                                budget_remaining: undefined,
+                            },
+                        },
+                        {
+                            site_type: 'worker_paused',
+                            display_name: 'Worker Paused',
+                            seed_url: 'https://www.tokyodev.com/jobs',
+                            description: 'Worker is disabled.',
+                            tags: ['seed'],
+                            search_keywords: ['worker'],
+                            fetch_mode: 'seed_website',
+                            provider_name: 'Worker seed fetcher',
+                            search_term: '',
+                            location: null,
+                            country: null,
+                            results_wanted: 7,
+                            hours_old: null,
+                            options: {},
+                            api_health: null,
+                            external_fetch_status: {
+                                enabled: false,
+                                configured: true,
+                                status: 'disabled',
+                                provider: 'cloudflare_worker_seed',
+                                last_attempt_at: null,
+                                last_success_at: null,
+                                next_eligible_at: null,
+                                failure_class: null,
+                                budget_remaining: 0,
+                            },
+                        },
+                        {
+                            site_type: 'jobspy_timeout',
+                            display_name: 'JobSpy Timeout',
+                            seed_url: 'https://www.indeed.com',
+                            description: 'API timeout.',
+                            tags: ['api'],
+                            search_keywords: ['jobspy'],
+                            fetch_mode: 'jobspy_api',
+                            provider_name: 'JobSpy',
+                            search_term: 'engineer',
+                            location: null,
+                            country: null,
+                            results_wanted: 4,
+                            hours_old: null,
+                            options: {},
+                            api_health: {
+                                available: false,
+                                status: 'timeout',
+                                endpoint: 'https://jobspy.example/health',
+                                status_code: null,
+                                response_time_ms: null,
+                                error: 'timeout',
+                            },
+                        },
+                        {
+                            site_type: 'jobspy_unconfigured',
+                            display_name: 'JobSpy Unconfigured',
+                            seed_url: 'https://www.linkedin.com/jobs',
+                            description: 'API not configured.',
+                            tags: ['api'],
+                            search_keywords: ['jobspy'],
+                            fetch_mode: 'jobspy_api',
+                            provider_name: 'JobSpy',
+                            search_term: 'engineer',
+                            location: null,
+                            country: null,
+                            results_wanted: 4,
+                            hours_old: null,
+                            options: {},
+                            api_health: {
+                                available: false,
+                                status: 'not_configured',
+                                endpoint: null,
+                                status_code: null,
+                                response_time_ms: null,
+                                error: null,
+                            },
+                        },
+                    ],
+                },
+            });
+            mockPipelineApi.getUserAtsSources.mockResolvedValueOnce({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-initial-outcome',
+                        tenant_id: 'tenant-1',
+                        provider: 'greenhouse',
+                        display_name: 'Initial Outcome Source',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: 'invalid-date',
+                        last_error: 'Provider returned a warning',
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://boards.greenhouse.io/initial-outcome',
+                        created_at: null,
+                        updated_at: null,
+                        initial_sync: {
+                            status: 'completed',
+                            provider: 'greenhouse',
+                            run_id: 'run-initial',
+                            jobs_seen: 9,
+                            jobs_imported: 3,
+                            jobs_deactivated: 0,
+                            error_summary: null,
+                            retry_after_seconds: null,
+                        },
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Worker OK')).toBeInTheDocument();
+            });
+            expect(screen.getByText('Worker updated')).toBeInTheDocument();
+            expect(screen.getByText('Worker degraded')).toBeInTheDocument();
+            expect(screen.getByText('Worker disabled')).toBeInTheDocument();
+            expect(screen.getByText('JobSpy timeout')).toBeInTheDocument();
+            expect(screen.getByText('JobSpy not configured')).toBeInTheDocument();
+            expect(screen.getAllByText('Ready to fetch').length).toBeGreaterThan(0);
+            expect(screen.getAllByText('Check API health').length).toBeGreaterThan(0);
+            expect(screen.getByText('3 imported / 9 seen')).toBeInTheDocument();
+            expect(screen.getByText('Provider returned a warning')).toBeInTheDocument();
+        });
+
         it('shows discovery empty and error states without creating a source', async () => {
             mockPipelineApi.discoverAtsSources
                 .mockResolvedValueOnce({ data: [] })
@@ -976,6 +1184,18 @@ describe('DashboardControls', () => {
                         occurred_at: '2026-05-23T00:00:00Z',
                         readd_payload: null,
                     },
+                    {
+                        id: 'history-3',
+                        action: 'integration.user_source_sync_triggered',
+                        resource_id: 'source-synced',
+                        provider: 'ashby',
+                        display_name: 'Synced Gamma',
+                        identifier: 'gamma',
+                        source_url: 'https://jobs.ashbyhq.com/gamma',
+                        status: 'active',
+                        occurred_at: '2026-05-22T00:00:00Z',
+                        readd_payload: null,
+                    },
                 ],
             });
 
@@ -990,15 +1210,23 @@ describe('DashboardControls', () => {
                 expect(screen.getByText('Deleted Acme')).toBeInTheDocument();
             });
             expect(screen.getByText('Updated Beta')).toBeInTheDocument();
+            expect(screen.getByText('Synced Gamma')).toBeInTheDocument();
 
             await userEvent.click(screen.getByRole('button', { name: /deleted/i }));
             expect(screen.getByText('Deleted Acme')).toBeInTheDocument();
             expect(screen.queryByText('Updated Beta')).not.toBeInTheDocument();
+            expect(screen.queryByText('Synced Gamma')).not.toBeInTheDocument();
 
             await userEvent.click(screen.getByRole('button', { name: /recoverable/i }));
             expect(screen.getByText('Deleted Acme')).toBeInTheDocument();
             expect(screen.queryByText('Updated Beta')).not.toBeInTheDocument();
+            expect(screen.queryByText('Synced Gamma')).not.toBeInTheDocument();
 
+            await userEvent.click(screen.getByRole('button', { name: /synced/i }));
+            expect(screen.getByText('Synced Gamma')).toBeInTheDocument();
+            expect(screen.queryByText('Deleted Acme')).not.toBeInTheDocument();
+
+            await userEvent.click(screen.getByRole('button', { name: /recoverable/i }));
             await userEvent.click(screen.getByRole('button', { name: /re-add/i }));
 
             await waitFor(() => {
@@ -1350,6 +1578,278 @@ describe('DashboardControls', () => {
                 expect(mockPipelineApi.deleteCloudIntegration).toHaveBeenCalledWith('integration-1');
             });
             expect(mockPipelineApi.deleteUserAtsSource).not.toHaveBeenCalled();
+        });
+
+        it('hides workspace source actions when the API denies management', async () => {
+            mockPipelineApi.getCloudIntegrations.mockResolvedValueOnce({
+                status: 200,
+                data: [
+                    {
+                        id: 'integration-readonly',
+                        tenant_id: 'tenant-1',
+                        provider: 'greenhouse',
+                        display_name: 'Read Only ATS',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        source_kind: 'workspace',
+                        can_manage: false,
+                        allowed_actions: [],
+                        status_reason: 'Tenant admin required',
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Read Only ATS')).toBeInTheDocument();
+            });
+            const sourceCard = screen.getByText('Read Only ATS').closest('div[class*="group"]') as HTMLElement;
+
+            expect(within(sourceCard).getByText('Tenant admin required')).toBeInTheDocument();
+            expect(within(sourceCard).queryByRole('button', { name: /sync/i })).not.toBeInTheDocument();
+            expect(within(sourceCard).queryByRole('button', { name: /disable/i })).not.toBeInTheDocument();
+            expect(within(sourceCard).queryByRole('button', { name: /edit/i })).not.toBeInTheDocument();
+            expect(within(sourceCard).queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
+        });
+
+        it('renders only backend-permitted managed source actions', async () => {
+            mockPipelineApi.getCloudIntegrations.mockResolvedValueOnce({ status: 200, data: [] });
+            mockPipelineApi.getUserAtsSources.mockResolvedValueOnce({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-sync-only',
+                        tenant_id: 'tenant-1',
+                        provider: 'lever',
+                        display_name: 'Sync Only Source',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://jobs.lever.co/sync-only',
+                        created_at: null,
+                        updated_at: null,
+                        can_manage: true,
+                        allowed_actions: ['sync'],
+                    },
+                    {
+                        id: 'source-edit-only',
+                        tenant_id: 'tenant-1',
+                        provider: 'greenhouse',
+                        display_name: 'Edit Only Source',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://boards.greenhouse.io/edit-only',
+                        created_at: null,
+                        updated_at: null,
+                        can_manage: true,
+                        allowed_actions: ['edit'],
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Sync Only Source')).toBeInTheDocument();
+            });
+            const syncCard = screen.getByText('Sync Only Source').closest('div[class*="group"]') as HTMLElement;
+            expect(within(syncCard).getByRole('button', { name: /sync/i })).toBeInTheDocument();
+            expect(within(syncCard).queryByRole('button', { name: /disable/i })).not.toBeInTheDocument();
+            expect(within(syncCard).queryByRole('button', { name: /edit/i })).not.toBeInTheDocument();
+            expect(within(syncCard).queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
+
+            const editCard = screen.getByText('Edit Only Source').closest('div[class*="group"]') as HTMLElement;
+            expect(within(editCard).queryByRole('button', { name: /sync/i })).not.toBeInTheDocument();
+            expect(within(editCard).queryByRole('button', { name: /disable/i })).not.toBeInTheDocument();
+            expect(within(editCard).getByRole('button', { name: /edit/i })).toBeInTheDocument();
+            expect(within(editCard).queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
+        });
+
+        it('guards stale managed source action clicks when permissions change under the rendered card', async () => {
+            const allowedActions = ['sync', 'edit', 'disable', 'delete'];
+            mockPipelineApi.getCloudIntegrations.mockResolvedValueOnce({ status: 200, data: [] });
+            mockPipelineApi.getUserAtsSources.mockResolvedValueOnce({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-stale-actions',
+                        tenant_id: 'tenant-1',
+                        provider: 'lever',
+                        display_name: 'Stale Action Source',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://jobs.lever.co/stale',
+                        created_at: null,
+                        updated_at: null,
+                        can_manage: true,
+                        allowed_actions: allowedActions,
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Stale Action Source')).toBeInTheDocument();
+            });
+            const sourceCard = screen.getByText('Stale Action Source').closest('div[class*="group"]') as HTMLElement;
+            const syncButton = within(sourceCard).getByRole('button', { name: /sync/i });
+            const disableButton = within(sourceCard).getByRole('button', { name: /disable/i });
+            const editButton = within(sourceCard).getByRole('button', { name: /edit/i });
+            const deleteButton = within(sourceCard).getByRole('button', { name: /delete/i });
+
+            allowedActions.length = 0;
+
+            await userEvent.click(editButton);
+            expect(toast.error).toHaveBeenCalledWith('You do not have permission to edit this source.');
+            await userEvent.click(deleteButton);
+            expect(toast.error).toHaveBeenCalledWith('You do not have permission to delete this source.');
+            await userEvent.click(syncButton);
+            expect(toast.error).toHaveBeenCalledWith('You do not have permission to sync this source.');
+            await userEvent.click(disableButton);
+            expect(toast.error).toHaveBeenCalledWith(
+                'You do not have permission to change this source status.'
+            );
+        });
+
+        it('guards stale edit submissions when source edit permission is revoked mid-edit', async () => {
+            const allowedActions = ['edit'];
+            mockPipelineApi.getCloudIntegrations.mockResolvedValueOnce({ status: 200, data: [] });
+            mockPipelineApi.getUserAtsSources.mockResolvedValueOnce({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-edit-revoked',
+                        tenant_id: 'tenant-1',
+                        provider: 'greenhouse',
+                        display_name: 'Revoked Edit Source',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://boards.greenhouse.io/revoked',
+                        created_at: null,
+                        updated_at: null,
+                        can_manage: true,
+                        allowed_actions: allowedActions,
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Revoked Edit Source')).toBeInTheDocument();
+            });
+            const sourceCard = screen.getByText('Revoked Edit Source').closest('div[class*="group"]') as HTMLElement;
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /edit/i }));
+
+            allowedActions.length = 0;
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /save/i }));
+            expect(toast.error).toHaveBeenCalledWith('You do not have permission to edit this source.');
+            expect(mockPipelineApi.updateUserAtsSource).not.toHaveBeenCalled();
+        });
+
+        it('guards stale delete confirmations for user and workspace sources', async () => {
+            const userAllowedActions = ['delete'];
+            const workspaceAllowedActions = ['delete'];
+            mockPipelineApi.getCloudIntegrations.mockResolvedValueOnce({
+                status: 200,
+                data: [
+                    {
+                        id: 'integration-delete-revoked',
+                        tenant_id: 'tenant-1',
+                        provider: 'ashby',
+                        display_name: 'Workspace Delete Revoked',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        can_manage: true,
+                        allowed_actions: workspaceAllowedActions,
+                    },
+                ],
+            });
+            mockPipelineApi.getUserAtsSources.mockResolvedValueOnce({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-delete-revoked',
+                        tenant_id: 'tenant-1',
+                        provider: 'greenhouse',
+                        display_name: 'User Delete Revoked',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://boards.greenhouse.io/delete-revoked',
+                        created_at: null,
+                        updated_at: null,
+                        can_manage: true,
+                        allowed_actions: userAllowedActions,
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('User Delete Revoked')).toBeInTheDocument();
+            });
+            const userCard = screen.getByText('User Delete Revoked').closest('div[class*="group"]') as HTMLElement;
+            await userEvent.click(within(userCard).getByRole('button', { name: /delete/i }));
+            userAllowedActions.length = 0;
+            await userEvent.click(screen.getByRole('button', { name: /delete source/i }));
+            expect(toast.error).toHaveBeenCalledWith('You do not have permission to delete this source.');
+            expect(mockPipelineApi.deleteUserAtsSource).not.toHaveBeenCalled();
+            await userEvent.click(screen.getByRole('button', { name: /cancel/i }));
+
+            const workspaceCard = screen.getByText('Workspace Delete Revoked').closest('div[class*="group"]') as HTMLElement;
+            await userEvent.click(within(workspaceCard).getByRole('button', { name: /delete/i }));
+            workspaceAllowedActions.length = 0;
+            await userEvent.click(screen.getByRole('button', { name: /delete source/i }));
+            expect(toast.error).toHaveBeenCalledWith('You do not have permission to delete this source.');
+            expect(mockPipelineApi.deleteCloudIntegration).not.toHaveBeenCalled();
         });
 
         it('lets users update a managed ATS source name and sync interval', async () => {

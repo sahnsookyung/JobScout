@@ -129,6 +129,9 @@ describe('DashboardHeader', () => {
         expect(screen.getByRole('dialog', { name: /tenant diagnostics/i })).toBeInTheDocument();
         expect(screen.getByText('Operations status content')).toBeInTheDocument();
         expect(screen.queryByLabelText('Profile panel')).not.toBeInTheDocument();
+
+        await userEvent.click(screen.getAllByRole('button', { name: /close diagnostics/i })[0]);
+        expect(screen.queryByRole('dialog', { name: /tenant diagnostics/i })).not.toBeInTheDocument();
     });
 
     it('signs out from the profile panel', async () => {
@@ -150,6 +153,17 @@ describe('DashboardHeader', () => {
         expect(screen.getByLabelText('Profile panel')).toBeInTheDocument();
 
         fireEvent.mouseDown(document.body);
+
+        await waitFor(() => {
+            expect(screen.queryByLabelText('Profile panel')).not.toBeInTheDocument();
+        });
+    });
+
+    it('closes the profile panel on escape', async () => {
+        render(<DashboardHeader />);
+
+        await userEvent.click(screen.getByRole('button', { name: /open profile menu/i }));
+        fireEvent.keyDown(document, { key: 'Escape' });
 
         await waitFor(() => {
             expect(screen.queryByLabelText('Profile panel')).not.toBeInTheDocument();

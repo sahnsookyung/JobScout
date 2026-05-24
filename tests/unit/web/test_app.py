@@ -203,6 +203,10 @@ class TestReadRootEndpoint:
         assert resp.headers["referrer-policy"] == "strict-origin-when-cross-origin"
         assert "geolocation=()" in resp.headers["permissions-policy"]
         assert "frame-ancestors 'none'" in resp.headers["content-security-policy"]
+        assert (
+            "https://accounts.google.com/gsi/style"
+            in resp.headers["content-security-policy"]
+        )
 
     def test_returns_full_html_content(self, tmp_path):
         html = '<html><head><title>JobScout</title></head><body><div id="root"></div></body></html>'

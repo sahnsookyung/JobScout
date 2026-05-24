@@ -52,6 +52,11 @@ const OPERATIONAL_OPTION_KEYS = new Set([
     'initial_sync_jobs_seen',
     'initial_sync_jobs_imported',
     'initial_sync_jobs_deactivated',
+    'source_kind',
+    'can_manage',
+    'allowed_actions',
+    'status_reason',
+    'deleted_at',
 ]);
 const SUPPORTED_ATS_SOURCE_HOSTS = new Set([
     'boards.greenhouse.io',
@@ -192,7 +197,13 @@ function sourceKindLabel(source: FetchSource): string {
 
 function sourceVolumeLabel(source: FetchSource): string {
     if (source.fetch_mode === 'ats_api') return 'ATS sync';
-    return `${source.results_wanted} jobs`;
+    return `Max ${source.results_wanted}/fetch`;
+}
+
+function sourceCadenceHeading(source: FetchSource, intervalMinutes: number | null): string {
+    if (intervalMinutes) return 'Cadence';
+    if (source.fetch_mode === 'ats_api') return 'Sync';
+    return 'Fetch cap';
 }
 
 function userSourceId(source: FetchSource): string | null {
@@ -211,6 +222,20 @@ function managedSourceId(source: FetchSource): string | null {
 
 function sourceManagementLabel(source: FetchSource): string {
     return userSourceId(source) ? 'User-managed ATS source' : 'Workspace ATS source';
+}
+
+function sourceAllowedActions(source: FetchSource): string[] {
+    const actions = source.options?.allowed_actions;
+    if (!Array.isArray(actions)) return [];
+    return actions.filter((action): action is string => typeof action === 'string');
+}
+
+function sourceCanManage(source: FetchSource): boolean {
+    return source.options?.can_manage === true && sourceAllowedActions(source).length > 0;
+}
+
+function sourceHasAction(source: FetchSource, action: string): boolean {
+    return sourceAllowedActions(source).includes(action);
 }
 
 function sourceIsPaused(source: FetchSource): boolean {
@@ -348,6 +373,8 @@ function cloudIntegrationSource(integration: CloudIntegration): FetchSource {
     const status = integration.status || 'unknown';
     const isUserSource = integration.is_user_source === true;
     const identifier = atsIdentifier(integration);
+    const fallbackToggleAction = status === 'disabled' ? 'enable' : 'disable';
+    const allowedActions = integration.allowed_actions ?? ['sync', 'edit', fallbackToggleAction, 'delete'];
     return {
         site_type: integration.provider,
         display_name: integration.display_name,
@@ -396,6 +423,11 @@ function cloudIntegrationSource(integration: CloudIntegration): FetchSource {
             initial_sync_jobs_seen: integration.initial_sync?.jobs_seen,
             initial_sync_jobs_imported: integration.initial_sync?.jobs_imported,
             initial_sync_jobs_deactivated: integration.initial_sync?.jobs_deactivated,
+            source_kind: integration.source_kind,
+            can_manage: integration.can_manage ?? (allowedActions.length > 0),
+            allowed_actions: allowedActions,
+            status_reason: integration.status_reason || undefined,
+            deleted_at: integration.deleted_at || undefined,
         },
         api_health: null,
     };
@@ -556,10 +588,16 @@ function SourceCard({
     const managedId = managedSourceId(source);
     const isUserManagedSource = Boolean(userSourceId(source));
     const isDisabled = statusText === 'disabled';
+    const canManageSource = sourceCanManage(source);
+    const canSyncSource = sourceHasAction(source, 'sync');
+    const canEditSource = sourceHasAction(source, 'edit');
+    const canDeleteSource = sourceHasAction(source, 'delete');
+    const canToggleSource = sourceHasAction(source, isDisabled ? 'enable' : 'disable');
     const isMutatingAtsSource = isSyncingAtsSource || isUpdatingAtsSource || isDeletingAtsSource;
     const providerLabel = modeLabel(source);
     const lastError = textOption(source, 'last_error');
     const lastValidated = textOption(source, 'last_validated_at');
+    const statusReason = textOption(source, 'status_reason');
     const boardReference = sourceBoardReference(source);
     const className = 'group min-h-48 border border-rule bg-surface px-4 py-3 transition-colors hover:border-rule-strong';
 
@@ -622,7 +660,7 @@ function SourceCard({
                 <div className="border border-rule bg-surface-sunk px-3 py-2">
                     <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-ink-soft">
                         <Clock3 className="h-3 w-3" aria-hidden="true" />
-                        Cadence
+                        {sourceCadenceHeading(source, intervalMinutes)}
                     </div>
                     <div className="mt-1 truncate text-[12px] font-medium text-ink">
                         {intervalMinutes ? `${intervalMinutes}m sync` : sourceVolumeLabel(source)}
@@ -701,7 +739,7 @@ function SourceCard({
 
             {managedId ? (
                 <div className="mt-3 border-t border-rule pt-3">
-                    {isEditing ? (
+                    {isEditing && canEditSource ? (
                         <form
                             onSubmit={(event) => {
                                 event.preventDefault();
@@ -786,52 +824,65 @@ function SourceCard({
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <div className="text-[12px] leading-5 text-ink-soft">
                             {sourceManagementLabel(source)}
+                            {!canManageSource && statusReason ? (
+                                <span className="ml-2 text-ink-muted">{statusReason}</span>
+                            ) : null}
                         </div>
-                        <div className="flex flex-wrap justify-end gap-2">
-                            <button
-                                type="button"
-                                onClick={() => onSyncAtsSource(managedId)}
-                                disabled={isDisabled || isSyncingAtsSource}
-                                className="inline-flex min-h-9 items-center gap-1.5 border border-accent px-3 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
-                            >
-                                <RefreshCw
-                                    className={`h-3.5 w-3.5 ${isSyncingAtsSource ? 'animate-spin' : ''}`}
-                                    aria-hidden="true"
-                                />
-                                Sync now
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => onToggleAtsSource(managedId, isDisabled ? 'active' : 'disabled')}
-                                disabled={isMutatingAtsSource}
-                                className="inline-flex min-h-9 items-center gap-1.5 border border-rule px-3 py-1 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
-                            >
-                                {isDisabled ? (
-                                    <Zap className="h-3.5 w-3.5" aria-hidden="true" />
-                                ) : (
-                                    <PauseCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                                )}
-                                {isDisabled ? 'Enable' : 'Disable'}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => onEditAtsSource(source)}
-                                disabled={isMutatingAtsSource || isEditing}
-                                className="inline-flex min-h-9 items-center gap-1.5 border border-rule px-3 py-1 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
-                            >
-                                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                                Edit
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => onDeleteAtsSource(source)}
-                                disabled={isMutatingAtsSource}
-                                className="inline-flex min-h-9 items-center gap-1.5 border border-warn/50 px-3 py-1 text-[12px] font-medium text-warn transition-colors hover:bg-warn-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
-                            >
-                                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                                Delete
-                            </button>
-                        </div>
+                        {canManageSource ? (
+                            <div className="flex flex-wrap justify-end gap-2">
+                                {canSyncSource ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => onSyncAtsSource(managedId)}
+                                        disabled={isDisabled || isSyncingAtsSource}
+                                        className="inline-flex min-h-9 items-center gap-1.5 border border-accent px-3 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                                    >
+                                        <RefreshCw
+                                            className={`h-3.5 w-3.5 ${isSyncingAtsSource ? 'animate-spin' : ''}`}
+                                            aria-hidden="true"
+                                        />
+                                        Sync now
+                                    </button>
+                                ) : null}
+                                {canToggleSource ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => onToggleAtsSource(managedId, isDisabled ? 'active' : 'disabled')}
+                                        disabled={isMutatingAtsSource}
+                                        className="inline-flex min-h-9 items-center gap-1.5 border border-rule px-3 py-1 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
+                                    >
+                                        {isDisabled ? (
+                                            <Zap className="h-3.5 w-3.5" aria-hidden="true" />
+                                        ) : (
+                                            <PauseCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                                        )}
+                                        {isDisabled ? 'Enable' : 'Disable'}
+                                    </button>
+                                ) : null}
+                                {canEditSource ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => onEditAtsSource(source)}
+                                        disabled={isMutatingAtsSource || isEditing}
+                                        className="inline-flex min-h-9 items-center gap-1.5 border border-rule px-3 py-1 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
+                                    >
+                                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                                        Edit
+                                    </button>
+                                ) : null}
+                                {canDeleteSource ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => onDeleteAtsSource(source)}
+                                        disabled={isMutatingAtsSource}
+                                        className="inline-flex min-h-9 items-center gap-1.5 border border-warn/50 px-3 py-1 text-[12px] font-medium text-warn transition-colors hover:bg-warn-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                                    >
+                                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                                        Delete
+                                    </button>
+                                ) : null}
+                            </div>
+                        ) : null}
                     </div>
                 </div>
             ) : source.fetch_mode === 'ats_api' ? (
@@ -1948,6 +1999,10 @@ export function FetchSourcesPanel() {
     function editManagedSource(source: FetchSource) {
         const sourceId = managedSourceId(source);
         if (!sourceId) return;
+        if (!sourceHasAction(source, 'edit')) {
+            toast.error('You do not have permission to edit this source.');
+            return;
+        }
         setEditingSourceId(sourceId);
         setEditSourceName(source.display_name);
         setEditSyncInterval(String(atsInterval(source) ?? 120));
@@ -1975,6 +2030,10 @@ export function FetchSourcesPanel() {
         const source = findManagedSource(sourceId);
         if (!source) {
             toast.error('ATS source is no longer available.');
+            return;
+        }
+        if (!sourceHasAction(source, 'edit')) {
+            toast.error('You do not have permission to edit this source.');
             return;
         }
         const displayName = editSourceName.trim();
@@ -2030,6 +2089,10 @@ export function FetchSourcesPanel() {
     function deleteManagedSource(source: FetchSource) {
         const sourceId = managedSourceId(source);
         if (!sourceId) return;
+        if (!sourceHasAction(source, 'delete')) {
+            toast.error('You do not have permission to delete this source.');
+            return;
+        }
         setSourcePendingDelete(source);
     }
 
@@ -2037,11 +2100,19 @@ export function FetchSourcesPanel() {
         if (!sourcePendingDelete) return;
         const sourceId = userSourceId(sourcePendingDelete);
         if (sourceId) {
+            if (!sourceHasAction(sourcePendingDelete, 'delete')) {
+                toast.error('You do not have permission to delete this source.');
+                return;
+            }
             deleteUserSourceMutation.mutate(sourceId);
             return;
         }
         const integrationId = tenantIntegrationId(sourcePendingDelete);
         if (integrationId) {
+            if (!sourceHasAction(sourcePendingDelete, 'delete')) {
+                toast.error('You do not have permission to delete this source.');
+                return;
+            }
             deleteTenantIntegrationMutation.mutate(integrationId);
         }
     }
@@ -2050,6 +2121,10 @@ export function FetchSourcesPanel() {
         const source = findManagedSource(sourceId);
         if (!source) {
             toast.error('ATS source is no longer available.');
+            return;
+        }
+        if (!sourceHasAction(source, 'sync')) {
+            toast.error('You do not have permission to sync this source.');
             return;
         }
         if (userSourceId(source)) {
@@ -2063,6 +2138,10 @@ export function FetchSourcesPanel() {
         const source = findManagedSource(sourceId);
         if (!source) {
             toast.error('ATS source is no longer available.');
+            return;
+        }
+        if (!sourceHasAction(source, status === 'disabled' ? 'disable' : 'enable')) {
+            toast.error('You do not have permission to change this source status.');
             return;
         }
         if (userSourceId(source)) {

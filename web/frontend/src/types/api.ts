@@ -395,6 +395,11 @@ export interface CloudIntegration {
     validation_status: string;
     last_validated_at: string | null;
     last_error: string | null;
+    source_kind?: 'user' | 'workspace';
+    can_manage?: boolean;
+    allowed_actions?: string[];
+    status_reason?: string | null;
+    deleted_at?: string | null;
     is_user_source?: boolean;
     owner_user_id?: string | null;
     source_url?: string | null;
