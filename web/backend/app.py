@@ -28,7 +28,7 @@ from core.logging_utils import (
     setup_logging as setup_shared_logging,
 )
 from core.metrics_router import router as metrics_router
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -57,6 +57,18 @@ logger.debug("NUL log sanitization active=%s", is_nul_filter_active())
 
 # Load configuration
 config = get_config()
+
+WEB_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; "
+    "script-src 'self' https://accounts.google.com https://accounts.gstatic.com; "
+    "frame-src https://accounts.google.com; "
+    "connect-src 'self' https://oauth2.googleapis.com; "
+    "img-src 'self' data: https:; "
+    "style-src 'self' 'unsafe-inline'; "
+    "base-uri 'self'; "
+    "form-action 'self'; "
+    "frame-ancestors 'none'"
+)
 
 
 @lru_cache(maxsize=8)
@@ -115,6 +127,21 @@ def create_app() -> FastAPI:
 
     # Configure rate limiting
     add_rate_limit_handlers(_app)
+
+    @_app.middleware("http")
+    async def add_web_security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Content-Security-Policy", WEB_CONTENT_SECURITY_POLICY)
+        if request.url.scheme == "https":
+            response.headers.setdefault(
+                "Strict-Transport-Security",
+                "max-age=31536000; includeSubDomains",
+            )
+        return response
 
     # Register exception handlers
     _app.add_exception_handler(ServiceException, service_exception_handler)

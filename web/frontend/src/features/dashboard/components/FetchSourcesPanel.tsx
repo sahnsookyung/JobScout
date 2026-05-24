@@ -1,17 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { ExternalLink, Globe2, MapPin, PauseCircle, Plus, RefreshCw, Search, Server, Trash2, Zap } from 'lucide-react';
+import { Check, ExternalLink, Globe2, MapPin, PauseCircle, Pencil, Plus, RefreshCw, Search, Server, Trash2, X, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { pipelineApi } from '@/services/pipelineApi';
-import type { AtsSourceCreateRequest, CloudIntegration, FetchSource } from '@/types/api';
+import type { AtsSourceCreateRequest, AtsSourceUpdateRequest, CloudIntegration, FetchSource } from '@/types/api';
 
 const OPERATIONAL_OPTION_KEYS = new Set([
     'status',
     'validation_status',
     'sync_interval_minutes',
     'last_error',
+]);
+const SUPPORTED_ATS_SOURCE_HOSTS = new Set([
+    'boards.greenhouse.io',
+    'boards-api.greenhouse.io',
+    'jobs.lever.co',
+    'api.lever.co',
+    'jobs.ashbyhq.com',
+    'api.ashbyhq.com',
 ]);
 
 function sourceScope(source: FetchSource): string {
@@ -99,6 +107,23 @@ function atsInterval(source: FetchSource): number | null {
 function userSourceId(source: FetchSource): string | null {
     const sourceId = source.options?.user_source_id;
     return typeof sourceId === 'string' && sourceId ? sourceId : null;
+}
+
+function isSupportedAtsUrl(value: string): boolean {
+    const candidate = value.trim();
+    if (!candidate) return true;
+    try {
+        const url = new URL(candidate);
+        return (
+            url.protocol === 'https:'
+            && !url.username
+            && !url.password
+            && !url.port
+            && SUPPORTED_ATS_SOURCE_HOSTS.has(url.hostname.toLowerCase())
+        );
+    } catch {
+        return false;
+    }
 }
 
 function cloudIntegrationSource(integration: CloudIntegration): FetchSource {
@@ -229,22 +254,38 @@ function SourceCard({
     onFetchSource,
     isFetchingSource,
     onSyncAtsSource,
+    onEditAtsSource,
     onToggleAtsSource,
     onDeleteAtsSource,
+    onSubmitEdit,
+    onCancelEdit,
     isSyncingAtsSource,
     isUpdatingAtsSource,
     isDeletingAtsSource,
+    isEditing,
+    editSourceName,
+    editSyncInterval,
+    onEditSourceNameChange,
+    onEditSyncIntervalChange,
 }: Readonly<{
     source: FetchSource;
     index: number;
     onFetchSource: (source: string) => void;
     isFetchingSource: boolean;
     onSyncAtsSource: (sourceId: string) => void;
+    onEditAtsSource: (source: FetchSource) => void;
     onToggleAtsSource: (sourceId: string, status: string) => void;
     onDeleteAtsSource: (source: FetchSource) => void;
+    onSubmitEdit: (sourceId: string) => void;
+    onCancelEdit: () => void;
     isSyncingAtsSource: boolean;
     isUpdatingAtsSource: boolean;
     isDeletingAtsSource: boolean;
+    isEditing: boolean;
+    editSourceName: string;
+    editSyncInterval: string;
+    onEditSourceNameChange: (value: string) => void;
+    onEditSyncIntervalChange: (value: string) => void;
 }>) {
     const healthText = healthLabel(source);
     const externalText = externalSeedLabel(source);
@@ -349,7 +390,65 @@ function SourceCard({
                 </div>
             ) : null}
             {managedSourceId ? (
-                <div className="mt-3 flex flex-wrap justify-end gap-2 border-t border-rule pt-3">
+                <div className="mt-3 border-t border-rule pt-3">
+                    {isEditing ? (
+                        <form
+                            onSubmit={(event) => {
+                                event.preventDefault();
+                                onSubmitEdit(managedSourceId);
+                            }}
+                            className="mb-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_8rem_auto]"
+                        >
+                            <label className="grid gap-1 text-[12px] text-ink-soft">
+                                Name
+                                <input
+                                    value={editSourceName}
+                                    onChange={(event) => onEditSourceNameChange(event.target.value)}
+                                    className="h-8 min-w-0 border border-rule bg-surface-raised px-2 text-[12px] text-ink outline-none focus:border-accent"
+                                />
+                            </label>
+                            <label className="grid gap-1 text-[12px] text-ink-soft">
+                                Sync minutes
+                                <input
+                                    type="number"
+                                    min={5}
+                                    max={1440}
+                                    value={editSyncInterval}
+                                    onChange={(event) => onEditSyncIntervalChange(event.target.value)}
+                                    className="h-8 min-w-0 border border-rule bg-surface-raised px-2 text-[12px] text-ink outline-none focus:border-accent"
+                                />
+                            </label>
+                            <div className="flex items-end gap-1.5">
+                                <button
+                                    type="submit"
+                                    disabled={isUpdatingAtsSource}
+                                    className="inline-flex h-8 items-center gap-1.5 border border-accent px-2 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                                >
+                                    <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                                    Save
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={onCancelEdit}
+                                    disabled={isUpdatingAtsSource}
+                                    className="inline-flex h-8 items-center gap-1.5 border border-rule px-2 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
+                                >
+                                    <X className="h-3.5 w-3.5" aria-hidden="true" />
+                                    Cancel
+                                </button>
+                            </div>
+                        </form>
+                    ) : null}
+                    <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                        type="button"
+                        onClick={() => onEditAtsSource(source)}
+                        disabled={isMutatingAtsSource || isEditing}
+                        className="inline-flex min-h-8 items-center gap-1.5 border border-rule px-2.5 py-1 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
+                    >
+                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                        Edit
+                    </button>
                     <button
                         type="button"
                         onClick={() => onSyncAtsSource(managedSourceId)}
@@ -384,6 +483,7 @@ function SourceCard({
                         <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                         Delete
                     </button>
+                    </div>
                 </div>
             ) : null}
         </>
@@ -404,6 +504,9 @@ export function FetchSourcesPanel() {
     const [newSourceUrl, setNewSourceUrl] = useState('');
     const [newSourceProvider, setNewSourceProvider] = useState('');
     const [newSourceIdentifier, setNewSourceIdentifier] = useState('');
+    const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
+    const [editSourceName, setEditSourceName] = useState('');
+    const [editSyncInterval, setEditSyncInterval] = useState('');
     const queryClient = useQueryClient();
     const { data, isLoading } = useQuery({
         queryKey: ['pipeline', 'sources'],
@@ -464,12 +567,18 @@ export function FetchSourcesPanel() {
         },
     });
     const updateUserSourceMutation = useMutation({
-        mutationFn: async ({ sourceId, status }: { sourceId: string; status: string }) => {
-            const response = await pipelineApi.updateUserAtsSource(sourceId, { status });
+        mutationFn: async ({ sourceId, payload }: { sourceId: string; payload: AtsSourceUpdateRequest }) => {
+            const response = await pipelineApi.updateUserAtsSource(sourceId, payload);
             return response.data;
         },
-        onSuccess: (source) => {
-            toast.success(`${source.display_name} ${source.status === 'disabled' ? 'disabled' : 'enabled'}`);
+        onSuccess: (source, variables) => {
+            const updatedStatus = variables.payload.status;
+            if (updatedStatus) {
+                toast.success(`${source.display_name} ${source.status === 'disabled' ? 'disabled' : 'enabled'}`);
+            } else {
+                toast.success(`${source.display_name} updated`);
+                setEditingSourceId(null);
+            }
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources'] });
         },
@@ -532,9 +641,14 @@ export function FetchSourcesPanel() {
         event.preventDefault();
         const provider = newSourceProvider.trim() || undefined;
         const identifier = newSourceIdentifier.trim() || undefined;
+        const sourceUrl = newSourceUrl.trim();
+        if (sourceUrl && !isSupportedAtsUrl(sourceUrl)) {
+            toast.error('Use a Greenhouse, Lever, or Ashby board URL.');
+            return;
+        }
         const payload: AtsSourceCreateRequest = {
             display_name: newSourceName.trim() || undefined,
-            source_url: newSourceUrl.trim() || undefined,
+            source_url: sourceUrl || undefined,
             provider,
             identifier,
             providers: provider && !identifier ? [provider] : undefined,
@@ -544,6 +658,34 @@ export function FetchSourcesPanel() {
             return;
         }
         createUserSourceMutation.mutate(payload);
+    }
+
+    function editUserSource(source: FetchSource) {
+        const sourceId = userSourceId(source);
+        if (!sourceId) return;
+        setEditingSourceId(sourceId);
+        setEditSourceName(source.display_name);
+        setEditSyncInterval(String(atsInterval(source) ?? 120));
+    }
+
+    function submitUserSourceEdit(sourceId: string) {
+        const displayName = editSourceName.trim();
+        const interval = Number(editSyncInterval);
+        if (!displayName) {
+            toast.error('Source name cannot be blank.');
+            return;
+        }
+        if (!Number.isInteger(interval) || interval < 5 || interval > 1440) {
+            toast.error('Sync interval must be between 5 and 1440 minutes.');
+            return;
+        }
+        updateUserSourceMutation.mutate({
+            sourceId,
+            payload: {
+                display_name: displayName,
+                sync_interval_minutes: interval,
+            },
+        });
     }
 
     function deleteUserSource(source: FetchSource) {
@@ -582,8 +724,11 @@ export function FetchSourcesPanel() {
                             && fetchSourceMutation.variables === source.site_type
                         }
                         onSyncAtsSource={(sourceId) => syncUserSourceMutation.mutate(sourceId)}
-                        onToggleAtsSource={(sourceId, status) => updateUserSourceMutation.mutate({ sourceId, status })}
+                        onEditAtsSource={editUserSource}
+                        onToggleAtsSource={(sourceId, status) => updateUserSourceMutation.mutate({ sourceId, payload: { status } })}
                         onDeleteAtsSource={deleteUserSource}
+                        onSubmitEdit={submitUserSourceEdit}
+                        onCancelEdit={() => setEditingSourceId(null)}
                         isSyncingAtsSource={
                             syncUserSourceMutation.isPending
                             && syncUserSourceMutation.variables === userSourceId(source)
@@ -596,6 +741,11 @@ export function FetchSourcesPanel() {
                             deleteUserSourceMutation.isPending
                             && deleteUserSourceMutation.variables === userSourceId(source)
                         }
+                        isEditing={editingSourceId === userSourceId(source)}
+                        editSourceName={editSourceName}
+                        editSyncInterval={editSyncInterval}
+                        onEditSourceNameChange={setEditSourceName}
+                        onEditSyncIntervalChange={setEditSyncInterval}
                     />
                 ))}
             </div>

@@ -644,6 +644,22 @@ describe('DashboardControls', () => {
             expect(mockPipelineApi.createUserAtsSource).not.toHaveBeenCalled();
         });
 
+        it('rejects unsupported careers URLs before creating a user ATS source', async () => {
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+
+            await userEvent.click(screen.getByRole('button', { name: /add source/i }));
+            await userEvent.type(screen.getByLabelText('Name'), 'Acme Careers');
+            await userEvent.type(screen.getByLabelText('Careers URL'), 'https://careers.example.com/acme');
+            await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+
+            expect(toast.error).toHaveBeenCalledWith('Use a Greenhouse, Lever, or Ashby board URL.');
+            expect(mockPipelineApi.createUserAtsSource).not.toHaveBeenCalled();
+        });
+
         it('renders seed, JobSpy, custom, and degraded source status labels', async () => {
             mockPipelineApi.getCloudIntegrations.mockResolvedValue({ status: 200, data: [] });
             mockPipelineApi.getUserAtsSources.mockResolvedValue({ status: 200, data: [] });
@@ -903,6 +919,74 @@ describe('DashboardControls', () => {
             expect(confirmSpy).toHaveBeenCalledWith('Delete Acme Lever?');
 
             confirmSpy.mockRestore();
+        });
+
+        it('lets users update a managed ATS source name and sync interval', async () => {
+            mockPipelineApi.getUserAtsSources.mockResolvedValue({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-edit',
+                        tenant_id: 'tenant-1',
+                        provider: 'greenhouse',
+                        display_name: 'Editable Source',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: {},
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://boards.greenhouse.io/editable',
+                        created_at: null,
+                        updated_at: null,
+                    },
+                ],
+            });
+            mockPipelineApi.updateUserAtsSource.mockResolvedValueOnce({
+                data: {
+                    id: 'source-edit',
+                    tenant_id: 'tenant-1',
+                    provider: 'greenhouse',
+                    display_name: 'Renamed Source',
+                    status: 'active',
+                    sync_interval_minutes: 240,
+                    config: {},
+                    capabilities: ['list_jobs'],
+                    validation_status: 'pending',
+                    last_validated_at: null,
+                    last_error: null,
+                    is_user_source: true,
+                    owner_user_id: 'user-1',
+                    source_url: 'https://boards.greenhouse.io/editable',
+                    created_at: null,
+                    updated_at: null,
+                },
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Editable Source')).toBeInTheDocument();
+            });
+            const sourceCard = screen.getByText('Editable Source').closest('div[class*="group"]') as HTMLElement;
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /edit/i }));
+            await userEvent.clear(within(sourceCard).getByLabelText('Name'));
+            await userEvent.type(within(sourceCard).getByLabelText('Name'), 'Renamed Source');
+            await userEvent.clear(within(sourceCard).getByLabelText('Sync minutes'));
+            await userEvent.type(within(sourceCard).getByLabelText('Sync minutes'), '240');
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /save/i }));
+
+            await waitFor(() => {
+                expect(mockPipelineApi.updateUserAtsSource).toHaveBeenCalledWith('source-edit', {
+                    display_name: 'Renamed Source',
+                    sync_interval_minutes: 240,
+                });
+            });
+            expect(toast.success).toHaveBeenCalledWith('Renamed Source updated');
         });
 
         it('lets users re-enable a disabled managed ATS source', async () => {

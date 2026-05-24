@@ -189,6 +189,21 @@ class TestReadRootEndpoint:
             resp = client.get("/")
         assert "text/html" in resp.headers.get("content-type", "")
 
+    def test_dashboard_responses_include_security_headers(self, tmp_path):
+        (tmp_path / 'web' / 'templates').mkdir(parents=True)
+        (tmp_path / 'web' / 'templates' / 'index.html').write_text('<html></html>')
+        from fastapi.testclient import TestClient
+        from web.backend.app import create_app
+        with patch('web.backend.app.get_project_root', return_value=tmp_path):
+            client = TestClient(create_app())
+            resp = client.get("/")
+
+        assert resp.headers["x-content-type-options"] == "nosniff"
+        assert resp.headers["x-frame-options"] == "DENY"
+        assert resp.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+        assert "geolocation=()" in resp.headers["permissions-policy"]
+        assert "frame-ancestors 'none'" in resp.headers["content-security-policy"]
+
     def test_returns_full_html_content(self, tmp_path):
         html = '<html><head><title>JobScout</title></head><body><div id="root"></div></body></html>'
         (tmp_path / 'web' / 'templates').mkdir(parents=True)
