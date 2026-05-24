@@ -1,7 +1,28 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useMemo, useRef, useState } from 'react';
-import type { FormEvent, ReactNode } from 'react';
-import { Check, ExternalLink, Globe2, MapPin, PauseCircle, Pencil, Plus, RefreshCw, Search, Server, Trash2, X, Zap } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ComponentProps, SyntheticEvent } from 'react';
+import {
+    Activity,
+    AlertTriangle,
+    Check,
+    Clock3,
+    ExternalLink,
+    Globe2,
+    History,
+    ListFilter,
+    MapPin,
+    PauseCircle,
+    Pencil,
+    Plus,
+    RefreshCw,
+    RotateCcw,
+    Search,
+    Server,
+    ShieldCheck,
+    Trash2,
+    X,
+    Zap,
+} from 'lucide-react';
 import { toast } from 'sonner';
 
 import { pipelineApi } from '@/services/pipelineApi';
@@ -12,6 +33,7 @@ import type {
     AtsSourceUpdateRequest,
     CloudIntegration,
     FetchSource,
+    IntegrationUpdateRequest,
 } from '@/types/api';
 
 const OPERATIONAL_OPTION_KEYS = new Set([
@@ -19,12 +41,17 @@ const OPERATIONAL_OPTION_KEYS = new Set([
     'validation_status',
     'sync_interval_minutes',
     'last_error',
+    'last_validated_at',
     'user_source_id',
     'is_user_source',
     'owner_user_id',
     'source_url',
     'ats_provider',
     'ats_identifier',
+    'initial_sync_status',
+    'initial_sync_jobs_seen',
+    'initial_sync_jobs_imported',
+    'initial_sync_jobs_deactivated',
 ]);
 const SUPPORTED_ATS_SOURCE_HOSTS = new Set([
     'boards.greenhouse.io',
@@ -39,6 +66,30 @@ const ATS_IDENTIFIER_CONFIG_KEYS: Record<string, string> = {
     lever: 'site_identifier',
     ashby: 'job_board_name',
 };
+const ATS_PROVIDER_SEARCH_ORDER = ['Greenhouse', 'Lever', 'Ashby'];
+const SOURCE_VIEW_OPTIONS = [
+    { key: 'all', label: 'All' },
+    { key: 'ats', label: 'ATS boards' },
+    { key: 'seed', label: 'Seed sites' },
+    { key: 'api', label: 'API' },
+    { key: 'paused', label: 'Paused' },
+    { key: 'needs_attention', label: 'Needs attention' },
+] as const;
+
+type SourceView = typeof SOURCE_VIEW_OPTIONS[number]['key'];
+type FormSubmitHandler = NonNullable<ComponentProps<'form'>['onSubmit']>;
+type FormSubmitEvent = Parameters<FormSubmitHandler>[0];
+
+const SOURCE_ACTIVITY_FILTER_OPTIONS = [
+    { key: 'all', label: 'All' },
+    { key: 'added', label: 'Added' },
+    { key: 'updated', label: 'Updated' },
+    { key: 'deleted', label: 'Deleted' },
+    { key: 'synced', label: 'Synced' },
+    { key: 'recoverable', label: 'Recoverable' },
+] as const;
+
+type SourceActivityFilter = typeof SOURCE_ACTIVITY_FILTER_OPTIONS[number]['key'];
 
 function sourceScope(source: FetchSource): string {
     const parts = [source.location, source.country].filter(Boolean);
@@ -122,6 +173,23 @@ function atsInterval(source: FetchSource): number | null {
     return typeof interval === 'number' && Number.isFinite(interval) ? interval : null;
 }
 
+function sourceKind(source: FetchSource): 'api' | 'ats' | 'custom' | 'seed' | 'other' {
+    if (source.fetch_mode === 'ats_api') return 'ats';
+    if (source.fetch_mode === 'seed_website') return 'seed';
+    if (source.fetch_mode === 'jobspy_api') return 'api';
+    if (source.fetch_mode === 'custom_source') return 'custom';
+    return 'other';
+}
+
+function sourceKindLabel(source: FetchSource): string {
+    const kind = sourceKind(source);
+    if (kind === 'ats') return 'ATS board';
+    if (kind === 'seed') return 'Seed site';
+    if (kind === 'api') return 'API source';
+    if (kind === 'custom') return 'Custom source';
+    return toTitleCase(source.fetch_mode);
+}
+
 function sourceVolumeLabel(source: FetchSource): string {
     if (source.fetch_mode === 'ats_api') return 'ATS sync';
     return `${source.results_wanted} jobs`;
@@ -130,6 +198,116 @@ function sourceVolumeLabel(source: FetchSource): string {
 function userSourceId(source: FetchSource): string | null {
     const sourceId = source.options?.user_source_id;
     return typeof sourceId === 'string' && sourceId ? sourceId : null;
+}
+
+function tenantIntegrationId(source: FetchSource): string | null {
+    const integrationId = source.options?.tenant_integration_id;
+    return typeof integrationId === 'string' && integrationId ? integrationId : null;
+}
+
+function managedSourceId(source: FetchSource): string | null {
+    return userSourceId(source) ?? tenantIntegrationId(source);
+}
+
+function sourceManagementLabel(source: FetchSource): string {
+    return userSourceId(source) ? 'User-managed ATS source' : 'Workspace ATS source';
+}
+
+function sourceIsPaused(source: FetchSource): boolean {
+    if (atsStatus(source) === 'disabled') return true;
+    return source.fetch_mode === 'seed_website' && source.external_fetch_status?.status === 'disabled';
+}
+
+function sourceNeedsAttention(source: FetchSource): boolean {
+    if (source.options?.last_error) return true;
+    if (source.fetch_mode === 'ats_api') {
+        const validation = source.options?.validation_status;
+        return validation === 'failed' || validation === 'invalid' || validation === 'error';
+    }
+    if (source.fetch_mode === 'jobspy_api') {
+        return Boolean(source.api_health && !source.api_health.available && source.api_health.status !== 'not_configured');
+    }
+    if (source.fetch_mode === 'seed_website') {
+        const status = source.external_fetch_status?.status;
+        return status === 'degraded' || status === 'rate_limited' || status === 'error';
+    }
+    return false;
+}
+
+function sourceStatusLabel(source: FetchSource): string {
+    const status = atsStatus(source);
+    if (sourceNeedsAttention(source)) return 'Needs attention';
+    if (sourceIsPaused(source)) return 'Paused';
+    if (status === 'active') return 'Active';
+    if (status) return toTitleCase(status);
+    if (source.fetch_mode === 'jobspy_api' && source.api_health?.available) return 'Online';
+    if (source.fetch_mode === 'seed_website' && source.external_fetch_status?.configured) return 'Ready';
+    return 'Available';
+}
+
+function sourceStatusTone(source: FetchSource): string {
+    if (sourceNeedsAttention(source)) return 'border-warn/50 bg-warn-soft text-warn';
+    if (sourceIsPaused(source)) return 'border-rule bg-surface-sunk text-ink-soft';
+    return 'border-success/40 bg-success-soft text-ink';
+}
+
+function sourceMatchesView(source: FetchSource, view: SourceView): boolean {
+    if (view === 'all') return true;
+    if (view === 'paused') return sourceIsPaused(source);
+    if (view === 'needs_attention') return sourceNeedsAttention(source);
+    return sourceKind(source) === view;
+}
+
+function numericOption(source: FetchSource, key: string): number | null {
+    const value = source.options?.[key];
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function textOption(source: FetchSource, key: string): string | null {
+    const value = source.options?.[key];
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function sourceOutcomeLabel(source: FetchSource): string {
+    if (source.fetch_mode === 'ats_api') {
+        const seen = numericOption(source, 'initial_sync_jobs_seen');
+        const imported = numericOption(source, 'initial_sync_jobs_imported');
+        if (seen !== null || imported !== null) {
+            return `${imported ?? 0} imported / ${seen ?? 0} seen`;
+        }
+        const validation = textOption(source, 'validation_status');
+        if (validation) return `Validation ${toTitleCase(validation)}`;
+        return 'Awaiting sync';
+    }
+    if (source.fetch_mode === 'seed_website') {
+        const remaining = source.external_fetch_status?.budget_remaining;
+        return remaining === null || remaining === undefined
+            ? 'Ready to fetch'
+            : `${remaining} fetches left`;
+    }
+    if (source.fetch_mode === 'jobspy_api') {
+        return source.api_health?.available ? 'API reachable' : 'Check API health';
+    }
+    return `${optionCount(source)} filters`;
+}
+
+function sourceBoardReference(source: FetchSource): string {
+    const identifier = textOption(source, 'ats_identifier');
+    if (identifier) return identifier;
+    if (source.seed_url) return source.seed_url;
+    return source.site_type;
+}
+
+function formattedDateTime(value: string | null): string {
+    if (!value) return 'Not recorded';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Not recorded';
+    return new Intl.DateTimeFormat(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+    }).format(date);
 }
 
 function isSupportedAtsUrl(value: string): boolean {
@@ -204,13 +382,20 @@ function cloudIntegrationSource(integration: CloudIntegration): FetchSource {
             status,
             validation_status: integration.validation_status,
             sync_interval_minutes: integration.sync_interval_minutes,
+            last_validated_at: integration.last_validated_at,
             last_error: integration.last_error,
+            tenant_integration_id: integration.id,
+            is_tenant_integration: !isUserSource || undefined,
             user_source_id: isUserSource ? integration.id : undefined,
             is_user_source: isUserSource || undefined,
             owner_user_id: integration.owner_user_id || undefined,
             source_url: integration.source_url || undefined,
             ats_provider: integration.provider,
             ats_identifier: identifier || undefined,
+            initial_sync_status: integration.initial_sync?.status,
+            initial_sync_jobs_seen: integration.initial_sync?.jobs_seen,
+            initial_sync_jobs_imported: integration.initial_sync?.jobs_imported,
+            initial_sync_jobs_deactivated: integration.initial_sync?.jobs_deactivated,
         },
         api_health: null,
     };
@@ -298,6 +483,20 @@ function historyActionLabel(action: string): string {
     return toTitleCase(action.replace(/^integration\.user_source_/, ''));
 }
 
+function historyActionKind(action: string): Exclude<SourceActivityFilter, 'all' | 'recoverable'> | 'other' {
+    if (action.endsWith('_created')) return 'added';
+    if (action.endsWith('_updated')) return 'updated';
+    if (action.endsWith('_deleted')) return 'deleted';
+    if (action.endsWith('_sync_triggered')) return 'synced';
+    return 'other';
+}
+
+function historyEventMatchesFilter(event: AtsSourceHistoryEvent, filter: SourceActivityFilter): boolean {
+    if (filter === 'all') return true;
+    if (filter === 'recoverable') return Boolean(event.readd_payload);
+    return historyActionKind(event.action) === filter;
+}
+
 function SourceCard({
     source,
     index,
@@ -354,21 +553,31 @@ function SourceCard({
     const statusText = atsStatus(source);
     const intervalMinutes = atsInterval(source);
     const canFetch = canFetchExternalSeed(source);
-    const managedSourceId = userSourceId(source);
+    const managedId = managedSourceId(source);
+    const isUserManagedSource = Boolean(userSourceId(source));
     const isDisabled = statusText === 'disabled';
     const isMutatingAtsSource = isSyncingAtsSource || isUpdatingAtsSource || isDeletingAtsSource;
-    const content = (
-        <>
+    const providerLabel = modeLabel(source);
+    const lastError = textOption(source, 'last_error');
+    const lastValidated = textOption(source, 'last_validated_at');
+    const boardReference = sourceBoardReference(source);
+    const className = 'group min-h-48 border border-rule bg-surface px-4 py-3 transition-colors hover:border-rule-strong';
+
+    return (
+        <div key={`${source.site_type}-${index}`} className={className}>
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <div className="truncate text-[14px] font-medium text-ink">
-                            {source.display_name}
-                        </div>
-                        <span className="inline-flex min-h-6 items-center border border-rule bg-surface-sunk px-2 py-0.5 text-[11px] leading-none text-ink-soft">
-                            {modeLabel(source)}
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className={metaChipClasses('uppercase tracking-[0.12em]')}>
+                            {sourceKindLabel(source)}
+                        </span>
+                        <span className={metaChipClasses(sourceStatusTone(source))}>
+                            {sourceStatusLabel(source)}
                         </span>
                     </div>
+                    <h4 className="mt-2 truncate text-[15px] font-medium text-ink">
+                        {source.display_name}
+                    </h4>
                     <div className="mt-1 flex items-center gap-1.5 text-[12px] text-ink-muted">
                         <Search className="h-3 w-3" aria-hidden="true" />
                         <span className="truncate">{sourceQuery(source)}</span>
@@ -380,124 +589,167 @@ function SourceCard({
                         target="_blank"
                         rel="noreferrer"
                         aria-label={`Open ${source.display_name}`}
-                        className="mt-0.5 inline-flex h-7 w-7 flex-shrink-0 items-center justify-center border border-transparent text-ink-muted transition-colors hover:border-rule hover:text-accent"
+                        className="mt-0.5 inline-flex h-8 w-8 flex-shrink-0 items-center justify-center border border-transparent text-ink-muted transition-colors hover:border-rule hover:text-accent"
                     >
                         <ExternalLink className="h-4 w-4" aria-hidden="true" />
                     </a>
                 ) : (
-                    <Globe2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-ink-muted transition-colors group-hover:text-accent" aria-hidden="true" />
+                    <Globe2 className="mt-1 h-4 w-4 flex-shrink-0 text-ink-muted transition-colors group-hover:text-accent" aria-hidden="true" />
                 )}
             </div>
+
             {source.description ? (
                 <p className="mt-2 line-clamp-2 text-[12px] leading-5 text-ink-muted">
                     {source.description}
                 </p>
             ) : null}
-            <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                <span className={metaChipClasses()}>
-                    <MapPin className="h-3 w-3" aria-hidden="true" />
-                    {sourceScope(source)}
-                </span>
-                <span className={metaChipClasses('tabular-nums')}>{sourceVolumeLabel(source)}</span>
-                {optionCount(source) > 0 ? (
-                    <span className={metaChipClasses('tabular-nums')}>{optionCount(source)} filters</span>
-                ) : null}
-                {healthText ? (
-                    <span className={metaChipClasses(`${healthTone(source)} tabular-nums`)}>
-                        {healthText}
-                    </span>
-                ) : null}
-                {externalText ? (
-                    <span className={metaChipClasses(`${externalSeedTone(source)} tabular-nums`)}>
-                        {externalText}
-                    </span>
-                ) : null}
-                {statusText ? (
-                    <span className={metaChipClasses('capitalize tabular-nums')}>
-                        {statusText}
-                    </span>
-                ) : null}
-                {intervalMinutes ? (
-                    <span className={metaChipClasses('tabular-nums')}>
-                        {intervalMinutes}m sync
-                    </span>
-                ) : null}
+
+            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                <div className="border border-rule bg-surface-sunk px-3 py-2">
+                    <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-ink-soft">
+                        <MapPin className="h-3 w-3" aria-hidden="true" />
+                        Scope
+                    </div>
+                    <div className="mt-1 truncate text-[12px] font-medium text-ink">{sourceScope(source)}</div>
+                </div>
+                <div className="border border-rule bg-surface-sunk px-3 py-2">
+                    <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-ink-soft">
+                        <Activity className="h-3 w-3" aria-hidden="true" />
+                        Outcome
+                    </div>
+                    <div className="mt-1 truncate text-[12px] font-medium text-ink">{sourceOutcomeLabel(source)}</div>
+                </div>
+                <div className="border border-rule bg-surface-sunk px-3 py-2">
+                    <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-ink-soft">
+                        <Clock3 className="h-3 w-3" aria-hidden="true" />
+                        Cadence
+                    </div>
+                    <div className="mt-1 truncate text-[12px] font-medium text-ink">
+                        {intervalMinutes ? `${intervalMinutes}m sync` : sourceVolumeLabel(source)}
+                    </div>
+                </div>
             </div>
-            {source.tags.length > 0 ? (
-                <div className="mt-3 flex flex-wrap gap-1">
-                    {source.tags.slice(0, 4).map((tag) => (
-                        <span
-                            key={tag}
-                            className="border border-rule bg-surface-sunk px-1.5 py-0.5 text-[11px] text-ink-soft"
-                        >
-                            {tag}
-                        </span>
-                    ))}
+
+            {lastError ? (
+                <div className="mt-3 flex gap-2 border border-warn/40 bg-warn-soft px-3 py-2 text-[12px] leading-5 text-ink">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warn" aria-hidden="true" />
+                    <span className="min-w-0 break-words">{lastError}</span>
                 </div>
             ) : null}
+
+            <details className="mt-3 border-t border-rule pt-3">
+                <summary className="cursor-pointer text-[12px] font-medium text-ink-soft transition-colors hover:text-accent">
+                    Details
+                </summary>
+                <div className="mt-3 grid gap-2 text-[12px] text-ink-muted">
+                    <div className="flex flex-wrap gap-1.5">
+                        <span className={metaChipClasses()}>{providerLabel}</span>
+                        {healthText ? (
+                            <span className={metaChipClasses(`${healthTone(source)} tabular-nums`)}>
+                                {healthText}
+                            </span>
+                        ) : null}
+                        {externalText ? (
+                            <span className={metaChipClasses(`${externalSeedTone(source)} tabular-nums`)}>
+                                {externalText}
+                            </span>
+                        ) : null}
+                        {optionCount(source) > 0 ? (
+                            <span className={metaChipClasses('tabular-nums')}>{optionCount(source)} filters</span>
+                        ) : null}
+                        {lastValidated ? (
+                            <span className={metaChipClasses('tabular-nums')}>
+                                Checked {formattedDateTime(lastValidated)}
+                            </span>
+                        ) : null}
+                    </div>
+                    <div className="grid gap-1">
+                        <span className="caption">Board reference</span>
+                        <span className="break-all text-ink-soft">{boardReference}</span>
+                    </div>
+                    {source.tags.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                            {source.tags.slice(0, 6).map((tag) => (
+                                <span
+                                    key={tag}
+                                    className="border border-rule bg-surface-sunk px-1.5 py-0.5 text-[11px] text-ink-soft"
+                                >
+                                    {tag}
+                                </span>
+                            ))}
+                        </div>
+                    ) : null}
+                </div>
+            </details>
+
             {canFetch ? (
                 <div className="mt-3 flex justify-end">
                     <button
                         type="button"
                         onClick={() => onFetchSource(source.site_type)}
                         disabled={isFetchingSource}
-                        className="inline-flex min-h-8 items-center gap-1.5 border border-accent px-2.5 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                        className="inline-flex min-h-9 items-center gap-1.5 border border-accent px-3 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
                     >
                         <RefreshCw
                             className={`h-3.5 w-3.5 ${isFetchingSource ? 'animate-spin' : ''}`}
                             aria-hidden="true"
                         />
-                        Fetch
+                        Fetch now
                     </button>
                 </div>
             ) : null}
-            {managedSourceId ? (
+
+            {managedId ? (
                 <div className="mt-3 border-t border-rule pt-3">
                     {isEditing ? (
                         <form
                             onSubmit={(event) => {
                                 event.preventDefault();
-                                onSubmitEdit(managedSourceId);
+                                onSubmitEdit(managedId);
                             }}
-                            className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_8rem_minmax(0,1fr)_7rem_auto]"
+                            className="mb-4 grid gap-3 border border-rule bg-surface-sunk p-3 sm:grid-cols-2"
                         >
                             <label className="grid gap-1 text-[12px] text-ink-soft">
                                 Name
                                 <input
                                     value={editSourceName}
                                     onChange={(event) => onEditSourceNameChange(event.target.value)}
-                                    className="h-8 min-w-0 border border-rule bg-surface-raised px-2 text-[12px] text-ink outline-none focus:border-accent"
+                                    className="h-9 min-w-0 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
                                 />
                             </label>
-                            <label className="grid gap-1 text-[12px] text-ink-soft">
-                                Careers URL
-                                <input
-                                    value={editSourceUrl}
-                                    onChange={(event) => onEditSourceUrlChange(event.target.value)}
-                                    className="h-8 min-w-0 border border-rule bg-surface-raised px-2 text-[12px] text-ink outline-none focus:border-accent"
-                                />
-                            </label>
-                            <label className="grid gap-1 text-[12px] text-ink-soft">
-                                Provider
-                                <select
-                                    value={editSourceProvider}
-                                    onChange={(event) => onEditSourceProviderChange(event.target.value)}
-                                    className="h-8 min-w-0 border border-rule bg-surface-raised px-2 text-[12px] text-ink outline-none focus:border-accent"
-                                >
-                                    <option value="">Auto</option>
-                                    <option value="greenhouse">Greenhouse</option>
-                                    <option value="lever">Lever</option>
-                                    <option value="ashby">Ashby</option>
-                                </select>
-                            </label>
-                            <label className="grid gap-1 text-[12px] text-ink-soft">
-                                Board ID
-                                <input
-                                    value={editSourceIdentifier}
-                                    onChange={(event) => onEditSourceIdentifierChange(event.target.value)}
-                                    className="h-8 min-w-0 border border-rule bg-surface-raised px-2 text-[12px] text-ink outline-none focus:border-accent"
-                                />
-                            </label>
+                            {isUserManagedSource ? (
+                                <>
+                                    <label className="grid gap-1 text-[12px] text-ink-soft">
+                                        Careers URL
+                                        <input
+                                            value={editSourceUrl}
+                                            onChange={(event) => onEditSourceUrlChange(event.target.value)}
+                                            className="h-9 min-w-0 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
+                                        />
+                                    </label>
+                                    <label className="grid gap-1 text-[12px] text-ink-soft">
+                                        Provider
+                                        <select
+                                            value={editSourceProvider}
+                                            onChange={(event) => onEditSourceProviderChange(event.target.value)}
+                                            className="h-9 min-w-0 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
+                                        >
+                                            <option value="">Auto</option>
+                                            <option value="greenhouse">Greenhouse</option>
+                                            <option value="lever">Lever</option>
+                                            <option value="ashby">Ashby</option>
+                                        </select>
+                                    </label>
+                                    <label className="grid gap-1 text-[12px] text-ink-soft">
+                                        Board ID
+                                        <input
+                                            value={editSourceIdentifier}
+                                            onChange={(event) => onEditSourceIdentifierChange(event.target.value)}
+                                            className="h-9 min-w-0 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
+                                        />
+                                    </label>
+                                </>
+                            ) : null}
                             <label className="grid gap-1 text-[12px] text-ink-soft">
                                 Sync minutes
                                 <input
@@ -506,14 +758,14 @@ function SourceCard({
                                     max={1440}
                                     value={editSyncInterval}
                                     onChange={(event) => onEditSyncIntervalChange(event.target.value)}
-                                    className="h-8 min-w-0 border border-rule bg-surface-raised px-2 text-[12px] text-ink outline-none focus:border-accent"
+                                    className="h-9 min-w-0 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
                                 />
                             </label>
-                            <div className="flex items-end gap-1.5">
+                            <div className="flex items-end gap-2">
                                 <button
                                     type="submit"
                                     disabled={isUpdatingAtsSource}
-                                    className="inline-flex h-8 items-center gap-1.5 border border-accent px-2 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                                    className="inline-flex h-9 items-center gap-1.5 border border-accent px-3 text-[13px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
                                 >
                                     <Check className="h-3.5 w-3.5" aria-hidden="true" />
                                     Save
@@ -522,7 +774,7 @@ function SourceCard({
                                     type="button"
                                     onClick={onCancelEdit}
                                     disabled={isUpdatingAtsSource}
-                                    className="inline-flex h-8 items-center gap-1.5 border border-rule px-2 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
+                                    className="inline-flex h-9 items-center gap-1.5 border border-rule px-3 text-[13px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
                                 >
                                     <X className="h-3.5 w-3.5" aria-hidden="true" />
                                     Cancel
@@ -530,75 +782,791 @@ function SourceCard({
                             </div>
                         </form>
                     ) : null}
-                    <div className="flex flex-wrap justify-end gap-2">
-                    <button
-                        type="button"
-                        onClick={() => onEditAtsSource(source)}
-                        disabled={isMutatingAtsSource || isEditing}
-                        className="inline-flex min-h-8 items-center gap-1.5 border border-rule px-2.5 py-1 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
-                    >
-                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                        Edit
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => onSyncAtsSource(managedSourceId)}
-                        disabled={isDisabled || isSyncingAtsSource}
-                        className="inline-flex min-h-8 items-center gap-1.5 border border-accent px-2.5 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
-                    >
-                        <RefreshCw
-                            className={`h-3.5 w-3.5 ${isSyncingAtsSource ? 'animate-spin' : ''}`}
-                            aria-hidden="true"
-                        />
-                        Sync
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => onToggleAtsSource(managedSourceId, isDisabled ? 'active' : 'disabled')}
-                        disabled={isMutatingAtsSource}
-                        className="inline-flex min-h-8 items-center gap-1.5 border border-rule px-2.5 py-1 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
-                    >
-                        {isDisabled ? (
-                            <Zap className="h-3.5 w-3.5" aria-hidden="true" />
-                        ) : (
-                            <PauseCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                        )}
-                        {isDisabled ? 'Enable' : 'Disable'}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => onDeleteAtsSource(source)}
-                        disabled={isMutatingAtsSource}
-                        className="inline-flex min-h-8 items-center gap-1.5 border border-warn/50 px-2.5 py-1 text-[12px] font-medium text-warn transition-colors hover:bg-warn-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
-                    >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                        Delete
-                    </button>
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="text-[12px] leading-5 text-ink-soft">
+                            {sourceManagementLabel(source)}
+                        </div>
+                        <div className="flex flex-wrap justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={() => onSyncAtsSource(managedId)}
+                                disabled={isDisabled || isSyncingAtsSource}
+                                className="inline-flex min-h-9 items-center gap-1.5 border border-accent px-3 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                            >
+                                <RefreshCw
+                                    className={`h-3.5 w-3.5 ${isSyncingAtsSource ? 'animate-spin' : ''}`}
+                                    aria-hidden="true"
+                                />
+                                Sync now
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => onToggleAtsSource(managedId, isDisabled ? 'active' : 'disabled')}
+                                disabled={isMutatingAtsSource}
+                                className="inline-flex min-h-9 items-center gap-1.5 border border-rule px-3 py-1 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
+                            >
+                                {isDisabled ? (
+                                    <Zap className="h-3.5 w-3.5" aria-hidden="true" />
+                                ) : (
+                                    <PauseCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                                )}
+                                {isDisabled ? 'Enable' : 'Disable'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => onEditAtsSource(source)}
+                                disabled={isMutatingAtsSource || isEditing}
+                                className="inline-flex min-h-9 items-center gap-1.5 border border-rule px-3 py-1 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
+                            >
+                                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                                Edit
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => onDeleteAtsSource(source)}
+                                disabled={isMutatingAtsSource}
+                                className="inline-flex min-h-9 items-center gap-1.5 border border-warn/50 px-3 py-1 text-[12px] font-medium text-warn transition-colors hover:bg-warn-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                            >
+                                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                                Delete
+                            </button>
+                        </div>
                     </div>
                 </div>
             ) : source.fetch_mode === 'ats_api' ? (
                 <div className="mt-3 border-t border-rule pt-3 text-[12px] leading-5 text-ink-soft">
-                    Tenant-managed source
+                    Tenant-managed ATS source
                 </div>
             ) : null}
-        </>
+        </div>
     );
-    const className = 'group min-h-36 border border-rule bg-surface px-4 py-3 transition-colors hover:border-rule-strong';
+}
+
+function SourceDeleteDialog({
+    source,
+    isDeleting,
+    onCancel,
+    onConfirm,
+}: Readonly<{
+    source: FetchSource;
+    isDeleting: boolean;
+    onCancel: () => void;
+    onConfirm: () => void;
+}>) {
+    const dialogRef = useRef<HTMLDialogElement>(null);
+    const cancelButtonRef = useRef<HTMLButtonElement>(null);
+    const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+    const isDeletingRef = useRef(isDeleting);
+    const onCancelRef = useRef(onCancel);
+
+    useEffect(() => {
+        isDeletingRef.current = isDeleting;
+        onCancelRef.current = onCancel;
+    }, [isDeleting, onCancel]);
+
+    useEffect(() => {
+        const dialog = dialogRef.current;
+        previouslyFocusedRef.current = document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
+        if (dialog && !dialog.open) {
+            if (typeof dialog.showModal === 'function') {
+                dialog.showModal();
+            } else {
+                dialog.setAttribute('open', '');
+            }
+        }
+        cancelButtonRef.current?.focus();
+
+        function handleWindowKeyDown(event: globalThis.KeyboardEvent) {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (!isDeletingRef.current) {
+                onCancelRef.current();
+            }
+        }
+
+        globalThis.addEventListener('keydown', handleWindowKeyDown);
+
+        return () => {
+            globalThis.removeEventListener('keydown', handleWindowKeyDown);
+            if (dialog?.open) {
+                if (typeof dialog.close === 'function') {
+                    dialog.close();
+                } else {
+                    dialog.removeAttribute('open');
+                }
+            }
+            const previouslyFocused = previouslyFocusedRef.current;
+            if (previouslyFocused && document.contains(previouslyFocused)) {
+                previouslyFocused.focus();
+            }
+        };
+    }, []);
+
+    function handleCancel(event: SyntheticEvent<HTMLDialogElement>) {
+        event.preventDefault();
+        if (!isDeleting) {
+            onCancel();
+        }
+    }
 
     return (
-        <div key={`${source.site_type}-${index}`} className={className}>
-            {content}
+        <dialog
+            ref={dialogRef}
+            aria-labelledby="delete-source-title"
+            aria-describedby="delete-source-description"
+            onCancel={handleCancel}
+            className="m-auto w-[calc(100%-2rem)] max-w-md border border-rule bg-surface px-5 py-4 text-ink shadow-lg backdrop:bg-ink/20"
+        >
+            <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-warn" aria-hidden="true" />
+                <div>
+                    <h4 id="delete-source-title" className="text-[15px] font-medium text-ink">
+                        Delete ATS source?
+                    </h4>
+                    <p id="delete-source-description" className="mt-2 text-[13px] leading-5 text-ink-muted">
+                        {source.display_name} will be removed from active syncing. Its recent activity remains available so it can be re-added later.
+                    </p>
+                </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+                <button
+                    ref={cancelButtonRef}
+                    type="button"
+                    onClick={onCancel}
+                    disabled={isDeleting}
+                    className="inline-flex h-9 items-center justify-center border border-rule px-3 text-[13px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
+                >
+                    Cancel
+                </button>
+                <button
+                    type="button"
+                    onClick={onConfirm}
+                    disabled={isDeleting}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 border border-warn/50 px-3 text-[13px] font-medium text-warn transition-colors hover:bg-warn-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    {isDeleting ? 'Deleting' : 'Delete source'}
+                </button>
+            </div>
+        </dialog>
+    );
+}
+
+function sourceEmptyMessage(sourceSearch: string, sourceView: SourceView): string {
+    if (sourceSearch.trim()) return 'No sources match that search.';
+    if (sourceView !== 'all') return 'No sources in this view.';
+    return 'No job sources configured.';
+}
+
+function sourceLoadMessages(args: {
+    isSourcesError: boolean;
+    sourcesError: unknown;
+    isCloudError: boolean;
+    cloudError: unknown;
+    isUserSourcesError: boolean;
+    userSourcesError: unknown;
+    isHistoryError: boolean;
+    historyError: unknown;
+}): string[] {
+    const messages: string[] = [];
+    if (args.isSourcesError) messages.push(`Catalog: ${apiErrorMessage(args.sourcesError)}`);
+    if (args.isCloudError) messages.push(`Tenant ATS sources: ${apiErrorMessage(args.cloudError)}`);
+    if (args.isUserSourcesError) messages.push(`Your ATS sources: ${apiErrorMessage(args.userSourcesError)}`);
+    if (args.isHistoryError) messages.push(`Activity: ${apiErrorMessage(args.historyError)}`);
+    return messages;
+}
+
+function filterButtonClasses(isActive: boolean): string {
+    const activeClasses = 'border-accent bg-accent-soft text-accent';
+    const inactiveClasses = 'border-rule bg-surface text-ink-soft hover:border-accent hover:text-accent';
+    return `inline-flex min-h-8 items-center gap-1.5 border px-2.5 py-1 text-[12px] font-medium transition-colors ${
+        isActive ? activeClasses : inactiveClasses
+    }`;
+}
+
+function SourcePanelHeader({
+    visibleCount,
+    totalCount,
+    isAddingSource,
+    showHistory,
+    sourceSearch,
+    sourceView,
+    sourceViewCounts,
+    catalogLabel,
+    onToggleAddingSource,
+    onToggleHistory,
+    onSourceSearchChange,
+    onSourceViewChange,
+}: Readonly<{
+    visibleCount: number;
+    totalCount: number;
+    isAddingSource: boolean;
+    showHistory: boolean;
+    sourceSearch: string;
+    sourceView: SourceView;
+    sourceViewCounts: Record<SourceView, number>;
+    catalogLabel: string;
+    onToggleAddingSource: () => void;
+    onToggleHistory: () => void;
+    onSourceSearchChange: (value: string) => void;
+    onSourceViewChange: (view: SourceView) => void;
+}>) {
+    return (
+        <div className="mb-4 flex flex-col gap-4">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+                <div>
+                    <p className="caption">Provider management</p>
+                    <h3 className="mt-1 flex items-baseline gap-2 text-[16px] font-medium text-ink">
+                        <span>Job Sources</span>
+                        <span className="text-[12px] font-normal text-ink-soft">
+                            {visibleCount}/{totalCount}
+                        </span>
+                    </h3>
+                    <p className="mt-1 max-w-2xl text-[12px] leading-5 text-ink-muted">
+                        Add supported ATS boards, monitor seed/API health, and keep paused or deleted sources recoverable from activity.
+                    </p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <button
+                        type="button"
+                        onClick={onToggleAddingSource}
+                        aria-expanded={isAddingSource}
+                        aria-controls="add-source-form"
+                        className="inline-flex h-9 items-center justify-center gap-1.5 border border-accent px-3 text-[13px] font-medium text-accent transition-colors hover:bg-accent-soft"
+                    >
+                        <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                        Add source
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onToggleHistory}
+                        aria-expanded={showHistory}
+                        aria-controls="source-activity-panel"
+                        className="inline-flex h-9 items-center justify-center gap-1.5 border border-rule px-3 text-[13px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent"
+                    >
+                        <History className="h-3.5 w-3.5" aria-hidden="true" />
+                        Activity
+                    </button>
+                    <label className="relative block">
+                        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-soft" aria-hidden="true" />
+                        <input
+                            aria-label="Search sources"
+                            value={sourceSearch}
+                            onChange={(event) => onSourceSearchChange(event.target.value)}
+                            placeholder="Search sources"
+                            className="h-9 w-full border border-rule bg-surface pl-8 pr-3 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-soft focus:border-accent sm:w-52"
+                        />
+                    </label>
+                    <div className="inline-flex items-center gap-2 self-start border border-rule bg-surface px-2.5 py-1.5 text-[12px] text-ink-soft">
+                        <Server className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
+                        <span>{catalogLabel}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2" aria-label="Source views">
+                {SOURCE_VIEW_OPTIONS.map((option) => (
+                    <button
+                        key={option.key}
+                        type="button"
+                        aria-pressed={sourceView === option.key}
+                        onClick={() => onSourceViewChange(option.key)}
+                        className={filterButtonClasses(sourceView === option.key)}
+                    >
+                        {option.label}
+                        <span className="tabular-nums text-[11px]">{sourceViewCounts[option.key]}</span>
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function SourceLoadErrorBanner({
+    messages,
+    onRetry,
+}: Readonly<{
+    messages: string[];
+    onRetry: () => void;
+}>) {
+    return (
+        <div role="alert" className="mb-4 border border-warn/40 bg-warn-soft px-4 py-3 text-[12px] text-ink">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex gap-2">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-warn" aria-hidden="true" />
+                    <div>
+                        <p className="font-medium">Some source status could not be loaded.</p>
+                        <ul className="mt-1 grid gap-1 text-ink-muted">
+                            {messages.map((message) => (
+                                <li key={message}>{message}</li>
+                            ))}
+                        </ul>
+                    </div>
+                </div>
+                <button
+                    type="button"
+                    onClick={onRetry}
+                    className="inline-flex h-8 items-center justify-center gap-1.5 border border-rule bg-surface px-2.5 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent"
+                >
+                    <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                    Retry
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function AddSourceForm({
+    newSourceName,
+    newSourceUrl,
+    newSourceProvider,
+    newSourceIdentifier,
+    discoveryError,
+    hasCheckedDiscovery,
+    discoveryCandidates,
+    isChecking,
+    isAdding,
+    onSubmit,
+    onCheck,
+    onNameChange,
+    onUrlChange,
+    onProviderChange,
+    onIdentifierChange,
+    onAddDiscoveredSource,
+}: Readonly<{
+    newSourceName: string;
+    newSourceUrl: string;
+    newSourceProvider: string;
+    newSourceIdentifier: string;
+    discoveryError: string | null;
+    hasCheckedDiscovery: boolean;
+    discoveryCandidates: AtsSourceDiscoveryCandidate[];
+    isChecking: boolean;
+    isAdding: boolean;
+    onSubmit: FormSubmitHandler;
+    onCheck: () => void;
+    onNameChange: (value: string) => void;
+    onUrlChange: (value: string) => void;
+    onProviderChange: (value: string) => void;
+    onIdentifierChange: (value: string) => void;
+    onAddDiscoveredSource: (candidate: AtsSourceDiscoveryCandidate) => void;
+}>) {
+    return (
+        <form
+            id="add-source-form"
+            onSubmit={onSubmit}
+            className="mb-4 grid gap-4 border border-rule bg-surface px-4 py-4"
+        >
+            <div className="flex flex-col gap-3 border-b border-rule pb-4 md:flex-row md:items-start md:justify-between">
+                <div className="flex gap-3">
+                    <ShieldCheck className="mt-0.5 h-5 w-5 text-accent" aria-hidden="true" />
+                    <div>
+                        <p className="text-[14px] font-medium text-ink">Add a supported ATS board</p>
+                        <p className="mt-1 max-w-2xl text-[12px] leading-5 text-ink-muted">
+                            Enter a company name, supported careers URL, or board ID. Arbitrary websites are blocked; discovery checks supported ATS providers only.
+                        </p>
+                    </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5 text-[11px] text-ink-soft">
+                    <span className={metaChipClasses('uppercase tracking-[0.12em]')}>Search order</span>
+                    {ATS_PROVIDER_SEARCH_ORDER.map((provider) => (
+                        <span key={provider} className={metaChipClasses()}>
+                            {provider}
+                        </span>
+                    ))}
+                </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_10rem_minmax(0,1fr)]">
+                <div>
+                    <label htmlFor="new-source-name" className="text-[12px] text-ink-soft">
+                        Name
+                    </label>
+                    <input
+                        id="new-source-name"
+                        value={newSourceName}
+                        onChange={(event) => onNameChange(event.target.value)}
+                        placeholder="Company or board"
+                        className="mt-1 h-9 w-full border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
+                    />
+                    <p className="mt-1 text-[11px] leading-4 text-ink-soft">
+                        Works alone for discovery when the company name is distinctive.
+                    </p>
+                </div>
+                <div>
+                    <label htmlFor="new-source-url" className="text-[12px] text-ink-soft">
+                        Careers URL
+                    </label>
+                    <input
+                        id="new-source-url"
+                        value={newSourceUrl}
+                        onChange={(event) => onUrlChange(event.target.value)}
+                        placeholder="https://boards.greenhouse.io/acme"
+                        className="mt-1 h-9 w-full border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
+                    />
+                    <p className="mt-1 text-[11px] leading-4 text-ink-soft">
+                        Only Greenhouse, Lever, and Ashby board URLs are accepted.
+                    </p>
+                </div>
+                <div>
+                    <label htmlFor="new-source-provider" className="text-[12px] text-ink-soft">
+                        Provider
+                    </label>
+                    <select
+                        id="new-source-provider"
+                        value={newSourceProvider}
+                        onChange={(event) => onProviderChange(event.target.value)}
+                        className="mt-1 h-9 w-full border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
+                    >
+                        <option value="">Auto</option>
+                        <option value="greenhouse">Greenhouse</option>
+                        <option value="lever">Lever</option>
+                        <option value="ashby">Ashby</option>
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="new-source-identifier" className="text-[12px] text-ink-soft">
+                        Board ID
+                    </label>
+                    <input
+                        id="new-source-identifier"
+                        value={newSourceIdentifier}
+                        onChange={(event) => onIdentifierChange(event.target.value)}
+                        placeholder="acme"
+                        className="mt-1 h-9 w-full border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
+                    />
+                    <p className="mt-1 text-[11px] leading-4 text-ink-soft">
+                        Use with a provider, or leave provider on Auto to probe all supported boards.
+                    </p>
+                </div>
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                <button
+                    type="button"
+                    onClick={onCheck}
+                    disabled={isChecking}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 border border-rule px-3 text-[13px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                >
+                    <Search className="h-3.5 w-3.5" aria-hidden="true" />
+                    {isChecking ? 'Checking' : 'Check'}
+                </button>
+                <button
+                    type="submit"
+                    disabled={isAdding}
+                    className="inline-flex h-9 items-center justify-center border border-accent px-3 text-[13px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                >
+                    {isAdding ? 'Adding' : 'Add'}
+                </button>
+            </div>
+
+            {discoveryError ? (
+                <div className="flex gap-2 border border-warn/40 bg-warn-soft px-3 py-2 text-[12px] text-ink">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warn" aria-hidden="true" />
+                    <span>{discoveryError}</span>
+                </div>
+            ) : null}
+
+            {hasCheckedDiscovery && discoveryCandidates.length === 0 && !discoveryError ? (
+                <div className="border border-dashed border-rule bg-surface-sunk px-3 py-3 text-[12px] leading-5 text-ink-muted">
+                    No supported ATS board matched those inputs. Try a provider-specific board ID or a supported board URL.
+                </div>
+            ) : null}
+
+            {discoveryCandidates.length > 0 ? (
+                <div className="grid gap-2 border-t border-rule pt-4">
+                    <div className="flex items-center justify-between gap-3">
+                        <p className="caption">Discovery candidates</p>
+                        <span className="text-[12px] text-ink-soft">
+                            {discoveryCandidates.length} found
+                        </span>
+                    </div>
+                    {discoveryCandidates.map((candidate) => (
+                        <div
+                            key={`${candidate.provider}-${candidate.identifier}`}
+                            className="flex flex-col gap-3 border border-rule bg-surface-raised px-3 py-3 sm:flex-row sm:items-start sm:justify-between"
+                        >
+                            <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-[13px] font-medium text-ink">
+                                        {candidate.display_name}
+                                    </span>
+                                    <span className={metaChipClasses('capitalize')}>
+                                        {candidate.provider}
+                                    </span>
+                                    <span className={metaChipClasses('tabular-nums')}>
+                                        {candidate.jobs_seen} jobs
+                                    </span>
+                                </div>
+                                <p className="mt-1 break-all text-[12px] text-ink-soft">
+                                    {candidate.identifier}
+                                </p>
+                                {candidate.source_url ? (
+                                    <p className="mt-1 break-all text-[12px] text-ink-soft">
+                                        {candidate.source_url}
+                                    </p>
+                                ) : null}
+                                <p className="mt-2 text-[12px] leading-5 text-ink-muted">
+                                    {candidate.match_reason}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => onAddDiscoveredSource(candidate)}
+                                disabled={isAdding}
+                                className="inline-flex h-9 items-center justify-center border border-accent px-3 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                            >
+                                Add
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            ) : null}
+        </form>
+    );
+}
+
+function SourceActivityPanel({
+    sourceActivityFilter,
+    sourceActivityCounts,
+    sourceHistory,
+    filteredSourceHistory,
+    isAdding,
+    onFilterChange,
+    onHide,
+    onReaddSource,
+}: Readonly<{
+    sourceActivityFilter: SourceActivityFilter;
+    sourceActivityCounts: Record<SourceActivityFilter, number>;
+    sourceHistory: AtsSourceHistoryEvent[];
+    filteredSourceHistory: AtsSourceHistoryEvent[];
+    isAdding: boolean;
+    onFilterChange: (filter: SourceActivityFilter) => void;
+    onHide: () => void;
+    onReaddSource: (event: AtsSourceHistoryEvent) => void;
+}>) {
+    const emptyHistoryMessage = sourceHistory.length === 0
+        ? 'No source activity recorded yet.'
+        : 'No activity matches this filter.';
+
+    return (
+        <div id="source-activity-panel" className="mb-4 border border-rule bg-surface px-4 py-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                    <p className="caption">Source activity</p>
+                    <p className="mt-1 text-[12px] text-ink-muted">
+                        Recent add, update, pause, delete, and re-add events.
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    onClick={onHide}
+                    className="inline-flex h-8 w-8 items-center justify-center border border-rule text-ink-soft transition-colors hover:border-accent hover:text-accent"
+                    aria-label="Hide source activity"
+                >
+                    <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+            </div>
+            <div className="mb-3 flex flex-wrap gap-2" aria-label="Source activity filters">
+                {SOURCE_ACTIVITY_FILTER_OPTIONS.map((option) => (
+                    <button
+                        key={option.key}
+                        type="button"
+                        aria-pressed={sourceActivityFilter === option.key}
+                        onClick={() => onFilterChange(option.key)}
+                        className={filterButtonClasses(sourceActivityFilter === option.key)}
+                    >
+                        {option.label}
+                        <span className="tabular-nums text-[11px]">{sourceActivityCounts[option.key]}</span>
+                    </button>
+                ))}
+            </div>
+            {filteredSourceHistory.length > 0 ? (
+                <div className="grid gap-2">
+                    {filteredSourceHistory.map((event) => (
+                        <div
+                            key={event.id}
+                            className="flex flex-col gap-2 border border-rule bg-surface-raised px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                        >
+                            <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-[13px] font-medium text-ink">
+                                        {event.display_name || event.identifier || event.provider || 'ATS source'}
+                                    </span>
+                                    <span className={metaChipClasses()}>
+                                        {historyActionLabel(event.action)}
+                                    </span>
+                                    {event.provider ? (
+                                        <span className={metaChipClasses('capitalize')}>
+                                            {event.provider}
+                                        </span>
+                                    ) : null}
+                                    <span className={metaChipClasses('tabular-nums')}>
+                                        {formattedDateTime(event.occurred_at)}
+                                    </span>
+                                </div>
+                                {event.identifier ? (
+                                    <p className="mt-1 truncate text-[12px] text-ink-soft">
+                                        {event.identifier}
+                                    </p>
+                                ) : null}
+                            </div>
+                            {event.readd_payload ? (
+                                <button
+                                    type="button"
+                                    onClick={() => onReaddSource(event)}
+                                    disabled={isAdding}
+                                    className="inline-flex h-8 items-center justify-center gap-1.5 border border-rule px-2.5 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
+                                >
+                                    <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                                    Re-add
+                                </button>
+                            ) : null}
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                <div className="border border-dashed border-rule bg-surface-sunk px-3 py-4 text-[12px] text-ink-muted">
+                    {emptyHistoryMessage}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function SourcesContent({
+    isLoading,
+    sources,
+    emptyMessage,
+    fetchingSourceSiteType,
+    syncingSourceId,
+    updatingSourceId,
+    deletingSourceId,
+    editingSourceId,
+    editSourceName,
+    editSourceUrl,
+    editSourceProvider,
+    editSourceIdentifier,
+    editSyncInterval,
+    onFetchSource,
+    onSyncAtsSource,
+    onEditAtsSource,
+    onToggleAtsSource,
+    onDeleteAtsSource,
+    onSubmitEdit,
+    onCancelEdit,
+    onEditSourceNameChange,
+    onEditSourceUrlChange,
+    onEditSourceProviderChange,
+    onEditSourceIdentifierChange,
+    onEditSyncIntervalChange,
+}: Readonly<{
+    isLoading: boolean;
+    sources: FetchSource[];
+    emptyMessage: string;
+    fetchingSourceSiteType: string | null;
+    syncingSourceId: string | null;
+    updatingSourceId: string | null;
+    deletingSourceId: string | null;
+    editingSourceId: string | null;
+    editSourceName: string;
+    editSourceUrl: string;
+    editSourceProvider: string;
+    editSourceIdentifier: string;
+    editSyncInterval: string;
+    onFetchSource: (siteType: string) => void;
+    onSyncAtsSource: (sourceId: string) => void;
+    onEditAtsSource: (source: FetchSource) => void;
+    onToggleAtsSource: (sourceId: string, status: string) => void;
+    onDeleteAtsSource: (source: FetchSource) => void;
+    onSubmitEdit: (sourceId: string) => void;
+    onCancelEdit: () => void;
+    onEditSourceNameChange: (value: string) => void;
+    onEditSourceUrlChange: (value: string) => void;
+    onEditSourceProviderChange: (value: string) => void;
+    onEditSourceIdentifierChange: (value: string) => void;
+    onEditSyncIntervalChange: (value: string) => void;
+}>) {
+    if (isLoading) {
+        return (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {[0, 1, 2].map((item) => (
+                    <div key={item} className="h-48 animate-pulse border border-rule bg-surface-sunk" />
+                ))}
+            </div>
+        );
+    }
+
+    if (sources.length === 0) {
+        return (
+            <div className="border border-dashed border-rule bg-surface px-4 py-6 text-[13px] text-ink-muted">
+                <div className="flex items-start gap-3">
+                    <ListFilter className="mt-0.5 h-4 w-4 text-accent" aria-hidden="true" />
+                    <div>
+                        <p className="font-medium text-ink">{emptyMessage}</p>
+                        <p className="mt-1 leading-5">
+                            Add a supported ATS board or relax the current search and status filters.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {sources.map((source, index) => {
+                const managedId = managedSourceId(source);
+                return (
+                    <SourceCard
+                        key={`${source.site_type}-${index}`}
+                        source={source}
+                        index={index}
+                        onFetchSource={onFetchSource}
+                        isFetchingSource={fetchingSourceSiteType === source.site_type}
+                        onSyncAtsSource={onSyncAtsSource}
+                        onEditAtsSource={onEditAtsSource}
+                        onToggleAtsSource={onToggleAtsSource}
+                        onDeleteAtsSource={onDeleteAtsSource}
+                        onSubmitEdit={onSubmitEdit}
+                        onCancelEdit={onCancelEdit}
+                        isSyncingAtsSource={syncingSourceId === managedId}
+                        isUpdatingAtsSource={updatingSourceId === managedId}
+                        isDeletingAtsSource={deletingSourceId === managedId}
+                        isEditing={editingSourceId === managedId}
+                        editSourceName={editSourceName}
+                        editSourceUrl={editSourceUrl}
+                        editSourceProvider={editSourceProvider}
+                        editSourceIdentifier={editSourceIdentifier}
+                        editSyncInterval={editSyncInterval}
+                        onEditSourceNameChange={onEditSourceNameChange}
+                        onEditSourceUrlChange={onEditSourceUrlChange}
+                        onEditSourceProviderChange={onEditSourceProviderChange}
+                        onEditSourceIdentifierChange={onEditSourceIdentifierChange}
+                        onEditSyncIntervalChange={onEditSyncIntervalChange}
+                    />
+                );
+            })}
         </div>
     );
 }
 
 export function FetchSourcesPanel() {
     const [sourceSearch, setSourceSearch] = useState('');
+    const [sourceView, setSourceView] = useState<SourceView>('all');
+    const [sourceActivityFilter, setSourceActivityFilter] = useState<SourceActivityFilter>('all');
     const [isAddingSource, setIsAddingSource] = useState(false);
+    const [showHistory, setShowHistory] = useState(false);
     const [newSourceName, setNewSourceName] = useState('');
     const [newSourceUrl, setNewSourceUrl] = useState('');
     const [newSourceProvider, setNewSourceProvider] = useState('');
     const [newSourceIdentifier, setNewSourceIdentifier] = useState('');
+    const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+    const [hasCheckedDiscovery, setHasCheckedDiscovery] = useState(false);
     const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
     const [editSourceName, setEditSourceName] = useState('');
     const [editSourceUrl, setEditSourceUrl] = useState('');
@@ -612,9 +1580,16 @@ export function FetchSourcesPanel() {
     } | null>(null);
     const [discoveryCandidates, setDiscoveryCandidates] = useState<AtsSourceDiscoveryCandidate[]>([]);
     const [discoveryPayload, setDiscoveryPayload] = useState<AtsSourceCreateRequest | null>(null);
+    const [sourcePendingDelete, setSourcePendingDelete] = useState<FetchSource | null>(null);
     const latestDiscoveryKeyRef = useRef('');
     const queryClient = useQueryClient();
-    const { data, isLoading } = useQuery({
+    const {
+        data,
+        isLoading,
+        isError: isSourcesError,
+        error: sourcesError,
+        refetch: refetchSources,
+    } = useQuery({
         queryKey: ['pipeline', 'sources'],
         queryFn: async () => {
             const response = await pipelineApi.getSources({
@@ -637,7 +1612,13 @@ export function FetchSourcesPanel() {
             toast.error(`Source fetch failed: ${apiErrorMessage(error)}`);
         },
     });
-    const { data: cloudIntegrations = [], isLoading: isLoadingCloud } = useQuery({
+    const {
+        data: cloudIntegrations = [],
+        isLoading: isLoadingCloud,
+        isError: isCloudError,
+        error: cloudError,
+        refetch: refetchCloudIntegrations,
+    } = useQuery({
         queryKey: ['cloud', 'integrations', 'source-panel'],
         queryFn: async () => {
             const response = await pipelineApi.getCloudIntegrations();
@@ -645,7 +1626,13 @@ export function FetchSourcesPanel() {
         },
         staleTime: 5 * 60 * 1000,
     });
-    const { data: userAtsSources = [], isLoading: isLoadingUserSources } = useQuery({
+    const {
+        data: userAtsSources = [],
+        isLoading: isLoadingUserSources,
+        isError: isUserSourcesError,
+        error: userSourcesError,
+        refetch: refetchUserSources,
+    } = useQuery({
         queryKey: ['cloud', 'integrations', 'user-sources'],
         queryFn: async () => {
             const response = await pipelineApi.getUserAtsSources();
@@ -653,7 +1640,12 @@ export function FetchSourcesPanel() {
         },
         staleTime: 60 * 1000,
     });
-    const { data: sourceHistory = [] } = useQuery({
+    const {
+        data: sourceHistory = [],
+        isError: isHistoryError,
+        error: historyError,
+        refetch: refetchSourceHistory,
+    } = useQuery({
         queryKey: ['cloud', 'integrations', 'user-sources-history'],
         queryFn: async () => {
             const response = await pipelineApi.getUserAtsSourceHistory();
@@ -670,6 +1662,8 @@ export function FetchSourcesPanel() {
             if (sourcePayloadKey(variables) !== latestDiscoveryKeyRef.current) return;
             setDiscoveryPayload(variables);
             setDiscoveryCandidates(candidates);
+            setDiscoveryError(null);
+            setHasCheckedDiscovery(true);
             if (candidates.length === 0) {
                 toast.error('No supported ATS board found.');
             } else {
@@ -677,7 +1671,10 @@ export function FetchSourcesPanel() {
             }
         },
         onError: (error) => {
-            toast.error(`ATS source check failed: ${apiErrorMessage(error)}`);
+            const message = apiErrorMessage(error);
+            setDiscoveryError(message);
+            setHasCheckedDiscovery(true);
+            toast.error(`ATS source check failed: ${message}`);
         },
     });
     const createUserSourceMutation = useMutation({
@@ -699,6 +1696,8 @@ export function FetchSourcesPanel() {
             setNewSourceIdentifier('');
             setDiscoveryCandidates([]);
             setDiscoveryPayload(null);
+            setDiscoveryError(null);
+            setHasCheckedDiscovery(false);
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources'] });
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources-history'] });
@@ -729,6 +1728,26 @@ export function FetchSourcesPanel() {
             toast.error(`ATS source update failed: ${apiErrorMessage(error)}`);
         },
     });
+    const updateTenantIntegrationMutation = useMutation({
+        mutationFn: async ({ integrationId, payload }: { integrationId: string; payload: IntegrationUpdateRequest }) => {
+            const response = await pipelineApi.updateCloudIntegration(integrationId, payload);
+            return response.data;
+        },
+        onSuccess: (integration, variables) => {
+            const updatedStatus = variables.payload.status;
+            if (updatedStatus) {
+                toast.success(`${integration.display_name} ${integration.status === 'disabled' ? 'disabled' : 'enabled'}`);
+            } else {
+                toast.success(`${integration.display_name} updated`);
+                setEditingSourceId(null);
+                setEditOriginalSource(null);
+            }
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
+        },
+        onError: (error) => {
+            toast.error(`Workspace ATS source update failed: ${apiErrorMessage(error)}`);
+        },
+    });
     const deleteUserSourceMutation = useMutation({
         mutationFn: async (sourceId: string) => {
             await pipelineApi.deleteUserAtsSource(sourceId);
@@ -736,12 +1755,27 @@ export function FetchSourcesPanel() {
         },
         onSuccess: () => {
             toast.success('ATS source deleted');
+            setSourcePendingDelete(null);
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources'] });
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources-history'] });
         },
         onError: (error) => {
             toast.error(`ATS source delete failed: ${apiErrorMessage(error)}`);
+        },
+    });
+    const deleteTenantIntegrationMutation = useMutation({
+        mutationFn: async (integrationId: string) => {
+            await pipelineApi.deleteCloudIntegration(integrationId);
+            return integrationId;
+        },
+        onSuccess: () => {
+            toast.success('Workspace ATS source deleted');
+            setSourcePendingDelete(null);
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
+        },
+        onError: (error) => {
+            toast.error(`Workspace ATS source delete failed: ${apiErrorMessage(error)}`);
         },
     });
     const syncUserSourceMutation = useMutation({
@@ -759,6 +1793,19 @@ export function FetchSourcesPanel() {
             toast.error(`ATS source sync failed: ${apiErrorMessage(error)}`);
         },
     });
+    const syncTenantIntegrationMutation = useMutation({
+        mutationFn: async (integrationId: string) => {
+            const response = await pipelineApi.syncCloudIntegration(integrationId, true);
+            return response.data;
+        },
+        onSuccess: (result) => {
+            toast.success(`${result.jobs_imported} jobs imported from ${toTitleCase(result.provider)}`);
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
+        },
+        onError: (error) => {
+            toast.error(`Workspace ATS source sync failed: ${apiErrorMessage(error)}`);
+        },
+    });
 
     const cloudSources = useMemo(
         () => [
@@ -773,14 +1820,46 @@ export function FetchSourcesPanel() {
         () => [...(data?.sources ?? []), ...cloudSources],
         [data?.sources, cloudSources]
     );
+    const sourceViewCounts = useMemo(
+        () => SOURCE_VIEW_OPTIONS.reduce<Record<SourceView, number>>((counts, option) => {
+            counts[option.key] = allSources.filter((source) => sourceMatchesView(source, option.key)).length;
+            return counts;
+        }, {
+            all: 0,
+            ats: 0,
+            seed: 0,
+            api: 0,
+            paused: 0,
+            needs_attention: 0,
+        }),
+        [allSources]
+    );
     const sources = useMemo(
-        () => allSources.filter((source) => sourceMatchesSearch(source, sourceSearch)),
-        [allSources, sourceSearch]
+        () => allSources.filter((source) => (
+            sourceMatchesView(source, sourceView) && sourceMatchesSearch(source, sourceSearch)
+        )),
+        [allSources, sourceSearch, sourceView]
+    );
+    const sourceActivityCounts = useMemo(
+        () => SOURCE_ACTIVITY_FILTER_OPTIONS.reduce<Record<SourceActivityFilter, number>>((counts, option) => {
+            counts[option.key] = sourceHistory.filter((event) => historyEventMatchesFilter(event, option.key)).length;
+            return counts;
+        }, {
+            all: 0,
+            added: 0,
+            updated: 0,
+            deleted: 0,
+            synced: 0,
+            recoverable: 0,
+        }),
+        [sourceHistory]
+    );
+    const filteredSourceHistory = useMemo(
+        () => sourceHistory.filter((event) => historyEventMatchesFilter(event, sourceActivityFilter)),
+        [sourceActivityFilter, sourceHistory]
     );
     const totalCount = (data?.total_count ?? (data?.sources ?? []).length) + cloudSources.length;
-    const emptyMessage = sourceSearch.trim()
-        ? 'No sources match that search.'
-        : 'No fetch sources configured.';
+    const emptyMessage = sourceEmptyMessage(sourceSearch, sourceView);
 
     function buildUserSourcePayload(): AtsSourceCreateRequest | null {
         const provider = newSourceProvider.trim() || undefined;
@@ -807,6 +1886,8 @@ export function FetchSourcesPanel() {
     function clearDiscoveryCandidates() {
         setDiscoveryCandidates([]);
         setDiscoveryPayload(null);
+        setDiscoveryError(null);
+        setHasCheckedDiscovery(false);
         latestDiscoveryKeyRef.current = '';
     }
 
@@ -830,7 +1911,7 @@ export function FetchSourcesPanel() {
         clearDiscoveryCandidates();
     }
 
-    function submitUserSource(event: FormEvent<HTMLFormElement>) {
+    function submitUserSource(event: FormSubmitEvent) {
         event.preventDefault();
         const payload = buildUserSourcePayload();
         if (!payload) return;
@@ -840,6 +1921,8 @@ export function FetchSourcesPanel() {
     function checkUserSource() {
         const payload = buildUserSourcePayload();
         if (!payload) return;
+        setDiscoveryError(null);
+        setHasCheckedDiscovery(false);
         latestDiscoveryKeyRef.current = sourcePayloadKey(payload);
         discoverUserSourceMutation.mutate(payload);
     }
@@ -858,38 +1941,70 @@ export function FetchSourcesPanel() {
         createUserSourceMutation.mutate(event.readd_payload);
     }
 
-    function editUserSource(source: FetchSource) {
-        const sourceId = userSourceId(source);
+    function findManagedSource(sourceId: string): FetchSource | undefined {
+        return allSources.find((source) => managedSourceId(source) === sourceId);
+    }
+
+    function editManagedSource(source: FetchSource) {
+        const sourceId = managedSourceId(source);
         if (!sourceId) return;
         setEditingSourceId(sourceId);
         setEditSourceName(source.display_name);
-        setEditSourceUrl(String(source.options?.source_url || source.seed_url || ''));
-        setEditSourceProvider(String(source.options?.ats_provider || source.site_type || ''));
-        setEditSourceIdentifier(String(source.options?.ats_identifier || ''));
         setEditSyncInterval(String(atsInterval(source) ?? 120));
+        if (!userSourceId(source)) {
+            setEditSourceUrl('');
+            setEditSourceProvider('');
+            setEditSourceIdentifier('');
+            setEditOriginalSource(null);
+            return;
+        }
+        const sourceUrl = String(source.options?.source_url || source.seed_url || '');
+        const provider = String(source.options?.ats_provider || source.site_type || '');
+        const identifier = String(source.options?.ats_identifier || '');
+        setEditSourceUrl(sourceUrl);
+        setEditSourceProvider(provider);
+        setEditSourceIdentifier(identifier);
         setEditOriginalSource({
-            sourceUrl: String(source.options?.source_url || source.seed_url || ''),
-            provider: String(source.options?.ats_provider || source.site_type || ''),
-            identifier: String(source.options?.ats_identifier || ''),
+            sourceUrl,
+            provider,
+            identifier,
         });
     }
 
-    function submitUserSourceEdit(sourceId: string) {
+    function submitManagedSourceEdit(sourceId: string) {
+        const source = findManagedSource(sourceId);
+        if (!source) {
+            toast.error('ATS source is no longer available.');
+            return;
+        }
         const displayName = editSourceName.trim();
-        const sourceUrl = editSourceUrl.trim();
-        const provider = editSourceProvider.trim() || undefined;
-        const identifier = editSourceIdentifier.trim() || undefined;
         const interval = Number(editSyncInterval);
         if (!displayName) {
             toast.error('Source name cannot be blank.');
             return;
         }
-        if (sourceUrl && !isSupportedAtsUrl(sourceUrl)) {
-            toast.error('Use a Greenhouse, Lever, or Ashby board URL.');
-            return;
-        }
         if (!Number.isInteger(interval) || interval < 5 || interval > 1440) {
             toast.error('Sync interval must be between 5 and 1440 minutes.');
+            return;
+        }
+
+        const tenantId = tenantIntegrationId(source);
+        if (tenantId && !userSourceId(source)) {
+            updateTenantIntegrationMutation.mutate({
+                integrationId: tenantId,
+                payload: {
+                    display_name: displayName,
+                    sync_interval_minutes: interval,
+                },
+            });
+            return;
+        }
+
+        const sourceUrl = editSourceUrl.trim();
+        const provider = editSourceProvider.trim() || undefined;
+        const identifier = editSourceIdentifier.trim() || undefined;
+        if (sourceUrl && !isSupportedAtsUrl(sourceUrl)) {
+            toast.error('Use a Greenhouse, Lever, or Ashby board URL.');
             return;
         }
         const payload: AtsSourceUpdateRequest = {
@@ -912,269 +2027,184 @@ export function FetchSourcesPanel() {
         });
     }
 
-    function deleteUserSource(source: FetchSource) {
-        const sourceId = userSourceId(source);
+    function deleteManagedSource(source: FetchSource) {
+        const sourceId = managedSourceId(source);
         if (!sourceId) return;
-        if (!window.confirm(`Delete ${source.display_name}?`)) return;
-        deleteUserSourceMutation.mutate(sourceId);
+        setSourcePendingDelete(source);
     }
 
-    let sourcesContent: ReactNode;
-    if (isLoading || isLoadingCloud || isLoadingUserSources) {
-        sourcesContent = (
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {[0, 1, 2].map((item) => (
-                    <div key={item} className="h-24 animate-pulse border border-rule bg-surface-sunk" />
-                ))}
-            </div>
-        );
-    } else if (sources.length === 0) {
-        sourcesContent = (
-            <div className="border border-dashed border-rule bg-surface px-4 py-5 text-[13px] text-ink-muted">
-                {emptyMessage}
-            </div>
-        );
-    } else {
-        sourcesContent = (
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {sources.map((source, index) => (
-                    <SourceCard
-                        key={`${source.site_type}-${index}`}
-                        source={source}
-                        index={index}
-                        onFetchSource={(siteType) => fetchSourceMutation.mutate(siteType)}
-                        isFetchingSource={
-                            fetchSourceMutation.isPending
-                            && fetchSourceMutation.variables === source.site_type
-                        }
-                        onSyncAtsSource={(sourceId) => syncUserSourceMutation.mutate(sourceId)}
-                        onEditAtsSource={editUserSource}
-                        onToggleAtsSource={(sourceId, status) => updateUserSourceMutation.mutate({ sourceId, payload: { status } })}
-                        onDeleteAtsSource={deleteUserSource}
-                        onSubmitEdit={submitUserSourceEdit}
-                        onCancelEdit={() => {
-                            setEditingSourceId(null);
-                            setEditOriginalSource(null);
-                        }}
-                        isSyncingAtsSource={
-                            syncUserSourceMutation.isPending
-                            && syncUserSourceMutation.variables === userSourceId(source)
-                        }
-                        isUpdatingAtsSource={
-                            updateUserSourceMutation.isPending
-                            && updateUserSourceMutation.variables?.sourceId === userSourceId(source)
-                        }
-                        isDeletingAtsSource={
-                            deleteUserSourceMutation.isPending
-                            && deleteUserSourceMutation.variables === userSourceId(source)
-                        }
-                        isEditing={editingSourceId === userSourceId(source)}
-                        editSourceName={editSourceName}
-                        editSourceUrl={editSourceUrl}
-                        editSourceProvider={editSourceProvider}
-                        editSourceIdentifier={editSourceIdentifier}
-                        editSyncInterval={editSyncInterval}
-                        onEditSourceNameChange={setEditSourceName}
-                        onEditSourceUrlChange={setEditSourceUrl}
-                        onEditSourceProviderChange={setEditSourceProvider}
-                        onEditSourceIdentifierChange={setEditSourceIdentifier}
-                        onEditSyncIntervalChange={setEditSyncInterval}
-                    />
-                ))}
-            </div>
-        );
+    function confirmDeleteManagedSource() {
+        if (!sourcePendingDelete) return;
+        const sourceId = userSourceId(sourcePendingDelete);
+        if (sourceId) {
+            deleteUserSourceMutation.mutate(sourceId);
+            return;
+        }
+        const integrationId = tenantIntegrationId(sourcePendingDelete);
+        if (integrationId) {
+            deleteTenantIntegrationMutation.mutate(integrationId);
+        }
+    }
+
+    function syncManagedSource(sourceId: string) {
+        const source = findManagedSource(sourceId);
+        if (!source) {
+            toast.error('ATS source is no longer available.');
+            return;
+        }
+        if (userSourceId(source)) {
+            syncUserSourceMutation.mutate(sourceId);
+            return;
+        }
+        syncTenantIntegrationMutation.mutate(sourceId);
+    }
+
+    function toggleManagedSource(sourceId: string, status: string) {
+        const source = findManagedSource(sourceId);
+        if (!source) {
+            toast.error('ATS source is no longer available.');
+            return;
+        }
+        if (userSourceId(source)) {
+            updateUserSourceMutation.mutate({ sourceId, payload: { status } });
+            return;
+        }
+        updateTenantIntegrationMutation.mutate({ integrationId: sourceId, payload: { status } });
+    }
+
+    const sourceLoadErrors = sourceLoadMessages({
+        isSourcesError,
+        sourcesError,
+        isCloudError,
+        cloudError,
+        isUserSourcesError,
+        userSourcesError,
+        isHistoryError,
+        historyError,
+    });
+
+    function retrySourceLoads() {
+        void refetchSources();
+        void refetchCloudIntegrations();
+        void refetchUserSources();
+        void refetchSourceHistory();
+    }
+
+    let syncingManagedSourceId: string | null = null;
+    if (syncUserSourceMutation.isPending) {
+        syncingManagedSourceId = syncUserSourceMutation.variables ?? null;
+    } else if (syncTenantIntegrationMutation.isPending) {
+        syncingManagedSourceId = syncTenantIntegrationMutation.variables ?? null;
+    }
+
+    let updatingManagedSourceId: string | null = null;
+    if (updateUserSourceMutation.isPending) {
+        updatingManagedSourceId = updateUserSourceMutation.variables?.sourceId ?? null;
+    } else if (updateTenantIntegrationMutation.isPending) {
+        updatingManagedSourceId = updateTenantIntegrationMutation.variables?.integrationId ?? null;
+    }
+
+    let deletingManagedSourceId: string | null = null;
+    if (deleteUserSourceMutation.isPending) {
+        deletingManagedSourceId = deleteUserSourceMutation.variables ?? null;
+    } else if (deleteTenantIntegrationMutation.isPending) {
+        deletingManagedSourceId = deleteTenantIntegrationMutation.variables ?? null;
     }
 
     return (
         <section className="border-t border-rule pt-6">
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                    <p className="caption">Sources</p>
-                    <h3 className="mt-1 text-[15px] font-medium text-ink">
-                        Fetch queue
-                        {data ? (
-                            <span className="ml-2 text-[12px] font-normal text-ink-soft">
-                                {sources.length}/{totalCount}
-                            </span>
-                        ) : null}
-                    </h3>
-                </div>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <button
-                        type="button"
-                        onClick={() => setIsAddingSource((value) => !value)}
-                        className="inline-flex h-9 items-center justify-center gap-1.5 border border-accent px-3 text-[13px] font-medium text-accent transition-colors hover:bg-accent-soft"
-                    >
-                        <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                        Add source
-                    </button>
-                    <label className="relative block">
-                        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-soft" aria-hidden="true" />
-                        <input
-                            aria-label="Search sources"
-                            value={sourceSearch}
-                            onChange={(event) => setSourceSearch(event.target.value)}
-                            placeholder="Search sources"
-                            className="h-9 w-full border border-rule bg-surface pl-8 pr-3 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-soft focus:border-accent sm:w-48"
-                        />
-                    </label>
-                    <div className="inline-flex items-center gap-2 self-start border border-rule bg-surface px-2.5 py-1.5 text-[12px] text-ink-soft">
-                        <Server className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
-                        <span>{sourceCatalogLabel(data?.api_based_fetching, cloudSources.length)}</span>
-                    </div>
-                </div>
-            </div>
+            <SourcePanelHeader
+                visibleCount={sources.length}
+                totalCount={totalCount}
+                isAddingSource={isAddingSource}
+                showHistory={showHistory}
+                sourceSearch={sourceSearch}
+                sourceView={sourceView}
+                sourceViewCounts={sourceViewCounts}
+                catalogLabel={sourceCatalogLabel(data?.api_based_fetching, cloudSources.length)}
+                onToggleAddingSource={() => setIsAddingSource((value) => !value)}
+                onToggleHistory={() => setShowHistory((value) => !value)}
+                onSourceSearchChange={setSourceSearch}
+                onSourceViewChange={setSourceView}
+            />
+
+            {sourceLoadErrors.length > 0 ? (
+                <SourceLoadErrorBanner messages={sourceLoadErrors} onRetry={retrySourceLoads} />
+            ) : null}
 
             {isAddingSource ? (
-                <form
+                <AddSourceForm
+                    newSourceName={newSourceName}
+                    newSourceUrl={newSourceUrl}
+                    newSourceProvider={newSourceProvider}
+                    newSourceIdentifier={newSourceIdentifier}
+                    discoveryError={discoveryError}
+                    hasCheckedDiscovery={hasCheckedDiscovery}
+                    discoveryCandidates={discoveryCandidates}
+                    isChecking={discoverUserSourceMutation.isPending}
+                    isAdding={createUserSourceMutation.isPending}
                     onSubmit={submitUserSource}
-                    className="mb-4 grid gap-3 border border-rule bg-surface px-4 py-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_9rem_minmax(0,1fr)_auto]"
-                >
-                    <label className="grid gap-1 text-[12px] text-ink-soft">
-                        Name
-                        <input
-                            value={newSourceName}
-                            onChange={(event) => updateNewSourceName(event.target.value)}
-                            placeholder="Company or board"
-                            className="h-9 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
-                        />
-                    </label>
-                    <label className="grid gap-1 text-[12px] text-ink-soft">
-                        Careers URL
-                        <input
-                            value={newSourceUrl}
-                            onChange={(event) => updateNewSourceUrl(event.target.value)}
-                            placeholder="https://boards.greenhouse.io/acme"
-                            className="h-9 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
-                        />
-                    </label>
-                    <label className="grid gap-1 text-[12px] text-ink-soft">
-                        Provider
-                        <select
-                            value={newSourceProvider}
-                            onChange={(event) => updateNewSourceProvider(event.target.value)}
-                            className="h-9 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
-                        >
-                            <option value="">Auto</option>
-                            <option value="greenhouse">Greenhouse</option>
-                            <option value="lever">Lever</option>
-                            <option value="ashby">Ashby</option>
-                        </select>
-                    </label>
-                    <label className="grid gap-1 text-[12px] text-ink-soft">
-                        Board ID
-                        <input
-                            value={newSourceIdentifier}
-                            onChange={(event) => updateNewSourceIdentifier(event.target.value)}
-                            placeholder="acme"
-                            className="h-9 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
-                        />
-                    </label>
-                    <div className="flex items-end gap-2">
-                        <button
-                            type="button"
-                            onClick={checkUserSource}
-                            disabled={discoverUserSourceMutation.isPending}
-                            className="inline-flex h-9 items-center justify-center gap-1.5 border border-rule px-3 text-[13px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
-                        >
-                            <Search className="h-3.5 w-3.5" aria-hidden="true" />
-                            {discoverUserSourceMutation.isPending ? 'Checking' : 'Check'}
-                        </button>
-                        <button
-                            type="submit"
-                            disabled={createUserSourceMutation.isPending}
-                            className="inline-flex h-9 items-center justify-center border border-accent px-3 text-[13px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
-                        >
-                            {createUserSourceMutation.isPending ? 'Adding' : 'Add'}
-                        </button>
-                    </div>
-                    {discoveryCandidates.length > 0 ? (
-                        <div className="grid gap-2 border-t border-rule pt-3 md:col-span-5">
-                            {discoveryCandidates.slice(0, 3).map((candidate) => (
-                                <div
-                                    key={`${candidate.provider}-${candidate.identifier}`}
-                                    className="flex flex-col gap-2 border border-rule bg-surface-raised px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-                                >
-                                    <div className="min-w-0">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                            <span className="text-[13px] font-medium text-ink">
-                                                {candidate.display_name}
-                                            </span>
-                                            <span className={metaChipClasses('capitalize')}>
-                                                {candidate.provider}
-                                            </span>
-                                            <span className={metaChipClasses('tabular-nums')}>
-                                                {candidate.jobs_seen} jobs
-                                            </span>
-                                        </div>
-                                        <p className="mt-1 truncate text-[12px] text-ink-soft">
-                                            {candidate.identifier}
-                                        </p>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => addDiscoveredSource(candidate)}
-                                        disabled={createUserSourceMutation.isPending}
-                                        className="inline-flex h-8 items-center justify-center border border-accent px-2.5 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
-                                    >
-                                        Add
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-                    ) : null}
-                </form>
+                    onCheck={checkUserSource}
+                    onNameChange={updateNewSourceName}
+                    onUrlChange={updateNewSourceUrl}
+                    onProviderChange={updateNewSourceProvider}
+                    onIdentifierChange={updateNewSourceIdentifier}
+                    onAddDiscoveredSource={addDiscoveredSource}
+                />
             ) : null}
 
-            {sourceHistory.length > 0 ? (
-                <div className="mb-4 border border-rule bg-surface px-4 py-3">
-                    <div className="mb-2 flex items-center justify-between gap-3">
-                        <p className="caption">Source history</p>
-                    </div>
-                    <div className="grid gap-2">
-                        {sourceHistory.slice(0, 5).map((event) => (
-                            <div
-                                key={event.id}
-                                className="flex flex-col gap-2 border border-rule bg-surface-raised px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-                            >
-                                <div className="min-w-0">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        <span className="text-[13px] font-medium text-ink">
-                                            {event.display_name || event.identifier || event.provider || 'ATS source'}
-                                        </span>
-                                        <span className={metaChipClasses()}>
-                                            {historyActionLabel(event.action)}
-                                        </span>
-                                        {event.provider ? (
-                                            <span className={metaChipClasses('capitalize')}>
-                                                {event.provider}
-                                            </span>
-                                        ) : null}
-                                    </div>
-                                    {event.identifier ? (
-                                        <p className="mt-1 truncate text-[12px] text-ink-soft">
-                                            {event.identifier}
-                                        </p>
-                                    ) : null}
-                                </div>
-                                {event.readd_payload ? (
-                                    <button
-                                        type="button"
-                                        onClick={() => readdHistorySource(event)}
-                                        disabled={createUserSourceMutation.isPending}
-                                        className="inline-flex h-8 items-center justify-center gap-1.5 border border-rule px-2.5 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
-                                    >
-                                        <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                                        Re-add
-                                    </button>
-                                ) : null}
-                            </div>
-                        ))}
-                    </div>
-                </div>
+            {showHistory ? (
+                <SourceActivityPanel
+                    sourceActivityFilter={sourceActivityFilter}
+                    sourceActivityCounts={sourceActivityCounts}
+                    sourceHistory={sourceHistory}
+                    filteredSourceHistory={filteredSourceHistory}
+                    isAdding={createUserSourceMutation.isPending}
+                    onFilterChange={setSourceActivityFilter}
+                    onHide={() => setShowHistory(false)}
+                    onReaddSource={readdHistorySource}
+                />
             ) : null}
 
-            {sourcesContent}
+            <SourcesContent
+                isLoading={isLoading || isLoadingCloud || isLoadingUserSources}
+                sources={sources}
+                emptyMessage={emptyMessage}
+                fetchingSourceSiteType={fetchSourceMutation.isPending ? fetchSourceMutation.variables ?? null : null}
+                syncingSourceId={syncingManagedSourceId}
+                updatingSourceId={updatingManagedSourceId}
+                deletingSourceId={deletingManagedSourceId}
+                editingSourceId={editingSourceId}
+                editSourceName={editSourceName}
+                editSourceUrl={editSourceUrl}
+                editSourceProvider={editSourceProvider}
+                editSourceIdentifier={editSourceIdentifier}
+                editSyncInterval={editSyncInterval}
+                onFetchSource={(siteType) => fetchSourceMutation.mutate(siteType)}
+                onSyncAtsSource={syncManagedSource}
+                onEditAtsSource={editManagedSource}
+                onToggleAtsSource={toggleManagedSource}
+                onDeleteAtsSource={deleteManagedSource}
+                onSubmitEdit={submitManagedSourceEdit}
+                onCancelEdit={() => {
+                    setEditingSourceId(null);
+                    setEditOriginalSource(null);
+                }}
+                onEditSourceNameChange={setEditSourceName}
+                onEditSourceUrlChange={setEditSourceUrl}
+                onEditSourceProviderChange={setEditSourceProvider}
+                onEditSourceIdentifierChange={setEditSourceIdentifier}
+                onEditSyncIntervalChange={setEditSyncInterval}
+            />
+
+            {sourcePendingDelete ? (
+                <SourceDeleteDialog
+                    source={sourcePendingDelete}
+                    isDeleting={deleteUserSourceMutation.isPending || deleteTenantIntegrationMutation.isPending}
+                    onCancel={() => setSourcePendingDelete(null)}
+                    onConfirm={confirmDeleteManagedSource}
+                />
+            ) : null}
         </section>
     );
 }

@@ -6,6 +6,7 @@ import type {
     AtsSourceUpdateRequest,
     CloudIntegration,
     FetchSourcesResponse,
+    IntegrationUpdateRequest,
     PipelineTaskResponse,
     PipelineStatusResponse,
     ResumeEligibilityResponse,
@@ -55,6 +56,15 @@ export const pipelineApi = {
         apiClient.get<CloudIntegration[]>('/cloud/integrations', {
             validateStatus: (status) => status < 500,
         }),
+
+    updateCloudIntegration: (integrationId: string, payload: IntegrationUpdateRequest) =>
+        apiClient.patch<CloudIntegration>(`/cloud/integrations/${integrationId}`, payload),
+
+    deleteCloudIntegration: (integrationId: string) =>
+        apiClient.delete(`/cloud/integrations/${integrationId}`),
+
+    syncCloudIntegration: (integrationId: string, force = false) =>
+        apiClient.post<SyncRunResponse>(`/cloud/integrations/${integrationId}/sync`, { force }),
 
     getUserAtsSources: () =>
         apiClient.get<UserAtsSource[]>('/cloud/integrations/sources', {

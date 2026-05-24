@@ -462,6 +462,14 @@ export interface AtsSourceUpdateRequest {
     sync_interval_minutes?: number;
 }
 
+export interface IntegrationUpdateRequest {
+    display_name?: string;
+    status?: string;
+    sync_interval_minutes?: number;
+    config?: Record<string, any>;
+    secret_value?: string | null;
+}
+
 export interface SyncRunResponse {
     run_id: string;
     status: string;
