@@ -400,6 +400,16 @@ export interface CloudIntegration {
     source_url?: string | null;
     created_at?: string | null;
     updated_at?: string | null;
+    initial_sync?: {
+        status: string;
+        provider: string;
+        run_id?: string | null;
+        jobs_seen: number;
+        jobs_imported: number;
+        jobs_deactivated: number;
+        error_summary?: string | null;
+        retry_after_seconds?: number | null;
+    } | null;
 }
 
 export interface AtsSourceDiscoveryCandidate {
@@ -411,6 +421,19 @@ export interface AtsSourceDiscoveryCandidate {
     source_url: string | null;
     jobs_seen: number;
     match_reason: string;
+}
+
+export interface AtsSourceHistoryEvent {
+    id: string;
+    action: string;
+    resource_id: string | null;
+    provider: string | null;
+    display_name: string | null;
+    identifier: string | null;
+    source_url: string | null;
+    status: string | null;
+    occurred_at: string | null;
+    readd_payload: AtsSourceCreateRequest | null;
 }
 
 export interface UserAtsSource extends CloudIntegration {
@@ -431,6 +454,10 @@ export interface AtsSourceCreateRequest {
 
 export interface AtsSourceUpdateRequest {
     display_name?: string;
+    source_url?: string;
+    provider?: string;
+    identifier?: string;
+    providers?: string[];
     status?: string;
     sync_interval_minutes?: number;
 }

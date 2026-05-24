@@ -146,12 +146,16 @@ describe('pipelineApi', () => {
             mockDelete.mockResolvedValue({ data: {} } as any);
 
             pipelineApi.discoverAtsSources(payload);
+            pipelineApi.getUserAtsSourceHistory();
             pipelineApi.createUserAtsSource(payload);
             pipelineApi.updateUserAtsSource('source-1', { status: 'disabled' });
             pipelineApi.deleteUserAtsSource('source-1');
             pipelineApi.syncUserAtsSource('source-1', true);
 
             expect(mockPost).toHaveBeenCalledWith('/cloud/integrations/sources/discover', payload);
+            expect(mockGet).toHaveBeenCalledWith('/cloud/integrations/sources/history', {
+                validateStatus: expect.any(Function),
+            });
             expect(mockPost).toHaveBeenCalledWith('/cloud/integrations/sources', payload);
             expect(mockPatch).toHaveBeenCalledWith('/cloud/integrations/sources/source-1', {
                 status: 'disabled',

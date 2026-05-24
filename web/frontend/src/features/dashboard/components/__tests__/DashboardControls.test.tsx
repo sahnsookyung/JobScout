@@ -17,6 +17,8 @@ vi.mock('@/services/pipelineApi', () => ({
             fetchSource: vi.fn(),
             getCloudIntegrations: vi.fn(),
             getUserAtsSources: vi.fn(),
+            getUserAtsSourceHistory: vi.fn(),
+            discoverAtsSources: vi.fn(),
             createUserAtsSource: vi.fn(),
             updateUserAtsSource: vi.fn(),
             deleteUserAtsSource: vi.fn(),
@@ -42,6 +44,8 @@ const mockPipelineApi = pipelineApi as unknown as {
     fetchSource: ReturnType<typeof vi.fn>;
     getCloudIntegrations: ReturnType<typeof vi.fn>;
     getUserAtsSources: ReturnType<typeof vi.fn>;
+    getUserAtsSourceHistory: ReturnType<typeof vi.fn>;
+    discoverAtsSources: ReturnType<typeof vi.fn>;
     createUserAtsSource: ReturnType<typeof vi.fn>;
     updateUserAtsSource: ReturnType<typeof vi.fn>;
     deleteUserAtsSource: ReturnType<typeof vi.fn>;
@@ -182,6 +186,24 @@ describe('DashboardControls', () => {
         mockPipelineApi.getUserAtsSources.mockResolvedValue({
             status: 200,
             data: [],
+        });
+        mockPipelineApi.getUserAtsSourceHistory.mockResolvedValue({
+            status: 200,
+            data: [],
+        });
+        mockPipelineApi.discoverAtsSources.mockResolvedValue({
+            data: [
+                {
+                    provider: 'lever',
+                    identifier: 'acme',
+                    config_key: 'site_identifier',
+                    config: { site_identifier: 'acme', company_name: 'Acme Lever' },
+                    display_name: 'Acme Lever',
+                    source_url: 'https://jobs.lever.co/acme',
+                    jobs_seen: 4,
+                    match_reason: 'public ATS board returned active jobs',
+                },
+            ],
         });
         mockPipelineApi.createUserAtsSource.mockResolvedValue({
             data: {
@@ -603,6 +625,7 @@ describe('DashboardControls', () => {
                 });
             });
             expect(toast.success).toHaveBeenCalledWith('Acme Lever added');
+            expect(mockPipelineApi.syncUserAtsSource).not.toHaveBeenCalled();
         });
 
         it('lets users add a provider board identifier without a careers URL', async () => {
@@ -628,6 +651,83 @@ describe('DashboardControls', () => {
             });
         });
 
+        it('lets users check ATS discovery candidates before adding a source', async () => {
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+
+            await userEvent.click(screen.getByRole('button', { name: /add source/i }));
+            await userEvent.type(screen.getByLabelText('Name'), 'Acme');
+            await userEvent.click(screen.getByRole('button', { name: /check/i }));
+
+            await waitFor(() => {
+                expect(mockPipelineApi.discoverAtsSources).toHaveBeenCalledWith({
+                    display_name: 'Acme',
+                    source_url: undefined,
+                    provider: undefined,
+                    providers: undefined,
+                    identifier: undefined,
+                });
+            });
+            expect(screen.getByText('4 jobs')).toBeInTheDocument();
+
+            const discoveryResult = screen.getByText('acme').closest('div[class*="border"]') as HTMLElement;
+            await userEvent.click(within(discoveryResult).getByRole('button', { name: /^add$/i }));
+
+            await waitFor(() => {
+                expect(mockPipelineApi.createUserAtsSource).toHaveBeenCalledWith({
+                    display_name: 'Acme',
+                    source_url: 'https://jobs.lever.co/acme',
+                    provider: 'lever',
+                    identifier: 'acme',
+                });
+            });
+        });
+
+        it('clears discovery candidates when source inputs change', async () => {
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+
+            await userEvent.click(screen.getByRole('button', { name: /add source/i }));
+            await userEvent.type(screen.getByLabelText('Name'), 'Acme');
+            await userEvent.click(screen.getByRole('button', { name: /check/i }));
+
+            await waitFor(() => {
+                expect(screen.getByText('4 jobs')).toBeInTheDocument();
+            });
+
+            await userEvent.type(screen.getByLabelText('Board ID'), 'changed');
+
+            expect(screen.queryByText('4 jobs')).not.toBeInTheDocument();
+        });
+
+        it('lets users search by board identifier alone across supported ATS providers', async () => {
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('TokyoDev')).toBeInTheDocument();
+            });
+
+            await userEvent.click(screen.getByRole('button', { name: /add source/i }));
+            await userEvent.type(screen.getByLabelText('Board ID'), 'acme');
+            await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+
+            await waitFor(() => {
+                expect(mockPipelineApi.createUserAtsSource).toHaveBeenCalledWith({
+                    display_name: undefined,
+                    source_url: undefined,
+                    provider: undefined,
+                    providers: undefined,
+                    identifier: 'acme',
+                });
+            });
+        });
+
         it('validates empty user ATS source submissions before calling the API', async () => {
             render(<DashboardControls />, { wrapper: createWrapper() });
 
@@ -639,9 +739,55 @@ describe('DashboardControls', () => {
             await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
 
             expect(toast.error).toHaveBeenCalledWith(
-                'Add a source name, careers URL, or provider board identifier.'
+                'Add a source name, careers URL, or board identifier.'
             );
             expect(mockPipelineApi.createUserAtsSource).not.toHaveBeenCalled();
+        });
+
+        it('shows source history and can re-add a deleted source snapshot', async () => {
+            mockPipelineApi.getUserAtsSourceHistory.mockResolvedValue({
+                status: 200,
+                data: [
+                    {
+                        id: 'history-1',
+                        action: 'integration.user_source_deleted',
+                        resource_id: 'source-old',
+                        provider: 'greenhouse',
+                        display_name: 'Deleted Acme',
+                        identifier: 'acme',
+                        source_url: 'https://boards.greenhouse.io/acme',
+                        status: 'active',
+                        occurred_at: '2026-05-24T00:00:00Z',
+                        readd_payload: {
+                            display_name: 'Deleted Acme',
+                            provider: 'greenhouse',
+                            identifier: 'acme',
+                            source_url: 'https://boards.greenhouse.io/acme',
+                            sync_interval_minutes: 120,
+                            status: 'active',
+                        },
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Deleted Acme')).toBeInTheDocument();
+            });
+
+            await userEvent.click(screen.getByRole('button', { name: /re-add/i }));
+
+            await waitFor(() => {
+                expect(mockPipelineApi.createUserAtsSource).toHaveBeenCalledWith({
+                    display_name: 'Deleted Acme',
+                    provider: 'greenhouse',
+                    identifier: 'acme',
+                    source_url: 'https://boards.greenhouse.io/acme',
+                    sync_interval_minutes: 120,
+                    status: 'active',
+                });
+            });
         });
 
         it('rejects unsupported careers URLs before creating a user ATS source', async () => {
@@ -987,6 +1133,58 @@ describe('DashboardControls', () => {
                 });
             });
             expect(toast.success).toHaveBeenCalledWith('Renamed Source updated');
+        });
+
+        it('lets users replace the ATS board for a managed source', async () => {
+            mockPipelineApi.getUserAtsSources.mockResolvedValue({
+                status: 200,
+                data: [
+                    {
+                        id: 'source-edit-board',
+                        tenant_id: 'tenant-1',
+                        provider: 'greenhouse',
+                        display_name: 'Editable Board',
+                        status: 'active',
+                        sync_interval_minutes: 120,
+                        config: { board_token: 'old-board' },
+                        capabilities: ['list_jobs'],
+                        validation_status: 'pending',
+                        last_validated_at: null,
+                        last_error: null,
+                        is_user_source: true,
+                        owner_user_id: 'user-1',
+                        source_url: 'https://boards.greenhouse.io/old-board',
+                        created_at: null,
+                        updated_at: null,
+                    },
+                ],
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(screen.getByText('Editable Board')).toBeInTheDocument();
+            });
+            const sourceCard = screen.getByText('Editable Board').closest('div[class*="group"]') as HTMLElement;
+
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /edit/i }));
+            await userEvent.clear(within(sourceCard).getByLabelText('Careers URL'));
+            await userEvent.type(within(sourceCard).getByLabelText('Careers URL'), 'https://jobs.lever.co/new-board');
+            await userEvent.selectOptions(within(sourceCard).getByLabelText('Provider'), 'lever');
+            await userEvent.clear(within(sourceCard).getByLabelText('Board ID'));
+            await userEvent.type(within(sourceCard).getByLabelText('Board ID'), 'new-board');
+            await userEvent.click(within(sourceCard).getByRole('button', { name: /save/i }));
+
+            await waitFor(() => {
+                expect(mockPipelineApi.updateUserAtsSource).toHaveBeenCalledWith('source-edit-board', {
+                    display_name: 'Editable Board',
+                    source_url: 'https://jobs.lever.co/new-board',
+                    provider: 'lever',
+                    identifier: 'new-board',
+                    providers: undefined,
+                    sync_interval_minutes: 120,
+                });
+            });
         });
 
         it('lets users re-enable a disabled managed ATS source', async () => {

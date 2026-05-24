@@ -2,6 +2,7 @@ import { apiClient } from './api';
 import type {
     AtsSourceCreateRequest,
     AtsSourceDiscoveryCandidate,
+    AtsSourceHistoryEvent,
     AtsSourceUpdateRequest,
     CloudIntegration,
     FetchSourcesResponse,
@@ -62,6 +63,11 @@ export const pipelineApi = {
 
     discoverAtsSources: (payload: AtsSourceCreateRequest) =>
         apiClient.post<AtsSourceDiscoveryCandidate[]>('/cloud/integrations/sources/discover', payload),
+
+    getUserAtsSourceHistory: () =>
+        apiClient.get<AtsSourceHistoryEvent[]>('/cloud/integrations/sources/history', {
+            validateStatus: (status) => status < 500,
+        }),
 
     createUserAtsSource: (payload: AtsSourceCreateRequest) =>
         apiClient.post<UserAtsSource>('/cloud/integrations/sources', payload),

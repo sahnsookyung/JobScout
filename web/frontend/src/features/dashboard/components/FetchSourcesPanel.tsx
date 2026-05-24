@@ -1,17 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { Check, ExternalLink, Globe2, MapPin, PauseCircle, Pencil, Plus, RefreshCw, Search, Server, Trash2, X, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { pipelineApi } from '@/services/pipelineApi';
-import type { AtsSourceCreateRequest, AtsSourceUpdateRequest, CloudIntegration, FetchSource } from '@/types/api';
+import type {
+    AtsSourceCreateRequest,
+    AtsSourceDiscoveryCandidate,
+    AtsSourceHistoryEvent,
+    AtsSourceUpdateRequest,
+    CloudIntegration,
+    FetchSource,
+} from '@/types/api';
 
 const OPERATIONAL_OPTION_KEYS = new Set([
     'status',
     'validation_status',
     'sync_interval_minutes',
     'last_error',
+    'user_source_id',
+    'is_user_source',
+    'owner_user_id',
+    'source_url',
+    'ats_provider',
+    'ats_identifier',
 ]);
 const SUPPORTED_ATS_SOURCE_HOSTS = new Set([
     'boards.greenhouse.io',
@@ -21,6 +34,11 @@ const SUPPORTED_ATS_SOURCE_HOSTS = new Set([
     'jobs.ashbyhq.com',
     'api.ashbyhq.com',
 ]);
+const ATS_IDENTIFIER_CONFIG_KEYS: Record<string, string> = {
+    greenhouse: 'board_token',
+    lever: 'site_identifier',
+    ashby: 'job_board_name',
+};
 
 function sourceScope(source: FetchSource): string {
     const parts = [source.location, source.country].filter(Boolean);
@@ -104,6 +122,11 @@ function atsInterval(source: FetchSource): number | null {
     return typeof interval === 'number' && Number.isFinite(interval) ? interval : null;
 }
 
+function sourceVolumeLabel(source: FetchSource): string {
+    if (source.fetch_mode === 'ats_api') return 'ATS sync';
+    return `${source.results_wanted} jobs`;
+}
+
 function userSourceId(source: FetchSource): string | null {
     const sourceId = source.options?.user_source_id;
     return typeof sourceId === 'string' && sourceId ? sourceId : null;
@@ -126,10 +149,27 @@ function isSupportedAtsUrl(value: string): boolean {
     }
 }
 
+function atsIdentifier(integration: CloudIntegration): string | null {
+    const key = ATS_IDENTIFIER_CONFIG_KEYS[integration.provider];
+    const value = key ? integration.config?.[key] : null;
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function sourcePayloadKey(payload: AtsSourceCreateRequest | AtsSourceUpdateRequest): string {
+    return JSON.stringify({
+        display_name: payload.display_name ?? null,
+        source_url: payload.source_url ?? null,
+        provider: payload.provider ?? null,
+        identifier: payload.identifier ?? null,
+        providers: payload.providers ?? null,
+    });
+}
+
 function cloudIntegrationSource(integration: CloudIntegration): FetchSource {
     const providerLabel = toTitleCase(integration.provider);
     const status = integration.status || 'unknown';
     const isUserSource = integration.is_user_source === true;
+    const identifier = atsIdentifier(integration);
     return {
         site_type: integration.provider,
         display_name: integration.display_name,
@@ -169,6 +209,8 @@ function cloudIntegrationSource(integration: CloudIntegration): FetchSource {
             is_user_source: isUserSource || undefined,
             owner_user_id: integration.owner_user_id || undefined,
             source_url: integration.source_url || undefined,
+            ats_provider: integration.provider,
+            ats_identifier: identifier || undefined,
         },
         api_health: null,
     };
@@ -248,6 +290,14 @@ function apiErrorMessage(error: unknown): string {
     return data?.warnings?.[0] || data?.error || data?.message || (error instanceof Error ? error.message : 'Unknown error');
 }
 
+function historyActionLabel(action: string): string {
+    if (action.endsWith('_created')) return 'Added';
+    if (action.endsWith('_updated')) return 'Updated';
+    if (action.endsWith('_deleted')) return 'Deleted';
+    if (action.endsWith('_sync_triggered')) return 'Synced';
+    return toTitleCase(action.replace(/^integration\.user_source_/, ''));
+}
+
 function SourceCard({
     source,
     index,
@@ -264,8 +314,14 @@ function SourceCard({
     isDeletingAtsSource,
     isEditing,
     editSourceName,
+    editSourceUrl,
+    editSourceProvider,
+    editSourceIdentifier,
     editSyncInterval,
     onEditSourceNameChange,
+    onEditSourceUrlChange,
+    onEditSourceProviderChange,
+    onEditSourceIdentifierChange,
     onEditSyncIntervalChange,
 }: Readonly<{
     source: FetchSource;
@@ -283,8 +339,14 @@ function SourceCard({
     isDeletingAtsSource: boolean;
     isEditing: boolean;
     editSourceName: string;
+    editSourceUrl: string;
+    editSourceProvider: string;
+    editSourceIdentifier: string;
     editSyncInterval: string;
     onEditSourceNameChange: (value: string) => void;
+    onEditSourceUrlChange: (value: string) => void;
+    onEditSourceProviderChange: (value: string) => void;
+    onEditSourceIdentifierChange: (value: string) => void;
     onEditSyncIntervalChange: (value: string) => void;
 }>) {
     const healthText = healthLabel(source);
@@ -336,7 +398,7 @@ function SourceCard({
                     <MapPin className="h-3 w-3" aria-hidden="true" />
                     {sourceScope(source)}
                 </span>
-                <span className={metaChipClasses('tabular-nums')}>{source.results_wanted} jobs</span>
+                <span className={metaChipClasses('tabular-nums')}>{sourceVolumeLabel(source)}</span>
                 {optionCount(source) > 0 ? (
                     <span className={metaChipClasses('tabular-nums')}>{optionCount(source)} filters</span>
                 ) : null}
@@ -397,13 +459,42 @@ function SourceCard({
                                 event.preventDefault();
                                 onSubmitEdit(managedSourceId);
                             }}
-                            className="mb-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_8rem_auto]"
+                            className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_8rem_minmax(0,1fr)_7rem_auto]"
                         >
                             <label className="grid gap-1 text-[12px] text-ink-soft">
                                 Name
                                 <input
                                     value={editSourceName}
                                     onChange={(event) => onEditSourceNameChange(event.target.value)}
+                                    className="h-8 min-w-0 border border-rule bg-surface-raised px-2 text-[12px] text-ink outline-none focus:border-accent"
+                                />
+                            </label>
+                            <label className="grid gap-1 text-[12px] text-ink-soft">
+                                Careers URL
+                                <input
+                                    value={editSourceUrl}
+                                    onChange={(event) => onEditSourceUrlChange(event.target.value)}
+                                    className="h-8 min-w-0 border border-rule bg-surface-raised px-2 text-[12px] text-ink outline-none focus:border-accent"
+                                />
+                            </label>
+                            <label className="grid gap-1 text-[12px] text-ink-soft">
+                                Provider
+                                <select
+                                    value={editSourceProvider}
+                                    onChange={(event) => onEditSourceProviderChange(event.target.value)}
+                                    className="h-8 min-w-0 border border-rule bg-surface-raised px-2 text-[12px] text-ink outline-none focus:border-accent"
+                                >
+                                    <option value="">Auto</option>
+                                    <option value="greenhouse">Greenhouse</option>
+                                    <option value="lever">Lever</option>
+                                    <option value="ashby">Ashby</option>
+                                </select>
+                            </label>
+                            <label className="grid gap-1 text-[12px] text-ink-soft">
+                                Board ID
+                                <input
+                                    value={editSourceIdentifier}
+                                    onChange={(event) => onEditSourceIdentifierChange(event.target.value)}
                                     className="h-8 min-w-0 border border-rule bg-surface-raised px-2 text-[12px] text-ink outline-none focus:border-accent"
                                 />
                             </label>
@@ -485,6 +576,10 @@ function SourceCard({
                     </button>
                     </div>
                 </div>
+            ) : source.fetch_mode === 'ats_api' ? (
+                <div className="mt-3 border-t border-rule pt-3 text-[12px] leading-5 text-ink-soft">
+                    Tenant-managed source
+                </div>
             ) : null}
         </>
     );
@@ -506,7 +601,18 @@ export function FetchSourcesPanel() {
     const [newSourceIdentifier, setNewSourceIdentifier] = useState('');
     const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
     const [editSourceName, setEditSourceName] = useState('');
+    const [editSourceUrl, setEditSourceUrl] = useState('');
+    const [editSourceProvider, setEditSourceProvider] = useState('');
+    const [editSourceIdentifier, setEditSourceIdentifier] = useState('');
     const [editSyncInterval, setEditSyncInterval] = useState('');
+    const [editOriginalSource, setEditOriginalSource] = useState<{
+        sourceUrl: string;
+        provider: string;
+        identifier: string;
+    } | null>(null);
+    const [discoveryCandidates, setDiscoveryCandidates] = useState<AtsSourceDiscoveryCandidate[]>([]);
+    const [discoveryPayload, setDiscoveryPayload] = useState<AtsSourceCreateRequest | null>(null);
+    const latestDiscoveryKeyRef = useRef('');
     const queryClient = useQueryClient();
     const { data, isLoading } = useQuery({
         queryKey: ['pipeline', 'sources'],
@@ -547,6 +653,33 @@ export function FetchSourcesPanel() {
         },
         staleTime: 60 * 1000,
     });
+    const { data: sourceHistory = [] } = useQuery({
+        queryKey: ['cloud', 'integrations', 'user-sources-history'],
+        queryFn: async () => {
+            const response = await pipelineApi.getUserAtsSourceHistory();
+            return response.status === 200 && Array.isArray(response.data) ? response.data : [];
+        },
+        staleTime: 60 * 1000,
+    });
+    const discoverUserSourceMutation = useMutation({
+        mutationFn: async (payload: AtsSourceCreateRequest) => {
+            const response = await pipelineApi.discoverAtsSources(payload);
+            return response.data;
+        },
+        onSuccess: (candidates, variables) => {
+            if (sourcePayloadKey(variables) !== latestDiscoveryKeyRef.current) return;
+            setDiscoveryPayload(variables);
+            setDiscoveryCandidates(candidates);
+            if (candidates.length === 0) {
+                toast.error('No supported ATS board found.');
+            } else {
+                toast.success(`${candidates.length} ATS board${candidates.length === 1 ? '' : 's'} found`);
+            }
+        },
+        onError: (error) => {
+            toast.error(`ATS source check failed: ${apiErrorMessage(error)}`);
+        },
+    });
     const createUserSourceMutation = useMutation({
         mutationFn: async (payload: AtsSourceCreateRequest) => {
             const response = await pipelineApi.createUserAtsSource(payload);
@@ -554,13 +687,21 @@ export function FetchSourcesPanel() {
         },
         onSuccess: (source) => {
             toast.success(`${source.display_name} added`);
+            if (source.initial_sync?.status === 'completed') {
+                toast.success(`${source.initial_sync.jobs_imported} jobs imported from ${toTitleCase(source.initial_sync.provider)}`);
+            } else if (source.initial_sync?.error_summary) {
+                toast(`Initial sync ${source.initial_sync.status}: ${source.initial_sync.error_summary}`);
+            }
             setIsAddingSource(false);
             setNewSourceName('');
             setNewSourceUrl('');
             setNewSourceProvider('');
             setNewSourceIdentifier('');
+            setDiscoveryCandidates([]);
+            setDiscoveryPayload(null);
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources'] });
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources-history'] });
         },
         onError: (error) => {
             toast.error(`ATS source add failed: ${apiErrorMessage(error)}`);
@@ -578,9 +719,11 @@ export function FetchSourcesPanel() {
             } else {
                 toast.success(`${source.display_name} updated`);
                 setEditingSourceId(null);
+                setEditOriginalSource(null);
             }
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources'] });
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources-history'] });
         },
         onError: (error) => {
             toast.error(`ATS source update failed: ${apiErrorMessage(error)}`);
@@ -595,6 +738,7 @@ export function FetchSourcesPanel() {
             toast.success('ATS source deleted');
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources'] });
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources-history'] });
         },
         onError: (error) => {
             toast.error(`ATS source delete failed: ${apiErrorMessage(error)}`);
@@ -609,6 +753,7 @@ export function FetchSourcesPanel() {
             toast.success(`${result.jobs_imported} jobs imported from ${toTitleCase(result.provider)}`);
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'source-panel'] });
             void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources'] });
+            void queryClient.invalidateQueries({ queryKey: ['cloud', 'integrations', 'user-sources-history'] });
         },
         onError: (error) => {
             toast.error(`ATS source sync failed: ${apiErrorMessage(error)}`);
@@ -637,14 +782,13 @@ export function FetchSourcesPanel() {
         ? 'No sources match that search.'
         : 'No fetch sources configured.';
 
-    function submitUserSource(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault();
+    function buildUserSourcePayload(): AtsSourceCreateRequest | null {
         const provider = newSourceProvider.trim() || undefined;
         const identifier = newSourceIdentifier.trim() || undefined;
         const sourceUrl = newSourceUrl.trim();
         if (sourceUrl && !isSupportedAtsUrl(sourceUrl)) {
             toast.error('Use a Greenhouse, Lever, or Ashby board URL.');
-            return;
+            return null;
         }
         const payload: AtsSourceCreateRequest = {
             display_name: newSourceName.trim() || undefined,
@@ -653,11 +797,65 @@ export function FetchSourcesPanel() {
             identifier,
             providers: provider && !identifier ? [provider] : undefined,
         };
-        if (!payload.display_name && !payload.source_url && !(payload.provider && payload.identifier)) {
-            toast.error('Add a source name, careers URL, or provider board identifier.');
-            return;
+        if (!payload.display_name && !payload.source_url && !payload.identifier) {
+            toast.error('Add a source name, careers URL, or board identifier.');
+            return null;
         }
+        return payload;
+    }
+
+    function clearDiscoveryCandidates() {
+        setDiscoveryCandidates([]);
+        setDiscoveryPayload(null);
+        latestDiscoveryKeyRef.current = '';
+    }
+
+    function updateNewSourceName(value: string) {
+        setNewSourceName(value);
+        clearDiscoveryCandidates();
+    }
+
+    function updateNewSourceUrl(value: string) {
+        setNewSourceUrl(value);
+        clearDiscoveryCandidates();
+    }
+
+    function updateNewSourceProvider(value: string) {
+        setNewSourceProvider(value);
+        clearDiscoveryCandidates();
+    }
+
+    function updateNewSourceIdentifier(value: string) {
+        setNewSourceIdentifier(value);
+        clearDiscoveryCandidates();
+    }
+
+    function submitUserSource(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        const payload = buildUserSourcePayload();
+        if (!payload) return;
         createUserSourceMutation.mutate(payload);
+    }
+
+    function checkUserSource() {
+        const payload = buildUserSourcePayload();
+        if (!payload) return;
+        latestDiscoveryKeyRef.current = sourcePayloadKey(payload);
+        discoverUserSourceMutation.mutate(payload);
+    }
+
+    function addDiscoveredSource(candidate: AtsSourceDiscoveryCandidate) {
+        createUserSourceMutation.mutate({
+            display_name: discoveryPayload?.display_name || candidate.display_name,
+            source_url: candidate.source_url || discoveryPayload?.source_url || undefined,
+            provider: candidate.provider,
+            identifier: candidate.identifier,
+        });
+    }
+
+    function readdHistorySource(event: AtsSourceHistoryEvent) {
+        if (!event.readd_payload) return;
+        createUserSourceMutation.mutate(event.readd_payload);
     }
 
     function editUserSource(source: FetchSource) {
@@ -665,26 +863,52 @@ export function FetchSourcesPanel() {
         if (!sourceId) return;
         setEditingSourceId(sourceId);
         setEditSourceName(source.display_name);
+        setEditSourceUrl(String(source.options?.source_url || source.seed_url || ''));
+        setEditSourceProvider(String(source.options?.ats_provider || source.site_type || ''));
+        setEditSourceIdentifier(String(source.options?.ats_identifier || ''));
         setEditSyncInterval(String(atsInterval(source) ?? 120));
+        setEditOriginalSource({
+            sourceUrl: String(source.options?.source_url || source.seed_url || ''),
+            provider: String(source.options?.ats_provider || source.site_type || ''),
+            identifier: String(source.options?.ats_identifier || ''),
+        });
     }
 
     function submitUserSourceEdit(sourceId: string) {
         const displayName = editSourceName.trim();
+        const sourceUrl = editSourceUrl.trim();
+        const provider = editSourceProvider.trim() || undefined;
+        const identifier = editSourceIdentifier.trim() || undefined;
         const interval = Number(editSyncInterval);
         if (!displayName) {
             toast.error('Source name cannot be blank.');
+            return;
+        }
+        if (sourceUrl && !isSupportedAtsUrl(sourceUrl)) {
+            toast.error('Use a Greenhouse, Lever, or Ashby board URL.');
             return;
         }
         if (!Number.isInteger(interval) || interval < 5 || interval > 1440) {
             toast.error('Sync interval must be between 5 and 1440 minutes.');
             return;
         }
+        const payload: AtsSourceUpdateRequest = {
+            display_name: displayName,
+            sync_interval_minutes: interval,
+        };
+        const boardChanged = !editOriginalSource
+            || sourceUrl !== editOriginalSource.sourceUrl
+            || (provider || '') !== editOriginalSource.provider
+            || (identifier || '') !== editOriginalSource.identifier;
+        if (boardChanged) {
+            payload.source_url = sourceUrl || undefined;
+            payload.provider = provider;
+            payload.identifier = identifier;
+            payload.providers = provider && !identifier ? [provider] : undefined;
+        }
         updateUserSourceMutation.mutate({
             sourceId,
-            payload: {
-                display_name: displayName,
-                sync_interval_minutes: interval,
-            },
+            payload,
         });
     }
 
@@ -728,7 +952,10 @@ export function FetchSourcesPanel() {
                         onToggleAtsSource={(sourceId, status) => updateUserSourceMutation.mutate({ sourceId, payload: { status } })}
                         onDeleteAtsSource={deleteUserSource}
                         onSubmitEdit={submitUserSourceEdit}
-                        onCancelEdit={() => setEditingSourceId(null)}
+                        onCancelEdit={() => {
+                            setEditingSourceId(null);
+                            setEditOriginalSource(null);
+                        }}
                         isSyncingAtsSource={
                             syncUserSourceMutation.isPending
                             && syncUserSourceMutation.variables === userSourceId(source)
@@ -743,8 +970,14 @@ export function FetchSourcesPanel() {
                         }
                         isEditing={editingSourceId === userSourceId(source)}
                         editSourceName={editSourceName}
+                        editSourceUrl={editSourceUrl}
+                        editSourceProvider={editSourceProvider}
+                        editSourceIdentifier={editSourceIdentifier}
                         editSyncInterval={editSyncInterval}
                         onEditSourceNameChange={setEditSourceName}
+                        onEditSourceUrlChange={setEditSourceUrl}
+                        onEditSourceProviderChange={setEditSourceProvider}
+                        onEditSourceIdentifierChange={setEditSourceIdentifier}
                         onEditSyncIntervalChange={setEditSyncInterval}
                     />
                 ))}
@@ -801,7 +1034,7 @@ export function FetchSourcesPanel() {
                         Name
                         <input
                             value={newSourceName}
-                            onChange={(event) => setNewSourceName(event.target.value)}
+                            onChange={(event) => updateNewSourceName(event.target.value)}
                             placeholder="Company or board"
                             className="h-9 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
                         />
@@ -810,7 +1043,7 @@ export function FetchSourcesPanel() {
                         Careers URL
                         <input
                             value={newSourceUrl}
-                            onChange={(event) => setNewSourceUrl(event.target.value)}
+                            onChange={(event) => updateNewSourceUrl(event.target.value)}
                             placeholder="https://boards.greenhouse.io/acme"
                             className="h-9 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
                         />
@@ -819,7 +1052,7 @@ export function FetchSourcesPanel() {
                         Provider
                         <select
                             value={newSourceProvider}
-                            onChange={(event) => setNewSourceProvider(event.target.value)}
+                            onChange={(event) => updateNewSourceProvider(event.target.value)}
                             className="h-9 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none focus:border-accent"
                         >
                             <option value="">Auto</option>
@@ -832,12 +1065,21 @@ export function FetchSourcesPanel() {
                         Board ID
                         <input
                             value={newSourceIdentifier}
-                            onChange={(event) => setNewSourceIdentifier(event.target.value)}
+                            onChange={(event) => updateNewSourceIdentifier(event.target.value)}
                             placeholder="acme"
                             className="h-9 border border-rule bg-surface-raised px-3 text-[13px] text-ink outline-none placeholder:text-ink-soft focus:border-accent"
                         />
                     </label>
                     <div className="flex items-end gap-2">
+                        <button
+                            type="button"
+                            onClick={checkUserSource}
+                            disabled={discoverUserSourceMutation.isPending}
+                            className="inline-flex h-9 items-center justify-center gap-1.5 border border-rule px-3 text-[13px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                        >
+                            <Search className="h-3.5 w-3.5" aria-hidden="true" />
+                            {discoverUserSourceMutation.isPending ? 'Checking' : 'Check'}
+                        </button>
                         <button
                             type="submit"
                             disabled={createUserSourceMutation.isPending}
@@ -846,7 +1088,90 @@ export function FetchSourcesPanel() {
                             {createUserSourceMutation.isPending ? 'Adding' : 'Add'}
                         </button>
                     </div>
+                    {discoveryCandidates.length > 0 ? (
+                        <div className="grid gap-2 border-t border-rule pt-3 md:col-span-5">
+                            {discoveryCandidates.slice(0, 3).map((candidate) => (
+                                <div
+                                    key={`${candidate.provider}-${candidate.identifier}`}
+                                    className="flex flex-col gap-2 border border-rule bg-surface-raised px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                                >
+                                    <div className="min-w-0">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <span className="text-[13px] font-medium text-ink">
+                                                {candidate.display_name}
+                                            </span>
+                                            <span className={metaChipClasses('capitalize')}>
+                                                {candidate.provider}
+                                            </span>
+                                            <span className={metaChipClasses('tabular-nums')}>
+                                                {candidate.jobs_seen} jobs
+                                            </span>
+                                        </div>
+                                        <p className="mt-1 truncate text-[12px] text-ink-soft">
+                                            {candidate.identifier}
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => addDiscoveredSource(candidate)}
+                                        disabled={createUserSourceMutation.isPending}
+                                        className="inline-flex h-8 items-center justify-center border border-accent px-2.5 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                                    >
+                                        Add
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    ) : null}
                 </form>
+            ) : null}
+
+            {sourceHistory.length > 0 ? (
+                <div className="mb-4 border border-rule bg-surface px-4 py-3">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                        <p className="caption">Source history</p>
+                    </div>
+                    <div className="grid gap-2">
+                        {sourceHistory.slice(0, 5).map((event) => (
+                            <div
+                                key={event.id}
+                                className="flex flex-col gap-2 border border-rule bg-surface-raised px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                            >
+                                <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-[13px] font-medium text-ink">
+                                            {event.display_name || event.identifier || event.provider || 'ATS source'}
+                                        </span>
+                                        <span className={metaChipClasses()}>
+                                            {historyActionLabel(event.action)}
+                                        </span>
+                                        {event.provider ? (
+                                            <span className={metaChipClasses('capitalize')}>
+                                                {event.provider}
+                                            </span>
+                                        ) : null}
+                                    </div>
+                                    {event.identifier ? (
+                                        <p className="mt-1 truncate text-[12px] text-ink-soft">
+                                            {event.identifier}
+                                        </p>
+                                    ) : null}
+                                </div>
+                                {event.readd_payload ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => readdHistorySource(event)}
+                                        disabled={createUserSourceMutation.isPending}
+                                        className="inline-flex h-8 items-center justify-center gap-1.5 border border-rule px-2.5 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
+                                    >
+                                        <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                                        Re-add
+                                    </button>
+                                ) : null}
+                            </div>
+                        ))}
+                    </div>
+                </div>
             ) : null}
 
             {sourcesContent}
