@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FormEvent, KeyboardEvent, SyntheticEvent } from 'react';
+import type { ComponentProps, SyntheticEvent } from 'react';
 import {
     Activity,
     AlertTriangle,
@@ -76,6 +76,8 @@ const SOURCE_VIEW_OPTIONS = [
 ] as const;
 
 type SourceView = typeof SOURCE_VIEW_OPTIONS[number]['key'];
+type FormSubmitHandler = NonNullable<ComponentProps<'form'>['onSubmit']>;
+type FormSubmitEvent = Parameters<FormSubmitHandler>[0];
 
 const SOURCE_ACTIVITY_FILTER_OPTIONS = [
     { key: 'all', label: 'All' },
@@ -834,6 +836,13 @@ function SourceDeleteDialog({
     const dialogRef = useRef<HTMLDialogElement>(null);
     const cancelButtonRef = useRef<HTMLButtonElement>(null);
     const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+    const isDeletingRef = useRef(isDeleting);
+    const onCancelRef = useRef(onCancel);
+
+    useEffect(() => {
+        isDeletingRef.current = isDeleting;
+        onCancelRef.current = onCancel;
+    }, [isDeleting, onCancel]);
 
     useEffect(() => {
         const dialog = dialogRef.current;
@@ -849,7 +858,19 @@ function SourceDeleteDialog({
         }
         cancelButtonRef.current?.focus();
 
+        function handleWindowKeyDown(event: globalThis.KeyboardEvent) {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (!isDeletingRef.current) {
+                onCancelRef.current();
+            }
+        }
+
+        window.addEventListener('keydown', handleWindowKeyDown);
+
         return () => {
+            window.removeEventListener('keydown', handleWindowKeyDown);
             if (dialog?.open) {
                 if (typeof dialog.close === 'function') {
                     dialog.close();
@@ -871,21 +892,12 @@ function SourceDeleteDialog({
         }
     }
 
-    function handleKeyDown(event: KeyboardEvent<HTMLDialogElement>) {
-        if (event.key === 'Escape') {
-            event.preventDefault();
-            if (isDeleting) return;
-            onCancel();
-        }
-    }
-
     return (
         <dialog
             ref={dialogRef}
             aria-labelledby="delete-source-title"
             aria-describedby="delete-source-description"
             onCancel={handleCancel}
-            onKeyDown={handleKeyDown}
             className="m-auto w-[calc(100%-2rem)] max-w-md border border-rule bg-surface px-5 py-4 text-ink shadow-lg backdrop:bg-ink/20"
         >
             <div className="flex items-start gap-3">
@@ -1114,7 +1126,7 @@ function AddSourceForm({
     discoveryCandidates: AtsSourceDiscoveryCandidate[];
     isChecking: boolean;
     isAdding: boolean;
-    onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+    onSubmit: FormSubmitHandler;
     onCheck: () => void;
     onNameChange: (value: string) => void;
     onUrlChange: (value: string) => void;
@@ -1831,7 +1843,7 @@ export function FetchSourcesPanel() {
         clearDiscoveryCandidates();
     }
 
-    function submitUserSource(event: FormEvent<HTMLFormElement>) {
+    function submitUserSource(event: FormSubmitEvent) {
         event.preventDefault();
         const payload = buildUserSourcePayload();
         if (!payload) return;
