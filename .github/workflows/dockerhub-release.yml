@@ -62,7 +62,7 @@ jobs:
 
       - name: Log in to Docker Hub
         # docker/login-action v4.0.0 — verified 2026-03-30
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
