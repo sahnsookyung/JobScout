@@ -3,26 +3,24 @@
  */
 
 import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
-import xxhash from 'xxhash-wasm';
 
-let xxhPromise: ReturnType<typeof xxhash> | null = null;
+const HASH_ALGORITHM = 'SHA-256';
 
-async function getXxh() {
-    xxhPromise ??= xxhash();
-    return xxhPromise;
+function arrayBufferToHex(buffer: ArrayBuffer): string {
+    return Array.from(new Uint8Array(buffer))
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
 }
 
 /**
- * Compute XXH64 hash of a file.
+ * Compute a CSP-safe hash of a file using the browser's native Web Crypto API.
  * @param file - The file to hash
- * @returns Hex string of the XXH64 hash (16 characters)
+ * @returns Hex string of the SHA-256 hash (64 characters)
  */
 export async function computeFileHash(file: File): Promise<string> {
-    const xxh = await getXxh();
     const buffer = await file.arrayBuffer();
-    const hasher = xxh.create64();
-    hasher.update(new Uint8Array(buffer));
-    return hasher.digest().toString(16).padStart(16, '0');
+    const digest = await globalThis.crypto.subtle.digest(HASH_ALGORITHM, buffer);
+    return arrayBufferToHex(digest);
 }
 
 /**

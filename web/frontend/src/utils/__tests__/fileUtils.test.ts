@@ -8,7 +8,7 @@ import { webcrypto } from 'node:crypto';
 import { computeFileHash, validateFileSize } from '../fileUtils';
 import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
 
-// Polyfill crypto.subtle for JSDOM environment (needed for xxhash)
+// Polyfill crypto.subtle for JSDOM.
 if (globalThis.crypto?.subtle === undefined) {
     Object.defineProperty(globalThis, 'crypto', { value: webcrypto });
 }
@@ -53,7 +53,7 @@ describe('fileUtils', () => {
     });
 
     describe('computeFileHash', () => {
-        it('should compute XXH64 hash of a file', async () => {
+        it('should compute a SHA-256 hash of a file without WebAssembly', async () => {
             const file = new File(['test content'], 'test.pdf', {
                 type: 'application/pdf',
             });
@@ -62,7 +62,7 @@ describe('fileUtils', () => {
 
             expect(hash).toBeDefined();
             expect(typeof hash).toBe('string');
-            expect(hash).toHaveLength(16);
+            expect(hash).toHaveLength(64);
             expect(hash).toMatch(/^[0-9a-f]+$/);
         });
 
@@ -89,7 +89,7 @@ describe('fileUtils', () => {
             const hash = await computeFileHash(emptyFile);
 
             expect(hash).toBeDefined();
-            expect(hash).toHaveLength(16);
+            expect(hash).toHaveLength(64);
             expect(hash).toMatch(/^[0-9a-f]+$/);
         });
     });

@@ -10,14 +10,14 @@ import { saveResume, getResume, getResumeHash, deleteResume, hasResume } from '.
 import { computeFileHash, validateFileSize } from '../fileUtils';
 import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
 
-// Polyfill crypto.subtle for JSDOM environment (needed for xxhash)
+// Polyfill crypto.subtle for JSDOM.
 if (globalThis.crypto?.subtle === undefined) {
     Object.defineProperty(globalThis, 'crypto', { value: webcrypto });
 }
 
 describe('IndexedDB Resume Storage', () => {
     const testBlob = new Blob(['test content'], { type: 'application/pdf' });
-    const testHash = 'abc123def4567890'; // 16 chars for xxhash format
+    const testHash = 'abc123def4567890';
 
     beforeEach(async () => {
         // Clean up before each test by deleting the test hash
@@ -121,14 +121,13 @@ describe('IndexedDB Resume Storage', () => {
 });
 
 describe('File Hash Computation', () => {
-    it('should compute XXH64 hash of file content', async () => {
+    it('should compute SHA-256 hash of file content', async () => {
         const content = 'Hello, World!';
         const file = new File([content], 'test.txt', { type: 'text/plain' });
 
         const hash = await computeFileHash(file);
 
-        // XXH64 produces 16 hex characters
-        expect(hash).toHaveLength(16);
+        expect(hash).toHaveLength(64);
         expect(hash).toMatch(/^[0-9a-f]+$/);
     });
 
@@ -151,13 +150,11 @@ describe('File Hash Computation', () => {
         const hash1 = await computeFileHash(file1);
         const hash2 = await computeFileHash(file2);
 
-        // XXH64 produces 16-character hex strings
-        expect(hash1).toHaveLength(16);
-        expect(hash2).toHaveLength(16);
-        // Note: In JSDOM environment, xxhash may produce same hash due to mock limitations
-        // The important thing is that the function returns a valid hash format
+        expect(hash1).toHaveLength(64);
+        expect(hash2).toHaveLength(64);
         expect(hash1).toMatch(/^[0-9a-f]+$/);
         expect(hash2).toMatch(/^[0-9a-f]+$/);
+        expect(hash1).not.toBe(hash2);
     });
 });
 
