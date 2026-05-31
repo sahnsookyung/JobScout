@@ -19,7 +19,7 @@ function arrayBufferToHex(buffer: ArrayBuffer): string {
  */
 export async function computeFileHash(file: File): Promise<string> {
     const buffer = await file.arrayBuffer();
-    const digest = await globalThis.crypto.subtle.digest(HASH_ALGORITHM, buffer);
+    const digest = await globalThis.crypto.subtle.digest(HASH_ALGORITHM, new Uint8Array(buffer));
     return arrayBufferToHex(digest);
 }
 
