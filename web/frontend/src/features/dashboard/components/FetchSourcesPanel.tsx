@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ComponentProps, SyntheticEvent } from 'react';
+import type { ComponentProps, ReactNode, SyntheticEvent } from 'react';
 import {
     Activity,
     AlertTriangle,
@@ -156,6 +156,48 @@ function externalSeedTone(source: FetchSource): string {
 
 function metaChipClasses(extra = ''): string {
     return `inline-flex min-h-7 items-center gap-1.5 border border-rule bg-surface-raised px-2 py-1 text-[12px] leading-none text-ink-soft ${extra}`;
+}
+
+const sourceMetricTileClasses = 'min-h-[4.5rem] border border-rule bg-surface-sunk px-3 py-2.5';
+
+type SourceIconButtonTone = 'accent' | 'neutral' | 'warn';
+
+type SourceIconButtonProps = Omit<ComponentProps<'button'>, 'children'> & {
+    children: ReactNode;
+    label: string;
+    tone?: SourceIconButtonTone;
+};
+
+function sourceIconButtonToneClasses(tone: SourceIconButtonTone): string {
+    if (tone === 'accent') {
+        return 'border-accent text-accent hover:bg-accent-soft disabled:border-rule disabled:text-ink-soft';
+    }
+    if (tone === 'warn') {
+        return 'border-warn/50 text-warn hover:bg-warn-soft disabled:border-rule disabled:text-ink-soft';
+    }
+    return 'border-rule text-ink-soft hover:border-accent hover:text-accent disabled:border-rule disabled:text-ink-soft';
+}
+
+function SourceIconButton({
+    children,
+    className = '',
+    label,
+    tone = 'neutral',
+    ...buttonProps
+}: Readonly<SourceIconButtonProps>) {
+    return (
+        <button
+            {...buttonProps}
+            aria-label={label}
+            title={label}
+            className={`group/source-action relative inline-flex h-9 w-9 flex-none items-center justify-center border bg-surface text-[12px] transition-colors disabled:cursor-not-allowed ${sourceIconButtonToneClasses(tone)} ${className}`}
+        >
+            {children}
+            <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden -translate-x-1/2 whitespace-nowrap border border-rule bg-ink px-2 py-1 text-[11px] font-medium leading-none text-canvas shadow-sm group-hover/source-action:block group-focus-within/source-action:block group-focus-visible/source-action:block">
+                {label}
+            </span>
+        </button>
+    );
 }
 
 function toTitleCase(value: string): string {
@@ -643,26 +685,26 @@ function SourceCard({
             ) : null}
 
             <div className="mt-4 grid gap-2 sm:grid-cols-3">
-                <div className="border border-rule bg-surface-sunk px-3 py-2">
+                <div className={sourceMetricTileClasses}>
                     <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-ink-soft">
                         <MapPin className="h-3 w-3" aria-hidden="true" />
                         Scope
                     </div>
-                    <div className="mt-1 truncate text-[12px] font-medium text-ink">{sourceScope(source)}</div>
+                    <div className="mt-1 line-clamp-2 text-[12px] font-medium leading-5 text-ink">{sourceScope(source)}</div>
                 </div>
-                <div className="border border-rule bg-surface-sunk px-3 py-2">
+                <div className={sourceMetricTileClasses}>
                     <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-ink-soft">
                         <Activity className="h-3 w-3" aria-hidden="true" />
                         Outcome
                     </div>
-                    <div className="mt-1 truncate text-[12px] font-medium text-ink">{sourceOutcomeLabel(source)}</div>
+                    <div className="mt-1 line-clamp-2 text-[12px] font-medium leading-5 text-ink">{sourceOutcomeLabel(source)}</div>
                 </div>
-                <div className="border border-rule bg-surface-sunk px-3 py-2">
+                <div className={sourceMetricTileClasses}>
                     <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-ink-soft">
                         <Clock3 className="h-3 w-3" aria-hidden="true" />
                         {sourceCadenceHeading(source, intervalMinutes)}
                     </div>
-                    <div className="mt-1 truncate text-[12px] font-medium text-ink">
+                    <div className="mt-1 line-clamp-2 text-[12px] font-medium leading-5 text-ink">
                         {intervalMinutes ? `${intervalMinutes}m sync` : sourceVolumeLabel(source)}
                     </div>
                 </div>
@@ -722,18 +764,18 @@ function SourceCard({
 
             {canFetch ? (
                 <div className="mt-3 flex justify-end">
-                    <button
+                    <SourceIconButton
                         type="button"
+                        label={isFetchingSource ? 'Fetching source' : 'Fetch now'}
                         onClick={() => onFetchSource(source.site_type)}
                         disabled={isFetchingSource}
-                        className="inline-flex min-h-9 items-center gap-1.5 border border-accent px-3 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                        tone="accent"
                     >
                         <RefreshCw
                             className={`h-3.5 w-3.5 ${isFetchingSource ? 'animate-spin' : ''}`}
                             aria-hidden="true"
                         />
-                        Fetch now
-                    </button>
+                    </SourceIconButton>
                 </div>
             ) : null}
 
@@ -829,57 +871,55 @@ function SourceCard({
                             ) : null}
                         </div>
                         {canManageSource ? (
-                            <div className="flex flex-wrap justify-end gap-2">
+                            <div className="flex flex-wrap justify-end gap-1.5">
                                 {canSyncSource ? (
-                                    <button
+                                    <SourceIconButton
                                         type="button"
+                                        label={isSyncingAtsSource ? 'Syncing source' : 'Sync now'}
                                         onClick={() => onSyncAtsSource(managedId)}
                                         disabled={isDisabled || isSyncingAtsSource}
-                                        className="inline-flex min-h-9 items-center gap-1.5 border border-accent px-3 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                                        tone="accent"
                                     >
                                         <RefreshCw
                                             className={`h-3.5 w-3.5 ${isSyncingAtsSource ? 'animate-spin' : ''}`}
                                             aria-hidden="true"
                                         />
-                                        Sync now
-                                    </button>
+                                    </SourceIconButton>
                                 ) : null}
                                 {canToggleSource ? (
-                                    <button
+                                    <SourceIconButton
                                         type="button"
+                                        label={isDisabled ? 'Enable' : 'Disable'}
                                         onClick={() => onToggleAtsSource(managedId, isDisabled ? 'active' : 'disabled')}
                                         disabled={isMutatingAtsSource}
-                                        className="inline-flex min-h-9 items-center gap-1.5 border border-rule px-3 py-1 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
                                     >
                                         {isDisabled ? (
                                             <Zap className="h-3.5 w-3.5" aria-hidden="true" />
                                         ) : (
                                             <PauseCircle className="h-3.5 w-3.5" aria-hidden="true" />
                                         )}
-                                        {isDisabled ? 'Enable' : 'Disable'}
-                                    </button>
+                                    </SourceIconButton>
                                 ) : null}
                                 {canEditSource ? (
-                                    <button
+                                    <SourceIconButton
                                         type="button"
+                                        label="Edit"
                                         onClick={() => onEditAtsSource(source)}
                                         disabled={isMutatingAtsSource || isEditing}
-                                        className="inline-flex min-h-9 items-center gap-1.5 border border-rule px-3 py-1 text-[12px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:text-ink-soft"
                                     >
                                         <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                                        Edit
-                                    </button>
+                                    </SourceIconButton>
                                 ) : null}
                                 {canDeleteSource ? (
-                                    <button
+                                    <SourceIconButton
                                         type="button"
+                                        label="Delete"
                                         onClick={() => onDeleteAtsSource(source)}
                                         disabled={isMutatingAtsSource}
-                                        className="inline-flex min-h-9 items-center gap-1.5 border border-warn/50 px-3 py-1 text-[12px] font-medium text-warn transition-colors hover:bg-warn-soft disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-soft"
+                                        tone="warn"
                                     >
                                         <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                                        Delete
-                                    </button>
+                                    </SourceIconButton>
                                 ) : null}
                             </div>
                         ) : null}
@@ -1087,7 +1127,7 @@ function SourcePanelHeader({
                         onClick={onToggleAddingSource}
                         aria-expanded={isAddingSource}
                         aria-controls="add-source-form"
-                        className="inline-flex h-9 items-center justify-center gap-1.5 border border-accent px-3 text-[13px] font-medium text-accent transition-colors hover:bg-accent-soft"
+                        className="inline-flex h-10 items-center justify-center gap-1.5 whitespace-nowrap border border-accent px-3 text-[13px] font-medium text-accent transition-colors hover:bg-accent-soft"
                     >
                         <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                         Add source
@@ -1097,7 +1137,7 @@ function SourcePanelHeader({
                         onClick={onToggleHistory}
                         aria-expanded={showHistory}
                         aria-controls="source-activity-panel"
-                        className="inline-flex h-9 items-center justify-center gap-1.5 border border-rule px-3 text-[13px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent"
+                        className="inline-flex h-10 items-center justify-center gap-1.5 whitespace-nowrap border border-rule px-3 text-[13px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent"
                     >
                         <History className="h-3.5 w-3.5" aria-hidden="true" />
                         Activity
@@ -1109,10 +1149,10 @@ function SourcePanelHeader({
                             value={sourceSearch}
                             onChange={(event) => onSourceSearchChange(event.target.value)}
                             placeholder="Search sources"
-                            className="h-9 w-full border border-rule bg-surface pl-8 pr-3 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-soft focus:border-accent sm:w-52"
+                            className="h-10 w-full border border-rule bg-surface pl-8 pr-3 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-soft focus:border-accent sm:w-52"
                         />
                     </label>
-                    <div className="inline-flex items-center gap-2 self-start border border-rule bg-surface px-2.5 py-1.5 text-[12px] text-ink-soft">
+                    <div className="inline-flex h-10 min-w-[10.5rem] items-center justify-center gap-2 whitespace-nowrap border border-rule bg-surface px-3 text-[12px] text-ink-soft">
                         <Server className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
                         <span>{catalogLabel}</span>
                     </div>

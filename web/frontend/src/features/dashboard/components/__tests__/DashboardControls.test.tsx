@@ -1492,6 +1492,18 @@ describe('DashboardControls', () => {
             });
             const sourceCard = screen.getByText('Acme Lever').closest('div[class*="group"]') as HTMLElement;
 
+            for (const label of ['Sync now', 'Disable', 'Edit', 'Delete']) {
+                const actionButton = within(sourceCard).getByRole('button', { name: new RegExp(label, 'i') });
+                const directText = Array.from(actionButton.childNodes)
+                    .filter((node) => node.nodeType === Node.TEXT_NODE)
+                    .map((node) => node.textContent?.trim() ?? '')
+                    .join('');
+
+                expect(actionButton).toHaveClass('h-9', 'w-9');
+                expect(actionButton).toHaveAttribute('title', label);
+                expect(directText).toBe('');
+            }
+
             await userEvent.click(within(sourceCard).getByRole('button', { name: /sync/i }));
             await waitFor(() => {
                 expect(mockPipelineApi.syncUserAtsSource).toHaveBeenCalledWith('source-1', true);
