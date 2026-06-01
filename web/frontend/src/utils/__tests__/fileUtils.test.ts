@@ -64,6 +64,7 @@ describe('fileUtils', () => {
             expect(typeof hash).toBe('string');
             expect(hash).toHaveLength(64);
             expect(hash).toMatch(/^[0-9a-f]+$/);
+            expect(hash).toBe('6ae8a75555209fd6c44157c0aed8016e763ff435a19cf186f76863140143ff72');
         });
 
         it('should produce deterministic hash for same content', async () => {
@@ -91,6 +92,7 @@ describe('fileUtils', () => {
             expect(hash).toBeDefined();
             expect(hash).toHaveLength(64);
             expect(hash).toMatch(/^[0-9a-f]+$/);
+            expect(hash).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
         });
     });
 });

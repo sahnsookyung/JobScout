@@ -18,6 +18,62 @@ from uuid import UUID
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 
+class TestResumeHashVerification(unittest.TestCase):
+    """Unit tests for server-side resume hash compatibility."""
+
+    def test_accepts_browser_sha256_hash(self):
+        from web.backend.routers.pipeline import _compute_and_verify_hash
+
+        content = b'{"name": "Test User"}'
+        browser_hash = hashlib.sha256(content).hexdigest()
+
+        self.assertEqual(_compute_and_verify_hash(content, browser_hash), browser_hash)
+
+    def test_accepts_uppercase_sha256_hash_as_canonical_lowercase(self):
+        from web.backend.routers.pipeline import _compute_and_verify_hash
+
+        content = b'{"name": "Test User"}'
+        browser_hash = hashlib.sha256(content).hexdigest()
+
+        self.assertEqual(_compute_and_verify_hash(content, browser_hash.upper()), browser_hash)
+
+    def test_accepts_legacy_xxh64_hash_for_existing_clients(self):
+        from database.models.resume import generate_file_fingerprint
+        from web.backend.routers.pipeline import _compute_and_verify_hash
+
+        content = b'{"name": "Legacy User"}'
+        legacy_hash = generate_file_fingerprint(content)
+
+        self.assertEqual(_compute_and_verify_hash(content, legacy_hash), legacy_hash)
+
+    def test_omitted_hash_preserves_legacy_server_fingerprint(self):
+        from database.models.resume import generate_file_fingerprint
+        from web.backend.routers.pipeline import _compute_and_verify_hash
+
+        content = b'{"name": "Server Caller"}'
+
+        self.assertEqual(_compute_and_verify_hash(content, None), generate_file_fingerprint(content))
+
+    def test_rejects_sha256_for_different_content(self):
+        from web.backend.api_error_codes import PIPELINE_RESUME_HASH_MISMATCH
+        from web.backend.routers.pipeline import PipelineApiError, _compute_and_verify_hash
+
+        content = b'{"name": "Actual"}'
+        different_content_hash = hashlib.sha256(b'{"name": "Different"}').hexdigest()
+
+        with self.assertRaises(PipelineApiError) as exc_info:
+            _compute_and_verify_hash(content, different_content_hash)
+
+        self.assertEqual(exc_info.exception.status_code, 400)
+        self.assertEqual(exc_info.exception.payload.code, PIPELINE_RESUME_HASH_MISMATCH)
+
+    def test_rejects_malformed_hash_without_processing(self):
+        from web.backend.routers.pipeline import PipelineApiError, _compute_and_verify_hash
+
+        with self.assertRaises(PipelineApiError):
+            _compute_and_verify_hash(b'{"name": "Actual"}', "wrong_hash_that_attacker_provides")
+
+
 class TestResumeUploadEndpoint(unittest.TestCase):
     """Unit tests for resume upload endpoint."""
 
@@ -402,7 +458,7 @@ class TestResumeUploadSecurity(unittest.TestCase):
     def test_upload_hash_match_succeeds(self):
         """Test that server accepts when client hash matches computed hash."""
         sample_content = b'{"name": "Test User", "title": "Engineer"}'
-        correct_hash = hashlib.sha256(sample_content).hexdigest()[:32]
+        correct_hash = hashlib.sha256(sample_content).hexdigest()
 
         files = {'file': ('resume.json', sample_content, 'application/json')}
 
@@ -472,7 +528,7 @@ class TestResumeUploadDeduplication(unittest.TestCase):
     def test_upload_deduplication_skips_processing(self):
         """Test that uploading same file twice skips processing on second upload."""
         sample_content = b'{"name": "Test User", "experience": [{"title": "Engineer"}]}'
-        file_hash = hashlib.sha256(sample_content).hexdigest()[:32]
+        file_hash = hashlib.sha256(sample_content).hexdigest()
 
         files = {'file': ('resume.json', sample_content, 'application/json')}
 
@@ -517,7 +573,7 @@ class TestResumeUploadDeduplication(unittest.TestCase):
     def test_upload_returns_hash_for_indexeddb(self):
         """Test that response includes resume_hash for frontend IndexedDB storage."""
         sample_content = b'{"name": "Test User"}'
-        expected_hash = hashlib.sha256(sample_content).hexdigest()[:32]
+        expected_hash = hashlib.sha256(sample_content).hexdigest()
 
         files = {'file': ('resume.json', sample_content, 'application/json')}
 
@@ -567,7 +623,7 @@ class TestResumeUploadDeduplication(unittest.TestCase):
     def test_upload_processes_new_file(self):
         """Test that new file gets processed and stored in DB."""
         sample_content = b'{"name": "New User", "title": "Developer"}'
-        file_hash = hashlib.sha256(sample_content).hexdigest()[:32]
+        file_hash = hashlib.sha256(sample_content).hexdigest()
 
         files = {'file': ('resume.json', sample_content, 'application/json')}
 

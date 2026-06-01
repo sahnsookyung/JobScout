@@ -6,6 +6,8 @@ Pipeline endpoints - trigger and monitor matching pipeline.
 import json
 import os
 import asyncio
+import hashlib
+import hmac
 import logging
 import re
 import uuid
@@ -135,6 +137,8 @@ router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 # Pre-compiled pattern for task_id validation
 # Format used by orchestrator: "match-{8 hex chars}" e.g., "match-a1b2c3d4"
 TASK_ID_PATTERN = re.compile(r'^[a-zA-Z0-9-]{1,50}$')
+SHA256_HEX_PATTERN = re.compile(r'^[0-9a-fA-F]{64}$')
+XXH64_HEX_PATTERN = re.compile(r'^[0-9a-fA-F]{16}$')
 JOB_BOARD_TAG = "job board"
 JOBSPY_SITE_TYPES = {"indeed", "glassdoor", "linkedin", "google", "zip_recruiter"}
 ATS_SITE_TYPES = {"greenhouse", "lever", "ashby", "hubspot", "workday"}
@@ -1998,23 +2002,56 @@ async def _validate_resume_file(file: UploadFile) -> bytes:
     return content
 
 
+def _normalized_hash(value: Optional[str]) -> Optional[str]:
+    """Return a lowercase client hash, or None when omitted/blank."""
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    return stripped.lower()
+
+
+def _hash_equals(left: str, right: str) -> bool:
+    """Compare same-algorithm hashes without timing-shortcut surprises."""
+    return len(left) == len(right) and hmac.compare_digest(left, right)
+
+
 def _compute_and_verify_hash(content: bytes, provided_hash: Optional[str]) -> str:
-    """Compute file fingerprint and verify against provided hash."""
+    """Compute and verify resume hashes accepted by current and legacy clients.
+
+    Hosted browsers now send a CSP-safe SHA-256 hex digest because the former
+    xxhash-wasm client path violated the production CSP. Older clients may still
+    send the historical xxh64 digest, and server-only callers may omit a hash.
+    Store the digest the caller actually proved when present; otherwise preserve
+    the legacy server-side fingerprint for backward compatibility.
+    """
     from database.models.resume import generate_file_fingerprint
 
-    computed_hash = generate_file_fingerprint(content)
-    logger.debug("Hash check - frontend: %s, backend: %s, len: %d", _sanitize_log(provided_hash), computed_hash, len(computed_hash))
+    legacy_hash = generate_file_fingerprint(content).lower()
+    sha256_hash = hashlib.sha256(content).hexdigest()
+    normalized_provided = _normalized_hash(provided_hash)
 
-    # If client provided a hash, verify it matches
-    if provided_hash and provided_hash != computed_hash:
-        logger.debug("Hash mismatch - provided: %s, computed: %s", _sanitize_log(provided_hash), computed_hash)
-        _raise_pipeline_error(
-            status_code=400,
-            code=PIPELINE_RESUME_HASH_MISMATCH,
-            message="File hash mismatch. The provided hash does not match the file content.",
-        )
+    if normalized_provided is None:
+        return legacy_hash
 
-    return computed_hash
+    if SHA256_HEX_PATTERN.fullmatch(normalized_provided) and _hash_equals(normalized_provided, sha256_hash):
+        return normalized_provided
+
+    if XXH64_HEX_PATTERN.fullmatch(normalized_provided) and _hash_equals(normalized_provided, legacy_hash):
+        return normalized_provided
+
+    logger.debug(
+        "Hash mismatch - provided: %s, sha256: %s, legacy_xxh64: %s",
+        _sanitize_log(normalized_provided),
+        _sanitize_log(sha256_hash),
+        _sanitize_log(legacy_hash),
+    )
+    _raise_pipeline_error(
+        status_code=400,
+        code=PIPELINE_RESUME_HASH_MISMATCH,
+        message="File hash mismatch. The provided hash does not match the file content.",
+    )
 
 
 def _process_resume_background(
