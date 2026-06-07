@@ -203,7 +203,10 @@ class TestReadRootEndpoint:
         assert resp.headers["referrer-policy"] == "strict-origin-when-cross-origin"
         assert "geolocation=()" in resp.headers["permissions-policy"]
         assert "frame-ancestors 'none'" in resp.headers["content-security-policy"]
-        assert "font-src 'self' data:" in resp.headers["content-security-policy"]
+        assert (
+            "font-src 'self' data: https://frontend-cdn.perplexity.ai;"
+            in resp.headers["content-security-policy"]
+        )
         assert (
             "https://accounts.google.com/gsi/style"
             in resp.headers["content-security-policy"]

@@ -148,7 +148,7 @@ class TestExtractOne:
         mock_job = Mock()
         mock_job.id = "job-123"
         mock_job.title = "Software Engineer"
-        mock_job.description = "Job description"
+        mock_job.description = "Job description with Python APIs, distributed systems, and production support. " * 4
 
         service.extract_one(mock_repo, mock_job)
 
@@ -163,8 +163,8 @@ class TestExtractOne:
         assert 'canonical_job_summary_version' in update_payload
         assert 'canonical_job_summary_hash' in update_payload
 
-    def test_extract_empty_requirements(self):
-        """Test extraction with empty requirements raises error."""
+    def test_extract_empty_requirements_saves_minimal_extraction(self):
+        """Empty requirement extraction should not block later jobs."""
         from etl.orchestrator import JobETLService
 
         mock_ai = Mock()
@@ -178,9 +178,21 @@ class TestExtractOne:
         mock_repo = Mock()
         mock_job = Mock()
         mock_job.id = "job-123"
+        mock_job.title = "Project Manager"
+        mock_job.company = "MoneyForward"
+        mock_job.description = "This is a detailed job description that is long enough to attempt extraction. " * 4
 
-        with pytest.raises(ValueError, match="Empty requirements"):
-            service.extract_one(mock_repo, mock_job)
+        service.extract_one(mock_repo, mock_job)
+
+        mock_ai.extract_requirements_data.assert_called_once_with(mock_job.description)
+        mock_repo.save_requirements.assert_called_once_with(mock_job, [])
+        mock_repo.save_benefits.assert_called_once_with(mock_job, [])
+        mock_repo.mark_as_extracted.assert_called_once_with(mock_job)
+
+        update_payload = mock_repo.update_content_metadata.call_args[0][1]
+        assert update_payload["extraction_quality"] == "minimal"
+        assert update_payload["extraction_warning"] == "empty_requirements_extraction"
+        assert "canonical_job_summary" in update_payload
 
     def test_extract_validation_error_uses_raw_data(self):
         """Test extraction handles validation errors gracefully."""
@@ -197,6 +209,10 @@ class TestExtractOne:
 
         mock_repo = Mock()
         mock_job = Mock()
+        mock_job.id = "job-raw"
+        mock_job.title = "Data Engineer"
+        mock_job.company = "Example"
+        mock_job.description = "Long enough description for extraction validation error coverage. " * 4
 
         with patch('etl.orchestrator.JobExtraction') as mock_model:
             mock_model.model_validate.side_effect = ValidationError.from_exception_data(
@@ -207,12 +223,11 @@ class TestExtractOne:
 
             mock_repo.update_job_metadata.assert_called_once()
 
-    def test_extract_empty_result(self):
-        """Test extraction with empty result."""
+    def test_extract_empty_result_saves_minimal_extraction(self):
+        """Empty extraction result should become sparse extracted metadata."""
         from etl.orchestrator import JobETLService
 
         mock_ai = Mock()
-        # Return empty requirements to trigger the ValueError
         mock_ai.extract_requirements_data.return_value = {
             'requirements': [],
             'benefits': []
@@ -223,9 +238,42 @@ class TestExtractOne:
         mock_repo = Mock()
         mock_job = Mock()
         mock_job.id = "job-123"
+        mock_job.title = "Backend Engineer"
+        mock_job.company = "Example"
+        mock_job.description = "Backend APIs, Python services, and production operations. " * 4
 
-        with pytest.raises(ValueError, match="Empty requirements"):
-            service.extract_one(mock_repo, mock_job)
+        service.extract_one(mock_repo, mock_job)
+
+        mock_repo.mark_as_extracted.assert_called_once_with(mock_job)
+        update_payload = mock_repo.update_content_metadata.call_args[0][1]
+        assert update_payload["requirements"] == []
+        assert update_payload["benefits"] == []
+        assert update_payload["extraction_quality"] == "minimal"
+
+    def test_extract_short_description_skips_llm(self):
+        """Low-detail placeholder rows should be extracted without LLM retries."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+        mock_job = Mock()
+        mock_job.id = "job-short"
+        mock_job.title = "Project Manager (CTO Office), Tokyo"
+        mock_job.company = "MoneyForward"
+        mock_job.description = "tokyodev listing: Project Manager (CTO Office), Tokyo"
+
+        service.extract_one(mock_repo, mock_job)
+
+        mock_ai.extract_requirements_data.assert_not_called()
+        mock_repo.save_requirements.assert_called_once_with(mock_job, [])
+        mock_repo.save_benefits.assert_called_once_with(mock_job, [])
+        mock_repo.mark_as_extracted.assert_called_once_with(mock_job)
+
+        update_payload = mock_repo.update_content_metadata.call_args[0][1]
+        assert update_payload["extraction_quality"] == "minimal"
+        assert update_payload["extraction_warning"] == "description_too_short_for_llm_extraction"
 
 
 class TestEmbedJobOne:

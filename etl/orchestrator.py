@@ -60,6 +60,39 @@ class JobETLService:
         self.ai = ai_service
         self.canonical_summary_generator = CanonicalJobSummaryGenerator()
 
+    @staticmethod
+    def _description_has_extraction_signal(description: str | None) -> bool:
+        """Return True when a job description is worth sending to the LLM."""
+        if not isinstance(description, str) or not description:
+            return False
+        normalized = " ".join(description.split())
+        return len(normalized) >= 160
+
+    @staticmethod
+    def _minimal_job_extraction(job, reason: str) -> Dict[str, Any]:
+        """Build a sparse extraction for low-detail jobs so they can still embed."""
+        raw_description = getattr(job, "description", "")
+        description = (
+            " ".join(raw_description.split())
+            if isinstance(raw_description, str)
+            else ""
+        )
+        raw_title = getattr(job, "title", "")
+        title = raw_title if isinstance(raw_title, str) and raw_title else "Untitled role"
+        summary_parts = [title]
+        company = getattr(job, "company", None)
+        if isinstance(company, str) and company:
+            summary_parts.append(f"at {company}")
+        if description:
+            summary_parts.append(description[:500])
+        return {
+            "job_summary": " ".join(summary_parts),
+            "requirements": [],
+            "benefits": [],
+            "extraction_quality": "minimal",
+            "extraction_warning": reason,
+        }
+
     def ingest_one(self, repo: JobRepository, job_data: Dict[str, Any], site_name: str) -> None:
         record = NormalizedJobRecord.from_scraper_payload(job_data, site_name)
         self.import_record(repo, record)
@@ -132,21 +165,39 @@ class JobETLService:
         """
         logger.info(f"Extracting for job {job.id}: {job.title}")
 
-        extraction_result = self.ai.extract_requirements_data(job.description)
+        if self._description_has_extraction_signal(job.description):
+            extraction_result = self.ai.extract_requirements_data(job.description)
+        else:
+            extraction_result = self._minimal_job_extraction(
+                job,
+                "description_too_short_for_llm_extraction",
+            )
 
         # Check if extraction returned meaningful data
         requirements = extraction_result.get('requirements', [])
         if not requirements:
-            raise ValueError(f"Empty requirements extraction for job {job.id}")
+            logger.warning(
+                "Job %s produced no extracted requirements; saving minimal extraction",
+                job.id,
+            )
+            extraction_result = {
+                **self._minimal_job_extraction(job, "empty_requirements_extraction"),
+                **extraction_result,
+                "requirements": [],
+                "benefits": extraction_result.get("benefits", []),
+            }
 
-        # Validate with Pydantic model
+        # Validate rich LLM output while letting known sparse fallback data pass through.
         if extraction_result:
-            try:
-                job_extraction = JobExtraction.model_validate(extraction_result)
-                data = job_extraction.model_dump()
-            except ValidationError:
-                logger.exception("Failed to validate job extraction")
+            if extraction_result.get("extraction_quality") == "minimal":
                 data = extraction_result
+            else:
+                try:
+                    job_extraction = JobExtraction.model_validate(extraction_result)
+                    data = job_extraction.model_dump()
+                except ValidationError:
+                    logger.exception("Failed to validate job extraction")
+                    data = extraction_result
         else:
             data = {}
 
