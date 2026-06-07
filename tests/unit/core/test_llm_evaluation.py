@@ -37,21 +37,23 @@ def _config(
         matching=SimpleNamespace(
             llm_judge=SimpleNamespace(
                 enabled=judge_enabled,
+                runtime=SimpleNamespace(
+                    base_url=base_url,
+                    model=model,
+                    provider="openai_compatible",
+                    api_key="judge-key" if llm_enabled else None,
+                    api_secret=None,
+                    headers=None,
+                    structured_output_mode="auto",
+                    temperature=0.0,
+                    timeout_seconds=20,
+                    max_input_tokens=4000,
+                ),
                 max_per_run=10,
                 max_per_owner_per_day=max_per_owner_per_day,
                 reuse_ttl_days=reuse_ttl_days,
                 prompt_version="match-judge-v1",
                 schema_version="1",
-            ),
-            scorer=SimpleNamespace(
-                semantic_fit=SimpleNamespace(
-                    llm=SimpleNamespace(
-                        enabled=llm_enabled,
-                        base_url=base_url,
-                        model=model,
-                        provider="openai",
-                    )
-                )
             ),
         )
     )
@@ -152,6 +154,14 @@ def _wire_minimal_generation(service, *, match=None, existing=None, created=None
 
 def test_unavailable_provider_blocks_generation_before_db_work():
     service = _service(_config(judge_enabled=False))
+
+    with pytest.raises(LlmJudgeUnavailableError):
+        service.generate_for_match("match-1", owner_id="owner-1")
+
+def test_unavailable_provider_requires_credentials_for_remote_endpoint():
+    service = _service(_config(llm_enabled=False))
+
+    assert service.is_available() is False
 
     with pytest.raises(LlmJudgeUnavailableError):
         service.generate_for_match("match-1", owner_id="owner-1")
@@ -567,7 +577,7 @@ def test_provider_is_built_lazily_and_cached():
         build = Mock(return_value=provider)
         runtime = Mock(return_value="runtime-config")
         monkeypatch.setattr("core.llm_evaluation.build_llm_provider", build)
-        monkeypatch.setattr("core.llm_evaluation.runtime_llm_config_from_fit", runtime)
+        monkeypatch.setattr("core.llm_evaluation.runtime_llm_config_from_match_judge", runtime)
 
         assert service._provider() is provider
         assert service._provider() is provider

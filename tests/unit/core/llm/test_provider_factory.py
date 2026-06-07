@@ -1,12 +1,18 @@
 import pytest
 
-from core.config_loader import LlmConfig, PreferenceModelConfig, SemanticFitLlmConfig
+from core.config_loader import (
+    LlmConfig,
+    LlmJudgeRuntimeConfig,
+    PreferenceModelConfig,
+    SemanticFitLlmConfig,
+)
 from core.llm.openai_service import OpenAIService
 from core.llm.provider_factory import (
     RuntimeLLMConfig,
     build_llm_provider,
     runtime_llm_config_from_etl,
     runtime_llm_config_from_fit,
+    runtime_llm_config_from_match_judge,
     runtime_llm_config_from_preference,
 )
 
@@ -74,6 +80,27 @@ def test_runtime_llm_config_from_fit_maps_llm_fields():
     assert runtime_config.timeout_seconds == 12
 
 
+def test_runtime_llm_config_from_match_judge_maps_groq_fields():
+    config = LlmJudgeRuntimeConfig(
+        provider="openai_compatible",
+        base_url="https://api.groq.com/openai/v1",
+        api_key="groq-key",
+        model="openai/gpt-oss-20b",
+        temperature=0.1,
+        timeout_seconds=18,
+        structured_output_mode="auto",
+    )
+
+    runtime_config = runtime_llm_config_from_match_judge(config)
+
+    assert runtime_config.provider == "openai_compatible"
+    assert runtime_config.base_url == "https://api.groq.com/openai/v1"
+    assert runtime_config.api_key == "groq-key"
+    assert runtime_config.model == "openai/gpt-oss-20b"
+    assert runtime_config.timeout_seconds == 18
+    assert runtime_config.structured_output_mode == "auto"
+
+
 def test_build_llm_provider_constructs_openai_compatible_service():
     provider = build_llm_provider(
         RuntimeLLMConfig(
@@ -82,6 +109,8 @@ def test_build_llm_provider_constructs_openai_compatible_service():
             api_key="llm-key",
             model="gpt-runtime",
             temperature=0.2,
+            timeout_seconds=12,
+            structured_output_mode="auto",
             embedding_model="embed-model",
             embedding_dimensions=1024,
         )
@@ -91,6 +120,7 @@ def test_build_llm_provider_constructs_openai_compatible_service():
     assert provider.extraction_model == "gpt-runtime"
     assert provider.embedding_model == "embed-model"
     assert provider.embedding_dimensions == 1024
+    assert provider.structured_output_mode == "auto"
 
 
 def test_build_llm_provider_requires_model():

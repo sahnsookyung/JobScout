@@ -630,6 +630,9 @@ describe('MatchDetailsModal', () => {
         render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />, { wrapper: makeQueryWrapper() });
 
         expect(await screen.findByText('Second-pass relevance review')).toBeInTheDocument();
+        expect(screen.getByText('Generate a second-pass relevance review')).toBeInTheDocument();
+        expect(screen.getByText('Delete this cached LLM review')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^generate llm evaluation$/i })).toHaveClass('hover:-translate-y-0.5');
         await screen.findByText('Relevant backend role.');
         fireEvent.click(screen.getByRole('button', { name: /delete llm evaluation/i }));
 

@@ -4,7 +4,12 @@ from typing import Dict, Literal, Optional
 
 from pydantic import BaseModel
 
-from core.config_loader import LlmConfig, PreferenceModelConfig, SemanticFitLlmConfig
+from core.config_loader import (
+    LlmConfig,
+    LlmJudgeRuntimeConfig,
+    PreferenceModelConfig,
+    SemanticFitLlmConfig,
+)
 from core.llm.interfaces import LLMProvider
 from core.llm.openai_service import OpenAIService
 
@@ -18,6 +23,7 @@ class RuntimeLLMConfig(BaseModel):
     model: Optional[str] = None
     temperature: float = 0.0
     timeout_seconds: Optional[int] = None
+    structured_output_mode: Optional[Literal["auto", "json_schema", "json_object"]] = None
     embedding_model: Optional[str] = None
     embedding_dimensions: Optional[int] = None
     embedding_base_url: Optional[str] = None
@@ -76,6 +82,20 @@ def runtime_llm_config_from_fit(config: SemanticFitLlmConfig) -> RuntimeLLMConfi
     )
 
 
+def runtime_llm_config_from_match_judge(config: LlmJudgeRuntimeConfig) -> RuntimeLLMConfig:
+    return RuntimeLLMConfig(
+        provider=config.provider,
+        base_url=config.base_url,
+        api_key=config.api_key,
+        api_secret=config.api_secret,
+        headers=config.headers,
+        model=config.model,
+        temperature=config.temperature,
+        timeout_seconds=config.timeout_seconds,
+        structured_output_mode=config.structured_output_mode,
+    )
+
+
 def build_llm_provider(config: RuntimeLLMConfig) -> LLMProvider:
     if config.provider != "openai_compatible":
         raise RuntimeError(
@@ -100,6 +120,8 @@ def build_llm_provider(config: RuntimeLLMConfig) -> LLMProvider:
         api_secret=config.api_secret,
         model_config=model_config,
         extraction_headers=config.headers,
+        timeout_seconds=config.timeout_seconds,
+        structured_output_mode=config.structured_output_mode,
         embedding_base_url=config.embedding_base_url,
         embedding_api_key=config.embedding_api_key,
         embedding_api_secret=config.embedding_api_secret,

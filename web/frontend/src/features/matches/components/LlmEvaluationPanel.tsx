@@ -14,6 +14,17 @@ type Props = Readonly<{
     markerStatus?: string | null;
 }>;
 
+type LlmActionButtonProps = Readonly<{
+    label: string;
+    tooltip: string;
+    children: React.ReactNode;
+    disabled?: boolean;
+    isLoading?: boolean;
+    tone?: 'default' | 'danger';
+    variant?: React.ComponentProps<typeof Button>['variant'];
+    onClick: () => void;
+}>;
+
 function statusBadgeVariant(status?: string | null): 'success' | 'warning' | 'error' | 'info' | 'default' {
     if (status === 'succeeded') return 'success';
     if (status === 'pending' || status === 'running') return 'info';
@@ -30,6 +41,56 @@ function statusLabel(status?: string | null): string {
 function latestEvaluation(data?: MatchLlmEvaluationListResponse): MatchLlmEvaluation | null {
     return data?.evaluations?.[0] ?? null;
 }
+
+const actionButtonClasses = [
+    'h-9 w-9 px-0 transition-all duration-150',
+    'hover:-translate-y-0.5 hover:border-accent hover:bg-accent-soft hover:text-accent',
+    'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+    'disabled:hover:translate-y-0 disabled:hover:border-rule disabled:hover:bg-surface disabled:hover:text-ink-muted',
+].join(' ');
+
+const dangerActionButtonClasses = [
+    actionButtonClasses,
+    'text-warn hover:border-warn hover:bg-warn-soft hover:text-warn',
+].join(' ');
+
+const LlmActionButton: React.FC<LlmActionButtonProps> = ({
+    label,
+    tooltip,
+    children,
+    disabled,
+    isLoading,
+    tone = 'default',
+    variant = 'secondary',
+    onClick,
+}) => {
+    const tooltipId = React.useId();
+    return (
+        <span className="group relative inline-flex">
+            <Button
+                type="button"
+                variant={variant}
+                size="sm"
+                className={tone === 'danger' ? dangerActionButtonClasses : actionButtonClasses}
+                isLoading={isLoading}
+                onClick={onClick}
+                title={tooltip}
+                aria-label={label}
+                aria-describedby={tooltipId}
+                disabled={disabled}
+            >
+                {children}
+            </Button>
+            <span
+                id={tooltipId}
+                role="tooltip"
+                className="pointer-events-none absolute right-0 top-full z-10 mt-2 w-max max-w-[14rem] border border-rule bg-ink px-2.5 py-1.5 text-[11px] font-medium normal-case tracking-normal text-canvas opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
+            >
+                {tooltip}
+            </span>
+        </span>
+    );
+};
 
 export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) => {
     const queryClient = useQueryClient();
@@ -110,55 +171,42 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                     <h4 className="mt-1 text-[18px] font-medium text-ink">Second-pass relevance review</h4>
                 </div>
                 <div className="flex items-center gap-2">
-                    <Button
-                        type="button"
+                    <LlmActionButton
                         variant="ghost"
-                        size="sm"
-                        className="h-9 w-9 px-0"
                         onClick={() => refetch()}
-                        title="Refresh evaluation"
-                        aria-label="Refresh LLM evaluation"
+                        label="Refresh LLM evaluation"
+                        tooltip="Refresh the latest LLM evaluation status"
                     >
                         <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        className="h-9 w-9 px-0"
+                    </LlmActionButton>
+                    <LlmActionButton
                         isLoading={generateMutation.isPending && !hasEvaluation}
                         onClick={() => generateMutation.mutate(false)}
-                        title="Generate evaluation"
-                        aria-label="Generate LLM evaluation"
+                        label="Generate LLM evaluation"
+                        tooltip="Generate a second-pass relevance review"
                         disabled={isBusy}
                     >
                         <Sparkles className="h-4 w-4" aria-hidden="true" />
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        className="h-9 w-9 px-0"
+                    </LlmActionButton>
+                    <LlmActionButton
                         isLoading={generateMutation.isPending && hasEvaluation}
                         onClick={() => generateMutation.mutate(true)}
-                        title="Regenerate evaluation"
-                        aria-label="Regenerate LLM evaluation"
+                        label="Regenerate LLM evaluation"
+                        tooltip="Regenerate and replace the cached review"
                         disabled={isBusy || !hasEvaluation}
                     >
                         <RotateCcw className="h-4 w-4" aria-hidden="true" />
-                    </Button>
-                    <Button
-                        type="button"
+                    </LlmActionButton>
+                    <LlmActionButton
                         variant="ghost"
-                        size="sm"
-                        className="h-9 w-9 px-0 text-warn hover:text-warn"
+                        tone="danger"
                         onClick={() => evaluation && deleteMutation.mutate(evaluation.id)}
-                        title="Delete evaluation"
-                        aria-label="Delete LLM evaluation"
+                        label="Delete LLM evaluation"
+                        tooltip="Delete this cached LLM review"
                         disabled={isBusy || !evaluation}
                     >
                         <Trash2 className="h-4 w-4" aria-hidden="true" />
-                    </Button>
+                    </LlmActionButton>
                 </div>
             </div>
 

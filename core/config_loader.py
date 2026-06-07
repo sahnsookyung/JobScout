@@ -137,10 +137,33 @@ class ResultPolicy(BaseModel):
     min_jd_required_coverage: Optional[float] = None
 
 
+class LlmJudgeRuntimeConfig(BaseModel):
+    """OpenAI-compatible runtime used only for match-level LLM judging."""
+
+    provider: Literal["openai_compatible"] = "openai_compatible"
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    api_secret: Optional[str] = None
+    headers: Optional[Dict[str, str]] = None
+    model: Optional[str] = None
+    temperature: float = 0.0
+    timeout_seconds: int = 20
+    structured_output_mode: Literal["auto", "json_schema", "json_object"] = "auto"
+    max_input_tokens: int = 4000
+
+    def model_post_init(self, __context: Any) -> None:
+        del __context
+        if int(self.timeout_seconds) <= 0:
+            raise ValueError("matching.llm_judge.runtime.timeout_seconds must be positive")
+        if int(self.max_input_tokens) <= 0:
+            raise ValueError("matching.llm_judge.runtime.max_input_tokens must be positive")
+
+
 class MatchLlmJudgeConfig(BaseModel):
     """Optional match-level LLM judge controls and safety budgets."""
 
     enabled: bool = False
+    runtime: LlmJudgeRuntimeConfig = Field(default_factory=LlmJudgeRuntimeConfig)
     top_n_default: int = 5
     top_n_max: int = 10
     max_per_run: int = 10
@@ -619,6 +642,15 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["MATCH_LLM_JUDGE_MAX_PER_RUN"], ["matching", "llm_judge", "max_per_run"]),
     (["MATCH_LLM_JUDGE_MAX_PER_OWNER_PER_DAY"], ["matching", "llm_judge", "max_per_owner_per_day"]),
     (["MATCH_LLM_JUDGE_REUSE_TTL_DAYS"], ["matching", "llm_judge", "reuse_ttl_days"]),
+    (["LLM_AS_A_JUDGE_PROVIDER"], ["matching", "llm_judge", "runtime", "provider"]),
+    (["LLM_AS_A_JUDGE_BASE_URL"], ["matching", "llm_judge", "runtime", "base_url"]),
+    (["LLM_AS_A_JUDGE_API_KEY", "GROQ_API_KEY"], ["matching", "llm_judge", "runtime", "api_key"]),
+    (["LLM_AS_A_JUDGE_API_SECRET"], ["matching", "llm_judge", "runtime", "api_secret"]),
+    (["LLM_AS_A_JUDGE_MODEL"], ["matching", "llm_judge", "runtime", "model"]),
+    (["LLM_AS_A_JUDGE_TEMPERATURE"], ["matching", "llm_judge", "runtime", "temperature"]),
+    (["LLM_AS_A_JUDGE_TIMEOUT_SECONDS"], ["matching", "llm_judge", "runtime", "timeout_seconds"]),
+    (["LLM_AS_A_JUDGE_STRUCTURED_OUTPUT_MODE"], ["matching", "llm_judge", "runtime", "structured_output_mode"]),
+    (["LLM_AS_A_JUDGE_MAX_INPUT_TOKENS"], ["matching", "llm_judge", "runtime", "max_input_tokens"]),
     (["FIT_CROSS_ENCODER_ROUTE_POLICY"], ["matching", "scorer", "semantic_fit", "cross_encoder", "route_policy"]),
     (["FIT_CROSS_ENCODER_LOCAL_RUNTIME"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "runtime"]),
     (["FIT_CROSS_ENCODER_LOCAL_MODEL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "model_name"]),
@@ -660,6 +692,7 @@ DEFAULT_HEADER_MAPPINGS: tuple[HeaderMapping, ...] = (
     ("PREFERENCES_PARSER_HEADER_ENV_VARS", ["preferences", "parser", "headers"]),
     ("PREFERENCES_SEMANTIC_RERANKER_HEADER_ENV_VARS", ["preferences", "semantic_reranker", "headers"]),
     ("PREFERENCES_LLM_JUDGE_HEADER_ENV_VARS", ["preferences", "llm_judge", "headers"]),
+    ("LLM_AS_A_JUDGE_HEADER_ENV_VARS", ["matching", "llm_judge", "runtime", "headers"]),
     ("FIT_LLM_HEADER_ENV_VARS", ["matching", "scorer", "semantic_fit", "llm", "headers"]),
 )
 

@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from core.config_loader import (
     AppConfig,
+    LlmJudgeRuntimeConfig,
     MatcherConfig,
     ScorerConfig,
     SemanticFitConfig,
@@ -71,6 +72,10 @@ class TestConfigLoader(unittest.TestCase):
             "SMTP_USE_TLS",
             "FROM_EMAIL",
             "NOTIFICATION_DRY_RUN",
+            "LLM_AS_A_JUDGE_BASE_URL",
+            "LLM_AS_A_JUDGE_API_KEY",
+            "GROQ_API_KEY",
+            "LLM_AS_A_JUDGE_MODEL",
         ]
         with patch("builtins.open", mock_open(read_data=self.config_yaml)):
             with patch("os.path.exists", return_value=True):
@@ -405,6 +410,41 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config.matching.scorer.semantic_fit.llm.api_key, "fit-key")
         self.assertEqual(config.matching.scorer.semantic_fit.llm.model, "fit-gpt")
 
+    def test_match_llm_judge_env_overrides_use_dedicated_groq_namespace(self):
+        config_yaml = yaml.dump({
+            "database": {"url": "test"},
+            "matching": {
+                "llm_judge": {
+                    "enabled": False,
+                }
+            },
+            "schedule": {"interval_seconds": 60},
+            "scrapers": []
+        })
+
+        env = {
+            "MATCH_LLM_JUDGE_ENABLED": "true",
+            "MATCH_LLM_JUDGE_TOP_N_DEFAULT": "3",
+            "LLM_AS_A_JUDGE_BASE_URL": "https://api.groq.com/openai/v1",
+            "GROQ_API_KEY": "groq-key",
+            "LLM_AS_A_JUDGE_MODEL": "openai/gpt-oss-20b",
+            "LLM_AS_A_JUDGE_STRUCTURED_OUTPUT_MODE": "auto",
+        }
+
+        with patch("builtins.open", mock_open(read_data=config_yaml)):
+            with patch("os.path.exists", return_value=True):
+                with patch.dict(os.environ, env, clear=False):
+                    config = load_config("dummy")
+
+        runtime = config.matching.llm_judge.runtime
+        self.assertTrue(config.matching.llm_judge.enabled)
+        self.assertEqual(config.matching.llm_judge.top_n_default, 3)
+        self.assertEqual(runtime.provider, "openai_compatible")
+        self.assertEqual(runtime.base_url, "https://api.groq.com/openai/v1")
+        self.assertEqual(runtime.api_key, "groq-key")
+        self.assertEqual(runtime.model, "openai/gpt-oss-20b")
+        self.assertEqual(runtime.structured_output_mode, "auto")
+
     def test_semantic_fit_raises_when_default_mode_not_in_deploy_allowed(self):
         with self.assertRaises(ValidationError) as ctx:
             SemanticFitConfig(
@@ -628,6 +668,17 @@ class TestConfigLoader(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     SemanticFitLlmConfig(**overrides)
 
+    def test_match_llm_judge_runtime_raises_for_non_positive_limits(self):
+        invalid_cases = [
+            {"timeout_seconds": 0},
+            {"max_input_tokens": 0},
+        ]
+
+        for overrides in invalid_cases:
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(ValidationError):
+                    LlmJudgeRuntimeConfig(**overrides)
+
     def test_semantic_fit_raises_for_blank_llm_model(self):
         with self.assertRaises(ValidationError) as ctx:
             SemanticFitConfig(
@@ -668,6 +719,21 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(
             updated["matching"]["scorer"]["semantic_fit"]["llm"]["headers"],
             {"Authorization": "Bearer token"},
+        )
+
+    def test_apply_env_overrides_applies_llm_judge_header_mapping(self):
+        data = {"matching": {"llm_judge": {"runtime": {}}}}
+        env = {
+            "LLM_AS_A_JUDGE_HEADER_ENV_VARS": '{"X-API-Key":"JUDGE_TOKEN"}',
+            "JUDGE_TOKEN": "secret-token",
+        }
+
+        with patch.dict(os.environ, env, clear=False):
+            updated = apply_env_overrides(data)
+
+        self.assertEqual(
+            updated["matching"]["llm_judge"]["runtime"]["headers"],
+            {"X-API-Key": "secret-token"},
         )
 
 if __name__ == "__main__":

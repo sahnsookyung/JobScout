@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from core.config_loader import load_config
 from core.llm.interfaces import LLMProvider
-from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_fit
+from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_match_judge
 from core.redis_streams import _sanitize_log
 from database.models import (
     LLM_EVALUATION_DELETED,
@@ -112,14 +112,22 @@ class MatchLlmEvaluationService:
 
     @property
     def llm_config(self):
-        return self.config.matching.scorer.semantic_fit.llm
+        return self.judge_config.runtime
 
     def is_available(self) -> bool:
+        base_url = str(self.llm_config.base_url or "").strip()
+        model = str(self.llm_config.model or "").strip()
+        has_auth = bool(
+            getattr(self.llm_config, "api_key", None)
+            or getattr(self.llm_config, "api_secret", None)
+            or getattr(self.llm_config, "headers", None)
+            or self._is_local_llm_endpoint(base_url)
+        )
         return bool(
             self.judge_config.enabled
-            and self.llm_config.enabled
-            and str(self.llm_config.base_url or "").strip()
-            and str(self.llm_config.model or "").strip()
+            and base_url
+            and model
+            and has_auth
         )
 
     def list_for_match(
@@ -400,6 +408,7 @@ class MatchLlmEvaluationService:
         judge_config_payload = {
             "provider": self.llm_config.provider,
             "model": self.llm_config.model,
+            "structured_output_mode": self.llm_config.structured_output_mode,
             "prompt_version": self.judge_config.prompt_version,
             "schema_version": self.judge_config.schema_version,
         }
@@ -488,8 +497,16 @@ class MatchLlmEvaluationService:
     def _provider(self) -> LLMProvider:
         if self._llm_provider is not None:
             return self._llm_provider
-        self._llm_provider = build_llm_provider(runtime_llm_config_from_fit(self.llm_config))
+        self._llm_provider = build_llm_provider(runtime_llm_config_from_match_judge(self.llm_config))
         return self._llm_provider
+
+    @staticmethod
+    def _is_local_llm_endpoint(base_url: str) -> bool:
+        lowered = base_url.lower()
+        return any(
+            host in lowered
+            for host in ("localhost", "127.0.0.1", "host.docker.internal", "ollama")
+        )
 
     def _is_reusable(self, evaluation: LlmMatchEvaluation) -> bool:
         if evaluation.status != LLM_EVALUATION_SUCCEEDED:

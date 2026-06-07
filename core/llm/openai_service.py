@@ -189,6 +189,21 @@ def _validate_embedding_vector(vector: Any) -> List[float]:
     return validated
 
 
+def _structured_output_rejected(exc: BaseException) -> bool:
+    """Return True when an OpenAI-compatible backend rejects JSON Schema mode."""
+    message = str(exc).lower()
+    return any(
+        token in message
+        for token in (
+            "response_format",
+            "json_schema",
+            "structured output",
+            "structured_outputs",
+            "schema",
+        )
+    )
+
+
 class OpenAIService(LLMProvider):
     """
     OpenAI LLM Service.
@@ -207,10 +222,14 @@ class OpenAIService(LLMProvider):
         embedding_api_key: Optional[str] = None,
         embedding_api_secret: Optional[str] = None,
         embedding_base_url: Optional[str] = None,
-        embedding_headers: Optional[Dict[str, str]] = None
+        embedding_headers: Optional[Dict[str, str]] = None,
+        timeout_seconds: Optional[int] = None,
+        structured_output_mode: Optional[str] = None,
     ):
         # Build extraction client
         client_kwargs = {"max_retries": OPENAI_CLIENT_MAX_RETRIES}
+        if timeout_seconds:
+            client_kwargs["timeout"] = timeout_seconds
         if api_key:
             client_kwargs['api_key'] = api_key
         if base_url:
@@ -226,6 +245,8 @@ class OpenAIService(LLMProvider):
         # Build embedding client (separate if different endpoint or headers)
         if embedding_base_url or embedding_api_key or embedding_api_secret or embedding_headers:
             embedding_client_kwargs = {"max_retries": OPENAI_CLIENT_MAX_RETRIES}
+            if timeout_seconds:
+                embedding_client_kwargs["timeout"] = timeout_seconds
             if embedding_api_key:
                 embedding_client_kwargs['api_key'] = embedding_api_key
             if embedding_base_url:
@@ -245,6 +266,7 @@ class OpenAIService(LLMProvider):
         self.embedding_model = self.model_config.get('embedding_model', 'qwen3-embedding:4b')
         self.embedding_dimensions = self.model_config.get('embedding_dimensions', 1024)
         self.extraction_temperature = self.model_config.get('extraction_temperature', 0.0)
+        self.structured_output_mode = structured_output_mode or "json_schema"
 
     @_llm_retry()
     def extract_structured_data(
@@ -279,19 +301,31 @@ class OpenAIService(LLMProvider):
             {"role": "user", "content": user_message},
         ]
 
-        response = self.client.chat.completions.create(
-            model=self.extraction_model,
-            messages=messages,
-            temperature=self.extraction_temperature,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": name,
-                    "schema": runtime_schema,
-                    "strict": strict,
-                },
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": name,
+                "schema": runtime_schema,
+                "strict": strict,
             },
-        )
+        }
+        if self.structured_output_mode == "json_object":
+            response_format = {"type": "json_object"}
+            messages = self._messages_with_schema_guidance(messages, runtime_schema)
+
+        try:
+            response = self._create_chat_completion(messages, response_format)
+        except openai.BadRequestError as exc:
+            if self.structured_output_mode != "auto" or not _structured_output_rejected(exc):
+                raise
+            logger.info(
+                "JSON Schema response_format rejected by provider for model %s; retrying JSON Object mode.",
+                self.extraction_model,
+            )
+            response = self._create_chat_completion(
+                self._messages_with_schema_guidance(messages, runtime_schema),
+                {"type": "json_object"},
+            )
 
         try:
             content = response.choices[0].message.content
@@ -308,6 +342,33 @@ class OpenAIService(LLMProvider):
         logger.debug("=" * 60)
 
         return data
+
+    def _create_chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        response_format: Dict[str, Any],
+    ) -> Any:
+        return self.client.chat.completions.create(
+            model=self.extraction_model,
+            messages=messages,
+            temperature=self.extraction_temperature,
+            response_format=response_format,
+        )
+
+    @staticmethod
+    def _messages_with_schema_guidance(
+        messages: List[Dict[str, str]],
+        runtime_schema: Dict[str, Any],
+    ) -> List[Dict[str, str]]:
+        guided_messages = [dict(message) for message in messages]
+        schema_text = json.dumps(runtime_schema, sort_keys=True)
+        guided_messages[-1]["content"] = (
+            f"{guided_messages[-1]['content']}\n\n"
+            "Return a single valid JSON object matching this JSON Schema. "
+            "Do not include markdown fences or prose outside the JSON object.\n"
+            f"{schema_text}"
+        )
+        return guided_messages
 
     def extract_resume_data(self, text: str) -> Dict[str, Any]:
         """Extract structured data from resumes using specialized resume instructions.

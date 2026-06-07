@@ -18,6 +18,7 @@ from core.llm.openai_service import (
     _unwrap_schema_spec,
     _is_retryable,
     _parse_reset_duration,
+    _structured_output_rejected,
     _wait_from_rate_limit_headers,
     _wait_respecting_retry_after,
 )
@@ -117,6 +118,68 @@ class TestExtractStructuredData:
         with pytest.raises(ValueError, match="Not a valid JSON Schema object"):
             service.extract_structured_data("test text", invalid)
 
+    def test_json_object_mode_adds_schema_guidance(self):
+        """JSON Object mode should avoid json_schema response_format for broader provider support."""
+        service = OpenAIService(api_key="test", structured_output_mode="json_object")
+        service.client = MagicMock()
+        mock_message = MagicMock()
+        mock_message.content = json.dumps({"result": "test"})
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=mock_message)]
+        service.client.chat.completions.create.return_value = mock_response
+
+        service.extract_structured_data(
+            "test text",
+            {"type": "object", "properties": {"result": {"type": "string"}}},
+        )
+
+        call_kwargs = service.client.chat.completions.create.call_args[1]
+        assert call_kwargs["response_format"] == {"type": "json_object"}
+        assert "JSON Schema" in call_kwargs["messages"][1]["content"]
+
+    def test_auto_mode_falls_back_to_json_object_when_json_schema_is_rejected(self, monkeypatch):
+        """Groq-compatible providers can reject schema mode for some models; auto retries safely."""
+        class FakeBadRequestError(Exception):
+            pass
+
+        monkeypatch.setattr("core.llm.openai_service.openai.BadRequestError", FakeBadRequestError)
+        service = OpenAIService(api_key="test", structured_output_mode="auto")
+        service.client = MagicMock()
+        mock_message = MagicMock()
+        mock_message.content = json.dumps({"result": "test"})
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=mock_message)]
+        service.client.chat.completions.create.side_effect = [
+            FakeBadRequestError("response_format json_schema is unsupported"),
+            mock_response,
+        ]
+
+        result = service.extract_structured_data(
+            "test text",
+            {"type": "object", "properties": {"result": {"type": "string"}}},
+        )
+
+        assert result == {"result": "test"}
+        assert service.client.chat.completions.create.call_count == 2
+        second_call = service.client.chat.completions.create.call_args_list[1][1]
+        assert second_call["response_format"] == {"type": "json_object"}
+
+    def test_auto_mode_does_not_hide_non_response_format_bad_request(self, monkeypatch):
+        """Only structured-output compatibility errors should use the JSON Object fallback."""
+        class FakeBadRequestError(Exception):
+            pass
+
+        monkeypatch.setattr("core.llm.openai_service.openai.BadRequestError", FakeBadRequestError)
+        service = OpenAIService(api_key="test", structured_output_mode="auto")
+        service.client = MagicMock()
+        service.client.chat.completions.create.side_effect = FakeBadRequestError("bad api key")
+
+        with pytest.raises(FakeBadRequestError):
+            service.extract_structured_data(
+                "test text",
+                {"type": "object", "properties": {"result": {"type": "string"}}},
+            )
+
 
 class TestRetryHelpers:
     """Tests for retry logic helpers."""
@@ -150,6 +213,10 @@ class TestRetryHelpers:
         from unittest.mock import MagicMock
         exc = MagicMock(spec=openai.AuthenticationError)
         assert _is_retryable(exc) is False
+
+    def test_structured_output_rejection_detector(self):
+        assert _structured_output_rejected(RuntimeError("response_format json_schema unsupported"))
+        assert not _structured_output_rejected(RuntimeError("bad api key"))
 
 
 class TestParseResetDuration:
@@ -518,6 +585,25 @@ class TestOpenAIServiceConstructor:
         OpenAIService(api_key="sk-test")
 
         assert captured_kwargs[0]["max_retries"] == 0
+
+    def test_constructor_passes_timeout_to_clients(self, monkeypatch):
+        captured_kwargs = []
+
+        class FakeOpenAI:
+            def __init__(self, **kwargs):
+                captured_kwargs.append(kwargs)
+
+        monkeypatch.setattr("core.llm.openai_service.OpenAI", FakeOpenAI)
+
+        OpenAIService(
+            api_key="sk-test",
+            timeout_seconds=17,
+            embedding_api_key="embed-key",
+            embedding_base_url="https://embed.example/v1",
+        )
+
+        assert captured_kwargs[0]["timeout"] == 17
+        assert captured_kwargs[1]["timeout"] == 17
 
     def test_default_construction_with_api_key(self):
         svc = OpenAIService(api_key="sk-test")
