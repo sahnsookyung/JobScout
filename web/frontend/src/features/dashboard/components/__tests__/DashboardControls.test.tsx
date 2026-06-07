@@ -111,7 +111,7 @@ describe('DashboardControls', () => {
                         search_term: '',
                         location: null,
                         country: null,
-                        results_wanted: 5,
+                        results_wanted: 250,
                         hours_old: null,
                         options: { seniorities: ['junior'] },
                         api_health: null,
@@ -862,7 +862,7 @@ describe('DashboardControls', () => {
 
             const tokyoDevCard = screen.getByText('TokyoDev').closest('div[class*="group"]') as HTMLElement;
             expect(within(tokyoDevCard).getByText('Fetch cap')).toBeInTheDocument();
-            expect(within(tokyoDevCard).getByText('Max 5/fetch')).toBeInTheDocument();
+            expect(within(tokyoDevCard).getByText('Max 250/fetch')).toBeInTheDocument();
         });
 
         it('renders distinct source health, outcome, and paused states', async () => {

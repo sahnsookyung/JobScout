@@ -224,7 +224,7 @@ scrapers:
   - site_type: ["linkedin"]
     search_term: "software engineer"
     location: "Tokyo"
-    results_wanted: 5
+    results_wanted: 50
     hours_old: 168
   # Also: indeed, glassdoor, tokyodev, japandev
 ```

@@ -111,7 +111,7 @@ def test_external_seed_config_filters_sources_and_caps_limits(monkeypatch) -> No
     assert config.enabled is True
     assert config.configured is True
     assert config.sources == ("tokyodev", "japandev")
-    assert config.max_jobs_per_source == 25
+    assert config.max_jobs_per_source == 250
     assert config.max_calls_per_day == 100
     assert config.max_calls_per_source_per_day == 50
     assert config.min_interval_minutes == 240

@@ -318,7 +318,7 @@ scrapers:
     description: "English-friendly software roles in Japan."
     tags: ["japan", "tokyo", "english", "software", "startup"]
     search_term: ""
-    results_wanted: 5
+    results_wanted: 250
     options:
       japanese_requirements: ["none"]
       seniorities: ["intern", "junior", "intermediate"]
@@ -327,7 +327,7 @@ scrapers:
     description: "Japan-focused developer roles with language and seniority filters."
     tags: ["japan", "developer", "english", "visa", "software"]
     search_term: ""
-    results_wanted: 5
+    results_wanted: 250
     options:
       japanese_levels: ["japanese_level_not_required"]
       seniorities: ["seniority_level_junior", "seniority_level_mid_level"]
@@ -339,7 +339,7 @@ scrapers:
     search_term: "software engineer"
     location: "Tokyo"
     country: "Japan"
-    results_wanted: 5
+    results_wanted: 50
     hours_old: 168 # 24 * 7
   
   - site_type: ["glassdoor"]
@@ -347,7 +347,7 @@ scrapers:
     tags: ["job board", "tokyo", "company", "salary", "software"]
     search_term: "software engineer"
     location: "Tokyo"
-    results_wanted: 5
+    results_wanted: 50
     hours_old: 168
     request_timeout: 300 # 5 mins
 
@@ -356,6 +356,6 @@ scrapers:
     tags: ["job board", "tokyo", "professional", "network", "software"]
     search_term: "software engineer"
     location: "Tokyo"
-    results_wanted: 5
+    results_wanted: 50
     hours_old: 168
     linkedin_fetch_description: true

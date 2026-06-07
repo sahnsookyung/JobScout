@@ -140,6 +140,6 @@ class SourceFetchRequest(BaseModel):
     limit: Optional[int] = Field(
         default=None,
         ge=1,
-        le=25,
-        description="Optional source-specific max jobs to fetch, capped at 25",
+        le=250,
+        description="Optional source-specific max jobs to fetch, capped at 250",
     )
