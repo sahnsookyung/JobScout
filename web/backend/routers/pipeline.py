@@ -14,7 +14,7 @@ import uuid
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Request, Depends, Query
@@ -116,6 +116,7 @@ logger = logging.getLogger(__name__)
 TASK_NOT_FOUND_DETAIL = "Task not found"
 TASK_NOT_FOUND_OR_EXPIRED_DETAIL = "Task not found or expired"
 ACTIVE_TASK_ID_KEY_PREFIX = "pipeline:active_task_id"
+LATEST_MATCHING_TASK_ID_KEY_PREFIX = "pipeline:latest_matching_task"
 LATEST_UPLOAD_TASK_ID_KEY_PREFIX = "resume:upload:latest_task_id"
 STOP_PIPELINE_ERROR = "Failed to stop pipeline"
 STALE_RESUME_UPLOAD_TIMEOUT_SECONDS = 600
@@ -125,6 +126,49 @@ RESUME_ETL_WAIT_TIMEOUT_SECONDS = float(
 RESUME_PROCESSING_FAILED_MESSAGE = "Resume processing failed."
 RESUME_PROCESSING_COMPLETED_MESSAGE = "Resume processing completed successfully."
 RESUME_PROCESSING_TIMED_OUT_MESSAGE = "Resume processing timed out. Please retry."
+MATCHING_PHASES = (
+    "initializing",
+    "loading_resume",
+    "matching_jobs",
+    "scoring",
+    "saving",
+    "notifying",
+    "completed",
+)
+RESUME_PHASES = (
+    "loading_resume",
+    "extracting_resume",
+    "embedding_resume",
+    "completed",
+)
+ACTIVE_MATCHING_STATUSES = {
+    "pending",
+    "running",
+    "cancellation_requested",
+    "persisting",
+}
+USER_SAFE_WARNING_MESSAGES = {
+    "matching_enqueue_failed": "Resume processing finished, but matching did not start automatically.",
+    "no_jobs_ready": "No prepared jobs were available to score yet.",
+    "jobs_preparing": "Some jobs are still being prepared for matching.",
+    "notification_disabled": "Notifications are disabled for this run.",
+    "notification_skipped": "Notifications were checked but not sent for this run.",
+    "notification_no_channel": "No notification channel is configured for this run.",
+    "notification_delivery_rejected": "No notification channel accepted delivery for this run.",
+    "scorer_degraded": "Some relevance scoring used the deterministic fallback.",
+    "stale_resume": "A newer resume upload is active, so this run is no longer current.",
+}
+USER_SAFE_FAILURES = {
+    "resume_parse_failed": ("Resume parsing failed. Try a simpler PDF/DOCX or upload plain text.", "retry_resume", True),
+    "resume_embedding_failed": ("Resume embedding failed after parsing. Retry processing the resume.", "retry_resume", True),
+    "resume_processing_failed": ("Resume processing failed. Retry or upload a cleaner resume file.", "retry_resume", True),
+    "matching_enqueue_failed": ("Matching could not be started. Try running matching again.", "run_matching", True),
+    "matching_failed": ("Matching failed before results could be saved. Try running matching again.", "run_matching", True),
+    "scoring_failed": ("Scoring failed before results could be saved. Try running matching again.", "run_matching", True),
+    "saving_failed": ("Results could not be saved. Try running matching again.", "run_matching", True),
+    "notification_failed": ("Matching finished, but notification delivery failed.", "open_notification_settings", True),
+    "cancelled": ("This run was cancelled.", "run_matching", True),
+}
 
 # Strong references to fire-and-forget upload tasks — prevents GC on Python 3.12+
 # where the event loop only keeps weak refs to asyncio.Task objects.
@@ -453,6 +497,9 @@ def _jobspy_health(config) -> Optional[FetchSourceHealthResponse]:
 
 def _active_task_key(owner_id: str) -> str:
     return f"{ACTIVE_TASK_ID_KEY_PREFIX}:{owner_id}"
+
+def _latest_matching_task_key(owner_id: str) -> str:
+    return f"{LATEST_MATCHING_TASK_ID_KEY_PREFIX}:{owner_id}"
 
 def _latest_upload_task_key(owner_id: str) -> str:
     return f"{LATEST_UPLOAD_TASK_ID_KEY_PREFIX}:{owner_id}"
@@ -815,22 +862,194 @@ def _normalize_matching_step(
     return aliases.get(normalized, default)
 
 
+def _utc_now_iso() -> str:
+    """Return an ISO-8601 UTC timestamp for task-state metadata."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _matching_phase_from_step(status: str, step: Optional[str]) -> str:
+    if status in {"completed", "failed", "cancelled"}:
+        return status
+
+    normalized = _normalize_matching_step(step, default="initializing")
+    if normalized == "vector_matching":
+        return "matching_jobs"
+    if normalized == "saving_results":
+        return "saving"
+    if normalized in {"initializing", "loading_resume", "scoring", "notifying"}:
+        return normalized
+    return "initializing"
+
+
+def _resume_phase_from_step(status: str, step: Optional[str]) -> str:
+    if status == "completed":
+        return "completed"
+    if status == "failed":
+        return "failed"
+    if step == "embedding":
+        return "embedding_resume"
+    if step == "extracting":
+        return "extracting_resume"
+    return "loading_resume"
+
+
+def _progress_for_phase(
+    phase: str,
+    *,
+    status: str,
+    phases: tuple[str, ...],
+    started_at: Optional[str] = None,
+    updated_at: Optional[str] = None,
+) -> dict[str, Any]:
+    total_steps = len(phases)
+    if phase in phases:
+        current_step = phases.index(phase) + 1
+    elif status in {"completed", "failed", "cancelled"}:
+        current_step = total_steps
+    else:
+        current_step = 1
+
+    if status == "completed":
+        percent = 100
+    else:
+        denominator = max(total_steps - 1, 1)
+        percent = min(99, int(((current_step - 1) / denominator) * 100))
+
+    return {
+        "current_step": current_step,
+        "total_steps": total_steps,
+        "percent": percent,
+        "started_at": started_at,
+        "updated_at": updated_at,
+    }
+
+
+def _safe_warning(code: str) -> dict[str, str]:
+    return {
+        "code": code,
+        "message": USER_SAFE_WARNING_MESSAGES.get(
+            code,
+            "A non-critical issue occurred during this run.",
+        ),
+    }
+
+
+def _safe_warnings_from_state(state: dict, stats: dict[str, Any]) -> list[dict[str, str]]:
+    seen: set[str] = set()
+    warnings: list[dict[str, str]] = []
+
+    for warning in state.get("warnings") or []:
+        if isinstance(warning, dict):
+            code = str(warning.get("code") or "pipeline_warning")[:80]
+        else:
+            code = str(warning or "pipeline_warning")[:80]
+        if code in seen:
+            continue
+        seen.add(code)
+        warnings.append(_safe_warning(code))
+
+    if state.get("stale_due_to_newer_upload") and "stale_resume" not in seen:
+        seen.add("stale_resume")
+        warnings.append(_safe_warning("stale_resume"))
+
+    pending_jobs = int(stats.get("jobs_pending_extraction") or 0) + int(
+        stats.get("jobs_pending_embedding") or 0
+    )
+    if pending_jobs > 0 and "jobs_preparing" not in seen:
+        seen.add("jobs_preparing")
+        warnings.append(_safe_warning("jobs_preparing"))
+
+    if (
+        state.get("status") == "completed"
+        and state.get("task_type") != "resume_upload"
+        and int(stats.get("matches_saved") or 0) == 0
+        and int(stats.get("jobs_ready_to_score") or 0) == 0
+        and "no_jobs_ready" not in seen
+    ):
+        warnings.append(_safe_warning("no_jobs_ready"))
+
+    return warnings
+
+
+def _public_stats_from_state(state: dict) -> dict[str, Any]:
+    stats = dict(state.get("stats") or {})
+    result_data = state.get("result", {}) or {}
+    if "matches_count" in result_data:
+        stats.setdefault("candidates_considered", result_data.get("matches_count") or 0)
+        stats.setdefault("matches_selected", result_data.get("matches_count") or 0)
+    if "saved_count" in result_data:
+        stats.setdefault("matches_saved", result_data.get("saved_count") or 0)
+    if "notified_count" in result_data:
+        stats.setdefault("notifications_sent", result_data.get("notified_count") or 0)
+    return stats
+
+
+def _public_failure_from_state(state: dict, *, task_type: str) -> Optional[dict[str, Any]]:
+    status = state.get("status")
+    if status not in {"failed", "cancelled"}:
+        return None
+
+    if status == "cancelled":
+        code = "cancelled"
+    elif task_type == "resume_upload":
+        step = state.get("step")
+        if step == "embedding":
+            code = "resume_embedding_failed"
+        elif step == "extracting":
+            code = "resume_parse_failed"
+        else:
+            code = "resume_processing_failed"
+    else:
+        step = _normalize_matching_step(state.get("step"), default="initializing")
+        if step == "scoring":
+            code = "scoring_failed"
+        elif step == "saving_results":
+            code = "saving_failed"
+        elif step == "notifying":
+            code = "notification_failed"
+        else:
+            code = "matching_failed"
+
+    message, next_action, retryable = USER_SAFE_FAILURES[code]
+    return {
+        "code": code,
+        "user_message": message,
+        "retryable": retryable,
+        "next_action": next_action,
+    }
+
+
 def _build_pipeline_status_response(task_id: str, state: dict) -> PipelineStatusResponse:
     """Convert Redis task state into the shared pipeline status response shape."""
     result_data = state.get("result", {}) or {}
     status = state.get("status", "unknown")
     default_step = "initializing" if status in ("pending", "running") else None
+    step = _normalize_matching_step(state.get("step"), default=default_step)
+    phase = _matching_phase_from_step(status, step)
+    stats = _public_stats_from_state(state)
+    failure = _public_failure_from_state(state, task_type="matching")
     return PipelineStatusResponse(
         task_id=task_id,
         status=status,
+        phase=phase,
+        progress=_progress_for_phase(
+            phase,
+            status=status,
+            phases=MATCHING_PHASES,
+            started_at=state.get("started_at"),
+            updated_at=state.get("updated_at"),
+        ),
+        stats=stats,
+        warnings=_safe_warnings_from_state(state, stats),
+        failure=failure,
         upload_id=state.get("upload_id"),
         resume_fingerprint=state.get("resume_fingerprint"),
-        step=_normalize_matching_step(state.get("step"), default=default_step),
+        step=step,
         matches_count=result_data.get("matches_count"),
         saved_count=result_data.get("saved_count"),
         notified_count=result_data.get("notified_count"),
         execution_time=result_data.get("execution_time"),
-        error=state.get("error"),
+        error=failure["user_message"] if failure else None,
         stale_due_to_newer_upload=bool(state.get("stale_due_to_newer_upload")),
         latest_upload_id=state.get("latest_upload_id"),
         latest_resume_fingerprint=state.get("latest_resume_fingerprint"),
@@ -903,17 +1122,20 @@ def _mark_resume_upload_failed_from_stale_task(repo, upload, task_id: str) -> No
         user_safe_message=upload_error,
         failure_debug_context={"reason": "stale_task"},
     )
+    now = _utc_now_iso()
     set_task_state(
         task_id,
         {
             "status": "failed",
             "task_type": "resume_upload",
+            "step": "embedding" if retryable else "extracting",
             "error": upload_error,
             "upload_status": upload_status,
             "resume_hash": upload.resume_hash,
             "resume_fingerprint": upload.resume_fingerprint,
             "upload_id": str(upload.id),
             "owner_id": serialize_owner_id(upload.owner_id),
+            "updated_at": now,
         },
         ttl=3600,
     )
@@ -971,15 +1193,28 @@ def _reconcile_resume_upload_task(repo, upload):
     return upload
 
 
-def _resume_status_from_upload(task_id: str, upload) -> Optional[ResumeStatusResponse]:
+def _resume_status_from_upload(
+    task_id: str,
+    upload,
+    *,
+    matching_task_id: Optional[str] = None,
+) -> Optional[ResumeStatusResponse]:
     if upload is None:
         return None
 
     if upload.status == RESUME_UPLOAD_READY:
+        phase = _resume_phase_from_step("completed", None)
         return ResumeStatusResponse(
             task_id=task_id,
             status="completed",
             step=None,
+            matching_task_id=matching_task_id,
+            phase=phase,
+            progress=_progress_for_phase(
+                phase,
+                status="completed",
+                phases=RESUME_PHASES,
+            ),
             message=RESUME_PROCESSING_COMPLETED_MESSAGE,
             error=None,
         )
@@ -988,12 +1223,22 @@ def _resume_status_from_upload(task_id: str, upload) -> Optional[ResumeStatusRes
         RESUME_UPLOAD_FAILED_RETRYABLE,
         RESUME_UPLOAD_FAILED_REUPLOAD_REQUIRED,
     }:
+        state = {"status": "failed", "step": None, "task_type": "resume_upload"}
+        failure = _public_failure_from_state(state, task_type="resume_upload")
+        phase = _resume_phase_from_step("failed", None)
         return ResumeStatusResponse(
             task_id=task_id,
             status="failed",
             step=None,
+            phase=phase,
+            progress=_progress_for_phase(
+                phase,
+                status="failed",
+                phases=RESUME_PHASES,
+            ),
+            failure=failure,
             message=upload.user_safe_message or upload.last_error,
-            error=upload.user_safe_message or upload.last_error,
+            error=upload.user_safe_message or (failure["user_message"] if failure else RESUME_PROCESSING_FAILED_MESSAGE),
         )
 
     return None
@@ -1019,25 +1264,97 @@ def _resume_status_message(status: str, step: Optional[str], error: Optional[str
 def _resume_status_from_task_state(task_id: str, state: dict) -> ResumeStatusResponse:
     """Convert owned Redis task state into the shared resume status response shape."""
     status = state.get("status", "unknown")
+    public_status = "processing" if status in {"pending", "running"} else status
     step = state.get("step")
-    error = state.get("error")
+    failure = _public_failure_from_state(state, task_type="resume_upload")
+    phase = _resume_phase_from_step(public_status, step)
+    stats = _public_stats_from_state(state)
+    error = failure["user_message"] if failure else None
     return ResumeStatusResponse(
         task_id=task_id,
-        status=status,
+        status=public_status,
         step=step,
-        message=_resume_status_message(status, step, error),
+        matching_task_id=state.get("matching_task_id"),
+        phase=phase,
+        progress=_progress_for_phase(
+            phase,
+            status=public_status,
+            phases=RESUME_PHASES,
+            started_at=state.get("started_at"),
+            updated_at=state.get("updated_at"),
+        ),
+        stats=stats,
+        warnings=_safe_warnings_from_state(state, stats),
+        failure=failure,
+        message=_resume_status_message(public_status, step, error),
         error=error,
     )
 
 
-def _get_resume_upload_status(repo, owner_id, task_id: str) -> Optional[ResumeStatusResponse]:
+def _write_resume_ready_state(
+    *,
+    task_id: str,
+    upload_id: str,
+    owner_id,
+    resume_hash: str,
+    resume_fingerprint: str,
+    trigger: str,
+) -> Optional[str]:
+    """Write final resume-ready state and attach or report the matching enqueue."""
+    owner_key = serialize_owner_id(owner_id)
+    matching_task_id = _enqueue_matching_for_ready_resume(
+        owner_id=owner_id,
+        upload_id=upload_id,
+        resume_fingerprint=resume_fingerprint,
+        trigger=trigger,
+    )
+    warnings = [] if matching_task_id else [{"code": "matching_enqueue_failed"}]
+    now = _utc_now_iso()
+    try:
+        previous_state = get_task_state(task_id) or {}
+    except Exception:
+        previous_state = {}
+    try:
+        set_task_state(
+            task_id,
+            {
+                "status": "completed",
+                "task_type": "resume_upload",
+                "upload_status": RESUME_UPLOAD_READY,
+                "resume_hash": resume_hash,
+                "resume_fingerprint": resume_fingerprint,
+                "upload_id": upload_id,
+                "owner_id": owner_key,
+                "matching_task_id": matching_task_id,
+                "trigger": trigger,
+                "started_at": previous_state.get("started_at") or now,
+                "updated_at": now,
+                "warnings": warnings,
+            },
+            ttl=3600,
+        )
+    except Exception:
+        logger.warning("Failed to write Redis completed state for task %s", task_id)
+    return matching_task_id
+
+
+def _get_resume_upload_status(
+    repo,
+    owner_id,
+    task_id: str,
+    task_state: Optional[dict] = None,
+) -> Optional[ResumeStatusResponse]:
     """Best-effort DB lookup for persisted upload state associated with a task."""
     try:
         upload = repo.get_resume_upload_by_task_id(owner_id, task_id)
         if upload is None:
             return None
         upload = _reconcile_resume_upload_task(repo, upload)
-        return _resume_status_from_upload(task_id, upload)
+        return _resume_status_from_upload(
+            task_id,
+            upload,
+            matching_task_id=(task_state or {}).get("matching_task_id"),
+        )
     except HTTPException:
         raise
     except Exception:
@@ -1061,7 +1378,7 @@ def _ensure_no_active_matching_task(redis, owner_id: str) -> None:
 
         active_id = _decode_redis_value(active_id_raw)
         state = get_task_state(active_id)
-        if state and state.get("status") in ("pending", "running", "cancellation_requested", "persisting"):
+        if state and state.get("status") in ACTIVE_MATCHING_STATUSES:
             _raise_pipeline_error(
                 status_code=409,
                 code=PIPELINE_MATCH_ALREADY_RUNNING,
@@ -1099,18 +1416,26 @@ def _set_initial_matching_task_state(
     upload_id: str,
     fingerprint: str,
     owner_id: str,
+    *,
+    trigger: str = "manual",
 ) -> None:
     """Write initial pending state for matching tasks."""
+    now = _utc_now_iso()
     try:
         set_task_state(
             task_id,
             {
                 "status": "pending",
                 "step": "initializing",
+                "phase": "initializing",
                 "task_type": "matching",
                 "upload_id": upload_id,
                 "owner_id": owner_id,
                 "resume_fingerprint": fingerprint,
+                "trigger": trigger,
+                "started_at": now,
+                "updated_at": now,
+                "stats": {},
             },
             ttl=3600,
         )
@@ -1118,15 +1443,117 @@ def _set_initial_matching_task_state(
         logger.warning("Failed to set initial Redis task state for %s", task_id)
 
 
-def _store_active_task_id(redis, owner_id: str, task_id: str) -> None:
-    """Store active matching task ID in Redis when available."""
+def _claim_active_task_id(redis, owner_id: str, task_id: str) -> str:
+    """Atomically claim the active matching slot or return the current winner."""
+    if not redis:
+        return task_id
+
+    try:
+        active_key = _active_task_key(owner_id)
+        if redis.set(active_key, task_id, ex=3600, nx=True):
+            return task_id
+
+        active_task_id = _active_matching_task_id(redis, owner_id)
+        if active_task_id:
+            return active_task_id
+
+        # Existing marker is stale or points at a terminal task; replace it.
+        redis.set(active_key, task_id, ex=3600)
+    except Exception:
+        logger.warning("Failed to claim active_task_id in Redis for %s", task_id)
+    return task_id
+
+
+def _matching_task_marker_payload(
+    *,
+    task_id: str,
+    upload_id: str,
+    resume_fingerprint: str,
+    trigger: str,
+) -> str:
+    """Serialize the latest matching marker written before queueing work."""
+    return json.dumps(
+        {
+            "task_id": task_id,
+            "upload_id": upload_id,
+            "resume_fingerprint": resume_fingerprint,
+            "trigger": trigger,
+            "started_at": _utc_now_iso(),
+        },
+        sort_keys=True,
+    )
+
+
+def _store_latest_matching_task_marker(
+    redis,
+    owner_id: str,
+    *,
+    task_id: str,
+    upload_id: str,
+    resume_fingerprint: str,
+    trigger: str,
+) -> None:
+    """Remember the newest matching task for an upload/fingerprint pair."""
     if not redis:
         return
 
     try:
-        redis.set(_active_task_key(owner_id), task_id, ex=3600)
+        redis.set(
+            _latest_matching_task_key(owner_id),
+            _matching_task_marker_payload(
+                task_id=task_id,
+                upload_id=upload_id,
+                resume_fingerprint=resume_fingerprint,
+                trigger=trigger,
+            ),
+            ex=3600,
+        )
     except Exception:
-        logger.warning("Failed to store active_task_id in Redis for %s", task_id)
+        logger.warning("Failed to store latest matching task marker for %s", task_id)
+
+
+def _latest_matching_task_for_upload(
+    redis,
+    owner_id: str,
+    *,
+    upload_id: str,
+    resume_fingerprint: str,
+) -> Optional[str]:
+    """Return any recent task already started for this upload/fingerprint."""
+    if not redis:
+        return None
+
+    try:
+        marker_raw = redis.get(_latest_matching_task_key(owner_id))
+        if not marker_raw:
+            return None
+        marker = json.loads(_decode_redis_value(marker_raw))
+        if (
+            str(marker.get("upload_id")) == str(upload_id)
+            and str(marker.get("resume_fingerprint")) == str(resume_fingerprint)
+        ):
+            task_id = marker.get("task_id")
+            return str(task_id) if task_id else None
+    except Exception:
+        logger.warning("Failed to read latest matching task marker", exc_info=True)
+    return None
+
+
+def _clear_latest_matching_task_marker(redis, owner_id: str, task_id: str) -> None:
+    """Clear a failed latest matching marker if it still points at task_id."""
+    if not redis:
+        return
+
+    try:
+        key = _latest_matching_task_key(owner_id)
+        marker_raw = redis.get(key)
+        if not marker_raw:
+            return
+        marker = json.loads(_decode_redis_value(marker_raw))
+        if str(marker.get("task_id")) == str(task_id):
+            redis.delete(key)
+    except Exception:
+        logger.warning("Failed to clear latest matching task marker for %s", task_id)
 
 
 def _enqueue_matching_job_or_500(
@@ -1135,6 +1562,8 @@ def _enqueue_matching_job_or_500(
     upload_id: str,
     owner_id: str,
     redis=None,
+    *,
+    trigger: str = "manual",
 ) -> None:
     """Enqueue matching work or raise 500 if enqueue fails."""
     try:
@@ -1144,13 +1573,31 @@ def _enqueue_matching_job_or_500(
             "resume_upload_id": upload_id,
             "owner_id": owner_id,
             "correlation_id": task_id,
+            "trigger": trigger,
             "warn_on_no_completion_subscribers": False,
         })
     except Exception:
         logger.exception("Failed to enqueue matching job to stream")
-        clear_task_cancellation_requested(task_id)
         try:
-            set_task_state(task_id, {"status": "failed", "error": "Failed to start matching pipeline"}, ttl=3600)
+            clear_task_cancellation_requested(task_id)
+        except Exception:
+            logger.warning("Failed to clear cancellation marker after enqueue failure")
+        try:
+            set_task_state(
+                task_id,
+                    {
+                        "status": "failed",
+                        "step": "initializing",
+                        "task_type": "matching",
+                        "owner_id": owner_id,
+                        "upload_id": upload_id,
+                        "resume_fingerprint": fingerprint,
+                        "trigger": trigger,
+                        "updated_at": _utc_now_iso(),
+                        "warnings": [{"code": "matching_enqueue_failed"}],
+                    },
+                    ttl=3600,
+                )
         except Exception:
             logger.warning("Failed to write failed state for unqueued task %s", task_id)
         if redis:
@@ -1168,31 +1615,115 @@ def _enqueue_matching_job_or_500(
         )
 
 
-def _start_matching(user) -> PipelineTaskResponse:
-    """Enqueue a matching job to the Redis stream for the scorer-matcher consumer."""
+def _active_matching_task_id(redis, owner_id: str) -> Optional[str]:
+    """Return an active matching task for this owner if one is still running."""
+    if not redis:
+        return None
+
+    try:
+        active_id_raw = redis.get(_active_task_key(owner_id))
+        if not active_id_raw:
+            return None
+        active_id = _decode_redis_value(active_id_raw)
+        state = get_task_state(active_id)
+        if state and state.get("status") in ACTIVE_MATCHING_STATUSES:
+            return active_id
+    except Exception:
+        logger.warning("Failed to load active matching task for owner", exc_info=True)
+    return None
+
+
+def _enqueue_matching_for_ready_resume(
+    *,
+    owner_id,
+    upload_id: str,
+    resume_fingerprint: str,
+    trigger: str,
+    raise_on_failure: bool = False,
+) -> Optional[str]:
+    """Start or reuse a matching task for a ready resume upload."""
     import uuid as _uuid
 
-    owner_id = serialize_owner_id(resolve_owner_id(user))
+    owner_key = serialize_owner_id(owner_id)
     redis = _get_matching_redis_client()
-    _ensure_no_active_matching_task(redis, owner_id)
-    _guard_resume_not_uploading(redis, owner_id)
-    eligibility = _require_resume_eligibility_or_raise(user.id)
+    active_task_id = _active_matching_task_id(redis, owner_key)
+    if active_task_id:
+        return active_task_id
+
+    if trigger != "manual":
+        latest_task_id = _latest_matching_task_for_upload(
+            redis,
+            owner_key,
+            upload_id=upload_id,
+            resume_fingerprint=resume_fingerprint,
+        )
+        if latest_task_id:
+            return latest_task_id
 
     task_id = str(_uuid.uuid4())
     _set_initial_matching_task_state(
         task_id,
-        eligibility.upload_id,
-        eligibility.resume_fingerprint,
-        owner_id,
+        upload_id,
+        resume_fingerprint,
+        owner_key,
+        trigger=trigger,
     )
-    _store_active_task_id(redis, owner_id, task_id)
-    _enqueue_matching_job_or_500(
-        task_id,
-        eligibility.resume_fingerprint,
-        eligibility.upload_id,
-        owner_id,
+    claimed_task_id = _claim_active_task_id(redis, owner_key, task_id)
+    if claimed_task_id != task_id:
+        return claimed_task_id
+    _store_latest_matching_task_marker(
         redis,
+        owner_key,
+        task_id=task_id,
+        upload_id=upload_id,
+        resume_fingerprint=resume_fingerprint,
+        trigger=trigger,
     )
+    try:
+        _enqueue_matching_job_or_500(
+            task_id,
+            resume_fingerprint,
+            upload_id,
+            owner_key,
+            redis,
+            trigger=trigger,
+        )
+    except PipelineApiError:
+        _clear_latest_matching_task_marker(redis, owner_key, task_id)
+        if raise_on_failure:
+            raise
+        logger.warning(
+            "Auto matching enqueue failed for upload_id=%s trigger=%s",
+            _sanitize_log(upload_id),
+            trigger,
+            exc_info=True,
+        )
+        return None
+
+    return task_id
+
+
+def _start_matching(user) -> PipelineTaskResponse:
+    """Enqueue a matching job to the Redis stream for the scorer-matcher consumer."""
+    owner_id = resolve_owner_id(user)
+    owner_key = serialize_owner_id(owner_id)
+    redis = _get_matching_redis_client()
+    _guard_resume_not_uploading(redis, owner_key)
+    eligibility = _require_resume_eligibility_or_raise(owner_id)
+
+    task_id = _enqueue_matching_for_ready_resume(
+        owner_id=owner_id,
+        upload_id=eligibility.upload_id,
+        resume_fingerprint=eligibility.resume_fingerprint,
+        trigger="manual",
+        raise_on_failure=True,
+    )
+    if task_id is None:
+        _raise_pipeline_error(
+            status_code=500,
+            code=PIPELINE_MATCH_START_FAILED,
+            message="Failed to start matching pipeline.",
+        )
 
     return PipelineTaskResponse(
         success=True,
@@ -1308,18 +1839,16 @@ def get_pipeline_status(
                 message=TASK_NOT_FOUND_DETAIL,
             )
 
-        return PipelineStatusResponse(
-            task_id=task_id,
-            status=result.get("status", "unknown"),
-            step=_normalize_matching_step(
-                result.get("current_stage"),
-                default="initializing" if result.get("status") in ("pending", "running") else None,
-            ),
-            matches_count=result.get("result", {}).get("matches_count"),
-            saved_count=result.get("result", {}).get("saved_count"),
-            notified_count=result.get("result", {}).get("notified_count"),
-            execution_time=result.get("result", {}).get("execution_time"),
-            error=result.get("error")
+        return _build_pipeline_status_response(
+            task_id,
+            {
+                "status": result.get("status", "unknown"),
+                "step": result.get("current_stage"),
+                "task_type": "matching",
+                "owner_id": serialize_owner_id(owner_id),
+                "result": result.get("result", {}) or {},
+                "updated_at": _utc_now_iso(),
+            },
         )
     except PipelineApiError as exc:
         return _pipeline_error_response(exc)
@@ -1354,12 +1883,7 @@ def _get_active_task(user) -> Optional[PipelineStatusResponse]:
             return None
         task_id = task_id_raw if isinstance(task_id_raw, str) else task_id_raw.decode()
         state = get_task_state(task_id)
-        if not state or state.get("status") not in (
-            "running",
-            "pending",
-            "cancellation_requested",
-            "persisting",
-        ):
+        if not state or state.get("status") not in ACTIVE_MATCHING_STATUSES:
             return None
         return _build_pipeline_status_response(task_id, state)
     except Exception:
@@ -1439,13 +1963,32 @@ def select_ready_resume(
             upload_id = str(upload.id)
 
         _clear_latest_upload_task_marker(owner_key)
+        matching_task_id = _enqueue_matching_for_ready_resume(
+            owner_id=owner_id,
+            upload_id=upload_id,
+            resume_fingerprint=resume_fingerprint,
+            trigger="resume_selected",
+        )
+        phase = _resume_phase_from_step("completed", None)
 
         return ResumeUploadResponse(
             success=True,
             resume_hash=body.resume_hash,
             upload_id=upload_id,
             message="Resume selected and ready for matching.",
+            matching_task_id=matching_task_id,
             status=RESUME_UPLOAD_READY,
+            phase=phase,
+            progress=_progress_for_phase(
+                phase,
+                status="completed",
+                phases=RESUME_PHASES,
+            ),
+            warnings=(
+                []
+                if matching_task_id
+                else [_safe_warning("matching_enqueue_failed")]
+            ),
         )
     except PipelineApiError as exc:
         return _pipeline_error_response(exc)
@@ -1526,15 +2069,20 @@ async def retry_resume(
     try:
         redis = get_redis_client()
         redis.set(_latest_upload_task_key(owner_key), task_id, ex=3600)
+        now = _utc_now_iso()
         set_task_state(
             task_id,
             {
                 "status": "pending",
                 "step": "embedding",
+                "phase": "embedding_resume",
                 "task_type": "resume_upload",
                 "upload_id": retry_upload_id,
                 "owner_id": owner_key,
                 "resume_fingerprint": source_resume_fingerprint,
+                "started_at": now,
+                "updated_at": now,
+                "stats": {},
             },
             ttl=3600,
         )
@@ -1561,6 +2109,12 @@ async def retry_resume(
         task_id=task_id,
         message="Retry started for the latest resume upload.",
         status=RESUME_UPLOAD_IN_PROGRESS,
+        phase="embedding_resume",
+        progress=_progress_for_phase(
+            "embedding_resume",
+            status="processing",
+            phases=RESUME_PHASES,
+        ),
     )
 
 async def _stream_orchestrator_sse(orchestrator_url: str, task_id: str):
@@ -1764,7 +2318,7 @@ def get_resume_status(
                 raise
 
         with job_uow() as repo:
-            upload_status = _get_resume_upload_status(repo, owner_id, task_id)
+            upload_status = _get_resume_upload_status(repo, owner_id, task_id, state)
             if upload_status is not None:
                 return upload_status
     except PipelineApiError as exc:
@@ -1860,13 +2414,32 @@ async def upload_resume_endpoint(
                         user_safe_message="Resume already processed and ready for matching.",
                     )
                 )
+                matching_task_id = _enqueue_matching_for_ready_resume(
+                    owner_id=owner_id,
+                    upload_id=str(upload.id),
+                    resume_fingerprint=resume_fingerprint,
+                    trigger="resume_already_ready",
+                )
+                phase = _resume_phase_from_step("completed", None)
                 return ResumeUploadResponse(
                     success=True,
                     resume_hash=resume_hash,
                     upload_id=str(upload.id),
                     message="Resume already processed and ready for matching.",
                     task_id=None,
+                    matching_task_id=matching_task_id,
                     status=RESUME_UPLOAD_READY,
+                    phase=phase,
+                    progress=_progress_for_phase(
+                        phase,
+                        status="completed",
+                        phases=RESUME_PHASES,
+                    ),
+                    warnings=(
+                        []
+                        if matching_task_id
+                        else [_safe_warning("matching_enqueue_failed")]
+                    ),
                 )
 
             if latest_same_upload and latest_same_upload.status in {
@@ -1883,6 +2456,12 @@ async def upload_resume_endpoint(
                     message="Resume is already being processed.",
                     task_id=task_id,
                     status=RESUME_UPLOAD_IN_PROGRESS,
+                    phase="extracting_resume",
+                    progress=_progress_for_phase(
+                        "extracting_resume",
+                        status="processing",
+                        phases=RESUME_PHASES,
+                    ),
                 )
 
             import uuid as _uuid
@@ -1913,15 +2492,20 @@ async def upload_resume_endpoint(
         try:
             redis = get_redis_client()
             redis.set(_latest_upload_task_key(owner_key), task_id, ex=3600)
+            now = _utc_now_iso()
             set_task_state(
                 task_id,
                 {
                     "status": "pending",
                     "step": "extracting",
+                    "phase": "extracting_resume",
                     "task_type": "resume_upload",
                     "upload_id": upload_id,
                     "owner_id": owner_key,
                     "resume_fingerprint": resume_fingerprint,
+                    "started_at": now,
+                    "updated_at": now,
+                    "stats": {},
                 },
                 ttl=3600,
             )
@@ -1956,6 +2540,12 @@ async def upload_resume_endpoint(
             message="Resume uploaded. Processing in background...",
             task_id=task_id,
             status=RESUME_UPLOAD_IN_PROGRESS,
+            phase="extracting_resume",
+            progress=_progress_for_phase(
+                "extracting_resume",
+                status="processing",
+                phases=RESUME_PHASES,
+            ),
         )
     except PipelineApiError as exc:
         return _pipeline_error_response(exc)
@@ -2078,15 +2668,20 @@ def _process_resume_background(
     from web.backend.services.clients import orchestrator_client
 
     try:
+        now = _utc_now_iso()
         set_task_state(
             task_id,
             {
                 "status": "processing",
                 "step": "extracting",
+                "phase": "extracting_resume",
                 "task_type": "resume_upload",
                 "upload_id": upload_id,
                 "owner_id": serialize_owner_id(owner_id),
                 "resume_fingerprint": resume_fingerprint,
+                "started_at": now,
+                "updated_at": now,
+                "stats": {},
             },
             ttl=3600,
         )
@@ -2117,6 +2712,14 @@ def _process_resume_background(
                 retryable=False,
                 user_safe_message=RESUME_PROCESSING_COMPLETED_MESSAGE,
             )
+        _write_resume_ready_state(
+            task_id=task_id,
+            upload_id=upload_id,
+            owner_id=owner_id,
+            resume_hash=resume_hash,
+            resume_fingerprint=resume_fingerprint,
+            trigger="resume_ready",
+        )
     except Exception as exc:
         logger.exception("Background resume processing failed")
         _write_resume_failure_state(
@@ -2143,15 +2746,20 @@ def _retry_resume_background(
     from web.backend.services.clients import orchestrator_client
 
     try:
+        now = _utc_now_iso()
         set_task_state(
             task_id,
             {
                 "status": "processing",
                 "step": "embedding",
+                "phase": "embedding_resume",
                 "task_type": "resume_upload",
                 "upload_id": upload_id,
                 "owner_id": serialize_owner_id(owner_id),
                 "resume_fingerprint": resume_fingerprint,
+                "started_at": now,
+                "updated_at": now,
+                "stats": {},
             },
             ttl=3600,
         )
@@ -2179,6 +2787,14 @@ def _retry_resume_background(
                 retryable=False,
                 user_safe_message=RESUME_PROCESSING_COMPLETED_MESSAGE,
             )
+        _write_resume_ready_state(
+            task_id=task_id,
+            upload_id=upload_id,
+            owner_id=owner_id,
+            resume_hash=resume_hash,
+            resume_fingerprint=resume_fingerprint,
+            trigger="resume_retry_ready",
+        )
     except Exception as exc:
         logger.exception("Background resume retry failed")
         _write_resume_failure_state(
@@ -2240,17 +2856,20 @@ def _write_resume_failure_state(
             failure_debug_context={"exception_type": type(error).__name__},
         )
     try:
+        now = _utc_now_iso()
         set_task_state(
             task_id,
             {
                 "status": "failed",
                 "task_type": "resume_upload",
+                "step": "embedding" if retryable else "extracting",
                 "error": upload_error,
                 "upload_status": upload_status,
                 "resume_hash": resume_hash,
                 "resume_fingerprint": resume_fingerprint,
                 "upload_id": upload_id,
                 "owner_id": owner_id,
+                "updated_at": now,
             },
             ttl=3600,
         )

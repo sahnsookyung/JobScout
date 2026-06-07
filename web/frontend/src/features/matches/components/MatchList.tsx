@@ -1,14 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import { useMatches } from '@/hooks/useMatches';
+import { usePolicy } from '@/hooks/usePolicy';
 import { useStats } from '@/hooks/useStats';
 import { MatchCard } from './MatchCard';
 import { MatchFilters } from './MatchFilters';
 import { Button } from '@/components/ui/Button';
-import type { MatchStatus, RankingMode } from '@/types/api';
+import type { MatchStatus, PolicyConfig, RankingMode } from '@/types/api';
 
 interface MatchListProps {
     onMatchSelect: (matchId: string) => void;
 }
+
+const DEFAULT_POLICY: PolicyConfig = {
+    min_fit: 55,
+    top_k: 50,
+    min_jd_required_coverage: null,
+};
 
 function degradedSummary(reason: string): string {
     if (reason === 'remote_unavailable') return 'The remote cross-encoder is unreachable; results used a threshold fallback.';
@@ -31,17 +38,21 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
         const saved = localStorage.getItem('jobscout_show_hidden');
         return saved === 'true';
     });
+    const { policy } = usePolicy();
 
     useEffect(() => {
         localStorage.setItem('jobscout_show_hidden', showHidden.toString());
     }, [showHidden]);
 
+    const effectivePolicy = policy ?? DEFAULT_POLICY;
     const { data, isLoading, error, refetch } = useMatches({
         status,
+        min_fit: showExcluded ? undefined : effectivePolicy.min_fit,
+        top_k: showExcluded ? undefined : effectivePolicy.top_k,
         remote_only: remoteOnly,
         show_hidden: showHidden,
         ranking_mode: rankingMode,
-        tier: showExcluded ? 'all' : 'primary',
+        tier: 'all',
     });
     const { data: stats } = useStats();
 

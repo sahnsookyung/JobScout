@@ -4,7 +4,7 @@ Policy endpoints - manage result filtering policies.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
-from typing import cast
+from typing import Annotated, cast
 
 from ..dependencies import get_current_user
 from ..services.policy_service import get_policy_service
@@ -19,8 +19,21 @@ router = APIRouter(
 )
 
 
+def _policy_response(policy, llm_policy) -> PolicyResponse:
+    return PolicyResponse(
+        min_fit=policy.min_fit,
+        top_k=policy.top_k,
+        min_jd_required_coverage=policy.min_jd_required_coverage,
+        llm_judge_enabled=llm_policy.enabled,
+        llm_judge_top_n=llm_policy.top_n,
+        llm_judge_top_n_max=llm_policy.top_n_max,
+        llm_judge_available=llm_policy.available,
+        llm_judge_revision=llm_policy.revision,
+    )
+
+
 @router.get("/v1/policy", response_model=PolicyResponse)
-def get_policy():
+def get_policy(user: Annotated[object, Depends(get_current_user)]):
     """
     Get current result policy configuration.
     
@@ -28,16 +41,16 @@ def get_policy():
     """
     policy_service = get_policy_service()
     policy = policy_service.get_current_policy()
-    
-    return PolicyResponse(
-        min_fit=policy.min_fit,
-        top_k=policy.top_k,
-        min_jd_required_coverage=policy.min_jd_required_coverage
-    )
+    llm_policy = policy_service.get_llm_judge_policy(getattr(user, "id", None))
+
+    return _policy_response(policy, llm_policy)
 
 
 @router.put("/v1/policy", response_model=PolicyResponse)
-def update_policy(policy_update: PolicyUpdate):
+def update_policy(
+    policy_update: PolicyUpdate,
+    user: Annotated[object, Depends(get_current_user)],
+):
     """
     Update result policy configuration.
     
@@ -49,18 +62,34 @@ def update_policy(policy_update: PolicyUpdate):
     """
     policy_service = get_policy_service()
     current_policy = policy_service.get_current_policy()
-    
+    fields_set = policy_update.model_fields_set
+
     policy = policy_service.update_policy(
-        min_fit=cast(float, policy_update.min_fit if policy_update.min_fit is not None else current_policy.min_fit),
-        top_k=cast(int, policy_update.top_k if policy_update.top_k is not None else current_policy.top_k),
-        min_jd_required_coverage=policy_update.min_jd_required_coverage if policy_update.min_jd_required_coverage is not None else current_policy.min_jd_required_coverage
+        min_fit=cast(
+            float,
+            policy_update.min_fit
+            if "min_fit" in fields_set and policy_update.min_fit is not None
+            else current_policy.min_fit,
+        ),
+        top_k=cast(
+            int,
+            policy_update.top_k
+            if "top_k" in fields_set and policy_update.top_k is not None
+            else current_policy.top_k,
+        ),
+        min_jd_required_coverage=(
+            policy_update.min_jd_required_coverage
+            if "min_jd_required_coverage" in fields_set
+            else current_policy.min_jd_required_coverage
+        ),
     )
-    
-    return PolicyResponse(
-        min_fit=policy.min_fit,
-        top_k=policy.top_k,
-        min_jd_required_coverage=policy.min_jd_required_coverage
+    llm_policy = policy_service.update_llm_judge_policy(
+        owner_id=getattr(user, "id", None),
+        enabled=policy_update.llm_judge_enabled,
+        top_n=policy_update.llm_judge_top_n,
     )
+
+    return _policy_response(policy, llm_policy)
 
 
 @router.post(
@@ -68,7 +97,10 @@ def update_policy(policy_update: PolicyUpdate):
     response_model=PolicyResponse,
     responses={400: {"description": "Unknown preset name"}}
 )
-def apply_preset(preset_name: str):
+def apply_preset(
+    preset_name: str,
+    user: Annotated[object, Depends(get_current_user)],
+):
     """
     Apply a result policy preset.
     
@@ -90,12 +122,9 @@ def apply_preset(preset_name: str):
 
     policy_service = get_policy_service()
     policy = policy_service.apply_preset(normalized_preset)
-    
-    return PolicyResponse(
-        min_fit=policy.min_fit,
-        top_k=policy.top_k,
-        min_jd_required_coverage=policy.min_jd_required_coverage
-    )
+    llm_policy = policy_service.get_llm_judge_policy(getattr(user, "id", None))
+
+    return _policy_response(policy, llm_policy)
 
 
 @router.get("/config/scoring-weights", response_model=ScoringWeightsResponse)

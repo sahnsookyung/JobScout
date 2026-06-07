@@ -356,12 +356,15 @@ class TestMatcherConsumer:
         mock_result.notified_count = 1
         mock_result.execution_time = 2.5
         mock_result.cancelled = False
+        mock_result.success = True
         mock_result.error = None
 
         with patch("services.scorer_matcher.main._run_matching_pipeline_sync",
                    return_value=mock_result), \
              patch("services.scorer_matcher.main.is_task_cancellation_requested", return_value=False), \
              patch("services.scorer_matcher.main._compute_stale_result_metadata", return_value={}), \
+             patch("services.scorer_matcher.main._job_preparation_stats", return_value={}), \
+             patch("services.scorer_matcher.main._maybe_enqueue_preparation_backfill", return_value=[]), \
              patch("services.scorer_matcher.main.clear_task_cancellation_requested"), \
              patch("services.scorer_matcher.main.set_task_state") as mock_set_state:
             success, result = await consumer._do_process(
@@ -372,29 +375,25 @@ class TestMatcherConsumer:
         assert success is True
         assert result["status"] == "completed"
         assert result["matches_count"] == 3
-        assert mock_set_state.call_args_list[0].args[1] == {
-            "status": "running",
-            "step": "initializing",
-            "task_type": "matching",
-            "owner_id": None,
-            "upload_id": None,
-            "resume_fingerprint": "fp-123",
+        running_state = mock_set_state.call_args_list[0].args[1]
+        assert running_state["status"] == "running"
+        assert running_state["step"] == "initializing"
+        assert running_state["task_type"] == "matching"
+        assert running_state["resume_fingerprint"] == "fp-123"
+        assert running_state["stats"] == {}
+        assert running_state["warnings"] == []
+        assert running_state["updated_at"]
+
+        terminal_state = mock_set_state.call_args_list[-1].args[1]
+        assert terminal_state["status"] == "completed"
+        assert terminal_state["result"] == {
+            "matches_count": 3,
+            "saved_count": 3,
+            "notified_count": 1,
+            "execution_time": 2.5,
         }
-        assert mock_set_state.call_args_list[-1].args[1] == {
-            "status": "completed",
-            "step": "initializing",
-            "task_type": "matching",
-            "owner_id": None,
-            "upload_id": None,
-            "resume_fingerprint": "fp-123",
-            "result": {
-                "matches_count": 3,
-                "saved_count": 3,
-                "notified_count": 1,
-                "execution_time": 2.5,
-            },
-            "error": None,
-        }
+        assert terminal_state["stats"]["matches_saved"] == 3
+        assert terminal_state["error"] is None
 
     @pytest.mark.asyncio
     async def test_do_process_no_result(self):
@@ -430,6 +429,8 @@ class TestMatcherConsumer:
         with patch("services.scorer_matcher.main._run_matching_pipeline_sync",
                    side_effect=Exception("Pipeline failed")), \
              patch("services.scorer_matcher.main.is_task_cancellation_requested", return_value=False), \
+             patch("services.scorer_matcher.main._job_preparation_stats", return_value={}), \
+             patch("services.scorer_matcher.main._maybe_enqueue_preparation_backfill", return_value=[]), \
              patch("services.scorer_matcher.main.clear_task_cancellation_requested"), \
              patch("services.scorer_matcher.main.set_task_state") as mock_set_state:
             success, result = await consumer._do_process(
@@ -440,15 +441,14 @@ class TestMatcherConsumer:
         assert success is False
         assert result["status"] == "failed"
         assert "Pipeline failed" in result.get("error", "")
-        assert mock_set_state.call_args_list[-1].args[1] == {
-            "status": "failed",
-            "step": "initializing",
-            "task_type": "matching",
-            "owner_id": None,
-            "upload_id": None,
-            "resume_fingerprint": "fp-123",
-            "error": "Pipeline failed",
-        }
+        failed_state = mock_set_state.call_args_list[-1].args[1]
+        assert failed_state["status"] == "failed"
+        assert failed_state["step"] == "initializing"
+        assert failed_state["task_type"] == "matching"
+        assert failed_state["resume_fingerprint"] == "fp-123"
+        assert failed_state["error"] == "Pipeline failed"
+        assert failed_state["stats"] == {}
+        assert failed_state["updated_at"]
 
     @pytest.mark.asyncio
     async def test_do_process_persists_matching_steps(self):

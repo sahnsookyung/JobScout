@@ -13,6 +13,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from core.llm_evaluation import (
+    LlmJudgeConflictError,
+    LlmJudgeQuotaExceededError,
+    LlmJudgeUnavailableError,
+)
 from web.backend.dependencies import get_current_user
 from web.backend.exceptions import InvalidMatchOperationException
 from web.backend.routers.matches import router, validate_uuid
@@ -91,6 +96,14 @@ class TestMatchesRouter:
     def mock_match_service(self):
         """Create mock match service."""
         with patch('web.backend.routers.matches.MatchService') as mock:
+            mock_service_instance = Mock()
+            mock.return_value = mock_service_instance
+            yield mock_service_instance
+
+    @pytest.fixture
+    def mock_llm_evaluation_service(self):
+        """Create mock LLM evaluation service."""
+        with patch('web.backend.routers.matches.MatchLlmEvaluationService') as mock:
             mock_service_instance = Mock()
             mock.return_value = mock_service_instance
             yield mock_service_instance
@@ -467,6 +480,133 @@ class TestMatchesRouter:
 
         match_id = str(uuid.uuid4())
         response = client.get(f'/api/matches/{match_id}/explanation')
+
+        assert response.status_code == 404
+
+    def _evaluation(self, match_id=None, evaluation_id=None):
+        return SimpleNamespace(
+            id=evaluation_id or str(uuid.uuid4()),
+            job_match_id=match_id or str(uuid.uuid4()),
+            job_post_id=str(uuid.uuid4()),
+            status="succeeded",
+            llm_score=88.0,
+            confidence=0.91,
+            verdict="good",
+            summary="Strong overlap on Python and backend work.",
+            reason_codes=["skills_match"],
+            requirement_verdicts=[],
+            provider="openai",
+            model="judge-model",
+            prompt_version="match-judge-v1",
+            schema_version="1",
+            error_code=None,
+            retryable=False,
+            created_at=None,
+            started_at=None,
+            completed_at=None,
+        )
+
+    def test_list_llm_evaluations_success(self, client, mock_llm_evaluation_service):
+        match_id = str(uuid.uuid4())
+        evaluation = self._evaluation(match_id=match_id)
+        mock_llm_evaluation_service.list_for_match.return_value = [evaluation]
+
+        response = client.get(f'/api/matches/{match_id}/llm-evaluations')
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["count"] == 1
+        assert data["evaluations"][0]["status"] == "succeeded"
+        assert "owner_id" not in data["evaluations"][0]
+        mock_llm_evaluation_service.list_for_match.assert_called_once_with(
+            match_id,
+            owner_id="user-123",
+            tenant_id=None,
+        )
+
+    def test_list_llm_evaluations_not_found(self, client, mock_llm_evaluation_service):
+        match_id = str(uuid.uuid4())
+        mock_llm_evaluation_service.list_for_match.side_effect = LookupError("missing")
+
+        response = client.get(f'/api/matches/{match_id}/llm-evaluations')
+
+        assert response.status_code == 404
+
+    def test_generate_llm_evaluation_force_passes_tenant_header(
+        self,
+        client,
+        mock_llm_evaluation_service,
+    ):
+        match_id = str(uuid.uuid4())
+        tenant_id = "00000000-0000-4000-8000-000000000201"
+        evaluation = self._evaluation(match_id=match_id)
+        mock_llm_evaluation_service.generate_for_match.return_value = SimpleNamespace(
+            evaluation=evaluation,
+            reused=False,
+        )
+
+        response = client.post(
+            f'/api/matches/{match_id}/llm-evaluations',
+            headers={"X-Tenant-Id": tenant_id},
+            json={"force": True},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["reused"] is False
+        assert data["evaluation"]["id"] == str(evaluation.id)
+        mock_llm_evaluation_service.generate_for_match.assert_called_once()
+        call_kwargs = mock_llm_evaluation_service.generate_for_match.call_args.kwargs
+        assert call_kwargs["owner_id"] == "user-123"
+        assert str(call_kwargs["tenant_id"]) == tenant_id
+        assert call_kwargs["force"] is True
+
+    @pytest.mark.parametrize(
+        ("exc", "status_code"),
+        [
+            (LookupError("missing"), 404),
+            (LlmJudgeConflictError("running"), 409),
+            (LlmJudgeQuotaExceededError("quota"), 429),
+            (LlmJudgeUnavailableError("disabled"), 503),
+        ],
+    )
+    def test_generate_llm_evaluation_error_mapping(
+        self,
+        client,
+        mock_llm_evaluation_service,
+        exc,
+        status_code,
+    ):
+        match_id = str(uuid.uuid4())
+        mock_llm_evaluation_service.generate_for_match.side_effect = exc
+
+        response = client.post(f'/api/matches/{match_id}/llm-evaluations', json={})
+
+        assert response.status_code == status_code
+
+    def test_delete_llm_evaluation_success(self, client, mock_llm_evaluation_service):
+        match_id = str(uuid.uuid4())
+        evaluation_id = str(uuid.uuid4())
+
+        response = client.delete(f'/api/matches/{match_id}/llm-evaluations/{evaluation_id}')
+
+        assert response.status_code == 200
+        assert response.json()["evaluation"] is None
+        mock_llm_evaluation_service.delete_evaluation.assert_called_once_with(
+            match_id,
+            evaluation_id,
+            owner_id="user-123",
+            tenant_id=None,
+        )
+
+    def test_delete_llm_evaluation_not_found(self, client, mock_llm_evaluation_service):
+        match_id = str(uuid.uuid4())
+        evaluation_id = str(uuid.uuid4())
+        mock_llm_evaluation_service.delete_evaluation.side_effect = LookupError("missing")
+
+        response = client.delete(f'/api/matches/{match_id}/llm-evaluations/{evaluation_id}')
 
         assert response.status_code == 404
 

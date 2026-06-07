@@ -137,6 +137,35 @@ class ResultPolicy(BaseModel):
     min_jd_required_coverage: Optional[float] = None
 
 
+class MatchLlmJudgeConfig(BaseModel):
+    """Optional match-level LLM judge controls and safety budgets."""
+
+    enabled: bool = False
+    top_n_default: int = 5
+    top_n_max: int = 10
+    max_per_run: int = 10
+    max_per_owner_per_day: int = 25
+    reuse_ttl_days: int = 90
+    prompt_version: str = "match_llm_judge_v1"
+    schema_version: str = "match_llm_judge_schema_v1"
+
+    def model_post_init(self, __context: Any) -> None:
+        del __context
+        positive_fields = (
+            "top_n_default",
+            "top_n_max",
+            "max_per_run",
+            "max_per_owner_per_day",
+            "reuse_ttl_days",
+        )
+        for field_name in positive_fields:
+            value = int(getattr(self, field_name))
+            if value <= 0:
+                raise ValueError(f"matching.llm_judge.{field_name} must be positive")
+            setattr(self, field_name, value)
+        self.top_n_default = min(self.top_n_default, self.top_n_max)
+        self.max_per_run = min(self.max_per_run, self.top_n_max)
+
 class MatcherConfig(BaseModel):
     """Configuration for vector retrieval."""
 
@@ -430,6 +459,7 @@ class MatchingConfig(BaseModel):
     enabled: bool = True
     matcher: MatcherConfig = MatcherConfig()
     scorer: ScorerConfig = ScorerConfig()
+    llm_judge: MatchLlmJudgeConfig = Field(default_factory=MatchLlmJudgeConfig)
     result_policy: ResultPolicy = Field(default_factory=ResultPolicy)
     invalidate_on_job_change: bool = True
     invalidate_on_resume_change: bool = True
@@ -583,6 +613,12 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["EVIDENCE_RERANK_ENABLED"], ["matching", "scorer", "semantic_fit", "evidence_rerank_enabled"]),
     (["EVIDENCE_LLM_ESCALATION"], ["matching", "scorer", "semantic_fit", "evidence_llm_escalation"]),
     (["TWO_TIER_SELECTION_ENABLED"], ["matching", "two_tier_selection_enabled"]),
+    (["MATCH_LLM_JUDGE_ENABLED"], ["matching", "llm_judge", "enabled"]),
+    (["MATCH_LLM_JUDGE_TOP_N_DEFAULT"], ["matching", "llm_judge", "top_n_default"]),
+    (["MATCH_LLM_JUDGE_TOP_N_MAX"], ["matching", "llm_judge", "top_n_max"]),
+    (["MATCH_LLM_JUDGE_MAX_PER_RUN"], ["matching", "llm_judge", "max_per_run"]),
+    (["MATCH_LLM_JUDGE_MAX_PER_OWNER_PER_DAY"], ["matching", "llm_judge", "max_per_owner_per_day"]),
+    (["MATCH_LLM_JUDGE_REUSE_TTL_DAYS"], ["matching", "llm_judge", "reuse_ttl_days"]),
     (["FIT_CROSS_ENCODER_ROUTE_POLICY"], ["matching", "scorer", "semantic_fit", "cross_encoder", "route_policy"]),
     (["FIT_CROSS_ENCODER_LOCAL_RUNTIME"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "runtime"]),
     (["FIT_CROSS_ENCODER_LOCAL_MODEL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "model_name"]),

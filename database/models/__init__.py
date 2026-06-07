@@ -25,6 +25,15 @@ from .resume import (
 )
 from .match import JobMatch, JobMatchRequirement
 from .match_selection import MatchSelectionRun, MatchSelectionItem
+from .llm_evaluation import (
+    LLM_EVALUATION_DELETED,
+    LLM_EVALUATION_FAILED,
+    LLM_EVALUATION_PENDING,
+    LLM_EVALUATION_RUNNING,
+    LLM_EVALUATION_SKIPPED,
+    LLM_EVALUATION_SUCCEEDED,
+    LlmMatchEvaluation,
+)
 from .notification import NotificationTracker
 from .notification_settings import UserNotificationSettings, UserNotificationChannel
 from .resume_variant import ResumeVariant
@@ -64,6 +73,13 @@ __all__ = [
     'JobMatchRequirement',
     'MatchSelectionRun',
     'MatchSelectionItem',
+    'LlmMatchEvaluation',
+    'LLM_EVALUATION_PENDING',
+    'LLM_EVALUATION_RUNNING',
+    'LLM_EVALUATION_SUCCEEDED',
+    'LLM_EVALUATION_FAILED',
+    'LLM_EVALUATION_SKIPPED',
+    'LLM_EVALUATION_DELETED',
     'NotificationTracker',
     'UserNotificationSettings',
     'UserNotificationChannel',

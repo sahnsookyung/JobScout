@@ -121,6 +121,36 @@
       "type": "PRIMARY KEY"
     },
     {
+      "definition": "FOREIGN KEY (job_match_id) REFERENCES job_match(id) ON DELETE SET NULL",
+      "name": "llm_match_evaluation_job_match_id_fkey",
+      "table": "llm_match_evaluation",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (job_post_id) REFERENCES job_post(id) ON DELETE CASCADE",
+      "name": "llm_match_evaluation_job_post_id_fkey",
+      "table": "llm_match_evaluation",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
+      "name": "llm_match_evaluation_owner_id_fkey",
+      "table": "llm_match_evaluation",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "llm_match_evaluation_pkey",
+      "table": "llm_match_evaluation",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE",
+      "name": "llm_match_evaluation_tenant_id_fkey",
+      "table": "llm_match_evaluation",
+      "type": "FOREIGN KEY"
+    },
+    {
       "definition": "FOREIGN KEY (job_match_id) REFERENCES job_match(id) ON DELETE CASCADE",
       "name": "match_selection_item_job_match_id_fkey",
       "table": "match_selection_item",
@@ -694,6 +724,60 @@
       ],
       "table": "job_requirement_unit_embedding",
       "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_llm_eval_job_match ON public.llm_match_evaluation USING btree (job_match_id)",
+      "name": "idx_llm_eval_job_match",
+      "predicate": null,
+      "reloptions": null,
+      "table": "llm_match_evaluation",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_llm_eval_job_post ON public.llm_match_evaluation USING btree (job_post_id)",
+      "name": "idx_llm_eval_job_post",
+      "predicate": null,
+      "reloptions": null,
+      "table": "llm_match_evaluation",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_llm_eval_owner_resume_created ON public.llm_match_evaluation USING btree (owner_id, resume_fingerprint, created_at)",
+      "name": "idx_llm_eval_owner_resume_created",
+      "predicate": null,
+      "reloptions": null,
+      "table": "llm_match_evaluation",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_llm_eval_owner_status_created ON public.llm_match_evaluation USING btree (owner_id, status, created_at)",
+      "name": "idx_llm_eval_owner_status_created",
+      "predicate": null,
+      "reloptions": null,
+      "table": "llm_match_evaluation",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE UNIQUE INDEX uq_llm_eval_active_global_cache ON public.llm_match_evaluation USING btree (owner_id, resume_fingerprint, job_post_id, judge_config_hash, evidence_hash) WHERE ((deleted_at IS NULL) AND (tenant_id IS NULL))",
+      "name": "uq_llm_eval_active_global_cache",
+      "predicate": "((deleted_at IS NULL) AND (tenant_id IS NULL))",
+      "reloptions": null,
+      "table": "llm_match_evaluation",
+      "unique": true
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE UNIQUE INDEX uq_llm_eval_active_tenant_cache ON public.llm_match_evaluation USING btree (owner_id, tenant_id, resume_fingerprint, job_post_id, judge_config_hash, evidence_hash) WHERE ((deleted_at IS NULL) AND (tenant_id IS NOT NULL))",
+      "name": "uq_llm_eval_active_tenant_cache",
+      "predicate": "((deleted_at IS NULL) AND (tenant_id IS NOT NULL))",
+      "reloptions": null,
+      "table": "llm_match_evaluation",
+      "unique": true
     },
     {
       "access_method": "btree",
@@ -1999,6 +2083,172 @@
           "name": "job_requirement_unit_id",
           "nullable": false,
           "type": "uuid"
+        }
+      ]
+    },
+    "llm_match_evaluation": {
+      "columns": [
+        {
+          "default": null,
+          "name": "completed_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "confidence",
+          "nullable": true,
+          "type": "numeric(5,4)"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "deleted_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "error_code",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "evidence_hash",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "input_hash",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "job_match_id",
+          "nullable": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "job_post_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "judge_config_hash",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "llm_score",
+          "nullable": true,
+          "type": "numeric(5,2)"
+        },
+        {
+          "default": null,
+          "name": "model",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "owner_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "prompt_version",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "provider",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": "'[]'::jsonb",
+          "name": "reason_codes",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": "'[]'::jsonb",
+          "name": "requirement_verdicts",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "resume_fingerprint",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": "false",
+          "name": "retryable",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "schema_version",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "'pending'::text",
+          "name": "status",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "summary",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "tenant_id",
+          "nullable": true,
+          "type": "uuid"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "verdict",
+          "nullable": true,
+          "type": "text"
         }
       ]
     },

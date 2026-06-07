@@ -4,12 +4,24 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Dict, Optional
 
 from core.config_loader import ResultPolicy, load_config
 from database.database import db_session_scope
 
 logger = logging.getLogger(__name__)
+
+LLM_JUDGE_FEATURE_KEY = "match.llm_judge"
+
+
+@dataclass(frozen=True)
+class LlmJudgePolicy:
+    enabled: bool
+    top_n: int
+    top_n_max: int
+    available: bool
+    revision: int = 0
 
 
 def _default_policy_from_config() -> ResultPolicy:
@@ -24,6 +36,45 @@ def _default_policy_from_config() -> ResultPolicy:
         logger.warning("Could not load default result policy from config: %s", exc)
 
     return ResultPolicy()
+
+def _llm_judge_config():
+    try:
+        config = load_config()
+        matching_config = getattr(config, "matching", None)
+        judge_config = getattr(matching_config, "llm_judge", None)
+        semantic_fit = getattr(getattr(matching_config, "scorer", None), "semantic_fit", None)
+        llm_config = getattr(semantic_fit, "llm", None)
+        return judge_config, llm_config
+    except Exception as exc:
+        logger.warning("Could not load LLM judge config: %s", exc)
+        return None, None
+
+
+def _llm_judge_available(judge_config=None, llm_config=None) -> bool:
+    if judge_config is None or llm_config is None:
+        judge_config, llm_config = _llm_judge_config()
+    return bool(
+        judge_config
+        and getattr(judge_config, "enabled", False)
+        and getattr(llm_config, "enabled", False)
+        and str(getattr(llm_config, "base_url", "") or "").strip()
+        and str(getattr(llm_config, "model", "") or "").strip()
+    )
+
+
+def _default_llm_judge_policy() -> LlmJudgePolicy:
+    judge_config, llm_config = _llm_judge_config()
+    if judge_config is None:
+        return LlmJudgePolicy(enabled=False, top_n=5, top_n_max=10, available=False)
+    top_n_max = int(getattr(judge_config, "top_n_max", 10) or 10)
+    top_n = min(int(getattr(judge_config, "top_n_default", 5) or 5), top_n_max)
+    available = _llm_judge_available(judge_config, llm_config)
+    return LlmJudgePolicy(
+        enabled=bool(getattr(judge_config, "enabled", False)) and available,
+        top_n=top_n,
+        top_n_max=top_n_max,
+        available=available,
+    )
 
 
 POLICY_PRESETS: Dict[str, ResultPolicy] = {
@@ -41,6 +92,91 @@ class ResultPolicyStore:
 
     def get_current_policy(self) -> ResultPolicy:
         return self._load_from_db()
+
+    def get_llm_judge_policy(self, owner_id: object | None = None) -> LlmJudgePolicy:
+        default_policy = _default_llm_judge_policy()
+        if owner_id is None:
+            return default_policy
+
+        try:
+            from database.models import UserFeatureCapability
+
+            with db_session_scope() as session:
+                capability = session.query(UserFeatureCapability).filter(
+                    UserFeatureCapability.owner_id == owner_id,
+                    UserFeatureCapability.feature_key == LLM_JUDGE_FEATURE_KEY,
+                ).first()
+                if capability is None:
+                    return default_policy
+
+                value = capability.value_json if isinstance(capability.value_json, dict) else {}
+                top_n = self._clamp_llm_top_n(
+                    value.get("top_n", default_policy.top_n),
+                    default_policy.top_n_max,
+                )
+                revision = int(value.get("revision", 0) or 0)
+                return LlmJudgePolicy(
+                    enabled=bool(capability.enabled) and default_policy.available,
+                    top_n=top_n,
+                    top_n_max=default_policy.top_n_max,
+                    available=default_policy.available,
+                    revision=revision,
+                )
+        except Exception as exc:
+            logger.warning("Could not load LLM judge policy from database: %s", exc)
+            return default_policy
+
+    def update_llm_judge_policy(
+        self,
+        *,
+        owner_id: object | None,
+        enabled: Optional[bool] = None,
+        top_n: Optional[int] = None,
+    ) -> LlmJudgePolicy:
+        current = self.get_llm_judge_policy(owner_id)
+        next_enabled = current.enabled if enabled is None else bool(enabled)
+        next_top_n = current.top_n if top_n is None else self._clamp_llm_top_n(top_n, current.top_n_max)
+
+        if owner_id is None:
+            return LlmJudgePolicy(
+                enabled=next_enabled and current.available,
+                top_n=next_top_n,
+                top_n_max=current.top_n_max,
+                available=current.available,
+                revision=current.revision,
+            )
+
+        from database.models import UserFeatureCapability
+
+        with db_session_scope() as session:
+            capability = session.query(UserFeatureCapability).filter(
+                UserFeatureCapability.owner_id == owner_id,
+                UserFeatureCapability.feature_key == LLM_JUDGE_FEATURE_KEY,
+            ).first()
+            next_revision = current.revision + 1
+            value_json = {
+                "top_n": next_top_n,
+                "revision": next_revision,
+            }
+            if capability is None:
+                capability = UserFeatureCapability(
+                    owner_id=owner_id,
+                    feature_key=LLM_JUDGE_FEATURE_KEY,
+                )
+                session.add(capability)
+
+            capability.enabled = next_enabled
+            capability.value_json = value_json
+            capability.source = "user"
+            session.commit()
+
+        return LlmJudgePolicy(
+            enabled=next_enabled and current.available,
+            top_n=next_top_n,
+            top_n_max=current.top_n_max,
+            available=current.available,
+            revision=next_revision,
+        )
 
     def update_policy(
         self,
@@ -127,6 +263,16 @@ class ResultPolicyStore:
         if isinstance(value, str):
             return json.loads(value)
         return value
+
+    @staticmethod
+    def _clamp_llm_top_n(value, top_n_max: int) -> int:
+        try:
+            parsed = int(value)
+        except Exception as exc:
+            raise ValueError("llm_judge_top_n must be an integer") from exc
+        if parsed <= 0:
+            raise ValueError("llm_judge_top_n must be positive")
+        return min(parsed, int(top_n_max))
 
     @staticmethod
     def _validate(

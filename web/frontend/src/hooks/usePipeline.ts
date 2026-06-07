@@ -4,16 +4,17 @@ import { usePipelineEvents } from './usePipelineEvents';
 import { getResumeHash, getResume, saveResume } from '@/utils/indexedDB';
 import { computeFileHash } from '@/utils/fileUtils';
 import React from 'react';
-import type { PipelineStatusResponse } from '@/types/api';
+import type { PipelineStatusResponse, ResumeStatusResponse } from '@/types/api';
 
-async function pollResumeProcessing(taskId: string): Promise<void> {
+async function pollResumeProcessing(taskId: string): Promise<ResumeStatusResponse | null> {
     const MAX_POLLS = 60; // 2 min @ 2 s/poll
     for (let i = 0; i < MAX_POLLS; i++) {
         await new Promise(r => setTimeout(r, 2000));
         const resp = await pipelineApi.getResumeStatus(taskId);
         const { status } = resp.data;
-        if (status === 'completed' || status === 'failed') return;
+        if (status === 'completed' || status === 'failed') return resp.data;
     }
+    return null;
 }
 
 export const usePipeline = () => {
@@ -52,6 +53,9 @@ export const usePipeline = () => {
             task_id: pendingTaskId,
             status: 'pending',
             step: 'initializing',
+            phase: 'initializing',
+            stats: {},
+            warnings: [],
         };
     }, [activePipeline, pendingTaskId, sseStatus]);
 
@@ -72,13 +76,21 @@ export const usePipeline = () => {
     });
 
     React.useEffect(() => {
+        if (resumeProcessingStatus?.matching_task_id) {
+            setPendingTaskId(resumeProcessingStatus.matching_task_id);
+            queryClient.invalidateQueries({ queryKey: ['pipeline', 'active'] });
+        }
         if (
             resumeProcessingStatus?.status === 'completed' ||
             resumeProcessingStatus?.status === 'failed'
         ) {
             setPendingResumeTaskId(null);
         }
-    }, [resumeProcessingStatus?.status]);
+    }, [
+        queryClient,
+        resumeProcessingStatus?.matching_task_id,
+        resumeProcessingStatus?.status,
+    ]);
 
     const runPipelineMutation = useMutation({
         mutationFn: () => pipelineApi.runMatching(),
@@ -143,6 +155,10 @@ export const usePipeline = () => {
 
             if (preflight.status === 'ready_already_known') {
                 const selectResp = await pipelineApi.selectResume(hash, file.name);
+                if (selectResp.data.matching_task_id) {
+                    setPendingTaskId(selectResp.data.matching_task_id);
+                    queryClient.invalidateQueries({ queryKey: ['pipeline', 'active'] });
+                }
                 return {
                     alreadyExists: true,
                     message: selectResp.data.message || 'Resume already ready',
@@ -169,6 +185,10 @@ export const usePipeline = () => {
             if (uploadResp.data.task_id) {
                 setPendingResumeTaskId(uploadResp.data.task_id);
             }
+            if (uploadResp.data.matching_task_id) {
+                setPendingTaskId(uploadResp.data.matching_task_id);
+                queryClient.invalidateQueries({ queryKey: ['pipeline', 'active'] });
+            }
 
             return {
                 alreadyExists: uploadResp.data.status === 'ready',
@@ -177,7 +197,7 @@ export const usePipeline = () => {
         } finally {
             setIsUploading(false);
         }
-    }, []);
+    }, [queryClient]);
 
     /**
      * Run the matching pipeline using the backend eligibility decision as the source of truth.
@@ -214,7 +234,17 @@ export const usePipeline = () => {
                 const uploadResp = await pipelineApi.uploadResume(blob as File, hash);
                 if (uploadResp.data.task_id) {
                     setPendingResumeTaskId(uploadResp.data.task_id);
-                    await pollResumeProcessing(uploadResp.data.task_id);
+                    const resumeStatus = await pollResumeProcessing(uploadResp.data.task_id);
+                    if (resumeStatus?.matching_task_id) {
+                        setPendingTaskId(resumeStatus.matching_task_id);
+                        queryClient.invalidateQueries({ queryKey: ['pipeline', 'active'] });
+                        return;
+                    }
+                }
+                if (uploadResp.data.matching_task_id) {
+                    setPendingTaskId(uploadResp.data.matching_task_id);
+                    queryClient.invalidateQueries({ queryKey: ['pipeline', 'active'] });
+                    return;
                 }
                 eligibility = (await pipelineApi.getResumeEligibility()).data;
             }
@@ -231,7 +261,7 @@ export const usePipeline = () => {
         } finally {
             setIsRunningPreflight(false);
         }
-    }, [pendingResumeTaskId, runPipelineMutation]);
+    }, [pendingResumeTaskId, queryClient, runPipelineMutation]);
 
     return {
         activePipeline,
@@ -250,6 +280,7 @@ export const usePipeline = () => {
         isUploading,
         isPreparingResume: isRunningPreflight || pendingResumeTaskId !== null,
         resumeProcessingStep: resumeProcessingStatus?.step ?? null,
+        resumeProcessingStatus,
         retrySSE,
     };
 };

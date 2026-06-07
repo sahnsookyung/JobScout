@@ -235,6 +235,9 @@ describe('usePipeline', () => {
                 task_id: 'new-task',
                 status: 'pending',
                 step: 'initializing',
+                phase: 'initializing',
+                stats: {},
+                warnings: [],
             });
         });
 

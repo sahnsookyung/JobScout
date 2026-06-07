@@ -29,6 +29,7 @@ from services.scorer_matcher.pipeline import (
     _run_scorer_service,
     _send_run_notifications,
     SaveMatchesBatchResult,
+    _run_llm_judge_for_selection,
     _publish_match_selection_run,
     run_matching_pipeline,
 )
@@ -1144,8 +1145,10 @@ class TestPipelineNotificationAndPublicationHelpers:
     @patch("services.scorer_matcher.pipeline._publish_match_selection_run", return_value="run-1")
     @patch("services.scorer_matcher.pipeline._refresh_resume_match_set")
     @patch("services.scorer_matcher.pipeline._save_matches_batch")
+    @patch("services.scorer_matcher.pipeline._run_llm_judge_for_selection")
     def test_save_results_and_publish_selection_refreshes_then_publishes(
         self,
+        mock_llm_judge,
         mock_save,
         mock_refresh,
         mock_publish,
@@ -1170,12 +1173,18 @@ class TestPipelineNotificationAndPublicationHelpers:
         mock_refresh.assert_called_once_with("fp-123", active_job_ids=frozenset({"job-1"}))
         mock_publish.assert_called_once()
         assert mock_publish.call_args.kwargs["owner_id"] == "user-1"
+        mock_llm_judge.assert_called_once_with(
+            selection_run_id="run-1",
+            owner_id="user-1",
+        )
 
     @patch("services.scorer_matcher.pipeline._publish_match_selection_run", return_value="run-1")
     @patch("services.scorer_matcher.pipeline._refresh_resume_match_set")
     @patch("services.scorer_matcher.pipeline._save_matches_batch")
+    @patch("services.scorer_matcher.pipeline._run_llm_judge_for_selection")
     def test_save_results_and_publish_selection_uses_resolved_resume_owner(
         self,
+        mock_llm_judge,
         mock_save,
         _mock_refresh,
         mock_publish,
@@ -1197,12 +1206,18 @@ class TestPipelineNotificationAndPublicationHelpers:
         )
 
         assert mock_publish.call_args.kwargs["owner_id"] == "resume-owner-1"
+        mock_llm_judge.assert_called_once_with(
+            selection_run_id="run-1",
+            owner_id="resume-owner-1",
+        )
 
     @patch("services.scorer_matcher.pipeline._publish_match_selection_run", return_value="run-1")
     @patch("services.scorer_matcher.pipeline._refresh_resume_match_set")
     @patch("services.scorer_matcher.pipeline._save_matches_batch")
+    @patch("services.scorer_matcher.pipeline._run_llm_judge_for_selection")
     def test_save_results_and_publish_selection_saves_persistence_dtos(
         self,
+        _mock_llm_judge,
         mock_save,
         mock_refresh,
         mock_publish,
@@ -1227,8 +1242,8 @@ class TestPipelineNotificationAndPublicationHelpers:
                 primary,
                 persist_dtos=[primary, excluded],
                 item_snapshots=[
-                    SimpleNamespace(job_id="job-primary"),
-                    SimpleNamespace(job_id="job-excluded"),
+                    SimpleNamespace(job_id="job-primary", selection_tier="primary"),
+                    SimpleNamespace(job_id="job-excluded", selection_tier="excluded"),
                 ],
             ),
             task_id="task-1",
@@ -1240,7 +1255,7 @@ class TestPipelineNotificationAndPublicationHelpers:
         assert [dto.job.id for dto in saved_dtos] == ["job-primary", "job-excluded"]
         mock_refresh.assert_called_once_with(
             "fp-123",
-            active_job_ids=frozenset({"job-primary", "job-excluded"}),
+            active_job_ids=frozenset({"job-primary"}),
         )
         mock_publish.assert_called_once()
 
@@ -1272,6 +1287,67 @@ class TestPipelineNotificationAndPublicationHelpers:
         assert selection_run_id is None
         mock_refresh.assert_not_called()
         mock_publish.assert_not_called()
+
+    @patch("services.scorer_matcher.pipeline.job_uow")
+    @patch("services.scorer_matcher.pipeline.MatchLlmEvaluationService")
+    @patch("services.scorer_matcher.pipeline.get_result_policy_store")
+    def test_run_llm_judge_for_selection_uses_owner_policy_and_top_n(
+        self,
+        mock_policy_store,
+        mock_service_cls,
+        mock_uow,
+    ):
+        repo = SimpleNamespace(db=MagicMock())
+        mock_uow.return_value = _uow(repo)
+        mock_policy_store.return_value.get_llm_judge_policy.return_value = SimpleNamespace(
+            enabled=True,
+            available=True,
+            top_n=3,
+        )
+        service = MagicMock()
+        service.evaluate_selection_run.return_value = {
+            "attempted": 3,
+            "reused": 1,
+            "created": 2,
+            "failed": 0,
+        }
+        mock_service_cls.return_value = service
+
+        stats = _run_llm_judge_for_selection(
+            selection_run_id="selection-run-1",
+            owner_id="owner-1",
+        )
+
+        assert stats["created"] == 2
+        mock_policy_store.return_value.get_llm_judge_policy.assert_called_once_with("owner-1")
+        mock_service_cls.assert_called_once_with(repo.db)
+        service.evaluate_selection_run.assert_called_once_with(
+            "selection-run-1",
+            owner_id="owner-1",
+            tenant_id=None,
+            top_n=3,
+        )
+
+    @patch("services.scorer_matcher.pipeline.job_uow")
+    @patch("services.scorer_matcher.pipeline.get_result_policy_store")
+    def test_run_llm_judge_for_selection_skips_when_disabled(
+        self,
+        mock_policy_store,
+        mock_uow,
+    ):
+        mock_policy_store.return_value.get_llm_judge_policy.return_value = SimpleNamespace(
+            enabled=False,
+            available=True,
+            top_n=3,
+        )
+
+        stats = _run_llm_judge_for_selection(
+            selection_run_id="selection-run-1",
+            owner_id="owner-1",
+        )
+
+        assert stats == {"attempted": 0, "reused": 0, "created": 0, "failed": 0}
+        mock_uow.assert_not_called()
 
 
 class TestDtoRankingSnapshot:

@@ -792,12 +792,14 @@ class TestRunResumeEtl:
                 resume_fingerprint=None,
             )
 
-        assert mock_set_task_state.call_args.args[1] == {
-            "status": "completed",
-            "upload_id": "upload-5",
-            "owner_id": "00000000-0000-0000-0000-000000000001",
-            "resume_fingerprint": "fp-5",
-        }
+        completed_state = mock_set_task_state.call_args.args[1]
+        assert completed_state["status"] == "completed"
+        assert completed_state["phase"] == "completed"
+        assert completed_state["task_type"] == "resume_upload"
+        assert completed_state["upload_id"] == "upload-5"
+        assert completed_state["owner_id"] == "00000000-0000-0000-0000-000000000001"
+        assert completed_state["resume_fingerprint"] == "fp-5"
+        assert completed_state["updated_at"]
 
     @pytest.mark.asyncio
     async def test_run_resume_etl_handles_timeout(self):

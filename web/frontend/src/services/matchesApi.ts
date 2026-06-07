@@ -3,6 +3,8 @@ import type {
     MatchesResponse,
     MatchDetailResponse,
     MatchExplanationResponse,
+    MatchLlmEvaluationListResponse,
+    MatchLlmEvaluationMutationResponse,
     MatchStatus,
     RankingMode,
     StatsResponse,
@@ -27,6 +29,20 @@ export const matchesApi = {
 
     getMatchExplanation: (matchId: string) =>
         apiClient.get<MatchExplanationResponse>(`/matches/${matchId}/explanation`),
+
+    getLlmEvaluations: (matchId: string) =>
+        apiClient.get<MatchLlmEvaluationListResponse>(`/matches/${matchId}/llm-evaluations`),
+
+    generateLlmEvaluation: (matchId: string, force = false) =>
+        apiClient.post<MatchLlmEvaluationMutationResponse>(
+            `/matches/${matchId}/llm-evaluations`,
+            { force },
+        ),
+
+    deleteLlmEvaluation: (matchId: string, evaluationId: string) =>
+        apiClient.delete<MatchLlmEvaluationMutationResponse>(
+            `/matches/${matchId}/llm-evaluations/${evaluationId}`,
+        ),
 
     getStats: () => apiClient.get<StatsResponse>('/stats'),
 

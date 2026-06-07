@@ -7,6 +7,7 @@ Covers: web/backend/routers/pipeline.py (helper functions)
 import pytest
 from fastapi import HTTPException
 from types import SimpleNamespace
+from uuid import UUID
 from unittest.mock import MagicMock, patch
 
 from web.backend.routers.pipeline import _validate_task_id
@@ -202,6 +203,91 @@ class TestMatchingTaskHelpers:
         mock_clear_cancel.assert_called_once_with("match-task-1")
         mock_set_state.assert_called_once()
         redis.delete.assert_called_once()
+
+    def test_enqueue_matching_for_ready_resume_reuses_active_task(self):
+        from web.backend.routers.pipeline import _enqueue_matching_for_ready_resume
+
+        redis = MagicMock()
+        redis.get.return_value = b"match-active"
+
+        with patch("web.backend.routers.pipeline._get_matching_redis_client", return_value=redis), \
+             patch("web.backend.routers.pipeline.get_task_state", return_value={"status": "running"}), \
+             patch("web.backend.routers.pipeline.enqueue_job") as mock_enqueue:
+            task_id = _enqueue_matching_for_ready_resume(
+                owner_id="00000000-0000-0000-0000-000000000001",
+                upload_id="upload-1",
+                resume_fingerprint="fp-1",
+                trigger="resume_ready",
+            )
+
+        assert task_id == "match-active"
+        mock_enqueue.assert_not_called()
+
+    def test_auto_enqueue_reuses_latest_matching_task_for_same_upload(self):
+        from web.backend.routers.pipeline import _enqueue_matching_for_ready_resume
+
+        redis = MagicMock()
+        redis.get.side_effect = [
+            None,
+            (
+                '{"resume_fingerprint":"fp-1","task_id":"manual-task-1",'
+                '"trigger":"manual","upload_id":"upload-1"}'
+            ),
+        ]
+
+        with patch("web.backend.routers.pipeline._get_matching_redis_client", return_value=redis), \
+             patch("web.backend.routers.pipeline.enqueue_job") as mock_enqueue:
+            task_id = _enqueue_matching_for_ready_resume(
+                owner_id="00000000-0000-0000-0000-000000000001",
+                upload_id="upload-1",
+                resume_fingerprint="fp-1",
+                trigger="resume_ready",
+            )
+
+        assert task_id == "manual-task-1"
+        mock_enqueue.assert_not_called()
+
+    def test_manual_enqueue_ignores_latest_matching_marker(self):
+        from web.backend.routers.pipeline import _enqueue_matching_for_ready_resume
+
+        redis = MagicMock()
+        redis.get.return_value = None
+        redis.set.return_value = True
+
+        with patch("web.backend.routers.pipeline._get_matching_redis_client", return_value=redis), \
+             patch("uuid.uuid4", return_value=UUID("11111111-1111-1111-1111-111111111111")), \
+             patch("web.backend.routers.pipeline._set_initial_matching_task_state"), \
+             patch("web.backend.routers.pipeline._enqueue_matching_job_or_500") as mock_enqueue:
+            task_id = _enqueue_matching_for_ready_resume(
+                owner_id="00000000-0000-0000-0000-000000000001",
+                upload_id="upload-1",
+                resume_fingerprint="fp-1",
+                trigger="manual",
+            )
+
+        assert task_id == "11111111-1111-1111-1111-111111111111"
+        mock_enqueue.assert_called_once()
+        assert redis.set.call_count >= 2
+
+    def test_resume_status_from_task_state_includes_matching_task_id_and_safe_failure(self):
+        from web.backend.routers.pipeline import _resume_status_from_task_state
+
+        response = _resume_status_from_task_state(
+            "resume-task-1",
+            {
+                "status": "completed",
+                "step": None,
+                "task_type": "resume_upload",
+                "owner_id": "00000000-0000-0000-0000-000000000001",
+                "matching_task_id": "match-task-1",
+                "warnings": [{"code": "matching_enqueue_failed", "message": "raw ignored"}],
+            },
+        )
+
+        assert response.matching_task_id == "match-task-1"
+        assert response.phase == "completed"
+        assert response.warnings[0].code == "matching_enqueue_failed"
+        assert "raw ignored" not in response.warnings[0].message
 
 
 class TestResumeEtlHelpers:

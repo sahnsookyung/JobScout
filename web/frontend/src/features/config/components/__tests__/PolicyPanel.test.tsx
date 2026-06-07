@@ -9,6 +9,8 @@ import { PolicyPanel } from '../PolicyPanel';
 vi.mock('@/hooks/usePolicy');
 vi.mock('lucide-react', () => ({
     Sliders: () => <svg data-testid="sliders-icon" />,
+    Minus: () => <svg data-testid="minus-icon" />,
+    Plus: () => <svg data-testid="plus-icon" />,
 }));
 
 import { usePolicy } from '@/hooks/usePolicy';
@@ -109,6 +111,16 @@ describe('PolicyPanel', () => {
             expect((slider as HTMLInputElement).value).toBe('150');
         });
 
+        it('marks the matching preset active when hydrated from policy', () => {
+            mockUsePolicy.mockReturnValue({
+                ...defaultHook,
+                policy: { min_fit: 70, top_k: 25, min_jd_required_coverage: 0.8 },
+            });
+            render(<PolicyPanel />);
+            const strictBtn = screen.getByText('Strict').closest('button');
+            expect(strictBtn?.getAttribute('aria-pressed')).toBe('true');
+        });
+
         it('does not auto-save policy values during hydration', async () => {
             mockUsePolicy.mockReturnValue({
                 ...defaultHook,
@@ -165,6 +177,50 @@ describe('PolicyPanel', () => {
             );
         });
 
+        it('preserves an explicit zero coverage floor when auto-saving', async () => {
+            mockUsePolicy.mockReturnValue({
+                ...defaultHook,
+                policy: { min_fit: 55, top_k: 50, min_jd_required_coverage: 0 },
+            });
+            render(<PolicyPanel />);
+            const slider = screen.getByRole('slider', { name: /minimum fit score/i });
+            fireEvent.change(slider, { target: { value: '30' } });
+            await act(async () => { vi.advanceTimersByTime(300); });
+            expect(defaultHook.updatePolicy).toHaveBeenCalledWith(
+                expect.objectContaining({ min_jd_required_coverage: 0 })
+            );
+        });
+
+        it('updates writable LLM judge settings after debounce', async () => {
+            mockUsePolicy.mockReturnValue({
+                ...defaultHook,
+                policy: {
+                    min_fit: 55,
+                    top_k: 50,
+                    min_jd_required_coverage: null,
+                    llm_judge_enabled: false,
+                    llm_judge_top_n: 2,
+                    llm_judge_top_n_max: 4,
+                    llm_judge_available: true,
+                    llm_judge_revision: 3,
+                },
+            });
+            render(<PolicyPanel />);
+
+            fireEvent.click(screen.getByRole('checkbox', { name: /enable llm judging/i }));
+            fireEvent.click(screen.getByRole('button', { name: /increase llm judge top n/i }));
+
+            await act(async () => { vi.advanceTimersByTime(300); });
+
+            expect(defaultHook.updatePolicy).toHaveBeenCalledWith({
+                min_fit: 55,
+                top_k: 50,
+                min_jd_required_coverage: null,
+                llm_judge_enabled: true,
+                llm_judge_top_n: 3,
+            });
+        });
+
         it('calls updatePolicy after debounce when topK changes', async () => {
             mockUsePolicy.mockReturnValue({
                 ...defaultHook,
@@ -190,6 +246,16 @@ describe('PolicyPanel', () => {
             fireEvent.click(screen.getByText('Strict'));
             const strictBtn = screen.getByText('Strict').closest('button');
             expect(strictBtn?.getAttribute('aria-pressed')).toBe('true');
+        });
+
+        it('updates slider values immediately when a preset is clicked', () => {
+            render(<PolicyPanel />);
+
+            fireEvent.click(screen.getByText('Discovery'));
+
+            expect(screen.getByRole('slider', { name: /minimum fit score/i })).toHaveValue('40');
+            expect(screen.getByRole('slider', { name: /maximum number of results/i })).toHaveValue('100');
+            expect(defaultHook.applyPreset).toHaveBeenCalledWith('discovery');
         });
 
         it('resets preset to balanced when slider is manually adjusted', () => {

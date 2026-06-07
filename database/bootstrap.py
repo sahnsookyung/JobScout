@@ -136,6 +136,7 @@ def _can_adopt_legacy_migration_history(applied: dict[str, str]) -> bool:
 
 
 def _upgrade_legacy_schema_to_current(conn: Connection) -> None:
+    Base.metadata.create_all(bind=conn)
     conn.execute(
         text(
             """

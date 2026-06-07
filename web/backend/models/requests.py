@@ -16,6 +16,25 @@ class PolicyUpdate(BaseModel):
         le=1,
         description="Minimum job description coverage (0-1), or null to disable"
     )
+    llm_judge_enabled: Optional[bool] = Field(
+        None,
+        description="Whether to run optional LLM judging for top selected matches",
+    )
+    llm_judge_top_n: Optional[int] = Field(
+        None,
+        ge=1,
+        le=100,
+        description="Requested top-N matches to LLM judge, capped by the server",
+    )
+
+
+class MatchLlmEvaluationRequest(BaseModel):
+    """Request to generate or regenerate an LLM match evaluation."""
+
+    force: bool = Field(
+        default=False,
+        description="When true, tombstone the active evaluation and create a fresh one",
+    )
 
 
 class NotificationRequest(BaseModel):

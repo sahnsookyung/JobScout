@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from core.app_context import AppContext
 from core.config_loader import PreferencesConfig
+from core.llm_evaluation import MatchLlmEvaluationService
 from core.match_selection import (
     MatchSelectionItemSnapshot,
     MatchSelectionPolicySnapshot,
@@ -470,7 +471,10 @@ def _save_results_and_publish_selection(
 
     _refresh_resume_match_set(
         resume_fingerprint,
-        active_job_ids=save_batch_result.active_job_ids,
+        active_job_ids=_active_job_ids_for_selection(
+            prepared_selection,
+            fallback_active_job_ids=save_batch_result.active_job_ids,
+        ),
     )
     selection_run_id = _publish_match_selection_run(
         owner_id=prepared_selection.owner_id,
@@ -479,7 +483,55 @@ def _save_results_and_publish_selection(
         prepared_selection=prepared_selection,
         save_batch_result=save_batch_result,
     )
+    _run_llm_judge_for_selection(
+        selection_run_id=selection_run_id,
+        owner_id=prepared_selection.owner_id,
+    )
     return save_batch_result, selection_run_id
+
+
+def _run_llm_judge_for_selection(
+    *,
+    selection_run_id: Optional[str],
+    owner_id: Optional[str],
+) -> dict[str, int]:
+    """Run optional match-level LLM judging for the current selected top-N."""
+    if not selection_run_id or not owner_id:
+        return {"attempted": 0, "reused": 0, "created": 0, "failed": 0}
+
+    try:
+        llm_policy = get_result_policy_store().get_llm_judge_policy(owner_id)
+        if not llm_policy.enabled or not llm_policy.available:
+            return {"attempted": 0, "reused": 0, "created": 0, "failed": 0}
+
+        with job_uow() as repo:
+            service = MatchLlmEvaluationService(repo.db)
+            stats = service.evaluate_selection_run(
+                selection_run_id,
+                owner_id=owner_id,
+                tenant_id=None,
+                top_n=llm_policy.top_n,
+            )
+            logger.info("LLM judge selection stats: %s", stats)
+            return stats
+    except Exception:
+        logger.exception("Optional LLM judge failed after selection publication")
+        return {"attempted": 0, "reused": 0, "created": 0, "failed": 1}
+
+
+def _active_job_ids_for_selection(
+    prepared_selection: PreparedSelectionResult,
+    *,
+    fallback_active_job_ids: frozenset[str],
+) -> frozenset[str]:
+    """Return the selected primary jobs that should remain active after a rerun."""
+    if not prepared_selection.item_snapshots:
+        return fallback_active_job_ids
+    return frozenset(
+        str(item.job_id)
+        for item in prepared_selection.item_snapshots
+        if (getattr(item, "selection_tier", None) or "primary") == "primary"
+    )
 
 
 def _ensure_notification_service(ctx: AppContext) -> None:

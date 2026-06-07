@@ -18,6 +18,7 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Annotated, Optional, Tuple, Dict, Any, List
 
@@ -63,6 +64,10 @@ setup_service_logging(logger)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 ORCHESTRATION_TTL = 3600  # 1 hour
 LISTENER_TIMEOUT = float(os.getenv("LISTENER_TIMEOUT_SECONDS", "300"))  # 5 minutes per stage
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 # Scraper configuration
 SCRAPER_INTERVAL_HOURS = float(os.getenv("SCRAPER_INTERVAL_HOURS", "6"))
@@ -1780,7 +1785,21 @@ async def _run_resume_etl(
                     "Resume extraction stage failed with status=%s",
                     extraction_status,
                 )
-                set_task_state(task_id, {"status": "failed", "step": "extracting", "error": err}, ttl=3600)
+                set_task_state(
+                    task_id,
+                    {
+                        "status": "failed",
+                        "step": "extracting",
+                        "phase": "extracting_resume",
+                        "task_type": "resume_upload",
+                        "upload_id": upload_id,
+                        "owner_id": owner_id,
+                        "resume_fingerprint": resume_fingerprint,
+                        "error": err,
+                        "updated_at": _utc_now_iso(),
+                    },
+                    ttl=3600,
+                )
                 return
 
             fingerprint = extraction_data.get("resume_fingerprint")
@@ -1791,9 +1810,12 @@ async def _run_resume_etl(
                     {
                         "status": "failed",
                         "step": "extracting",
+                        "phase": "extracting_resume",
+                        "task_type": "resume_upload",
                         "upload_id": upload_id,
                         "owner_id": owner_id,
                         "error": "No fingerprint in extraction response",
+                        "updated_at": _utc_now_iso(),
                     },
                     ttl=3600,
                 )
@@ -1805,9 +1827,12 @@ async def _run_resume_etl(
                 {
                     "status": "running",
                     "step": "embedding",
+                    "phase": "embedding_resume",
+                    "task_type": "resume_upload",
                     "upload_id": upload_id,
                     "owner_id": owner_id,
                     "resume_fingerprint": fingerprint,
+                    "updated_at": _utc_now_iso(),
                 },
                 ttl=3600,
             )
@@ -1817,9 +1842,12 @@ async def _run_resume_etl(
                 {
                     "status": "failed",
                     "step": "embedding",
+                    "phase": "embedding_resume",
+                    "task_type": "resume_upload",
                     "upload_id": upload_id,
                     "owner_id": owner_id,
                     "error": "Missing resume fingerprint for embed-only retry",
+                    "updated_at": _utc_now_iso(),
                 },
                 ttl=3600,
             )
@@ -1856,10 +1884,13 @@ async def _run_resume_etl(
                 {
                     "status": "failed",
                     "step": "embedding",
+                    "phase": "embedding_resume",
+                    "task_type": "resume_upload",
                     "upload_id": upload_id,
                     "owner_id": owner_id,
                     "resume_fingerprint": fingerprint,
                     "error": err,
+                    "updated_at": _utc_now_iso(),
                 },
                 ttl=3600,
             )
@@ -1870,9 +1901,12 @@ async def _run_resume_etl(
             task_id,
             {
                 "status": "completed",
+                "phase": "completed",
+                "task_type": "resume_upload",
                 "upload_id": upload_id,
                 "owner_id": owner_id,
                 "resume_fingerprint": fingerprint,
+                "updated_at": _utc_now_iso(),
             },
             ttl=3600,
         )
@@ -1883,10 +1917,14 @@ async def _run_resume_etl(
             task_id,
             {
                 "status": "failed",
+                "step": "embedding",
+                "phase": "embedding_resume",
+                "task_type": "resume_upload",
                 "upload_id": upload_id,
                 "owner_id": owner_id,
                 "resume_fingerprint": resume_fingerprint,
                 "error": "Stage timeout",
+                "updated_at": _utc_now_iso(),
             },
             ttl=3600,
         )
@@ -1896,10 +1934,14 @@ async def _run_resume_etl(
             task_id,
             {
                 "status": "failed",
+                "step": "embedding",
+                "phase": "embedding_resume",
+                "task_type": "resume_upload",
                 "upload_id": upload_id,
                 "owner_id": owner_id,
                 "resume_fingerprint": resume_fingerprint,
                 "error": str(exc),
+                "updated_at": _utc_now_iso(),
             },
             ttl=3600,
         )

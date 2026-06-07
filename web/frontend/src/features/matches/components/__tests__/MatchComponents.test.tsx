@@ -16,9 +16,12 @@ vi.mock('lucide-react', () => ({
     Wifi: ({ className }: any) => <svg data-testid="wifi" className={className} />,
     Eye: ({ className }: any) => <svg data-testid="eye" className={className} />,
     EyeOff: ({ className }: any) => <svg data-testid="eye-off" className={className} />,
+    Sparkles: ({ className }: any) => <svg data-testid="sparkles-icon" className={className} />,
     X: ({ className }: any) => <svg data-testid="x-icon" className={className} />,
     Download: ({ className }: any) => <svg data-testid="download-icon" className={className} />,
     RefreshCw: ({ className }: any) => <svg data-testid="refresh-icon" className={className} />,
+    RotateCcw: ({ className }: any) => <svg data-testid="rotate-icon" className={className} />,
+    Trash2: ({ className }: any) => <svg data-testid="trash-icon" className={className} />,
     Wand2: ({ className }: any) => <svg data-testid="wand-icon" className={className} />,
 }));
 
@@ -51,7 +54,7 @@ vi.mock('@/components/ui/Badge', () => ({
 }));
 
 vi.mock('@/components/ui/Button', () => ({
-    Button: ({ children, onClick, disabled, ...props }: any) => (
+    Button: ({ children, onClick, disabled, isLoading: _isLoading, ...props }: any) => (
         <button type="button" onClick={onClick} disabled={disabled} {...props}>
             {children}
         </button>
@@ -59,7 +62,12 @@ vi.mock('@/components/ui/Button', () => ({
 }));
 
 vi.mock('@/services/matchesApi', () => ({
-    matchesApi: { toggleHidden: vi.fn() },
+    matchesApi: {
+        toggleHidden: vi.fn(),
+        getLlmEvaluations: vi.fn(),
+        generateLlmEvaluation: vi.fn(),
+        deleteLlmEvaluation: vi.fn(),
+    },
 }));
 
 const mockUseMatchDetails = vi.fn();
@@ -75,6 +83,11 @@ vi.mock('@/hooks/useMatches', () => ({
 const mockUseStats = vi.fn();
 vi.mock('@/hooks/useStats', () => ({
     useStats: () => mockUseStats(),
+}));
+
+const mockUsePolicy = vi.fn();
+vi.mock('@/hooks/usePolicy', () => ({
+    usePolicy: () => mockUsePolicy(),
 }));
 
 function makeQueryWrapper() {
@@ -249,6 +262,22 @@ describe('MatchCard', () => {
         expect(screen.queryByRole('button', { name: /^hide$/i })).not.toBeInTheDocument();
     });
 
+    it('shows compact LLM evaluation markers', () => {
+        render(
+            <MatchCard
+                match={makeMatch({
+                    llm_evaluation_status: 'succeeded',
+                    llm_score: 91,
+                })}
+                onSelect={vi.fn()}
+            />,
+            { wrapper: makeQueryWrapper() }
+        );
+
+        expect(screen.getByText('LLM judged')).toBeInTheDocument();
+        expect(screen.getByTestId('sparkles-icon')).toBeInTheDocument();
+    });
+
     it('persists hide changes and reports failures', async () => {
         vi.mocked(matchesApi.toggleHidden).mockResolvedValueOnce({
             data: { is_hidden: true },
@@ -298,6 +327,12 @@ describe('MatchList', () => {
         vi.clearAllMocks();
         storageMock.clear();
         mockUseStats.mockReturnValue({ data: { excluded_count: 0 } });
+        mockUsePolicy.mockReturnValue({
+            policy: { min_fit: 55, top_k: 50, min_jd_required_coverage: null },
+            isLoading: false,
+            updatePolicy: vi.fn(),
+            applyPreset: vi.fn(),
+        });
     });
 
     it('shows the loading state', () => {
@@ -352,7 +387,7 @@ describe('MatchList', () => {
         mockUseStats.mockReturnValue({ data: { excluded_count: 2 } });
         mockUseMatches.mockImplementation((params) => ({
             data: {
-                matches: params.tier === 'all'
+                matches: params.min_fit === undefined
                     ? [makeMatch({ match_id: 'match-2', fit_score: 62 })]
                     : [makeMatch({ scoring_degraded_reason: 'remote_unavailable' })],
             },
@@ -396,6 +431,40 @@ describe('MatchList', () => {
         expect(screen.getByText('Top match')).toBeInTheDocument();
         expect(screen.getByText('1 strong')).toBeInTheDocument();
     });
+
+    it('uses a relaxed result policy to show previously excluded scored matches', () => {
+        mockUsePolicy.mockReturnValue({
+            policy: { min_fit: 0, top_k: 100, min_jd_required_coverage: null },
+            isLoading: false,
+            updatePolicy: vi.fn(),
+            applyPreset: vi.fn(),
+        });
+        mockUseStats.mockReturnValue({ data: { excluded_count: 2 } });
+        mockUseMatches.mockReturnValue({
+            data: {
+                matches: [
+                    makeMatch({
+                        match_id: 'excluded-1',
+                        title: 'Backend Engineer',
+                        fit_score: 35,
+                        selection_tier: 'excluded',
+                        excluded_reason: 'below_min_fit',
+                    }),
+                ],
+            },
+            isLoading: false,
+            error: null,
+            refetch: vi.fn(),
+        });
+
+        render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        expect(mockUseMatches).toHaveBeenLastCalledWith(
+            expect.objectContaining({ tier: 'all', min_fit: 0, top_k: 100 }),
+        );
+        expect(screen.getByText('Backend Engineer')).toBeInTheDocument();
+        expect(screen.queryByText(/Nothing above your threshold/i)).not.toBeInTheDocument();
+    });
 });
 
 function makeModalData(overrides: Record<string, any> = {}) {
@@ -432,6 +501,41 @@ describe('MatchDetailsModal', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockUseMatchDetails.mockReturnValue({ data: undefined, isLoading: false });
+        vi.mocked(matchesApi.getLlmEvaluations).mockResolvedValue({
+            data: { success: true, count: 0, evaluations: [] },
+        } as never);
+        vi.mocked(matchesApi.generateLlmEvaluation).mockResolvedValue({
+            data: {
+                success: true,
+                reused: false,
+                message: 'Generated LLM evaluation.',
+                evaluation: {
+                    id: 'eval-1',
+                    match_id: 'match-1',
+                    job_id: 'job-1',
+                    status: 'succeeded',
+                    llm_score: 91,
+                    confidence: 0.9,
+                    verdict: 'good',
+                    summary: 'Relevant backend role.',
+                    reason_codes: ['skills_match'],
+                    requirement_verdicts: [],
+                    provider: 'openai',
+                    model: 'judge-model',
+                    prompt_version: 'match-judge-v1',
+                    schema_version: '1',
+                    retryable: false,
+                },
+            },
+        } as never);
+        vi.mocked(matchesApi.deleteLlmEvaluation).mockResolvedValue({
+            data: {
+                success: true,
+                reused: false,
+                message: 'Deleted LLM evaluation.',
+                evaluation: null,
+            },
+        } as never);
     });
 
     it('renders nothing when matchId is null', () => {
@@ -493,6 +597,45 @@ describe('MatchDetailsModal', () => {
         expect(screen.getByText('Staff Engineer')).toBeInTheDocument();
         expect(screen.getByText('Acme')).toBeInTheDocument();
         expect(screen.getByText('Remote')).toBeInTheDocument();
+    });
+
+    it('renders LLM evaluation controls and supports delete', async () => {
+        vi.mocked(matchesApi.getLlmEvaluations).mockResolvedValue({
+            data: {
+                success: true,
+                count: 1,
+                evaluations: [
+                    {
+                        id: 'eval-delete',
+                        match_id: 'match-1',
+                        job_id: 'job-1',
+                        status: 'succeeded',
+                        llm_score: 91,
+                        confidence: 0.9,
+                        verdict: 'good',
+                        summary: 'Relevant backend role.',
+                        reason_codes: ['skills_match'],
+                        requirement_verdicts: [],
+                        provider: 'openai',
+                        model: 'judge-model',
+                        prompt_version: 'match-judge-v1',
+                        schema_version: '1',
+                        retryable: false,
+                    },
+                ],
+            },
+        } as never);
+        mockUseMatchDetails.mockReturnValue({ data: makeModalData(), isLoading: false });
+
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        expect(await screen.findByText('Second-pass relevance review')).toBeInTheDocument();
+        await screen.findByText('Relevant backend role.');
+        fireEvent.click(screen.getByRole('button', { name: /delete llm evaluation/i }));
+
+        await waitFor(() => {
+            expect(matchesApi.deleteLlmEvaluation).toHaveBeenCalledWith('match-1', 'eval-delete');
+        });
     });
 
     it('renders semantic fit details when present', () => {
