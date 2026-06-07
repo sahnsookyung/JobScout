@@ -1773,9 +1773,13 @@ async def _run_resume_etl(
 
             await pubsub.unsubscribe(CHANNEL_EXTRACTION_DONE)
 
-            if not extraction_data or extraction_data.get("status") == "failed":
+            extraction_status = (extraction_data or {}).get("status")
+            if extraction_status not in {"completed", "skipped"}:
                 err = (extraction_data or {}).get("error", "Extraction failed")
-                logger.error("Resume extraction stage failed")
+                logger.error(
+                    "Resume extraction stage failed with status=%s",
+                    extraction_status,
+                )
                 set_task_state(task_id, {"status": "failed", "step": "extracting", "error": err}, ttl=3600)
                 return
 
@@ -1840,9 +1844,13 @@ async def _run_resume_etl(
 
         await pubsub.unsubscribe(CHANNEL_EMBEDDINGS_DONE)
 
-        if not embeddings_data or embeddings_data.get("status") == "failed":
+        embeddings_status = (embeddings_data or {}).get("status")
+        if embeddings_status != "completed":
             err = (embeddings_data or {}).get("error", "Embeddings failed")
-            logger.error("Embedding stage failed")
+            logger.error(
+                "Embedding stage failed with status=%s",
+                embeddings_status,
+            )
             set_task_state(
                 task_id,
                 {

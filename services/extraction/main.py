@@ -34,6 +34,7 @@ from core.redis_streams import (
 from services.base.extraction import run_job_extraction, extract_resume as extract_resume_file
 from database.init_db import init_db
 from database.models import SYSTEM_OWNER_ID
+from database.uow import job_uow
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,31 @@ class ExtractionConsumer(StreamConsumerWithCompletion):
         )
 
         status = "skipped" if not changed else "completed"
+        if not changed:
+            if not fingerprint:
+                logger.error("❌ Extraction produced no fingerprint: task_id=%s", task_id)
+                return False, {
+                    "status": "failed",
+                    "error": "Resume extraction did not produce a fingerprint",
+                }
+
+            with job_uow() as repo:
+                structured_resume = repo.get_structured_resume_by_fingerprint(fingerprint)
+
+            if structured_resume is None or not structured_resume.extracted_data:
+                logger.error(
+                    "❌ Extraction produced no structured resume: task_id=%s, fingerprint=%s...",
+                    task_id,
+                    fingerprint[:16],
+                )
+                return False, {
+                    "status": "failed",
+                    "error": "Resume extraction failed to produce structured data",
+                    "resume_fingerprint": fingerprint,
+                    "resume_upload_id": msg.get("resume_upload_id"),
+                    "owner_id": owner_id,
+                }
+
         logger.info(
             "✅ Extraction job done: task_id=%s, status=%s, fingerprint=%s...",
             task_id, status, (fingerprint or "")[:16],

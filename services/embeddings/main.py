@@ -85,12 +85,26 @@ class EmbeddingsConsumer(StreamConsumerWithCompletion):
         )
 
         try:
-            await asyncio.to_thread(
+            embedded = await asyncio.to_thread(
                 generate_resume_embedding,
                 self.ctx,
                 resume_fingerprint,
                 owner_id,
             )
+
+            if not embedded:
+                logger.error(
+                    "❌ Embeddings produced no resume artifacts: task_id=%s, fingerprint=%s...",
+                    task_id,
+                    fp_preview,
+                )
+                return False, {
+                    "status": "failed",
+                    "error": "Resume embeddings were not generated",
+                    "resume_fingerprint": resume_fingerprint,
+                    "resume_upload_id": msg.get("resume_upload_id"),
+                    "owner_id": owner_id,
+                }
 
             logger.info(
                 "✅ Embeddings job done: task_id=%s, fingerprint=%s...",

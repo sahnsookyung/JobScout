@@ -297,9 +297,15 @@ class TestExtractionConsumer:
 
         mock_ctx = Mock()
         consumer = ExtractionConsumer(mock_ctx)
+        repo = Mock()
+        repo.get_structured_resume_by_fingerprint.return_value = Mock(
+            extracted_data={"profile": {}}
+        )
 
         with patch("services.extraction.main.extract_resume_file",
-                   return_value=(False, "fp-123")):
+                   return_value=(False, "fp-123")), \
+             patch("services.extraction.main.job_uow") as mock_uow:
+            mock_uow.return_value.__enter__.return_value = repo
             success, result = await consumer._do_process(
                 "msg-1",
                 {"task_id": "t-1", "resume_file": "/app/resume.pdf"}
@@ -307,6 +313,29 @@ class TestExtractionConsumer:
 
         assert success is True
         assert result["status"] == "skipped"
+
+    @pytest.mark.asyncio
+    async def test_do_process_fails_when_extraction_skips_without_structured_resume(self):
+        """_do_process fails closed when extraction produced no usable resume."""
+        from services.extraction.main import ExtractionConsumer
+
+        mock_ctx = Mock()
+        consumer = ExtractionConsumer(mock_ctx)
+        repo = Mock()
+        repo.get_structured_resume_by_fingerprint.return_value = None
+
+        with patch("services.extraction.main.extract_resume_file",
+                   return_value=(False, "fp-123")), \
+             patch("services.extraction.main.job_uow") as mock_uow:
+            mock_uow.return_value.__enter__.return_value = repo
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "t-1", "resume_file": "/app/resume.pdf"}
+            )
+
+        assert success is False
+        assert result["status"] == "failed"
+        assert "structured data" in result["error"]
 
     @pytest.mark.asyncio
     async def test_batch_consumer_invalid_message(self):

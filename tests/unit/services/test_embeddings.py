@@ -220,6 +220,24 @@ class TestEmbeddingsConsumerClass:
         mock_embed.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_do_process_fails_when_resume_embedding_returns_false(self):
+        """_do_process fails closed when no resume embeddings were generated."""
+        from services.embeddings.main import EmbeddingsConsumer
+
+        mock_ctx = Mock()
+        consumer = EmbeddingsConsumer(mock_ctx)
+
+        with patch("services.embeddings.main.generate_resume_embedding", return_value=False):
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "t-1", "resume_fingerprint": "fp-123"}
+            )
+
+        assert success is False
+        assert result["status"] == "failed"
+        assert "not generated" in result["error"]
+
+    @pytest.mark.asyncio
     async def test_do_process_failure(self):
         """_do_process returns failure on error."""
         from services.embeddings.main import EmbeddingsConsumer
