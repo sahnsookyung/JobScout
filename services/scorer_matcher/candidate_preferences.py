@@ -231,11 +231,6 @@ def apply_candidate_preference_filters(preliminary_matches, preferences: Optiona
         for preliminary in preliminary_matches
         if _matches_candidate_preferences(preliminary, preferences)
     ]
-    logger.info(
-        "Candidate preference filters kept %d/%d preliminary matches",
-        len(filtered_matches),
-        len(preliminary_matches),
-    )
     return filtered_matches
 
 

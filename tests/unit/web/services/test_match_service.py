@@ -678,6 +678,25 @@ class TestToMatchSummary:
         assert result.is_remote is False
         assert result.fit_score == pytest.approx(72.5)
 
+    def test_llm_marker_fields_mapped(self, service):
+        completed_at = datetime.now(timezone.utc)
+        m = _make_match(match_id="m-llm")
+        m.llm_evaluation = SimpleNamespace(
+            id="eval-1",
+            status="succeeded",
+            llm_score=91.5,
+            confidence=0.875,
+            completed_at=completed_at,
+        )
+
+        result = service._to_match_summary(m)
+
+        assert result.llm_evaluation_status == "succeeded"
+        assert result.llm_evaluation_id == "eval-1"
+        assert result.llm_score == pytest.approx(91.5)
+        assert result.llm_confidence == pytest.approx(0.875)
+        assert result.llm_judged_at == completed_at.isoformat()
+
     def test_job_access_error_falls_back_to_unknown(self, service):
         from unittest.mock import PropertyMock
         m = _make_match()
@@ -770,7 +789,7 @@ class TestGetMatchDetail:
             }
         )
 
-        detail = service._to_match_detail(match, {})
+        detail = service._to_match_detail(match, {}, owner_id=None, tenant_id=None)
 
         assert detail.preference_components is None
         assert "preference_mode_used" not in (detail.fit_components or {})
@@ -784,7 +803,7 @@ class TestGetMatchDetail:
         match.preferred_requirement_coverage = 0.42
         match.preference_components = None
 
-        detail = service._to_match_detail(match, {})
+        detail = service._to_match_detail(match, {}, owner_id=None, tenant_id=None)
 
         assert "preferred_requirement_coverage" not in detail.fit_components
         assert detail.preferred_requirement_coverage == pytest.approx(0.42)
@@ -807,6 +826,30 @@ class TestGetMatchDetail:
         result = service.get_match_detail("match-1")
 
         assert result.match.preference_score is None
+
+    def test_llm_marker_fields_mapped_in_detail(self, service):
+        match = self._make_full_match()
+        service._latest_evaluation_for_match = Mock(
+            return_value=SimpleNamespace(
+                id="eval-detail",
+                status="failed",
+                llm_score=None,
+                confidence=None,
+                completed_at=None,
+            )
+        )
+
+        detail = service._to_match_detail(
+            match,
+            {},
+            owner_id="owner-1",
+            tenant_id=None,
+        )
+
+        assert detail.llm_evaluation_status == "failed"
+        assert detail.llm_evaluation_id == "eval-detail"
+        assert detail.llm_score is None
+        assert detail.llm_confidence is None
 
     def test_not_found_raises(self, service, mock_db):
         from web.backend.exceptions import MatchNotFoundException
@@ -1125,6 +1168,20 @@ class TestSelectionItemFiltersByTier:
             10.0,
             status="all",
             min_fit=40.0,
+            remote_only=False,
+            show_hidden=True,
+            tier="excluded",
+        )
+
+    def test_excluded_tier_passes_when_read_time_min_fit_is_relaxed(self, real_service):
+        excluded_match = SimpleNamespace(status="active", is_hidden=False)
+        remote_job = SimpleNamespace(is_remote=True)
+        assert real_service._selection_item_passes_filters(
+            excluded_match,
+            remote_job,
+            10.0,
+            status="all",
+            min_fit=0.0,
             remote_only=False,
             show_hidden=True,
             tier="excluded",

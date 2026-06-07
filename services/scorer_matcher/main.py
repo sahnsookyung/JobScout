@@ -17,10 +17,12 @@ import os
 import threading
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
+from sqlalchemy import func, select
 
 from core.config_loader import load_config
 from core.app_context import AppContext
@@ -29,11 +31,16 @@ from core.metrics_router import router as metrics_router
 from core.stream_consumer import StreamConsumerWithCompletion, validate_message
 from core.redis_streams import (
     CHANNEL_MATCHING_DONE,
+    STREAM_EMBEDDINGS_BATCH,
+    STREAM_EXTRACTION_BATCH,
     STREAM_MATCHING,
     clear_task_cancellation_requested,
+    enqueue_job,
+    get_redis_client,
     is_task_cancellation_requested,
     set_task_state,
 )
+from database.models import JobPost
 from database.uow import job_uow
 from services.scorer_matcher.pipeline import run_matching_pipeline
 from database.init_db import init_db
@@ -42,6 +49,9 @@ logger = logging.getLogger(__name__)
 
 CONSUMER_GROUP = os.getenv("MATCHER_CONSUMER_GROUP", "matcher-service")
 CONSUMER_NAME = os.getenv("HOSTNAME", "matcher-1")
+PREPARATION_BACKFILL_LOCK_KEY = "matching:preparation_backfill:lock"
+PREPARATION_BACKFILL_LOCK_TTL_SECONDS = int(os.getenv("MATCHER_PREP_BACKFILL_LOCK_TTL_SECONDS", "300"))
+PREPARATION_BACKFILL_LIMIT = int(os.getenv("MATCHER_PREP_BACKFILL_LIMIT", "10"))
 
 
 def _serialize_task_state(state: dict) -> dict:
@@ -89,6 +99,90 @@ def _compute_stale_result_metadata(
             "Run matching again to use your latest resume."
         ),
     }
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _job_preparation_stats() -> dict:
+    """Return user-safe active job preparation counts for pipeline visibility."""
+    try:
+        with job_uow() as repo:
+            active_filter = JobPost.status == "active"
+            jobs_seen = repo.db.scalar(
+                select(func.count(JobPost.id)).where(active_filter)
+            ) or 0
+            jobs_ready = repo.db.scalar(
+                select(func.count(JobPost.id)).where(
+                    active_filter,
+                    JobPost.is_extracted.is_(True),
+                    JobPost.is_embedded.is_(True),
+                )
+            ) or 0
+            pending_extraction = repo.db.scalar(
+                select(func.count(JobPost.id)).where(
+                    active_filter,
+                    JobPost.is_extracted.is_(False),
+                )
+            ) or 0
+            pending_embedding = repo.db.scalar(
+                select(func.count(JobPost.id)).where(
+                    active_filter,
+                    JobPost.is_extracted.is_(True),
+                    JobPost.is_embedded.is_(False),
+                )
+            ) or 0
+            return {
+                "jobs_seen": int(jobs_seen),
+                "jobs_ready_to_score": int(jobs_ready),
+                "jobs_pending_extraction": int(pending_extraction),
+                "jobs_pending_embedding": int(pending_embedding),
+            }
+    except Exception:
+        logger.warning("Failed to load job preparation counts", exc_info=True)
+        return {}
+
+
+def _maybe_enqueue_preparation_backfill(task_id: str, stats: dict) -> list[dict[str, str]]:
+    """Enqueue small existing preparation batches when matching finds a backlog."""
+    pending_extraction = int(stats.get("jobs_pending_extraction") or 0)
+    pending_embedding = int(stats.get("jobs_pending_embedding") or 0)
+    if pending_extraction <= 0 and pending_embedding <= 0:
+        return []
+
+    try:
+        redis_client = get_redis_client()
+        if not redis_client.set(
+            PREPARATION_BACKFILL_LOCK_KEY,
+            task_id,
+            nx=True,
+            ex=PREPARATION_BACKFILL_LOCK_TTL_SECONDS,
+        ):
+            return [{"code": "jobs_preparing"}]
+
+        if pending_extraction > 0:
+            enqueue_job(
+                STREAM_EXTRACTION_BATCH,
+                {
+                    "task_id": f"{task_id}-prep-extract",
+                    "limit": min(PREPARATION_BACKFILL_LIMIT, pending_extraction),
+                    "trigger": "matching_backfill",
+                },
+            )
+        if pending_embedding > 0:
+            enqueue_job(
+                STREAM_EMBEDDINGS_BATCH,
+                {
+                    "task_id": f"{task_id}-prep-embed",
+                    "limit": min(PREPARATION_BACKFILL_LIMIT, pending_embedding),
+                    "trigger": "matching_backfill",
+                },
+            )
+        return [{"code": "jobs_preparing"}]
+    except Exception:
+        logger.warning("Failed to enqueue preparation backfill", exc_info=True)
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +243,16 @@ class MatcherConsumer(StreamConsumerWithCompletion):
         notified_count = result.notified_count if result else 0
         execution_time = result.execution_time if result else 0.0
         stale_metadata = _compute_stale_result_metadata(owner_id, upload_id)
+        stats = {
+            **_job_preparation_stats(),
+            "candidates_considered": matches_count,
+            "matches_selected": matches_count,
+            "matches_saved": saved_count,
+            "notifications_sent": notified_count,
+        }
+        warnings = []
+        if final_status == "completed" and saved_count == 0 and stats.get("jobs_ready_to_score", 0) == 0:
+            warnings.append({"code": "no_jobs_ready"})
         return {
             "status": final_status,
             "step": last_step,
@@ -156,13 +260,16 @@ class MatcherConsumer(StreamConsumerWithCompletion):
             "owner_id": owner_id,
             "upload_id": upload_id,
             "resume_fingerprint": resume_fingerprint,
+            "updated_at": _utc_now_iso(),
+            "stats": stats,
+            "warnings": warnings,
             "result": {
                 "matches_count": matches_count,
                 "saved_count": saved_count,
                 "notified_count": notified_count,
                 "execution_time": execution_time,
             },
-            "error": result.error if result and result.cancelled else None,
+            "error": result.error if result and (result.cancelled or not result.success) else None,
             **stale_metadata,
         }
 
@@ -183,6 +290,8 @@ class MatcherConsumer(StreamConsumerWithCompletion):
             "upload_id": upload_id,
             "resume_fingerprint": resume_fingerprint,
             "error": str(error),
+            "updated_at": _utc_now_iso(),
+            "stats": _job_preparation_stats(),
         }
 
     async def _do_process(self, msg_id: str, msg: dict) -> tuple[bool, dict]:
@@ -214,10 +323,13 @@ class MatcherConsumer(StreamConsumerWithCompletion):
 
         last_step = "initializing"
         task_stop_event = threading.Event()
+        initial_stats = _job_preparation_stats()
+        backfill_warnings = _maybe_enqueue_preparation_backfill(task_id, initial_stats)
 
         def _update_task_state(step: str) -> None:
             nonlocal last_step
             last_step = step
+            stats = _job_preparation_stats()
             self._write_task_state(
                 task_id,
                 {
@@ -227,6 +339,9 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                     "owner_id": owner_id,
                     "upload_id": upload_id,
                     "resume_fingerprint": resume_fingerprint,
+                    "updated_at": _utc_now_iso(),
+                    "stats": stats,
+                    "warnings": backfill_warnings,
                 },
                 warning_message="Failed to write running task state for %s",
             )
@@ -254,7 +369,12 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                 task_id, saved_count,
             )
 
-            final_status = "cancelled" if result and result.cancelled else "completed"
+            if result and result.cancelled:
+                final_status = "cancelled"
+            elif result and not result.success:
+                final_status = "failed"
+            else:
+                final_status = "completed"
             self._write_task_state(
                 task_id,
                 self._terminal_task_state(
@@ -269,7 +389,8 @@ class MatcherConsumer(StreamConsumerWithCompletion):
             )
 
             clear_task_cancellation_requested(task_id)
-            return (not result.cancelled if result else True), {
+            success = bool(result and result.success and not result.cancelled) if result else True
+            return success, {
                 "status": final_status,
                 "resume_fingerprint": resume_fingerprint,
                 "matches_count": saved_count,

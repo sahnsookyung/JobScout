@@ -5,6 +5,7 @@ import { useMatchDetails } from '@/hooks/useMatchDetails';
 import { Badge } from '@/components/ui/Badge';
 import { formatScore, formatSalary } from '@/utils/formatters';
 import { ResumeVariantPanel } from './ResumeVariantPanel';
+import { LlmEvaluationPanel } from './LlmEvaluationPanel';
 
 type MatchDetailsModalProps = Readonly<{
     matchId: string | null;
@@ -429,6 +430,10 @@ function ModalBody({ isLoading, data, matchId }: Readonly<{ isLoading: boolean; 
         <div className="space-y-10">
             <JobInfoSection job={data.job} />
             <ScoresSection match={data.match} />
+            <LlmEvaluationPanel
+                matchId={matchId}
+                markerStatus={data.match.llm_evaluation_status}
+            />
             <ResumeVariantPanel matchId={matchId} />
             <RequirementsSection requirements={data.requirements} fitExplanation={data.match.fit_explanation} />
             {data.job.description && <JobDescriptionSection description={data.job.description} />}

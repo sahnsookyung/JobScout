@@ -36,11 +36,12 @@ def _ctx(notif_config=None):
     )
 
 
-def _match(score, *, match_id="match-1"):
+def _match(score, *, match_id="match-1", selection_tier="primary"):
     return SimpleNamespace(
         id=match_id,
         fit_score=score,
         notified=False,
+        selection_tier=selection_tier,
     )
 
 
@@ -202,7 +203,7 @@ class TestSendNotifications:
         )
 
         assert count == 0
-        mock_load.assert_called_once_with("run-1")
+        mock_load.assert_called_once_with("run-1", tier="all")
 
     @patch("notification.orchestrator._load_persisted_notification_matches")
     @patch("notification.orchestrator._send_match_notification")
@@ -250,6 +251,34 @@ class TestSendNotifications:
         )
         assert count == 0
         mock_send.assert_not_called()
+
+    @patch("notification.orchestrator._load_persisted_notification_matches")
+    @patch("notification.orchestrator._send_match_notification")
+    @patch("notification.orchestrator._resolve_notification_plan")
+    def test_batch_complete_sends_for_zero_alert_eligible_matches(self, mock_plan, mock_send, mock_load):
+        ctx = _ctx(_notif_config(
+            enabled=True,
+            min_fit_for_alerts=90.0,
+            notify_on_new_match=True,
+            notify_on_batch_complete=True,
+        ))
+        ctx.notification_service.notify_batch_complete.return_value = {"email": "notification-1"}
+        mock_plan.return_value = _delivery_plan()
+        mock_load.return_value = [
+            _match(55.0, match_id="excluded-1", selection_tier="excluded"),
+        ]
+
+        count = send_notifications(
+            ctx,
+            failed_count=0,
+            resume_fingerprint="fp",
+            stop_event=threading.Event(),
+            selection_run_id="run-1",
+        )
+
+        assert count == 1
+        mock_send.assert_not_called()
+        ctx.notification_service.notify_batch_complete.assert_called_once()
 
 
 class TestPersistedNotificationHelpers:

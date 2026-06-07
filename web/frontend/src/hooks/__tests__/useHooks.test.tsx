@@ -272,6 +272,25 @@ describe('usePolicy', () => {
         });
     });
 
+    it('updates policy cache optimistically before updatePolicy resolves', async () => {
+        const { configApi } = await import('@/services/configApi');
+        const initialPolicy = { min_fit: 55, top_k: 50, min_jd_required_coverage: null };
+        const nextPolicy = { min_fit: 0, top_k: 100, min_jd_required_coverage: null };
+        (configApi.getPolicy as any).mockResolvedValue({ data: initialPolicy });
+        (configApi.updatePolicy as any).mockReturnValue(new Promise(() => undefined));
+
+        const { result } = renderHook(() => usePolicy(), { wrapper: createWrapper() });
+        await waitFor(() => expect(result.current.policy).toEqual(initialPolicy));
+
+        act(() => {
+            result.current.updatePolicy(nextPolicy);
+        });
+
+        await waitFor(() => {
+            expect(result.current.policy).toEqual(nextPolicy);
+        });
+    });
+
     it('applyPreset calls configApi.applyPreset', async () => {
         const { configApi } = await import('@/services/configApi');
         (configApi.getPolicy as any).mockResolvedValue({ data: {} });
@@ -286,6 +305,29 @@ describe('usePolicy', () => {
 
         await waitFor(() => {
             expect(configApi.applyPreset).toHaveBeenCalledWith('strict');
+        });
+    });
+
+    it('updates policy cache optimistically when applying a preset', async () => {
+        const { configApi } = await import('@/services/configApi');
+        (configApi.getPolicy as any).mockResolvedValue({
+            data: { min_fit: 55, top_k: 50, min_jd_required_coverage: null },
+        });
+        (configApi.applyPreset as any).mockReturnValue(new Promise(() => undefined));
+
+        const { result } = renderHook(() => usePolicy(), { wrapper: createWrapper() });
+        await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+        act(() => {
+            result.current.applyPreset('discovery' as any);
+        });
+
+        await waitFor(() => {
+            expect(result.current.policy).toEqual({
+                min_fit: 40,
+                top_k: 100,
+                min_jd_required_coverage: null,
+            });
         });
     });
 

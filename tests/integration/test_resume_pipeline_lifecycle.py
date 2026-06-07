@@ -315,13 +315,19 @@ def test_selecting_ready_resume_unblocks_matching_from_older_processing_upload(l
     )
     assert select_response.status_code == 200
     assert redis.get(_latest_upload_task_key(str(OWNER_ID))) is None
+    matching_task_id = select_response.json()["matching_task_id"]
+    assert matching_task_id
+    matching_state = get_task_state(matching_task_id)
+    assert matching_state is not None
+    assert matching_state["resume_fingerprint"] == ready_fingerprint
 
     with patch("web.backend.routers.pipeline.enqueue_job") as mock_enqueue:
         run_response = client.post("/api/pipeline/run-matching")
 
     assert run_response.status_code == 200
     assert run_response.json()["success"] is True
-    mock_enqueue.assert_called_once()
+    assert run_response.json()["task_id"] == matching_task_id
+    mock_enqueue.assert_not_called()
 
 
 def test_matching_consumer_marks_completed_run_stale_when_newer_upload_exists(lifecycle_env):

@@ -169,6 +169,16 @@ matching:
     min_salary: null
     target_seniority: null
 
+  llm_judge:
+    enabled: false
+    top_n_default: 5
+    top_n_max: 10
+    max_per_run: 10
+    max_per_owner_per_day: 25
+    reuse_ttl_days: 90
+    prompt_version: "match_llm_judge_v1"
+    schema_version: "match_llm_judge_schema_v1"
+
 preferences:
   default_mode: "semantic_rerank"
   allowed_modes:

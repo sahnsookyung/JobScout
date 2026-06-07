@@ -365,6 +365,33 @@ class TestPipelineRoutes(unittest.TestCase):
         self.assertTrue(data["task_id"])
         mock_enqueue.assert_called_once()
 
+    @patch("web.backend.routers.pipeline._enqueue_matching_for_ready_resume")
+    @patch("web.backend.routers.pipeline.evaluate_resume_eligibility")
+    @patch("web.backend.routers.pipeline._guard_resume_not_uploading")
+    @patch("web.backend.routers.pipeline.get_redis_client", return_value=object())
+    def test_run_matching_reuses_active_matching_task(
+        self,
+        _mock_redis,
+        mock_upload_guard,
+        mock_eligibility,
+        mock_enqueue_ready_resume,
+    ):
+        mock_eligibility.return_value = SimpleNamespace(
+            can_run=True,
+            upload_id="upload-1",
+            resume_fingerprint="fp-ready",
+        )
+        mock_enqueue_ready_resume.return_value = "match-active"
+
+        response = self.client.post("/api/pipeline/run-matching")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["task_id"], "match-active")
+        mock_upload_guard.assert_called_once()
+        mock_enqueue_ready_resume.assert_called_once()
+
     @patch("web.backend.routers.pipeline.evaluate_resume_eligibility")
     @patch("web.backend.routers.pipeline.get_redis_client", return_value=None)
     def test_run_matching_reports_resume_processing_state(

@@ -9,15 +9,26 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
+from core.llm_evaluation import (
+    LlmJudgeConflictError,
+    LlmJudgeQuotaExceededError,
+    LlmJudgeUnavailableError,
+    MatchLlmEvaluationService,
+    evaluation_public_dict,
+)
 from ..dependencies import get_current_user, get_db
 from ..exceptions import InvalidMatchOperationException
+from ..models.requests import MatchLlmEvaluationRequest
 from ..services.match_service import MatchService
 from ..services.policy_service import get_policy_service
 from ..models.responses import (
     MatchesResponse,
     MatchDetailResponse,
     HideMatchResponse,
-    MatchExplanationResponse
+    MatchExplanationResponse,
+    MatchLlmEvaluationListResponse,
+    MatchLlmEvaluationMutationResponse,
+    MatchLlmEvaluationSummary,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,6 +48,10 @@ def validate_uuid(match_id: str) -> str:
             status_code=400,
             detail=f"Invalid match_id format: {match_id}. Must be a valid UUID."
         )
+
+
+def _to_evaluation_summary(evaluation) -> MatchLlmEvaluationSummary:
+    return MatchLlmEvaluationSummary(**evaluation_public_dict(evaluation))
 
 
 _VALID_RANKING_MODES = {"preference_first", "fit_first", "balanced"}
@@ -231,5 +246,114 @@ def get_match_explanation(
         owner_id=getattr(user, "id", None),
         tenant_id=_request_tenant_id(request),
     )
-    
+
     return MatchExplanationResponse(**result)
+
+
+@router.get(
+    "/{match_id}/llm-evaluations",
+    response_model=MatchLlmEvaluationListResponse,
+    responses={400: {"description": "Invalid match ID"}, 404: {"description": "Match not found"}},
+)
+def list_match_llm_evaluations(
+    match_id: str,
+    request: Request,
+    db: DbSession,
+    user: Annotated[object, Depends(get_current_user)],
+):
+    validate_uuid(match_id)
+    service = MatchLlmEvaluationService(db)
+    try:
+        evaluations = service.list_for_match(
+            match_id,
+            owner_id=getattr(user, "id", None),
+            tenant_id=_request_tenant_id(request),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Match not found") from exc
+
+    return MatchLlmEvaluationListResponse(
+        success=True,
+        count=len(evaluations),
+        evaluations=[_to_evaluation_summary(evaluation) for evaluation in evaluations],
+    )
+
+
+@router.post(
+    "/{match_id}/llm-evaluations",
+    response_model=MatchLlmEvaluationMutationResponse,
+    responses={
+        400: {"description": "Invalid match ID"},
+        404: {"description": "Match not found"},
+        409: {"description": "Evaluation already running"},
+        429: {"description": "LLM judge quota exhausted"},
+        503: {"description": "LLM judge unavailable"},
+    },
+)
+def generate_match_llm_evaluation(
+    match_id: str,
+    body: MatchLlmEvaluationRequest,
+    request: Request,
+    db: DbSession,
+    user: Annotated[object, Depends(get_current_user)],
+):
+    validate_uuid(match_id)
+    service = MatchLlmEvaluationService(db)
+    try:
+        result = service.generate_for_match(
+            match_id,
+            owner_id=getattr(user, "id", None),
+            tenant_id=_request_tenant_id(request),
+            force=body.force,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Match not found") from exc
+    except LlmJudgeConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LlmJudgeQuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except LlmJudgeUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return MatchLlmEvaluationMutationResponse(
+        success=True,
+        evaluation=_to_evaluation_summary(result.evaluation),
+        reused=result.reused,
+        message="Reused cached LLM evaluation." if result.reused else "Generated LLM evaluation.",
+    )
+
+
+@router.delete(
+    "/{match_id}/llm-evaluations/{evaluation_id}",
+    response_model=MatchLlmEvaluationMutationResponse,
+    responses={
+        400: {"description": "Invalid match/evaluation ID"},
+        404: {"description": "Evaluation not found"},
+    },
+)
+def delete_match_llm_evaluation(
+    match_id: str,
+    evaluation_id: str,
+    request: Request,
+    db: DbSession,
+    user: Annotated[object, Depends(get_current_user)],
+):
+    validate_uuid(match_id)
+    validate_uuid(evaluation_id)
+    service = MatchLlmEvaluationService(db)
+    try:
+        service.delete_evaluation(
+            match_id,
+            evaluation_id,
+            owner_id=getattr(user, "id", None),
+            tenant_id=_request_tenant_id(request),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Evaluation not found") from exc
+
+    return MatchLlmEvaluationMutationResponse(
+        success=True,
+        evaluation=None,
+        reused=False,
+        message="Deleted LLM evaluation.",
+    )

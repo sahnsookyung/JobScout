@@ -1,5 +1,5 @@
 import React from 'react';
-import { Building2, Eye, EyeOff, MapPin, Wifi } from 'lucide-react';
+import { Building2, Eye, EyeOff, MapPin, Sparkles, Wifi } from 'lucide-react';
 import type { MatchSummary } from '@/types/api';
 import { formatScore } from '@/utils/formatters';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -17,6 +17,15 @@ function renderVisibilityToggleIcon(isPending: boolean, isHidden: boolean) {
         return <span className="h-3 w-3 animate-spin rounded-full border border-current border-t-transparent" />;
     }
     return isHidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />;
+}
+
+function llmStatusLabel(status?: string | null): string | null {
+    if (!status) return null;
+    if (status === 'succeeded') return 'LLM judged';
+    if (status === 'pending' || status === 'running') return 'LLM pending';
+    if (status === 'failed') return 'LLM failed';
+    if (status === 'skipped') return 'LLM skipped';
+    return status.replace(/_/g, ' ');
 }
 
 export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured = false }) => {
@@ -167,6 +176,15 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
                     )}
                     {match.is_hidden && !isExcluded && (
                         <span className="caption text-ink-muted">hidden</span>
+                    )}
+                    {llmStatusLabel(match.llm_evaluation_status) && (
+                        <span
+                            className="caption inline-flex items-center gap-1 text-accent"
+                            title="LLM evaluation status"
+                        >
+                            <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+                            {llmStatusLabel(match.llm_evaluation_status)}
+                        </span>
                     )}
 
                     {canToggleHidden && (

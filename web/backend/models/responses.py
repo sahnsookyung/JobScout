@@ -24,6 +24,47 @@ class ApiError(BaseModel):
     fields: Optional[List[ApiFieldError]] = None
 
 
+class MatchLlmEvaluationSummary(BaseModel):
+    """Safe public summary of a cached match-level LLM evaluation."""
+
+    id: str
+    match_id: Optional[str] = None
+    job_id: str
+    status: str
+    llm_score: Optional[float] = Field(default=None, ge=0, le=100)
+    confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    verdict: Optional[str] = None
+    summary: Optional[str] = None
+    reason_codes: List[str] = Field(default_factory=list)
+    requirement_verdicts: List[Dict[str, Any]] = Field(default_factory=list)
+    provider: str
+    model: str
+    prompt_version: str
+    schema_version: str
+    error_code: Optional[str] = None
+    retryable: bool = False
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+class MatchLlmEvaluationListResponse(BaseModel):
+    """Response containing active LLM evaluations for a match."""
+
+    success: bool
+    count: int
+    evaluations: List[MatchLlmEvaluationSummary] = Field(default_factory=list)
+
+
+class MatchLlmEvaluationMutationResponse(BaseModel):
+    """Response after generating, regenerating, or deleting an LLM evaluation."""
+
+    success: bool
+    evaluation: Optional[MatchLlmEvaluationSummary] = None
+    reused: bool = False
+    message: str
+
+
 class MatchSummary(BaseModel):
     """Summary of a job match."""
     model_config = ConfigDict(
@@ -80,6 +121,11 @@ class MatchSummary(BaseModel):
     scoring_degraded_reason: Optional[str] = None
     selection_tier: str = "primary"
     excluded_reason: Optional[str] = None
+    llm_evaluation_status: Optional[str] = None
+    llm_evaluation_id: Optional[str] = None
+    llm_score: Optional[float] = Field(default=None, ge=0, le=100)
+    llm_confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    llm_judged_at: Optional[str] = None
 
 
 class RequirementDetail(BaseModel):
@@ -127,6 +173,11 @@ class MatchDetail(BaseModel):
     fit_scorer: Optional[Dict[str, Any]] = None
     scoring_degraded_reason: Optional[str] = None
     preference_status: Optional[Dict[str, Any]] = None
+    llm_evaluation_status: Optional[str] = None
+    llm_evaluation_id: Optional[str] = None
+    llm_score: Optional[float] = Field(default=None, ge=0, le=100)
+    llm_confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    llm_judged_at: Optional[str] = None
 
     # Legacy fields
     base_score: float
@@ -182,6 +233,37 @@ class PolicyResponse(BaseModel):
     min_fit: float
     top_k: int
     min_jd_required_coverage: Optional[float] = None
+    llm_judge_enabled: bool = False
+    llm_judge_top_n: int = 5
+    llm_judge_top_n_max: int = 10
+    llm_judge_available: bool = False
+    llm_judge_revision: int = 0
+
+
+class ProcessingProgress(BaseModel):
+    """User-safe task progress metadata."""
+
+    current_step: int = Field(ge=0)
+    total_steps: int = Field(ge=1)
+    percent: int = Field(ge=0, le=100)
+    started_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class ProcessingWarning(BaseModel):
+    """Stable user-facing warning from a background pipeline."""
+
+    code: str
+    message: str
+
+
+class ProcessingFailure(BaseModel):
+    """Stable user-facing failure from a background pipeline."""
+
+    code: str
+    user_message: str
+    retryable: bool = False
+    next_action: Optional[str] = None
 
 
 class PipelineTaskResponse(BaseModel):
@@ -195,6 +277,11 @@ class PipelineStatusResponse(BaseModel):
     """Response containing pipeline task status."""
     task_id: str
     status: str  # "pending", "running", "completed", "failed", "cancelled"
+    phase: Optional[str] = None
+    progress: Optional[ProcessingProgress] = None
+    stats: Dict[str, Any] = Field(default_factory=dict)
+    warnings: List[ProcessingWarning] = Field(default_factory=list)
+    failure: Optional[ProcessingFailure] = None
     upload_id: Optional[str] = None
     resume_fingerprint: Optional[str] = None
     matches_count: Optional[int] = None
@@ -403,7 +490,13 @@ class ResumeUploadResponse(BaseModel):
     message: str
     upload_id: Optional[str] = None
     task_id: Optional[str] = None
+    matching_task_id: Optional[str] = None
     status: Optional[str] = None
+    phase: Optional[str] = None
+    progress: Optional[ProcessingProgress] = None
+    stats: Dict[str, Any] = Field(default_factory=dict)
+    warnings: List[ProcessingWarning] = Field(default_factory=list)
+    failure: Optional[ProcessingFailure] = None
 
 
 class ResumeStatusResponse(BaseModel):
@@ -411,6 +504,12 @@ class ResumeStatusResponse(BaseModel):
     task_id: str
     status: str  # processing | completed | failed
     step: Optional[str] = None  # extracting | embedding
+    matching_task_id: Optional[str] = None
+    phase: Optional[str] = None
+    progress: Optional[ProcessingProgress] = None
+    stats: Dict[str, Any] = Field(default_factory=dict)
+    warnings: List[ProcessingWarning] = Field(default_factory=list)
+    failure: Optional[ProcessingFailure] = None
     message: Optional[str] = None
     error: Optional[str] = None
 

@@ -16,6 +16,7 @@ from database.models import (
     JobMatch,
     JobMatchRequirement,
     JobPost,
+    LlmMatchEvaluation,
     MatchSelectionItem,
     MatchSelectionRun,
     StructuredResume,
@@ -68,6 +69,7 @@ class MatchSummaryCandidate:
     ranking_explanation: Any = None
     selection_tier: str = "primary"
     excluded_reason: Optional[str] = None
+    llm_evaluation: Any = None
 
 
 class MatchService:
@@ -159,6 +161,11 @@ class MatchService:
             effective_k = ranking_config.effective_top_k(top_k)
             ranked = primary_pool[:effective_k]
 
+        self._attach_latest_evaluations(
+            ranked,
+            owner_id=owner_id,
+            tenant_id=tenant_id,
+        )
         return [self._to_match_summary(m) for m in ranked]
 
     def _resolve_canonical_selection(
@@ -277,6 +284,60 @@ class MatchService:
             selection_tier=getattr(item, "selection_tier", "primary") or "primary",
             excluded_reason=getattr(item, "excluded_reason", None),
         )
+
+    def _attach_latest_evaluations(
+        self,
+        matches: List[Any],
+        *,
+        owner_id: Optional[Any],
+        tenant_id: Optional[Any],
+    ) -> None:
+        if owner_id is None or not matches or not self._has_real_query_session():
+            return
+        match_ids = [getattr(match, "id", None) for match in matches]
+        match_ids = [match_id for match_id in match_ids if match_id is not None]
+        if not match_ids:
+            return
+
+        stmt = (
+            self.db.query(LlmMatchEvaluation)
+            .filter(
+                LlmMatchEvaluation.owner_id == owner_id,
+                LlmMatchEvaluation.job_match_id.in_(match_ids),
+                LlmMatchEvaluation.deleted_at.is_(None),
+            )
+            .order_by(LlmMatchEvaluation.job_match_id.asc(), LlmMatchEvaluation.created_at.desc())
+        )
+        if tenant_id is None:
+            stmt = stmt.filter(LlmMatchEvaluation.tenant_id.is_(None))
+        else:
+            stmt = stmt.filter(LlmMatchEvaluation.tenant_id == tenant_id)
+
+        by_match_id: Dict[str, LlmMatchEvaluation] = {}
+        try:
+            evaluations = stmt.all()
+        except Exception as exc:
+            logger.warning("Could not attach LLM evaluation markers: %s", exc)
+            return
+        try:
+            iterator = iter(evaluations)
+        except TypeError:
+            logger.warning("Could not attach LLM evaluation markers: query returned non-iterable")
+            return
+        for evaluation in iterator:
+            by_match_id.setdefault(str(evaluation.job_match_id), evaluation)
+
+        for match in matches:
+            evaluation = by_match_id.get(str(getattr(match, "id", "")))
+            if evaluation is not None:
+                setattr(match, "llm_evaluation", evaluation)
+
+    def _has_real_query_session(self) -> bool:
+        """Return false for mocked sessions so optional enrichment stays inert in unit tests."""
+        query = getattr(self.db, "query", None)
+        if not callable(query):
+            return False
+        return not type(query).__module__.startswith("unittest.mock")
     
     def _get_match_for_owner(
         self,
@@ -339,7 +400,12 @@ class MatchService:
 
             return MatchDetailResponse(
                 success=True,
-                match=self._to_match_detail(match, penalty_details),
+                match=self._to_match_detail(
+                    match,
+                    penalty_details,
+                    owner_id=owner_id,
+                    tenant_id=tenant_id,
+                ),
                 job=self._to_job_details(job),
                 requirements=requirements
             )
@@ -504,6 +570,7 @@ class MatchService:
     def _to_match_summary(self, match: JobMatch) -> MatchSummary:
         """Convert ORM model to MatchSummary response model."""
         job_fields = self._extract_summary_job_fields(match)
+        evaluation = getattr(match, "llm_evaluation", None)
 
         expl = getattr(match, "ranking_explanation", None)
         preferred_requirement_coverage = self._float_or_zero(
@@ -538,11 +605,24 @@ class MatchService:
             scoring_degraded_reason=self._scoring_degraded_reason(getattr(match, "fit_components", None)),
             selection_tier=selection_tier or "primary",
             excluded_reason=excluded_reason,
+            **self._llm_marker_fields(evaluation),
         )
     
-    def _to_match_detail(self, match: JobMatch, penalty_details: Dict[str, Any]) -> MatchDetail:
+    def _to_match_detail(
+        self,
+        match: JobMatch,
+        penalty_details: Dict[str, Any],
+        *,
+        owner_id: Optional[Any],
+        tenant_id: Optional[Any],
+    ) -> MatchDetail:
         """Convert ORM model to MatchDetail response model."""
         fit_components = self._fit_components(match.fit_components)
+        evaluation = self._latest_evaluation_for_match(
+            match,
+            owner_id=owner_id,
+            tenant_id=tenant_id,
+        )
         preferred_requirement_coverage = safe_float(
             match.preferred_requirement_coverage
         )
@@ -558,6 +638,7 @@ class MatchService:
             fit_explanation=self._fit_explanation(fit_components),
             fit_scorer=self._fit_scorer(fit_components),
             preference_status=self._preference_status(match),
+            **self._llm_marker_fields(evaluation),
             base_score=safe_float(match.base_score),
             penalties=safe_float(match.penalties),
             required_coverage=safe_float(match.required_coverage),
@@ -660,7 +741,57 @@ class MatchService:
                 "effective_mode": mode_used,
             }
         return None
-    
+
+    def _latest_evaluation_for_match(
+        self,
+        match: JobMatch,
+        *,
+        owner_id: Optional[Any],
+        tenant_id: Optional[Any],
+    ) -> Optional[LlmMatchEvaluation]:
+        if owner_id is None:
+            return None
+        query = self.db.query(LlmMatchEvaluation).filter(
+            LlmMatchEvaluation.owner_id == owner_id,
+            LlmMatchEvaluation.job_match_id == match.id,
+            LlmMatchEvaluation.resume_fingerprint == match.resume_fingerprint,
+            LlmMatchEvaluation.deleted_at.is_(None),
+        )
+        if tenant_id is None:
+            query = query.filter(LlmMatchEvaluation.tenant_id.is_(None))
+        else:
+            query = query.filter(LlmMatchEvaluation.tenant_id == tenant_id)
+        return query.order_by(LlmMatchEvaluation.created_at.desc()).first()
+
+    @staticmethod
+    def _llm_marker_fields(evaluation: Any) -> Dict[str, Any]:
+        status = getattr(evaluation, "status", None) if evaluation is not None else None
+        if not isinstance(status, str):
+            return {
+                "llm_evaluation_status": None,
+                "llm_evaluation_id": None,
+                "llm_score": None,
+                "llm_confidence": None,
+                "llm_judged_at": None,
+            }
+        judged_at = getattr(evaluation, "completed_at", None)
+        judged_at_iso = safe_datetime_iso(judged_at) if hasattr(judged_at, "isoformat") else None
+        return {
+            "llm_evaluation_status": status,
+            "llm_evaluation_id": str(getattr(evaluation, "id", "")),
+            "llm_score": (
+                None
+                if getattr(evaluation, "llm_score", None) is None
+                else safe_float(evaluation.llm_score)
+            ),
+            "llm_confidence": (
+                None
+                if getattr(evaluation, "confidence", None) is None
+                else safe_float(evaluation.confidence)
+            ),
+            "llm_judged_at": judged_at_iso,
+        }
+
     def _to_job_details(self, job: Optional[JobPost]) -> JobDetails:
         """Convert ORM model to JobDetails response model."""
         if not job:

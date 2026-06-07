@@ -4,12 +4,30 @@ Tests for Policy Router
 Covers: web/backend/routers/policy.py
 """
 
-import pytest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
+
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from web.backend.routers.policy import router
+
+def _llm_policy(
+    *,
+    enabled=False,
+    top_n=5,
+    top_n_max=10,
+    available=False,
+    revision=0,
+):
+    return SimpleNamespace(
+        enabled=enabled,
+        top_n=top_n,
+        top_n_max=top_n_max,
+        available=available,
+        revision=revision,
+    )
 
 
 class TestPolicyRouter:
@@ -32,6 +50,8 @@ class TestPolicyRouter:
         """Create mock policy service."""
         with patch('web.backend.routers.policy.get_policy_service') as mock:
             policy_service = Mock()
+            policy_service.get_llm_judge_policy.return_value = _llm_policy()
+            policy_service.update_llm_judge_policy.return_value = _llm_policy()
             mock.return_value = policy_service
             yield policy_service
 
@@ -51,6 +71,9 @@ class TestPolicyRouter:
         assert data['min_fit'] == 55.0
         assert data['top_k'] == 50
         assert data['min_jd_required_coverage'] == 0.6
+        assert data['llm_judge_enabled'] is False
+        assert data['llm_judge_top_n'] == 5
+        assert data['llm_judge_top_n_max'] == 10
         mock_policy_service.get_current_policy.assert_called_once()
 
     def test_get_policy_with_null_coverage(self, client, mock_policy_service):
@@ -99,6 +122,38 @@ class TestPolicyRouter:
             top_k=25,
             min_jd_required_coverage=0.8
         )
+        mock_policy_service.update_llm_judge_policy.assert_called_once()
+        assert mock_policy_service.update_llm_judge_policy.call_args.kwargs["enabled"] is None
+        assert mock_policy_service.update_llm_judge_policy.call_args.kwargs["top_n"] is None
+
+    def test_update_policy_updates_llm_judge_fields(self, client, mock_policy_service):
+        """Test updating owner-scoped LLM judge controls."""
+        default_policy = Mock(min_fit=50.0, top_k=100, min_jd_required_coverage=None)
+        mock_policy_service.get_current_policy.return_value = default_policy
+        mock_policy_service.update_policy.return_value = default_policy
+        mock_policy_service.update_llm_judge_policy.return_value = _llm_policy(
+            enabled=True,
+            top_n=3,
+            top_n_max=8,
+            available=True,
+            revision=2,
+        )
+
+        response = client.put(
+            '/api/v1/policy',
+            json={'llm_judge_enabled': True, 'llm_judge_top_n': 3}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data['llm_judge_enabled'] is True
+        assert data['llm_judge_top_n'] == 3
+        assert data['llm_judge_top_n_max'] == 8
+        assert data['llm_judge_available'] is True
+        assert data['llm_judge_revision'] == 2
+        mock_policy_service.update_llm_judge_policy.assert_called_once()
+        assert mock_policy_service.update_llm_judge_policy.call_args.kwargs["enabled"] is True
+        assert mock_policy_service.update_llm_judge_policy.call_args.kwargs["top_n"] == 3
 
     def test_update_policy_partial(self, client, mock_policy_service):
         """Test policy update with partial fields."""
@@ -129,7 +184,7 @@ class TestPolicyRouter:
 
     def test_update_policy_null_coverage(self, client, mock_policy_service):
         """Test policy update with null min_jd_required_coverage."""
-        default_policy = Mock(min_fit=50.0, top_k=100, min_jd_required_coverage=None)
+        default_policy = Mock(min_fit=50.0, top_k=100, min_jd_required_coverage=0.7)
         mock_policy_service.get_current_policy.return_value = default_policy
 
         mock_updated_policy = Mock()
@@ -147,6 +202,11 @@ class TestPolicyRouter:
         assert response.status_code == 200
         data = response.json()
         assert data['min_jd_required_coverage'] is None
+        mock_policy_service.update_policy.assert_called_once_with(
+            min_fit=50.0,
+            top_k=100,
+            min_jd_required_coverage=None,
+        )
 
     def test_apply_preset_strict(self, client, mock_policy_service):
         """Test applying strict preset."""
@@ -270,6 +330,8 @@ class TestPolicyRouterIntegration:
         with patch('web.backend.routers.policy.get_policy_service') as MockPolicyService:
             # Setup mock policy service
             mock_policy_service = Mock()
+            mock_policy_service.get_llm_judge_policy.return_value = _llm_policy()
+            mock_policy_service.update_llm_judge_policy.return_value = _llm_policy()
 
             # Initial policy
             initial_policy = Mock()
@@ -328,6 +390,7 @@ class TestPolicyRouterIntegration:
         """Test applying different presets in sequence."""
         with patch('web.backend.routers.policy.get_policy_service') as MockPolicyService:
             mock_policy_service = Mock()
+            mock_policy_service.get_llm_judge_policy.return_value = _llm_policy()
 
             preset_policies = {
                 'strict': Mock(min_fit=70.0, top_k=25, min_jd_required_coverage=0.80),
@@ -351,6 +414,7 @@ class TestPolicyRouterIntegration:
         """Test policy update with various value combinations."""
         with patch('web.backend.routers.policy.get_policy_service') as MockPolicyService:
             mock_policy_service = Mock()
+            mock_policy_service.update_llm_judge_policy.return_value = _llm_policy()
 
             default_policy = Mock(min_fit=50.0, top_k=100, min_jd_required_coverage=None)
             mock_policy_service.get_current_policy.return_value = default_policy

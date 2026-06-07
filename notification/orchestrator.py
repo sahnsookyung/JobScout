@@ -28,6 +28,8 @@ class NotificationCandidate:
     preference_score: float | None
     job_similarity: float | None
     alert_eligible: bool | None = None
+    selection_tier: str = "primary"
+    excluded_reason: str | None = None
     ranking_explanation: Any = None
 
 
@@ -114,11 +116,13 @@ def _alert_eligible_matches_for_plan(
 
 def _load_persisted_notification_matches(
     selection_run_id: str,
+    *,
+    tier: Optional[str] = "primary",
 ) -> List:
     """Load canonical persisted notification candidates for this run."""
     with job_uow() as repo:
         items = repo.match_selection.get_items_for_run(
-            selection_run_id, tier="primary"
+            selection_run_id, tier=tier
         )
         return [
             NotificationCandidate(
@@ -131,6 +135,8 @@ def _load_persisted_notification_matches(
                 ),
                 job_similarity=float(item.job_similarity_at_selection),
                 alert_eligible=bool(item.alert_eligible),
+                selection_tier=str(getattr(item, "selection_tier", "primary") or "primary"),
+                excluded_reason=getattr(item, "excluded_reason", None),
             )
             for item in items
         ]
@@ -219,9 +225,9 @@ def _send_batch_complete_notification(
     alert_eligible_matches: List,
     min_fit_for_alerts: int,
     task_id: Optional[str],
-) -> None:
+) -> bool:
     """Send the batch summary notification."""
-    ctx.notification_service.notify_batch_complete(
+    results = ctx.notification_service.notify_batch_complete(
         user_id=delivery_plan.user_id,
         total_matches=saved_count,
         alert_eligible_matches=len(alert_eligible_matches),
@@ -229,6 +235,7 @@ def _send_batch_complete_notification(
         channels=delivery_plan.enabled_channels,
         task_id=task_id,
     )
+    return any(results.values())
 
 
 def _notify_per_match(
@@ -301,15 +308,19 @@ def send_notifications(
             )
             return 0
 
-        persisted_matches = _load_persisted_notification_matches(selection_run_id)
+        persisted_matches = _load_persisted_notification_matches(selection_run_id, tier="all")
         if not persisted_matches:
             logger.info(
-                "=== NOTIFICATION STEP: Skipped (no persisted active matches for resume %s) ===",
+                "=== NOTIFICATION STEP: Skipped (no persisted selection items for resume %s) ===",
                 resume_fingerprint[:16],
             )
             return 0
+        primary_matches = [
+            match for match in persisted_matches
+            if getattr(match, "selection_tier", "primary") == "primary"
+        ]
         alert_eligible_matches = _alert_eligible_matches_for_plan(
-            persisted_matches,
+            primary_matches,
             notification_config,
             delivery_plan,
         )
@@ -321,7 +332,7 @@ def send_notifications(
             )
         )
 
-        notified_count = _notify_per_match(
+        per_match_count = _notify_per_match(
             ctx,
             alert_eligible_matches,
             notification_config,
@@ -329,22 +340,25 @@ def send_notifications(
             task_id,
             stop_event,
         )
+        batch_count = 0
 
         if _notification_setting_value(
             notification_config, delivery_plan.settings_snapshot, "notify_on_batch_complete",
         ):
             try:
-                _send_batch_complete_notification(
+                if _send_batch_complete_notification(
                     ctx,
                     delivery_plan=delivery_plan,
                     saved_count=len(persisted_matches),
                     alert_eligible_matches=alert_eligible_matches,
                     min_fit_for_alerts=min_fit_for_alerts,
                     task_id=task_id,
-                )
+                ):
+                    batch_count = 1
             except Exception:
                 logger.exception("Failed to send batch summary")
 
+        notified_count = per_match_count + batch_count
         step_elapsed = time.time() - step_start
         logger.info(
             "MATCHING Step 3 completed: Sent %d notifications in %.2fs",

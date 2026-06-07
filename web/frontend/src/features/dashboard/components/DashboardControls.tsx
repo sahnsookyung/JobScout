@@ -21,6 +21,7 @@ export const DashboardControls: React.FC = () => {
         isUploading,
         isPreparingResume,
         resumeProcessingStep,
+        resumeProcessingStatus,
         uploadResume,
     } = usePipeline();
     const { data: stats } = useStats();
@@ -65,12 +66,12 @@ export const DashboardControls: React.FC = () => {
         }
     };
 
-    const statusData = status;
+    const statusData = status ?? resumeProcessingStatus;
     const hasStatus = statusData !== null && statusData !== undefined;
-    const isRunningStatus = hasStatus && ['pending', 'running'].includes(statusData?.status ?? '');
+    const isRunningStatus = hasStatus && ['pending', 'running', 'processing'].includes(statusData?.status ?? '');
     const isCancellationRequested = hasStatus && statusData?.status === 'cancellation_requested';
     const isPersistingStatus = hasStatus && statusData?.status === 'persisting';
-    const canStop = isRunningStatus;
+    const canStop = status !== null && ['pending', 'running'].includes(status?.status ?? '');
     const isCompletedStatus = hasStatus && statusData?.status === 'completed';
     const isFailedStatus = hasStatus && statusData?.status === 'failed';
     const isCancelledStatus = hasStatus && statusData?.status === 'cancelled';

@@ -1,5 +1,5 @@
 import { apiClient } from './api';
-import type { ScoringWeights, PolicyConfig, PolicyPreset } from '@/types/api';
+import type { ScoringWeights, PolicyConfig, PolicyPreset, PolicyUpdatePayload } from '@/types/api';
 
 export const configApi = {
     getScoringWeights: () =>
@@ -7,7 +7,7 @@ export const configApi = {
 
     getPolicy: () => apiClient.get<PolicyConfig>('/v1/policy'),
 
-    updatePolicy: (policy: PolicyConfig) =>
+    updatePolicy: (policy: PolicyUpdatePayload) =>
         apiClient.put<PolicyConfig>('/v1/policy', policy),
 
     applyPreset: (preset: PolicyPreset) =>

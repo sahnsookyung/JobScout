@@ -11,6 +11,11 @@ import { StatusBanner, type StatusBannerProps } from '../StatusBanner';
 
 vi.mock('lucide-react', () => ({
     FileText: ({ className, ...props }: any) => <div data-testid="file-text-icon" className={className} {...props} />,
+    FileCheck2: ({ className, ...props }: any) => <div data-testid="file-check2-icon" className={className} {...props} />,
+    Sparkles: ({ className, ...props }: any) => <div data-testid="sparkles-icon" className={className} {...props} />,
+    Database: ({ className, ...props }: any) => <div data-testid="database-icon" className={className} {...props} />,
+    SearchCheck: ({ className, ...props }: any) => <div data-testid="search-check-icon" className={className} {...props} />,
+    Bell: ({ className, ...props }: any) => <div data-testid="bell-icon" className={className} {...props} />,
     Loader2: ({ className, ...props }: any) => <div data-testid="loader2-icon" className={className} {...props} />,
     Upload: ({ className, ...props }: any) => <div data-testid="upload-icon" className={className} {...props} />,
     CheckCircle2: ({ className, ...props }: any) => <div data-testid="check-circle2-icon" className={className} {...props} />,
@@ -147,7 +152,7 @@ describe('StatusBanner', () => {
 
     it('renders completed status summary', () => {
         render(<StatusBanner status="completed" matches_count={10} saved_count={8} execution_time={45.5} />);
-        expect(screen.getByTestId('check-circle2-icon')).toBeInTheDocument();
+        expect(screen.getAllByTestId('check-circle2-icon').length).toBeGreaterThanOrEqual(1);
         expect(screen.getByText('Complete')).toBeInTheDocument();
         expect(screen.getByText((_, node) => node?.textContent === 'Found 10')).toBeInTheDocument();
         expect(screen.getByText((_, node) => node?.textContent === 'Saved 8')).toBeInTheDocument();

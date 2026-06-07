@@ -27,6 +27,11 @@ export interface MatchSummary {
     scoring_degraded_reason?: string | null;
     selection_tier?: 'primary' | 'excluded';
     excluded_reason?: string | null;
+    llm_evaluation_status?: string | null;
+    llm_evaluation_id?: string | null;
+    llm_score?: number | null;
+    llm_confidence?: number | null;
+    llm_judged_at?: string | null;
 }
 
 export interface RequirementDetail {
@@ -68,6 +73,11 @@ export interface MatchDetail {
     fit_scorer: Record<string, any> | null;
     scoring_degraded_reason?: string | null;
     preference_status?: Record<string, any> | null;
+    llm_evaluation_status?: string | null;
+    llm_evaluation_id?: string | null;
+    llm_score?: number | null;
+    llm_confidence?: number | null;
+    llm_judged_at?: string | null;
     base_score: number;
     penalties: number;
     required_coverage: number;
@@ -93,6 +103,41 @@ export interface MatchExplanationResponse {
     match_id: string;
     explanation: Record<string, any> | null;
     message?: string | null;
+}
+
+export interface MatchLlmEvaluation {
+    id: string;
+    match_id?: string | null;
+    job_id: string;
+    status: string;
+    llm_score?: number | null;
+    confidence?: number | null;
+    verdict?: string | null;
+    summary?: string | null;
+    reason_codes: string[];
+    requirement_verdicts: Array<Record<string, any>>;
+    provider: string;
+    model: string;
+    prompt_version: string;
+    schema_version: string;
+    error_code?: string | null;
+    retryable: boolean;
+    created_at?: string | null;
+    started_at?: string | null;
+    completed_at?: string | null;
+}
+
+export interface MatchLlmEvaluationListResponse {
+    success: boolean;
+    count: number;
+    evaluations: MatchLlmEvaluation[];
+}
+
+export interface MatchLlmEvaluationMutationResponse {
+    success: boolean;
+    evaluation?: MatchLlmEvaluation | null;
+    reused: boolean;
+    message: string;
 }
 
 export interface MatchesResponse {
@@ -131,12 +176,71 @@ export interface PolicyConfig {
     min_fit: number;
     top_k: number;
     min_jd_required_coverage: number | null;
+    llm_judge_enabled?: boolean;
+    llm_judge_top_n?: number;
+    llm_judge_top_n_max?: number;
+    llm_judge_available?: boolean;
+    llm_judge_revision?: number;
 }
+
+export type PolicyUpdatePayload = Pick<
+    PolicyConfig,
+    'min_fit' | 'top_k' | 'min_jd_required_coverage'
+> & {
+    llm_judge_enabled?: boolean;
+    llm_judge_top_n?: number;
+};
 
 export interface PipelineTaskResponse {
     success: boolean;
     task_id: string;
     message: string;
+}
+
+export type PipelinePhase =
+    | 'initializing'
+    | 'loading_resume'
+    | 'extracting_resume'
+    | 'embedding_resume'
+    | 'matching_jobs'
+    | 'scoring'
+    | 'saving'
+    | 'notifying'
+    | 'completed'
+    | 'failed'
+    | 'cancelled';
+
+export interface ProcessingProgress {
+    current_step: number;
+    total_steps: number;
+    percent: number;
+    started_at?: string | null;
+    updated_at?: string | null;
+}
+
+export interface ProcessingWarning {
+    code: string;
+    message: string;
+}
+
+export interface ProcessingFailure {
+    code: string;
+    user_message: string;
+    retryable: boolean;
+    next_action?: string | null;
+}
+
+export interface PipelineStats {
+    jobs_seen?: number;
+    jobs_ready_to_score?: number;
+    jobs_pending_extraction?: number;
+    jobs_pending_embedding?: number;
+    candidates_considered?: number;
+    matches_selected?: number;
+    matches_saved?: number;
+    below_threshold?: number;
+    notifications_sent?: number;
+    [key: string]: unknown;
 }
 
 export interface ResumeEligibilityResponse {
@@ -165,13 +269,25 @@ export interface ResumeUploadResponse {
     message: string;
     upload_id?: string;
     task_id?: string;
+    matching_task_id?: string | null;
     status?: string;
+    phase?: PipelinePhase | string | null;
+    progress?: ProcessingProgress | null;
+    stats?: PipelineStats;
+    warnings?: ProcessingWarning[];
+    failure?: ProcessingFailure | null;
 }
 
 export interface ResumeStatusResponse {
     task_id: string;
     status: string;
     step?: string;
+    matching_task_id?: string | null;
+    phase?: PipelinePhase | string | null;
+    progress?: ProcessingProgress | null;
+    stats?: PipelineStats;
+    warnings?: ProcessingWarning[];
+    failure?: ProcessingFailure | null;
     message?: string;
     error?: string;
 }
@@ -309,6 +425,11 @@ export interface PipelineStatusResponse {
         | 'completed'
         | 'failed'
         | 'cancelled';
+    phase?: PipelinePhase | string | null;
+    progress?: ProcessingProgress | null;
+    stats?: PipelineStats;
+    warnings?: ProcessingWarning[];
+    failure?: ProcessingFailure | null;
     upload_id?: string;
     resume_fingerprint?: string;
     matches_count?: number;

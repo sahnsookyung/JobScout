@@ -152,7 +152,8 @@ class TestGetPipelineStatus:
             response = pipeline_client.get("/api/pipeline/status/task-123")
         assert response.status_code == 200
         data = response.json()
-        assert data["error"] == "something broke"
+        assert data["error"] != "something broke"
+        assert data["failure"]["code"] == "matching_failed"
 
     def test_get_task_state_exception_falls_through_gracefully(self, pipeline_client):
         with patch.dict("os.environ", {"ORCHESTRATOR_URL": ""}, clear=False), \
@@ -406,6 +407,7 @@ class TestProcessResumeBackground:
              patch("os.unlink"), \
              patch("web.backend.services.clients.orchestrator_client"), \
              patch("web.backend.routers.pipeline.job_uow", return_value=mock_uow), \
+             patch("web.backend.routers.pipeline._enqueue_matching_for_ready_resume", return_value="match-1"), \
              patch("web.backend.routers.pipeline.set_task_state"), \
              patch("web.backend.routers.pipeline.get_task_state", return_value={"status": "completed"}):
             _process_resume_background(
