@@ -5,6 +5,7 @@ from typing import Dict, Literal, Optional
 from pydantic import BaseModel
 
 from core.config_loader import (
+    GROQ_OPENAI_COMPATIBLE_BASE_URL,
     LlmConfig,
     LlmJudgeRuntimeConfig,
     PreferenceModelConfig,
@@ -15,7 +16,7 @@ from core.llm.openai_service import OpenAIService
 
 
 class RuntimeLLMConfig(BaseModel):
-    provider: Literal["openai_compatible"] = "openai_compatible"
+    provider: Literal["openai_compatible", "groq"] = "openai_compatible"
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     api_secret: Optional[str] = None
@@ -96,16 +97,29 @@ def runtime_llm_config_from_match_judge(config: LlmJudgeRuntimeConfig) -> Runtim
     )
 
 
+def _normalize_chat_provider(provider: str) -> str:
+    if provider == "groq":
+        return "openai_compatible"
+    return provider
+
+
+def _normalize_base_url(config: RuntimeLLMConfig) -> Optional[str]:
+    if config.provider == "groq" and not str(config.base_url or "").strip():
+        return GROQ_OPENAI_COMPATIBLE_BASE_URL
+    return config.base_url
+
+
 def build_llm_provider(config: RuntimeLLMConfig) -> LLMProvider:
-    if config.provider != "openai_compatible":
+    provider = _normalize_chat_provider(config.provider)
+    if provider != "openai_compatible":
         raise RuntimeError(
             f"Unsupported runtime LLM provider '{config.provider}'. "
-            "Only 'openai_compatible' is supported at runtime."
+            "Only 'openai_compatible' and 'groq' are supported at runtime."
         )
     if not str(config.model or "").strip():
         raise RuntimeError(
             "Runtime LLM provider configuration requires a model for "
-            "provider='openai_compatible'."
+            f"provider='{config.provider}'."
         )
 
     model_config = {
@@ -115,7 +129,7 @@ def build_llm_provider(config: RuntimeLLMConfig) -> LLMProvider:
         "extraction_temperature": config.temperature,
     }
     return OpenAIService(
-        base_url=config.base_url,
+        base_url=_normalize_base_url(config),
         api_key=config.api_key,
         api_secret=config.api_secret,
         model_config=model_config,

@@ -82,7 +82,7 @@ def test_runtime_llm_config_from_fit_maps_llm_fields():
 
 def test_runtime_llm_config_from_match_judge_maps_groq_fields():
     config = LlmJudgeRuntimeConfig(
-        provider="openai_compatible",
+        provider="groq",
         base_url="https://api.groq.com/openai/v1",
         api_key="groq-key",
         model="openai/gpt-oss-20b",
@@ -93,7 +93,7 @@ def test_runtime_llm_config_from_match_judge_maps_groq_fields():
 
     runtime_config = runtime_llm_config_from_match_judge(config)
 
-    assert runtime_config.provider == "openai_compatible"
+    assert runtime_config.provider == "groq"
     assert runtime_config.base_url == "https://api.groq.com/openai/v1"
     assert runtime_config.api_key == "groq-key"
     assert runtime_config.model == "openai/gpt-oss-20b"
@@ -121,6 +121,21 @@ def test_build_llm_provider_constructs_openai_compatible_service():
     assert provider.embedding_model == "embed-model"
     assert provider.embedding_dimensions == 1024
     assert provider.structured_output_mode == "auto"
+
+
+def test_build_llm_provider_constructs_groq_alias_service():
+    provider = build_llm_provider(
+        RuntimeLLMConfig(
+            provider="groq",
+            api_key="groq-key",
+            model="llama-3.1-8b-instant",
+            structured_output_mode="auto",
+        )
+    )
+
+    assert isinstance(provider, OpenAIService)
+    assert str(provider.client.base_url).rstrip("/") == "https://api.groq.com/openai/v1"
+    assert provider.extraction_model == "llama-3.1-8b-instant"
 
 
 def test_build_llm_provider_requires_model():

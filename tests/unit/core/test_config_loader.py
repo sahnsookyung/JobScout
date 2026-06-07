@@ -679,6 +679,35 @@ class TestConfigLoader(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     LlmJudgeRuntimeConfig(**overrides)
 
+    def test_match_llm_judge_runtime_accepts_groq_provider_alias(self):
+        config = LlmJudgeRuntimeConfig(
+            provider="groq",
+            api_key="groq-key",
+            model="llama-3.1-8b-instant",
+        )
+
+        self.assertEqual(config.provider, "groq")
+        self.assertEqual(config.base_url, "https://api.groq.com/openai/v1")
+
+    def test_match_llm_judge_env_accepts_groq_provider(self):
+        data = {"database": {"url": "test"}, "schedule": {"interval_seconds": 60}, "scrapers": []}
+        env = {
+            "MATCH_LLM_JUDGE_ENABLED": "true",
+            "LLM_AS_A_JUDGE_PROVIDER": "groq",
+            "GROQ_API_KEY": "groq-key",
+            "LLM_AS_A_JUDGE_MODEL": "llama-3.1-8b-instant",
+        }
+
+        with patch("builtins.open", mock_open(read_data=yaml.dump(data))):
+            with patch("os.path.exists", return_value=True):
+                with patch.dict(os.environ, env, clear=False):
+                    config = load_config("dummy")
+
+        self.assertTrue(config.matching.llm_judge.enabled)
+        self.assertEqual(config.matching.llm_judge.runtime.provider, "groq")
+        self.assertEqual(config.matching.llm_judge.runtime.api_key, "groq-key")
+        self.assertEqual(config.matching.llm_judge.runtime.base_url, "https://api.groq.com/openai/v1")
+
     def test_semantic_fit_raises_for_blank_llm_model(self):
         with self.assertRaises(ValidationError) as ctx:
             SemanticFitConfig(

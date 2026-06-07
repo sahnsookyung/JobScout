@@ -13,6 +13,8 @@ EnvMapping = tuple[Sequence[str], Sequence[str]]
 HeaderMapping = tuple[str, Sequence[str]]
 ConfigPath = str | os.PathLike[str]
 DEFAULT_CONFIG_FILENAME = "config.yaml"
+LlmJudgeProvider = Literal["openai_compatible", "groq"]
+GROQ_OPENAI_COMPATIBLE_BASE_URL = "https://api.groq.com/openai/v1"
 
 
 class ScraperConfig(BaseModel):
@@ -140,7 +142,7 @@ class ResultPolicy(BaseModel):
 class LlmJudgeRuntimeConfig(BaseModel):
     """OpenAI-compatible runtime used only for match-level LLM judging."""
 
-    provider: Literal["openai_compatible"] = "openai_compatible"
+    provider: LlmJudgeProvider = "openai_compatible"
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     api_secret: Optional[str] = None
@@ -153,6 +155,8 @@ class LlmJudgeRuntimeConfig(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         del __context
+        if self.provider == "groq" and not str(self.base_url or "").strip():
+            self.base_url = GROQ_OPENAI_COMPATIBLE_BASE_URL
         if int(self.timeout_seconds) <= 0:
             raise ValueError("matching.llm_judge.runtime.timeout_seconds must be positive")
         if int(self.max_input_tokens) <= 0:
