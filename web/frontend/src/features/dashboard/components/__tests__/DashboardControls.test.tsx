@@ -5,10 +5,12 @@ import { vi } from 'vitest';
 import { toast } from 'sonner';
 
 import { DashboardControls } from '../DashboardControls';
+import { useAuth } from '@/features/auth/useAuth';
 import { usePipeline } from '@/hooks/usePipeline';
 import { useStats } from '@/hooks/useStats';
 import { pipelineApi } from '@/services/pipelineApi';
 
+vi.mock('@/features/auth/useAuth');
 vi.mock('@/hooks/usePipeline');
 vi.mock('@/hooks/useStats');
 vi.mock('@/services/pipelineApi', () => ({
@@ -42,6 +44,7 @@ vi.mock('@/utils/indexedDB', () => ({
 
 const mockUsePipeline = usePipeline as ReturnType<typeof vi.fn>;
 const mockUseStats = useStats as ReturnType<typeof vi.fn>;
+const mockUseAuth = useAuth as ReturnType<typeof vi.fn>;
 const mockPipelineApi = pipelineApi as unknown as {
     getSources: ReturnType<typeof vi.fn>;
     fetchSource: ReturnType<typeof vi.fn>;
@@ -73,6 +76,7 @@ describe('DashboardControls', () => {
     const mockUploadResume = vi.fn();
 
     beforeEach(() => {
+        vi.unstubAllEnvs();
         vi.clearAllMocks();
 
         mockUsePipeline.mockReturnValue({
@@ -88,6 +92,27 @@ describe('DashboardControls', () => {
         });
 
         mockUseStats.mockReturnValue({ data: null });
+        mockUseAuth.mockReturnValue({
+            user: {
+                email: 'user@example.com',
+                name: 'Example User',
+            },
+            token: null,
+            tenants: [
+                {
+                    id: 'tenant-1',
+                    name: 'Default Tenant',
+                    role: 'owner',
+                    is_default: true,
+                },
+            ],
+            selectedTenantId: 'tenant-1',
+            isReady: true,
+            restoreError: null,
+            login: vi.fn(),
+            logout: vi.fn(),
+            retrySession: vi.fn(),
+        });
 
         mockPipelineApi.getSources.mockResolvedValue({
             data: {
@@ -688,6 +713,70 @@ describe('DashboardControls', () => {
             expect(mockPipelineApi.getCloudIntegrations).toHaveBeenCalledTimes(2);
             expect(mockPipelineApi.getUserAtsSources).toHaveBeenCalledTimes(2);
             expect(mockPipelineApi.getUserAtsSourceHistory).toHaveBeenCalledTimes(2);
+        });
+
+        it('waits for hosted auth readiness before loading protected source status', async () => {
+            vi.stubEnv('VITE_AUTH_REQUIRED', 'true');
+            mockUseAuth.mockReturnValue({
+                user: null,
+                token: null,
+                tenants: [],
+                selectedTenantId: null,
+                isReady: false,
+                restoreError: null,
+                login: vi.fn(),
+                logout: vi.fn(),
+                retrySession: vi.fn(),
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(mockPipelineApi.getSources).not.toHaveBeenCalled();
+            });
+            expect(mockPipelineApi.getCloudIntegrations).not.toHaveBeenCalled();
+            expect(mockPipelineApi.getUserAtsSources).not.toHaveBeenCalled();
+            expect(mockPipelineApi.getUserAtsSourceHistory).not.toHaveBeenCalled();
+        });
+
+        it('loads source status without a user when hosted auth is disabled', async () => {
+            mockUseAuth.mockReturnValue({
+                user: null,
+                token: null,
+                tenants: [],
+                selectedTenantId: null,
+                isReady: true,
+                restoreError: null,
+                login: vi.fn(),
+                logout: vi.fn(),
+                retrySession: vi.fn(),
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            await waitFor(() => {
+                expect(mockPipelineApi.getSources).toHaveBeenCalledWith({
+                    includeStatus: true,
+                });
+            });
+            expect(mockPipelineApi.getCloudIntegrations).toHaveBeenCalledTimes(1);
+            expect(mockPipelineApi.getUserAtsSources).toHaveBeenCalledTimes(1);
+            expect(mockPipelineApi.getUserAtsSourceHistory).toHaveBeenCalledTimes(1);
+        });
+
+        it('shows a session recovery message instead of a catalog error for auth failures', async () => {
+            mockPipelineApi.getSources.mockRejectedValueOnce(
+                Object.assign(new Error('Missing Authorization header.'), { status: 401 })
+            );
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            const alert = await screen.findByRole('alert');
+            expect(
+                within(alert).getByText('Session: Please sign in again to load source status.')
+            ).toBeInTheDocument();
+            expect(within(alert).queryByText(/Catalog:/)).not.toBeInTheDocument();
+            expect(within(alert).queryByText(/Missing Authorization header/i)).not.toBeInTheDocument();
         });
 
         it('lets users add their own ATS source from the fetch panel', async () => {

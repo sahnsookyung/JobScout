@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 
-import { readRequestedTenantId, setVerifiedTenantId } from '@/services/api';
+import { API_AUTH_FAILURE_EVENT, readRequestedTenantId, setVerifiedTenantId } from '@/services/api';
 import { cloudAuthApi } from '@/services/cloudAuthApi';
 import type { CloudTenant } from '@/types/api';
 
@@ -240,8 +240,13 @@ function loadStoredAuth(): AuthState {
 }
 
 function getErrorStatus(error: unknown): number | null {
-    if (typeof error !== 'object' || error === null || !('response' in error)) {
+    if (typeof error !== 'object' || error === null) {
         return null;
+    }
+
+    const status = (error as { status?: unknown }).status;
+    if (typeof status === 'number') {
+        return status;
     }
 
     const response = (error as { response?: { status?: unknown } }).response;
@@ -477,6 +482,20 @@ export function useAuth(): UseAuthResult {
         scheduleTokenRefresh();
         void bootstrapStoredSession();
         void bootstrapCookieSession();
+    }, []);
+
+    useEffect(() => {
+        if (!hostedAuthRequired() || globalThis.window === undefined) {
+            return undefined;
+        }
+
+        const handleAuthFailure = () => {
+            clearAuthState();
+        };
+        globalThis.window.addEventListener(API_AUTH_FAILURE_EVENT, handleAuthFailure);
+        return () => {
+            globalThis.window.removeEventListener(API_AUTH_FAILURE_EVENT, handleAuthFailure);
+        };
     }, []);
 
     return {

@@ -63,13 +63,14 @@ vi.mock('axios', () => {
     };
 });
 
-import { apiClient, readRequestedTenantId, setVerifiedTenantId } from '../api';
+import { API_AUTH_FAILURE_EVENT, apiClient, readRequestedTenantId, setVerifiedTenantId } from '../api';
 
 describe('apiClient', () => {
     const originalWindow = globalThis.window;
     const originalLocalStorage = globalThis.localStorage;
 
     beforeEach(() => {
+        vi.unstubAllEnvs();
         vi.clearAllMocks();
         setVerifiedTenantId(null);
         Object.defineProperty(globalThis, 'window', {
@@ -522,6 +523,32 @@ describe('apiClient', () => {
             return testErrorInterceptor(mockError, 'Network Error', {
                 code: 'common.network.request_failed',
             });
+        });
+
+        it('should emit a hosted auth failure event for unauthorized responses', async () => {
+            vi.stubEnv('VITE_AUTH_REQUIRED', 'true');
+            const listener = vi.fn();
+            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            window.addEventListener(API_AUTH_FAILURE_EVENT, listener);
+            const mockError = createMockError({
+                message: 'Unauthorized',
+                status: 401,
+                data: { error: 'Missing Authorization header.' },
+            });
+
+            const { responseHandler } = getMockHandlers();
+            await expect(responseHandler.rejected(mockError)).rejects.toMatchObject({
+                status: 401,
+                code: 'common.http.401',
+            });
+
+            expect(listener).toHaveBeenCalledTimes(1);
+            expect((listener.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({
+                code: 'common.http.401',
+                status: 401,
+            });
+            window.removeEventListener(API_AUTH_FAILURE_EVENT, listener);
+            consoleSpy.mockRestore();
         });
     });
 });

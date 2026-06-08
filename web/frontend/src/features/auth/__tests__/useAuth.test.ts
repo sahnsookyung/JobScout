@@ -11,6 +11,7 @@ vi.mock('@/services/cloudAuthApi', () => ({
 }));
 
 import { cloudAuthApi } from '@/services/cloudAuthApi';
+import { API_AUTH_FAILURE_EVENT } from '@/services/api';
 import type { CloudAuthExchangeResponse, CloudTenant, CloudUser } from '@/types/api';
 import { useAuth, __resetAuthForTests } from '../useAuth';
 
@@ -978,6 +979,31 @@ describe('useAuth', () => {
             expect(result.current.user).toBeNull();
             expect(result.current.token).toBeNull();
             expect(result.current.isReady).toBe(true);
+        });
+
+        it('clears stale hosted auth when the API reports an auth failure', async () => {
+            vi.stubEnv('VITE_AUTH_REQUIRED', 'true');
+            vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValue(
+                axiosResponse(buildCloudUser({ email: 'cookie@example.com', name: 'Cookie User' }))
+            );
+            vi.mocked(cloudAuthApi.listTenants).mockResolvedValue(
+                axiosResponse<CloudTenant[]>([
+                    { id: 'tenant-cookie', name: 'Cookie Tenant', role: 'owner', is_default: true },
+                ])
+            );
+
+            const { result } = renderHook(() => useAuth());
+            await flushAuthEffects();
+            await flushAuthEffects();
+
+            expect(result.current.user?.email).toBe('cookie@example.com');
+
+            act(() => {
+                window.dispatchEvent(new CustomEvent(API_AUTH_FAILURE_EVENT));
+            });
+
+            expect(result.current.user).toBeNull();
+            expect(result.current.selectedTenantId).toBeNull();
         });
 
         it('does not let a stale bootstrap response restore a logged-out session', async () => {

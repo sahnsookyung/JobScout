@@ -11,6 +11,8 @@ const MUTATION_METHODS = new Set(['post', 'put', 'patch', 'delete']);
 
 let verifiedTenantId: string | null = null;
 
+export const API_AUTH_FAILURE_EVENT = 'jobscout:auth-failure';
+
 export const apiClient = axios.create({
     baseURL: import.meta.env.VITE_API_URL || withAppBasePath('/api'),
     timeout: 30000,
@@ -95,6 +97,29 @@ function readCsrfCookie(): string | null {
 
 function isProductionLike(): boolean {
     return import.meta.env.PROD;
+}
+
+function hostedAuthRequired(): boolean {
+    return isProductionLike()
+        || String(import.meta.env.VITE_AUTH_REQUIRED ?? '').toLowerCase() === 'true';
+}
+
+function emitHostedAuthFailure(error: NormalizedApiError): void {
+    if (!hostedAuthRequired() || (error.status !== 401 && error.status !== 403)) {
+        return;
+    }
+    if (globalThis.window === undefined || typeof globalThis.CustomEvent !== 'function') {
+        return;
+    }
+
+    globalThis.window.dispatchEvent(
+        new CustomEvent(API_AUTH_FAILURE_EVENT, {
+            detail: {
+                code: error.code,
+                status: error.status,
+            },
+        })
+    );
 }
 
 apiClient.interceptors.request.use(
@@ -227,6 +252,7 @@ apiClient.interceptors.response.use(
     (response) => response,
     (error: AxiosError) => {
         const normalised = normalizeApiError(error);
+        emitHostedAuthFailure(normalised);
         if (!isProductionLike()) {
             console.error(`[API Error] ${normalised.status ?? 'network'}: ${normalised.message}`);
         }

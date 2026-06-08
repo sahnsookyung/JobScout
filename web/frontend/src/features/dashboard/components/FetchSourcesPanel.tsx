@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
+import { useAuth } from '@/features/auth/useAuth';
 import { pipelineApi } from '@/services/pipelineApi';
 import type {
     AtsSourceCreateRequest,
@@ -549,6 +550,30 @@ function apiErrorMessage(error: unknown): string {
     return data?.warnings?.[0] || data?.error || data?.message || (error instanceof Error ? error.message : 'Unknown error');
 }
 
+function apiErrorStatus(error: unknown): number | null {
+    if (typeof error !== 'object' || error === null) {
+        return null;
+    }
+
+    const status = (error as { status?: unknown }).status;
+    if (typeof status === 'number') {
+        return status;
+    }
+
+    const response = (error as { response?: { status?: unknown } }).response;
+    return typeof response?.status === 'number' ? response.status : null;
+}
+
+function isAuthError(error: unknown): boolean {
+    const status = apiErrorStatus(error);
+    return status === 401 || status === 403;
+}
+
+function hostedAuthRequiredForSources(): boolean {
+    return import.meta.env.PROD
+        || String(import.meta.env.VITE_AUTH_REQUIRED ?? '').toLowerCase() === 'true';
+}
+
 function historyActionLabel(action: string): string {
     if (action.endsWith('_created')) return 'Added';
     if (action.endsWith('_updated')) return 'Updated';
@@ -1063,6 +1088,15 @@ function sourceLoadMessages(args: {
     isHistoryError: boolean;
     historyError: unknown;
 }): string[] {
+    if (
+        (args.isSourcesError && isAuthError(args.sourcesError))
+        || (args.isCloudError && isAuthError(args.cloudError))
+        || (args.isUserSourcesError && isAuthError(args.userSourcesError))
+        || (args.isHistoryError && isAuthError(args.historyError))
+    ) {
+        return ['Session: Please sign in again to load source status.'];
+    }
+
     const messages: string[] = [];
     if (args.isSourcesError) messages.push(`Catalog: ${apiErrorMessage(args.sourcesError)}`);
     if (args.isCloudError) messages.push(`Tenant ATS sources: ${apiErrorMessage(args.cloudError)}`);
@@ -1674,6 +1708,8 @@ export function FetchSourcesPanel() {
     const [sourcePendingDelete, setSourcePendingDelete] = useState<FetchSource | null>(null);
     const latestDiscoveryKeyRef = useRef('');
     const queryClient = useQueryClient();
+    const { user, isReady: isAuthReady } = useAuth();
+    const canLoadProtectedSources = isAuthReady && (!hostedAuthRequiredForSources() || Boolean(user));
     const {
         data,
         isLoading,
@@ -1689,6 +1725,7 @@ export function FetchSourcesPanel() {
             return response.data;
         },
         staleTime: 5 * 60 * 1000,
+        enabled: canLoadProtectedSources,
     });
     const fetchSourceMutation = useMutation({
         mutationFn: async (source: string) => {
@@ -1716,6 +1753,7 @@ export function FetchSourcesPanel() {
             return response.status === 200 && Array.isArray(response.data) ? response.data : [];
         },
         staleTime: 5 * 60 * 1000,
+        enabled: canLoadProtectedSources,
     });
     const {
         data: userAtsSources = [],
@@ -1730,6 +1768,7 @@ export function FetchSourcesPanel() {
             return response.status === 200 && Array.isArray(response.data) ? response.data : [];
         },
         staleTime: 60 * 1000,
+        enabled: canLoadProtectedSources,
     });
     const {
         data: sourceHistory = [],
@@ -1743,6 +1782,7 @@ export function FetchSourcesPanel() {
             return response.status === 200 && Array.isArray(response.data) ? response.data : [];
         },
         staleTime: 60 * 1000,
+        enabled: canLoadProtectedSources,
     });
     const discoverUserSourceMutation = useMutation({
         mutationFn: async (payload: AtsSourceCreateRequest) => {
