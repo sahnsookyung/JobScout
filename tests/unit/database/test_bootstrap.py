@@ -150,6 +150,10 @@ def test_bootstrap_upgrades_stamped_schema_checksum_mismatch() -> None:
         ),
         patch.object(bootstrap_module, "_schema_checksum", return_value="expected-checksum"),
         patch.object(bootstrap_module.Base.metadata, "create_all") as create_all,
+        patch.object(
+            bootstrap_module,
+            "_apply_current_additive_schema_upgrades",
+        ) as apply_additive_upgrades,
         patch.object(bootstrap_module, "_verify_bootstrapped_schema") as verify_schema,
         patch.object(bootstrap_module, "_stamp_current_schema") as stamp_schema,
     ):
@@ -158,6 +162,7 @@ def test_bootstrap_upgrades_stamped_schema_checksum_mismatch() -> None:
         ]
 
     create_all.assert_called_once()
+    apply_additive_upgrades.assert_called_once()
     verify_schema.assert_called_once()
     stamp_schema.assert_called_once()
 

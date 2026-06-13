@@ -189,6 +189,28 @@ def _upgrade_legacy_schema_to_current(conn: Connection) -> None:
             """
         )
     )
+    _apply_current_additive_schema_upgrades(conn)
+
+
+def _apply_current_additive_schema_upgrades(conn: Connection) -> None:
+    """Apply idempotent additive changes that create_all() cannot add to old tables."""
+    conn.execute(
+        text(
+            """
+            ALTER TABLE job_post
+            ADD COLUMN IF NOT EXISTS description_source TEXT DEFAULT 'unknown' NOT NULL;
+
+            ALTER TABLE job_post
+            ADD COLUMN IF NOT EXISTS description_completeness TEXT DEFAULT 'unknown' NOT NULL;
+
+            ALTER TABLE job_post
+            ADD COLUMN IF NOT EXISTS description_warning_code TEXT;
+
+            ALTER TABLE llm_match_evaluation
+            ADD COLUMN IF NOT EXISTS analysis JSONB DEFAULT '{}'::jsonb NOT NULL;
+            """
+        )
+    )
     conn.execute(
         text(
             """
@@ -246,6 +268,7 @@ def _upgrade_stamped_schema_if_current(conn: Connection, applied: dict[str, str]
         return False
 
     Base.metadata.create_all(bind=conn)
+    _apply_current_additive_schema_upgrades(conn)
     _verify_bootstrapped_schema(conn)
     _stamp_current_schema(conn)
     return True

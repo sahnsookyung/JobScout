@@ -94,6 +94,20 @@ def _capture_additive_upgrade_path() -> dict:
                 table for table in Base.metadata.sorted_tables if table.name != "resume_variant"
             ]
             Base.metadata.create_all(engine, tables=previous_tables)
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                        ALTER TABLE job_post
+                        DROP COLUMN IF EXISTS description_source,
+                        DROP COLUMN IF EXISTS description_completeness,
+                        DROP COLUMN IF EXISTS description_warning_code;
+
+                        ALTER TABLE llm_match_evaluation
+                        DROP COLUMN IF EXISTS analysis;
+                        """
+                    )
+                )
 
             bootstrap_module.bootstrap_database(engine=engine)
             return schema_snapshot.capture(engine)
