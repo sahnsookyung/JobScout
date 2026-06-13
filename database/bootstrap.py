@@ -206,8 +206,17 @@ def _apply_current_additive_schema_upgrades(conn: Connection) -> None:
             ALTER TABLE job_post
             ADD COLUMN IF NOT EXISTS description_warning_code TEXT;
 
+            ALTER TABLE job_post
+            ADD COLUMN IF NOT EXISTS description_hash TEXT;
+
             ALTER TABLE llm_match_evaluation
             ADD COLUMN IF NOT EXISTS analysis JSONB DEFAULT '{}'::jsonb NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_job_post_description_hash
+            ON job_post (description_hash);
+
+            CREATE INDEX IF NOT EXISTS idx_llm_eval_owner_match_created
+            ON llm_match_evaluation (owner_id, job_match_id, created_at);
             """
         )
     )

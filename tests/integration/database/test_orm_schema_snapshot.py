@@ -101,10 +101,13 @@ def _capture_additive_upgrade_path() -> dict:
                         ALTER TABLE job_post
                         DROP COLUMN IF EXISTS description_source,
                         DROP COLUMN IF EXISTS description_completeness,
-                        DROP COLUMN IF EXISTS description_warning_code;
+                        DROP COLUMN IF EXISTS description_warning_code,
+                        DROP COLUMN IF EXISTS description_hash;
 
                         ALTER TABLE llm_match_evaluation
                         DROP COLUMN IF EXISTS analysis;
+
+                        DROP INDEX IF EXISTS idx_llm_eval_owner_match_created;
                         """
                     )
                 )
