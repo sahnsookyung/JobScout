@@ -176,8 +176,14 @@ matching:
     max_per_run: 10
     max_per_owner_per_day: 25
     reuse_ttl_days: 90
-    prompt_version: "match_llm_judge_v1"
-    schema_version: "match_llm_judge_schema_v1"
+    prompt_version: "match_llm_judge_v2"
+    schema_version: "match_llm_judge_schema_v2"
+    job_description_max_chars: 16000
+    requirements_max_count: 80
+    evidence_units_max_count: 80
+    evidence_unit_max_chars: 900
+    resume_summary_max_chars: 4000
+    public_analysis_max_chars: 2000
 
 preferences:
   default_mode: "semantic_rerank"

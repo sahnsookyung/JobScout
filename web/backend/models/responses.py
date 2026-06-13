@@ -37,6 +37,11 @@ class MatchLlmEvaluationSummary(BaseModel):
     summary: Optional[str] = None
     reason_codes: List[str] = Field(default_factory=list)
     requirement_verdicts: List[Dict[str, Any]] = Field(default_factory=list)
+    analysis: Dict[str, Any] = Field(default_factory=dict)
+    effective_for_rerank: bool = False
+    ignored_for_rerank_reason: Optional[str] = None
+    stale_status: Optional[str] = None
+    input_truncation: Dict[str, Any] = Field(default_factory=dict)
     provider: str
     model: str
     prompt_version: str
@@ -126,6 +131,13 @@ class MatchSummary(BaseModel):
     llm_score: Optional[float] = Field(default=None, ge=0, le=100)
     llm_confidence: Optional[float] = Field(default=None, ge=0, le=1)
     llm_judged_at: Optional[str] = None
+    llm_effective_for_rerank: bool = False
+    llm_ignored_for_rerank_reason: Optional[str] = None
+    llm_stale_status: Optional[str] = None
+    llm_original_rank: Optional[int] = None
+    llm_reranked_rank: Optional[int] = None
+    llm_rerank_score: Optional[float] = Field(default=None, ge=0, le=100)
+    llm_rerank_confidence: Optional[float] = Field(default=None, ge=0, le=1)
 
 
 class RequirementDetail(BaseModel):
@@ -148,6 +160,9 @@ class JobDetails(BaseModel):
     location: Optional[str] = None
     is_remote: Optional[bool] = None
     description: Optional[str] = None
+    description_source: str = "unknown"
+    description_completeness: str = "missing"
+    description_warning_code: Optional[str] = None
     salary_min: Optional[float] = None
     salary_max: Optional[float] = None
     currency: Optional[str] = None
@@ -178,6 +193,9 @@ class MatchDetail(BaseModel):
     llm_score: Optional[float] = Field(default=None, ge=0, le=100)
     llm_confidence: Optional[float] = Field(default=None, ge=0, le=1)
     llm_judged_at: Optional[str] = None
+    llm_effective_for_rerank: bool = False
+    llm_ignored_for_rerank_reason: Optional[str] = None
+    llm_stale_status: Optional[str] = None
 
     # Legacy fields
     base_score: float
@@ -200,12 +218,25 @@ class MatchDetailResponse(BaseModel):
     job: JobDetails
     requirements: List[RequirementDetail]
 
+class LlmRerankMetadata(BaseModel):
+    """Metadata for display-time LLM reranking of the primary pool."""
+
+    enabled: bool = False
+    available: bool = False
+    applied: bool = False
+    top_n: int = 0
+    window_size: int = 0
+    eligible_count: int = 0
+    reranked_count: int = 0
+    reason: Optional[str] = None
+
 
 class MatchesResponse(BaseModel):
     """Response containing list of matches."""
     success: bool
     count: int
     matches: List[MatchSummary]
+    llm_rerank: LlmRerankMetadata = Field(default_factory=LlmRerankMetadata)
 
 
 class ScoreDistribution(BaseModel):
@@ -237,6 +268,7 @@ class PolicyResponse(BaseModel):
     llm_judge_top_n: int = 5
     llm_judge_top_n_max: int = 10
     llm_judge_available: bool = False
+    llm_judge_unavailable_reason: str = "available"
     llm_judge_revision: int = 0
 
 

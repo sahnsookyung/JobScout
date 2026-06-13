@@ -28,6 +28,22 @@ function llmStatusLabel(status?: string | null): string | null {
     return status.replace(/_/g, ' ');
 }
 
+function llmOrderingLabel(match: MatchSummary): string | null {
+    if (match.llm_effective_for_rerank && match.llm_original_rank && match.llm_reranked_rank) {
+        if (match.llm_original_rank !== match.llm_reranked_rank) {
+            return `LLM-applied #${match.llm_original_rank} -> #${match.llm_reranked_rank}`;
+        }
+        return 'LLM-applied ordering';
+    }
+    if (match.llm_ignored_for_rerank_reason) {
+        return `LLM not applied: ${match.llm_ignored_for_rerank_reason.replace(/_/g, ' ')}`;
+    }
+    if (match.llm_evaluation_status === 'pending' || match.llm_evaluation_status === 'running') {
+        return 'LLM pending';
+    }
+    return null;
+}
+
 export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured = false }) => {
     const queryClient = useQueryClient();
 
@@ -89,6 +105,7 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
     }
 
     const coveragePct = Math.max(0, Math.min(100, reqCoverage));
+    const llmOrdering = llmOrderingLabel(match);
 
     return (
         <article
@@ -181,9 +198,19 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
                         <span
                             className="caption inline-flex items-center gap-1 text-accent"
                             title="LLM evaluation status"
+                            aria-label={llmStatusLabel(match.llm_evaluation_status) ?? undefined}
                         >
                             <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
                             {llmStatusLabel(match.llm_evaluation_status)}
+                        </span>
+                    )}
+                    {llmOrdering && (
+                        <span
+                            className="caption max-w-[12rem] text-right text-ink-muted"
+                            title={llmOrdering}
+                            aria-label={llmOrdering}
+                        >
+                            {llmOrdering}
                         </span>
                     )}
 

@@ -211,6 +211,11 @@ export const PolicyPanel: React.FC = () => {
                             <p className="mt-1 text-[13px] leading-relaxed text-ink-muted">
                                 Second-pass review for top matches.
                             </p>
+                            {!policy?.llm_judge_available && (
+                                <p className="mt-1 text-[12px] leading-relaxed text-warn">
+                                    {String(policy?.llm_judge_unavailable_reason ?? 'unavailable').replace(/_/g, ' ')}
+                                </p>
+                            )}
                         </div>
                         <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] text-ink">
                             <input

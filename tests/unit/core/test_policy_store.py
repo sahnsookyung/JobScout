@@ -34,6 +34,13 @@ def _make_config(
                 enabled=judge_enabled,
                 top_n_default=top_n_default,
                 top_n_max=top_n_max,
+                runtime=SimpleNamespace(
+                    base_url=base_url,
+                    model=model,
+                    api_key="judge-key" if llm_enabled else None,
+                    api_secret=None,
+                    headers=None,
+                ),
             ),
             scorer=SimpleNamespace(
                 semantic_fit=SimpleNamespace(

@@ -410,13 +410,38 @@ function RequirementGroup({
     );
 }
 
-function JobDescriptionSection({ description }: Readonly<{ description: string }>) {
+function metadataLabel(value: string | null | undefined): string {
+    if (!value) return 'unknown';
+    return value.replace(/_/g, ' ');
+}
+
+function JobDescriptionSection({ job }: Readonly<{ job: any }>) {
+    const description = typeof job.description === 'string' ? job.description : '';
+    const completeness = job.description_completeness ?? (description ? 'unknown' : 'missing');
+    const source = job.description_source ?? 'unknown';
+    const warningCode = job.description_warning_code ?? null;
+
     return (
         <section>
             <p className="caption">Description</p>
-            <h4 className="mt-1 text-[18px] font-medium text-ink">The original posting</h4>
-            <div className="mt-4 border-l-2 border-rule pl-5">
-                <p className="whitespace-pre-wrap text-[14px] leading-relaxed text-ink-soft">{description}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+                <h4 className="text-[18px] font-medium text-ink">The original posting</h4>
+                <Badge variant={completeness === 'full' ? 'success' : completeness === 'partial' ? 'warning' : 'default'}>
+                    {metadataLabel(completeness)}
+                </Badge>
+                <span className="caption">Source {metadataLabel(source)}</span>
+                {warningCode && (
+                    <span className="caption text-warn">{metadataLabel(warningCode)}</span>
+                )}
+            </div>
+            <div
+                className="mt-4 max-h-[28rem] overflow-y-auto border-l-2 border-rule pl-5 pr-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                tabIndex={0}
+                aria-label="Full job description"
+            >
+                <p className="whitespace-pre-wrap break-words text-[14px] leading-relaxed text-ink-soft">
+                    {description || 'No job description was available for this posting.'}
+                </p>
             </div>
         </section>
     );
@@ -436,7 +461,7 @@ function ModalBody({ isLoading, data, matchId }: Readonly<{ isLoading: boolean; 
             />
             <ResumeVariantPanel matchId={matchId} />
             <RequirementsSection requirements={data.requirements} fitExplanation={data.match.fit_explanation} />
-            {data.job.description && <JobDescriptionSection description={data.job.description} />}
+            <JobDescriptionSection job={data.job} />
         </div>
     );
 }

@@ -32,6 +32,13 @@ export interface MatchSummary {
     llm_score?: number | null;
     llm_confidence?: number | null;
     llm_judged_at?: string | null;
+    llm_effective_for_rerank?: boolean;
+    llm_ignored_for_rerank_reason?: string | null;
+    llm_stale_status?: string | null;
+    llm_original_rank?: number | null;
+    llm_reranked_rank?: number | null;
+    llm_rerank_score?: number | null;
+    llm_rerank_confidence?: number | null;
 }
 
 export interface RequirementDetail {
@@ -52,6 +59,9 @@ export interface JobDetails {
     location: string | null;
     is_remote: boolean | null;
     description: string | null;
+    description_source?: string;
+    description_completeness?: string;
+    description_warning_code?: string | null;
     salary_min: number | null;
     salary_max: number | null;
     currency: string | null;
@@ -78,6 +88,9 @@ export interface MatchDetail {
     llm_score?: number | null;
     llm_confidence?: number | null;
     llm_judged_at?: string | null;
+    llm_effective_for_rerank?: boolean;
+    llm_ignored_for_rerank_reason?: string | null;
+    llm_stale_status?: string | null;
     base_score: number;
     penalties: number;
     required_coverage: number;
@@ -116,6 +129,17 @@ export interface MatchLlmEvaluation {
     summary?: string | null;
     reason_codes: string[];
     requirement_verdicts: Array<Record<string, any>>;
+    analysis?: {
+        transferable_strengths?: string[];
+        gaps?: string[];
+        ranking_rationale?: string;
+        input_truncation?: Record<string, any>;
+        [key: string]: any;
+    };
+    effective_for_rerank?: boolean;
+    ignored_for_rerank_reason?: string | null;
+    stale_status?: string | null;
+    input_truncation?: Record<string, any>;
     provider: string;
     model: string;
     prompt_version: string;
@@ -144,6 +168,16 @@ export interface MatchesResponse {
     success: boolean;
     count: number;
     matches: MatchSummary[];
+    llm_rerank?: {
+        enabled: boolean;
+        available: boolean;
+        applied: boolean;
+        top_n: number;
+        window_size: number;
+        eligible_count: number;
+        reranked_count: number;
+        reason?: string | null;
+    };
 }
 
 export interface StatsResponse {
@@ -180,6 +214,7 @@ export interface PolicyConfig {
     llm_judge_top_n?: number;
     llm_judge_top_n_max?: number;
     llm_judge_available?: boolean;
+    llm_judge_unavailable_reason?: string;
     llm_judge_revision?: number;
 }
 

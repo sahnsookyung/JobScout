@@ -10,7 +10,9 @@ from typing import List, Optional, Dict, Any
 from core.redis_streams import _sanitize_log
 from sqlalchemy.orm import Session
 
+from core.llm_evaluation import MatchLlmEvaluationService
 from core.match_selection import resolve_canonical_resume_selection
+from core.policy import get_result_policy_store
 from core.ranking import rank_matches, RankingContext, RankingMode, get_ranking_policy_store
 from database.models import (
     JobMatch,
@@ -70,6 +72,16 @@ class MatchSummaryCandidate:
     selection_tier: str = "primary"
     excluded_reason: Optional[str] = None
     llm_evaluation: Any = None
+    resume_fingerprint: Optional[str] = None
+    job_post_id: Optional[str] = None
+    job_content_hash: Optional[str] = None
+    llm_original_rank: Optional[int] = None
+    llm_reranked_rank: Optional[int] = None
+    llm_effective_for_rerank: bool = False
+    llm_ignored_for_rerank_reason: Optional[str] = None
+    llm_stale_status: Optional[str] = None
+    llm_rerank_score: Optional[float] = None
+    llm_rerank_confidence: Optional[float] = None
 
 
 class MatchService:
@@ -77,6 +89,9 @@ class MatchService:
     
     def __init__(self, db: Session):
         self.db = db
+        self.last_llm_rerank_metadata: Dict[str, Any] = self._empty_llm_rerank_metadata(
+            reason="not_evaluated"
+        )
     
     def get_matches(
         self,
@@ -152,8 +167,26 @@ class MatchService:
         ]
         ctx = RankingContext(mode=mode, config=ranking_config)
         rank_matches(primary_pool, ctx)
+        for index, candidate in enumerate(primary_pool, start=1):
+            setattr(candidate, "llm_original_rank", index)
+
+        self._attach_latest_evaluations(
+            primary_pool,
+            owner_id=owner_id,
+            tenant_id=tenant_id,
+        )
+        self.last_llm_rerank_metadata = self._apply_llm_rerank(
+            primary_pool,
+            owner_id=owner_id,
+            tenant_id=tenant_id,
+        )
 
         if tier == "all":
+            self._attach_latest_evaluations(
+                excluded_pool,
+                owner_id=owner_id,
+                tenant_id=tenant_id,
+            )
             ranked = primary_pool + excluded_pool
             if top_k is not None:
                 ranked = ranked[:ranking_config.effective_top_k(top_k)]
@@ -161,11 +194,6 @@ class MatchService:
             effective_k = ranking_config.effective_top_k(top_k)
             ranked = primary_pool[:effective_k]
 
-        self._attach_latest_evaluations(
-            ranked,
-            owner_id=owner_id,
-            tenant_id=tenant_id,
-        )
         return [self._to_match_summary(m) for m in ranked]
 
     def _resolve_canonical_selection(
@@ -283,6 +311,9 @@ class MatchService:
             calculated_at=match.calculated_at,
             selection_tier=getattr(item, "selection_tier", "primary") or "primary",
             excluded_reason=getattr(item, "excluded_reason", None),
+            resume_fingerprint=getattr(match, "resume_fingerprint", None),
+            job_post_id=str(getattr(match, "job_post_id", "")),
+            job_content_hash=getattr(match, "job_content_hash", None),
         )
 
     def _attach_latest_evaluations(
@@ -331,6 +362,110 @@ class MatchService:
             evaluation = by_match_id.get(str(getattr(match, "id", "")))
             if evaluation is not None:
                 setattr(match, "llm_evaluation", evaluation)
+
+    @staticmethod
+    def _empty_llm_rerank_metadata(reason: str) -> Dict[str, Any]:
+        return {
+            "enabled": False,
+            "available": False,
+            "applied": False,
+            "top_n": 0,
+            "window_size": 0,
+            "eligible_count": 0,
+            "reranked_count": 0,
+            "reason": reason,
+        }
+
+    def _apply_llm_rerank(
+        self,
+        primary_pool: List[Any],
+        *,
+        owner_id: Optional[Any],
+        tenant_id: Optional[Any],
+    ) -> Dict[str, Any]:
+        if owner_id is None:
+            return self._empty_llm_rerank_metadata(reason="owner_missing")
+        if not primary_pool:
+            return self._empty_llm_rerank_metadata(reason="empty_primary_pool")
+
+        try:
+            policy = get_result_policy_store().get_llm_judge_policy(owner_id)
+        except Exception as exc:
+            logger.warning("Could not load LLM rerank policy: %s", exc)
+            return self._empty_llm_rerank_metadata(reason="policy_unavailable")
+
+        top_n = max(0, int(getattr(policy, "top_n", 0) or 0))
+        metadata = {
+            "enabled": bool(getattr(policy, "enabled", False)),
+            "available": bool(getattr(policy, "available", False)),
+            "applied": False,
+            "top_n": top_n,
+            "window_size": 0,
+            "eligible_count": 0,
+            "reranked_count": 0,
+            "reason": None,
+        }
+        if not getattr(policy, "available", False):
+            metadata["reason"] = getattr(policy, "unavailable_reason", None) or "unavailable"
+            return metadata
+        if not getattr(policy, "enabled", False):
+            metadata["reason"] = "disabled"
+            return metadata
+        if top_n <= 0:
+            metadata["reason"] = "top_n_zero"
+            return metadata
+
+        window_size = min(top_n, len(primary_pool))
+        window = primary_pool[:window_size]
+        metadata["window_size"] = window_size
+        judge_service = MatchLlmEvaluationService(self.db)
+        eligible_count = 0
+        for candidate in window:
+            evaluation = getattr(candidate, "llm_evaluation", None)
+            effectiveness = judge_service.evaluation_effectiveness(
+                candidate,
+                evaluation,
+                owner_id=owner_id,
+                tenant_id=tenant_id,
+            )
+            if evaluation is not None:
+                setattr(evaluation, "llm_effectiveness", effectiveness)
+            candidate.llm_effective_for_rerank = bool(effectiveness.get("effective_for_rerank"))
+            candidate.llm_ignored_for_rerank_reason = effectiveness.get("ignored_for_rerank_reason")
+            candidate.llm_stale_status = effectiveness.get("stale_status")
+            if candidate.llm_effective_for_rerank and evaluation is not None:
+                eligible_count += 1
+                candidate.llm_rerank_score = safe_float(evaluation.llm_score)
+                candidate.llm_rerank_confidence = safe_float(evaluation.confidence)
+
+        metadata["eligible_count"] = eligible_count
+        if eligible_count == 0:
+            metadata["reason"] = "no_current_successful_evaluations"
+            for index, candidate in enumerate(primary_pool, start=1):
+                candidate.llm_reranked_rank = index
+            return metadata
+
+        def sort_key(candidate: Any):
+            original_rank = int(getattr(candidate, "llm_original_rank", 0) or 0)
+            match_id = str(getattr(candidate, "id", ""))
+            if getattr(candidate, "llm_effective_for_rerank", False):
+                return (
+                    0,
+                    -(getattr(candidate, "llm_rerank_score", None) or 0.0),
+                    -(getattr(candidate, "llm_rerank_confidence", None) or 0.0),
+                    original_rank,
+                    match_id,
+                )
+            return (1, 0.0, 0.0, original_rank, match_id)
+
+        reranked_window = sorted(window, key=sort_key)
+        primary_pool[:window_size] = reranked_window
+        for index, candidate in enumerate(primary_pool, start=1):
+            candidate.llm_reranked_rank = index
+        metadata["applied"] = True
+        metadata["reranked_count"] = eligible_count
+        metadata["reason"] = "applied"
+        return metadata
 
     def _has_real_query_session(self) -> bool:
         """Return false for mocked sessions so optional enrichment stays inert in unit tests."""
@@ -567,6 +702,34 @@ class MatchService:
     def _float_or_zero(value: Optional[float]) -> float:
         return safe_float(value) if value is not None else 0.0
 
+    @staticmethod
+    def _optional_int_attr(obj: Any, name: str) -> Optional[int]:
+        value = getattr(obj, name, None)
+        if type(value).__module__.startswith("unittest.mock"):
+            return None
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        try:
+            return int(value) if value is not None else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _optional_float_attr(obj: Any, name: str) -> Optional[float]:
+        value = getattr(obj, name, None)
+        if type(value).__module__.startswith("unittest.mock"):
+            return None
+        return safe_float(value) if value is not None else None
+
+    @staticmethod
+    def _optional_str_attr(obj: Any, name: str) -> Optional[str]:
+        value = getattr(obj, name, None)
+        if type(value).__module__.startswith("unittest.mock"):
+            return None
+        return value if isinstance(value, str) else None
+
     def _to_match_summary(self, match: JobMatch) -> MatchSummary:
         """Convert ORM model to MatchSummary response model."""
         job_fields = self._extract_summary_job_fields(match)
@@ -605,6 +768,10 @@ class MatchService:
             scoring_degraded_reason=self._scoring_degraded_reason(getattr(match, "fit_components", None)),
             selection_tier=selection_tier or "primary",
             excluded_reason=excluded_reason,
+            llm_original_rank=self._optional_int_attr(match, "llm_original_rank"),
+            llm_reranked_rank=self._optional_int_attr(match, "llm_reranked_rank"),
+            llm_rerank_score=self._optional_float_attr(match, "llm_rerank_score"),
+            llm_rerank_confidence=self._optional_float_attr(match, "llm_rerank_confidence"),
             **self._llm_marker_fields(evaluation),
         )
     
@@ -623,6 +790,20 @@ class MatchService:
             owner_id=owner_id,
             tenant_id=tenant_id,
         )
+        if evaluation is not None and owner_id is not None:
+            try:
+                setattr(
+                    evaluation,
+                    "llm_effectiveness",
+                    MatchLlmEvaluationService(self.db).evaluation_effectiveness(
+                        match,
+                        evaluation,
+                        owner_id=owner_id,
+                        tenant_id=tenant_id,
+                    ),
+                )
+            except Exception as exc:
+                logger.warning("Could not annotate LLM evaluation freshness: %s", exc)
         preferred_requirement_coverage = safe_float(
             match.preferred_requirement_coverage
         )
@@ -773,9 +954,15 @@ class MatchService:
                 "llm_score": None,
                 "llm_confidence": None,
                 "llm_judged_at": None,
+                "llm_effective_for_rerank": False,
+                "llm_ignored_for_rerank_reason": None,
+                "llm_stale_status": None,
             }
         judged_at = getattr(evaluation, "completed_at", None)
         judged_at_iso = safe_datetime_iso(judged_at) if hasattr(judged_at, "isoformat") else None
+        effectiveness = getattr(evaluation, "llm_effectiveness", None)
+        if not isinstance(effectiveness, dict):
+            effectiveness = {}
         return {
             "llm_evaluation_status": status,
             "llm_evaluation_id": str(getattr(evaluation, "id", "")),
@@ -790,6 +977,9 @@ class MatchService:
                 else safe_float(evaluation.confidence)
             ),
             "llm_judged_at": judged_at_iso,
+            "llm_effective_for_rerank": bool(effectiveness.get("effective_for_rerank", False)),
+            "llm_ignored_for_rerank_reason": effectiveness.get("ignored_for_rerank_reason"),
+            "llm_stale_status": effectiveness.get("stale_status"),
         }
 
     def _to_job_details(self, job: Optional[JobPost]) -> JobDetails:
@@ -802,6 +992,9 @@ class MatchService:
                 location=None,
                 is_remote=None,
                 description=None,
+                description_source="unknown",
+                description_completeness="missing",
+                description_warning_code=None,
                 salary_min=None,
                 salary_max=None,
                 currency=None,
@@ -811,13 +1004,25 @@ class MatchService:
                 job_level=None,
             )
         
+        description = getattr(job, "description", None)
+        description_source = self._optional_str_attr(job, "description_source") or "unknown"
+        description_completeness = self._optional_str_attr(job, "description_completeness")
+        if not description:
+            description_completeness = "missing"
+        elif description_completeness is None:
+            description_completeness = "unknown"
+        description_warning_code = self._optional_str_attr(job, "description_warning_code")
+
         return JobDetails(
             job_id=str(job.id),
             title=job.title,
             company=job.company,
             location=job.location_text,
             is_remote=job.is_remote,
-            description=job.description,
+            description=description,
+            description_source=description_source,
+            description_completeness=description_completeness,
+            description_warning_code=description_warning_code,
             salary_min=safe_float(job.salary_min) if job.salary_min is not None else None,
             salary_max=safe_float(job.salary_max) if job.salary_max is not None else None,
             currency=job.currency,

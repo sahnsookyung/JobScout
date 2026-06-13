@@ -254,6 +254,67 @@ class TestSaveJobContent:
 
         assert mock_job.description == "Python dev"
 
+    def test_keeps_full_description_over_later_partial_snippet(self):
+        repo, mock_db = make_repo()
+        mock_job = MagicMock(spec=JobPost)
+        mock_job.description = "Full job description with responsibilities and requirements."
+        mock_job.description_source = "external_seed"
+        mock_job.description_completeness = "full"
+        mock_job.description_warning_code = None
+        mock_job.description_hash = repo._calculate_description_hash(mock_job.description)
+        mock_job.content_hash = "old-hash"
+        mock_job.extraction_status = "succeeded"
+        mock_db.execute.return_value.scalar_one.return_value = mock_job
+
+        repo.save_job_content(
+            "job-id",
+            {
+                "description": "Short snippet.",
+                "title": "Dev",
+                "company_name": "X",
+                "source_provider": "jobspy",
+                "source_metadata": {"description_completeness": "partial"},
+            },
+        )
+
+        assert mock_job.description == "Full job description with responsibilities and requirements."
+        assert mock_job.description_completeness == "full"
+        assert mock_job.raw_payload["description"] == mock_job.description
+        assert mock_job.raw_payload["latest_partial_description_payload"]["description"] == "Short snippet."
+
+    def test_trusted_full_description_upgrades_existing_partial(self):
+        repo, mock_db = make_repo()
+        mock_job = MagicMock(spec=JobPost)
+        mock_job.description = "Short snippet."
+        mock_job.description_source = "jobspy"
+        mock_job.description_completeness = "partial"
+        mock_job.description_warning_code = None
+        mock_job.description_hash = repo._calculate_description_hash(mock_job.description)
+        mock_job.content_hash = "old-hash"
+        mock_job.extraction_status = "succeeded"
+        mock_db.execute.return_value.scalar_one.return_value = mock_job
+
+        repo.save_job_content(
+            "job-id",
+            {
+                "description": "Full job description with responsibilities and requirements.",
+                "title": "Dev",
+                "company_name": "X",
+                "source_provider": "cloudflare_worker_seed",
+                "source_metadata": {
+                    "ingest_mode": "external_seed_fetch",
+                    "description_source": "external_seed",
+                    "description_completeness": "full",
+                    "trusted_description_metadata": True,
+                },
+            },
+        )
+
+        assert mock_job.description == "Full job description with responsibilities and requirements."
+        assert mock_job.description_source == "external_seed"
+        assert mock_job.description_completeness == "full"
+        assert mock_job.raw_payload["source_metadata"]["description_completeness"] == "full"
+
     def test_updates_content_hash_when_changed(self):
         repo, mock_db = make_repo()
         mock_job = MagicMock(spec=JobPost)

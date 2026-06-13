@@ -43,6 +43,7 @@ class LlmMatchEvaluation(Base):
     summary = Column(Text, nullable=True)
     reason_codes = Column(JSONB, nullable=False, default=list, server_default=sql_text("'[]'"))
     requirement_verdicts = Column(JSONB, nullable=False, default=list, server_default=sql_text("'[]'"))
+    analysis = Column(JSONB, nullable=False, default=dict, server_default=sql_text("'{}'"))
     error_code = Column(Text, nullable=True)
     retryable = Column(Boolean, nullable=False, default=False, server_default=sql_text("FALSE"))
 
@@ -55,6 +56,7 @@ class LlmMatchEvaluation(Base):
     __table_args__ = (
         Index("idx_llm_eval_owner_status_created", "owner_id", "status", "created_at"),
         Index("idx_llm_eval_owner_resume_created", "owner_id", "resume_fingerprint", "created_at"),
+        Index("idx_llm_eval_owner_match_created", "owner_id", "job_match_id", "created_at"),
         Index("idx_llm_eval_job_match", "job_match_id"),
         Index("idx_llm_eval_job_post", "job_post_id"),
         Index(

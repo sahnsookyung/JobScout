@@ -141,9 +141,41 @@ class _ScalarResult:
         return SimpleNamespace(all=lambda: self.rows)
 
 
+class _CapturingProvider:
+    def __init__(self):
+        self.calls = []
+
+    def extract_structured_data(self, text, schema_spec, system_prompt=None, user_message=None):
+        self.calls.append(
+            {
+                "text": text,
+                "schema_spec": schema_spec,
+                "system_prompt": system_prompt,
+                "user_message": user_message,
+            }
+        )
+        return {
+            "score": 78.5,
+            "confidence": 0.72,
+            "verdict": "good",
+            "summary": "The candidate is a plausible fit.",
+            "reason_codes": ["transferable_skills"],
+            "requirement_verdicts": [],
+            "transferable_strengths": ["Java experience transfers to Kotlin reasonably well."],
+            "gaps": ["No direct Kotlin production evidence."],
+            "ranking_rationale": "Strong adjacent JVM evidence with a remaining direct-language gap.",
+        }
+
+
 def _wire_minimal_generation(service, *, match=None, existing=None, created=None):
     service._get_match_for_owner = Mock(return_value=match or _match())
-    service._build_hash_payload = Mock(return_value=({"safe": "payload"}, _hashes()))
+    service.build_judge_input = Mock(
+        return_value=SimpleNamespace(
+            provider_payload={"safe": "payload"},
+            hashes=_hashes(),
+            truncation={"truncated": False, "fields": {}},
+        )
+    )
     service._find_active_cache = Mock(return_value=existing)
     service._check_daily_quota = Mock()
     service._create_pending_evaluation = Mock(
@@ -194,8 +226,39 @@ def test_failed_cache_is_tombstoned_and_retried():
     assert existing.status == LLM_EVALUATION_DELETED
     assert existing.summary is None
     service._check_daily_quota.assert_called_once_with("owner-1")
-    service._run_provider.assert_called_once_with(created, {"safe": "payload"})
+    service._run_provider.assert_called_once_with(
+        created,
+        {"safe": "payload"},
+        truncation={"truncated": False, "fields": {}},
+    )
     db.commit.assert_called_once()
+
+
+def test_run_provider_embeds_payload_in_user_message_for_openai_provider_path():
+    db = Mock()
+    provider = _CapturingProvider()
+    service = MatchLlmEvaluationService(db, config=_config(), llm_provider=provider)
+    evaluation = _evaluation(status=LLM_EVALUATION_PENDING)
+    payload = {
+        "job": {"description": "FULL JD SENTINEL"},
+        "resume_evidence_units": [{"source_text": "RESUME EVIDENCE SENTINEL"}],
+    }
+
+    service._run_provider(
+        evaluation,
+        payload,
+        truncation={"truncated": False, "fields": {}},
+    )
+
+    assert evaluation.status == LLM_EVALUATION_SUCCEEDED
+    assert provider.calls
+    call = provider.calls[0]
+    assert "FULL JD SENTINEL" in call["text"]
+    assert "RESUME EVIDENCE SENTINEL" in call["text"]
+    assert "FULL JD SENTINEL" in call["user_message"]
+    assert "RESUME EVIDENCE SENTINEL" in call["user_message"]
+    assert "<JUDGE_INPUT_JSON>" in call["user_message"]
+    db.flush.assert_called()
 
 
 def test_generate_infers_tenant_from_match_job_when_not_explicit():
@@ -456,7 +519,7 @@ def test_find_active_cache_filters_global_scope():
 
 
 def test_build_hash_payload_truncates_and_sanitizes_components():
-    requirement = SimpleNamespace(text="T" * 700)
+    requirement = SimpleNamespace(text="T" * 1000, req_type="required", tags={}, id="req-1")
     match_requirement = SimpleNamespace(
         job_requirement_unit_id="req-1",
         requirement=requirement,
@@ -482,8 +545,12 @@ def test_build_hash_payload_truncates_and_sanitizes_components():
             location_text="Tokyo",
             is_remote=True,
             content_hash="content-hash",
+            description_hash="description-hash",
             canonical_job_summary=None,
-            description="D" * 1900,
+            description="D" * 17000,
+            description_source="external_seed",
+            description_completeness="full",
+            description_warning_code=None,
             tenant_id=None,
         ),
         fit_score="81.25",
@@ -497,11 +564,14 @@ def test_build_hash_payload_truncates_and_sanitizes_components():
 
     payload, hashes = service._build_hash_payload(match)
 
-    assert payload["job"]["summary"].endswith("...")
-    assert payload["requirements"][0]["requirement_text"].endswith("...")
-    assert payload["requirements"][0]["evidence_score"] is None
-    assert payload["match"]["fit_components"] == {"fit_confidence": 0.9}
-    assert payload["match"]["preference_components"] == {"preference_mode_used": "semantic_rerank"}
+    assert payload["job"]["description"].endswith("...")
+    assert payload["job"]["description_metadata"]["completeness"] == "full"
+    assert payload["requirements"]["required"][0]["text"].endswith("...")
+    prior_match = payload["prior_deterministic_scores"]["requirement_matches"][0]
+    assert prior_match["evidence_text"].endswith("...")
+    assert prior_match["evidence_score"] is None
+    assert payload["prior_deterministic_scores"]["fit_components"] == {"fit_confidence": 0.9}
+    assert payload["prior_deterministic_scores"]["preference_components"] == {"preference_mode_used": "semantic_rerank"}
     assert set(hashes) == {"judge_config_hash", "evidence_hash", "input_hash"}
 
 

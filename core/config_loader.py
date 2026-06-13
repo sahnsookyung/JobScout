@@ -173,8 +173,14 @@ class MatchLlmJudgeConfig(BaseModel):
     max_per_run: int = 10
     max_per_owner_per_day: int = 25
     reuse_ttl_days: int = 90
-    prompt_version: str = "match_llm_judge_v1"
-    schema_version: str = "match_llm_judge_schema_v1"
+    prompt_version: str = "match_llm_judge_v2"
+    schema_version: str = "match_llm_judge_schema_v2"
+    job_description_max_chars: int = 16_000
+    requirements_max_count: int = 80
+    evidence_units_max_count: int = 80
+    evidence_unit_max_chars: int = 900
+    resume_summary_max_chars: int = 4_000
+    public_analysis_max_chars: int = 2_000
 
     def model_post_init(self, __context: Any) -> None:
         del __context
@@ -184,6 +190,12 @@ class MatchLlmJudgeConfig(BaseModel):
             "max_per_run",
             "max_per_owner_per_day",
             "reuse_ttl_days",
+            "job_description_max_chars",
+            "requirements_max_count",
+            "evidence_units_max_count",
+            "evidence_unit_max_chars",
+            "resume_summary_max_chars",
+            "public_analysis_max_chars",
         )
         for field_name in positive_fields:
             value = int(getattr(self, field_name))
@@ -192,6 +204,17 @@ class MatchLlmJudgeConfig(BaseModel):
             setattr(self, field_name, value)
         self.top_n_default = min(self.top_n_default, self.top_n_max)
         self.max_per_run = min(self.max_per_run, self.top_n_max)
+        caps = {
+            "job_description_max_chars": 32_000,
+            "requirements_max_count": 200,
+            "evidence_units_max_count": 200,
+            "evidence_unit_max_chars": 2_000,
+            "resume_summary_max_chars": 8_000,
+            "public_analysis_max_chars": 4_000,
+        }
+        for field_name, cap in caps.items():
+            if int(getattr(self, field_name)) > cap:
+                raise ValueError(f"matching.llm_judge.{field_name} must be <= {cap}")
 
 class MatcherConfig(BaseModel):
     """Configuration for vector retrieval."""
@@ -646,6 +669,12 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["MATCH_LLM_JUDGE_MAX_PER_RUN"], ["matching", "llm_judge", "max_per_run"]),
     (["MATCH_LLM_JUDGE_MAX_PER_OWNER_PER_DAY"], ["matching", "llm_judge", "max_per_owner_per_day"]),
     (["MATCH_LLM_JUDGE_REUSE_TTL_DAYS"], ["matching", "llm_judge", "reuse_ttl_days"]),
+    (["MATCH_LLM_JUDGE_JOB_DESCRIPTION_MAX_CHARS"], ["matching", "llm_judge", "job_description_max_chars"]),
+    (["MATCH_LLM_JUDGE_REQUIREMENTS_MAX_COUNT"], ["matching", "llm_judge", "requirements_max_count"]),
+    (["MATCH_LLM_JUDGE_EVIDENCE_UNITS_MAX_COUNT"], ["matching", "llm_judge", "evidence_units_max_count"]),
+    (["MATCH_LLM_JUDGE_EVIDENCE_UNIT_MAX_CHARS"], ["matching", "llm_judge", "evidence_unit_max_chars"]),
+    (["MATCH_LLM_JUDGE_RESUME_SUMMARY_MAX_CHARS"], ["matching", "llm_judge", "resume_summary_max_chars"]),
+    (["MATCH_LLM_JUDGE_PUBLIC_ANALYSIS_MAX_CHARS"], ["matching", "llm_judge", "public_analysis_max_chars"]),
     (["LLM_AS_A_JUDGE_PROVIDER"], ["matching", "llm_judge", "runtime", "provider"]),
     (["LLM_AS_A_JUDGE_BASE_URL"], ["matching", "llm_judge", "runtime", "base_url"]),
     (["LLM_AS_A_JUDGE_API_KEY", "GROQ_API_KEY"], ["matching", "llm_judge", "runtime", "api_key"]),

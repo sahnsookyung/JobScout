@@ -77,6 +77,10 @@ class JobPost(Base):
 
     # === Content Fields (Merged from JobPostContent) ===
     description = Column(Text)
+    description_source = Column(Text, nullable=False, default='unknown', server_default=sql_text("'unknown'"))
+    description_completeness = Column(Text, nullable=False, default='unknown', server_default=sql_text("'unknown'"))
+    description_warning_code = Column(Text)
+    description_hash = Column(Text)
     skills_raw = Column(Text) # CSV or raw string
     raw_payload = Column(JSONB, nullable=False, default={})
     content_hash = Column(Text)  # Hash of description for content change detection
@@ -135,6 +139,7 @@ class JobPost(Base):
         Index('idx_job_post_remote', 'is_remote'),
         Index('idx_job_post_tenant', 'tenant_id'),
         Index('idx_job_post_content_hash', 'content_hash'),
+        Index('idx_job_post_description_hash', 'description_hash'),
         Index('idx_job_post_extraction_retry', 'extraction_status', 'extraction_next_retry_at'),
         Index('idx_job_post_embedding_retry', 'embedding_status', 'embedding_next_retry_at'),
         # HNSW index for vector similarity search on summary_embedding

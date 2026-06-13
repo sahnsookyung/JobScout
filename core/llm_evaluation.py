@@ -28,19 +28,25 @@ from database.models import (
     JobMatch,
     JobMatchRequirement,
     JobPost,
+    JobRequirementUnit,
     LlmMatchEvaluation,
+    ResumeEvidenceUnitEmbedding,
     StructuredResume,
 )
 
 logger = logging.getLogger(__name__)
 
-MATCH_LLM_JUDGE_SCHEMA_NAME = "match_llm_judge_v1"
+MATCH_LLM_JUDGE_SCHEMA_NAME = "match_llm_judge_v2"
 MATCH_LLM_JUDGE_SYSTEM_PROMPT = """
 You are a careful resume-to-job relevance judge.
 
 Task
-- Review the provided deterministic match evidence.
-- Judge whether the job is relevant to the candidate based only on the supplied data.
+- Independently compare the packed job description and extracted requirements
+  against the structured resume summary and owner-scoped resume evidence units.
+- Treat prior deterministic scores as prior system output, not as ground truth.
+- Recognize transferable evidence when technologies are closely related
+  (for example Java and Kotlin), but explain the transfer rather than inventing
+  direct experience.
 - Do not invent experience, credentials, salary, location, or authorization facts.
 - Prefer concise, user-safe explanations.
 
@@ -65,6 +71,9 @@ class MatchEvaluationResponse(BaseModel):
     summary: str
     reason_codes: list[str] = Field(default_factory=list)
     requirement_verdicts: list[RequirementEvaluation] = Field(default_factory=list)
+    transferable_strengths: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+    ranking_rationale: str = ""
 
 
 MATCH_LLM_JUDGE_SCHEMA_SPEC = {
@@ -78,6 +87,13 @@ MATCH_LLM_JUDGE_SCHEMA_SPEC = {
 class EvaluationResult:
     evaluation: LlmMatchEvaluation
     reused: bool = False
+
+@dataclass(frozen=True)
+class JudgeInput:
+    provider_payload: dict[str, Any]
+    cache_payload: dict[str, Any]
+    hashes: dict[str, str]
+    truncation: dict[str, Any]
 
 
 class LlmJudgeUnavailableError(RuntimeError):
@@ -152,7 +168,19 @@ class MatchLlmEvaluationService:
             stmt = stmt.where(LlmMatchEvaluation.tenant_id.is_(None))
         else:
             stmt = stmt.where(LlmMatchEvaluation.tenant_id == effective_tenant_id)
-        return list(self.db.execute(stmt).scalars().all())
+        evaluations = list(self.db.execute(stmt).scalars().all())
+        for evaluation in evaluations:
+            setattr(
+                evaluation,
+                "llm_effectiveness",
+                self.evaluation_effectiveness(
+                    match,
+                    evaluation,
+                    owner_id=owner_id,
+                    tenant_id=effective_tenant_id,
+                ),
+            )
+        return evaluations
 
     def generate_for_match(
         self,
@@ -167,7 +195,12 @@ class MatchLlmEvaluationService:
 
         match = self._get_match_for_owner(match_id, owner_id=owner_id, tenant_id=tenant_id)
         effective_tenant_id = self._effective_tenant_id(match, tenant_id)
-        payload, hashes = self._build_hash_payload(match)
+        judge_input = self.build_judge_input(
+            match,
+            owner_id=owner_id,
+            tenant_id=effective_tenant_id,
+        )
+        hashes = judge_input.hashes
         existing = self._find_active_cache(
             owner_id=owner_id,
             tenant_id=effective_tenant_id,
@@ -215,7 +248,11 @@ class MatchLlmEvaluationService:
                 raise
             return EvaluationResult(existing_after_race, reused=True)
 
-        self._run_provider(evaluation, payload)
+        self._run_provider(
+            evaluation,
+            judge_input.provider_payload,
+            truncation=judge_input.truncation,
+        )
         self.db.commit()
         return EvaluationResult(evaluation, reused=False)
 
@@ -358,73 +395,524 @@ class MatchLlmEvaluationService:
             stmt = stmt.where(LlmMatchEvaluation.tenant_id == tenant_id)
         return self.db.execute(stmt).scalar_one_or_none()
 
+    def build_judge_input(
+        self,
+        match: JobMatch,
+        *,
+        owner_id: Any | None,
+        tenant_id: Any | None = None,
+    ) -> JudgeInput:
+        """Build the provider-safe judge payload and local cache hashes."""
+        del tenant_id
+        return self._build_judge_input(match, owner_id=owner_id)
+
     def _build_hash_payload(self, match: JobMatch) -> tuple[dict[str, Any], dict[str, str]]:
-        requirements = (
-            self.db.query(JobMatchRequirement)
-            .options(joinedload(JobMatchRequirement.requirement))
-            .filter(JobMatchRequirement.job_match_id == match.id)
-            .order_by(JobMatchRequirement.created_at.asc(), JobMatchRequirement.id.asc())
-            .all()
+        judge_input = self._build_judge_input(match, owner_id=None)
+        return judge_input.provider_payload, judge_input.hashes
+
+    def _build_judge_input(self, match: JobMatch, *, owner_id: Any | None) -> JudgeInput:
+        truncation: dict[str, Any] = {"truncated": False, "fields": {}}
+        job = self._load_job_for_match(match)
+        job_id = self._match_job_id(match)
+        description = self._truncate_with_metadata(
+            getattr(job, "description", None),
+            self._judge_limit("job_description_max_chars", 16_000),
+            truncation,
+            "job.description",
         )
-        job = match.job_post
-        requirement_payload = [
-            {
-                "requirement_id": str(req.job_requirement_unit_id),
-                "requirement_text": self._truncate(getattr(req.requirement, "text", None), 600),
-                "req_type": req.req_type,
-                "evidence_text": self._truncate(req.evidence_text, 900),
-                "evidence_section": self._truncate(req.evidence_section, 80),
-                "similarity_score": self._float(req.similarity_score),
-                "evidence_score": self._float(req.evidence_score),
-                "is_covered": bool(req.is_covered),
-            }
-            for req in requirements
-        ]
-        payload = {
-            "resume_fingerprint": match.resume_fingerprint,
+        match_requirements = self._load_match_requirements(match)
+        job_requirements = self._load_job_requirements(job)
+        if not job_requirements:
+            job_requirements = [
+                getattr(req, "requirement", None)
+                for req in match_requirements
+                if getattr(req, "requirement", None) is not None
+            ]
+        requirement_payload, requirement_id_map = self._serialize_requirements(
+            job_requirements,
+            truncation,
+        )
+        resume = self._load_resume(owner_id, getattr(match, "resume_fingerprint", None))
+        evidence_units = self._load_resume_evidence_units(
+            owner_id,
+            getattr(match, "resume_fingerprint", None),
+        )
+
+        provider_payload = {
+            "task": "independent_resume_job_match_review",
             "job": {
-                "job_id": str(match.job_post_id),
                 "title": self._truncate(getattr(job, "title", None), 200),
                 "company": self._truncate(getattr(job, "company", None), 200),
                 "location": self._truncate(getattr(job, "location_text", None), 200),
                 "is_remote": bool(getattr(job, "is_remote", False)),
-                "content_hash": getattr(job, "content_hash", None),
-                "summary": self._truncate(
-                    getattr(job, "canonical_job_summary", None) or getattr(job, "description", None),
-                    1800,
-                ),
-            },
-            "match": {
-                "fit_score": self._float(match.fit_score),
-                "preference_score": self._float(match.preference_score),
-                "required_coverage": self._float(match.required_coverage),
-                "preferred_requirement_coverage": self._float(match.preferred_requirement_coverage),
-                "penalties": self._float(match.penalties),
-                "fit_components": self._safe_components(match.fit_components),
-                "preference_components": self._safe_components(match.preference_components),
+                "description": description,
+                "description_metadata": {
+                    "source": str(getattr(job, "description_source", None) or "unknown"),
+                    "completeness": (
+                        str(getattr(job, "description_completeness", None) or "unknown")
+                        if description
+                        else "missing"
+                    ),
+                    "warning_code": getattr(job, "description_warning_code", None),
+                    "truncated_for_prompt": bool(
+                        truncation["fields"].get("job.description", {}).get("truncated")
+                    ),
+                },
             },
             "requirements": requirement_payload,
+            "resume": self._serialize_resume_summary(resume, truncation),
+            "resume_evidence_units": self._serialize_resume_evidence_units(
+                evidence_units,
+                truncation,
+            ),
+            "prior_deterministic_scores": {
+                "label": "prior deterministic output; use as context, not ground truth",
+                "fit_score": self._float(getattr(match, "fit_score", None)),
+                "preference_score": self._float(getattr(match, "preference_score", None)),
+                "required_coverage": self._float(getattr(match, "required_coverage", None)),
+                "preferred_requirement_coverage": self._float(
+                    getattr(match, "preferred_requirement_coverage", None)
+                ),
+                "penalties": self._float(getattr(match, "penalties", None)),
+                "fit_components": self._safe_components(getattr(match, "fit_components", None)),
+                "preference_components": self._safe_components(
+                    getattr(match, "preference_components", None)
+                ),
+                "requirement_matches": self._serialize_prior_requirement_matches(
+                    match_requirements,
+                    requirement_id_map,
+                    truncation,
+                ),
+            },
+            "input_metadata": {
+                "schema_version": str(self.judge_config.schema_version),
+                "prompt_version": str(self.judge_config.prompt_version),
+                "truncation": truncation,
+            },
         }
-        judge_config_payload = {
-            "provider": self.llm_config.provider,
-            "model": self.llm_config.model,
-            "structured_output_mode": self.llm_config.structured_output_mode,
-            "prompt_version": self.judge_config.prompt_version,
-            "schema_version": self.judge_config.schema_version,
+        judge_config_payload = self._judge_config_payload()
+        cache_payload = {
+            "job_post_id": str(job_id or ""),
+            "job_content_hash": getattr(job, "content_hash", None),
+            "job_description_hash": getattr(job, "description_hash", None),
+            "match_job_content_hash": getattr(match, "job_content_hash", None),
+            "provider_payload_hash": self._hash_json(provider_payload),
         }
-        evidence_hash = self._hash_json(payload)
+        evidence_hash = self._hash_json(provider_payload)
         judge_config_hash = self._hash_json(judge_config_payload)
         input_hash = self._hash_json(
             {
-                "payload": payload,
+                "provider_payload": provider_payload,
                 "judge_config": judge_config_payload,
             }
         )
-        return payload, {
-            "evidence_hash": evidence_hash,
-            "judge_config_hash": judge_config_hash,
-            "input_hash": input_hash,
+        return JudgeInput(
+            provider_payload=provider_payload,
+            cache_payload=cache_payload,
+            hashes={
+                "evidence_hash": evidence_hash,
+                "judge_config_hash": judge_config_hash,
+                "input_hash": input_hash,
+            },
+            truncation=truncation,
+        )
+
+    def evaluation_effectiveness(
+        self,
+        match: JobMatch,
+        evaluation: LlmMatchEvaluation | None,
+        *,
+        owner_id: Any | None,
+        tenant_id: Any | None = None,
+    ) -> dict[str, Any]:
+        """Return read-only rerank eligibility metadata for an evaluation."""
+        if evaluation is None:
+            return {
+                "effective_for_rerank": False,
+                "ignored_for_rerank_reason": "no_evaluation",
+                "stale_status": "missing",
+                "input_truncation": {},
+            }
+        if getattr(evaluation, "deleted_at", None) is not None:
+            return {
+                "effective_for_rerank": False,
+                "ignored_for_rerank_reason": "deleted",
+                "stale_status": "ignored",
+                "input_truncation": {},
+            }
+        status = getattr(evaluation, "status", None)
+        if status != LLM_EVALUATION_SUCCEEDED:
+            return {
+                "effective_for_rerank": False,
+                "ignored_for_rerank_reason": f"status_{status or 'unknown'}",
+                "stale_status": "ignored",
+                "input_truncation": {},
+            }
+        if getattr(evaluation, "llm_score", None) is None:
+            return {
+                "effective_for_rerank": False,
+                "ignored_for_rerank_reason": "missing_llm_score",
+                "stale_status": "ignored",
+                "input_truncation": {},
+            }
+
+        job = self._load_job_for_match(match)
+        current_job_hash = getattr(job, "content_hash", None)
+        match_job_hash = getattr(match, "job_content_hash", None)
+        if match_job_hash and current_job_hash and str(match_job_hash) != str(current_job_hash):
+            return {
+                "effective_for_rerank": False,
+                "ignored_for_rerank_reason": "stale_job_content",
+                "stale_status": "stale",
+                "input_truncation": {},
+            }
+
+        try:
+            judge_input = self.build_judge_input(match, owner_id=owner_id, tenant_id=tenant_id)
+        except Exception as exc:
+            logger.warning("Could not build current LLM judge input: %s", exc)
+            return {
+                "effective_for_rerank": False,
+                "ignored_for_rerank_reason": "current_input_unavailable",
+                "stale_status": "unknown",
+                "input_truncation": {},
+            }
+
+        for field_name, reason in (
+            ("judge_config_hash", "stale_config_hash"),
+            ("input_hash", "stale_input_hash"),
+            ("evidence_hash", "stale_evidence_hash"),
+        ):
+            if getattr(evaluation, field_name, None) != judge_input.hashes[field_name]:
+                return {
+                    "effective_for_rerank": False,
+                    "ignored_for_rerank_reason": reason,
+                    "stale_status": "stale",
+                    "input_truncation": judge_input.truncation,
+                }
+
+        return {
+            "effective_for_rerank": True,
+            "ignored_for_rerank_reason": None,
+            "stale_status": "current",
+            "input_truncation": judge_input.truncation,
         }
+
+    def _judge_limit(self, name: str, default: int) -> int:
+        value = getattr(self.judge_config, name, default)
+        try:
+            return max(1, int(value))
+        except Exception:
+            return default
+
+    def _judge_config_payload(self) -> dict[str, Any]:
+        return {
+            "provider": str(self.llm_config.provider),
+            "model": str(self.llm_config.model),
+            "structured_output_mode": str(self.llm_config.structured_output_mode),
+            "prompt_version": str(self.judge_config.prompt_version),
+            "schema_version": str(self.judge_config.schema_version),
+            "job_description_max_chars": self._judge_limit("job_description_max_chars", 16_000),
+            "requirements_max_count": self._judge_limit("requirements_max_count", 80),
+            "evidence_units_max_count": self._judge_limit("evidence_units_max_count", 80),
+            "evidence_unit_max_chars": self._judge_limit("evidence_unit_max_chars", 900),
+            "resume_summary_max_chars": self._judge_limit("resume_summary_max_chars", 4_000),
+        }
+
+    @staticmethod
+    def _match_job_id(match: Any) -> Any | None:
+        return getattr(match, "job_post_id", None) or getattr(match, "job_id", None)
+
+    def _load_job_for_match(self, match: Any) -> Any:
+        job = getattr(match, "job_post", None)
+        if job is not None:
+            return job
+        job_id = self._match_job_id(match)
+        if job_id is None:
+            return None
+        try:
+            get_method = getattr(self.db, "get", None)
+            if callable(get_method) and not type(get_method).__module__.startswith("unittest.mock"):
+                return get_method(JobPost, job_id)
+            return self.db.query(JobPost).get(job_id)
+        except Exception:
+            return None
+
+    def _load_job_requirements(self, job: Any) -> list[Any]:
+        if job is None:
+            return []
+        requirements = getattr(job, "requirements", None)
+        if requirements:
+            return sorted(
+                list(requirements),
+                key=lambda item: (
+                    getattr(item, "ordinal", None) is None,
+                    getattr(item, "ordinal", 0) or 0,
+                    str(getattr(item, "id", "")),
+                ),
+            )
+        job_id = getattr(job, "id", None)
+        if job_id is None:
+            return []
+        try:
+            return list(
+                self.db.query(JobRequirementUnit)
+                .filter(JobRequirementUnit.job_post_id == job_id)
+                .order_by(JobRequirementUnit.ordinal.asc(), JobRequirementUnit.created_at.asc())
+                .all()
+            )
+        except Exception:
+            return []
+
+    def _load_match_requirements(self, match: Any) -> list[Any]:
+        try:
+            return list(
+                self.db.query(JobMatchRequirement)
+                .options(joinedload(JobMatchRequirement.requirement))
+                .filter(JobMatchRequirement.job_match_id == match.id)
+                .order_by(JobMatchRequirement.created_at.asc(), JobMatchRequirement.id.asc())
+                .all()
+            )
+        except Exception:
+            return []
+
+    def _load_resume(self, owner_id: Any | None, resume_fingerprint: Any | None) -> Any:
+        if owner_id is None or resume_fingerprint is None:
+            return None
+        try:
+            return (
+                self.db.query(StructuredResume)
+                .filter(
+                    StructuredResume.owner_id == owner_id,
+                    StructuredResume.resume_fingerprint == resume_fingerprint,
+                )
+                .order_by(StructuredResume.updated_at.desc())
+                .first()
+            )
+        except Exception:
+            return None
+
+    def _load_resume_evidence_units(
+        self,
+        owner_id: Any | None,
+        resume_fingerprint: Any | None,
+    ) -> list[Any]:
+        if owner_id is None or resume_fingerprint is None:
+            return []
+        limit = self._judge_limit("evidence_units_max_count", 80)
+        try:
+            return list(
+                self.db.query(ResumeEvidenceUnitEmbedding)
+                .filter(
+                    ResumeEvidenceUnitEmbedding.owner_id == owner_id,
+                    ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint,
+                )
+                .order_by(
+                    ResumeEvidenceUnitEmbedding.source_section.asc(),
+                    ResumeEvidenceUnitEmbedding.evidence_unit_id.asc(),
+                    ResumeEvidenceUnitEmbedding.created_at.asc(),
+                )
+                .limit(limit + 1)
+                .all()
+            )
+        except Exception:
+            return []
+
+    def _serialize_requirements(
+        self,
+        requirements: list[Any],
+        truncation: dict[str, Any],
+    ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
+        grouped: dict[str, list[dict[str, Any]]] = {
+            "required": [],
+            "preferred": [],
+            "responsibility": [],
+            "constraint": [],
+            "benefit": [],
+            "other": [],
+        }
+        requirement_id_map: dict[str, str] = {}
+        max_count = self._judge_limit("requirements_max_count", 80)
+        if len(requirements) > max_count:
+            truncation["truncated"] = True
+            truncation["fields"]["requirements"] = {
+                "truncated": True,
+                "original_count": len(requirements),
+                "included_count": max_count,
+            }
+        for index, requirement in enumerate(requirements[:max_count], start=1):
+            public_id = f"req_{index}"
+            internal_id = getattr(requirement, "id", None)
+            if internal_id is not None:
+                requirement_id_map[str(internal_id)] = public_id
+            req_type = str(getattr(requirement, "req_type", None) or "other").lower()
+            if req_type not in grouped:
+                req_type = "other"
+            item = {
+                "requirement_id": public_id,
+                "type": req_type,
+                "text": self._truncate_with_metadata(
+                    getattr(requirement, "text", None),
+                    900,
+                    truncation,
+                    f"requirements.{public_id}.text",
+                ),
+                "tags": self._safe_json_object(getattr(requirement, "tags", None)),
+                "min_years": self._float(getattr(requirement, "min_years", None)),
+                "years_context": self._truncate(getattr(requirement, "years_context", None), 120),
+            }
+            grouped[req_type].append(item)
+        return grouped, requirement_id_map
+
+    def _serialize_prior_requirement_matches(
+        self,
+        match_requirements: list[Any],
+        requirement_id_map: dict[str, str],
+        truncation: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        payload: list[dict[str, Any]] = []
+        max_count = self._judge_limit("requirements_max_count", 80)
+        for index, req in enumerate(match_requirements[:max_count], start=1):
+            internal_req_id = str(getattr(req, "job_requirement_unit_id", "") or "")
+            public_id = requirement_id_map.get(internal_req_id, f"matched_req_{index}")
+            payload.append(
+                {
+                    "requirement_id": public_id,
+                    "requirement_text": self._truncate_with_metadata(
+                        getattr(getattr(req, "requirement", None), "text", None),
+                        600,
+                        truncation,
+                        f"prior_requirement_matches.{public_id}.requirement_text",
+                    ),
+                    "type": getattr(req, "req_type", None),
+                    "evidence_text": self._truncate_with_metadata(
+                        getattr(req, "evidence_text", None),
+                        self._judge_limit("evidence_unit_max_chars", 900),
+                        truncation,
+                        f"prior_requirement_matches.{public_id}.evidence_text",
+                    ),
+                    "evidence_section": self._truncate(getattr(req, "evidence_section", None), 80),
+                    "similarity_score": self._float(getattr(req, "similarity_score", None)),
+                    "evidence_score": self._float(getattr(req, "evidence_score", None)),
+                    "is_covered": bool(getattr(req, "is_covered", False)),
+                }
+            )
+        return payload
+
+    def _serialize_resume_summary(self, resume: Any, truncation: dict[str, Any]) -> dict[str, Any]:
+        if resume is None:
+            return {}
+        data = getattr(resume, "extracted_data", None)
+        summary = data if isinstance(data, dict) else {}
+        public_summary = {
+            key: summary[key]
+            for key in (
+                "headline",
+                "summary",
+                "skills",
+                "experience",
+                "projects",
+                "education",
+                "certifications",
+                "languages",
+            )
+            if key in summary
+        }
+        if getattr(resume, "total_experience_years", None) is not None:
+            public_summary["total_experience_years"] = self._float(resume.total_experience_years)
+        return self._cap_json_payload(
+            public_summary,
+            self._judge_limit("resume_summary_max_chars", 4_000),
+            truncation,
+            "resume.summary",
+        )
+
+    def _serialize_resume_evidence_units(
+        self,
+        units: list[Any],
+        truncation: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        max_count = self._judge_limit("evidence_units_max_count", 80)
+        if len(units) > max_count:
+            truncation["truncated"] = True
+            truncation["fields"]["resume_evidence_units"] = {
+                "truncated": True,
+                "original_count": len(units),
+                "included_count": max_count,
+            }
+        payload: list[dict[str, Any]] = []
+        for index, unit in enumerate(units[:max_count], start=1):
+            unit_id = f"ev_{index}"
+            payload.append(
+                {
+                    "unit_id": unit_id,
+                    "source_section": self._truncate(getattr(unit, "source_section", None), 80),
+                    "source_text": self._truncate_with_metadata(
+                        getattr(unit, "source_text", None),
+                        self._judge_limit("evidence_unit_max_chars", 900),
+                        truncation,
+                        f"resume_evidence_units.{unit_id}.source_text",
+                    ),
+                    "tags": self._safe_json_object(getattr(unit, "tags", None)),
+                    "years_value": self._float(getattr(unit, "years_value", None)),
+                    "years_context": self._truncate(getattr(unit, "years_context", None), 120),
+                    "is_total_years_claim": bool(getattr(unit, "is_total_years_claim", False)),
+                }
+            )
+        return payload
+
+    def _truncate_with_metadata(
+        self,
+        value: Any,
+        max_chars: int,
+        truncation: dict[str, Any],
+        field: str,
+    ) -> str:
+        text = "" if value is None else str(value)
+        if len(text) <= max_chars:
+            return text
+        truncation["truncated"] = True
+        truncation["fields"][field] = {
+            "truncated": True,
+            "original_chars": len(text),
+            "included_chars": max_chars,
+        }
+        return self._truncate(text, max_chars)
+
+    def _cap_json_payload(
+        self,
+        payload: dict[str, Any],
+        max_chars: int,
+        truncation: dict[str, Any],
+        field: str,
+    ) -> dict[str, Any]:
+        encoded = json.dumps(payload, sort_keys=True, default=str)
+        if len(encoded) <= max_chars:
+            return payload
+        truncation["truncated"] = True
+        truncation["fields"][field] = {
+            "truncated": True,
+            "original_chars": len(encoded),
+            "included_chars": max_chars,
+        }
+        return {"summary_text": self._truncate(encoded, max_chars)}
+
+    @staticmethod
+    def _safe_json_object(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        safe: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)[:80]
+            if isinstance(item, (str, int, float, bool)) or item is None:
+                safe[key_text] = item
+            elif isinstance(item, list):
+                safe[key_text] = [
+                    child
+                    for child in item[:20]
+                    if isinstance(child, (str, int, float, bool)) or child is None
+                ]
+        return safe
 
     def _create_pending_evaluation(
         self,
@@ -448,23 +936,33 @@ class MatchLlmEvaluationService:
             evidence_hash=hashes["evidence_hash"],
             input_hash=hashes["input_hash"],
             status=LLM_EVALUATION_PENDING,
+            analysis={},
         )
         self.db.add(evaluation)
         return evaluation
 
-    def _run_provider(self, evaluation: LlmMatchEvaluation, payload: dict[str, Any]) -> None:
+    def _run_provider(
+        self,
+        evaluation: LlmMatchEvaluation,
+        payload: dict[str, Any],
+        *,
+        truncation: dict[str, Any] | None = None,
+    ) -> None:
         evaluation.status = LLM_EVALUATION_RUNNING
         evaluation.started_at = self._utcnow()
         self.db.flush()
         try:
             provider = self._provider()
+            serialized_payload = json.dumps(payload, sort_keys=True)
             raw = provider.extract_structured_data(
-                text=json.dumps(payload, sort_keys=True),
+                text=serialized_payload,
                 schema_spec=MATCH_LLM_JUDGE_SCHEMA_SPEC,
                 system_prompt=MATCH_LLM_JUDGE_SYSTEM_PROMPT,
                 user_message=(
-                    "Evaluate this deterministic match record and return the requested JSON.\n\n"
-                    f"{json.dumps(payload, sort_keys=True)}"
+                    "Evaluate the resume evidence against the job and return the requested JSON.\n\n"
+                    "<JUDGE_INPUT_JSON>\n"
+                    f"{serialized_payload}\n"
+                    "</JUDGE_INPUT_JSON>"
                 ),
             )
             parsed = MatchEvaluationResponse.model_validate(raw)
@@ -477,6 +975,7 @@ class MatchLlmEvaluationService:
             evaluation.requirement_verdicts = [
                 item.model_dump() for item in parsed.requirement_verdicts[:50]
             ]
+            evaluation.analysis = self._analysis_payload(parsed, truncation or {})
             evaluation.error_code = None
             evaluation.retryable = False
         except Exception:
@@ -488,6 +987,7 @@ class MatchLlmEvaluationService:
             evaluation.summary = None
             evaluation.reason_codes = []
             evaluation.requirement_verdicts = []
+            evaluation.analysis = {}
             evaluation.error_code = "llm_judge_failed"
             evaluation.retryable = True
         finally:
@@ -535,9 +1035,33 @@ class MatchLlmEvaluationService:
         evaluation.summary = None
         evaluation.reason_codes = []
         evaluation.requirement_verdicts = []
+        evaluation.analysis = {}
         evaluation.error_code = None
         evaluation.retryable = False
         evaluation.deleted_at = self._utcnow()
+
+    def _analysis_payload(
+        self,
+        parsed: MatchEvaluationResponse,
+        truncation: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "transferable_strengths": [
+                self._truncate(item, 240)
+                for item in parsed.transferable_strengths[:8]
+                if str(item).strip()
+            ],
+            "gaps": [
+                self._truncate(item, 240)
+                for item in parsed.gaps[:8]
+                if str(item).strip()
+            ],
+            "ranking_rationale": self._truncate(
+                parsed.ranking_rationale,
+                self._judge_limit("public_analysis_max_chars", 2_000),
+            ),
+            "input_truncation": truncation if isinstance(truncation, dict) else {},
+        }
 
     @staticmethod
     def _utcnow() -> datetime:
@@ -602,6 +1126,26 @@ def evaluation_public_dict(evaluation: LlmMatchEvaluation) -> dict[str, Any]:
             return None
         return float(value)
 
+    def _cap_public(value, max_chars: int = 2000):
+        if isinstance(value, str):
+            return value if len(value) <= max_chars else value[: max_chars - 3] + "..."
+        if isinstance(value, list):
+            return [_cap_public(item, max_chars) for item in value[:50]]
+        if isinstance(value, dict):
+            return {
+                str(key)[:80]: _cap_public(item, max_chars)
+                for key, item in list(value.items())[:50]
+                if key not in {"provider_payload", "raw_payload", "prompt_payload"}
+            }
+        return value
+
+    analysis = getattr(evaluation, "analysis", None)
+    if not isinstance(analysis, dict):
+        analysis = {}
+    effectiveness = getattr(evaluation, "llm_effectiveness", None)
+    if not isinstance(effectiveness, dict):
+        effectiveness = {}
+
     return {
         "id": str(evaluation.id),
         "match_id": str(evaluation.job_match_id) if evaluation.job_match_id else None,
@@ -617,6 +1161,11 @@ def evaluation_public_dict(evaluation: LlmMatchEvaluation) -> dict[str, Any]:
             if isinstance(evaluation.requirement_verdicts, list)
             else []
         ),
+        "analysis": _cap_public(analysis),
+        "effective_for_rerank": bool(effectiveness.get("effective_for_rerank", False)),
+        "ignored_for_rerank_reason": effectiveness.get("ignored_for_rerank_reason"),
+        "stale_status": effectiveness.get("stale_status"),
+        "input_truncation": _cap_public(effectiveness.get("input_truncation", {})),
         "provider": evaluation.provider,
         "model": evaluation.model,
         "prompt_version": evaluation.prompt_version,

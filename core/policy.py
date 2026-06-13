@@ -21,6 +21,7 @@ class LlmJudgePolicy:
     top_n: int
     top_n_max: int
     available: bool
+    unavailable_reason: str = "available"
     revision: int = 0
 
 
@@ -42,38 +43,70 @@ def _llm_judge_config():
         config = load_config()
         matching_config = getattr(config, "matching", None)
         judge_config = getattr(matching_config, "llm_judge", None)
-        semantic_fit = getattr(getattr(matching_config, "scorer", None), "semantic_fit", None)
-        llm_config = getattr(semantic_fit, "llm", None)
-        return judge_config, llm_config
+        runtime_config = getattr(judge_config, "runtime", None)
+        return judge_config, runtime_config
     except Exception as exc:
         logger.warning("Could not load LLM judge config: %s", exc)
         return None, None
 
 
-def _llm_judge_available(judge_config=None, llm_config=None) -> bool:
-    if judge_config is None or llm_config is None:
-        judge_config, llm_config = _llm_judge_config()
-    return bool(
-        judge_config
-        and getattr(judge_config, "enabled", False)
-        and getattr(llm_config, "enabled", False)
-        and str(getattr(llm_config, "base_url", "") or "").strip()
-        and str(getattr(llm_config, "model", "") or "").strip()
+def _is_local_llm_endpoint(base_url: str) -> bool:
+    lowered = base_url.lower()
+    return any(
+        host in lowered
+        for host in ("localhost", "127.0.0.1", "host.docker.internal", "ollama")
     )
 
 
-def _default_llm_judge_policy() -> LlmJudgePolicy:
-    judge_config, llm_config = _llm_judge_config()
+def _llm_judge_availability(judge_config=None, runtime_config=None) -> tuple[bool, str]:
+    if judge_config is None or runtime_config is None:
+        judge_config, runtime_config = _llm_judge_config()
     if judge_config is None:
-        return LlmJudgePolicy(enabled=False, top_n=5, top_n_max=10, available=False)
+        return False, "config_missing"
+    if not getattr(judge_config, "enabled", False):
+        return False, "disabled"
+    if runtime_config is None:
+        return False, "runtime_missing"
+
+    base_url = str(getattr(runtime_config, "base_url", "") or "").strip()
+    if not base_url:
+        return False, "base_url_missing"
+    if not str(getattr(runtime_config, "model", "") or "").strip():
+        return False, "model_missing"
+    has_auth = bool(
+        getattr(runtime_config, "api_key", None)
+        or getattr(runtime_config, "api_secret", None)
+        or getattr(runtime_config, "headers", None)
+        or _is_local_llm_endpoint(base_url)
+    )
+    if not has_auth:
+        return False, "credentials_missing"
+    return True, "available"
+
+
+def _llm_judge_available(judge_config=None, llm_config=None) -> bool:
+    return _llm_judge_availability(judge_config, llm_config)[0]
+
+
+def _default_llm_judge_policy() -> LlmJudgePolicy:
+    judge_config, runtime_config = _llm_judge_config()
+    if judge_config is None:
+        return LlmJudgePolicy(
+            enabled=False,
+            top_n=5,
+            top_n_max=10,
+            available=False,
+            unavailable_reason="config_missing",
+        )
     top_n_max = int(getattr(judge_config, "top_n_max", 10) or 10)
     top_n = min(int(getattr(judge_config, "top_n_default", 5) or 5), top_n_max)
-    available = _llm_judge_available(judge_config, llm_config)
+    available, unavailable_reason = _llm_judge_availability(judge_config, runtime_config)
     return LlmJudgePolicy(
         enabled=bool(getattr(judge_config, "enabled", False)) and available,
         top_n=top_n,
         top_n_max=top_n_max,
         available=available,
+        unavailable_reason=unavailable_reason,
     )
 
 
@@ -120,6 +153,7 @@ class ResultPolicyStore:
                     top_n=top_n,
                     top_n_max=default_policy.top_n_max,
                     available=default_policy.available,
+                    unavailable_reason=default_policy.unavailable_reason,
                     revision=revision,
                 )
         except Exception as exc:
@@ -143,6 +177,7 @@ class ResultPolicyStore:
                 top_n=next_top_n,
                 top_n_max=current.top_n_max,
                 available=current.available,
+                unavailable_reason=current.unavailable_reason,
                 revision=current.revision,
             )
 
@@ -175,6 +210,7 @@ class ResultPolicyStore:
             top_n=next_top_n,
             top_n_max=current.top_n_max,
             available=current.available,
+            unavailable_reason=current.unavailable_reason,
             revision=next_revision,
         )
 

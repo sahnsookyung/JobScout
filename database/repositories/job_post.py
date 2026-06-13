@@ -1,4 +1,5 @@
 import logging
+import copy
 import json
 import hashlib
 import re
@@ -21,6 +22,22 @@ logger = logging.getLogger(__name__)
 EXTRACTION_RETRY_DELAYS_SECONDS = [60, 300, 900, 3600, 14400]
 EMBEDDING_RETRY_DELAYS_SECONDS = [60, 300, 900, 3600, 14400]
 STAGE_IN_PROGRESS_STALE_MINUTES = 30
+DESCRIPTION_COMPLETENESS_RANK = {
+    "missing": 0,
+    "unknown": 1,
+    "partial": 2,
+    "full": 3,
+}
+DESCRIPTION_SOURCE_RANK = {
+    "unknown": 0,
+    "untrusted": 0,
+    "jobspy": 1,
+    "scrape": 1,
+    "external_seed": 3,
+    "cloudflare_worker_seed": 3,
+}
+TRUSTED_DESCRIPTION_PROVIDERS = frozenset({"cloudflare_worker_seed"})
+TRUSTED_DESCRIPTION_INGEST_MODES = frozenset({"external_seed_fetch"})
 
 
 class JobPostRepository(BaseRepository):
@@ -145,15 +162,171 @@ class JobPostRepository(BaseRepository):
         content_str = '|'.join(str(part) for part in content_parts)
         return hashlib.sha256(content_str.encode('utf-8')).hexdigest()[:32]
 
+    @staticmethod
+    def _calculate_description_hash(description: Any) -> str | None:
+        if description is None:
+            return None
+        text = str(description).strip()
+        if not text:
+            return None
+        return hashlib.sha256(text.encode('utf-8')).hexdigest()[:32]
+
+    @staticmethod
+    def _clean_description(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        return text or None
+
+    @staticmethod
+    def _is_trusted_description_metadata(job_data: Dict[str, Any]) -> bool:
+        source_metadata = job_data.get("source_metadata")
+        metadata = source_metadata if isinstance(source_metadata, dict) else {}
+        provider = str(job_data.get("source_provider") or "").strip().lower()
+        ingest_mode = str(metadata.get("ingest_mode") or "").strip().lower()
+        return provider in TRUSTED_DESCRIPTION_PROVIDERS and (
+            ingest_mode in TRUSTED_DESCRIPTION_INGEST_MODES
+            or metadata.get("trusted_description_metadata") is True
+        )
+
+    def _description_metadata_from_job_data(
+        self,
+        job_data: Dict[str, Any],
+        description: str | None,
+    ) -> Dict[str, Any]:
+        source_metadata = job_data.get("source_metadata")
+        metadata = source_metadata if isinstance(source_metadata, dict) else {}
+        provider = str(job_data.get("source_provider") or "").strip().lower()
+        trusted = self._is_trusted_description_metadata(job_data)
+
+        raw_source = metadata.get("description_source") if trusted else None
+        source = str(raw_source or provider or "unknown").strip().lower() or "unknown"
+
+        raw_completeness = str(metadata.get("description_completeness") or "").strip().lower()
+        if not description:
+            completeness = "missing"
+        elif trusted and raw_completeness in DESCRIPTION_COMPLETENESS_RANK:
+            completeness = raw_completeness
+        elif raw_completeness == "partial":
+            completeness = "partial"
+        else:
+            completeness = "unknown"
+
+        warning_code = metadata.get("description_warning_code") if trusted else None
+        if warning_code is not None:
+            warning_code = str(warning_code).strip().lower() or None
+
+        return {
+            "source": source,
+            "completeness": completeness,
+            "warning_code": warning_code,
+            "source_rank": DESCRIPTION_SOURCE_RANK.get(source, 0),
+            "completeness_rank": DESCRIPTION_COMPLETENESS_RANK.get(completeness, 1),
+            "trusted": trusted,
+        }
+
+    @staticmethod
+    def _existing_description_metadata(job_post: JobPost) -> Dict[str, Any]:
+        source = str(getattr(job_post, "description_source", None) or "unknown").strip().lower()
+        completeness = str(
+            getattr(job_post, "description_completeness", None)
+            or ("unknown" if getattr(job_post, "description", None) else "missing")
+        ).strip().lower()
+        if completeness not in DESCRIPTION_COMPLETENESS_RANK:
+            completeness = "unknown" if getattr(job_post, "description", None) else "missing"
+        return {
+            "source": source or "unknown",
+            "completeness": completeness,
+            "warning_code": getattr(job_post, "description_warning_code", None),
+            "source_rank": DESCRIPTION_SOURCE_RANK.get(source, 0),
+            "completeness_rank": DESCRIPTION_COMPLETENESS_RANK.get(completeness, 1),
+            "trusted": False,
+        }
+
+    @staticmethod
+    def _should_replace_description(
+        *,
+        existing_description: str | None,
+        existing_metadata: Dict[str, Any],
+        incoming_description: str | None,
+        incoming_metadata: Dict[str, Any],
+    ) -> bool:
+        if not incoming_description:
+            return False
+        if not existing_description:
+            return True
+
+        incoming_rank = int(incoming_metadata.get("completeness_rank", 1))
+        existing_rank = int(existing_metadata.get("completeness_rank", 1))
+        if incoming_rank > existing_rank:
+            return True
+        if incoming_rank < existing_rank:
+            return False
+
+        incoming_source_rank = int(incoming_metadata.get("source_rank", 0))
+        existing_source_rank = int(existing_metadata.get("source_rank", 0))
+        if incoming_source_rank < existing_source_rank:
+            return False
+
+        return len(incoming_description) >= len(existing_description)
+
+    @staticmethod
+    def _set_description_metadata(
+        job_post: JobPost,
+        *,
+        description: str | None,
+        metadata: Dict[str, Any],
+    ) -> None:
+        job_post.description = description
+        job_post.description_source = str(metadata.get("source") or "unknown")
+        job_post.description_completeness = str(
+            metadata.get("completeness")
+            or ("unknown" if description else "missing")
+        )
+        job_post.description_warning_code = metadata.get("warning_code")
+        job_post.description_hash = JobPostRepository._calculate_description_hash(description)
+
     def save_job_content(self, job_post_id: Any, job_data: Dict[str, Any]) -> None:
         job_post = self.get_by_id(job_post_id)
 
-        new_content_hash = self._calculate_content_hash(job_data)
+        incoming_description = self._clean_description(job_data.get('description'))
+        incoming_metadata = self._description_metadata_from_job_data(job_data, incoming_description)
+        existing_description = self._clean_description(job_post.description)
+        existing_metadata = self._existing_description_metadata(job_post)
+        replace_description = self._should_replace_description(
+            existing_description=existing_description,
+            existing_metadata=existing_metadata,
+            incoming_description=incoming_description,
+            incoming_metadata=incoming_metadata,
+        )
+        effective_description = incoming_description if replace_description else existing_description
+        effective_metadata = incoming_metadata if replace_description else existing_metadata
+        effective_job_data = copy.deepcopy(job_data)
+        effective_job_data['description'] = effective_description
+
+        new_content_hash = self._calculate_content_hash(effective_job_data)
 
         content_changed = job_post.content_hash != new_content_hash
+        description_metadata_changed = (
+            str(getattr(job_post, "description_source", None) or "unknown")
+            != str(effective_metadata.get("source") or "unknown")
+            or str(getattr(job_post, "description_completeness", None) or "unknown")
+            != str(effective_metadata.get("completeness") or "unknown")
+            or getattr(job_post, "description_warning_code", None)
+            != effective_metadata.get("warning_code")
+        )
 
-        if not job_post.description or content_changed:
-            job_post.description = job_data.get('description')
+        if (
+            not job_post.description
+            or content_changed
+            or job_post.description_hash is None
+            or description_metadata_changed
+        ):
+            self._set_description_metadata(
+                job_post,
+                description=effective_description,
+                metadata=effective_metadata,
+            )
             if job_post.description and job_post.extraction_status == 'no_description':
                 job_post.extraction_status = 'pending'
                 logger.info(
@@ -161,13 +334,37 @@ class JobPostRepository(BaseRepository):
                     job_post_id,
                 )
 
-            if job_data.get('skills'):
-                job_post.skills_raw = json.dumps(job_data.get('skills'))
+            if effective_job_data.get('skills'):
+                job_post.skills_raw = json.dumps(effective_job_data.get('skills'))
 
-            job_post.raw_payload = job_data
+            raw_payload = copy.deepcopy(effective_job_data)
+            source_metadata = raw_payload.get('source_metadata')
+            if not isinstance(source_metadata, dict):
+                source_metadata = {}
+            source_metadata.update(
+                {
+                    "description_source": job_post.description_source,
+                    "description_completeness": job_post.description_completeness,
+                    "description_warning_code": job_post.description_warning_code,
+                    "description_hash": job_post.description_hash,
+                }
+            )
+            raw_payload['source_metadata'] = source_metadata
+            if (
+                incoming_description
+                and not replace_description
+                and incoming_description != effective_description
+            ):
+                raw_payload['latest_partial_description_payload'] = {
+                    "description": incoming_description,
+                    "description_source": incoming_metadata.get("source"),
+                    "description_completeness": incoming_metadata.get("completeness"),
+                    "description_warning_code": incoming_metadata.get("warning_code"),
+                }
+            job_post.raw_payload = raw_payload
 
-            if job_data.get('company_url'):
-                job_post.company_url = job_data.get('company_url')
+            if effective_job_data.get('company_url'):
+                job_post.company_url = effective_job_data.get('company_url')
 
             if content_changed:
                 job_post.content_hash = new_content_hash

@@ -135,6 +135,11 @@ class NormalizedJobRecord:
 
     def as_job_data(self) -> dict[str, Any]:
         payload = dict(self.raw_payload)
+        source_metadata = {
+            **self.metadata,
+            **self.source.metadata,
+            "site_name": self.source.site_name,
+        }
         payload.update(
             {
                 "title": self.title,
@@ -152,11 +157,7 @@ class NormalizedJobRecord:
                 "source_job_id": self.source.external_job_id,
                 "source_provider": self.source.provider,
                 "source_key": self.source.source_key,
-                "source_metadata": {
-                    **self.source.metadata,
-                    **self.metadata,
-                    "site_name": self.source.site_name,
-                },
+                "source_metadata": source_metadata,
             }
         )
         return payload

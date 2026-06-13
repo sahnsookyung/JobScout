@@ -136,6 +136,69 @@ class TestThreeStagePipeline:
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
+    @patch("web.backend.services.match_service.get_result_policy_store")
+    @patch("web.backend.services.match_service.MatchLlmEvaluationService")
+    def test_llm_rerank_applies_before_top_k_truncation(
+        self,
+        mock_judge_service_cls,
+        mock_llm_policy_store,
+        mock_store,
+        mock_rank,
+        mock_db,
+        service,
+    ):
+        from core.ranking.policy import RankingConfig
+
+        cfg = RankingConfig(
+            balanced_w_pref=0.6,
+            balanced_w_fit=0.4,
+            max_ranking_candidates=500,
+            default_top_k=1,
+            max_top_k=100,
+        )
+        mock_store.return_value.get_current_config.return_value = cfg
+        mock_llm_policy_store.return_value.get_llm_judge_policy.return_value = SimpleNamespace(
+            enabled=True,
+            available=True,
+            top_n=2,
+            unavailable_reason="available",
+        )
+        mock_judge_service = mock_judge_service_cls.return_value
+        mock_judge_service.evaluation_effectiveness.return_value = {
+            "effective_for_rerank": True,
+            "ignored_for_rerank_reason": None,
+            "stale_status": "current",
+            "input_truncation": {},
+        }
+
+        low_llm = _make_match("m1", fit_score=95)
+        high_llm = _make_match("m2", fit_score=90)
+        now = datetime.now(timezone.utc)
+        low_llm.llm_evaluation = SimpleNamespace(
+            id="eval-1",
+            status="succeeded",
+            llm_score=55,
+            confidence=0.9,
+            completed_at=now,
+        )
+        high_llm.llm_evaluation = SimpleNamespace(
+            id="eval-2",
+            status="succeeded",
+            llm_score=97,
+            confidence=0.8,
+            completed_at=now,
+        )
+        _wire_rankable_pool(service, [low_llm, high_llm])
+        mock_rank.side_effect = lambda p, ctx: p
+
+        results = service.get_matches(owner_id="owner-1", top_k=1)
+
+        assert [item.match_id for item in results] == ["m2"]
+        assert service.last_llm_rerank_metadata["applied"] is True
+        assert service.last_llm_rerank_metadata["eligible_count"] == 2
+
+    @patch("web.backend.services.match_service.rank_matches")
+    @patch("web.backend.services.match_service.get_ranking_policy_store")
     def test_rank_matches_receives_full_pool_before_truncation(
         self, mock_store, mock_rank, mock_db, service
     ):

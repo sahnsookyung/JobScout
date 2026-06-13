@@ -26,7 +26,7 @@ SCHEMA_VERSION = 1
 REQUEST_BODY_MAX_BYTES = 2 * 1024
 UPSTREAM_BODY_MAX_BYTES = 2 * 1024 * 1024
 RESPONSE_BODY_MAX_BYTES = 1024 * 1024
-JOB_DESCRIPTION_MAX_CHARS = 4_000
+JOB_DESCRIPTION_MAX_CHARS = 32_000
 MAX_JOBS_PER_SOURCE = 250
 MAX_GLOBAL_CALLS_PER_DAY = 250
 DEFAULT_GLOBAL_CALLS_PER_DAY = 100
@@ -421,12 +421,19 @@ def _validate_job(
         freshness_status = "fresh"
 
     description = raw_job.get("description")
+    description_warning_code = None
     if isinstance(description, str):
-        description = description.strip()[:JOB_DESCRIPTION_MAX_CHARS]
+        cleaned_description = description.strip()
+        if len(cleaned_description) > JOB_DESCRIPTION_MAX_CHARS:
+            description_warning_code = "truncated_by_ingest_cap"
+        description = cleaned_description[:JOB_DESCRIPTION_MAX_CHARS]
     else:
         description = None
 
     metadata = raw_job.get("metadata") if isinstance(raw_job.get("metadata"), dict) else {}
+    description_completeness = "missing"
+    if description:
+        description_completeness = "partial" if description_warning_code else "full"
     return (
         ExternalSeedJob(
             source_job_id=source_job_id,
@@ -447,6 +454,12 @@ def _validate_job(
                 key: value
                 for key, value in metadata.items()
                 if isinstance(key, str) and len(key) <= 80
+            } | {
+                "description_source": "external_seed",
+                "description_completeness": description_completeness,
+                "description_warning_code": description_warning_code,
+                "description_ingest_cap_chars": JOB_DESCRIPTION_MAX_CHARS,
+                "trusted_description_metadata": True,
             },
             freshness_status=freshness_status,
         ),

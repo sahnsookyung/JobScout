@@ -384,7 +384,13 @@ def test_validate_job_handles_invalid_shapes_and_non_string_description() -> Non
 
     assert warning is None
     assert job.description is None
-    assert job.metadata == {"ok": "kept"}
+    assert job.metadata["ok"] == "kept"
+    assert job.metadata["description_source"] == "external_seed"
+    assert job.metadata["description_completeness"] == "missing"
+    assert job.metadata["description_warning_code"] is None
+    assert job.metadata["trusted_description_metadata"] is True
+    assert 123 not in job.metadata
+    assert "x" * 90 not in job.metadata
 
 
 def test_external_seed_client_rejects_disabled_unallowed_and_unconfigured_sources() -> None:

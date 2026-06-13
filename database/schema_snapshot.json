@@ -586,6 +586,15 @@
     },
     {
       "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_post_description_hash ON public.job_post USING btree (description_hash)",
+      "name": "idx_job_post_description_hash",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_post",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
       "definition": "CREATE INDEX idx_job_post_embedding_retry ON public.job_post USING btree (embedding_status, embedding_next_retry_at)",
       "name": "idx_job_post_embedding_retry",
       "predicate": null,
@@ -738,6 +747,15 @@
       "access_method": "btree",
       "definition": "CREATE INDEX idx_llm_eval_job_post ON public.llm_match_evaluation USING btree (job_post_id)",
       "name": "idx_llm_eval_job_post",
+      "predicate": null,
+      "reloptions": null,
+      "table": "llm_match_evaluation",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_llm_eval_owner_match_created ON public.llm_match_evaluation USING btree (owner_id, job_match_id, created_at)",
+      "name": "idx_llm_eval_owner_match_created",
       "predicate": null,
       "reloptions": null,
       "table": "llm_match_evaluation",
@@ -1719,6 +1737,30 @@
           "type": "text"
         },
         {
+          "default": "'unknown'::text",
+          "name": "description_completeness",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "description_hash",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "'unknown'::text",
+          "name": "description_source",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "description_warning_code",
+          "nullable": true,
+          "type": "text"
+        },
+        {
           "default": null,
           "name": "emails",
           "nullable": true,
@@ -2088,6 +2130,12 @@
     },
     "llm_match_evaluation": {
       "columns": [
+        {
+          "default": "'{}'::jsonb",
+          "name": "analysis",
+          "nullable": false,
+          "type": "jsonb"
+        },
         {
           "default": null,
           "name": "completed_at",

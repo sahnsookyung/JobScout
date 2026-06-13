@@ -154,10 +154,15 @@ def get_matches(
         tenant_id=_request_tenant_id(request),
     )
 
+    llm_rerank = getattr(service, "last_llm_rerank_metadata", None)
+    if not isinstance(llm_rerank, dict):
+        llm_rerank = {}
+
     return MatchesResponse(
         success=True,
         count=len(matches),
-        matches=matches
+        matches=matches,
+        llm_rerank=llm_rerank,
     )
 
 

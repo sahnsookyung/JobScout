@@ -20,6 +20,9 @@ router = APIRouter(
 
 
 def _policy_response(policy, llm_policy) -> PolicyResponse:
+    unavailable_reason = getattr(llm_policy, "unavailable_reason", "available")
+    if not isinstance(unavailable_reason, str):
+        unavailable_reason = "available" if getattr(llm_policy, "available", False) else "unknown"
     return PolicyResponse(
         min_fit=policy.min_fit,
         top_k=policy.top_k,
@@ -28,6 +31,7 @@ def _policy_response(policy, llm_policy) -> PolicyResponse:
         llm_judge_top_n=llm_policy.top_n,
         llm_judge_top_n_max=llm_policy.top_n_max,
         llm_judge_available=llm_policy.available,
+        llm_judge_unavailable_reason=unavailable_reason,
         llm_judge_revision=llm_policy.revision,
     )
 

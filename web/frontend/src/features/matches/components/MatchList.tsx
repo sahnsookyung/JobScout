@@ -24,6 +24,20 @@ function degradedSummary(reason: string): string {
     return `Fallback scoring is active (${reason}).`;
 }
 
+function llmRerankSummary(rerank: any): string | null {
+    if (!rerank) return null;
+    if (rerank.applied) {
+        return `LLM-applied top ${rerank.window_size}`;
+    }
+    if (rerank.enabled && rerank.reason) {
+        return `LLM not applied: ${String(rerank.reason).replace(/_/g, ' ')}`;
+    }
+    if (rerank.available === false && rerank.reason) {
+        return `LLM unavailable: ${String(rerank.reason).replace(/_/g, ' ')}`;
+    }
+    return null;
+}
+
 function initialShowExcluded(): boolean {
     const params = new URLSearchParams(globalThis.location.search);
     return params.get('tier') === 'all' || params.get('showExcluded') === 'true';
@@ -59,6 +73,7 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
     const matches = data?.matches ?? [];
     const degradedReason = matches.find((m) => m.scoring_degraded_reason)?.scoring_degraded_reason ?? null;
     const excludedCount = stats?.excluded_count ?? 0;
+    const llmOrdering = llmRerankSummary(data?.llm_rerank);
 
     const strongCount = matches.filter((m) => !m.is_hidden && (m.fit_score ?? 0) >= 80).length;
 
@@ -134,7 +149,15 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                         )}
                     </span>
                 </div>
-                <span className="caption">Sorted by {rankingMode}</span>
+                <span className="caption" aria-label={llmOrdering ? `Sorted by ${rankingMode}. ${llmOrdering}` : undefined}>
+                    Sorted by {rankingMode}
+                    {llmOrdering && (
+                        <>
+                            <span className="mx-2 text-ink-faint">·</span>
+                            <span className="text-accent">{llmOrdering}</span>
+                        </>
+                    )}
+                </span>
             </header>
 
             {matches.length === 0 ? (

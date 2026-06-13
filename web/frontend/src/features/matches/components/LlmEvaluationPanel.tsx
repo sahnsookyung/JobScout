@@ -42,6 +42,17 @@ function latestEvaluation(data?: MatchLlmEvaluationListResponse): MatchLlmEvalua
     return data?.evaluations?.[0] ?? null;
 }
 
+function cleanLabel(value?: string | null): string {
+    if (!value) return '';
+    return value.replace(/_/g, ' ');
+}
+
+function stringList(value: unknown): string[] {
+    return Array.isArray(value)
+        ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        : [];
+}
+
 const actionButtonClasses = [
     'h-9 w-9 px-0 transition-all duration-150',
     'hover:-translate-y-0.5 hover:border-accent hover:bg-accent-soft hover:text-accent',
@@ -162,6 +173,17 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
     const isBusy = generateMutation.isPending || deleteMutation.isPending;
     const hasEvaluation = Boolean(evaluation);
     const score = typeof evaluation?.llm_score === 'number' ? formatScore(evaluation.llm_score) : null;
+    const analysis = evaluation?.analysis ?? {};
+    const transferableStrengths = stringList(analysis.transferable_strengths);
+    const gaps = stringList(analysis.gaps);
+    const rankingRationale = typeof analysis.ranking_rationale === 'string' ? analysis.ranking_rationale : '';
+    const requirementVerdicts = Array.isArray(evaluation?.requirement_verdicts)
+        ? evaluation.requirement_verdicts
+        : [];
+    const truncation = evaluation?.input_truncation ?? analysis.input_truncation ?? {};
+    const hasTruncation = Boolean((truncation as any)?.truncated);
+    const ignoredReason = evaluation?.ignored_for_rerank_reason;
+    const staleStatus = evaluation?.stale_status;
 
     return (
         <section className="border border-rule bg-surface p-5">
@@ -223,6 +245,9 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                     </span>
                 )}
                 {evaluation?.verdict && <span className="caption">{evaluation.verdict}</span>}
+                {staleStatus && staleStatus !== 'current' && (
+                    <span className="caption text-warn">{cleanLabel(staleStatus)}</span>
+                )}
             </div>
 
             {isLoading && !evaluation ? (
@@ -235,11 +260,76 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                 </p>
             )}
 
+            {ignoredReason && (
+                <p className="mt-4 border-l-2 border-warn/60 pl-3 text-[13px] leading-relaxed text-ink-soft">
+                    Not used for ordering: {cleanLabel(ignoredReason)}.
+                </p>
+            )}
+
+            {hasTruncation && (
+                <p className="mt-4 border-l-2 border-warn/60 pl-3 text-[13px] leading-relaxed text-ink-soft">
+                    Judge input was truncated for this review.
+                </p>
+            )}
+
+            {rankingRationale && (
+                <div className="mt-5 border-t border-rule pt-4">
+                    <p className="caption">Ranking rationale</p>
+                    <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">{rankingRationale}</p>
+                </div>
+            )}
+
+            {(transferableStrengths.length > 0 || gaps.length > 0) && (
+                <div className="mt-5 grid gap-4 md:grid-cols-2">
+                    {transferableStrengths.length > 0 && (
+                        <div>
+                            <p className="caption">Transferable strengths</p>
+                            <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-ink-soft">
+                                {transferableStrengths.map((item) => (
+                                    <li key={item} className="border-l-2 border-affirm/50 pl-3">{item}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                    {gaps.length > 0 && (
+                        <div>
+                            <p className="caption">Gaps</p>
+                            <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-ink-soft">
+                                {gaps.map((item) => (
+                                    <li key={item} className="border-l-2 border-warn/50 pl-3">{item}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {requirementVerdicts.length > 0 && (
+                <div className="mt-5 border-t border-rule pt-4">
+                    <p className="caption">LLM requirement verdicts</p>
+                    <div className="mt-3 grid gap-2">
+                        {requirementVerdicts.slice(0, 12).map((verdict, index) => (
+                            <div key={`${verdict.requirement_id ?? index}`} className="border border-rule bg-surface-sunk px-3 py-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <Badge variant={verdict.verdict === 'strong' ? 'success' : verdict.verdict === 'missing' ? 'warning' : 'info'}>
+                                        {cleanLabel(verdict.verdict ?? 'unknown')}
+                                    </Badge>
+                                    <span className="caption">{verdict.requirement_id ?? `req ${index + 1}`}</span>
+                                </div>
+                                {typeof verdict.reason === 'string' && (
+                                    <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">{verdict.reason}</p>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {evaluation?.reason_codes?.length ? (
                 <div className="mt-4 flex flex-wrap gap-2">
                     {evaluation.reason_codes.map((code) => (
                         <span key={code} className="caption border border-rule px-2 py-1">
-                            {code.replace(/_/g, ' ')}
+                            {cleanLabel(code)}
                         </span>
                     ))}
                 </div>
