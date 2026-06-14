@@ -702,7 +702,8 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config.base_url, "https://api.cerebras.ai/v1")
         self.assertEqual(config.model, "gpt-oss-120b")
         self.assertEqual(config.timeout_seconds, 60)
-        self.assertEqual(config.max_input_tokens, 60000)
+        self.assertEqual(config.structured_output_mode, "json_object")
+        self.assertEqual(config.max_input_tokens, 24000)
 
     def test_match_llm_judge_env_accepts_groq_provider(self):
         data = {"database": {"url": "test"}, "schedule": {"interval_seconds": 60}, "scrapers": []}

@@ -112,6 +112,14 @@ def _normalize_base_url(config: RuntimeLLMConfig) -> Optional[str]:
     return config.base_url
 
 
+def _normalize_structured_output_mode(
+    config: RuntimeLLMConfig,
+) -> Optional[Literal["auto", "json_schema", "json_object"]]:
+    if config.provider == "cerebras" and config.structured_output_mode in (None, "auto"):
+        return "json_object"
+    return config.structured_output_mode
+
+
 def build_llm_provider(config: RuntimeLLMConfig) -> LLMProvider:
     provider = _normalize_chat_provider(config.provider)
     if provider != "openai_compatible":
@@ -138,7 +146,7 @@ def build_llm_provider(config: RuntimeLLMConfig) -> LLMProvider:
         model_config=model_config,
         extraction_headers=config.headers,
         timeout_seconds=config.timeout_seconds,
-        structured_output_mode=config.structured_output_mode,
+        structured_output_mode=_normalize_structured_output_mode(config),
         embedding_base_url=config.embedding_base_url,
         embedding_api_key=config.embedding_api_key,
         embedding_api_secret=config.embedding_api_secret,

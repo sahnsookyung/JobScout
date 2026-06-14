@@ -48,7 +48,7 @@ def _config(
                     structured_output_mode="auto",
                     temperature=0.0,
                     timeout_seconds=20,
-                    max_input_tokens=4000,
+                    max_input_tokens=24000,
                 ),
                 max_per_run=10,
                 max_per_owner_per_day=max_per_owner_per_day,
@@ -667,6 +667,84 @@ def test_resume_summary_includes_full_nested_profile_skills_and_projects():
     assert truncation == {"truncated": False, "fields": {}}
 
 
+def test_judge_input_compacts_to_runtime_token_budget():
+    config = _config()
+    config.matching.llm_judge.runtime.max_input_tokens = 2000
+    service = _service(config)
+    requirement = SimpleNamespace(
+        text="Build TypeScript and React frontend experiences. " + ("Requirement detail. " * 200),
+        req_type="required",
+        tags={"technologies": ["TypeScript", "React"]},
+        min_years=None,
+        years_context=None,
+    )
+    resume = SimpleNamespace(
+        extracted_data={
+            "profile": {
+                "summary": "Frontend engineer with TypeScript, React, testing, and UI systems. " * 400,
+                "projects": [
+                    {
+                        "name": "Portfolio",
+                        "description": "Built TypeScript interfaces and React dashboards. " * 300,
+                    }
+                ],
+            }
+        },
+        total_experience_years=3.5,
+    )
+    evidence_unit = SimpleNamespace(
+        source_text="Built TypeScript Web Components and React overlays. " * 300,
+        source_section="Projects",
+        tags={"technologies": ["TypeScript", "React"]},
+        years_value=None,
+        years_context=None,
+        is_total_years_claim=False,
+    )
+    service._load_job_for_match = Mock(
+        return_value=SimpleNamespace(
+            title="Frontend Engineer",
+            company="Acme",
+            location_text="Tokyo",
+            is_remote=False,
+            description="Full job description mentioning TypeScript and React. " * 500,
+            description_source="external_seed",
+            description_completeness="full",
+            description_warning_code=None,
+            content_hash="content-hash",
+            description_hash="description-hash",
+        )
+    )
+    service._load_match_requirements = Mock(return_value=[])
+    service._load_job_requirements = Mock(return_value=[requirement])
+    service._load_resume = Mock(return_value=resume)
+    service._load_resume_evidence_units = Mock(return_value=[evidence_unit])
+
+    judge_input = service.build_judge_input(_match(), owner_id="owner-1")
+    token_budget = judge_input.provider_payload["input_metadata"]["token_budget"]
+
+    assert service._estimate_judge_prompt_tokens(judge_input.provider_payload) <= 2000
+    assert judge_input.truncation["truncated"] is True
+    assert judge_input.truncation["fields"]["llm_judge.prompt_token_budget"]["truncated"] is True
+    assert token_budget["max_input_tokens"] == 2000
+    assert token_budget["compacted"] is True
+    assert token_budget["within_budget"] is True
+    assert any(
+        field.get("reason") == "runtime_token_budget"
+        for field in judge_input.truncation["fields"].values()
+        if isinstance(field, dict)
+    )
+
+
+def test_judge_config_payload_includes_runtime_token_budget():
+    config = _config()
+    config.matching.llm_judge.runtime.max_input_tokens = 12345
+    service = _service(config)
+
+    payload = service._judge_config_payload()
+
+    assert payload["max_input_tokens"] == 12345
+
+
 def test_judge_input_prioritizes_late_requirement_relevant_resume_evidence():
     config = _config()
     config.matching.llm_judge.evidence_units_max_count = 3
@@ -829,6 +907,22 @@ def test_run_provider_marks_oversized_provider_request_with_specific_error():
 
     assert evaluation.status == LLM_EVALUATION_FAILED
     assert evaluation.error_code == "llm_judge_input_too_large"
+    assert evaluation.retryable is True
+
+
+def test_run_provider_marks_token_quota_failure_with_specific_error():
+    db = Mock()
+    provider = Mock()
+    provider_error = RuntimeError("Tokens per minute limit exceeded")
+    provider_error.status_code = 429
+    provider.extract_structured_data.side_effect = provider_error
+    service = MatchLlmEvaluationService(db, config=_config(), llm_provider=provider)
+    evaluation = _evaluation(status=LLM_EVALUATION_PENDING)
+
+    service._run_provider(evaluation, {"safe": "payload"})
+
+    assert evaluation.status == LLM_EVALUATION_FAILED
+    assert evaluation.error_code == "llm_judge_token_quota_exceeded"
     assert evaluation.retryable is True
 
 

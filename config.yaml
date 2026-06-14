@@ -176,8 +176,8 @@ matching:
       model: "gpt-oss-120b"
       temperature: 0.0
       timeout_seconds: 60
-      structured_output_mode: "auto"
-      max_input_tokens: 60000
+      structured_output_mode: "json_object"
+      max_input_tokens: 24000
     top_n_default: 5
     top_n_max: 10
     max_per_run: 10

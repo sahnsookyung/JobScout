@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -93,6 +94,11 @@ DEFAULT_EVIDENCE_UNITS_MAX_COUNT = 200
 DEFAULT_EVIDENCE_UNITS_SCAN_MAX_COUNT = 200
 DEFAULT_EVIDENCE_UNIT_MAX_CHARS = 4_000
 DEFAULT_RESUME_SUMMARY_MAX_CHARS = 64_000
+DEFAULT_LLM_JUDGE_MAX_INPUT_TOKENS = 24_000
+JUDGE_INPUT_ESTIMATED_CHARS_PER_TOKEN = 3.5
+JUDGE_INPUT_MIN_COMPACTED_STRING_CHARS = 400
+JUDGE_INPUT_COMPACTION_MAX_ITERATIONS = 300
+JUDGE_INPUT_TOKEN_BUDGET_FIELD = "llm_judge.prompt_token_budget"
 RESUME_PROVIDER_EXCLUDED_KEYS = {
     "embedding",
     "embeddings",
@@ -637,9 +643,11 @@ class MatchLlmEvaluationService:
             "input_metadata": {
                 "schema_version": str(self.judge_config.schema_version),
                 "prompt_version": str(self.judge_config.prompt_version),
+                "max_input_tokens": self._judge_token_budget(),
                 "truncation": truncation,
             },
         }
+        self._apply_provider_token_budget(provider_payload, truncation)
         judge_config_payload = self._judge_config_payload()
         cache_payload = {
             "job_post_id": str(job_id or ""),
@@ -755,11 +763,172 @@ class MatchLlmEvaluationService:
         except Exception:
             return default
 
+    def _judge_token_budget(self) -> int:
+        value = getattr(self.llm_config, "max_input_tokens", DEFAULT_LLM_JUDGE_MAX_INPUT_TOKENS)
+        try:
+            return max(1, int(value))
+        except Exception:
+            return DEFAULT_LLM_JUDGE_MAX_INPUT_TOKENS
+
+    def _apply_provider_token_budget(
+        self,
+        provider_payload: dict[str, Any],
+        truncation: dict[str, Any],
+    ) -> None:
+        """Compact the public judge payload only when it exceeds runtime input budget."""
+        budget = self._judge_token_budget()
+        input_metadata = provider_payload.setdefault("input_metadata", {})
+        token_budget_metadata = {
+            "max_input_tokens": budget,
+            "estimation": "chars_per_token",
+            "estimated_chars_per_token": JUDGE_INPUT_ESTIMATED_CHARS_PER_TOKEN,
+            "compacted": False,
+            "within_budget": True,
+        }
+        input_metadata["token_budget"] = token_budget_metadata
+
+        initial_tokens = self._estimate_judge_prompt_tokens(provider_payload)
+        token_budget_metadata["initial_estimated_tokens"] = initial_tokens
+        if initial_tokens <= budget:
+            token_budget_metadata["final_estimated_tokens"] = self._estimate_judge_prompt_tokens(
+                provider_payload
+            )
+            return
+
+        truncation["truncated"] = True
+        truncation["fields"][JUDGE_INPUT_TOKEN_BUDGET_FIELD] = {
+            "truncated": True,
+            "original_estimated_tokens": initial_tokens,
+            "max_input_tokens": budget,
+            "reason": "runtime_token_budget",
+        }
+        token_budget_metadata["compacted"] = True
+
+        for _ in range(JUDGE_INPUT_COMPACTION_MAX_ITERATIONS):
+            current_tokens = self._estimate_judge_prompt_tokens(provider_payload)
+            if current_tokens <= budget:
+                break
+            candidates = self._compaction_candidates(provider_payload)
+            if not candidates:
+                break
+            path, parent, key, text = max(candidates, key=lambda item: len(item[3]))
+            excess_tokens = max(1, current_tokens - budget)
+            excess_chars = math.ceil(
+                excess_tokens * JUDGE_INPUT_ESTIMATED_CHARS_PER_TOKEN * 1.15
+            ) + 256
+            new_len = max(JUDGE_INPUT_MIN_COMPACTED_STRING_CHARS, len(text) - excess_chars)
+            if new_len >= len(text):
+                new_len = max(JUDGE_INPUT_MIN_COMPACTED_STRING_CHARS, int(len(text) * 0.8))
+            if new_len >= len(text):
+                break
+            compacted = self._truncate(text, new_len)
+            if isinstance(parent, list) and isinstance(key, int):
+                parent[key] = compacted
+            elif isinstance(parent, dict):
+                parent[key] = compacted
+            self._record_token_budget_truncation(
+                truncation,
+                path=path,
+                original_chars=len(text),
+                included_chars=len(compacted),
+            )
+
+        final_tokens = self._estimate_judge_prompt_tokens(provider_payload)
+        token_budget_metadata["final_estimated_tokens"] = final_tokens
+        token_budget_metadata["within_budget"] = final_tokens <= budget
+        truncation["fields"][JUDGE_INPUT_TOKEN_BUDGET_FIELD][
+            "final_estimated_tokens"
+        ] = final_tokens
+        truncation["fields"][JUDGE_INPUT_TOKEN_BUDGET_FIELD]["within_budget"] = (
+            final_tokens <= budget
+        )
+        job = provider_payload.get("job")
+        if isinstance(job, dict):
+            description_metadata = job.get("description_metadata")
+            if isinstance(description_metadata, dict):
+                description_metadata["truncated_for_prompt"] = bool(
+                    truncation["fields"].get("job.description", {}).get("truncated")
+                )
+
+    def _estimate_judge_prompt_tokens(self, provider_payload: dict[str, Any]) -> int:
+        serialized_payload = json.dumps(provider_payload, sort_keys=True, default=str)
+        schema_text = json.dumps(MATCH_LLM_JUDGE_SCHEMA_SPEC["schema"], sort_keys=True)
+        prompt_text = (
+            f"{MATCH_LLM_JUDGE_SYSTEM_PROMPT}\n"
+            "Evaluate the resume evidence against the job and return the requested JSON.\n\n"
+            "<JUDGE_INPUT_JSON>\n"
+            f"{serialized_payload}\n"
+            "</JUDGE_INPUT_JSON>\n\n"
+            "Return a single valid JSON object matching this JSON Schema. "
+            "Do not include markdown fences or prose outside the JSON object.\n"
+            f"{schema_text}"
+        )
+        return max(1, math.ceil(len(prompt_text) / JUDGE_INPUT_ESTIMATED_CHARS_PER_TOKEN))
+
+    def _compaction_candidates(
+        self,
+        provider_payload: dict[str, Any],
+    ) -> list[tuple[str, Any, Any, str]]:
+        candidates: list[tuple[str, Any, Any, str]] = []
+        for key in ("job", "requirements", "resume", "resume_evidence_units"):
+            value = provider_payload.get(key)
+            self._collect_compaction_candidates(value, key, None, None, candidates)
+        return candidates
+
+    def _collect_compaction_candidates(
+        self,
+        value: Any,
+        path: str,
+        parent: Any,
+        key: Any,
+        candidates: list[tuple[str, Any, Any, str]],
+    ) -> None:
+        if isinstance(value, str):
+            if len(value) > JUDGE_INPUT_MIN_COMPACTED_STRING_CHARS:
+                candidates.append((path, parent, key, value))
+            return
+        if isinstance(value, dict):
+            for child_key, child_value in value.items():
+                child_path = f"{path}.{child_key}" if path else str(child_key)
+                self._collect_compaction_candidates(
+                    child_value,
+                    child_path,
+                    value,
+                    child_key,
+                    candidates,
+                )
+            return
+        if isinstance(value, list):
+            for index, child_value in enumerate(value):
+                child_path = f"{path}.{index}" if path else str(index)
+                self._collect_compaction_candidates(
+                    child_value,
+                    child_path,
+                    value,
+                    index,
+                    candidates,
+                )
+
+    def _record_token_budget_truncation(
+        self,
+        truncation: dict[str, Any],
+        *,
+        path: str,
+        original_chars: int,
+        included_chars: int,
+    ) -> None:
+        field = truncation["fields"].setdefault(path, {})
+        field["truncated"] = True
+        field["original_chars"] = max(int(field.get("original_chars", 0)), original_chars)
+        field["included_chars"] = included_chars
+        field["reason"] = "runtime_token_budget"
+
     def _judge_config_payload(self) -> dict[str, Any]:
         return {
             "provider": str(self.llm_config.provider),
             "model": str(self.llm_config.model),
             "structured_output_mode": str(self.llm_config.structured_output_mode),
+            "max_input_tokens": self._judge_token_budget(),
             "prompt_version": str(self.judge_config.prompt_version),
             "schema_version": str(self.judge_config.schema_version),
             "job_description_max_chars": self._judge_limit(
@@ -1179,6 +1348,12 @@ class MatchLlmEvaluationService:
         message = str(exc).lower()
         if status_code == 413 or "request too large" in message:
             return "llm_judge_input_too_large"
+        if (
+            status_code == 429
+            or "token_quota_exceeded" in message
+            or "tokens per minute" in message
+        ):
+            return "llm_judge_token_quota_exceeded"
         return "llm_judge_failed"
 
     def _is_reusable(self, evaluation: LlmMatchEvaluation) -> bool:

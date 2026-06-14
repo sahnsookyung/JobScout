@@ -114,7 +114,7 @@ def test_runtime_llm_config_from_match_judge_maps_cerebras_defaults():
     assert runtime_config.api_key == "cerebras-key"
     assert runtime_config.model == "gpt-oss-120b"
     assert runtime_config.timeout_seconds == 60
-    assert runtime_config.structured_output_mode == "auto"
+    assert runtime_config.structured_output_mode == "json_object"
 
 
 def test_build_llm_provider_constructs_openai_compatible_service():
@@ -167,6 +167,7 @@ def test_build_llm_provider_constructs_cerebras_alias_service():
     assert isinstance(provider, OpenAIService)
     assert str(provider.client.base_url).rstrip("/") == "https://api.cerebras.ai/v1"
     assert provider.extraction_model == "gpt-oss-120b"
+    assert provider.structured_output_mode == "json_object"
 
 
 def test_build_llm_provider_requires_model():

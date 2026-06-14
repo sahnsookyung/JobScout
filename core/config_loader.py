@@ -17,7 +17,7 @@ LlmJudgeProvider = Literal["openai_compatible", "groq", "cerebras"]
 GROQ_OPENAI_COMPATIBLE_BASE_URL = "https://api.groq.com/openai/v1"
 CEREBRAS_OPENAI_COMPATIBLE_BASE_URL = "https://api.cerebras.ai/v1"
 CEREBRAS_DEFAULT_MODEL = "gpt-oss-120b"
-CEREBRAS_DEFAULT_MAX_INPUT_TOKENS = 60_000
+CEREBRAS_DEFAULT_MAX_INPUT_TOKENS = 24_000
 
 
 class ScraperConfig(BaseModel):
@@ -165,6 +165,8 @@ class LlmJudgeRuntimeConfig(BaseModel):
                 self.base_url = CEREBRAS_OPENAI_COMPATIBLE_BASE_URL
             if not str(self.model or "").strip():
                 self.model = CEREBRAS_DEFAULT_MODEL
+            if self.structured_output_mode == "auto":
+                self.structured_output_mode = "json_object"
         if int(self.timeout_seconds) <= 0:
             raise ValueError("matching.llm_judge.runtime.timeout_seconds must be positive")
         if int(self.max_input_tokens) <= 0:
