@@ -1,285 +1,186 @@
 # JobScout
-![JobScout Dashboard](image.png)
-AI-powered job matching pipeline that scrapes, analyzes, and ranks jobs against your resume and preferences.
 
-## Features
+JobScout is an AI-assisted job search workshop. It ingests jobs, preserves the best available full job descriptions, builds resume evidence, ranks matches, and gives you an inspectable second-pass review before you spend time applying.
 
-- **ETL Pipeline**: Scrapes jobs from multiple sources (LinkedIn, Indeed, Glassdoor, TokyoDev, JapanDev)
-- **AI Extraction**: Uses any OpenAI-compatible LLM (Ollama, OpenAI, etc.) to extract structured requirements from job descriptions and resume
-- **Vector Search**: Hybrid retrieval with pgvector — dense embedding similarity + BM25 lexical fusion
-- **Semantic Fit Scoring**: Cross-encoder reranker (`BAAI/bge-reranker-v2-m3`) scores resume evidence against each requirement
-- **Preference Semantics**: LLM-powered reranker adjusts ranking based on natural language preferences set in the dashboard
-- **Ranking Pipeline**: Three ranking modes — `balanced`, `preference_first`, `fit_first` — configurable per request or globally
-- **Dashboard**: Web interface to browse ranked matches, view per-requirement evidence, hide jobs, and trigger the pipeline
+![JobScout dashboard](docs/assets/readme-dashboard.png)
+
+## What It Does
+
+- Imports and tracks job sources across configured seed feeds, job boards, and API-backed providers.
+- Stores the fullest available job description with source/completeness metadata so later snippets do not overwrite richer postings.
+- Extracts job requirements and compares them against resume evidence units, skills, projects, and experience.
+- Ranks matches with deterministic scoring, preference filters, hidden/excluded states, and configurable result policies.
+- Runs an optional independent LLM second-pass review against the job description and resume evidence.
+- Shows why each job matched, which requirements are covered, what is missing, and whether an LLM result is current enough to affect ordering.
+- Generates tailored resume drafts from the selected job, the resume profile, and match evidence.
+- Supports notifications, source health checks, local development, and cloud deployment paths.
+
+## Current UI
+
+The current frontend is a workbench, not a static report. The main page combines source status, result policy controls, ranking mode controls, preference visibility, notifications, and the live match list in one place.
+
+### Match Review
+
+Each result opens into a details modal with deterministic score cards, semantic-fit metadata, requirement coverage, LLM review status, resume draft actions, and the original posting.
+
+![Match details](docs/assets/readme-match-details.png)
+
+### Full Job Descriptions
+
+JobScout now displays the best available job description in the modal, including completeness/source labels and warning codes when the system only has a partial or missing description. Long descriptions are wrapped and contained in a scrollable region.
+
+![Full job description](docs/assets/readme-full-jd.png)
+
+## Matching Flow
+
+1. **Ingest jobs** from trusted source paths and seed feeds.
+2. **Preserve job content** using no-downgrade merging so a later short snippet does not replace a fuller posting.
+3. **Extract requirements** from the effective job description.
+4. **Build resume evidence** from the owner's resume profile, normalized skills, projects, and experience.
+5. **Generate candidates** with hybrid lexical and semantic retrieval.
+6. **Score deterministically** with requirement coverage, preference penalties, confidence, and fit thresholds.
+7. **Optionally judge with an LLM** using the full packed job description and owner-scoped resume evidence. The LLM review is cached by prompt, schema, config, resume, and job-content hashes so stale reviews can be displayed but ignored for ordering.
+8. **Rerank the configured top-N window** only when a current successful LLM evaluation is eligible.
+9. **Draft a tailored resume** from the selected job, resume profile, and match context.
+
+## LLM Runtime
+
+The second-pass judge is configured separately from extraction. It is intended to be an independent review of the job and resume evidence, not a rephrasing of deterministic scores.
+
+Typical local environment variables:
+
+```bash
+CEREBRAS_API_KEY=...
+LLM_AS_A_JUDGE_PROVIDER=cerebras
+LLM_AS_A_JUDGE_MODEL=gpt-oss-120b
+LLM_AS_A_JUDGE_BASE_URL=https://api.cerebras.ai/v1
+```
+
+The runtime configuration lives under `matching.llm_judge` in `config.yaml`. Hosted or OCI deployments must receive the same secret and runtime variables through their environment configuration.
 
 ## Architecture
 
-JobScout runs as a microservice stack:
+| Area | Responsibility |
+| --- | --- |
+| `etl/` | Source fetching, external seed imports, content normalization, requirement extraction |
+| `database/` | SQLAlchemy models, repositories, migrations, pgvector-backed storage |
+| `core/` | Matching, ranking, embeddings, LLM provider contracts, resume profiling |
+| `notification/` | Notification tracking and channel delivery |
+| `web/backend/` | FastAPI API used by the UI |
+| `web/frontend/` | React/TypeScript workbench UI |
+| `scripts/` | Local setup, deployment, smoke checks, and utility entrypoints |
 
-| Service | Role |
-|---------|------|
-| `orchestrator` | Schedules scraping, ETL, and matching; streams task progress over Redis |
-| `extraction` | LLM-based structured extraction from job descriptions and resume |
-| `embeddings` | Generates vector embeddings for resume and job requirements |
-| `scorer-matcher` | Hybrid retrieval, cross-encoder fit scoring, preference reranking |
-| `web-backend` | FastAPI dashboard API; serves match results and pipeline controls |
-| `web-ui` | React/Vite frontend |
+Runtime services:
+
+- PostgreSQL with pgvector for jobs, resumes, requirements, embeddings, matches, and cached evaluations.
+- Redis for queue-backed workers and background processing.
+- Optional Ollama/local embedding services depending on configuration.
+- Cerebras or another configured OpenAI-compatible provider for the second-pass judge.
 
 ## Quick Start
 
-### Prerequisites
-
-- **Python 3.13+** and **uv** (package manager)
-- **Docker** (for PostgreSQL with pgvector and Redis)
-- **Ollama** (optional — for local LLM inference; any OpenAI-compatible endpoint also works)
-- **Node.js 18+** (for frontend)
-
-### First-Time Setup
+Install dependencies:
 
 ```bash
-# 1. Install dependencies
 uv sync --all-groups
-cd web/frontend && npm install && cd ../..
-
-# 2. Copy and edit environment config
-cp .env.example .env
-# Edit .env — set notification secrets (e.g. DISCORD_WEBHOOK_URL), DB/Redis URLs if non-default
-
+cd web/frontend
+npm install
+cd ../..
 ```
 
-> **Resume**: Upload your resume (PDF or JSON) via the web dashboard. The old `resume.json` file config is deprecated and no longer used.
-> **Preferences**: Set your job preferences in natural language via the web dashboard.
+Create local configuration:
 
-### Start Everything
+```bash
+cp .env.example .env
+```
 
-**Start the full stack:**
+Start the full local stack:
 
 ```bash
 ./scripts/setup_local_env/start.sh
 ```
 
-**With local hot reload for backend and frontend:**
+For web development with hot reload:
 
 ```bash
-WEB_DEV=true ./scripts/setup_local_env/start.sh --web-app --web-ui
+WEB_DEV=true ./scripts/setup_local_env/start.sh --database --redis --web-app --web-ui
 ```
 
-**Access the app:**
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:8080
-- API Docs: http://localhost:8080/docs
-
-### View Logs
-
-```bash
-./scripts/setup_local_env/logs.sh           # Last 50 lines of all services
-./scripts/setup_local_env/logs.sh -f        # Follow in real-time
-./scripts/setup_local_env/logs.sh web-backend  # Single service
-```
-
-## Manual Startup
-
-### 1. Start Docker Services
-
-```bash
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.microservices.yml \
-  -f docker-compose.web.yml \
-  --profile web up -d
-
-# Run Ollama natively if your config points at localhost:11434
-ollama serve
-```
-
-### 2. Start Backend (FastAPI)
-
-**Docker (recommended):**
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.web.yml --profile web up -d web-backend
-```
-
-**Local development (with hot reload):**
-
-```bash
-uv sync --group web
-WEB_DEV=true uv run python -m uvicorn web.backend.app:app --host 127.0.0.1 --reload --port 8080
-```
-
-> **Security:** Use `--host 127.0.0.1` when running locally without Docker. Use `--host 0.0.0.0` only inside Docker containers where network isolation applies.
-
-### 3. Start Frontend (Vite)
+If the default Vite port is already in use, start the frontend manually on another port:
 
 ```bash
 cd web/frontend
-npm install  # first time only
-npm run dev
+npm run dev -- --host 127.0.0.1 --port 5174
 ```
 
-Frontend: http://localhost:5173 (proxies API requests to localhost:8080)
+## Common Workflow
 
-## Running the Pipeline
-
-Use the dashboard or API to upload your resume, trigger matching, and view results.
-
-```bash
-# Check whether the latest uploaded resume is eligible for matching
-curl http://localhost:8080/api/pipeline/resume-eligibility
-
-# Trigger a matching run
-curl -X POST http://localhost:8080/api/pipeline/run-matching
-
-# Check task status
-curl http://localhost:8080/api/pipeline/status/<task_id>
-```
+1. Open the web UI and review source status.
+2. Add or refresh job sources.
+3. Upload or update the resume profile.
+4. Run matching and tune the result policy.
+5. Open a job's match details to inspect deterministic requirement evidence.
+6. Generate or refresh the LLM second-pass review.
+7. Generate a tailored resume draft for jobs worth applying to.
+8. Hide, exclude, or notify on jobs as the shortlist changes.
 
 ## Configuration
 
-All configuration lives in `config.yaml`. Key sections:
+Core settings live in `config.yaml` and can be overridden with environment variables.
 
-### LLM Provider
+Important groups:
 
-JobScout uses any OpenAI-compatible endpoint for extraction, embedding, and preference reranking.
+- `database`: PostgreSQL connection and pgvector-backed persistence.
+- `etl`: source extraction, provider settings, and LLM-backed requirement extraction.
+- `matching`: thresholds, retrieval behavior, ranking policy, preferences, and LLM judge runtime.
+- `notifications`: notification channels and delivery behavior.
+- `web`: API and frontend runtime settings.
 
-```yaml
-etl:
-  llm:
-    provider: "openai_compatible"
-    base_url: "http://localhost:11434/v1"  # Ollama default; swap for OpenAI, etc.
-    api_key: "ollama"
-    extraction_model: "qwen3:14b"
-    embedding_model: "qwen3-embedding:4b"
-    embedding_dimensions: 1024
+Secrets belong in `.env` locally and in the deployment environment for hosted runs. Do not commit API keys.
+
+## Testing
+
+Run backend tests:
+
+```bash
+uv run python -m pytest tests/ -v
 ```
 
-Separate `embedding_base_url` / `embedding_api_key` overrides are available if you use a different provider for embeddings.
+Run only tests that do not require a database:
 
-### Matching & Fit Scoring
-
-```yaml
-matching:
-  matcher:
-    hybrid_retrieval_enabled: true    # dense + lexical fusion
-    similarity_threshold: 0.5
-  scorer:
-    semantic_fit:
-      cross_encoder:
-        local:
-          model_name: "BAAI/bge-reranker-v2-m3"
-    weight_required: 0.7              # blend required coverage with job similarity in fit score
-    penalty_missing_required: 15.0
-    penalty_seniority_mismatch: 10.0
+```bash
+uv run python -m pytest tests/ -v -m "not db"
 ```
 
-### Preference Semantics
+Run frontend checks:
 
-Natural language preferences set via the dashboard are parsed and used by an LLM (or cross-encoder) to rerank matches.
-
-```yaml
-preferences:
-  default_mode: "semantic_rerank"
-  reranker: "llm"                     # "llm" or "cross_encoder"
-  parser:
-    model: "qwen3:14b"
-  semantic_reranker:
-    model: "qwen3:14b"
-  llm_judge:
-    enabled: false                    # optional second-pass LLM judge
+```bash
+cd web/frontend
+npm run type-check
+npm run test -- --run
+npm run build
 ```
 
-### Ranking Pipeline
+Start the test database when database-marked tests are needed:
 
-Three ranking modes control how fit score and preference score are blended:
-
-```yaml
-ranking:
-  active_default_mode: "balanced"     # "balanced" | "preference_first" | "fit_first"
-  balanced_w_pref: 0.6
-  balanced_w_fit: 0.4
-  default_top_k: 25
-  max_ranking_candidates: 500
-```
-
-Override per-request via `?ranking_mode=preference_first` on the matches API.
-
-### Notifications
-
-```yaml
-notifications:
-  enabled: true
-  min_fit_for_alerts: 70.0
-  channels:
-    discord:
-      enabled: true
-      # Set DISCORD_WEBHOOK_URL env var
-```
-
-Supported channels: Discord, email (SMTP), Telegram, webhook. Mailpit is included in the local stack for email testing (SMTP at `localhost:1025`, UI at http://localhost:8025).
-
-### Scrapers
-
-```yaml
-scrapers:
-  - site_type: ["linkedin"]
-    search_term: "software engineer"
-    location: "Tokyo"
-    results_wanted: 50
-    hours_old: 168
-  # Also: indeed, glassdoor, tokyodev, japandev
+```bash
+docker-compose -f docker-compose.test.yml up -d
 ```
 
 ## Project Structure
 
+```text
+core/           Matching, scoring, embeddings, LLM provider interfaces
+database/       SQLAlchemy models, repositories, database setup
+etl/            Job ingestion, extraction, normalization, resume profiling
+notification/   Notification services and workers
+web/            FastAPI backend and React frontend
+tests/          Unit, router, service, ETL, and integration tests
+scripts/        Local setup, smoke tests, deployment helpers
+migrations/     Database migrations
+docs/assets/    README and product screenshots
 ```
-jobscout/
-├── config.yaml                  # All configuration
-├── core/                        # Shared AI/matching/scoring logic
-│   ├── matcher/                 # Hybrid retrieval (pgvector + lexical)
-│   ├── scorer/                  # Fit scoring, cross-encoder, persistence
-│   ├── ranking/                 # Ranking pipeline (balanced/preference_first/fit_first)
-│   └── llm/                     # Shared provider abstractions and structured extraction
-├── database/                    # SQLAlchemy models and repositories
-├── etl/                         # ETL orchestrator, resume profiler, schemas
-├── services/                    # Microservice entrypoints
-│   ├── orchestrator/            # Task scheduling and Redis stream coordination
-│   ├── extraction/              # LLM extraction service
-│   ├── embeddings/              # Embedding generation service
-│   └── scorer_matcher/          # Matching, preference parsing, and preference reranking
-├── notification/                # Notification channels, worker, tracker
-├── pipeline/                    # Matching pipeline
-├── web/
-│   ├── backend/                 # FastAPI backend (routers, services, models)
-│   └── frontend/                # React + Vite frontend
-├── tests/                       # Unit and integration tests
-├── scripts/
-│   └── setup_local_env/         # start.sh, logs.sh, local stack helpers
-└── docker-compose*.yml          # Docker service definitions
-```
-
-## Testing
-
-```bash
-# All tests (unit + integration if DB available)
-uv run python -m pytest tests/ -v
-
-# Unit tests only (no database required)
-uv run python -m pytest tests/ -v -m "not db"
-
-# Start the transient test database for integration tests
-docker compose -f docker-compose.test.yml up -d
-
-# Remove the test container and tmpfs-backed state after testing
-docker compose -f docker-compose.test.yml down --remove-orphans --volumes
-```
-
-## Dependencies
-
-- **Python 3.13+** with **uv**
-- **Docker**: PostgreSQL (pgvector), Redis
-- **Ollama** or any OpenAI-compatible LLM endpoint
-- **Node.js 18+** (frontend)
 
 ## License
 
-GNU Affero General Public License v3.0
+This project is licensed under the AGPL License.
