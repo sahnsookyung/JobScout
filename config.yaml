@@ -181,9 +181,9 @@ matching:
     job_description_max_chars: 6000
     requirements_max_count: 40
     requirement_text_max_chars: 500
-    evidence_units_max_count: 32
-    evidence_unit_max_chars: 450
-    resume_summary_max_chars: 2000
+    evidence_units_max_count: 24
+    evidence_unit_max_chars: 320
+    resume_summary_max_chars: 1500
     public_analysis_max_chars: 1500
 
 preferences:

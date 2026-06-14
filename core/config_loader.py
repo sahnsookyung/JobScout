@@ -178,9 +178,9 @@ class MatchLlmJudgeConfig(BaseModel):
     job_description_max_chars: int = 6_000
     requirements_max_count: int = 40
     requirement_text_max_chars: int = 500
-    evidence_units_max_count: int = 32
-    evidence_unit_max_chars: int = 450
-    resume_summary_max_chars: int = 2_000
+    evidence_units_max_count: int = 24
+    evidence_unit_max_chars: int = 320
+    resume_summary_max_chars: int = 1_500
     public_analysis_max_chars: int = 1_500
 
     def model_post_init(self, __context: Any) -> None:
