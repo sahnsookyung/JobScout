@@ -43,7 +43,6 @@ You are a careful resume-to-job relevance judge.
 Task
 - Independently compare the packed job description and extracted requirements
   against the structured resume summary and owner-scoped resume evidence units.
-- Treat prior deterministic scores as prior system output, not as ground truth.
 - Recognize transferable evidence when technologies are closely related
   (for example Java and Kotlin), but explain the transfer rather than inventing
   direct experience.
@@ -435,7 +434,7 @@ class MatchLlmEvaluationService:
                 for req in match_requirements
                 if getattr(req, "requirement", None) is not None
             ]
-        requirement_payload, requirement_id_map = self._serialize_requirements(
+        requirement_payload = self._serialize_requirements(
             job_requirements,
             truncation,
         )
@@ -472,25 +471,6 @@ class MatchLlmEvaluationService:
                 evidence_units,
                 truncation,
             ),
-            "prior_deterministic_scores": {
-                "label": "prior deterministic output; use as context, not ground truth",
-                "fit_score": self._float(getattr(match, "fit_score", None)),
-                "preference_score": self._float(getattr(match, "preference_score", None)),
-                "required_coverage": self._float(getattr(match, "required_coverage", None)),
-                "preferred_requirement_coverage": self._float(
-                    getattr(match, "preferred_requirement_coverage", None)
-                ),
-                "penalties": self._float(getattr(match, "penalties", None)),
-                "fit_components": self._safe_components(getattr(match, "fit_components", None)),
-                "preference_components": self._safe_components(
-                    getattr(match, "preference_components", None)
-                ),
-                "requirement_matches": self._serialize_prior_requirement_matches(
-                    match_requirements,
-                    requirement_id_map,
-                    truncation,
-                ),
-            },
             "input_metadata": {
                 "schema_version": str(self.judge_config.schema_version),
                 "prompt_version": str(self.judge_config.prompt_version),
@@ -751,7 +731,7 @@ class MatchLlmEvaluationService:
         self,
         requirements: list[Any],
         truncation: dict[str, Any],
-    ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
+    ) -> dict[str, list[dict[str, Any]]]:
         grouped: dict[str, list[dict[str, Any]]] = {
             "required": [],
             "preferred": [],
@@ -760,7 +740,6 @@ class MatchLlmEvaluationService:
             "benefit": [],
             "other": [],
         }
-        requirement_id_map: dict[str, str] = {}
         max_count = self._judge_limit("requirements_max_count", DEFAULT_REQUIREMENTS_MAX_COUNT)
         text_max_chars = self._judge_limit(
             "requirement_text_max_chars",
@@ -775,9 +754,6 @@ class MatchLlmEvaluationService:
             }
         for index, requirement in enumerate(requirements[:max_count], start=1):
             public_id = f"req_{index}"
-            internal_id = getattr(requirement, "id", None)
-            if internal_id is not None:
-                requirement_id_map[str(internal_id)] = public_id
             req_type = str(getattr(requirement, "req_type", None) or "other").lower()
             if req_type not in grouped:
                 req_type = "other"
@@ -795,50 +771,7 @@ class MatchLlmEvaluationService:
                 "years_context": self._truncate(getattr(requirement, "years_context", None), 120),
             }
             grouped[req_type].append(item)
-        return grouped, requirement_id_map
-
-    def _serialize_prior_requirement_matches(
-        self,
-        match_requirements: list[Any],
-        requirement_id_map: dict[str, str],
-        truncation: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        payload: list[dict[str, Any]] = []
-        max_count = self._judge_limit("requirements_max_count", DEFAULT_REQUIREMENTS_MAX_COUNT)
-        text_max_chars = self._judge_limit(
-            "requirement_text_max_chars",
-            DEFAULT_REQUIREMENT_TEXT_MAX_CHARS,
-        )
-        evidence_max_chars = self._judge_limit(
-            "evidence_unit_max_chars",
-            DEFAULT_EVIDENCE_UNIT_MAX_CHARS,
-        )
-        for index, req in enumerate(match_requirements[:max_count], start=1):
-            internal_req_id = str(getattr(req, "job_requirement_unit_id", "") or "")
-            public_id = requirement_id_map.get(internal_req_id, f"matched_req_{index}")
-            payload.append(
-                {
-                    "requirement_id": public_id,
-                    "requirement_text": self._truncate_with_metadata(
-                        getattr(getattr(req, "requirement", None), "text", None),
-                        text_max_chars,
-                        truncation,
-                        f"prior_requirement_matches.{public_id}.requirement_text",
-                    ),
-                    "type": getattr(req, "req_type", None),
-                    "evidence_text": self._truncate_with_metadata(
-                        getattr(req, "evidence_text", None),
-                        evidence_max_chars,
-                        truncation,
-                        f"prior_requirement_matches.{public_id}.evidence_text",
-                    ),
-                    "evidence_section": self._truncate(getattr(req, "evidence_section", None), 80),
-                    "similarity_score": self._float(getattr(req, "similarity_score", None)),
-                    "evidence_score": self._float(getattr(req, "evidence_score", None)),
-                    "is_covered": bool(getattr(req, "is_covered", False)),
-                }
-            )
-        return payload
+        return grouped
 
     def _serialize_resume_summary(self, resume: Any, truncation: dict[str, Any]) -> dict[str, Any]:
         if resume is None:
@@ -1137,20 +1070,6 @@ class MatchLlmEvaluationService:
         if max_chars <= 3:
             return text[:max_chars]
         return text if len(text) <= max_chars else text[: max_chars - 3] + "..."
-
-    @staticmethod
-    def _safe_components(value: Any) -> dict[str, Any]:
-        if not isinstance(value, dict):
-            return {}
-        allowed = {
-            "fit_confidence",
-            "semantic_fit_fallback_reason",
-            "provider_route",
-            "fit_scorer",
-            "preference_mode_used",
-            "preference_fallback_reason",
-        }
-        return {key: value[key] for key in allowed if key in value}
 
     @staticmethod
     def _safe_reason_codes(codes: list[str]) -> list[str]:

@@ -518,7 +518,7 @@ def test_find_active_cache_filters_global_scope():
     assert "tenant_id IS NULL" in str(db.execute.call_args.args[0])
 
 
-def test_build_hash_payload_truncates_and_sanitizes_components():
+def test_build_hash_payload_excludes_prior_deterministic_outputs():
     requirement = SimpleNamespace(text="T" * 1000, req_type="required", tags={}, id="req-1")
     match_requirement = SimpleNamespace(
         job_requirement_unit_id="req-1",
@@ -567,11 +567,12 @@ def test_build_hash_payload_truncates_and_sanitizes_components():
     assert payload["job"]["description"].endswith("...")
     assert payload["job"]["description_metadata"]["completeness"] == "full"
     assert payload["requirements"]["required"][0]["text"].endswith("...")
-    prior_match = payload["prior_deterministic_scores"]["requirement_matches"][0]
-    assert prior_match["evidence_text"].endswith("...")
-    assert prior_match["evidence_score"] is None
-    assert payload["prior_deterministic_scores"]["fit_components"] == {"fit_confidence": 0.9}
-    assert payload["prior_deterministic_scores"]["preference_components"] == {"preference_mode_used": "semantic_rerank"}
+    assert "prior_deterministic_scores" not in payload
+    assert "requirement_matches" not in payload
+    serialized = str(payload)
+    assert "81.25" not in serialized
+    assert "semantic_rerank" not in serialized
+    assert "E" * 100 not in serialized
     assert set(hashes) == {"judge_config_hash", "evidence_hash", "input_hash"}
 
 
