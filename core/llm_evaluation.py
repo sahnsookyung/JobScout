@@ -82,6 +82,13 @@ MATCH_LLM_JUDGE_SCHEMA_SPEC = {
     "schema": MatchEvaluationResponse.model_json_schema(),
 }
 
+DEFAULT_JOB_DESCRIPTION_MAX_CHARS = 6_000
+DEFAULT_REQUIREMENTS_MAX_COUNT = 40
+DEFAULT_REQUIREMENT_TEXT_MAX_CHARS = 500
+DEFAULT_EVIDENCE_UNITS_MAX_COUNT = 32
+DEFAULT_EVIDENCE_UNIT_MAX_CHARS = 450
+DEFAULT_RESUME_SUMMARY_MAX_CHARS = 2_000
+
 
 @dataclass(frozen=True)
 class EvaluationResult:
@@ -416,7 +423,7 @@ class MatchLlmEvaluationService:
         job_id = self._match_job_id(match)
         description = self._truncate_with_metadata(
             getattr(job, "description", None),
-            self._judge_limit("job_description_max_chars", 16_000),
+            self._judge_limit("job_description_max_chars", DEFAULT_JOB_DESCRIPTION_MAX_CHARS),
             truncation,
             "job.description",
         )
@@ -612,11 +619,30 @@ class MatchLlmEvaluationService:
             "structured_output_mode": str(self.llm_config.structured_output_mode),
             "prompt_version": str(self.judge_config.prompt_version),
             "schema_version": str(self.judge_config.schema_version),
-            "job_description_max_chars": self._judge_limit("job_description_max_chars", 16_000),
-            "requirements_max_count": self._judge_limit("requirements_max_count", 80),
-            "evidence_units_max_count": self._judge_limit("evidence_units_max_count", 80),
-            "evidence_unit_max_chars": self._judge_limit("evidence_unit_max_chars", 900),
-            "resume_summary_max_chars": self._judge_limit("resume_summary_max_chars", 4_000),
+            "job_description_max_chars": self._judge_limit(
+                "job_description_max_chars",
+                DEFAULT_JOB_DESCRIPTION_MAX_CHARS,
+            ),
+            "requirements_max_count": self._judge_limit(
+                "requirements_max_count",
+                DEFAULT_REQUIREMENTS_MAX_COUNT,
+            ),
+            "requirement_text_max_chars": self._judge_limit(
+                "requirement_text_max_chars",
+                DEFAULT_REQUIREMENT_TEXT_MAX_CHARS,
+            ),
+            "evidence_units_max_count": self._judge_limit(
+                "evidence_units_max_count",
+                DEFAULT_EVIDENCE_UNITS_MAX_COUNT,
+            ),
+            "evidence_unit_max_chars": self._judge_limit(
+                "evidence_unit_max_chars",
+                DEFAULT_EVIDENCE_UNIT_MAX_CHARS,
+            ),
+            "resume_summary_max_chars": self._judge_limit(
+                "resume_summary_max_chars",
+                DEFAULT_RESUME_SUMMARY_MAX_CHARS,
+            ),
         }
 
     @staticmethod
@@ -699,7 +725,10 @@ class MatchLlmEvaluationService:
     ) -> list[Any]:
         if owner_id is None or resume_fingerprint is None:
             return []
-        limit = self._judge_limit("evidence_units_max_count", 80)
+        limit = self._judge_limit(
+            "evidence_units_max_count",
+            DEFAULT_EVIDENCE_UNITS_MAX_COUNT,
+        )
         try:
             return list(
                 self.db.query(ResumeEvidenceUnitEmbedding)
@@ -732,7 +761,11 @@ class MatchLlmEvaluationService:
             "other": [],
         }
         requirement_id_map: dict[str, str] = {}
-        max_count = self._judge_limit("requirements_max_count", 80)
+        max_count = self._judge_limit("requirements_max_count", DEFAULT_REQUIREMENTS_MAX_COUNT)
+        text_max_chars = self._judge_limit(
+            "requirement_text_max_chars",
+            DEFAULT_REQUIREMENT_TEXT_MAX_CHARS,
+        )
         if len(requirements) > max_count:
             truncation["truncated"] = True
             truncation["fields"]["requirements"] = {
@@ -753,7 +786,7 @@ class MatchLlmEvaluationService:
                 "type": req_type,
                 "text": self._truncate_with_metadata(
                     getattr(requirement, "text", None),
-                    900,
+                    text_max_chars,
                     truncation,
                     f"requirements.{public_id}.text",
                 ),
@@ -771,7 +804,15 @@ class MatchLlmEvaluationService:
         truncation: dict[str, Any],
     ) -> list[dict[str, Any]]:
         payload: list[dict[str, Any]] = []
-        max_count = self._judge_limit("requirements_max_count", 80)
+        max_count = self._judge_limit("requirements_max_count", DEFAULT_REQUIREMENTS_MAX_COUNT)
+        text_max_chars = self._judge_limit(
+            "requirement_text_max_chars",
+            DEFAULT_REQUIREMENT_TEXT_MAX_CHARS,
+        )
+        evidence_max_chars = self._judge_limit(
+            "evidence_unit_max_chars",
+            DEFAULT_EVIDENCE_UNIT_MAX_CHARS,
+        )
         for index, req in enumerate(match_requirements[:max_count], start=1):
             internal_req_id = str(getattr(req, "job_requirement_unit_id", "") or "")
             public_id = requirement_id_map.get(internal_req_id, f"matched_req_{index}")
@@ -780,14 +821,14 @@ class MatchLlmEvaluationService:
                     "requirement_id": public_id,
                     "requirement_text": self._truncate_with_metadata(
                         getattr(getattr(req, "requirement", None), "text", None),
-                        600,
+                        text_max_chars,
                         truncation,
                         f"prior_requirement_matches.{public_id}.requirement_text",
                     ),
                     "type": getattr(req, "req_type", None),
                     "evidence_text": self._truncate_with_metadata(
                         getattr(req, "evidence_text", None),
-                        self._judge_limit("evidence_unit_max_chars", 900),
+                        evidence_max_chars,
                         truncation,
                         f"prior_requirement_matches.{public_id}.evidence_text",
                     ),
@@ -822,7 +863,7 @@ class MatchLlmEvaluationService:
             public_summary["total_experience_years"] = self._float(resume.total_experience_years)
         return self._cap_json_payload(
             public_summary,
-            self._judge_limit("resume_summary_max_chars", 4_000),
+            self._judge_limit("resume_summary_max_chars", DEFAULT_RESUME_SUMMARY_MAX_CHARS),
             truncation,
             "resume.summary",
         )
@@ -832,7 +873,14 @@ class MatchLlmEvaluationService:
         units: list[Any],
         truncation: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        max_count = self._judge_limit("evidence_units_max_count", 80)
+        max_count = self._judge_limit(
+            "evidence_units_max_count",
+            DEFAULT_EVIDENCE_UNITS_MAX_COUNT,
+        )
+        evidence_max_chars = self._judge_limit(
+            "evidence_unit_max_chars",
+            DEFAULT_EVIDENCE_UNIT_MAX_CHARS,
+        )
         if len(units) > max_count:
             truncation["truncated"] = True
             truncation["fields"]["resume_evidence_units"] = {
@@ -849,7 +897,7 @@ class MatchLlmEvaluationService:
                     "source_section": self._truncate(getattr(unit, "source_section", None), 80),
                     "source_text": self._truncate_with_metadata(
                         getattr(unit, "source_text", None),
-                        self._judge_limit("evidence_unit_max_chars", 900),
+                        evidence_max_chars,
                         truncation,
                         f"resume_evidence_units.{unit_id}.source_text",
                     ),
@@ -978,7 +1026,7 @@ class MatchLlmEvaluationService:
             evaluation.analysis = self._analysis_payload(parsed, truncation or {})
             evaluation.error_code = None
             evaluation.retryable = False
-        except Exception:
+        except Exception as exc:
             logger.exception("LLM match evaluation failed for %s", _sanitize_log(evaluation.id))
             evaluation.status = LLM_EVALUATION_FAILED
             evaluation.llm_score = None
@@ -988,7 +1036,7 @@ class MatchLlmEvaluationService:
             evaluation.reason_codes = []
             evaluation.requirement_verdicts = []
             evaluation.analysis = {}
-            evaluation.error_code = "llm_judge_failed"
+            evaluation.error_code = self._provider_error_code(exc)
             evaluation.retryable = True
         finally:
             evaluation.completed_at = self._utcnow()
@@ -1007,6 +1055,14 @@ class MatchLlmEvaluationService:
             host in lowered
             for host in ("localhost", "127.0.0.1", "host.docker.internal", "ollama")
         )
+
+    @staticmethod
+    def _provider_error_code(exc: Exception) -> str:
+        status_code = getattr(exc, "status_code", None)
+        message = str(exc).lower()
+        if status_code == 413 or "request too large" in message:
+            return "llm_judge_input_too_large"
+        return "llm_judge_failed"
 
     def _is_reusable(self, evaluation: LlmMatchEvaluation) -> bool:
         if evaluation.status != LLM_EVALUATION_SUCCEEDED:

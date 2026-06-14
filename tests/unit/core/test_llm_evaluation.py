@@ -639,6 +639,22 @@ def test_run_provider_marks_failure_retryable_without_raw_payload():
     assert db.flush.call_count >= 2
 
 
+def test_run_provider_marks_oversized_provider_request_with_specific_error():
+    db = Mock()
+    provider = Mock()
+    provider_error = RuntimeError("Request too large for model token limit")
+    provider_error.status_code = 413
+    provider.extract_structured_data.side_effect = provider_error
+    service = MatchLlmEvaluationService(db, config=_config(), llm_provider=provider)
+    evaluation = _evaluation(status=LLM_EVALUATION_PENDING)
+
+    service._run_provider(evaluation, {"safe": "payload"})
+
+    assert evaluation.status == LLM_EVALUATION_FAILED
+    assert evaluation.error_code == "llm_judge_input_too_large"
+    assert evaluation.retryable is True
+
+
 def test_provider_is_built_lazily_and_cached():
     service = _service()
     provider = Mock()

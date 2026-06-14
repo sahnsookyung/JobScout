@@ -429,6 +429,7 @@ class TestConfigLoader(unittest.TestCase):
             "GROQ_API_KEY": "groq-key",
             "LLM_AS_A_JUDGE_MODEL": "openai/gpt-oss-20b",
             "LLM_AS_A_JUDGE_STRUCTURED_OUTPUT_MODE": "auto",
+            "MATCH_LLM_JUDGE_REQUIREMENT_TEXT_MAX_CHARS": "420",
         }
 
         with patch("builtins.open", mock_open(read_data=config_yaml)):
@@ -444,6 +445,7 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(runtime.api_key, "groq-key")
         self.assertEqual(runtime.model, "openai/gpt-oss-20b")
         self.assertEqual(runtime.structured_output_mode, "auto")
+        self.assertEqual(config.matching.llm_judge.requirement_text_max_chars, 420)
 
     def test_semantic_fit_raises_when_default_mode_not_in_deploy_allowed(self):
         with self.assertRaises(ValidationError) as ctx:
