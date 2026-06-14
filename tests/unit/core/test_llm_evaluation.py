@@ -565,9 +565,10 @@ def test_build_hash_payload_excludes_prior_deterministic_outputs():
 
     payload, hashes = service._build_hash_payload(match)
 
-    assert payload["job"]["description"].endswith("...")
+    assert payload["job"]["description"] == "D" * 17000
     assert payload["job"]["description_metadata"]["completeness"] == "full"
-    assert payload["requirements"]["required"][0]["text"].endswith("...")
+    assert payload["job"]["description_metadata"]["truncated_for_prompt"] is False
+    assert payload["requirements"]["required"][0]["text"] == "T" * 1000
     assert "prior_deterministic_scores" not in payload
     assert "requirement_matches" not in payload
     serialized = str(payload)
@@ -577,22 +578,23 @@ def test_build_hash_payload_excludes_prior_deterministic_outputs():
     assert set(hashes) == {"judge_config_hash", "evidence_hash", "input_hash"}
 
 
-def test_resume_summary_includes_nested_profile_skills():
+def test_resume_summary_includes_full_nested_profile_skills_and_projects():
     service = _service()
+    skills = [{"name": f"Skill {index}"} for index in range(30)]
+    skills.append({"name": "TypeScript"})
+    long_project_detail = "Built TypeScript Web Components with typed frontend state. " * 20
     resume = SimpleNamespace(
         extracted_data={
             "profile": {
                 "summary": {"text": "Full-stack engineer."},
                 "skills": {
-                    "all": [
-                        {"name": "React.js"},
-                        {"name": "TypeScript"},
-                    ]
+                    "all": [{"name": "React.js"}, *skills],
                 },
                 "projects": [
                     {
                         "name": "Portfolio",
-                        "highlights": ["Built TypeScript Web Components."],
+                        "description": long_project_detail,
+                        "highlights": [long_project_detail],
                     }
                 ],
             }
@@ -604,8 +606,10 @@ def test_resume_summary_includes_nested_profile_skills():
     payload = service._serialize_resume_summary(resume, truncation)
 
     assert "TypeScript" in str(payload)
-    assert payload["skills"]["all"] == ["React.js", "TypeScript"]
+    assert payload["profile"]["skills"]["all"][-1]["name"] == "TypeScript"
+    assert payload["profile"]["projects"][0]["description"] == long_project_detail.strip()
     assert payload["total_experience_years"] == 3.5
+    assert truncation == {"truncated": False, "fields": {}}
 
 
 def test_judge_input_prioritizes_late_requirement_relevant_resume_evidence():

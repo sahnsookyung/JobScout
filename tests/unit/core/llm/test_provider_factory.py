@@ -101,6 +101,22 @@ def test_runtime_llm_config_from_match_judge_maps_groq_fields():
     assert runtime_config.structured_output_mode == "auto"
 
 
+def test_runtime_llm_config_from_match_judge_maps_cerebras_defaults():
+    config = LlmJudgeRuntimeConfig(
+        provider="cerebras",
+        api_key="cerebras-key",
+    )
+
+    runtime_config = runtime_llm_config_from_match_judge(config)
+
+    assert runtime_config.provider == "cerebras"
+    assert runtime_config.base_url == "https://api.cerebras.ai/v1"
+    assert runtime_config.api_key == "cerebras-key"
+    assert runtime_config.model == "gpt-oss-120b"
+    assert runtime_config.timeout_seconds == 60
+    assert runtime_config.structured_output_mode == "auto"
+
+
 def test_build_llm_provider_constructs_openai_compatible_service():
     provider = build_llm_provider(
         RuntimeLLMConfig(
@@ -136,6 +152,21 @@ def test_build_llm_provider_constructs_groq_alias_service():
     assert isinstance(provider, OpenAIService)
     assert str(provider.client.base_url).rstrip("/") == "https://api.groq.com/openai/v1"
     assert provider.extraction_model == "llama-3.1-8b-instant"
+
+
+def test_build_llm_provider_constructs_cerebras_alias_service():
+    provider = build_llm_provider(
+        RuntimeLLMConfig(
+            provider="cerebras",
+            api_key="cerebras-key",
+            model="gpt-oss-120b",
+            structured_output_mode="auto",
+        )
+    )
+
+    assert isinstance(provider, OpenAIService)
+    assert str(provider.client.base_url).rstrip("/") == "https://api.cerebras.ai/v1"
+    assert provider.extraction_model == "gpt-oss-120b"
 
 
 def test_build_llm_provider_requires_model():

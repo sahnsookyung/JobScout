@@ -171,6 +171,13 @@ matching:
 
   llm_judge:
     enabled: false
+    runtime:
+      provider: "cerebras"
+      model: "gpt-oss-120b"
+      temperature: 0.0
+      timeout_seconds: 60
+      structured_output_mode: "auto"
+      max_input_tokens: 60000
     top_n_default: 5
     top_n_max: 10
     max_per_run: 10
@@ -178,12 +185,12 @@ matching:
     reuse_ttl_days: 90
     prompt_version: "match_llm_judge_v4"
     schema_version: "match_llm_judge_schema_v2"
-    job_description_max_chars: 6000
-    requirements_max_count: 40
-    requirement_text_max_chars: 500
-    evidence_units_max_count: 24
-    evidence_unit_max_chars: 320
-    resume_summary_max_chars: 1500
+    job_description_max_chars: 128000
+    requirements_max_count: 200
+    requirement_text_max_chars: 2000
+    evidence_units_max_count: 200
+    evidence_unit_max_chars: 4000
+    resume_summary_max_chars: 64000
     public_analysis_max_chars: 1500
 
 preferences:

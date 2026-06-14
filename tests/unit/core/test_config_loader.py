@@ -74,6 +74,7 @@ class TestConfigLoader(unittest.TestCase):
             "NOTIFICATION_DRY_RUN",
             "LLM_AS_A_JUDGE_BASE_URL",
             "LLM_AS_A_JUDGE_API_KEY",
+            "CEREBRAS_API_KEY",
             "GROQ_API_KEY",
             "LLM_AS_A_JUDGE_MODEL",
         ]
@@ -266,7 +267,7 @@ class TestConfigLoader(unittest.TestCase):
 
         with patch("builtins.open", mock_open(read_data=config_yaml)):
             with patch("os.path.exists", return_value=True):
-                with patch.dict(os.environ, env, clear=False):
+                with patch.dict(os.environ, env, clear=True):
                     config = load_config("dummy")
 
         self.assertEqual(config.notifications.channels["email"].recipient, "env@example.com")
@@ -311,7 +312,7 @@ class TestConfigLoader(unittest.TestCase):
 
         with patch("builtins.open", mock_open(read_data=config_yaml)):
             with patch("os.path.exists", return_value=True):
-                with patch.dict(os.environ, env, clear=False):
+                with patch.dict(os.environ, env, clear=True):
                     config = load_config("dummy")
 
         self.assertEqual(config.preferences.default_mode, "llm_judge")
@@ -392,7 +393,7 @@ class TestConfigLoader(unittest.TestCase):
 
         with patch("builtins.open", mock_open(read_data=config_yaml)):
             with patch("os.path.exists", return_value=True):
-                with patch.dict(os.environ, env, clear=False):
+                with patch.dict(os.environ, env, clear=True):
                     config = load_config("dummy")
 
         self.assertEqual(config.matching.scorer.semantic_fit.default_mode, "llm")
@@ -434,7 +435,7 @@ class TestConfigLoader(unittest.TestCase):
 
         with patch("builtins.open", mock_open(read_data=config_yaml)):
             with patch("os.path.exists", return_value=True):
-                with patch.dict(os.environ, env, clear=False):
+                with patch.dict(os.environ, env, clear=True):
                     config = load_config("dummy")
 
         runtime = config.matching.llm_judge.runtime
@@ -691,6 +692,18 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config.provider, "groq")
         self.assertEqual(config.base_url, "https://api.groq.com/openai/v1")
 
+    def test_match_llm_judge_runtime_accepts_cerebras_provider_alias(self):
+        config = LlmJudgeRuntimeConfig(
+            provider="cerebras",
+            api_key="cerebras-key",
+        )
+
+        self.assertEqual(config.provider, "cerebras")
+        self.assertEqual(config.base_url, "https://api.cerebras.ai/v1")
+        self.assertEqual(config.model, "gpt-oss-120b")
+        self.assertEqual(config.timeout_seconds, 60)
+        self.assertEqual(config.max_input_tokens, 60000)
+
     def test_match_llm_judge_env_accepts_groq_provider(self):
         data = {"database": {"url": "test"}, "schedule": {"interval_seconds": 60}, "scrapers": []}
         env = {
@@ -702,13 +715,35 @@ class TestConfigLoader(unittest.TestCase):
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(data))):
             with patch("os.path.exists", return_value=True):
-                with patch.dict(os.environ, env, clear=False):
+                with patch.dict(os.environ, env, clear=True):
                     config = load_config("dummy")
 
         self.assertTrue(config.matching.llm_judge.enabled)
         self.assertEqual(config.matching.llm_judge.runtime.provider, "groq")
         self.assertEqual(config.matching.llm_judge.runtime.api_key, "groq-key")
         self.assertEqual(config.matching.llm_judge.runtime.base_url, "https://api.groq.com/openai/v1")
+
+    def test_match_llm_judge_env_accepts_cerebras_provider(self):
+        data = {"database": {"url": "test"}, "schedule": {"interval_seconds": 60}, "scrapers": []}
+        env = {
+            "MATCH_LLM_JUDGE_ENABLED": "true",
+            "LLM_AS_A_JUDGE_PROVIDER": "cerebras",
+            "CEREBRAS_API_KEY": "cerebras-key",
+        }
+
+        with patch("builtins.open", mock_open(read_data=yaml.dump(data))):
+            with patch("os.path.exists", return_value=True):
+                with patch.dict(os.environ, env, clear=True):
+                    config = load_config("dummy")
+
+        self.assertTrue(config.matching.llm_judge.enabled)
+        self.assertEqual(config.matching.llm_judge.runtime.provider, "cerebras")
+        self.assertEqual(config.matching.llm_judge.runtime.api_key, "cerebras-key")
+        self.assertEqual(config.matching.llm_judge.runtime.base_url, "https://api.cerebras.ai/v1")
+        self.assertEqual(config.matching.llm_judge.runtime.model, "gpt-oss-120b")
+        self.assertEqual(config.matching.llm_judge.job_description_max_chars, 128000)
+        self.assertEqual(config.matching.llm_judge.evidence_units_max_count, 200)
+        self.assertEqual(config.matching.llm_judge.resume_summary_max_chars, 64000)
 
     def test_semantic_fit_raises_for_blank_llm_model(self):
         with self.assertRaises(ValidationError) as ctx:

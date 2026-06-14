@@ -43,12 +43,13 @@ You are a careful resume-to-job relevance judge.
 
 Task
 - Independently compare the packed job description and extracted requirements
-  against the structured resume summary and owner-scoped resume evidence units.
+  against the full structured resume payload and owner-scoped resume evidence
+  units.
 - Recognize transferable evidence when technologies are closely related
   (for example Java and Kotlin), but explain the transfer rather than inventing
   direct experience.
-- Treat a direct mention in either the structured resume summary or the resume
-  evidence units as explicit resume evidence.
+- Treat a direct mention in either the full structured resume payload or the
+  resume evidence units as explicit resume evidence.
 - Do not invent experience, credentials, salary, location, or authorization facts.
 - Prefer concise, user-safe explanations.
 
@@ -84,13 +85,23 @@ MATCH_LLM_JUDGE_SCHEMA_SPEC = {
     "schema": MatchEvaluationResponse.model_json_schema(),
 }
 
-DEFAULT_JOB_DESCRIPTION_MAX_CHARS = 6_000
-DEFAULT_REQUIREMENTS_MAX_COUNT = 40
-DEFAULT_REQUIREMENT_TEXT_MAX_CHARS = 500
-DEFAULT_EVIDENCE_UNITS_MAX_COUNT = 24
+DEFAULT_JOB_DESCRIPTION_MAX_CHARS = 128_000
+DEFAULT_REQUIREMENTS_MAX_COUNT = 200
+DEFAULT_REQUIREMENT_TEXT_MAX_CHARS = 2_000
+DEFAULT_EVIDENCE_UNITS_MAX_COUNT = 200
 DEFAULT_EVIDENCE_UNITS_SCAN_MAX_COUNT = 200
-DEFAULT_EVIDENCE_UNIT_MAX_CHARS = 320
-DEFAULT_RESUME_SUMMARY_MAX_CHARS = 1_500
+DEFAULT_EVIDENCE_UNIT_MAX_CHARS = 4_000
+DEFAULT_RESUME_SUMMARY_MAX_CHARS = 64_000
+RESUME_PROVIDER_EXCLUDED_KEYS = {
+    "embedding",
+    "embeddings",
+    "fingerprint",
+    "owner_id",
+    "resume_fingerprint",
+    "tenant_id",
+    "vector",
+    "vectors",
+}
 
 
 @dataclass(frozen=True)
@@ -804,56 +815,22 @@ class MatchLlmEvaluationService:
         )
 
     def _public_resume_summary(self, summary: dict[str, Any]) -> dict[str, Any]:
-        public_summary = {
-            key: self._compact_resume_value(summary[key])
-            for key in (
-                "headline",
-                "summary",
-                "skills",
-                "experience",
-                "projects",
-                "education",
-                "certifications",
-                "languages",
-            )
-            if key in summary
-        }
-        profile = summary.get("profile")
-        if isinstance(profile, dict):
-            for key in (
-                "headline",
-                "summary",
-                "skills",
-                "experience",
-                "projects",
-                "education",
-                "certifications",
-                "languages",
-            ):
-                if key in profile and key not in public_summary:
-                    public_summary[key] = self._compact_resume_value(profile[key])
-        return public_summary
+        return self._public_resume_value(summary)
 
-    def _compact_resume_value(self, value: Any) -> Any:
+    def _public_resume_value(self, value: Any) -> Any:
         if isinstance(value, dict):
-            if isinstance(value.get("all"), list):
-                return {
-                    "all": [
-                        self._truncate(item.get("name"), 80)
-                        for item in value["all"][:80]
-                        if isinstance(item, dict) and str(item.get("name", "")).strip()
-                    ]
-                }
             return {
-                str(key)[:80]: self._compact_resume_value(item)
-                for key, item in list(value.items())[:20]
-                if key not in {"raw_text", "source_text"}
+                str(key)[:120]: self._public_resume_value(item)
+                for key, item in value.items()
+                if str(key).strip().lower() not in RESUME_PROVIDER_EXCLUDED_KEYS
             }
         if isinstance(value, list):
-            return [self._compact_resume_value(item) for item in value[:12]]
+            return [self._public_resume_value(item) for item in value]
         if isinstance(value, str):
-            return self._truncate(value, 260)
-        return value
+            return value.replace("\x00", "").strip()
+        if isinstance(value, (int, float, bool)) or value is None:
+            return value
+        return str(value)
 
     def _serialize_resume_evidence_units(
         self,

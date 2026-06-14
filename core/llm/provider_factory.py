@@ -5,6 +5,7 @@ from typing import Dict, Literal, Optional
 from pydantic import BaseModel
 
 from core.config_loader import (
+    CEREBRAS_OPENAI_COMPATIBLE_BASE_URL,
     GROQ_OPENAI_COMPATIBLE_BASE_URL,
     LlmConfig,
     LlmJudgeRuntimeConfig,
@@ -16,7 +17,7 @@ from core.llm.openai_service import OpenAIService
 
 
 class RuntimeLLMConfig(BaseModel):
-    provider: Literal["openai_compatible", "groq"] = "openai_compatible"
+    provider: Literal["openai_compatible", "groq", "cerebras"] = "openai_compatible"
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     api_secret: Optional[str] = None
@@ -98,7 +99,7 @@ def runtime_llm_config_from_match_judge(config: LlmJudgeRuntimeConfig) -> Runtim
 
 
 def _normalize_chat_provider(provider: str) -> str:
-    if provider == "groq":
+    if provider in {"groq", "cerebras"}:
         return "openai_compatible"
     return provider
 
@@ -106,6 +107,8 @@ def _normalize_chat_provider(provider: str) -> str:
 def _normalize_base_url(config: RuntimeLLMConfig) -> Optional[str]:
     if config.provider == "groq" and not str(config.base_url or "").strip():
         return GROQ_OPENAI_COMPATIBLE_BASE_URL
+    if config.provider == "cerebras" and not str(config.base_url or "").strip():
+        return CEREBRAS_OPENAI_COMPATIBLE_BASE_URL
     return config.base_url
 
 
@@ -114,7 +117,7 @@ def build_llm_provider(config: RuntimeLLMConfig) -> LLMProvider:
     if provider != "openai_compatible":
         raise RuntimeError(
             f"Unsupported runtime LLM provider '{config.provider}'. "
-            "Only 'openai_compatible' and 'groq' are supported at runtime."
+            "Only 'openai_compatible', 'groq', and 'cerebras' are supported at runtime."
         )
     if not str(config.model or "").strip():
         raise RuntimeError(

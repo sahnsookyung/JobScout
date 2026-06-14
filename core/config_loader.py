@@ -13,8 +13,11 @@ EnvMapping = tuple[Sequence[str], Sequence[str]]
 HeaderMapping = tuple[str, Sequence[str]]
 ConfigPath = str | os.PathLike[str]
 DEFAULT_CONFIG_FILENAME = "config.yaml"
-LlmJudgeProvider = Literal["openai_compatible", "groq"]
+LlmJudgeProvider = Literal["openai_compatible", "groq", "cerebras"]
 GROQ_OPENAI_COMPATIBLE_BASE_URL = "https://api.groq.com/openai/v1"
+CEREBRAS_OPENAI_COMPATIBLE_BASE_URL = "https://api.cerebras.ai/v1"
+CEREBRAS_DEFAULT_MODEL = "gpt-oss-120b"
+CEREBRAS_DEFAULT_MAX_INPUT_TOKENS = 60_000
 
 
 class ScraperConfig(BaseModel):
@@ -149,14 +152,19 @@ class LlmJudgeRuntimeConfig(BaseModel):
     headers: Optional[Dict[str, str]] = None
     model: Optional[str] = None
     temperature: float = 0.0
-    timeout_seconds: int = 20
+    timeout_seconds: int = 60
     structured_output_mode: Literal["auto", "json_schema", "json_object"] = "auto"
-    max_input_tokens: int = 4000
+    max_input_tokens: int = CEREBRAS_DEFAULT_MAX_INPUT_TOKENS
 
     def model_post_init(self, __context: Any) -> None:
         del __context
         if self.provider == "groq" and not str(self.base_url or "").strip():
             self.base_url = GROQ_OPENAI_COMPATIBLE_BASE_URL
+        if self.provider == "cerebras":
+            if not str(self.base_url or "").strip():
+                self.base_url = CEREBRAS_OPENAI_COMPATIBLE_BASE_URL
+            if not str(self.model or "").strip():
+                self.model = CEREBRAS_DEFAULT_MODEL
         if int(self.timeout_seconds) <= 0:
             raise ValueError("matching.llm_judge.runtime.timeout_seconds must be positive")
         if int(self.max_input_tokens) <= 0:
@@ -175,12 +183,12 @@ class MatchLlmJudgeConfig(BaseModel):
     reuse_ttl_days: int = 90
     prompt_version: str = "match_llm_judge_v4"
     schema_version: str = "match_llm_judge_schema_v2"
-    job_description_max_chars: int = 6_000
-    requirements_max_count: int = 40
-    requirement_text_max_chars: int = 500
-    evidence_units_max_count: int = 24
-    evidence_unit_max_chars: int = 320
-    resume_summary_max_chars: int = 1_500
+    job_description_max_chars: int = 128_000
+    requirements_max_count: int = 200
+    requirement_text_max_chars: int = 2_000
+    evidence_units_max_count: int = 200
+    evidence_unit_max_chars: int = 4_000
+    resume_summary_max_chars: int = 64_000
     public_analysis_max_chars: int = 1_500
 
     def model_post_init(self, __context: Any) -> None:
@@ -207,12 +215,12 @@ class MatchLlmJudgeConfig(BaseModel):
         self.top_n_default = min(self.top_n_default, self.top_n_max)
         self.max_per_run = min(self.max_per_run, self.top_n_max)
         caps = {
-            "job_description_max_chars": 32_000,
+            "job_description_max_chars": 256_000,
             "requirements_max_count": 200,
-            "requirement_text_max_chars": 2_000,
+            "requirement_text_max_chars": 4_000,
             "evidence_units_max_count": 200,
-            "evidence_unit_max_chars": 2_000,
-            "resume_summary_max_chars": 8_000,
+            "evidence_unit_max_chars": 8_000,
+            "resume_summary_max_chars": 128_000,
             "public_analysis_max_chars": 4_000,
         }
         for field_name, cap in caps.items():
@@ -681,7 +689,7 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["MATCH_LLM_JUDGE_PUBLIC_ANALYSIS_MAX_CHARS"], ["matching", "llm_judge", "public_analysis_max_chars"]),
     (["LLM_AS_A_JUDGE_PROVIDER"], ["matching", "llm_judge", "runtime", "provider"]),
     (["LLM_AS_A_JUDGE_BASE_URL"], ["matching", "llm_judge", "runtime", "base_url"]),
-    (["LLM_AS_A_JUDGE_API_KEY", "GROQ_API_KEY"], ["matching", "llm_judge", "runtime", "api_key"]),
+    (["LLM_AS_A_JUDGE_API_KEY"], ["matching", "llm_judge", "runtime", "api_key"]),
     (["LLM_AS_A_JUDGE_API_SECRET"], ["matching", "llm_judge", "runtime", "api_secret"]),
     (["LLM_AS_A_JUDGE_MODEL"], ["matching", "llm_judge", "runtime", "model"]),
     (["LLM_AS_A_JUDGE_TEMPERATURE"], ["matching", "llm_judge", "runtime", "temperature"]),
@@ -748,6 +756,40 @@ def _apply_jobspy_env_override(data: Dict[str, Any]) -> None:
     data["jobspy"] = None
 
 
+def _get_nested(data: Dict[str, Any], keys: Sequence[str]) -> Any:
+    current: Any = data
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _apply_llm_judge_provider_api_key_override(data: Dict[str, Any]) -> None:
+    if os.environ.get("LLM_AS_A_JUDGE_API_KEY"):
+        return
+
+    provider = str(
+        os.environ.get("LLM_AS_A_JUDGE_PROVIDER")
+        or _get_nested(data, ["matching", "llm_judge", "runtime", "provider"])
+        or ""
+    ).strip().lower()
+    base_url = str(
+        os.environ.get("LLM_AS_A_JUDGE_BASE_URL")
+        or _get_nested(data, ["matching", "llm_judge", "runtime", "base_url"])
+        or ""
+    ).strip().lower()
+
+    provider_api_key = None
+    if provider == "cerebras" or "api.cerebras.ai" in base_url:
+        provider_api_key = os.environ.get("CEREBRAS_API_KEY")
+    elif provider == "groq" or "api.groq.com" in base_url:
+        provider_api_key = os.environ.get("GROQ_API_KEY")
+
+    if provider_api_key:
+        _set_nested(data, ["matching", "llm_judge", "runtime", "api_key"], provider_api_key)
+
+
 def resolve_config_path(
     config_path: ConfigPath = DEFAULT_CONFIG_FILENAME,
     *,
@@ -780,6 +822,7 @@ def apply_env_overrides(
         val = next((os.environ.get(env_var) for env_var in env_vars if os.environ.get(env_var)), None)
         if val:
             _set_nested(data, list(keys), val)
+    _apply_llm_judge_provider_api_key_override(data)
 
     for env_var, keys in header_mappings:
         env_val = os.environ.get(env_var)
