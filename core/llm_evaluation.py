@@ -120,6 +120,10 @@ class JudgeInput:
 class LlmJudgeUnavailableError(RuntimeError):
     """Raised when match-level LLM judging is unavailable."""
 
+    def __init__(self, message: str, *, reason: str = "unavailable"):
+        super().__init__(message)
+        self.reason = reason
+
 
 class LlmJudgeQuotaExceededError(RuntimeError):
     """Raised when the per-user LLM judge budget is exhausted."""
@@ -152,20 +156,31 @@ class MatchLlmEvaluationService:
         return self.judge_config.runtime
 
     def is_available(self) -> bool:
+        return self.availability_status()[0]
+
+    def availability_status(self) -> tuple[bool, str]:
+        if self.judge_config is None:
+            return False, "config_missing"
+        if not getattr(self.judge_config, "enabled", False):
+            return False, "disabled"
+        if self.llm_config is None:
+            return False, "runtime_missing"
+
         base_url = str(self.llm_config.base_url or "").strip()
         model = str(self.llm_config.model or "").strip()
+        if not base_url:
+            return False, "base_url_missing"
+        if not model:
+            return False, "model_missing"
         has_auth = bool(
             getattr(self.llm_config, "api_key", None)
             or getattr(self.llm_config, "api_secret", None)
             or getattr(self.llm_config, "headers", None)
             or self._is_local_llm_endpoint(base_url)
         )
-        return bool(
-            self.judge_config.enabled
-            and base_url
-            and model
-            and has_auth
-        )
+        if not has_auth:
+            return False, "credentials_missing"
+        return True, "available"
 
     def list_for_match(
         self,
@@ -211,8 +226,12 @@ class MatchLlmEvaluationService:
         tenant_id: Any | None = None,
         force: bool = False,
     ) -> EvaluationResult:
-        if not self.is_available():
-            raise LlmJudgeUnavailableError("LLM judge is not configured.")
+        available, reason = self.availability_status()
+        if not available:
+            raise LlmJudgeUnavailableError(
+                self._unavailable_message(reason),
+                reason=reason,
+            )
 
         match = self._get_match_for_owner(match_id, owner_id=owner_id, tenant_id=tenant_id)
         effective_tenant_id = self._effective_tenant_id(match, tenant_id)
@@ -1019,6 +1038,21 @@ class MatchLlmEvaluationService:
             host in lowered
             for host in ("localhost", "127.0.0.1", "host.docker.internal", "ollama")
         )
+
+    @staticmethod
+    def _unavailable_message(reason: str) -> str:
+        messages = {
+            "config_missing": "LLM judge configuration is missing.",
+            "disabled": "LLM judge is disabled.",
+            "runtime_missing": "LLM judge runtime configuration is missing.",
+            "base_url_missing": "LLM judge provider base URL is missing.",
+            "model_missing": "LLM judge model is missing.",
+            "credentials_missing": (
+                "LLM judge provider credentials are missing. "
+                "Set CEREBRAS_API_KEY or LLM_AS_A_JUDGE_API_KEY."
+            ),
+        }
+        return messages.get(reason, "LLM judge is unavailable.")
 
     @staticmethod
     def _provider_error_code(exc: Exception) -> str:

@@ -501,6 +501,18 @@ describe('MatchDetailsModal', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockUseMatchDetails.mockReturnValue({ data: undefined, isLoading: false });
+        mockUsePolicy.mockReturnValue({
+            policy: {
+                min_fit: 55,
+                top_k: 50,
+                min_jd_required_coverage: null,
+                llm_judge_available: true,
+                llm_judge_unavailable_reason: 'available',
+            },
+            isLoading: false,
+            updatePolicy: vi.fn(),
+            applyPreset: vi.fn(),
+        });
         vi.mocked(matchesApi.getLlmEvaluations).mockResolvedValue({
             data: { success: true, count: 0, evaluations: [] },
         } as never);
@@ -639,6 +651,31 @@ describe('MatchDetailsModal', () => {
         await waitFor(() => {
             expect(matchesApi.deleteLlmEvaluation).toHaveBeenCalledWith('match-1', 'eval-delete');
         });
+    });
+
+    it('disables LLM generation when provider credentials are missing', async () => {
+        mockUsePolicy.mockReturnValue({
+            policy: {
+                min_fit: 55,
+                top_k: 50,
+                min_jd_required_coverage: null,
+                llm_judge_available: false,
+                llm_judge_unavailable_reason: 'credentials_missing',
+            },
+            isLoading: false,
+            updatePolicy: vi.fn(),
+            applyPreset: vi.fn(),
+        });
+        mockUseMatchDetails.mockReturnValue({ data: makeModalData(), isLoading: false });
+
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        expect(await screen.findByText('LLM judge unavailable: Cerebras API key missing.')).toBeInTheDocument();
+        const generateButton = screen.getByRole('button', { name: /^generate llm evaluation$/i });
+        expect(generateButton).toBeDisabled();
+
+        fireEvent.click(generateButton);
+        expect(matchesApi.generateLlmEvaluation).not.toHaveBeenCalled();
     });
 
     it('renders semantic fit details when present', () => {

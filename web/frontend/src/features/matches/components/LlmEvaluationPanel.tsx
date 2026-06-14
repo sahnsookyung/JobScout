@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { toast } from '@/components/ui/Toast';
+import { usePolicy } from '@/hooks/usePolicy';
 import { matchesApi } from '@/services/matchesApi';
 import type { MatchLlmEvaluation, MatchLlmEvaluationListResponse } from '@/types/api';
 import { formatScore } from '@/utils/formatters';
@@ -45,6 +46,17 @@ function latestEvaluation(data?: MatchLlmEvaluationListResponse): MatchLlmEvalua
 function cleanLabel(value?: string | null): string {
     if (!value) return '';
     return value.replace(/_/g, ' ');
+}
+
+function availabilityMessage(reason?: string | null): string {
+    if (reason === 'credentials_missing') return 'Cerebras API key missing.';
+    if (reason === 'disabled') return 'LLM judging is disabled.';
+    if (reason === 'base_url_missing') return 'LLM judge provider URL missing.';
+    if (reason === 'model_missing') return 'LLM judge model missing.';
+    if (reason === 'runtime_missing') return 'LLM judge runtime missing.';
+    if (reason === 'config_missing') return 'LLM judge configuration missing.';
+    if (!reason || reason === 'available') return '';
+    return cleanLabel(reason);
 }
 
 function stringList(value: unknown): string[] {
@@ -105,6 +117,7 @@ const LlmActionButton: React.FC<LlmActionButtonProps> = ({
 
 export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) => {
     const queryClient = useQueryClient();
+    const { policy } = usePolicy();
     const queryKey = ['match-llm-evaluations', matchId] as const;
 
     const { data, isLoading, refetch } = useQuery({
@@ -184,6 +197,10 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
     const hasTruncation = Boolean((truncation as any)?.truncated);
     const ignoredReason = evaluation?.ignored_for_rerank_reason;
     const staleStatus = evaluation?.stale_status;
+    const judgeAvailable = policy?.llm_judge_available ?? true;
+    const unavailableMessage = judgeAvailable
+        ? ''
+        : availabilityMessage(policy?.llm_judge_unavailable_reason);
 
     return (
         <section className="border border-rule bg-surface p-5">
@@ -205,8 +222,8 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                         isLoading={generateMutation.isPending && !hasEvaluation}
                         onClick={() => generateMutation.mutate(false)}
                         label="Generate LLM evaluation"
-                        tooltip="Generate a second-pass relevance review"
-                        disabled={isBusy}
+                        tooltip={unavailableMessage || 'Generate a second-pass relevance review'}
+                        disabled={isBusy || !judgeAvailable}
                     >
                         <Sparkles className="h-4 w-4" aria-hidden="true" />
                     </LlmActionButton>
@@ -214,8 +231,8 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                         isLoading={generateMutation.isPending && hasEvaluation}
                         onClick={() => generateMutation.mutate(true)}
                         label="Regenerate LLM evaluation"
-                        tooltip="Regenerate and replace the cached review"
-                        disabled={isBusy || !hasEvaluation}
+                        tooltip={unavailableMessage || 'Regenerate and replace the cached review'}
+                        disabled={isBusy || !hasEvaluation || !judgeAvailable}
                     >
                         <RotateCcw className="h-4 w-4" aria-hidden="true" />
                     </LlmActionButton>
@@ -249,6 +266,12 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                     <span className="caption text-warn">{cleanLabel(staleStatus)}</span>
                 )}
             </div>
+
+            {unavailableMessage && (
+                <p className="mt-4 border-l-2 border-warn/60 pl-3 text-[13px] leading-relaxed text-ink-soft">
+                    LLM judge unavailable: {unavailableMessage}
+                </p>
+            )}
 
             {isLoading && !evaluation ? (
                 <p className="mt-4 text-[13px] text-ink-muted">Loading evaluation status.</p>

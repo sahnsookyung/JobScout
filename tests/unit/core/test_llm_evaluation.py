@@ -195,9 +195,12 @@ def test_unavailable_provider_requires_credentials_for_remote_endpoint():
     service = _service(_config(llm_enabled=False))
 
     assert service.is_available() is False
+    assert service.availability_status() == (False, "credentials_missing")
 
-    with pytest.raises(LlmJudgeUnavailableError):
+    with pytest.raises(LlmJudgeUnavailableError) as exc_info:
         service.generate_for_match("match-1", owner_id="owner-1")
+    assert exc_info.value.reason == "credentials_missing"
+    assert "CEREBRAS_API_KEY" in str(exc_info.value)
 
 
 def test_generate_reuses_fresh_successful_cache_without_quota():
