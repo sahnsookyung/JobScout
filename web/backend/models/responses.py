@@ -67,6 +67,7 @@ class MatchLlmEvaluationMutationResponse(BaseModel):
     success: bool
     evaluation: Optional[MatchLlmEvaluationSummary] = None
     reused: bool = False
+    accepted: bool = False
     message: str
 
 

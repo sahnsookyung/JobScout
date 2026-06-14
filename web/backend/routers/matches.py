@@ -6,7 +6,7 @@ Match endpoints - view and manage job matches.
 import uuid
 import logging
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from core.llm_evaluation import (
@@ -36,6 +36,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/matches", tags=["matches"])
 
 DbSession = Annotated[Session, Depends(get_db)]
+
+
+def _run_match_llm_evaluation_background(
+    evaluation_id: str,
+    provider_payload: dict,
+    truncation: dict | None,
+) -> None:
+    from database.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        service = MatchLlmEvaluationService(db)
+        service.run_pending_evaluation(
+            evaluation_id,
+            provider_payload,
+            truncation=truncation or {},
+        )
+    except Exception:
+        logger.exception("Background LLM evaluation failed for %s", evaluation_id)
+        db.rollback()
+    finally:
+        db.close()
 
 
 def validate_uuid(match_id: str) -> str:
@@ -299,13 +321,14 @@ def generate_match_llm_evaluation(
     match_id: str,
     body: MatchLlmEvaluationRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: DbSession,
     user: Annotated[object, Depends(get_current_user)],
 ):
     validate_uuid(match_id)
     service = MatchLlmEvaluationService(db)
     try:
-        result = service.generate_for_match(
+        result = service.start_for_match(
             match_id,
             owner_id=getattr(user, "id", None),
             tenant_id=_request_tenant_id(request),
@@ -320,11 +343,21 @@ def generate_match_llm_evaluation(
     except LlmJudgeUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    should_run = bool(getattr(result, "should_run", False))
+    if should_run:
+        background_tasks.add_task(
+            _run_match_llm_evaluation_background,
+            str(result.evaluation.id),
+            getattr(result, "provider_payload", None) or {},
+            getattr(result, "truncation", None) or {},
+        )
+
     return MatchLlmEvaluationMutationResponse(
         success=True,
         evaluation=_to_evaluation_summary(result.evaluation),
         reused=result.reused,
-        message="Reused cached LLM evaluation." if result.reused else "Generated LLM evaluation.",
+        accepted=should_run,
+        message="Reused cached LLM evaluation." if result.reused else "Queued LLM evaluation.",
     )
 
 

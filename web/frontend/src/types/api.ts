@@ -161,6 +161,7 @@ export interface MatchLlmEvaluationMutationResponse {
     success: boolean;
     evaluation?: MatchLlmEvaluation | null;
     reused: boolean;
+    accepted?: boolean;
     message: string;
 }
 

@@ -20,7 +20,7 @@ type LlmActionButtonProps = Readonly<{
     tooltip: string;
     children: React.ReactNode;
     disabled?: boolean;
-    isLoading?: boolean;
+    active?: boolean;
     tone?: 'default' | 'danger';
     variant?: React.ComponentProps<typeof Button>['variant'];
     onClick: () => void;
@@ -41,6 +41,18 @@ function statusLabel(status?: string | null): string {
 
 function latestEvaluation(data?: MatchLlmEvaluationListResponse): MatchLlmEvaluation | null {
     return data?.evaluations?.[0] ?? null;
+}
+
+function isEvaluationInFlight(status?: string | null): boolean {
+    return status === 'pending' || status === 'running';
+}
+
+function progressMessage(status?: string | null): string {
+    if (status === 'pending') return 'Queued for Cerebras review. This panel will update automatically.';
+    if (status === 'running') {
+        return 'Cerebras is reviewing the full resume and job description. This panel will update automatically.';
+    }
+    return '';
 }
 
 function cleanLabel(value?: string | null): string {
@@ -77,32 +89,46 @@ const dangerActionButtonClasses = [
     'text-warn hover:border-warn hover:bg-warn-soft hover:text-warn',
 ].join(' ');
 
+const activeActionButtonClasses = [
+    actionButtonClasses,
+    'border-accent bg-accent-soft text-accent shadow-[0_0_18px_rgba(70,130,110,0.35)] disabled:opacity-100',
+].join(' ');
+
 const LlmActionButton: React.FC<LlmActionButtonProps> = ({
     label,
     tooltip,
     children,
     disabled,
-    isLoading,
+    active,
     tone = 'default',
     variant = 'secondary',
     onClick,
 }) => {
     const tooltipId = React.useId();
+    const className = active
+        ? activeActionButtonClasses
+        : tone === 'danger'
+            ? dangerActionButtonClasses
+            : actionButtonClasses;
     return (
         <span className="group relative inline-flex">
             <Button
                 type="button"
                 variant={variant}
                 size="sm"
-                className={tone === 'danger' ? dangerActionButtonClasses : actionButtonClasses}
-                isLoading={isLoading}
+                className={className}
                 onClick={onClick}
                 title={tooltip}
                 aria-label={label}
                 aria-describedby={tooltipId}
                 disabled={disabled}
+                aria-busy={active || undefined}
             >
-                {children}
+                <span
+                    className={active ? 'inline-flex animate-pulse drop-shadow-[0_0_6px_rgba(70,130,110,0.65)]' : 'inline-flex'}
+                >
+                    {children}
+                </span>
             </Button>
             <span
                 id={tooltipId}
@@ -127,11 +153,18 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
             return response.data;
         },
         enabled: Boolean(matchId),
+        refetchInterval: (query) => {
+            const latest = latestEvaluation(query.state.data as MatchLlmEvaluationListResponse | undefined);
+            return isEvaluationInFlight(latest?.status ?? markerStatus) ? 2500 : false;
+        },
+        refetchIntervalInBackground: true,
         staleTime: 30000,
     });
 
     const evaluation = latestEvaluation(data);
     const activeStatus = evaluation?.status ?? markerStatus ?? null;
+    const evaluationInFlight = isEvaluationInFlight(activeStatus);
+    const currentProgressMessage = progressMessage(activeStatus);
 
     const invalidate = () => {
         queryClient.invalidateQueries({ queryKey });
@@ -152,7 +185,15 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                 };
             });
             invalidate();
-            toast.success(response.data.reused ? 'Reused LLM evaluation' : 'LLM evaluation ready');
+            const nextStatus = response.data.evaluation?.status;
+            const isQueued = Boolean(response.data.accepted) || isEvaluationInFlight(nextStatus);
+            toast.success(
+                response.data.reused
+                    ? 'Reused LLM evaluation'
+                    : isQueued
+                        ? 'LLM evaluation started'
+                        : 'LLM evaluation ready',
+            );
         },
         onError: (error: any) => {
             toast.error(error?.message ?? 'Could not generate LLM evaluation.');
@@ -183,7 +224,20 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
         },
     });
 
-    const isBusy = generateMutation.isPending || deleteMutation.isPending;
+    const previousStatusRef = React.useRef<string | null>(null);
+    React.useEffect(() => {
+        const previousStatus = previousStatusRef.current;
+        if (activeStatus === 'succeeded' && isEvaluationInFlight(previousStatus)) {
+            invalidate();
+            toast.success('LLM evaluation ready');
+        } else if (activeStatus === 'failed' && isEvaluationInFlight(previousStatus)) {
+            invalidate();
+            toast.error('LLM evaluation failed.');
+        }
+        previousStatusRef.current = activeStatus;
+    }, [activeStatus]);
+
+    const isBusy = generateMutation.isPending || deleteMutation.isPending || evaluationInFlight;
     const hasEvaluation = Boolean(evaluation);
     const score = typeof evaluation?.llm_score === 'number' ? formatScore(evaluation.llm_score) : null;
     const analysis = evaluation?.analysis ?? {};
@@ -219,19 +273,19 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                         <RefreshCw className="h-4 w-4" aria-hidden="true" />
                     </LlmActionButton>
                     <LlmActionButton
-                        isLoading={generateMutation.isPending && !hasEvaluation}
+                        active={(generateMutation.isPending && !hasEvaluation) || evaluationInFlight}
                         onClick={() => generateMutation.mutate(false)}
                         label="Generate LLM evaluation"
-                        tooltip={unavailableMessage || 'Generate a second-pass relevance review'}
+                        tooltip={currentProgressMessage || unavailableMessage || 'Generate a second-pass relevance review'}
                         disabled={isBusy || !judgeAvailable}
                     >
                         <Sparkles className="h-4 w-4" aria-hidden="true" />
                     </LlmActionButton>
                     <LlmActionButton
-                        isLoading={generateMutation.isPending && hasEvaluation}
+                        active={generateMutation.isPending && hasEvaluation}
                         onClick={() => generateMutation.mutate(true)}
                         label="Regenerate LLM evaluation"
-                        tooltip={unavailableMessage || 'Regenerate and replace the cached review'}
+                        tooltip={currentProgressMessage || unavailableMessage || 'Regenerate and replace the cached review'}
                         disabled={isBusy || !hasEvaluation || !judgeAvailable}
                     >
                         <RotateCcw className="h-4 w-4" aria-hidden="true" />
@@ -273,10 +327,23 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                 </p>
             )}
 
+            {currentProgressMessage && (
+                <p
+                    className="mt-4 border-l-2 border-accent/60 pl-3 text-[13px] leading-relaxed text-ink-soft"
+                    aria-live="polite"
+                >
+                    {currentProgressMessage}
+                </p>
+            )}
+
             {isLoading && !evaluation ? (
                 <p className="mt-4 text-[13px] text-ink-muted">Loading evaluation status.</p>
             ) : evaluation?.summary ? (
                 <p className="mt-4 text-[14px] leading-relaxed text-ink-soft">{evaluation.summary}</p>
+            ) : currentProgressMessage ? (
+                <p className="mt-4 text-[13px] text-ink-muted">
+                    Waiting for the review to finish.
+                </p>
             ) : (
                 <p className="mt-4 text-[13px] text-ink-muted">
                     Generate an LLM review for this job to add a second-pass relevance explanation.

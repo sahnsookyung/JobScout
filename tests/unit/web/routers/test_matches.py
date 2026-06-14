@@ -541,9 +541,10 @@ class TestMatchesRouter:
         match_id = str(uuid.uuid4())
         tenant_id = "00000000-0000-4000-8000-000000000201"
         evaluation = self._evaluation(match_id=match_id)
-        mock_llm_evaluation_service.generate_for_match.return_value = SimpleNamespace(
+        mock_llm_evaluation_service.start_for_match.return_value = SimpleNamespace(
             evaluation=evaluation,
             reused=False,
+            should_run=False,
         )
 
         response = client.post(
@@ -556,12 +557,41 @@ class TestMatchesRouter:
         data = response.json()
         assert data["success"] is True
         assert data["reused"] is False
+        assert data["accepted"] is False
         assert data["evaluation"]["id"] == str(evaluation.id)
-        mock_llm_evaluation_service.generate_for_match.assert_called_once()
-        call_kwargs = mock_llm_evaluation_service.generate_for_match.call_args.kwargs
+        mock_llm_evaluation_service.start_for_match.assert_called_once()
+        call_kwargs = mock_llm_evaluation_service.start_for_match.call_args.kwargs
         assert call_kwargs["owner_id"] == "user-123"
         assert str(call_kwargs["tenant_id"]) == tenant_id
         assert call_kwargs["force"] is True
+
+    def test_generate_llm_evaluation_queues_background_task(
+        self,
+        client,
+        mock_llm_evaluation_service,
+    ):
+        match_id = str(uuid.uuid4())
+        evaluation = self._evaluation(match_id=match_id)
+        mock_llm_evaluation_service.start_for_match.return_value = SimpleNamespace(
+            evaluation=evaluation,
+            reused=False,
+            should_run=True,
+            provider_payload={"job": {"description": "Full JD"}},
+            truncation={"truncated": False, "fields": {}},
+        )
+
+        with patch("web.backend.routers.matches._run_match_llm_evaluation_background") as background:
+            response = client.post(f'/api/matches/{match_id}/llm-evaluations', json={})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["accepted"] is True
+        assert data["message"] == "Queued LLM evaluation."
+        background.assert_called_once_with(
+            str(evaluation.id),
+            {"job": {"description": "Full JD"}},
+            {"truncated": False, "fields": {}},
+        )
 
     @pytest.mark.parametrize(
         ("exc", "status_code"),
@@ -580,7 +610,7 @@ class TestMatchesRouter:
         status_code,
     ):
         match_id = str(uuid.uuid4())
-        mock_llm_evaluation_service.generate_for_match.side_effect = exc
+        mock_llm_evaluation_service.start_for_match.side_effect = exc
 
         response = client.post(f'/api/matches/{match_id}/llm-evaluations', json={})
 

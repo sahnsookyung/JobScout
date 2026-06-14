@@ -653,6 +653,44 @@ describe('MatchDetailsModal', () => {
         });
     });
 
+    it('shows automatic progress without a spinner while an LLM evaluation is running', async () => {
+        vi.mocked(matchesApi.getLlmEvaluations).mockResolvedValue({
+            data: {
+                success: true,
+                count: 1,
+                evaluations: [
+                    {
+                        id: 'eval-running',
+                        match_id: 'match-1',
+                        job_id: 'job-1',
+                        status: 'running',
+                        llm_score: null,
+                        confidence: null,
+                        verdict: null,
+                        summary: null,
+                        reason_codes: [],
+                        requirement_verdicts: [],
+                        provider: 'cerebras',
+                        model: 'gpt-oss-120b',
+                        prompt_version: 'match-judge-v1',
+                        schema_version: '1',
+                        retryable: false,
+                    },
+                ],
+            },
+        } as never);
+        mockUseMatchDetails.mockReturnValue({ data: makeModalData(), isLoading: false });
+
+        const { container } = render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        expect((await screen.findAllByText(/Cerebras is reviewing the full resume and job description/i)).length)
+            .toBeGreaterThan(0);
+        const generateButton = screen.getByRole('button', { name: /^generate llm evaluation$/i });
+        expect(generateButton).toBeDisabled();
+        expect(screen.getByTestId('sparkles-icon').parentElement).toHaveClass('animate-pulse');
+        expect(container.querySelector('.animate-spin')).not.toBeInTheDocument();
+    });
+
     it('disables LLM generation when provider credentials are missing', async () => {
         mockUsePolicy.mockReturnValue({
             policy: {

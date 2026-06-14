@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -108,6 +109,14 @@ RESUME_PROVIDER_EXCLUDED_KEYS = {
 class EvaluationResult:
     evaluation: LlmMatchEvaluation
     reused: bool = False
+
+
+@dataclass(frozen=True)
+class EvaluationStartResult(EvaluationResult):
+    should_run: bool = False
+    provider_payload: dict[str, Any] | None = None
+    truncation: dict[str, Any] | None = None
+
 
 @dataclass(frozen=True)
 class JudgeInput:
@@ -295,6 +304,116 @@ class MatchLlmEvaluationService:
         )
         self.db.commit()
         return EvaluationResult(evaluation, reused=False)
+
+    def start_for_match(
+        self,
+        match_id: Any,
+        *,
+        owner_id: Any,
+        tenant_id: Any | None = None,
+        force: bool = False,
+    ) -> EvaluationStartResult:
+        """Create or reuse a cache row without blocking on the provider call."""
+        available, reason = self.availability_status()
+        if not available:
+            raise LlmJudgeUnavailableError(
+                self._unavailable_message(reason),
+                reason=reason,
+            )
+
+        match = self._get_match_for_owner(match_id, owner_id=owner_id, tenant_id=tenant_id)
+        effective_tenant_id = self._effective_tenant_id(match, tenant_id)
+        judge_input = self.build_judge_input(
+            match,
+            owner_id=owner_id,
+            tenant_id=effective_tenant_id,
+        )
+        hashes = judge_input.hashes
+        existing = self._find_active_cache(
+            owner_id=owner_id,
+            tenant_id=effective_tenant_id,
+            resume_fingerprint=match.resume_fingerprint,
+            job_post_id=match.job_post_id,
+            judge_config_hash=hashes["judge_config_hash"],
+            evidence_hash=hashes["evidence_hash"],
+        )
+
+        if existing is not None and existing.status in {LLM_EVALUATION_PENDING, LLM_EVALUATION_RUNNING}:
+            if force:
+                raise LlmJudgeConflictError("An LLM evaluation is already running for this match.")
+            return EvaluationStartResult(existing, reused=True, should_run=False)
+
+        if existing is not None and not force and self._is_reusable(existing):
+            return EvaluationStartResult(existing, reused=True, should_run=False)
+
+        self._check_daily_quota(owner_id)
+        if existing is not None:
+            self._tombstone(existing)
+            self.db.flush()
+
+        evaluation = self._create_pending_evaluation(
+            match=match,
+            owner_id=owner_id,
+            tenant_id=effective_tenant_id,
+            hashes=hashes,
+        )
+        try:
+            self.db.flush()
+        except IntegrityError:
+            self.db.rollback()
+            existing_after_race = self._find_active_cache(
+                owner_id=owner_id,
+                tenant_id=effective_tenant_id,
+                resume_fingerprint=match.resume_fingerprint,
+                job_post_id=match.job_post_id,
+                judge_config_hash=hashes["judge_config_hash"],
+                evidence_hash=hashes["evidence_hash"],
+            )
+            if existing_after_race is None:
+                raise
+            return EvaluationStartResult(existing_after_race, reused=True, should_run=False)
+
+        self.db.commit()
+        return EvaluationStartResult(
+            evaluation,
+            reused=False,
+            should_run=True,
+            provider_payload=judge_input.provider_payload,
+            truncation=judge_input.truncation,
+        )
+
+    def run_pending_evaluation(
+        self,
+        evaluation_id: Any,
+        payload: dict[str, Any],
+        *,
+        truncation: dict[str, Any] | None = None,
+    ) -> LlmMatchEvaluation | None:
+        """Run provider work for a pending evaluation loaded in this DB session."""
+        try:
+            lookup_id = uuid.UUID(str(evaluation_id))
+        except (TypeError, ValueError):
+            logger.warning("Skipping invalid LLM evaluation id %s", _sanitize_log(evaluation_id))
+            return None
+
+        evaluation = self.db.get(LlmMatchEvaluation, lookup_id)
+        if evaluation is None:
+            logger.warning("Skipping missing LLM evaluation %s", _sanitize_log(evaluation_id))
+            return None
+        if evaluation.deleted_at is not None:
+            logger.info("Skipping deleted LLM evaluation %s", _sanitize_log(evaluation_id))
+            return evaluation
+        if evaluation.status not in {LLM_EVALUATION_PENDING, LLM_EVALUATION_RUNNING}:
+            logger.info(
+                "Skipping LLM evaluation %s with status %s",
+                _sanitize_log(evaluation_id),
+                _sanitize_log(evaluation.status),
+            )
+            return evaluation
+
+        self._run_provider(evaluation, payload, truncation=truncation)
+        self.db.commit()
+        return evaluation
 
     def delete_evaluation(
         self,

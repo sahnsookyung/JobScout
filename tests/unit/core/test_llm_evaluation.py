@@ -238,6 +238,58 @@ def test_failed_cache_is_tombstoned_and_retried():
     db.commit.assert_called_once()
 
 
+def test_start_for_match_creates_pending_without_running_provider():
+    db = Mock()
+    service = _service(db=db)
+    created = _evaluation(status=LLM_EVALUATION_PENDING)
+    _wire_minimal_generation(service, existing=None, created=created)
+
+    result = service.start_for_match("match-1", owner_id="owner-1")
+
+    assert result.reused is False
+    assert result.should_run is True
+    assert result.evaluation is created
+    assert result.provider_payload == {"safe": "payload"}
+    assert result.truncation == {"truncated": False, "fields": {}}
+    service._run_provider.assert_not_called()
+    db.commit.assert_called_once()
+
+
+def test_start_for_match_reuses_running_cache_without_queueing():
+    service = _service()
+    existing = _evaluation(status=LLM_EVALUATION_RUNNING)
+    _wire_minimal_generation(service, existing=existing)
+
+    result = service.start_for_match("match-1", owner_id="owner-1")
+
+    assert result.reused is True
+    assert result.should_run is False
+    assert result.evaluation is existing
+    service._check_daily_quota.assert_not_called()
+
+
+def test_run_pending_evaluation_loads_row_and_runs_provider():
+    db = Mock()
+    evaluation = _evaluation(status=LLM_EVALUATION_PENDING)
+    db.get.return_value = evaluation
+    service = _service(db=db)
+    service._run_provider = Mock()
+
+    result = service.run_pending_evaluation(
+        "00000000-0000-4000-8000-000000000301",
+        {"safe": "payload"},
+        truncation={"truncated": False, "fields": {}},
+    )
+
+    assert result is evaluation
+    service._run_provider.assert_called_once_with(
+        evaluation,
+        {"safe": "payload"},
+        truncation={"truncated": False, "fields": {}},
+    )
+    db.commit.assert_called_once()
+
+
 def test_run_provider_embeds_payload_in_user_message_for_openai_provider_path():
     db = Mock()
     provider = _CapturingProvider()
