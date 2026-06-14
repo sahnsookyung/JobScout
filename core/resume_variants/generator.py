@@ -5,9 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from core.resume_evidence_selection import (
+    build_job_relevance_terms,
+    select_relevant_resume_evidence_units,
+)
+
 MAX_CONTENT_JSON_BYTES = 128 * 1024
-GENERATOR_VERSION = "deterministic-v1"
-EVIDENCE_POLICY_VERSION = "evidence-v1"
+GENERATOR_VERSION = "deterministic-v2"
+EVIDENCE_POLICY_VERSION = "evidence-v2"
 TEMPLATE_VERSION = "compact-v1"
 RENDERER_VERSION = "renderer-v1"
 
@@ -70,7 +75,12 @@ def _summary_claims(profile: dict[str, Any]) -> list[dict[str, Any]]:
     return [_claim(text, [_source("structured_resume", "profile.summary.text")])]
 
 
-def _skill_claims(profile: dict[str, Any], *, limit: int = 18) -> list[dict[str, Any]]:
+def _skill_claims(
+    profile: dict[str, Any],
+    *,
+    relevance_terms: set[str] | None = None,
+    limit: int = 24,
+) -> list[dict[str, Any]]:
     skills = profile.get("skills")
     if not isinstance(skills, dict):
         return []
@@ -78,11 +88,22 @@ def _skill_claims(profile: dict[str, Any], *, limit: int = 18) -> list[dict[str,
     if not isinstance(items, list):
         return []
 
+    ordered_items = [
+        (index, item)
+        for index, item in enumerate(items)
+        if isinstance(item, dict)
+    ]
+    if relevance_terms:
+        ordered_items.sort(
+            key=lambda pair: (
+                -_term_overlap(str(pair[1].get("name", "")), relevance_terms),
+                pair[0],
+            )
+        )
+
     claims: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for index, item in enumerate(items):
-        if not isinstance(item, dict):
-            continue
+    for index, item in ordered_items:
         name = _clean_text(item.get("name"), max_length=80)
         if not name:
             continue
@@ -145,6 +166,43 @@ def _experience_claims(profile: dict[str, Any], *, limit: int = 6) -> list[dict[
     return entries
 
 
+def _evidence_unit_claims(
+    evidence_units: list[Any],
+    requirements: list[Any],
+    *,
+    job: Any,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    selected = select_relevant_resume_evidence_units(
+        evidence_units,
+        requirements,
+        max_count=limit,
+        job_texts=(getattr(job, "title", None), getattr(job, "description", None)),
+    )
+    claims: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for unit in selected[:limit]:
+        text = _clean_text(getattr(unit, "source_text", None), max_length=280)
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        claims.append(
+            _claim(
+                text,
+                [
+                    SourcePointer(
+                        kind="resume_evidence_unit",
+                        evidence_unit_id=str(getattr(unit, "evidence_unit_id", "")),
+                    ).as_dict()
+                ],
+            )
+        )
+    return claims
+
+
 def _requirement_claims(requirement_matches: list[Any], *, limit: int = 10) -> tuple[list[dict[str, Any]], list[str]]:
     claims: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -168,6 +226,38 @@ def _requirement_claims(requirement_matches: list[Any], *, limit: int = 10) -> t
         elif requirement_text:
             warnings.append(f"Unsupported requirement not claimed: {requirement_text}")
     return claims, warnings
+
+
+def _requirement_units(requirement_matches: list[Any]) -> list[Any]:
+    units: list[Any] = []
+    for match in requirement_matches:
+        requirement = getattr(match, "requirement", None)
+        if requirement is not None:
+            units.append(requirement)
+    return units
+
+
+def _term_overlap(text: str, terms: set[str]) -> int:
+    lowered = text.lower()
+    return sum(1 for term in terms if term in lowered)
+
+
+def _merge_claims(*claim_groups: list[dict[str, Any]], limit: int = 12) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for claims in claim_groups:
+        for claim in claims:
+            text = _clean_text(claim.get("text"), max_length=280)
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(claim)
+            if len(merged) >= limit:
+                return merged
+    return merged
 
 
 def _collect_claims(content: Any) -> list[dict[str, Any]]:
@@ -201,9 +291,20 @@ def generate_resume_variant_content(
     requirement_matches: list[Any],
     template_key: str,
     tone: str,
+    resume_evidence_units: list[Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
     """Generate a deterministic, evidence-grounded resume variant."""
     profile = _profile(resume_data)
+    requirements = _requirement_units(requirement_matches)
+    relevance_terms = build_job_relevance_terms(
+        requirements,
+        job_texts=(getattr(job, "title", None), getattr(job, "description", None)),
+    )
+    evidence_unit_claims = _evidence_unit_claims(
+        resume_evidence_units or [],
+        requirements,
+        job=job,
+    )
     requirement_claims, warnings = _requirement_claims(requirement_matches)
     if getattr(match, "is_hidden", False):
         warnings.append("This match is hidden; generated draft is still available for review.")
@@ -216,8 +317,8 @@ def generate_resume_variant_content(
             "company": _clean_text(getattr(job, "company", None), max_length=160),
         },
         "summary": _summary_claims(profile),
-        "targeted_evidence": requirement_claims,
-        "skills": _skill_claims(profile),
+        "targeted_evidence": _merge_claims(evidence_unit_claims, requirement_claims),
+        "skills": _skill_claims(profile, relevance_terms=relevance_terms),
         "experience": _experience_claims(profile),
     }
     warnings.extend(validate_claim_sources(content))

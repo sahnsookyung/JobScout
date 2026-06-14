@@ -20,7 +20,7 @@ from core.resume_variants.generator import (
 )
 from core.resume_variants.hashing import canonical_json_bytes, canonical_json_hash
 from core.resume_variants.quota import ResumeVariantQuota
-from database.models import JobMatchRequirement, JobPost, StructuredResume
+from database.models import JobMatchRequirement, JobPost, ResumeEvidenceUnitEmbedding, StructuredResume
 from database.repositories.match import MatchRepository
 from database.repositories.resume_variant import ResumeVariantRepository
 
@@ -89,6 +89,10 @@ class ResumeVariantService:
                 job=job,
                 match=match,
                 requirement_matches=self._requirement_matches(match.id),
+                resume_evidence_units=self._resume_evidence_units(
+                    owner_id,
+                    match.resume_fingerprint,
+                ),
                 template_key=request.template_key,
                 tone=request.tone,
             )
@@ -187,6 +191,26 @@ class ResumeVariantService:
                 .where(JobMatchRequirement.job_match_id == match_id)
             ).scalars()
         )
+
+    def _resume_evidence_units(self, owner_id: Any, resume_fingerprint: Any, *, limit: int = 200) -> list[Any]:
+        try:
+            return list(
+                self.db.execute(
+                    select(ResumeEvidenceUnitEmbedding)
+                    .where(
+                        ResumeEvidenceUnitEmbedding.owner_id == owner_id,
+                        ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint,
+                    )
+                    .order_by(
+                        ResumeEvidenceUnitEmbedding.source_section.asc(),
+                        ResumeEvidenceUnitEmbedding.evidence_unit_id.asc(),
+                        ResumeEvidenceUnitEmbedding.created_at.asc(),
+                    )
+                    .limit(limit)
+                ).scalars()
+            )
+        except Exception:
+            return []
 
     def _identity(
         self,

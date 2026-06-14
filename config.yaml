@@ -176,7 +176,7 @@ matching:
     max_per_run: 10
     max_per_owner_per_day: 25
     reuse_ttl_days: 90
-    prompt_version: "match_llm_judge_v3"
+    prompt_version: "match_llm_judge_v4"
     schema_version: "match_llm_judge_schema_v2"
     job_description_max_chars: 6000
     requirements_max_count: 40

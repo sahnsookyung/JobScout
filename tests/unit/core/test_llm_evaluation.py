@@ -14,6 +14,7 @@ from core.llm_evaluation import (
     MatchLlmEvaluationService,
     evaluation_public_dict,
 )
+from core.resume_evidence_selection import select_relevant_resume_evidence_units
 from database.models import (
     LLM_EVALUATION_DELETED,
     LLM_EVALUATION_FAILED,
@@ -574,6 +575,122 @@ def test_build_hash_payload_excludes_prior_deterministic_outputs():
     assert "semantic_rerank" not in serialized
     assert "E" * 100 not in serialized
     assert set(hashes) == {"judge_config_hash", "evidence_hash", "input_hash"}
+
+
+def test_resume_summary_includes_nested_profile_skills():
+    service = _service()
+    resume = SimpleNamespace(
+        extracted_data={
+            "profile": {
+                "summary": {"text": "Full-stack engineer."},
+                "skills": {
+                    "all": [
+                        {"name": "React.js"},
+                        {"name": "TypeScript"},
+                    ]
+                },
+                "projects": [
+                    {
+                        "name": "Portfolio",
+                        "highlights": ["Built TypeScript Web Components."],
+                    }
+                ],
+            }
+        },
+        total_experience_years=3.5,
+    )
+    truncation = {"truncated": False, "fields": {}}
+
+    payload = service._serialize_resume_summary(resume, truncation)
+
+    assert "TypeScript" in str(payload)
+    assert payload["skills"]["all"] == ["React.js", "TypeScript"]
+    assert payload["total_experience_years"] == 3.5
+
+
+def test_judge_input_prioritizes_late_requirement_relevant_resume_evidence():
+    config = _config()
+    config.matching.llm_judge.evidence_units_max_count = 3
+    service = _service(config)
+    requirement = SimpleNamespace(
+        text="Frontend development with TypeScript and React",
+        req_type="required",
+        tags={"technologies": ["TypeScript", "React"]},
+        min_years=None,
+        years_context=None,
+    )
+    generic_units = [
+        SimpleNamespace(
+            source_text=f"Generic backend evidence {index}",
+            source_section="Experience",
+            tags={},
+            years_value=None,
+            years_context=None,
+            is_total_years_claim=False,
+        )
+        for index in range(12)
+    ]
+    type_script_unit = SimpleNamespace(
+        source_text="Built TypeScript Web Components and React overlays.",
+        source_section="Projects",
+        tags={"technologies": ["TypeScript", "React"]},
+        years_value=None,
+        years_context=None,
+        is_total_years_claim=False,
+    )
+    service._load_job_for_match = Mock(
+        return_value=SimpleNamespace(
+            title="Frontend Engineer",
+            company="Acme",
+            location_text="Tokyo",
+            is_remote=False,
+            description="Build product UI with TypeScript.",
+            description_source="external_seed",
+            description_completeness="full",
+            description_warning_code=None,
+            content_hash="content-hash",
+            description_hash="description-hash",
+        )
+    )
+    service._load_match_requirements = Mock(return_value=[])
+    service._load_job_requirements = Mock(return_value=[requirement])
+    service._load_resume = Mock(return_value=None)
+    service._load_resume_evidence_units = Mock(return_value=[*generic_units, type_script_unit])
+
+    judge_input = service.build_judge_input(_match(), owner_id="owner-1")
+
+    serialized_evidence = str(judge_input.provider_payload["resume_evidence_units"])
+    assert "TypeScript Web Components" in serialized_evidence
+    assert len(judge_input.provider_payload["resume_evidence_units"]) == 3
+
+
+def test_evidence_selector_promotes_explicit_requirement_term_hits():
+    requirement = SimpleNamespace(text="TypeScript", tags={})
+    units = [
+        SimpleNamespace(
+            source_text=f"Generic service evidence {index}",
+            source_section="Experience",
+            tags={},
+            years_context=None,
+        )
+        for index in range(8)
+    ]
+    units.append(
+        SimpleNamespace(
+            source_text="Interactive Portfolio Website using TypeScript and Web Components.",
+            source_section="Projects",
+            tags={"technologies": ["TypeScript"]},
+            years_context=None,
+        )
+    )
+
+    selected = select_relevant_resume_evidence_units(
+        units,
+        [requirement],
+        max_count=2,
+    )
+
+    assert "TypeScript" in str(selected)
 
 
 def test_create_pending_evaluation_sets_cache_identity_fields():

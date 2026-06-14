@@ -196,6 +196,57 @@ def test_create_for_match_generates_persists_and_reports_quota(monkeypatch) -> N
     assert repo.pruned == {"owner_id": owner_id, "tenant_id": tenant_id, "keep_id": variant.id}
 
 
+def test_create_for_match_passes_resume_evidence_units_to_generator(monkeypatch) -> None:
+    now = datetime.now(timezone.utc)
+    owner_id = uuid4()
+    variant = SimpleNamespace(
+        id=uuid4(),
+        match_id=uuid4(),
+        job_post_id=uuid4(),
+        template_key="compact",
+        generation_mode="deterministic",
+        created_at=now,
+        content_json={"summary": []},
+        evidence_map={},
+        warnings=[],
+    )
+    match = SimpleNamespace(
+        id=variant.match_id,
+        job_post_id=variant.job_post_id,
+        resume_fingerprint="resume-fp",
+        status="active",
+        updated_at=now,
+        calculated_at=now,
+        job_content_hash="job-hash",
+    )
+    job = SimpleNamespace(content_hash="job-hash")
+    resume = SimpleNamespace(extracted_data={"profile": {}}, updated_at=now, created_at=now)
+    evidence_units = [SimpleNamespace(source_text="Built TypeScript UI.")]
+    captured = {}
+    service = ResumeVariantService(SimpleNamespace(commit=lambda: None), quota=_Quota())
+    repo = _RepoForCreate(variant)
+    service.repo = repo
+    service._load_sources = lambda **kwargs: (match, job, resume)
+    service._requirement_matches = lambda match_id: []
+    service._resume_evidence_units = lambda requested_owner_id, resume_fingerprint: evidence_units
+
+    def _capture_generator(**kwargs):
+        captured.update(kwargs)
+        return variant.content_json, {"summary": []}, []
+
+    monkeypatch.setattr("core.resume_variants.service.generate_resume_variant_content", _capture_generator)
+
+    service.create_for_match(
+        match_id=match.id,
+        owner_id=owner_id,
+        tenant_id=None,
+        request=ResumeVariantRequest(force=True),
+    )
+
+    assert captured["resume_evidence_units"] is evidence_units
+    assert captured["resume_data"] == resume.extracted_data
+
+
 def test_create_for_match_reuses_current_variant_after_unique_race(monkeypatch) -> None:
     now = datetime.now(timezone.utc)
     existing = SimpleNamespace(id=uuid4())

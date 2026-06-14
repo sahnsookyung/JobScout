@@ -173,7 +173,7 @@ class MatchLlmJudgeConfig(BaseModel):
     max_per_run: int = 10
     max_per_owner_per_day: int = 25
     reuse_ttl_days: int = 90
-    prompt_version: str = "match_llm_judge_v3"
+    prompt_version: str = "match_llm_judge_v4"
     schema_version: str = "match_llm_judge_schema_v2"
     job_description_max_chars: int = 6_000
     requirements_max_count: int = 40

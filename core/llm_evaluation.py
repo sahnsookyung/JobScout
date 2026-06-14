@@ -19,6 +19,7 @@ from core.config_loader import load_config
 from core.llm.interfaces import LLMProvider
 from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_match_judge
 from core.redis_streams import _sanitize_log
+from core.resume_evidence_selection import select_relevant_resume_evidence_units
 from database.models import (
     LLM_EVALUATION_DELETED,
     LLM_EVALUATION_FAILED,
@@ -46,6 +47,8 @@ Task
 - Recognize transferable evidence when technologies are closely related
   (for example Java and Kotlin), but explain the transfer rather than inventing
   direct experience.
+- Treat a direct mention in either the structured resume summary or the resume
+  evidence units as explicit resume evidence.
 - Do not invent experience, credentials, salary, location, or authorization facts.
 - Prefer concise, user-safe explanations.
 
@@ -85,6 +88,7 @@ DEFAULT_JOB_DESCRIPTION_MAX_CHARS = 6_000
 DEFAULT_REQUIREMENTS_MAX_COUNT = 40
 DEFAULT_REQUIREMENT_TEXT_MAX_CHARS = 500
 DEFAULT_EVIDENCE_UNITS_MAX_COUNT = 32
+DEFAULT_EVIDENCE_UNITS_SCAN_MAX_COUNT = 200
 DEFAULT_EVIDENCE_UNIT_MAX_CHARS = 450
 DEFAULT_RESUME_SUMMARY_MAX_CHARS = 2_000
 
@@ -443,6 +447,16 @@ class MatchLlmEvaluationService:
             owner_id,
             getattr(match, "resume_fingerprint", None),
         )
+        selected_evidence_units = select_relevant_resume_evidence_units(
+            evidence_units,
+            job_requirements,
+            max_count=self._judge_limit(
+                "evidence_units_max_count",
+                DEFAULT_EVIDENCE_UNITS_MAX_COUNT,
+            ),
+            extra_count=1,
+            job_texts=(getattr(job, "title", None), description),
+        )
 
         provider_payload = {
             "task": "independent_resume_job_match_review",
@@ -468,7 +482,7 @@ class MatchLlmEvaluationService:
             "requirements": requirement_payload,
             "resume": self._serialize_resume_summary(resume, truncation),
             "resume_evidence_units": self._serialize_resume_evidence_units(
-                evidence_units,
+                selected_evidence_units,
                 truncation,
             ),
             "input_metadata": {
@@ -709,6 +723,7 @@ class MatchLlmEvaluationService:
             "evidence_units_max_count",
             DEFAULT_EVIDENCE_UNITS_MAX_COUNT,
         )
+        scan_limit = max(limit + 1, DEFAULT_EVIDENCE_UNITS_SCAN_MAX_COUNT)
         try:
             return list(
                 self.db.query(ResumeEvidenceUnitEmbedding)
@@ -721,7 +736,7 @@ class MatchLlmEvaluationService:
                     ResumeEvidenceUnitEmbedding.evidence_unit_id.asc(),
                     ResumeEvidenceUnitEmbedding.created_at.asc(),
                 )
-                .limit(limit + 1)
+                .limit(scan_limit + 1)
                 .all()
             )
         except Exception:
@@ -778,8 +793,19 @@ class MatchLlmEvaluationService:
             return {}
         data = getattr(resume, "extracted_data", None)
         summary = data if isinstance(data, dict) else {}
+        public_summary = self._public_resume_summary(summary)
+        if getattr(resume, "total_experience_years", None) is not None:
+            public_summary["total_experience_years"] = self._float(resume.total_experience_years)
+        return self._cap_json_payload(
+            public_summary,
+            self._judge_limit("resume_summary_max_chars", DEFAULT_RESUME_SUMMARY_MAX_CHARS),
+            truncation,
+            "resume.summary",
+        )
+
+    def _public_resume_summary(self, summary: dict[str, Any]) -> dict[str, Any]:
         public_summary = {
-            key: summary[key]
+            key: self._compact_resume_value(summary[key])
             for key in (
                 "headline",
                 "summary",
@@ -792,14 +818,42 @@ class MatchLlmEvaluationService:
             )
             if key in summary
         }
-        if getattr(resume, "total_experience_years", None) is not None:
-            public_summary["total_experience_years"] = self._float(resume.total_experience_years)
-        return self._cap_json_payload(
-            public_summary,
-            self._judge_limit("resume_summary_max_chars", DEFAULT_RESUME_SUMMARY_MAX_CHARS),
-            truncation,
-            "resume.summary",
-        )
+        profile = summary.get("profile")
+        if isinstance(profile, dict):
+            for key in (
+                "headline",
+                "summary",
+                "skills",
+                "experience",
+                "projects",
+                "education",
+                "certifications",
+                "languages",
+            ):
+                if key in profile and key not in public_summary:
+                    public_summary[key] = self._compact_resume_value(profile[key])
+        return public_summary
+
+    def _compact_resume_value(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            if isinstance(value.get("all"), list):
+                return {
+                    "all": [
+                        self._truncate(item.get("name"), 80)
+                        for item in value["all"][:80]
+                        if isinstance(item, dict) and str(item.get("name", "")).strip()
+                    ]
+                }
+            return {
+                str(key)[:80]: self._compact_resume_value(item)
+                for key, item in list(value.items())[:20]
+                if key not in {"raw_text", "source_text"}
+            }
+        if isinstance(value, list):
+            return [self._compact_resume_value(item) for item in value[:12]]
+        if isinstance(value, str):
+            return self._truncate(value, 260)
+        return value
 
     def _serialize_resume_evidence_units(
         self,
