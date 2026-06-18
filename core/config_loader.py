@@ -590,7 +590,7 @@ class RankingConfig(BaseModel):
     stable_tie_break_key: Literal["job_id", "match_id"] = "match_id"
     max_ranking_candidates: int = Field(default=500, ge=10, le=10_000)
     default_top_k: int = Field(default=25, ge=1, le=500)
-    max_top_k: int = Field(default=100, ge=1, le=1_000)
+    max_top_k: int = Field(default=500, ge=1, le=1_000)
     explanation_labels: Dict[str, str] = Field(
         default_factory=lambda: {
             "preference_first": "Sorted by your soft preference match",

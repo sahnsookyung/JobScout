@@ -203,6 +203,20 @@ export interface StatsResponse {
         excluded_count: number;
         excluded_by_reason: Record<string, number>;
         preference_status?: Record<string, any> | null;
+        job_post_total?: number;
+        active_job_posts?: number;
+        inactive_job_posts?: number;
+        extracted_job_posts?: number;
+        embedded_job_posts?: number;
+        ready_to_score_job_posts?: number;
+        pending_extraction_job_posts?: number;
+        processing_extraction_job_posts?: number;
+        retryable_extraction_job_posts?: number;
+        failed_extraction_job_posts?: number;
+        pending_embedding_job_posts?: number;
+        processing_embedding_job_posts?: number;
+        retryable_embedding_job_posts?: number;
+        failed_embedding_job_posts?: number;
     };
 }
 

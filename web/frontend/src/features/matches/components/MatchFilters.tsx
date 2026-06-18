@@ -58,7 +58,7 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
                 />
                 {processedCount > 0 && (
                     <Toggle
-                        label={`All processed (${processedCount})`}
+                        label={`All matched candidates (${processedCount})`}
                         checked={showAllProcessed}
                         onChange={onShowAllProcessedChange}
                     />

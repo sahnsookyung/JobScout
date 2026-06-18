@@ -26,7 +26,7 @@ from core.match_selection.contracts import (
 from core.metrics import record_selection_tier_item
 from core.ranking import RankingContext, rank_matches
 
-EXCLUDED_STORAGE_CAP = 500
+EXCLUDED_STORAGE_CAP = 5000
 
 
 def select_matches(

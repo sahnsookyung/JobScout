@@ -75,9 +75,9 @@ matching:
   matcher:
     enabled: true
     similarity_threshold: 0.5
-    batch_size: 100
+    batch_size: 5000
     hybrid_retrieval_enabled: true
-    lexical_limit: 100
+    lexical_limit: 5000
     fusion_rank_constant: 60
     lexical_query_token_limit: 24
     # lexical_limit: 200          # Raise if dense-only retrieval misses exact skill/title matches
@@ -318,7 +318,7 @@ ranking:
   max_ranking_candidates: 500
   # Response bounds.
   default_top_k: 25
-  max_top_k: 100
+  max_top_k: 500
   explanation_labels:
     preference_first: "Sorted by your soft preference match"
     fit_first: "Sorted by skill & requirement fit"

@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from web.backend.routers.stats import router
+from web.backend.routers.stats import _job_processing_stats, router
 from web.backend.dependencies import get_current_user, get_db
 
 
@@ -46,6 +46,20 @@ def _make_policy_mock(min_fit=55.0, top_k=50):
     policy_service = Mock()
     policy_service.get_current_policy.return_value = policy
     return policy_service
+
+class _FakeJobStatsQuery:
+    def __init__(self, row):
+        self._row = row
+
+    def one(self):
+        return self._row
+
+class _FakeJobStatsDb:
+    def __init__(self, row):
+        self._row = row
+
+    def query(self, *args):
+        return _FakeJobStatsQuery(self._row)
 
 
 class TestGetStats:
@@ -379,3 +393,29 @@ class TestGetStats:
         assert data["stats"]["primary_count"] == 0
         assert data["stats"]["excluded_count"] == 0
         assert data["stats"]["total_matches"] == 0
+
+    def test_job_processing_stats_are_serialized(self):
+        row = SimpleNamespace(
+            job_post_total=1459,
+            active_job_posts=1050,
+            inactive_job_posts=409,
+            extracted_job_posts=352,
+            embedded_job_posts=1129,
+            ready_to_score_job_posts=352,
+            pending_extraction_job_posts=1103,
+            processing_extraction_job_posts=0,
+            retryable_extraction_job_posts=4,
+            failed_extraction_job_posts=0,
+            pending_embedding_job_posts=330,
+            processing_embedding_job_posts=0,
+            retryable_embedding_job_posts=0,
+            failed_embedding_job_posts=0,
+        )
+        repo = SimpleNamespace(db=_FakeJobStatsDb(row))
+
+        stats = _job_processing_stats(repo)
+
+        assert stats["job_post_total"] == 1459
+        assert stats["embedded_job_posts"] == 1129
+        assert stats["pending_extraction_job_posts"] == 1103
+        assert stats["retryable_extraction_job_posts"] == 4

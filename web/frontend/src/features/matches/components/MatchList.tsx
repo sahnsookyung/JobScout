@@ -152,7 +152,7 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                     </span>
                     <span className="text-[13px] text-ink-soft">
                         {showAllProcessed
-                            ? (matches.length === 1 ? 'processed job' : 'processed jobs')
+                            ? (matches.length === 1 ? 'matched candidate' : 'matched candidates')
                             : (matches.length === 1 ? 'match' : 'matches')}
                         {strongCount > 0 && (
                             <>
@@ -212,12 +212,12 @@ function EmptyState({
                     No matches qualified this run.
                 </p>
                 <p className="mx-auto mt-2 max-w-md text-[13px] text-ink-soft">
-                    {hiddenByCurrentFilters} {hiddenByCurrentFilters === 1 ? 'job was' : 'jobs were'} processed but hidden by the current result policy.
-                    Loosen the policy, or browse the full processed set now.
+                    {hiddenByCurrentFilters} {hiddenByCurrentFilters === 1 ? 'candidate was' : 'candidates were'} matched but hidden by the current result policy.
+                    Loosen the policy, or browse the full candidate set now.
                 </p>
                 <div className="mt-5">
                     <Button variant="secondary" size="sm" onClick={onShowAllProcessed}>
-                        Show all processed
+                        Show all matched candidates
                     </Button>
                 </div>
             </div>

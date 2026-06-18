@@ -286,8 +286,10 @@ describe('StatsPanel', () => {
     it('renders the total card, match breakdown, and score distribution', () => {
         render(<StatsPanel {...defaultProps} />);
         expect(screen.getByText('Total')).toBeInTheDocument();
-        expect(screen.getByText('100')).toBeInTheDocument();
-        expect(screen.getByText('processed this run')).toBeInTheDocument();
+        expect(screen.getAllByText('100').length).toBeGreaterThan(0);
+        expect(screen.getByText('matched candidates')).toBeInTheDocument();
+        expect(screen.getByText('Imported')).toBeInTheDocument();
+        expect(screen.getByText('Pending extract')).toBeInTheDocument();
         expect(screen.getByText('Fit')).toBeInTheDocument();
         expect(screen.getByText('Below threshold')).toBeInTheDocument();
         expect(screen.getByText('Hidden')).toBeInTheDocument();

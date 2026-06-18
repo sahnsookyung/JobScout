@@ -5,9 +5,11 @@ Stats endpoints - view match statistics.
 
 from typing import Annotated
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from core.match_selection import resolve_canonical_resume_selection
+from database.models import JobPost
 from database.uow import job_uow
 
 from ..dependencies import get_current_user, get_db
@@ -37,6 +39,20 @@ def _empty_stats_payload() -> dict[str, object]:
         "excluded_count": 0,
         "excluded_by_reason": {},
         "preference_status": None,
+        "job_post_total": 0,
+        "active_job_posts": 0,
+        "inactive_job_posts": 0,
+        "extracted_job_posts": 0,
+        "embedded_job_posts": 0,
+        "ready_to_score_job_posts": 0,
+        "pending_extraction_job_posts": 0,
+        "processing_extraction_job_posts": 0,
+        "retryable_extraction_job_posts": 0,
+        "failed_extraction_job_posts": 0,
+        "pending_embedding_job_posts": 0,
+        "processing_embedding_job_posts": 0,
+        "retryable_embedding_job_posts": 0,
+        "failed_embedding_job_posts": 0,
     }
 
 
@@ -63,6 +79,10 @@ def _canonical_stats_payload(
     top_k: int | None,
 ) -> dict[str, object]:
     stats = _empty_stats_payload()
+    try:
+        stats.update(_job_processing_stats(repo))
+    except Exception:
+        pass
     canonical = resolve_canonical_resume_selection(repo, owner_id)
     if canonical is None:
         return stats
@@ -103,6 +123,61 @@ def _canonical_stats_payload(
         }
     )
     return stats
+
+def _job_processing_stats(repo) -> dict[str, int]:
+    row = repo.db.query(
+        func.count(JobPost.id).label("job_post_total"),
+        func.count(JobPost.id).filter(JobPost.status == "active").label("active_job_posts"),
+        func.count(JobPost.id).filter(JobPost.status == "inactive").label("inactive_job_posts"),
+        func.count(JobPost.id).filter(JobPost.is_extracted.is_(True)).label("extracted_job_posts"),
+        func.count(JobPost.id).filter(JobPost.is_embedded.is_(True)).label("embedded_job_posts"),
+        func.count(JobPost.id)
+        .filter(JobPost.is_extracted.is_(True), JobPost.is_embedded.is_(True))
+        .label("ready_to_score_job_posts"),
+        func.count(JobPost.id)
+        .filter(JobPost.extraction_status == "pending")
+        .label("pending_extraction_job_posts"),
+        func.count(JobPost.id)
+        .filter(JobPost.extraction_status == "processing")
+        .label("processing_extraction_job_posts"),
+        func.count(JobPost.id)
+        .filter(JobPost.extraction_status == "failed_retryable")
+        .label("retryable_extraction_job_posts"),
+        func.count(JobPost.id)
+        .filter(JobPost.extraction_status == "failed")
+        .label("failed_extraction_job_posts"),
+        func.count(JobPost.id)
+        .filter(JobPost.embedding_status == "pending")
+        .label("pending_embedding_job_posts"),
+        func.count(JobPost.id)
+        .filter(JobPost.embedding_status == "processing")
+        .label("processing_embedding_job_posts"),
+        func.count(JobPost.id)
+        .filter(JobPost.embedding_status == "failed_retryable")
+        .label("retryable_embedding_job_posts"),
+        func.count(JobPost.id)
+        .filter(JobPost.embedding_status == "failed")
+        .label("failed_embedding_job_posts"),
+    ).one()
+    return {
+        key: int(getattr(row, key) or 0)
+        for key in (
+            "job_post_total",
+            "active_job_posts",
+            "inactive_job_posts",
+            "extracted_job_posts",
+            "embedded_job_posts",
+            "ready_to_score_job_posts",
+            "pending_extraction_job_posts",
+            "processing_extraction_job_posts",
+            "retryable_extraction_job_posts",
+            "failed_extraction_job_posts",
+            "pending_embedding_job_posts",
+            "processing_embedding_job_posts",
+            "retryable_embedding_job_posts",
+            "failed_embedding_job_posts",
+        )
+    }
 
 
 def _item_fit_score(item) -> float | None:
@@ -238,5 +313,19 @@ def get_stats(
             'excluded_count': stats['excluded_count'],
             'excluded_by_reason': stats['excluded_by_reason'],
             'preference_status': stats['preference_status'],
+            'job_post_total': stats['job_post_total'],
+            'active_job_posts': stats['active_job_posts'],
+            'inactive_job_posts': stats['inactive_job_posts'],
+            'extracted_job_posts': stats['extracted_job_posts'],
+            'embedded_job_posts': stats['embedded_job_posts'],
+            'ready_to_score_job_posts': stats['ready_to_score_job_posts'],
+            'pending_extraction_job_posts': stats['pending_extraction_job_posts'],
+            'processing_extraction_job_posts': stats['processing_extraction_job_posts'],
+            'retryable_extraction_job_posts': stats['retryable_extraction_job_posts'],
+            'failed_extraction_job_posts': stats['failed_extraction_job_posts'],
+            'pending_embedding_job_posts': stats['pending_embedding_job_posts'],
+            'processing_embedding_job_posts': stats['processing_embedding_job_posts'],
+            'retryable_embedding_job_posts': stats['retryable_embedding_job_posts'],
+            'failed_embedding_job_posts': stats['failed_embedding_job_posts'],
         }
     )

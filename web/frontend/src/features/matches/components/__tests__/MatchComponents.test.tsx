@@ -406,7 +406,7 @@ describe('MatchList', () => {
             error: null,
             refetch: vi.fn(),
         }));
-        fireEvent.click(screen.getByRole('checkbox', { name: /all processed \(2\)/i }));
+        fireEvent.click(screen.getByRole('checkbox', { name: /all matched candidates \(2\)/i }));
 
         expect(mockUseMatches).toHaveBeenLastCalledWith(
             expect.objectContaining({ tier: 'all', min_fit: undefined, top_k: undefined }),
