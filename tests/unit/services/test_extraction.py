@@ -370,6 +370,60 @@ class TestExtractionConsumer:
         assert result["status"] == "completed"
         assert result["processed"] == 4
 
+    @pytest.mark.asyncio
+    async def test_batch_consumer_enqueues_followup_embeddings_batch(self):
+        """Batch consumer queues embeddings only after extraction completes."""
+        from services.extraction.main import ExtractionBatchConsumer
+
+        mock_ctx = Mock()
+        stop_event = threading.Event()
+        consumer = ExtractionBatchConsumer(mock_ctx, stop_event)
+        followup = {"task_id": "embed-1", "limit": 25}
+
+        with patch("services.extraction.main.run_job_extraction", return_value=4), \
+             patch("services.extraction.main.enqueue_job", return_value="1-0") as enqueue:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {
+                    "task_id": "extract-1",
+                    "limit": 25,
+                    "enqueue_embeddings_batch": followup,
+                },
+            )
+
+        assert success is True
+        assert result["status"] == "completed"
+        assert result["processed"] == 4
+        assert result["followup_embeddings_batch_enqueued"] is True
+        assert result["followup_embeddings_task_id"] == "embed-1"
+        enqueue.assert_called_once_with("embeddings:batch", followup)
+
+    @pytest.mark.asyncio
+    async def test_batch_consumer_fails_when_followup_embeddings_payload_invalid(self):
+        """Invalid follow-up payloads surface as failed batch completion."""
+        from services.extraction.main import ExtractionBatchConsumer
+
+        mock_ctx = Mock()
+        stop_event = threading.Event()
+        consumer = ExtractionBatchConsumer(mock_ctx, stop_event)
+
+        with patch("services.extraction.main.run_job_extraction", return_value=4), \
+             patch("services.extraction.main.enqueue_job") as enqueue:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {
+                    "task_id": "extract-1",
+                    "limit": 25,
+                    "enqueue_embeddings_batch": "embed-1",
+                },
+            )
+
+        assert success is False
+        assert result["status"] == "failed"
+        assert result["followup_stage"] == "embeddings"
+        assert "enqueue_embeddings_batch" in result["error"]
+        enqueue.assert_not_called()
+
 
 class TestExtractionLifespan:
     """Test extraction lifespan startup and shutdown."""

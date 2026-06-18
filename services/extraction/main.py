@@ -28,8 +28,10 @@ from core.stream_consumer import StreamConsumerWithCompletion, validate_message
 from core.redis_streams import (
     CHANNEL_EXTRACTION_BATCH_DONE,
     CHANNEL_EXTRACTION_DONE,
+    STREAM_EMBEDDINGS_BATCH,
     STREAM_EXTRACTION_BATCH,
     STREAM_EXTRACTION,
+    enqueue_job,
 )
 from services.base.extraction import run_job_extraction, extract_resume as extract_resume_file
 from database.init_db import init_db
@@ -40,6 +42,21 @@ logger = logging.getLogger(__name__)
 
 CONSUMER_GROUP = os.getenv("EXTRACTION_CONSUMER_GROUP", "extraction-service")
 CONSUMER_NAME = os.getenv("HOSTNAME", "extraction-1")
+
+
+def _enqueue_followup_embeddings_batch(msg: dict) -> dict | None:
+    payload = msg.get("enqueue_embeddings_batch")
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise ValueError("enqueue_embeddings_batch must be an object")
+
+    enqueue_job(STREAM_EMBEDDINGS_BATCH, payload)
+    logger.info(
+        "Enqueued follow-up embeddings batch: task_id=%s",
+        payload.get("task_id"),
+    )
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +216,26 @@ class ExtractionBatchConsumer(StreamConsumerWithCompletion):
         processed = await asyncio.to_thread(
             run_job_extraction, self.ctx, self.stop_event, limit
         )
-        return True, {"status": "completed", "processed": processed}
+        result = {"status": "completed", "processed": processed}
+        try:
+            followup_payload = _enqueue_followup_embeddings_batch(msg)
+        except Exception as exc:
+            logger.warning(
+                "Unable to enqueue follow-up embeddings batch for extraction task %s",
+                msg["task_id"],
+                exc_info=True,
+            )
+            return False, {
+                **result,
+                "status": "failed",
+                "error": f"Unable to enqueue follow-up embeddings batch: {exc}",
+                "followup_stage": "embeddings",
+            }
+
+        if followup_payload is not None:
+            result["followup_embeddings_batch_enqueued"] = True
+            result["followup_embeddings_task_id"] = followup_payload.get("task_id")
+        return True, result
 
 
 # ---------------------------------------------------------------------------

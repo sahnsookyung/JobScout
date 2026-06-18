@@ -276,6 +276,63 @@ class TestEmbeddingsConsumerClass:
         assert result["processed"] == 6
 
     @pytest.mark.asyncio
+    async def test_batch_consumer_enqueues_followup_matching_jobs(self):
+        """Batch consumer queues matching only after embeddings complete."""
+        from services.embeddings.main import EmbeddingsBatchConsumer
+
+        mock_ctx = Mock()
+        stop_event = threading.Event()
+        consumer = EmbeddingsBatchConsumer(mock_ctx, stop_event)
+        matching_jobs = [
+            {"task_id": "match-1", "resume_fingerprint": "fp-1"},
+            {"task_id": "match-2", "resume_fingerprint": "fp-2"},
+        ]
+
+        with patch("services.embeddings.main.run_embedding_extraction", return_value=6), \
+             patch("services.embeddings.main.enqueue_job", return_value="1-0") as enqueue:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {
+                    "task_id": "embed-1",
+                    "limit": 50,
+                    "enqueue_matching_jobs": matching_jobs,
+                },
+            )
+
+        assert success is True
+        assert result["status"] == "completed"
+        assert result["processed"] == 6
+        assert result["followup_matching_jobs_enqueued"] == 2
+        assert enqueue.call_args_list[0].args == ("matching:jobs", matching_jobs[0])
+        assert enqueue.call_args_list[1].args == ("matching:jobs", matching_jobs[1])
+
+    @pytest.mark.asyncio
+    async def test_batch_consumer_fails_when_followup_matching_payload_invalid(self):
+        """Invalid matching follow-up payloads surface as failed completion."""
+        from services.embeddings.main import EmbeddingsBatchConsumer
+
+        mock_ctx = Mock()
+        stop_event = threading.Event()
+        consumer = EmbeddingsBatchConsumer(mock_ctx, stop_event)
+
+        with patch("services.embeddings.main.run_embedding_extraction", return_value=6), \
+             patch("services.embeddings.main.enqueue_job") as enqueue:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {
+                    "task_id": "embed-1",
+                    "limit": 50,
+                    "enqueue_matching_jobs": {"task_id": "match-1"},
+                },
+            )
+
+        assert success is False
+        assert result["status"] == "failed"
+        assert result["followup_stage"] == "matching"
+        assert "enqueue_matching_jobs" in result["error"]
+        enqueue.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_batch_consumer_invalid_message(self):
         """Batch consumer rejects message missing task_id."""
         from services.embeddings.main import EmbeddingsBatchConsumer

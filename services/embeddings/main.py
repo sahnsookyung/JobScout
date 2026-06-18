@@ -28,8 +28,10 @@ from core.stream_consumer import StreamConsumerWithCompletion, validate_message
 from core.redis_streams import (
     CHANNEL_EMBEDDINGS_BATCH_DONE,
     CHANNEL_EMBEDDINGS_DONE,
+    STREAM_MATCHING,
     STREAM_EMBEDDINGS_BATCH,
     STREAM_EMBEDDINGS,
+    enqueue_job,
 )
 from services.base.embeddings import run_embedding_extraction, generate_resume_embedding
 from database.init_db import init_db
@@ -39,6 +41,24 @@ logger = logging.getLogger(__name__)
 
 CONSUMER_GROUP = os.getenv("EMBEDDINGS_CONSUMER_GROUP", "embeddings-service")
 CONSUMER_NAME = os.getenv("HOSTNAME", "embeddings-1")
+
+
+def _enqueue_followup_matching_jobs(msg: dict) -> int:
+    payloads = msg.get("enqueue_matching_jobs") or []
+    if not payloads:
+        return 0
+    if not isinstance(payloads, list):
+        raise ValueError("enqueue_matching_jobs must be a list")
+
+    enqueued = 0
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            raise ValueError("enqueue_matching_jobs entries must be objects")
+        enqueue_job(STREAM_MATCHING, payload)
+        enqueued += 1
+
+    logger.info("Enqueued %d follow-up matching job(s)", enqueued)
+    return enqueued
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +173,25 @@ class EmbeddingsBatchConsumer(StreamConsumerWithCompletion):
         processed = await asyncio.to_thread(
             run_embedding_extraction, self.ctx, self.stop_event, limit
         )
-        return True, {"status": "completed", "processed": processed}
+        result = {"status": "completed", "processed": processed}
+        try:
+            matching_jobs_enqueued = _enqueue_followup_matching_jobs(msg)
+        except Exception as exc:
+            logger.warning(
+                "Unable to enqueue follow-up matching jobs for embeddings task %s",
+                msg["task_id"],
+                exc_info=True,
+            )
+            return False, {
+                **result,
+                "status": "failed",
+                "error": f"Unable to enqueue follow-up matching jobs: {exc}",
+                "followup_stage": "matching",
+            }
+
+        if matching_jobs_enqueued:
+            result["followup_matching_jobs_enqueued"] = matching_jobs_enqueued
+        return True, result
 
 
 # ---------------------------------------------------------------------------
