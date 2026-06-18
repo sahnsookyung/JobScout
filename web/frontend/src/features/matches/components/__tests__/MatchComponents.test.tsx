@@ -399,7 +399,7 @@ describe('MatchList', () => {
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
 
         expect(mockUseMatches).toHaveBeenLastCalledWith(
-            expect.objectContaining({ tier: 'primary', min_fit: 55, top_k: 50 }),
+            expect.objectContaining({ tier: 'all', min_fit: 55, top_k: 50 }),
         );
         expect(screen.getByText(/remote cross-encoder is unreachable/i)).toBeInTheDocument();
 
@@ -463,7 +463,7 @@ describe('MatchList', () => {
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
 
         expect(mockUseMatches).toHaveBeenLastCalledWith(
-            expect.objectContaining({ tier: 'primary', min_fit: 0, top_k: 100 }),
+            expect.objectContaining({ tier: 'all', min_fit: 0, top_k: 100 }),
         );
         expect(screen.getByText('Backend Engineer')).toBeInTheDocument();
         expect(screen.queryByText(/Nothing above your threshold/i)).not.toBeInTheDocument();
