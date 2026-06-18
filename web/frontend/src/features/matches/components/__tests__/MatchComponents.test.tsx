@@ -82,7 +82,7 @@ vi.mock('@/hooks/useMatches', () => ({
 
 const mockUseStats = vi.fn();
 vi.mock('@/hooks/useStats', () => ({
-    useStats: () => mockUseStats(),
+    useStats: (params: any) => mockUseStats(params),
 }));
 
 const mockUsePolicy = vi.fn();
@@ -326,7 +326,7 @@ describe('MatchList', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         storageMock.clear();
-        mockUseStats.mockReturnValue({ data: { excluded_count: 0 } });
+        mockUseStats.mockReturnValue({ data: { total_scored: 0, excluded_count: 0 } });
         mockUsePolicy.mockReturnValue({
             policy: { min_fit: 55, top_k: 50, min_jd_required_coverage: null },
             isLoading: false,
@@ -383,8 +383,8 @@ describe('MatchList', () => {
         expect(screen.getAllByRole('checkbox')[1]).toBeChecked();
     });
 
-    it('shows degraded copy and can reveal below-threshold results', () => {
-        mockUseStats.mockReturnValue({ data: { excluded_count: 2 } });
+    it('shows degraded copy and can reveal all processed results', () => {
+        mockUseStats.mockReturnValue({ data: { total_scored: 2, excluded_count: 2 } });
         mockUseMatches.mockImplementation((params) => ({
             data: {
                 matches: params.min_fit === undefined
@@ -406,10 +406,10 @@ describe('MatchList', () => {
             error: null,
             refetch: vi.fn(),
         }));
-        fireEvent.click(screen.getByRole('checkbox', { name: /below-threshold \(2\)/i }));
+        fireEvent.click(screen.getByRole('checkbox', { name: /all processed \(2\)/i }));
 
         expect(mockUseMatches).toHaveBeenLastCalledWith(
-            expect.objectContaining({ tier: 'all' }),
+            expect.objectContaining({ tier: 'all', min_fit: undefined, top_k: undefined }),
         );
     });
 
@@ -439,7 +439,7 @@ describe('MatchList', () => {
             updatePolicy: vi.fn(),
             applyPreset: vi.fn(),
         });
-        mockUseStats.mockReturnValue({ data: { excluded_count: 2 } });
+        mockUseStats.mockReturnValue({ data: { total_scored: 2, excluded_count: 2 } });
         mockUseMatches.mockReturnValue({
             data: {
                 matches: [

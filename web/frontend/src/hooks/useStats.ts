@@ -1,11 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
-import { matchesApi } from '@/services/matchesApi';
+import { matchesApi, type GetStatsParams } from '@/services/matchesApi';
 
-export const useStats = () => {
+export const useStats = (params: GetStatsParams = {}) => {
     return useQuery({
-        queryKey: ['stats'],
+        queryKey: ['stats', params],
         queryFn: async () => {
-            const response = await matchesApi.getStats();
+            const response = await matchesApi.getStats(params);
             return response.data.stats;
         },
         staleTime: 60000,

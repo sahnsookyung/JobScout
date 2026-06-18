@@ -7,11 +7,13 @@ import { toast } from 'sonner';
 import { DashboardControls } from '../DashboardControls';
 import { useAuth } from '@/features/auth/useAuth';
 import { usePipeline } from '@/hooks/usePipeline';
+import { usePolicy } from '@/hooks/usePolicy';
 import { useStats } from '@/hooks/useStats';
 import { pipelineApi } from '@/services/pipelineApi';
 
 vi.mock('@/features/auth/useAuth');
 vi.mock('@/hooks/usePipeline');
+vi.mock('@/hooks/usePolicy');
 vi.mock('@/hooks/useStats');
 vi.mock('@/services/pipelineApi', () => ({
         pipelineApi: {
@@ -43,6 +45,7 @@ vi.mock('@/utils/indexedDB', () => ({
 }));
 
 const mockUsePipeline = usePipeline as ReturnType<typeof vi.fn>;
+const mockUsePolicy = usePolicy as ReturnType<typeof vi.fn>;
 const mockUseStats = useStats as ReturnType<typeof vi.fn>;
 const mockUseAuth = useAuth as ReturnType<typeof vi.fn>;
 const mockPipelineApi = pipelineApi as unknown as {
@@ -92,6 +95,12 @@ describe('DashboardControls', () => {
         });
 
         mockUseStats.mockReturnValue({ data: null });
+        mockUsePolicy.mockReturnValue({
+            policy: { min_fit: 55, top_k: 50, min_jd_required_coverage: null },
+            isLoading: false,
+            updatePolicy: vi.fn(),
+            applyPreset: vi.fn(),
+        });
         mockUseAuth.mockReturnValue({
             user: {
                 email: 'user@example.com',

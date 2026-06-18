@@ -11,9 +11,9 @@ interface MatchFiltersProps {
     onRankingModeChange: (value: RankingMode) => void;
     showHidden: boolean;
     onShowHiddenChange: (value: boolean) => void;
-    showExcluded?: boolean;
-    onShowExcludedChange?: (value: boolean) => void;
-    excludedCount?: number;
+    showAllProcessed?: boolean;
+    onShowAllProcessedChange?: (value: boolean) => void;
+    processedCount?: number;
 }
 
 export const MatchFilters: React.FC<MatchFiltersProps> = ({
@@ -25,9 +25,9 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
     onRankingModeChange,
     showHidden,
     onShowHiddenChange,
-    showExcluded = false,
-    onShowExcludedChange = () => undefined,
-    excludedCount = 0,
+    showAllProcessed = false,
+    onShowAllProcessedChange = () => undefined,
+    processedCount = 0,
 }) => {
     return (
         <div className="grid grid-cols-1 gap-5 border-b border-rule pb-5 sm:grid-cols-[1fr_1fr_auto] sm:gap-8 sm:items-end">
@@ -56,11 +56,11 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
                     checked={showHidden}
                     onChange={onShowHiddenChange}
                 />
-                {excludedCount > 0 && (
+                {processedCount > 0 && (
                     <Toggle
-                        label={`Below-threshold (${excludedCount})`}
-                        checked={showExcluded}
-                        onChange={onShowExcludedChange}
+                        label={`All processed (${processedCount})`}
+                        checked={showAllProcessed}
+                        onChange={onShowAllProcessedChange}
                     />
                 )}
             </div>

@@ -20,6 +20,11 @@ export interface GetMatchesParams {
     tier?: 'primary' | 'all';
 }
 
+export interface GetStatsParams {
+    min_fit?: number;
+    top_k?: number;
+}
+
 export const matchesApi = {
     getMatches: (params: GetMatchesParams = {}) =>
         apiClient.get<MatchesResponse>('/matches', { params }),
@@ -44,7 +49,8 @@ export const matchesApi = {
             `/matches/${matchId}/llm-evaluations/${evaluationId}`,
         ),
 
-    getStats: () => apiClient.get<StatsResponse>('/stats'),
+    getStats: (params: GetStatsParams = {}) =>
+        apiClient.get<StatsResponse>('/stats', { params }),
 
     toggleHidden: (matchId: string) =>
         apiClient.post<{ success: boolean; match_id: string; is_hidden: boolean }>(`/matches/${matchId}/hide`),

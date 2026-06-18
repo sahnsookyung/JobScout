@@ -8,6 +8,8 @@ export interface StatsPanelProps {
         active_matches?: number;
         hidden_count?: number;
         below_threshold_count?: number;
+        beyond_top_k_count?: number;
+        policy_top_k?: number | null;
         score_distribution?: {
             excellent?: number;
             good?: number;
@@ -15,20 +17,28 @@ export interface StatsPanelProps {
             poor?: number;
         };
     } | null | undefined;
-    activeMatches: number;
-    activeArc: number;
-    hiddenArc: number;
-    belowArc: number;
-    circumference: number;
-    radius: number;
 }
 
-export const StatsPanel: React.FC<StatsPanelProps> = ({ stats, ...chartProps }) => {
+export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
     const totalMatches = stats?.total_matches ?? 0;
     const activeMatches = stats?.active_matches ?? 0;
     const hiddenMatches = stats?.hidden_count ?? 0;
     const belowThreshold = stats?.below_threshold_count ?? 0;
+    const beyondTopK = stats?.beyond_top_k_count ?? 0;
     const scoreDist = stats?.score_distribution;
+    const radius = 36;
+    const circumference = 2 * Math.PI * radius;
+    const chartTotal = Math.max(
+        totalMatches,
+        activeMatches + hiddenMatches + belowThreshold + beyondTopK,
+    );
+    const arcFor = (value: number) => (
+        chartTotal > 0 ? (Math.max(value, 0) / chartTotal) * circumference : 0
+    );
+    const activeArc = arcFor(activeMatches);
+    const cappedArc = arcFor(beyondTopK);
+    const hiddenArc = arcFor(hiddenMatches);
+    const belowArc = arcFor(belowThreshold);
 
     return (
         <div className="grid grid-cols-1 gap-8 sm:grid-cols-3 sm:divide-x sm:divide-rule">
@@ -39,15 +49,26 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats, ...chartProps }) 
                         {totalMatches}
                     </span>
                     <span className="text-[13px] text-ink-muted">
-                        {totalMatches === 1 ? 'match' : 'matches'} this run
+                        processed this run
                     </span>
                 </div>
             </div>
 
             <div className="flex items-center gap-5 sm:pl-8">
-                <SegmentedCircle {...chartProps} activeMatches={activeMatches} />
+                <SegmentedCircle
+                    activeMatches={activeMatches}
+                    activeArc={activeArc}
+                    cappedArc={cappedArc}
+                    hiddenArc={hiddenArc}
+                    belowArc={belowArc}
+                    circumference={circumference}
+                    radius={radius}
+                />
                 <dl className="space-y-1.5 text-[13px]">
                     <Legend swatch="accent" label="Fit" value={activeMatches} />
+                    {beyondTopK > 0 && (
+                        <Legend swatch="ink-soft" label="Above max" value={beyondTopK} />
+                    )}
                     <Legend swatch="ink-muted" label="Below threshold" value={belowThreshold} />
                     <Legend swatch="ink-faint" label="Hidden" value={hiddenMatches} />
                 </dl>
@@ -66,9 +87,10 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats, ...chartProps }) 
     );
 };
 
-function Legend({ swatch, label, value }: Readonly<{ swatch: 'accent' | 'ink-muted' | 'ink-faint'; label: string; value: number }>) {
+function Legend({ swatch, label, value }: Readonly<{ swatch: 'accent' | 'ink-soft' | 'ink-muted' | 'ink-faint'; label: string; value: number }>) {
     const swatchBg = {
         accent: 'bg-accent',
+        'ink-soft': 'bg-ink-soft',
         'ink-muted': 'bg-ink-muted',
         'ink-faint': 'bg-ink-faint',
     }[swatch];

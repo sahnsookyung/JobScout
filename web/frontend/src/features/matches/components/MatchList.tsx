@@ -38,16 +38,20 @@ function llmRerankSummary(rerank: any): string | null {
     return null;
 }
 
-function initialShowExcluded(): boolean {
+function initialShowAllProcessed(): boolean {
     const params = new URLSearchParams(globalThis.location.search);
-    return params.get('tier') === 'all' || params.get('showExcluded') === 'true';
+    return (
+        params.get('tier') === 'all'
+        || params.get('showExcluded') === 'true'
+        || params.get('showAllProcessed') === 'true'
+    );
 }
 
 export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
     const [status, setStatus] = useState<MatchStatus>('active');
     const [remoteOnly, setRemoteOnly] = useState(false);
     const [rankingMode, setRankingMode] = useState<RankingMode>('balanced');
-    const [showExcluded, setShowExcluded] = useState(initialShowExcluded);
+    const [showAllProcessed, setShowAllProcessed] = useState(initialShowAllProcessed);
     const [showHidden, setShowHidden] = useState(() => {
         const saved = localStorage.getItem('jobscout_show_hidden');
         return saved === 'true';
@@ -61,18 +65,25 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
     const effectivePolicy = policy ?? DEFAULT_POLICY;
     const { data, isLoading, error, refetch } = useMatches({
         status,
-        min_fit: showExcluded ? undefined : effectivePolicy.min_fit,
-        top_k: showExcluded ? undefined : effectivePolicy.top_k,
+        min_fit: showAllProcessed ? undefined : effectivePolicy.min_fit,
+        top_k: showAllProcessed ? undefined : effectivePolicy.top_k,
         remote_only: remoteOnly,
         show_hidden: showHidden,
         ranking_mode: rankingMode,
         tier: 'all',
     });
-    const { data: stats } = useStats();
+    const { data: stats } = useStats({
+        min_fit: effectivePolicy.min_fit,
+        top_k: effectivePolicy.top_k,
+    });
 
     const matches = data?.matches ?? [];
     const degradedReason = matches.find((m) => m.scoring_degraded_reason)?.scoring_degraded_reason ?? null;
-    const excludedCount = stats?.excluded_count ?? 0;
+    const processedCount = stats?.total_scored ?? stats?.total_matches ?? 0;
+    const hiddenByCurrentFilters = Math.max(processedCount - matches.length, 0);
+    const processedToggleCount = showAllProcessed || hiddenByCurrentFilters > 0
+        ? processedCount
+        : 0;
     const llmOrdering = llmRerankSummary(data?.llm_rerank);
 
     const strongCount = matches.filter((m) => !m.is_hidden && (m.fit_score ?? 0) >= 80).length;
@@ -122,9 +133,9 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                 onRankingModeChange={setRankingMode}
                 showHidden={showHidden}
                 onShowHiddenChange={setShowHidden}
-                showExcluded={showExcluded}
-                onShowExcludedChange={setShowExcluded}
-                excludedCount={excludedCount}
+                showAllProcessed={showAllProcessed}
+                onShowAllProcessedChange={setShowAllProcessed}
+                processedCount={processedToggleCount}
             />
 
             {degradedReason && (
@@ -140,7 +151,9 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                         {matches.length}
                     </span>
                     <span className="text-[13px] text-ink-soft">
-                        {matches.length === 1 ? 'match' : 'matches'}
+                        {showAllProcessed
+                            ? (matches.length === 1 ? 'processed job' : 'processed jobs')
+                            : (matches.length === 1 ? 'match' : 'matches')}
                         {strongCount > 0 && (
                             <>
                                 <span className="mx-2 text-ink-faint">·</span>
@@ -162,9 +175,9 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
 
             {matches.length === 0 ? (
                 <EmptyState
-                    excludedCount={excludedCount}
-                    showExcluded={showExcluded}
-                    onShowExcluded={() => setShowExcluded(true)}
+                    hiddenByCurrentFilters={hiddenByCurrentFilters}
+                    showAllProcessed={showAllProcessed}
+                    onShowAllProcessed={() => setShowAllProcessed(true)}
                 />
             ) : (
                 <div className="stagger border-x border-t border-rule bg-canvas">
@@ -183,15 +196,15 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
 };
 
 function EmptyState({
-    excludedCount,
-    showExcluded,
-    onShowExcluded,
+    hiddenByCurrentFilters,
+    showAllProcessed,
+    onShowAllProcessed,
 }: Readonly<{
-    excludedCount: number;
-    showExcluded: boolean;
-    onShowExcluded: () => void;
+    hiddenByCurrentFilters: number;
+    showAllProcessed: boolean;
+    onShowAllProcessed: () => void;
 }>) {
-    if (excludedCount > 0 && !showExcluded) {
+    if (hiddenByCurrentFilters > 0 && !showAllProcessed) {
         return (
             <div className="border border-rule bg-surface px-8 py-12 text-center">
                 <p className="caption text-ink-muted">Nothing above your threshold</p>
@@ -199,12 +212,12 @@ function EmptyState({
                     No matches qualified this run.
                 </p>
                 <p className="mx-auto mt-2 max-w-md text-[13px] text-ink-soft">
-                    {excludedCount} {excludedCount === 1 ? 'job was' : 'jobs were'} scored but fell below your current rules.
-                    Loosen the floor in your policy, or browse them now.
+                    {hiddenByCurrentFilters} {hiddenByCurrentFilters === 1 ? 'job was' : 'jobs were'} processed but hidden by the current result policy.
+                    Loosen the policy, or browse the full processed set now.
                 </p>
                 <div className="mt-5">
-                    <Button variant="secondary" size="sm" onClick={onShowExcluded}>
-                        Show below-threshold
+                    <Button variant="secondary" size="sm" onClick={onShowAllProcessed}>
+                        Show all processed
                     </Button>
                 </div>
             </div>

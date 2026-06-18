@@ -188,6 +188,9 @@ export interface StatsResponse {
         active_matches: number;
         hidden_count: number;
         below_threshold_count: number;
+        beyond_top_k_count?: number;
+        qualifying_count?: number;
+        policy_top_k?: number | null;
         min_fit_threshold: number;
         score_distribution: {
             excellent: number;

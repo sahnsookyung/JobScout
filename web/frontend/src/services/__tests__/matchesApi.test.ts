@@ -59,15 +59,25 @@ const mockDetail = { id: 'match-1', fit_score: 90 };
         expect(mockGet).toHaveBeenCalledWith('/matches/match-2/explanation');
     });
 
-    it('getStats calls GET /stats', async () => {
+    it('getStats calls GET /stats with default empty params', async () => {
         const mockStats = { total_matches: 50 };
         mockGet.mockResolvedValue({ data: mockStats });
         const { matchesApi } = await import('../matchesApi');
 
         const result = await matchesApi.getStats();
 
-        expect(mockGet).toHaveBeenCalledWith('/stats');
+        expect(mockGet).toHaveBeenCalledWith('/stats', { params: {} });
         expect(result).toEqual({ data: mockStats });
+    });
+
+    it('getStats passes policy params to GET /stats', async () => {
+        mockGet.mockResolvedValue({ data: { stats: {} } });
+        const { matchesApi } = await import('../matchesApi');
+
+        const params = { min_fit: 40, top_k: 200 };
+        await matchesApi.getStats(params);
+
+        expect(mockGet).toHaveBeenCalledWith('/stats', { params });
     });
 
     it('toggleHidden calls POST /matches/:id/hide', async () => {

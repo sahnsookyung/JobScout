@@ -95,6 +95,7 @@ describe('useStats', () => {
         });
 
         expect(result.current.data).toEqual(mockStats);
+        expect(matchesApi.getStats).toHaveBeenCalledWith({});
     });
 
     it('handles fetch error', async () => {
@@ -114,7 +115,7 @@ describe('useStats', () => {
         const { matchesApi } = await import('@/services/matchesApi');
         (matchesApi.getStats as any).mockResolvedValue({ data: { stats: {} } });
 
-        renderHook(() => useStats(), { wrapper: createWrapper() });
+        renderHook(() => useStats({ min_fit: 60, top_k: 100 }), { wrapper: createWrapper() });
 
         await waitFor(() => {
             expect(matchesApi.getStats).toHaveBeenCalled();
@@ -123,6 +124,7 @@ describe('useStats', () => {
         // Query should have staleTime of 60000ms (1 minute)
         // This is configured in the hook, verified by checking query options
         expect(matchesApi.getStats).toHaveBeenCalledTimes(1);
+        expect(matchesApi.getStats).toHaveBeenCalledWith({ min_fit: 60, top_k: 100 });
     });
 });
 

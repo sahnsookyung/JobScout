@@ -39,9 +39,10 @@ def _make_item(
     )
 
 
-def _make_policy_mock(min_fit=55.0):
+def _make_policy_mock(min_fit=55.0, top_k=50):
     policy = Mock()
     policy.min_fit = min_fit
+    policy.top_k = top_k
     policy_service = Mock()
     policy_service.get_current_policy.return_value = policy
     return policy_service
@@ -134,6 +135,8 @@ class TestGetStats:
                 _make_item(fit_score=85.0, hidden=True),
                 _make_item(fit_score=82.0),
                 _make_item(fit_score=78.0),
+                _make_item(fit_score=68.0),
+                _make_item(fit_score=58.0),
             ],
         )
 
@@ -174,7 +177,11 @@ class TestGetStats:
         canonical = SimpleNamespace(selection_run_id="run-1")
         repo = self._fake_repo(
             excluded_by_reason={"below_min_fit": 9},
-            items=[],
+            items=[
+                _make_item(fit_score=54.0),
+                _make_item(fit_score=20.0, tier="excluded"),
+                _make_item(fit_score=None, tier="excluded"),
+            ],
         )
 
         @contextmanager
@@ -185,7 +192,37 @@ class TestGetStats:
              patch("web.backend.routers.stats.job_uow", fake_uow), \
              patch("web.backend.routers.stats.resolve_canonical_resume_selection", return_value=canonical):
             data = client.get("/api/stats").json()
-        assert data["stats"]["below_threshold_count"] == 9
+        assert data["stats"]["below_threshold_count"] == 3
+
+    def test_policy_query_params_drive_live_bucket_counts(self, client, app):
+        mock_db = Mock()
+        canonical = SimpleNamespace(selection_run_id="run-1")
+        repo = self._fake_repo(
+            primary_count=4,
+            items=[
+                _make_item(fit_score=92.0),
+                _make_item(fit_score=80.0),
+                _make_item(fit_score=75.0, hidden=True),
+                _make_item(fit_score=45.0),
+            ],
+        )
+
+        @contextmanager
+        def fake_uow():
+            yield repo
+
+        with self._setup(app, mock_db, _make_policy_mock(min_fit=55.0, top_k=50)), \
+             patch("web.backend.routers.stats.job_uow", fake_uow), \
+             patch("web.backend.routers.stats.resolve_canonical_resume_selection", return_value=canonical):
+            data = client.get("/api/stats", params={"min_fit": 70, "top_k": 1}).json()
+        stats = data["stats"]
+        assert stats["min_fit_threshold"] == 70.0
+        assert stats["policy_top_k"] == 1
+        assert stats["active_matches"] == 1
+        assert stats["beyond_top_k_count"] == 1
+        assert stats["hidden_count"] == 1
+        assert stats["below_threshold_count"] == 1
+        assert stats["qualifying_count"] == 3
 
     def test_min_fit_threshold_from_policy(self, client, app):
         mock_db = Mock()
@@ -261,6 +298,7 @@ class TestGetStats:
         expected_keys = {
             "total_matches", "active_matches", "hidden_count",
             "below_threshold_count", "min_fit_threshold", "score_distribution",
+            "beyond_top_k_count", "qualifying_count", "policy_top_k",
         }
         assert expected_keys.issubset(data["stats"].keys())
 
@@ -297,7 +335,10 @@ class TestGetStats:
         assert stats["total_scored"] == 12
         assert stats["total_matches"] == 12
         assert stats["hidden_count"] == 1
-        assert stats["active_matches"] == 4
+        assert stats["active_matches"] == 1
+        assert stats["below_threshold_count"] == 1
+        assert stats["beyond_top_k_count"] == 0
+        assert stats["qualifying_count"] == 2
         assert stats["excluded_by_reason"] == {"below_min_fit": 4, "beyond_top_k": 3}
         assert stats["preference_status"] == {"applied": True, "reason": "ok"}
 

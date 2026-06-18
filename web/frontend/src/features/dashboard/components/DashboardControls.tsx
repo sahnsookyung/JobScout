@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { usePipeline } from '@/hooks/usePipeline';
+import { usePolicy } from '@/hooks/usePolicy';
 import { useStats } from '@/hooks/useStats';
 import { toast } from 'sonner';
 import { getResumeFilename } from '@/utils/indexedDB';
 import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
+import { POLICY_PRESET_VALUES } from '@/utils/constants';
 import { DashboardWrapper } from './DashboardWrapper';
 import { ResumeUploadSection } from './ResumeUploadSection';
 import { StatsPanel } from './StatsPanel';
@@ -24,7 +26,12 @@ export const DashboardControls: React.FC = () => {
         resumeProcessingStatus,
         uploadResume,
     } = usePipeline();
-    const { data: stats } = useStats();
+    const { policy } = usePolicy();
+    const effectivePolicy = policy ?? POLICY_PRESET_VALUES.balanced;
+    const { data: stats } = useStats({
+        min_fit: effectivePolicy.min_fit,
+        top_k: effectivePolicy.top_k,
+    });
     const [resumeFilename, setResumeFilename] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -80,27 +87,10 @@ export const DashboardControls: React.FC = () => {
         || isCompletedStatus || isFailedStatus || isCancelledStatus
     );
 
-    const totalMatches = stats?.total_matches ?? 0;
-    const activeMatches = stats?.active_matches ?? 0;
-    const hiddenMatches = stats?.hidden_count ?? 0;
-    const belowThreshold = stats?.below_threshold_count ?? 0;
-
-    const activePercentage = totalMatches > 0 ? (activeMatches / totalMatches) * 100 : 0;
-    const hiddenPercentage = totalMatches > 0 ? (hiddenMatches / totalMatches) * 100 : 0;
-    const belowPercentage = totalMatches > 0 ? (belowThreshold / totalMatches) * 100 : 0;
-
-    const radius = 36;
-    const circumference = 2 * Math.PI * radius;
-    const activeArc = (activePercentage / 100) * circumference;
-    const hiddenArc = (hiddenPercentage / 100) * circumference;
-    const belowArc = (belowPercentage / 100) * circumference;
-
-    const chartProps = { activeArc, hiddenArc, belowArc, circumference, radius };
-
     return (
         <DashboardWrapper>
             <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_auto] lg:items-start lg:gap-10">
-                <StatsPanel stats={stats} {...chartProps} activeMatches={activeMatches} />
+                <StatsPanel stats={stats} />
                 <div className="flex flex-col gap-3 lg:w-[220px] lg:border-l lg:border-rule lg:pl-8">
                     <p className="caption">Run</p>
                     <ResumeUploadSection

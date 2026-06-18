@@ -232,16 +232,17 @@ describe('SegmentedCircle', () => {
     const defaultProps: CircleChartProps = {
         activeMatches: 5,
         activeArc: 100,
+        cappedArc: 20,
         hiddenArc: 50,
         belowArc: 30,
         circumference: 226.19,
         radius: 36,
     };
 
-    it('renders SVG circle chart with four circles', () => {
+    it('renders SVG circle chart with five circles', () => {
         const { container } = render(<SegmentedCircle {...defaultProps} />);
         expect(container.querySelector('svg')).toBeInTheDocument();
-        expect(container.querySelectorAll('circle')).toHaveLength(4);
+        expect(container.querySelectorAll('circle')).toHaveLength(5);
     });
 
     it('displays active matches count in the center', () => {
@@ -269,6 +270,7 @@ describe('StatsPanel', () => {
         active_matches: 45,
         hidden_count: 30,
         below_threshold_count: 25,
+        beyond_top_k_count: 0,
         score_distribution: {
             excellent: 20,
             good: 25,
@@ -279,19 +281,13 @@ describe('StatsPanel', () => {
 
     const defaultProps: StatsPanelProps = {
         stats: defaultStats,
-        activeMatches: 45,
-        activeArc: 100,
-        hiddenArc: 50,
-        belowArc: 30,
-        circumference: 226.19,
-        radius: 36,
     };
 
     it('renders the total card, match breakdown, and score distribution', () => {
         render(<StatsPanel {...defaultProps} />);
         expect(screen.getByText('Total')).toBeInTheDocument();
         expect(screen.getByText('100')).toBeInTheDocument();
-        expect(screen.getByText('matches this run')).toBeInTheDocument();
+        expect(screen.getByText('processed this run')).toBeInTheDocument();
         expect(screen.getByText('Fit')).toBeInTheDocument();
         expect(screen.getByText('Below threshold')).toBeInTheDocument();
         expect(screen.getByText('Hidden')).toBeInTheDocument();
@@ -323,6 +319,21 @@ describe('StatsPanel', () => {
 
         expect(screen.getByText('Strong')).toBeInTheDocument();
         expect(container.querySelector('div[style*="width: 10%"]')).toBeInTheDocument();
+    });
+
+    it('shows jobs above the current max result cap as a separate segment', () => {
+        render(
+            <StatsPanel
+                stats={{
+                    ...defaultStats,
+                    active_matches: 50,
+                    beyond_top_k_count: 12,
+                }}
+            />
+        );
+
+        expect(screen.getByText('Above max')).toBeInTheDocument();
+        expect(screen.getByText('12')).toBeInTheDocument();
     });
 });
 
