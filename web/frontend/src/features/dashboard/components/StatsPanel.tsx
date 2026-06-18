@@ -55,18 +55,18 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
     const belowArc = arcFor(belowThreshold);
 
     return (
-        <div className="grid grid-cols-1 gap-8 sm:grid-cols-3 sm:divide-x sm:divide-rule">
-            <div className="flex flex-col justify-between">
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(19rem,1.15fr)_minmax(13rem,0.7fr)_minmax(15rem,1fr)] xl:gap-0">
+            <div className="min-w-0 flex flex-col justify-between xl:pr-7">
                 <p className="caption">Total</p>
-                <div className="mt-2 flex items-baseline gap-2">
-                    <span className="display-numeral text-[56px] sm:text-[64px]">
+                <div className="mt-2 flex flex-wrap items-end gap-x-3 gap-y-1">
+                    <span className="display-numeral text-[56px] leading-none sm:text-[64px]">
                         {totalMatches}
                     </span>
-                    <span className="text-[13px] text-ink-muted">
+                    <span className="max-w-[8.5rem] pb-1 text-[13px] leading-snug text-ink-muted">
                         matched candidates
                     </span>
                 </div>
-                <dl className="mt-4 grid grid-cols-2 gap-x-5 gap-y-2 border-t border-rule pt-3 text-[12px]">
+                <dl className="mt-4 grid grid-cols-1 gap-x-5 gap-y-2 border-t border-rule pt-3 text-[12px] min-[520px]:grid-cols-2">
                     <InventoryItem label="Imported" value={jobPostTotal} />
                     <InventoryItem label="Embedded" value={embeddedJobs} />
                     <InventoryItem label="Extracted" value={extractedJobs} />
@@ -76,7 +76,7 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
                 </dl>
             </div>
 
-            <div className="flex items-center gap-5 sm:pl-8">
+            <div className="min-w-0 border-t border-rule pt-6 md:flex md:items-center md:gap-5 xl:border-l xl:border-t-0 xl:px-7 xl:pt-0">
                 <SegmentedCircle
                     activeMatches={activeMatches}
                     activeArc={activeArc}
@@ -86,7 +86,7 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
                     circumference={circumference}
                     radius={radius}
                 />
-                <dl className="space-y-1.5 text-[13px]">
+                <dl className="mt-4 space-y-1.5 text-[13px] md:mt-0">
                     <Legend swatch="accent" label="Fit" value={activeMatches} />
                     {beyondTopK > 0 && (
                         <Legend swatch="ink-soft" label="Above max" value={beyondTopK} />
@@ -96,7 +96,7 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
                 </dl>
             </div>
 
-            <div className="flex flex-col sm:pl-8">
+            <div className="min-w-0 border-t border-rule pt-6 xl:border-l xl:border-t-0 xl:pl-7 xl:pt-0">
                 <p className="caption">Score distribution</p>
                 <div className="mt-3 space-y-2.5">
                     <CompactScoreBar label="Strong" range="80+" value={scoreDist?.excellent ?? 0} total={totalMatches} tone="accent" />
@@ -111,8 +111,8 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
 
 function InventoryItem({ label, value }: Readonly<{ label: string; value: number }>) {
     return (
-        <div className="flex items-baseline justify-between gap-3">
-            <dt className="caption text-[10px] text-ink-muted">{label}</dt>
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-3">
+            <dt className="caption min-w-0 text-[10px] text-ink-muted">{label}</dt>
             <dd className="num text-[13px] text-ink tabular-nums">{value}</dd>
         </div>
     );
@@ -127,7 +127,7 @@ function Legend({ swatch, label, value }: Readonly<{ swatch: 'accent' | 'ink-sof
     }[swatch];
 
     return (
-        <div className="flex items-center gap-2.5">
+        <div className="grid grid-cols-[0.5rem_auto_minmax(0,1fr)] items-center gap-2.5">
             <span className={`h-2 w-2 rounded-full ${swatchBg}`} aria-hidden="true" />
             <span className="num tabular-nums text-ink">{value}</span>
             <span className="text-ink-muted">{label}</span>

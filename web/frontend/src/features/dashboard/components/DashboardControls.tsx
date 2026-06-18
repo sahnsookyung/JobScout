@@ -90,9 +90,9 @@ export const DashboardControls: React.FC = () => {
 
     return (
         <DashboardWrapper>
-            <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_auto] lg:items-start lg:gap-10">
+            <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1fr)_minmax(13.75rem,15rem)] xl:items-start xl:gap-8">
                 <StatsPanel stats={stats} />
-                <div className="flex flex-col gap-3 lg:w-[220px] lg:border-l lg:border-rule lg:pl-8">
+                <div className="flex flex-col gap-3 border-t border-rule pt-6 xl:border-l xl:border-t-0 xl:pl-8 xl:pt-0">
                     <p className="caption">Run</p>
                     <ResumeUploadSection
                         fileInputRef={fileInputRef}

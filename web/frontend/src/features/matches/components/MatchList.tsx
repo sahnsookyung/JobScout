@@ -63,6 +63,7 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
     }, [showHidden]);
 
     const effectivePolicy = policy ?? DEFAULT_POLICY;
+    const requestTier = showAllProcessed ? 'all' : 'primary';
     const { data, isLoading, error, refetch } = useMatches({
         status,
         min_fit: showAllProcessed ? undefined : effectivePolicy.min_fit,
@@ -70,7 +71,7 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
         remote_only: remoteOnly,
         show_hidden: showHidden,
         ranking_mode: rankingMode,
-        tier: 'all',
+        tier: requestTier,
     });
     const { data: stats } = useStats({
         min_fit: effectivePolicy.min_fit,
