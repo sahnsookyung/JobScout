@@ -100,12 +100,9 @@ class JobETLService:
             return {}
 
         normalized = dict(extraction_result)
-        current_requirements = normalized.get("requirements")
-        if isinstance(current_requirements, list) and current_requirements:
-            return normalized
-
-        alias_requirements: List[Dict[str, Any]] = []
+        normalized_requirements: List[Dict[str, Any]] = []
         alias_map = (
+            ("requirements", "must_have"),
             ("required", "must_have"),
             ("must_have", "must_have"),
             ("preferred", "nice_to_have"),
@@ -118,24 +115,120 @@ class JobETLService:
             if not isinstance(raw_items, list):
                 continue
             for raw_item in raw_items:
-                if isinstance(raw_item, dict):
-                    item = dict(raw_item)
-                elif isinstance(raw_item, str) and len(raw_item.strip()) > 10 and " " in raw_item:
-                    item = {"text": raw_item.strip()}
-                else:
-                    continue
+                item = JobETLService._canonicalize_requirement_item(raw_item, req_type)
+                if item:
+                    normalized_requirements.append(item)
 
-                text = str(item.get("text") or "").strip()
-                if not text:
-                    continue
-                item["text"] = text
-                item.setdefault("req_type", req_type)
-                alias_requirements.append(item)
+        for alias, _ in alias_map:
+            if alias != "requirements":
+                normalized.pop(alias, None)
 
-        if alias_requirements:
-            normalized["requirements"] = alias_requirements
+        if normalized_requirements:
+            normalized["requirements"] = normalized_requirements
+            normalized.setdefault(
+                "thought_process",
+                "Provider returned compact requirement data; normalized locally.",
+            )
+            normalized.setdefault(
+                "job_summary",
+                str(normalized.get("summary") or "Job requirements extracted from posting.").strip(),
+            )
+            normalized.setdefault("seniority_level", None)
+            normalized.setdefault("remote_policy", None)
+            normalized.setdefault("visa_sponsorship_available", None)
+            normalized.setdefault("min_years_experience", None)
+            normalized.setdefault("requires_degree", None)
+            normalized.setdefault("security_clearance", None)
+            normalized.setdefault("salary_min", None)
+            normalized.setdefault("salary_max", None)
+            normalized.setdefault("currency", None)
+            if not isinstance(normalized.get("tech_stack"), list):
+                normalized["tech_stack"] = []
+            if not isinstance(normalized.get("benefits"), list):
+                normalized["benefits"] = []
 
         return normalized
+
+    @staticmethod
+    def _canonicalize_requirement_item(
+        raw_item: Any,
+        default_req_type: str,
+    ) -> Optional[Dict[str, Any]]:
+        if isinstance(raw_item, dict):
+            item = dict(raw_item)
+        elif isinstance(raw_item, str) and len(raw_item.strip()) > 10 and " " in raw_item:
+            item = {"text": raw_item.strip()}
+        else:
+            return None
+
+        text = str(item.get("text") or "").strip()
+        if not text:
+            return None
+
+        req_type = str(item.get("req_type") or default_req_type).strip()
+        if req_type not in {"must_have", "nice_to_have", "responsibility"}:
+            req_type = default_req_type
+
+        raw_related = item.get("related_skills", item.get("skills", []))
+        if isinstance(raw_related, str):
+            related_skills = [raw_related.strip()] if raw_related.strip() else []
+        elif isinstance(raw_related, list):
+            related_skills = [str(skill).strip() for skill in raw_related if str(skill).strip()]
+        else:
+            related_skills = []
+
+        category = str(item.get("category") or "").strip()
+        if category not in {"technical", "soft_skill", "domain_knowledge", "logistical"}:
+            category = JobETLService._infer_requirement_category(text, related_skills)
+
+        proficiency = item.get("proficiency")
+        if proficiency is not None:
+            proficiency = str(proficiency).strip() or None
+
+        return {
+            "req_type": req_type,
+            "category": category,
+            "text": text,
+            "related_skills": related_skills,
+            "proficiency": proficiency,
+        }
+
+    @staticmethod
+    def _infer_requirement_category(text: str, related_skills: List[str]) -> str:
+        text_lower = text.lower()
+        if any(
+            marker in text_lower
+            for marker in (
+                "remote",
+                "hybrid",
+                "on-site",
+                "onsite",
+                "visa",
+                "sponsor",
+                "relocat",
+                "timezone",
+                "based in",
+                "location",
+                "work authorization",
+                "resident",
+            )
+        ):
+            return "logistical"
+        if any(
+            marker in text_lower
+            for marker in (
+                "communicat",
+                "collaborat",
+                "leadership",
+                "stakeholder",
+                "mentor",
+                "teamwork",
+            )
+        ):
+            return "soft_skill"
+        if related_skills:
+            return "technical"
+        return "domain_knowledge"
 
     def ingest_one(self, repo: JobRepository, job_data: Dict[str, Any], site_name: str) -> None:
         record = NormalizedJobRecord.from_scraper_payload(job_data, site_name)

@@ -226,15 +226,24 @@ class TestExtractOne:
         saved_requirements = mock_repo.save_requirements.call_args[0][1]
         assert saved_requirements == [
             {
-                "text": "Minimum 3 years of customer success experience",
-                "section": "WHAT YOU NEED",
                 "req_type": "must_have",
+                "category": "domain_knowledge",
+                "text": "Minimum 3 years of customer success experience",
+                "related_skills": [],
+                "proficiency": None,
             },
             {
-                "text": "Experience with partner ecosystem operations",
                 "req_type": "nice_to_have",
+                "category": "domain_knowledge",
+                "text": "Experience with partner ecosystem operations",
+                "related_skills": [],
+                "proficiency": None,
             },
         ]
+        update_payload = mock_repo.update_content_metadata.call_args[0][1]
+        assert "required" not in update_payload
+        assert "preferred" not in update_payload
+        assert update_payload["tech_stack"] == []
 
     def test_extract_validation_error_uses_raw_data(self):
         """Test extraction handles validation errors gracefully."""
