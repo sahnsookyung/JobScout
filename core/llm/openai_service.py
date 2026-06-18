@@ -204,6 +204,34 @@ def _structured_output_rejected(exc: BaseException) -> bool:
     )
 
 
+def _structured_json_object_validation_failed(exc: BaseException) -> bool:
+    """Return True when provider-enforced JSON object mode rejects generated output."""
+    message = str(exc).lower()
+    return "json_validate_failed" in message or "failed to validate json" in message
+
+
+def _parse_structured_json_content(content: Any) -> Dict[str, Any]:
+    """Parse a JSON object from an LLM response, tolerating common fenced forms."""
+    if not isinstance(content, str):
+        raise ValueError("Structured data response content is not text")
+
+    stripped = content.strip()
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        fenced = re.search(r"```(?:json)?\s*(.*?)```", stripped, flags=re.IGNORECASE | re.DOTALL)
+        candidate = fenced.group(1).strip() if fenced else stripped
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise
+        parsed = json.loads(candidate[start : end + 1])
+
+    if not isinstance(parsed, dict):
+        raise ValueError("Structured data response did not contain a JSON object")
+    return parsed
+
+
 class OpenAIService(LLMProvider):
     """
     OpenAI LLM Service.
@@ -316,21 +344,38 @@ class OpenAIService(LLMProvider):
         try:
             response = self._create_chat_completion(messages, response_format)
         except openai.BadRequestError as exc:
-            if self.structured_output_mode != "auto" or not _structured_output_rejected(exc):
+            if self.structured_output_mode == "json_object" and _structured_json_object_validation_failed(exc):
+                logger.info(
+                    "JSON Object response_format generated invalid JSON for provider/model %s; retrying without provider response_format.",
+                    self.extraction_model,
+                )
+                response = self._create_chat_completion(messages, None)
+            elif self.structured_output_mode != "auto" or not _structured_output_rejected(exc):
                 raise
-            logger.info(
-                "JSON Schema response_format rejected by provider for model %s; retrying JSON Object mode.",
-                self.extraction_model,
-            )
-            response = self._create_chat_completion(
-                self._messages_with_schema_guidance(messages, runtime_schema),
-                {"type": "json_object"},
-            )
+            else:
+                logger.info(
+                    "JSON Schema response_format rejected by provider for model %s; retrying JSON Object mode.",
+                    self.extraction_model,
+                )
+                json_object_messages = self._messages_with_schema_guidance(messages, runtime_schema)
+                try:
+                    response = self._create_chat_completion(
+                        json_object_messages,
+                        {"type": "json_object"},
+                    )
+                except openai.BadRequestError as json_object_exc:
+                    if not _structured_json_object_validation_failed(json_object_exc):
+                        raise
+                    logger.info(
+                        "JSON Object response_format generated invalid JSON for provider/model %s; retrying without provider response_format.",
+                        self.extraction_model,
+                    )
+                    response = self._create_chat_completion(json_object_messages, None)
 
         try:
             content = response.choices[0].message.content
-            data = json.loads(content)
-        except (json.JSONDecodeError, IndexError, AttributeError):
+            data = _parse_structured_json_content(content)
+        except (json.JSONDecodeError, IndexError, AttributeError, ValueError):
             logger.exception("Failed to parse structured data response")
             raise
 
@@ -346,13 +391,16 @@ class OpenAIService(LLMProvider):
     def _create_chat_completion(
         self,
         messages: List[Dict[str, str]],
-        response_format: Dict[str, Any],
+        response_format: Optional[Dict[str, Any]],
     ) -> Any:
+        kwargs: Dict[str, Any] = {}
+        if response_format is not None:
+            kwargs["response_format"] = response_format
         return self.client.chat.completions.create(
             model=self.extraction_model,
             messages=messages,
             temperature=self.extraction_temperature,
-            response_format=response_format,
+            **kwargs,
         )
 
     @staticmethod

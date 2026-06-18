@@ -164,6 +164,35 @@ class TestExtractStructuredData:
         second_call = service.client.chat.completions.create.call_args_list[1][1]
         assert second_call["response_format"] == {"type": "json_object"}
 
+    def test_json_object_validation_failure_retries_without_response_format(self, monkeypatch):
+        """Providers may reject invalid generated JSON before returning content; retry without enforcement."""
+        class FakeBadRequestError(Exception):
+            pass
+
+        monkeypatch.setattr("core.llm.openai_service.openai.BadRequestError", FakeBadRequestError)
+        service = OpenAIService(api_key="test", structured_output_mode="json_object")
+        service.client = MagicMock()
+        mock_message = MagicMock()
+        mock_message.content = '```json\n{"result": "test"}\n```'
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=mock_message)]
+        service.client.chat.completions.create.side_effect = [
+            FakeBadRequestError("json_validate_failed: failed to validate JSON"),
+            mock_response,
+        ]
+
+        result = service.extract_structured_data(
+            "test text",
+            {"type": "object", "properties": {"result": {"type": "string"}}},
+        )
+
+        assert result == {"result": "test"}
+        assert service.client.chat.completions.create.call_count == 2
+        first_call = service.client.chat.completions.create.call_args_list[0][1]
+        second_call = service.client.chat.completions.create.call_args_list[1][1]
+        assert first_call["response_format"] == {"type": "json_object"}
+        assert "response_format" not in second_call
+
     def test_auto_mode_does_not_hide_non_response_format_bad_request(self, monkeypatch):
         """Only structured-output compatibility errors should use the JSON Object fallback."""
         class FakeBadRequestError(Exception):
