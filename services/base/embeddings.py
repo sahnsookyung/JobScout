@@ -7,6 +7,7 @@ microservice and shared embedding helpers used by the current runtime.
 
 import logging
 import threading
+from typing import Any
 
 from core.app_context import AppContext
 from database.uow import job_uow
@@ -15,16 +16,83 @@ from database.models import SYSTEM_OWNER_ID
 logger = logging.getLogger(__name__)
 
 
+def _as_embedding_text(value: Any, *, max_chars: int = 2000) -> str:
+    """Convert common job metadata values into compact embedding text."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()[:max_chars]
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, (list, tuple, set)):
+        items = [
+            _as_embedding_text(item, max_chars=max_chars)
+            for item in value
+        ]
+        return ", ".join(item for item in items if item)[:max_chars]
+    if isinstance(value, dict):
+        selected_keys = (
+            "title",
+            "company",
+            "location",
+            "location_text",
+            "job_type",
+            "job_level",
+            "seniority",
+            "skills",
+            "tags",
+            "requirements",
+            "benefits",
+            "description",
+            "summary",
+        )
+        items = [
+            _as_embedding_text(value.get(key), max_chars=max_chars)
+            for key in selected_keys
+        ]
+        return " | ".join(item for item in items if item)[:max_chars]
+    return ""
+
+
+def _append_part(parts: list[str], label: str, value: Any, *, max_chars: int = 2000) -> None:
+    text = _as_embedding_text(value, max_chars=max_chars)
+    if text:
+        parts.append(f"{label}: {text}")
+
+
 def _build_job_embedding_text(job) -> str:
-    """Build a job embedding payload from requirements, benefits, or description."""
-    parts = []
+    """Build an embedding payload from job-card metadata and richer content."""
+    parts: list[str] = []
+    _append_part(parts, "Title", getattr(job, "title", None), max_chars=300)
+    _append_part(parts, "Company", getattr(job, "company", None), max_chars=300)
+    _append_part(parts, "Location", getattr(job, "location_text", None), max_chars=300)
+    if getattr(job, "is_remote", None) is True:
+        parts.append("Work mode: Remote")
+    _append_part(parts, "Job type", getattr(job, "job_type", None), max_chars=200)
+    _append_part(parts, "Level", getattr(job, "job_level", None), max_chars=200)
+    _append_part(parts, "Experience", getattr(job, "experience_range", None), max_chars=300)
+    _append_part(parts, "Skills", getattr(job, "skills_raw", None), max_chars=1000)
+    _append_part(
+        parts,
+        "Canonical summary",
+        getattr(job, "canonical_job_summary", None),
+        max_chars=1200,
+    )
     if job.requirements:
-        parts.extend([r.text for r in job.requirements[:20]])
+        req_text = [getattr(r, "text", "") for r in job.requirements[:20]]
+        _append_part(parts, "Requirements", req_text, max_chars=3000)
     if job.benefits:
-        parts.extend([b.text for b in job.benefits[:10]])
-    if parts:
-        return " | ".join(parts)
-    return job.description[:5000] if job.description else ""
+        benefit_text = [getattr(b, "text", "") for b in job.benefits[:10]]
+        _append_part(parts, "Benefits", benefit_text, max_chars=1500)
+    _append_part(parts, "Description", getattr(job, "description", None), max_chars=5000)
+    _append_part(
+        parts,
+        "Company description",
+        getattr(job, "company_description", None),
+        max_chars=1000,
+    )
+    _append_part(parts, "Source metadata", getattr(job, "raw_payload", None), max_chars=2000)
+    return " | ".join(parts)
 
 
 def _collect_job_embedding_data(limit: int) -> list[tuple[object, str]]:

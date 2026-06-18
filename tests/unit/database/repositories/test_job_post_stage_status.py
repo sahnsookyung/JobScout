@@ -124,6 +124,21 @@ class TestJobPostStageQueries:
         ids = [j.id for j in repo.get_unembedded_jobs(limit=10)]
         assert job.id in ids
 
+    def test_get_unembedded_jobs_returns_jobs_without_description(self, db_session):
+        """Job-card metadata is enough for initial semantic-search embeddings."""
+        job = _make_job(
+            db_session,
+            extraction_status="pending",
+            is_extracted=False,
+            embedding_status="pending",
+            is_embedded=False,
+            summary_embedding=None,
+            description=None,
+        )
+        repo = JobPostRepository(db_session)
+        ids = [j.id for j in repo.get_unembedded_jobs(limit=10)]
+        assert job.id in ids
+
 
 # ---------------------------------------------------------------------------
 # Mutation tests — real DB commit verifies column names and types

@@ -9,11 +9,42 @@ Usage:
 """
 
 import threading
+from types import SimpleNamespace
 from unittest.mock import Mock, patch, MagicMock
 
 
 class TestRunEmbeddingBatch:
     """Test _run_embedding_batch function."""
+
+    def test_build_job_embedding_text_uses_card_metadata_without_description(self):
+        """Imported jobs without descriptions still get useful initial vectors."""
+        from services.base.embeddings import _build_job_embedding_text
+
+        job = SimpleNamespace(
+            title="Frontend Engineer",
+            company="Acme",
+            location_text="Tokyo, Japan",
+            is_remote=True,
+            job_type=None,
+            job_level="Junior/Mid",
+            experience_range=None,
+            skills_raw="TypeScript, React",
+            canonical_job_summary=None,
+            requirements=[],
+            benefits=[],
+            description=None,
+            company_description=None,
+            raw_payload={"tags": ["Vue.js", "Elixir"], "summary": "Build web UI"},
+        )
+
+        text = _build_job_embedding_text(job)
+
+        assert "Frontend Engineer" in text
+        assert "Acme" in text
+        assert "Tokyo, Japan" in text
+        assert "TypeScript, React" in text
+        assert "Vue.js" in text
+        assert "Build web UI" in text
 
     def test_embedding_batch_returns_count(self):
         """Test embedding batch returns count of processed items using batch API."""
