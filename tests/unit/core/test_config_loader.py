@@ -52,6 +52,8 @@ class TestConfigLoader(unittest.TestCase):
             "ETL_LLM_EXTRACTION_BASE_URL",
             "ETL_LLM_EXTRACTION_API_KEY",
             "ETL_LLM_EXTRACTION_API_SECRET",
+            "ETL_LLM_EXTRACTION_STRUCTURED_OUTPUT_MODE",
+            "ETL_LLM_STRUCTURED_OUTPUT_MODE",
             "ETL_EMBEDDING_MODEL",
             "ETL_EMBEDDING_BASE_URL",
             "ETL_EMBEDDING_API_KEY",
@@ -129,6 +131,8 @@ class TestConfigLoader(unittest.TestCase):
             "ETL_LLM_EXTRACTION_BASE_URL",
             "ETL_LLM_EXTRACTION_API_KEY",
             "ETL_LLM_EXTRACTION_API_SECRET",
+            "ETL_LLM_EXTRACTION_STRUCTURED_OUTPUT_MODE",
+            "ETL_LLM_STRUCTURED_OUTPUT_MODE",
             "ETL_EMBEDDING_MODEL",
             "ETL_EMBEDDING_BASE_URL",
             "ETL_EMBEDDING_API_KEY",
@@ -143,6 +147,7 @@ class TestConfigLoader(unittest.TestCase):
                     # Defaults from LlmConfig
                     self.assertEqual(config.etl.llm.provider, "openai_compatible")
                     self.assertEqual(config.etl.llm.extraction_model, "gpt-4o-mini")
+                    self.assertIsNone(config.etl.llm.structured_output_mode)
                 finally:
                     # Restore env vars
                     for k, v in saved_env.items():
@@ -320,6 +325,25 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config.preferences.parser.provider, "openai_compatible")
         self.assertEqual(config.etl.llm.extraction_model, "etl-model")
         self.assertEqual(config.etl.llm.provider, "openai_compatible")
+
+    def test_etl_structured_output_mode_env_override(self):
+        config_yaml = yaml.dump({
+            "database": {"url": "test"},
+            "schedule": {"interval_seconds": 60},
+            "etl": {"llm": {"extraction_model": "yaml-model"}},
+            "scrapers": []
+        })
+
+        env = {
+            "ETL_LLM_STRUCTURED_OUTPUT_MODE": "json_object",
+        }
+
+        with patch("builtins.open", mock_open(read_data=config_yaml)):
+            with patch("os.path.exists", return_value=True):
+                with patch.dict(os.environ, env, clear=True):
+                    config = load_config("dummy")
+
+        self.assertEqual(config.etl.llm.structured_output_mode, "json_object")
 
     def test_semantic_fit_defaults_are_loaded(self):
         config_yaml = yaml.dump({

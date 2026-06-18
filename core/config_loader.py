@@ -58,6 +58,7 @@ class LlmConfig(BaseModel):
     extraction_headers: Optional[Dict[str, str]] = None
     extraction_model: Optional[str] = "gpt-4o-mini"
     extraction_labels: Optional[List[str]] = None
+    structured_output_mode: Optional[Literal["auto", "json_schema", "json_object"]] = None
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1024
     extraction_temperature: float = 0.0
@@ -646,6 +647,10 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["ETL_EMBEDDING_API_KEY"], ["etl", "llm", "embedding_api_key"]),
     (["ETL_EMBEDDING_API_SECRET"], ["etl", "llm", "embedding_api_secret"]),
     (["ETL_LLM_EXTRACTION_MODEL"], ["etl", "llm", "extraction_model"]),
+    (
+        ["ETL_LLM_EXTRACTION_STRUCTURED_OUTPUT_MODE", "ETL_LLM_STRUCTURED_OUTPUT_MODE"],
+        ["etl", "llm", "structured_output_mode"],
+    ),
     (["ETL_EMBEDDING_MODEL"], ["etl", "llm", "embedding_model"]),
     (["PREFERENCES_DEFAULT_MODE"], ["preferences", "default_mode"]),
     (["PREFERENCES_PARSER_PROVIDER"], ["preferences", "parser", "provider"]),

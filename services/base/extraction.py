@@ -17,6 +17,10 @@ from database.models import SYSTEM_OWNER_ID, generate_file_fingerprint
 logger = logging.getLogger(__name__)
 
 
+class ProviderQuotaExceeded(RuntimeError):
+    """Raised when the extraction provider reports a non-transient quota limit."""
+
+
 def _format_http_error(e: Exception) -> str:
     """Format HTTP error details for logging."""
     response = getattr(e, 'response', None)
@@ -27,6 +31,31 @@ def _format_http_error(e: Exception) -> str:
         except Exception:
             return f"HTTP {response.status_code}"
     return "N/A"
+
+
+def _provider_quota_exhausted(e: Exception) -> bool:
+    """Return True for provider quota failures that cannot recover in this batch."""
+    response = getattr(e, 'response', None)
+    status_code = getattr(response, 'status_code', None)
+    if status_code != 429:
+        return False
+
+    try:
+        response_text = str(response.text or "")
+    except Exception:
+        response_text = ""
+    details = f"{response_text} {e}".lower()
+
+    # Per-minute throttles can recover inside the retry loop. Daily/insufficient
+    # quota cannot, so abort the batch and let stream-level retry/backoff own the
+    # later retry.
+    non_transient_markers = (
+        "per day limit exceeded",
+        "daily",
+        "insufficient_quota",
+        "billing",
+    )
+    return any(marker in details for marker in non_transient_markers)
 
 
 def _mark_job_retryable(job_id: int, exc_type: str, exc_message: str) -> None:
@@ -61,6 +90,18 @@ def _on_extraction_error(
     exc_type = type(e).__name__
     exc_message = str(e)
     is_last_attempt = attempt == len(retry_intervals) - 1
+
+    if _provider_quota_exhausted(e):
+        logger.error(
+            "Extraction provider quota exhausted, aborting batch after job_id=%s (title: %r): %s - %s. %s",
+            job_id,
+            job_title_str,
+            exc_type,
+            exc_message,
+            http_details,
+        )
+        _mark_job_retryable(job_id, exc_type, exc_message)
+        raise ProviderQuotaExceeded(exc_message) from e
 
     if is_last_attempt:
         logger.error(

@@ -43,6 +43,7 @@ def runtime_llm_config_from_etl(config: LlmConfig) -> RuntimeLLMConfig:
         headers=config.extraction_headers,
         model=config.extraction_model,
         temperature=config.extraction_temperature,
+        structured_output_mode=config.structured_output_mode,
         embedding_model=config.embedding_model,
         embedding_dimensions=config.embedding_dimensions,
         embedding_base_url=config.embedding_base_url,

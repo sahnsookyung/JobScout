@@ -25,6 +25,7 @@ def test_runtime_llm_config_from_etl_maps_embedding_fields():
         extraction_headers={"X-ETL": "1"},
         extraction_model="gpt-etl",
         extraction_temperature=0.3,
+        structured_output_mode="json_object",
         embedding_model="embed-model",
         embedding_dimensions=768,
         embedding_base_url="https://embed.example/v1",
@@ -36,6 +37,7 @@ def test_runtime_llm_config_from_etl_maps_embedding_fields():
 
     assert runtime_config.provider == "openai_compatible"
     assert runtime_config.model == "gpt-etl"
+    assert runtime_config.structured_output_mode == "json_object"
     assert runtime_config.embedding_model == "embed-model"
     assert runtime_config.embedding_dimensions == 768
     assert runtime_config.headers == {"X-ETL": "1"}

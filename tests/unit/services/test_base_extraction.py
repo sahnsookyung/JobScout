@@ -42,6 +42,34 @@ class TestFormatHttpError:
         assert result == "N/A"
 
 
+class TestProviderQuotaExhausted:
+    """Test provider quota classification."""
+
+    def test_daily_quota_error_is_non_transient(self):
+        """Daily quota exhaustion aborts the batch instead of per-job retries."""
+        from services.base.extraction import _provider_quota_exhausted
+
+        error = RuntimeError("Tokens per day limit exceeded")
+        error.response = MagicMock(  # type: ignore[attr-defined]
+            status_code=429,
+            text='{"message":"Tokens per day limit exceeded"}',
+        )
+
+        assert _provider_quota_exhausted(error) is True
+
+    def test_minute_quota_error_is_retryable(self):
+        """Minute-level throttling can recover inside the retry loop."""
+        from services.base.extraction import _provider_quota_exhausted
+
+        error = RuntimeError("Tokens per minute limit exceeded")
+        error.response = MagicMock(  # type: ignore[attr-defined]
+            status_code=429,
+            text='{"message":"Tokens per minute limit exceeded"}',
+        )
+
+        assert _provider_quota_exhausted(error) is False
+
+
 class TestMarkJobFailed:
     """Test _mark_job_failed function."""
 
@@ -120,6 +148,35 @@ class TestOnExtractionError:
             )
 
         assert result is False
+
+    def test_on_extraction_error_provider_quota_aborts_batch(self):
+        """Non-transient provider quota raises for stream-level batch retry."""
+        from services.base.extraction import ProviderQuotaExceeded, _on_extraction_error
+
+        error = RuntimeError("Tokens per day limit exceeded")
+        error.response = MagicMock(  # type: ignore[attr-defined]
+            status_code=429,
+            text='{"message":"Tokens per day limit exceeded"}',
+        )
+        stop_event = threading.Event()
+
+        with patch('services.base.extraction._mark_job_retryable') as mock_mark:
+            try:
+                _on_extraction_error(
+                    error,
+                    job_id=123,
+                    job_title="Test Job",
+                    attempt=0,
+                    retry_intervals=[30, 60, 120],
+                    wait_time=30,
+                    stop_event=stop_event,
+                )
+            except ProviderQuotaExceeded:
+                pass
+            else:
+                raise AssertionError("Expected ProviderQuotaExceeded")
+
+        mock_mark.assert_called_once()
 
 
 class TestExtractSingleJob:
@@ -216,6 +273,32 @@ class TestRunExtractionBatch:
                 result = _run_extraction_batch(mock_ctx, stop_event, limit=10)
 
                 assert result == 1
+
+    def test_run_extraction_batch_propagates_provider_quota(self):
+        """Provider quota errors leave the batch for stream-level retry handling."""
+        from services.base.extraction import ProviderQuotaExceeded, _run_extraction_batch
+        with patch('services.base.extraction.job_uow') as mock_job_uow:
+            with patch('services.base.extraction._extract_single_job') as mock_extract:
+                mock_repo = MagicMock()
+                job1, job2 = MagicMock(id=1), MagicMock(id=2)
+                mock_repo.get_unextracted_jobs.return_value = [job1, job2]
+
+                mock_context = MagicMock()
+                mock_context.__enter__ = Mock(return_value=mock_repo)
+                mock_context.__exit__ = Mock(return_value=False)
+                mock_job_uow.return_value = mock_context
+
+                mock_extract.side_effect = ProviderQuotaExceeded("quota exhausted")
+                stop_event = threading.Event()
+
+                try:
+                    _run_extraction_batch(Mock(), stop_event, limit=10)
+                except ProviderQuotaExceeded:
+                    pass
+                else:
+                    raise AssertionError("Expected ProviderQuotaExceeded")
+
+                mock_extract.assert_called_once()
 
 
 class TestRunJobExtraction:
