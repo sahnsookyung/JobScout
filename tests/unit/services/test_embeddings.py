@@ -333,6 +333,53 @@ class TestEmbeddingsConsumerClass:
         enqueue.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_batch_consumer_requeues_on_batch_exception(self):
+        """Transient batch failures should enqueue a bounded retry payload."""
+        from services.embeddings.main import EmbeddingsBatchConsumer
+
+        mock_ctx = Mock()
+        stop_event = threading.Event()
+        consumer = EmbeddingsBatchConsumer(mock_ctx, stop_event)
+
+        with patch("services.embeddings.main.run_embedding_extraction", side_effect=RuntimeError("db went away")), \
+             patch("services.embeddings.main.enqueue_job", return_value="1-0") as enqueue:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "embed-1", "limit": 25},
+            )
+
+        assert success is False
+        assert result["status"] == "failed"
+        assert result["retry_enqueued"] is True
+        assert result["batch_retry_count"] == 1
+        enqueue.assert_called_once_with(
+            "embeddings:batch",
+            {"task_id": "embed-1", "limit": 25, "batch_retry_count": 1},
+        )
+
+    @pytest.mark.asyncio
+    async def test_batch_consumer_does_not_requeue_after_retry_cap(self):
+        """Batch retry payloads stop after the configured retry cap."""
+        from services.embeddings.main import EmbeddingsBatchConsumer
+
+        mock_ctx = Mock()
+        stop_event = threading.Event()
+        consumer = EmbeddingsBatchConsumer(mock_ctx, stop_event)
+
+        with patch("services.embeddings.main.run_embedding_extraction", side_effect=RuntimeError("still broken")), \
+             patch("services.embeddings.main.enqueue_job") as enqueue:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "embed-1", "limit": 25, "batch_retry_count": 3},
+            )
+
+        assert success is False
+        assert result["status"] == "failed"
+        assert result["retry_enqueued"] is False
+        assert result["batch_retry_count"] == 3
+        enqueue.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_batch_consumer_invalid_message(self):
         """Batch consumer rejects message missing task_id."""
         from services.embeddings.main import EmbeddingsBatchConsumer

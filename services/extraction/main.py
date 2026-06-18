@@ -42,6 +42,15 @@ logger = logging.getLogger(__name__)
 
 CONSUMER_GROUP = os.getenv("EXTRACTION_CONSUMER_GROUP", "extraction-service")
 CONSUMER_NAME = os.getenv("HOSTNAME", "extraction-1")
+DEFAULT_BATCH_MAX_RETRIES = 3
+BATCH_RETRY_COUNT_FIELD = "batch_retry_count"
+
+
+def _batch_max_retries() -> int:
+    try:
+        return max(0, int(os.getenv("EXTRACTION_BATCH_MAX_RETRIES", DEFAULT_BATCH_MAX_RETRIES)))
+    except (TypeError, ValueError):
+        return DEFAULT_BATCH_MAX_RETRIES
 
 
 def _enqueue_followup_embeddings_batch(msg: dict) -> dict | None:
@@ -57,6 +66,23 @@ def _enqueue_followup_embeddings_batch(msg: dict) -> dict | None:
         payload.get("task_id"),
     )
     return payload
+
+
+def _requeue_extraction_batch(msg: dict) -> tuple[bool, int]:
+    retry_count = int(msg.get(BATCH_RETRY_COUNT_FIELD, 0) or 0)
+    next_retry_count = retry_count + 1
+    if retry_count >= _batch_max_retries():
+        return False, retry_count
+
+    payload = dict(msg)
+    payload[BATCH_RETRY_COUNT_FIELD] = next_retry_count
+    enqueue_job(STREAM_EXTRACTION_BATCH, payload)
+    logger.info(
+        "Requeued extraction batch: task_id=%s, retry_count=%d",
+        payload.get("task_id"),
+        next_retry_count,
+    )
+    return True, next_retry_count
 
 
 # ---------------------------------------------------------------------------
@@ -213,9 +239,26 @@ class ExtractionBatchConsumer(StreamConsumerWithCompletion):
             limit,
         )
 
-        processed = await asyncio.to_thread(
-            run_job_extraction, self.ctx, self.stop_event, limit
-        )
+        try:
+            processed = await asyncio.to_thread(
+                run_job_extraction, self.ctx, self.stop_event, limit
+            )
+        except Exception as exc:
+            retry_enqueued, retry_count = _requeue_extraction_batch(msg)
+            logger.warning(
+                "Extraction batch failed: task_id=%s, retry_enqueued=%s, retry_count=%d",
+                msg["task_id"],
+                retry_enqueued,
+                retry_count,
+                exc_info=True,
+            )
+            return False, {
+                "status": "failed",
+                "error": str(exc),
+                "retry_enqueued": retry_enqueued,
+                "batch_retry_count": retry_count,
+            }
+
         result = {"status": "completed", "processed": processed}
         try:
             followup_payload = _enqueue_followup_embeddings_batch(msg)

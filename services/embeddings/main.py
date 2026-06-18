@@ -41,6 +41,15 @@ logger = logging.getLogger(__name__)
 
 CONSUMER_GROUP = os.getenv("EMBEDDINGS_CONSUMER_GROUP", "embeddings-service")
 CONSUMER_NAME = os.getenv("HOSTNAME", "embeddings-1")
+DEFAULT_BATCH_MAX_RETRIES = 3
+BATCH_RETRY_COUNT_FIELD = "batch_retry_count"
+
+
+def _batch_max_retries() -> int:
+    try:
+        return max(0, int(os.getenv("EMBEDDINGS_BATCH_MAX_RETRIES", DEFAULT_BATCH_MAX_RETRIES)))
+    except (TypeError, ValueError):
+        return DEFAULT_BATCH_MAX_RETRIES
 
 
 def _enqueue_followup_matching_jobs(msg: dict) -> int:
@@ -59,6 +68,23 @@ def _enqueue_followup_matching_jobs(msg: dict) -> int:
 
     logger.info("Enqueued %d follow-up matching job(s)", enqueued)
     return enqueued
+
+
+def _requeue_embeddings_batch(msg: dict) -> tuple[bool, int]:
+    retry_count = int(msg.get(BATCH_RETRY_COUNT_FIELD, 0) or 0)
+    next_retry_count = retry_count + 1
+    if retry_count >= _batch_max_retries():
+        return False, retry_count
+
+    payload = dict(msg)
+    payload[BATCH_RETRY_COUNT_FIELD] = next_retry_count
+    enqueue_job(STREAM_EMBEDDINGS_BATCH, payload)
+    logger.info(
+        "Requeued embeddings batch: task_id=%s, retry_count=%d",
+        payload.get("task_id"),
+        next_retry_count,
+    )
+    return True, next_retry_count
 
 
 # ---------------------------------------------------------------------------
@@ -170,9 +196,26 @@ class EmbeddingsBatchConsumer(StreamConsumerWithCompletion):
             msg["task_id"],
             limit,
         )
-        processed = await asyncio.to_thread(
-            run_embedding_extraction, self.ctx, self.stop_event, limit
-        )
+        try:
+            processed = await asyncio.to_thread(
+                run_embedding_extraction, self.ctx, self.stop_event, limit
+            )
+        except Exception as exc:
+            retry_enqueued, retry_count = _requeue_embeddings_batch(msg)
+            logger.warning(
+                "Embeddings batch failed: task_id=%s, retry_enqueued=%s, retry_count=%d",
+                msg["task_id"],
+                retry_enqueued,
+                retry_count,
+                exc_info=True,
+            )
+            return False, {
+                "status": "failed",
+                "error": str(exc),
+                "retry_enqueued": retry_enqueued,
+                "batch_retry_count": retry_count,
+            }
+
         result = {"status": "completed", "processed": processed}
         try:
             matching_jobs_enqueued = _enqueue_followup_matching_jobs(msg)

@@ -424,6 +424,53 @@ class TestExtractionConsumer:
         assert "enqueue_embeddings_batch" in result["error"]
         enqueue.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_batch_consumer_requeues_on_batch_exception(self):
+        """Transient batch failures should enqueue a bounded retry payload."""
+        from services.extraction.main import ExtractionBatchConsumer
+
+        mock_ctx = Mock()
+        stop_event = threading.Event()
+        consumer = ExtractionBatchConsumer(mock_ctx, stop_event)
+
+        with patch("services.extraction.main.run_job_extraction", side_effect=RuntimeError("db went away")), \
+             patch("services.extraction.main.enqueue_job", return_value="1-0") as enqueue:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "extract-1", "limit": 25},
+            )
+
+        assert success is False
+        assert result["status"] == "failed"
+        assert result["retry_enqueued"] is True
+        assert result["batch_retry_count"] == 1
+        enqueue.assert_called_once_with(
+            "extraction:batch",
+            {"task_id": "extract-1", "limit": 25, "batch_retry_count": 1},
+        )
+
+    @pytest.mark.asyncio
+    async def test_batch_consumer_does_not_requeue_after_retry_cap(self):
+        """Batch retry payloads stop after the configured retry cap."""
+        from services.extraction.main import ExtractionBatchConsumer
+
+        mock_ctx = Mock()
+        stop_event = threading.Event()
+        consumer = ExtractionBatchConsumer(mock_ctx, stop_event)
+
+        with patch("services.extraction.main.run_job_extraction", side_effect=RuntimeError("still broken")), \
+             patch("services.extraction.main.enqueue_job") as enqueue:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "extract-1", "limit": 25, "batch_retry_count": 3},
+            )
+
+        assert success is False
+        assert result["status"] == "failed"
+        assert result["retry_enqueued"] is False
+        assert result["batch_retry_count"] == 3
+        enqueue.assert_not_called()
+
 
 class TestExtractionLifespan:
     """Test extraction lifespan startup and shutdown."""
