@@ -103,7 +103,7 @@ class TestJobPostStageQueries:
         results = repo.get_unembedded_jobs(limit=5)
         assert isinstance(results, list)
 
-    def test_get_unembedded_jobs_returns_eligible_jobs(self, db_session):
+    def test_get_unembedded_jobs_returns_extracted_jobs(self, db_session):
         """Jobs with succeeded extraction and pending embedding are returned."""
         job = _make_job(
             db_session,
@@ -117,12 +117,12 @@ class TestJobPostStageQueries:
         ids = [j.id for j in repo.get_unembedded_jobs(limit=10)]
         assert job.id in ids
 
-    def test_get_unembedded_jobs_excludes_unextracted(self, db_session):
-        """Jobs that haven't been extracted yet are NOT eligible for embedding."""
+    def test_get_unembedded_jobs_returns_unextracted_jobs_with_description(self, db_session):
+        """Raw descriptions are enough for initial semantic-search embeddings."""
         job = _make_job(db_session, extraction_status="pending", is_extracted=False)
         repo = JobPostRepository(db_session)
         ids = [j.id for j in repo.get_unembedded_jobs(limit=10)]
-        assert job.id not in ids
+        assert job.id in ids
 
 
 # ---------------------------------------------------------------------------

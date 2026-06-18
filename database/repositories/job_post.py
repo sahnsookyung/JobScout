@@ -639,7 +639,6 @@ class JobPostRepository(BaseRepository):
         stale_cutoff = now - timedelta(minutes=STAGE_IN_PROGRESS_STALE_MINUTES)
         stmt = select(JobPost).where(
             JobPost.description.isnot(None),
-            JobPost.extraction_status == 'succeeded',
             JobPost.summary_embedding.is_(None),
             or_(
                 and_(
