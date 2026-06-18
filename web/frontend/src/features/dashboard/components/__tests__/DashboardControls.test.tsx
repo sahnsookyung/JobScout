@@ -550,7 +550,7 @@ describe('DashboardControls', () => {
             });
 
             render(<DashboardControls />, { wrapper: createWrapper() });
-            expect(screen.getByText('100')).toBeInTheDocument();
+            expect(screen.getAllByText('100').length).toBeGreaterThan(0);
             expect(screen.getByText('Run matching')).toBeInTheDocument();
         });
 

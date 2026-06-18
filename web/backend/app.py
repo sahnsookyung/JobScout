@@ -42,6 +42,7 @@ from .exceptions import (
 )
 from .routers import (
     matches_router,
+    jobs_router,
     stats_router,
     policy_router,
     pipeline_router,
@@ -151,6 +152,7 @@ def create_app() -> FastAPI:
 
     # Include routers
     _app.include_router(matches_router)
+    _app.include_router(jobs_router)
     _app.include_router(stats_router)
     _app.include_router(policy_router)
     _app.include_router(pipeline_router)

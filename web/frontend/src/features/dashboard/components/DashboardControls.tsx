@@ -12,6 +12,7 @@ import { StatsPanel } from './StatsPanel';
 import { ActionButton } from './ActionButton';
 import { StatusBanner } from './StatusBanner';
 import { FetchSourcesPanel } from './FetchSourcesPanel';
+import { JobInventoryPanel } from './JobInventoryPanel';
 
 export const DashboardControls: React.FC = () => {
     const {
@@ -114,6 +115,7 @@ export const DashboardControls: React.FC = () => {
                     />
                 </div>
             </div>
+            <JobInventoryPanel stats={stats} />
             <FetchSourcesPanel />
             {showStatusBanner && statusData && <StatusBanner {...statusData} />}
         </DashboardWrapper>

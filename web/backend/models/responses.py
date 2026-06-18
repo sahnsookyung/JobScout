@@ -240,6 +240,45 @@ class MatchesResponse(BaseModel):
     llm_rerank: LlmRerankMetadata = Field(default_factory=LlmRerankMetadata)
 
 
+class JobInventoryItem(BaseModel):
+    """Read-only summary of an imported job and its processing state."""
+
+    job_id: str
+    title: str
+    company: str
+    location: Optional[str] = None
+    is_remote: Optional[bool] = None
+    status: str
+    is_extracted: bool
+    is_embedded: bool
+    extraction_status: str
+    embedding_status: str
+    description_completeness: str = "unknown"
+    description_source: str = "unknown"
+    description_warning_code: Optional[str] = None
+    source_site: Optional[str] = None
+    source_url: Optional[str] = None
+    first_seen_at: Optional[str] = None
+    last_seen_at: Optional[str] = None
+    extraction_attempts: int = 0
+    extraction_last_error: Optional[str] = None
+    extraction_next_retry_at: Optional[str] = None
+    embedding_attempts: int = 0
+    embedding_last_error: Optional[str] = None
+    embedding_next_retry_at: Optional[str] = None
+
+
+class JobsResponse(BaseModel):
+    """Paginated response containing imported jobs."""
+
+    success: bool
+    count: int
+    total: int
+    limit: int
+    offset: int
+    jobs: List[JobInventoryItem] = Field(default_factory=list)
+
+
 class ScoreDistribution(BaseModel):
     """Distribution of match scores."""
     excellent: int = Field(ge=0, description="Matches with score >= 80")

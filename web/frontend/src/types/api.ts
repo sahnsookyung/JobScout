@@ -181,6 +181,52 @@ export interface MatchesResponse {
     };
 }
 
+export interface JobInventoryItem {
+    job_id: string;
+    title: string;
+    company: string;
+    location: string | null;
+    is_remote: boolean | null;
+    status: string;
+    is_extracted: boolean;
+    is_embedded: boolean;
+    extraction_status: string;
+    embedding_status: string;
+    description_completeness: string;
+    description_source: string;
+    description_warning_code?: string | null;
+    source_site?: string | null;
+    source_url?: string | null;
+    first_seen_at?: string | null;
+    last_seen_at?: string | null;
+    extraction_attempts: number;
+    extraction_last_error?: string | null;
+    extraction_next_retry_at?: string | null;
+    embedding_attempts: number;
+    embedding_last_error?: string | null;
+    embedding_next_retry_at?: string | null;
+}
+
+export type JobProcessingStatus =
+    | 'all'
+    | 'ready'
+    | 'extracted'
+    | 'embedded'
+    | 'pending_extraction'
+    | 'pending_embedding'
+    | 'failed';
+
+export type JobLifecycleStatus = 'all' | 'active' | 'inactive' | 'expired' | 'unknown';
+
+export interface JobsResponse {
+    success: boolean;
+    count: number;
+    total: number;
+    limit: number;
+    offset: number;
+    jobs: JobInventoryItem[];
+}
+
 export interface StatsResponse {
     success: boolean;
     stats: {
