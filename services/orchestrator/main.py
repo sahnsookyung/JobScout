@@ -703,22 +703,40 @@ async def run_batch_stage(
     )
 
 
+async def enqueue_best_effort_extraction_backfill(
+    task_id: str,
+    *,
+    extraction_limit: int,
+    embedding_limit: int,
+) -> Dict[str, str]:
+    """Queue extraction enrichment without blocking job-description embeddings."""
+    extraction_task_id = f"{task_id}-extract"
+    followup_embedding_task_id = f"{task_id}-post-extract-embed"
+    await asyncio.to_thread(
+        enqueue_job,
+        STREAM_EXTRACTION_BATCH,
+        {
+            "task_id": extraction_task_id,
+            "limit": extraction_limit,
+            "enqueue_embeddings_batch": {
+                "task_id": followup_embedding_task_id,
+                "limit": embedding_limit,
+            },
+        },
+    )
+    return {
+        "extraction_task_id": extraction_task_id,
+        "followup_embedding_task_id": followup_embedding_task_id,
+    }
+
+
 async def run_post_scrape_job_pipeline(
     ctx: AppContext,
     task_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Run extraction + embedding after scraping using the stage adapter."""
+    """Embed scraped/imported jobs, then queue extraction as non-blocking enrichment."""
     stage_errors: Dict[str, List[str]] = {}
     pipeline_task_id = task_id or f"scrape-batch-{uuid.uuid4().hex[:8]}"
-
-    extracted, extract_error = await run_batch_stage(
-        ctx,
-        task_id=pipeline_task_id,
-        stage="extract",
-        limit=SCRAPER_EXTRACTION_LIMIT,
-    )
-    if extract_error:
-        stage_errors.setdefault("extract", []).append(extract_error)
 
     embedded, embed_error = await run_batch_stage(
         ctx,
@@ -729,9 +747,27 @@ async def run_post_scrape_job_pipeline(
     if embed_error:
         stage_errors.setdefault("embed", []).append(embed_error)
 
+    extraction_queued = False
+    extraction_task_id = None
+    followup_embedding_task_id = None
+    try:
+        extraction_backfill = await enqueue_best_effort_extraction_backfill(
+            pipeline_task_id,
+            extraction_limit=SCRAPER_EXTRACTION_LIMIT,
+            embedding_limit=SCRAPER_EMBEDDING_LIMIT,
+        )
+        extraction_queued = True
+        extraction_task_id = extraction_backfill["extraction_task_id"]
+        followup_embedding_task_id = extraction_backfill["followup_embedding_task_id"]
+    except Exception as exc:
+        stage_errors.setdefault("extract_enqueue", []).append(str(exc))
+
     return {
-        "extracted": extracted,
+        "extracted": 0,
         "embedded": embedded,
+        "extraction_queued": extraction_queued,
+        "extraction_task_id": extraction_task_id,
+        "followup_embedding_task_id": followup_embedding_task_id,
         "stage_errors": stage_errors,
     }
 
@@ -1419,7 +1455,7 @@ async def _run_scrape_extract_embed_pipeline_task(
     registry: OrchestratorRegistry,
     ctx: AppContext,
 ) -> None:
-    """Run scrape -> extract -> embed as a managed task."""
+    """Run scrape -> embed, then queue extraction enrichment as a managed task."""
     async with registry.lock:
         registry.active_task_ids.add(task_id)
 
@@ -1432,6 +1468,9 @@ async def _run_scrape_extract_embed_pipeline_task(
         "errors": [],
         "extracted_count": 0,
         "embedded_count": 0,
+        "extraction_enqueued": False,
+        "extraction_task_id": None,
+        "followup_embedding_task_id": None,
         "stage_errors": {},
     }
     await state._save_to_redis()
@@ -1455,20 +1494,16 @@ async def _run_scrape_extract_embed_pipeline_task(
             state.result["errors"] = list(scrape_result["errors"])
             state.result["stage_errors"]["scrape"] = list(scrape_result["errors"])
 
-        state.current_stage = "extract"
-        await state._save_to_redis()
-        extracted, extract_error = await run_batch_stage(
-            ctx,
-            task_id=task_id,
-            stage="extract",
-            limit=SCRAPER_EXTRACTION_LIMIT,
-        )
-        state.result["extracted_count"] = extracted
-        if extract_error:
-            state.result["stage_errors"].setdefault("extract", []).append(extract_error)
-
         state.current_stage = "embed"
         await state._save_to_redis()
+        await state.notify(
+            {
+                "task_id": task_id,
+                "status": "running",
+                "current_stage": "embed",
+                "message": "Embedding scraped jobs",
+            }
+        )
         embedded, embed_error = await run_batch_stage(
             ctx,
             task_id=task_id,
@@ -1479,13 +1514,40 @@ async def _run_scrape_extract_embed_pipeline_task(
         if embed_error:
             state.result["stage_errors"].setdefault("embed", []).append(embed_error)
 
+        state.current_stage = "extract"
+        await state._save_to_redis()
+        await state.notify(
+            {
+                "task_id": task_id,
+                "status": "running",
+                "current_stage": "extract",
+                "message": "Queueing extraction enrichment",
+            }
+        )
+        try:
+            extraction_backfill = await enqueue_best_effort_extraction_backfill(
+                task_id,
+                extraction_limit=SCRAPER_EXTRACTION_LIMIT,
+                embedding_limit=SCRAPER_EMBEDDING_LIMIT,
+            )
+            state.result["extraction_enqueued"] = True
+            state.result["extraction_task_id"] = extraction_backfill["extraction_task_id"]
+            state.result["followup_embedding_task_id"] = extraction_backfill[
+                "followup_embedding_task_id"
+            ]
+        except Exception as exc:
+            state.result["stage_errors"].setdefault("extract_enqueue", []).append(str(exc))
+
         flat_errors = []
         for errors in state.result["stage_errors"].values():
             flat_errors.extend(errors)
         state.result["errors"] = flat_errors
 
-        if flat_errors:
-            raise RuntimeError("; ".join(flat_errors))
+        critical_errors = []
+        for stage in ("scrape", "embed"):
+            critical_errors.extend(state.result["stage_errors"].get(stage, []))
+        if critical_errors:
+            raise RuntimeError("; ".join(critical_errors))
 
         state.status = "completed"
         await state._save_to_redis()
@@ -1493,7 +1555,7 @@ async def _run_scrape_extract_embed_pipeline_task(
             {
                 "task_id": task_id,
                 "status": "completed",
-                "current_stage": "embed",
+                "current_stage": state.current_stage,
                 "result": state.result,
             }
         )
@@ -1522,7 +1584,7 @@ async def _run_process_imported_jobs_pipeline_task(
     registry: OrchestratorRegistry,
     ctx: AppContext,
 ) -> None:
-    """Run extract -> embed for already imported jobs as a managed task."""
+    """Embed already imported jobs and queue extraction enrichment best-effort."""
     async with registry.lock:
         registry.active_task_ids.add(task_id)
 
@@ -1532,32 +1594,15 @@ async def _run_process_imported_jobs_pipeline_task(
     state.result = {
         "extracted_count": 0,
         "embedded_count": 0,
+        "extraction_enqueued": False,
+        "extraction_task_id": None,
+        "followup_embedding_task_id": None,
         "stage_errors": {},
         "errors": [],
     }
     await state._save_to_redis()
 
     try:
-        state.current_stage = "extract"
-        await state._save_to_redis()
-        await state.notify(
-            {
-                "task_id": task_id,
-                "status": "running",
-                "current_stage": "extract",
-                "message": "Processing imported jobs: extraction",
-            }
-        )
-        extracted, extract_error = await run_batch_stage(
-            ctx,
-            task_id=task_id,
-            stage="extract",
-            limit=SCRAPER_EXTRACTION_LIMIT,
-        )
-        state.result["extracted_count"] = extracted
-        if extract_error:
-            state.result["stage_errors"].setdefault("extract", []).append(extract_error)
-
         state.current_stage = "embed"
         await state._save_to_redis()
         await state.notify(
@@ -1578,13 +1623,37 @@ async def _run_process_imported_jobs_pipeline_task(
         if embed_error:
             state.result["stage_errors"].setdefault("embed", []).append(embed_error)
 
+        state.current_stage = "extract"
+        await state._save_to_redis()
+        await state.notify(
+            {
+                "task_id": task_id,
+                "status": "running",
+                "current_stage": "extract",
+                "message": "Queueing imported job extraction enrichment",
+            }
+        )
+        try:
+            extraction_backfill = await enqueue_best_effort_extraction_backfill(
+                task_id,
+                extraction_limit=SCRAPER_EXTRACTION_LIMIT,
+                embedding_limit=SCRAPER_EMBEDDING_LIMIT,
+            )
+            state.result["extraction_enqueued"] = True
+            state.result["extraction_task_id"] = extraction_backfill["extraction_task_id"]
+            state.result["followup_embedding_task_id"] = extraction_backfill[
+                "followup_embedding_task_id"
+            ]
+        except Exception as exc:
+            state.result["stage_errors"].setdefault("extract_enqueue", []).append(str(exc))
+
         flat_errors = []
         for errors in state.result["stage_errors"].values():
             flat_errors.extend(errors)
         state.result["errors"] = flat_errors
 
-        if flat_errors:
-            raise RuntimeError("; ".join(flat_errors))
+        if embed_error:
+            raise RuntimeError(embed_error)
 
         state.status = "completed"
         await state._save_to_redis()
@@ -1592,7 +1661,7 @@ async def _run_process_imported_jobs_pipeline_task(
             {
                 "task_id": task_id,
                 "status": "completed",
-                "current_stage": "embed",
+                "current_stage": state.current_stage,
                 "result": state.result,
             }
         )
