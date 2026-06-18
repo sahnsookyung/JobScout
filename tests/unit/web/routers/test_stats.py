@@ -403,13 +403,13 @@ class TestGetStats:
             embedded_job_posts=1129,
             ready_to_score_job_posts=352,
             pending_extraction_job_posts=1103,
-            processing_extraction_job_posts=0,
+            processing_extraction_job_posts=2,
             retryable_extraction_job_posts=4,
-            failed_extraction_job_posts=0,
+            failed_extraction_job_posts=3,
             pending_embedding_job_posts=330,
-            processing_embedding_job_posts=0,
-            retryable_embedding_job_posts=0,
-            failed_embedding_job_posts=0,
+            processing_embedding_job_posts=5,
+            retryable_embedding_job_posts=7,
+            failed_embedding_job_posts=11,
         )
         repo = SimpleNamespace(db=_FakeJobStatsDb(row))
 
@@ -418,4 +418,9 @@ class TestGetStats:
         assert stats["job_post_total"] == 1459
         assert stats["embedded_job_posts"] == 1129
         assert stats["pending_extraction_job_posts"] == 1103
+        assert stats["processing_extraction_job_posts"] == 2
         assert stats["retryable_extraction_job_posts"] == 4
+        assert stats["failed_extraction_job_posts"] == 3
+        assert stats["processing_embedding_job_posts"] == 5
+        assert stats["retryable_embedding_job_posts"] == 7
+        assert stats["failed_embedding_job_posts"] == 11

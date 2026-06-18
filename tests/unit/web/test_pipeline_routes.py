@@ -171,6 +171,39 @@ class TestPipelineRoutes(unittest.TestCase):
         self.assertEqual(sources[1]["fetch_mode"], "custom_source")
         self.assertIsNone(sources[1]["api_health"])
 
+    @patch("web.backend.routers.pipeline.set_task_state")
+    @patch("web.backend.routers.pipeline.get_redis_client")
+    @patch("web.backend.services.clients.orchestrator_client")
+    def test_process_jobs_endpoint_starts_imported_job_processing(
+        self,
+        mock_orchestrator,
+        mock_get_redis,
+        mock_set_task_state,
+    ):
+        redis = MagicMock()
+        redis.get.return_value = None
+        mock_get_redis.return_value = redis
+        mock_orchestrator.start_process_imported_jobs_pipeline.return_value = {
+            "success": True,
+            "task_id": "process-jobs-abc123",
+            "status": "queued",
+            "current_stage": "extract",
+            "result": {"extracted_count": 0, "embedded_count": 0},
+        }
+
+        response = self.client.post("/api/pipeline/process-jobs")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["task_id"], "process-jobs-abc123")
+        mock_orchestrator.start_process_imported_jobs_pipeline.assert_called_once()
+        redis.set.assert_called_once()
+        mock_set_task_state.assert_called_once()
+        state = mock_set_task_state.call_args.args[1]
+        self.assertEqual(state["task_type"], "job_processing")
+        self.assertEqual(state["owner_id"], "00000000-0000-0000-0000-000000000001")
+
     @patch("web.backend.routers.pipeline.get_external_seed_fetcher_status")
     @patch("web.backend.routers.pipeline.get_config")
     def test_fetch_sources_endpoint_reports_external_worker_status(

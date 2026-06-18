@@ -7,11 +7,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockGet = vi.fn();
 const mockPost = vi.fn();
+const mockDelete = vi.fn();
 
 vi.mock('@/services/api', () => ({
     apiClient: {
         get: mockGet,
         post: mockPost,
+        delete: mockDelete,
     },
 }));
 

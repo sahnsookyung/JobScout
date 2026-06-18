@@ -52,6 +52,15 @@ def _clean_text(value: Any, *, max_length: int = 600) -> str | None:
     return cleaned[:max_length]
 
 
+def _clean_number(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _source(kind: str, path: str, index: int | None = None) -> dict[str, Any]:
     return SourcePointer(kind=kind, path=path, index=index).as_dict()
 
@@ -203,14 +212,20 @@ def _evidence_unit_claims(
     return claims
 
 
-def _requirement_claims(requirement_matches: list[Any], *, limit: int = 10) -> tuple[list[dict[str, Any]], list[str]]:
+def _requirement_claims(
+    requirement_matches: list[Any],
+    *,
+    claim_limit: int = 10,
+    gap_limit: int = 12,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     claims: list[dict[str, Any]] = []
+    gaps: list[dict[str, Any]] = []
     warnings: list[str] = []
     for match in requirement_matches:
         requirement = getattr(match, "requirement", None)
         requirement_text = _clean_text(getattr(requirement, "text", None), max_length=180)
         evidence = _clean_text(getattr(match, "evidence_text", None), max_length=260)
-        if getattr(match, "is_covered", False) and evidence and len(claims) < limit:
+        if getattr(match, "is_covered", False) and evidence and len(claims) < claim_limit:
             claims.append(
                 _claim(
                     evidence,
@@ -224,8 +239,20 @@ def _requirement_claims(requirement_matches: list[Any], *, limit: int = 10) -> t
                 )
             )
         elif requirement_text:
+            if len(gaps) < gap_limit:
+                gaps.append(
+                    _claim(
+                        requirement_text,
+                        [
+                            SourcePointer(
+                                kind="job_requirement",
+                                job_requirement_unit_id=str(getattr(match, "job_requirement_unit_id")),
+                            ).as_dict()
+                        ],
+                    )
+                )
             warnings.append(f"Unsupported requirement not claimed: {requirement_text}")
-    return claims, warnings
+    return claims, gaps, warnings
 
 
 def _requirement_units(requirement_matches: list[Any]) -> list[Any]:
@@ -305,7 +332,7 @@ def generate_resume_variant_content(
         requirements,
         job=job,
     )
-    requirement_claims, warnings = _requirement_claims(requirement_matches)
+    requirement_claims, gap_claims, warnings = _requirement_claims(requirement_matches)
     if getattr(match, "is_hidden", False):
         warnings.append("This match is hidden; generated draft is still available for review.")
 
@@ -320,6 +347,14 @@ def generate_resume_variant_content(
         "targeted_evidence": _merge_claims(evidence_unit_claims, requirement_claims),
         "skills": _skill_claims(profile, relevance_terms=relevance_terms),
         "experience": _experience_claims(profile),
+        "gaps": gap_claims,
+        "source_quality": {
+            "job_description_completeness": _clean_text(getattr(job, "description_completeness", None), max_length=60),
+            "job_description_source": _clean_text(getattr(job, "description_source", None), max_length=80),
+            "job_description_warning_code": _clean_text(getattr(job, "description_warning_code", None), max_length=80),
+            "fit_score": _clean_number(getattr(match, "fit_score", None)),
+            "required_coverage": _clean_number(getattr(match, "required_coverage", None)),
+        },
     }
     warnings.extend(validate_claim_sources(content))
 

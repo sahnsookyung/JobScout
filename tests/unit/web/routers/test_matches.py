@@ -214,6 +214,43 @@ class TestMatchesRouter:
         assert response.status_code == 200
         assert mock_match_service.get_matches.call_args.kwargs["top_k"] is None
 
+    def test_get_matches_returns_pagination_metadata(self, client, mock_match_service, mock_policy_service):
+        match_id = str(uuid.uuid4())
+        mock_match_service.get_matches.return_value = [
+            {
+                'match_id': match_id,
+                'title': 'Software Engineer',
+                'company': 'Tech Corp',
+                'fit_score': 80.0,
+                'is_remote': True,
+                'is_hidden': False,
+                'required_coverage': 0.85,
+                'preferred_requirement_coverage': 0.70,
+                'match_type': 'requirements_only',
+                'base_score': 85.0,
+                'penalties': 0.0,
+            }
+        ]
+        mock_match_service.last_matches_total = 250
+        mock_match_service.last_matches_limit = 100
+        mock_match_service.last_matches_offset = 100
+
+        response = client.get(
+            '/api/matches',
+            params={'tier': 'all', 'limit': 100, 'offset': 100},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 1
+        assert data["total"] == 250
+        assert data["limit"] == 100
+        assert data["offset"] == 100
+        assert data["has_more"] is True
+        call_kwargs = mock_match_service.get_matches.call_args.kwargs
+        assert call_kwargs["limit"] == 100
+        assert call_kwargs["offset"] == 100
+
     def test_get_matches_invalid_status(self, client):
         """Test get matches with invalid status parameter."""
         response = client.get('/api/matches', params={'status': 'invalid_status'})

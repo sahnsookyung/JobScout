@@ -236,6 +236,10 @@ class MatchesResponse(BaseModel):
     """Response containing list of matches."""
     success: bool
     count: int
+    total: int = 0
+    limit: Optional[int] = None
+    offset: int = 0
+    has_more: bool = False
     matches: List[MatchSummary]
     llm_rerank: LlmRerankMetadata = Field(default_factory=LlmRerankMetadata)
 

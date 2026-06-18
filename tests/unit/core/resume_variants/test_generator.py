@@ -74,7 +74,9 @@ def test_generator_turns_unsupported_requirements_into_warnings() -> None:
         tone="concise",
     )
 
-    assert "Kubernetes leadership" not in str(content)
+    assert "Kubernetes leadership" not in str(content["targeted_evidence"])
+    assert content["gaps"][0]["text"] == "Requires Kubernetes leadership"
+    assert content["gaps"][0]["sources"][0]["kind"] == "job_requirement"
     assert warnings == ["Unsupported requirement not claimed: Requires Kubernetes leadership"]
 
 
@@ -127,6 +129,7 @@ def test_generator_uses_job_relevant_resume_evidence_units_before_deterministic_
     assert content["targeted_evidence"][0]["text"].startswith("Interactive Portfolio Website")
     assert content["targeted_evidence"][0]["sources"][0]["kind"] == "resume_evidence_unit"
     assert any(claim["text"] == "TypeScript" for claim in content["skills"])
+    assert content["gaps"][0]["text"] == "Frontend development with TypeScript"
     assert "resume_evidence_unit" in evidence_map["source_types"]
     assert warnings == ["Unsupported requirement not claimed: Frontend development with TypeScript"]
 

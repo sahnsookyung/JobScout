@@ -412,8 +412,61 @@ describe('MatchList', () => {
         fireEvent.click(screen.getByRole('checkbox', { name: /all matched candidates \(2\)/i }));
 
         expect(mockUseMatches).toHaveBeenLastCalledWith(
-            expect.objectContaining({ tier: 'all', min_fit: undefined, top_k: undefined }),
+            expect.objectContaining({
+                tier: 'all',
+                min_fit: undefined,
+                top_k: undefined,
+                limit: 100,
+                offset: 0,
+            }),
         );
+    });
+
+    it('loads all matched candidates in pages after the user opts in', async () => {
+        mockUseStats.mockReturnValue({ data: { total_scored: 3, excluded_count: 2 } });
+        mockUseMatches.mockImplementation((params) => ({
+            data: params.limit
+                ? {
+                    matches: [
+                        makeMatch({ match_id: `match-${params.offset ?? 0}`, title: `Candidate ${params.offset ?? 0}` }),
+                    ],
+                    total: 3,
+                    has_more: (params.offset ?? 0) < 2,
+                }
+                : {
+                    matches: [makeMatch({ match_id: 'base-1', title: 'Base Candidate' })],
+                    total: 1,
+                    has_more: false,
+                },
+            isLoading: false,
+            isFetching: false,
+            error: null,
+            refetch: vi.fn(),
+        }));
+
+        render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        expect(mockUseMatches).toHaveBeenLastCalledWith(
+            expect.objectContaining({ top_k: 50, limit: undefined, offset: 0 }),
+        );
+
+        fireEvent.click(screen.getByRole('checkbox', { name: /all matched candidates \(3\)/i }));
+
+        await waitFor(() => {
+            expect(screen.getByText('Candidate 0')).toBeInTheDocument();
+        });
+        expect(screen.getByText('1 of 3 matched candidates')).toBeInTheDocument();
+        expect(mockUseMatches).toHaveBeenLastCalledWith(
+            expect.objectContaining({ top_k: undefined, limit: 100, offset: 0 }),
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: /load more candidates/i }));
+
+        await waitFor(() => {
+            expect(mockUseMatches).toHaveBeenLastCalledWith(
+                expect.objectContaining({ top_k: undefined, limit: 100, offset: 1 }),
+            );
+        });
     });
 
     it('renders the top-match treatment for the strongest visible result', () => {

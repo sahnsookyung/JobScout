@@ -27,8 +27,8 @@ _VALID_PROCESSING_STATUSES = {
     "pending_embedding",
     "failed",
 }
-_RETRYABLE_OR_PENDING = {"pending", "processing", "failed_retryable"}
-_FAILED_STATUSES = {"failed", "failed_retryable"}
+_RETRYABLE_OR_PENDING = {"pending", "in_progress", "processing", "failed_retryable"}
+_FAILED_STATUSES = {"failed_terminal", "failed", "failed_retryable"}
 _ERROR_TEXT_LIMIT = 240
 
 

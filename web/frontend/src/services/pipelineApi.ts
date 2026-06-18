@@ -32,6 +32,9 @@ export const pipelineApi = {
     runMatching: () =>
         apiClient.post<PipelineTaskResponse>('/pipeline/run-matching'),
 
+    processJobs: () =>
+        apiClient.post<PipelineTaskResponse>('/pipeline/process-jobs'),
+
     getPipelineStatus: (taskId: string) =>
         apiClient.get<PipelineStatusResponse>(`/pipeline/status/${taskId}`),
 

@@ -347,6 +347,7 @@ class OrchestrationState:
                 set_task_state,
                 self.task_id,
                 {
+                    "task_id": self.task_id,
                     "status": self.status,
                     "task_type": self.task_type,
                     "current_stage": self.current_stage,
@@ -1516,6 +1517,104 @@ async def _run_scrape_extract_embed_pipeline_task(
         await state.close(registry)
 
 
+async def _run_process_imported_jobs_pipeline_task(
+    task_id: str,
+    registry: OrchestratorRegistry,
+    ctx: AppContext,
+) -> None:
+    """Run extract -> embed for already imported jobs as a managed task."""
+    async with registry.lock:
+        registry.active_task_ids.add(task_id)
+
+    state = await get_or_create_orchestration(registry, task_id)
+    state.task_type = "pipeline"
+    state.status = "running"
+    state.result = {
+        "extracted_count": 0,
+        "embedded_count": 0,
+        "stage_errors": {},
+        "errors": [],
+    }
+    await state._save_to_redis()
+
+    try:
+        state.current_stage = "extract"
+        await state._save_to_redis()
+        await state.notify(
+            {
+                "task_id": task_id,
+                "status": "running",
+                "current_stage": "extract",
+                "message": "Processing imported jobs: extraction",
+            }
+        )
+        extracted, extract_error = await run_batch_stage(
+            ctx,
+            task_id=task_id,
+            stage="extract",
+            limit=SCRAPER_EXTRACTION_LIMIT,
+        )
+        state.result["extracted_count"] = extracted
+        if extract_error:
+            state.result["stage_errors"].setdefault("extract", []).append(extract_error)
+
+        state.current_stage = "embed"
+        await state._save_to_redis()
+        await state.notify(
+            {
+                "task_id": task_id,
+                "status": "running",
+                "current_stage": "embed",
+                "message": "Processing imported jobs: embeddings",
+            }
+        )
+        embedded, embed_error = await run_batch_stage(
+            ctx,
+            task_id=task_id,
+            stage="embed",
+            limit=SCRAPER_EMBEDDING_LIMIT,
+        )
+        state.result["embedded_count"] = embedded
+        if embed_error:
+            state.result["stage_errors"].setdefault("embed", []).append(embed_error)
+
+        flat_errors = []
+        for errors in state.result["stage_errors"].values():
+            flat_errors.extend(errors)
+        state.result["errors"] = flat_errors
+
+        if flat_errors:
+            raise RuntimeError("; ".join(flat_errors))
+
+        state.status = "completed"
+        await state._save_to_redis()
+        await state.notify(
+            {
+                "task_id": task_id,
+                "status": "completed",
+                "current_stage": "embed",
+                "result": state.result,
+            }
+        )
+    except Exception as exc:
+        state.status = "failed"
+        state.error = str(exc)
+        await state._save_to_redis()
+        await state.notify(
+            {
+                "task_id": task_id,
+                "status": "failed",
+                "current_stage": state.current_stage,
+                "error": state.error,
+                "result": state.result,
+            }
+        )
+    finally:
+        async with registry.lock:
+            registry.active_task_ids.discard(task_id)
+        await state.close(registry)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -1627,6 +1726,34 @@ async def orchestrate_scrape_extract_embed_pipeline(request: Request):
             "extracted_count": 0,
             "embedded_count": 0,
             "stage_errors": {},
+        },
+    )
+
+
+@app.post("/orchestrate/pipelines/process-imported-jobs", response_model=TaskStatusResponse)
+async def orchestrate_process_imported_jobs_pipeline(request: Request):
+    """Canonical trigger for extract -> embed on already imported jobs."""
+    registry: OrchestratorRegistry = request.app.state.registry
+    ctx: AppContext = request.app.state.ctx
+    task_id = f"process-jobs-{uuid.uuid4().hex[:8]}"
+    response = await _spawn_background_task(
+        registry,
+        task_id,
+        "pipeline",
+        _run_process_imported_jobs_pipeline_task(task_id, registry, ctx),
+        "process-imported-jobs pipeline started",
+    )
+    return TaskStatusResponse(
+        success=response.success,
+        task_id=response.task_id,
+        status="queued",
+        task_type="pipeline",
+        current_stage="extract",
+        result={
+            "extracted_count": 0,
+            "embedded_count": 0,
+            "stage_errors": {},
+            "errors": [],
         },
     )
 

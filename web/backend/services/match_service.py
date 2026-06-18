@@ -92,7 +92,10 @@ class MatchService:
         self.last_llm_rerank_metadata: Dict[str, Any] = self._empty_llm_rerank_metadata(
             reason="not_evaluated"
         )
-    
+        self.last_matches_total: int = 0
+        self.last_matches_limit: Optional[int] = None
+        self.last_matches_offset: int = 0
+
     def get_matches(
         self,
         owner_id: Optional[Any] = None,
@@ -104,6 +107,8 @@ class MatchService:
         show_hidden: bool = False,
         ranking_mode: Optional[str] = None,
         tier: str = "primary",
+        limit: Optional[int] = None,
+        offset: int = 0,
     ) -> List[MatchSummary]:
         """
         Get filtered job matches, ranked by the requested mode.
@@ -126,6 +131,8 @@ class MatchService:
             show_hidden: Include hidden matches in results.
             ranking_mode: One of "preference_first", "fit_first", "balanced".
                 Defaults to config.active_default_mode.
+            limit: Optional page size applied after ranking/top_k selection.
+            offset: Optional page offset applied with `limit`.
 
         Returns:
             List of match summaries with ranking explanation fields.
@@ -143,6 +150,7 @@ class MatchService:
             tenant_id=tenant_id,
         )
         if canonical_selection is None:
+            self._set_match_page_metadata(total=0, limit=limit, offset=offset)
             return []
 
         pool = self._load_rankable_pool(
@@ -194,7 +202,30 @@ class MatchService:
             effective_k = ranking_config.effective_top_k(top_k)
             ranked = primary_pool[:effective_k]
 
+        total = len(ranked)
+        ranked = self._page_ranked_matches(ranked, limit=limit, offset=offset)
+        self._set_match_page_metadata(total=total, limit=limit, offset=offset)
+
         return [self._to_match_summary(m) for m in ranked]
+
+    @staticmethod
+    def _page_ranked_matches(matches: List[Any], *, limit: Optional[int], offset: int) -> List[Any]:
+        safe_offset = max(int(offset or 0), 0)
+        if limit is None:
+            return matches[safe_offset:] if safe_offset else matches
+        safe_limit = max(int(limit), 0)
+        return matches[safe_offset:safe_offset + safe_limit]
+
+    def _set_match_page_metadata(
+        self,
+        *,
+        total: int,
+        limit: Optional[int],
+        offset: int,
+    ) -> None:
+        self.last_matches_total = max(int(total or 0), 0)
+        self.last_matches_limit = None if limit is None else max(int(limit), 0)
+        self.last_matches_offset = max(int(offset or 0), 0)
 
     def _resolve_canonical_selection(
         self,

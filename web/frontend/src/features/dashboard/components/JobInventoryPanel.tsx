@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
     AlertTriangle,
     ChevronLeft,
@@ -10,7 +11,13 @@ import {
 } from 'lucide-react';
 
 import { useJobs } from '@/hooks/useJobs';
-import type { JobInventoryItem, JobLifecycleStatus, JobProcessingStatus } from '@/types/api';
+import { pipelineApi } from '@/services/pipelineApi';
+import type {
+    JobInventoryItem,
+    JobLifecycleStatus,
+    JobProcessingStatus,
+    PipelineStatusResponse,
+} from '@/types/api';
 
 const PAGE_SIZE = 50;
 
@@ -28,6 +35,8 @@ const LIFECYCLE_FILTERS: Array<{ key: JobLifecycleStatus; label: string }> = [
     { key: 'inactive', label: 'Inactive' },
 ];
 
+const TERMINAL_PROCESS_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+
 export interface JobInventoryPanelProps {
     stats?: {
         job_post_total?: number;
@@ -35,6 +44,7 @@ export interface JobInventoryPanelProps {
         pending_extraction_job_posts?: number;
         retryable_extraction_job_posts?: number;
         pending_embedding_job_posts?: number;
+        retryable_embedding_job_posts?: number;
     } | null;
 }
 
@@ -52,8 +62,10 @@ function formatDateTime(value?: string | null): string {
 
 function statusLabel(job: JobInventoryItem): string {
     if (job.is_extracted && job.is_embedded) return 'Ready';
+    if (job.extraction_status === 'in_progress' || job.extraction_status === 'processing') return 'Extracting';
+    if (job.embedding_status === 'in_progress' || job.embedding_status === 'processing') return 'Embedding';
     if (job.extraction_status === 'failed_retryable' || job.embedding_status === 'failed_retryable') return 'Retry queued';
-    if (job.extraction_status === 'failed' || job.embedding_status === 'failed') return 'Failed';
+    if (job.extraction_status === 'failed_terminal' || job.extraction_status === 'failed' || job.embedding_status === 'failed_terminal' || job.embedding_status === 'failed') return 'Failed';
     if (!job.is_extracted) return `Extract ${job.extraction_status}`;
     if (!job.is_embedded) return `Embed ${job.embedding_status}`;
     return 'Imported';
@@ -61,7 +73,7 @@ function statusLabel(job: JobInventoryItem): string {
 
 function statusTone(job: JobInventoryItem): string {
     if (job.is_extracted && job.is_embedded) return 'border-success/40 bg-success-soft text-ink';
-    if (job.extraction_status === 'failed' || job.embedding_status === 'failed') return 'border-warn/50 bg-warn-soft text-warn';
+    if (job.extraction_status === 'failed_terminal' || job.extraction_status === 'failed' || job.embedding_status === 'failed_terminal' || job.embedding_status === 'failed') return 'border-warn/50 bg-warn-soft text-warn';
     if (job.extraction_status === 'failed_retryable' || job.embedding_status === 'failed_retryable') return 'border-warn/50 bg-warn-soft text-ink';
     return 'border-rule bg-surface-sunk text-ink-soft';
 }
@@ -172,7 +184,11 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
     const [searchInput, setSearchInput] = useState('');
     const [search, setSearch] = useState('');
     const [offset, setOffset] = useState(0);
+    const [processTaskId, setProcessTaskId] = useState<string | null>(null);
+    const queryClient = useQueryClient();
     const pendingExtraction = (stats?.pending_extraction_job_posts ?? 0) + (stats?.retryable_extraction_job_posts ?? 0);
+    const pendingEmbedding = (stats?.pending_embedding_job_posts ?? 0) + (stats?.retryable_embedding_job_posts ?? 0);
+    const queuedWork = pendingExtraction + pendingEmbedding;
     const { data, isLoading, error, refetch } = useJobs({
         job_status: jobStatus,
         processing_status: processingStatus,
@@ -180,13 +196,56 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
         limit: PAGE_SIZE,
         offset,
     }, isOpen);
+    const processJobs = useMutation({
+        mutationFn: async () => {
+            const response = await pipelineApi.processJobs();
+            return response.data;
+        },
+        onSuccess: (response) => {
+            setProcessTaskId(response.task_id);
+            void queryClient.invalidateQueries({ queryKey: ['stats'] });
+            void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        },
+    });
+    const processStatus = useQuery({
+        queryKey: ['job-processing-status', processTaskId],
+        queryFn: async () => {
+            const response = await pipelineApi.getPipelineStatus(processTaskId ?? '');
+            return response.data;
+        },
+        enabled: Boolean(processTaskId),
+        refetchInterval: (query) => {
+            const status = (query.state.data as PipelineStatusResponse | undefined)?.status;
+            return status && TERMINAL_PROCESS_STATUSES.has(status) ? false : 2500;
+        },
+    });
 
     const total = data?.total ?? 0;
     const jobs = data?.jobs ?? [];
     const canPageBack = offset > 0;
     const canPageForward = offset + PAGE_SIZE < total;
+    const processStatusData = processStatus.data;
+    const processStatusText = processTaskId
+        ? processStatusData?.status === 'completed'
+            ? `Processed ${processStatusData.stats?.jobs_extracted ?? 0} extracted and ${processStatusData.stats?.jobs_embedded ?? 0} embedded jobs.`
+            : processStatusData?.status === 'failed'
+                ? 'Queued job processing failed. Check logs, then retry.'
+                : 'Processing imported jobs in the background.'
+        : null;
+    const processingActive = (
+        processJobs.isPending
+        || Boolean(processTaskId && !TERMINAL_PROCESS_STATUSES.has(processStatusData?.status ?? 'pending'))
+    );
 
     const resetOffset = () => setOffset(0);
+
+    useEffect(() => {
+        if (!processStatusData?.status || !TERMINAL_PROCESS_STATUSES.has(processStatusData.status)) {
+            return;
+        }
+        void queryClient.invalidateQueries({ queryKey: ['stats'] });
+        void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    }, [processStatusData?.status, queryClient]);
 
     return (
         <section className="mt-8 border-t border-rule pt-8">
@@ -209,19 +268,34 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
                         </div>
                         <div className="flex gap-1.5">
                             <dt>Pending embed</dt>
-                            <dd className="num text-ink">{stats?.pending_embedding_job_posts ?? 0}</dd>
+                            <dd className="num text-ink">{pendingEmbedding}</dd>
                         </div>
                     </dl>
+                    {processStatusText ? (
+                        <p className="mt-3 text-[12px] leading-5 text-ink-muted">{processStatusText}</p>
+                    ) : null}
                 </div>
-                <button
-                    type="button"
-                    onClick={() => setIsOpen((value) => !value)}
-                    aria-expanded={isOpen}
-                    className="inline-flex h-10 items-center justify-center gap-2 border border-accent px-4 text-[14px] font-medium text-accent transition-colors hover:bg-accent-soft"
-                >
-                    <ListChecks className="h-4 w-4" aria-hidden="true" />
-                    {isOpen ? 'Hide jobs' : 'Browse jobs'}
-                </button>
+                <div className="flex flex-wrap gap-2">
+                    <button
+                        type="button"
+                        onClick={() => processJobs.mutate()}
+                        disabled={queuedWork <= 0 || processingActive}
+                        aria-label="Process queued imported jobs"
+                        className="inline-flex h-10 items-center justify-center gap-2 border border-rule px-4 text-[14px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        <RefreshCw className={`h-4 w-4 ${processingActive ? 'animate-pulse text-accent' : ''}`} aria-hidden="true" />
+                        {processingActive ? 'Processing queued' : 'Process queued'}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setIsOpen((value) => !value)}
+                        aria-expanded={isOpen}
+                        className="inline-flex h-10 items-center justify-center gap-2 border border-accent px-4 text-[14px] font-medium text-accent transition-colors hover:bg-accent-soft"
+                    >
+                        <ListChecks className="h-4 w-4" aria-hidden="true" />
+                        {isOpen ? 'Hide jobs' : 'Browse jobs'}
+                    </button>
+                </div>
             </div>
 
             {isOpen ? (

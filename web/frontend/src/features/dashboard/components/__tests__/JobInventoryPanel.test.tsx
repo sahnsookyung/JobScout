@@ -1,12 +1,22 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { JobInventoryPanel } from '../JobInventoryPanel';
 
 const mockUseJobs = vi.hoisted(() => vi.fn());
+const mockProcessJobs = vi.hoisted(() => vi.fn());
+const mockGetPipelineStatus = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/useJobs', () => ({
     useJobs: (params: any, enabled: boolean) => mockUseJobs(params, enabled),
+}));
+
+vi.mock('@/services/pipelineApi', () => ({
+    pipelineApi: {
+        processJobs: mockProcessJobs,
+        getPipelineStatus: mockGetPipelineStatus,
+    },
 }));
 
 vi.mock('lucide-react', () => ({
@@ -52,6 +62,15 @@ const stats = {
     pending_embedding_job_posts: 330,
 };
 
+function renderPanel(panelStats = stats) {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+        <QueryClientProvider client={queryClient}>
+            <JobInventoryPanel stats={panelStats} />
+        </QueryClientProvider>,
+    );
+}
+
 describe('JobInventoryPanel', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -61,10 +80,16 @@ describe('JobInventoryPanel', () => {
             error: null,
             refetch: vi.fn(),
         });
+        mockProcessJobs.mockResolvedValue({
+            data: { success: true, task_id: 'process-jobs-1', message: 'started' },
+        });
+        mockGetPipelineStatus.mockResolvedValue({
+            data: { task_id: 'process-jobs-1', status: 'completed', stats: { jobs_extracted: 1, jobs_embedded: 1 } },
+        });
     });
 
     it('stays collapsed by default while showing inventory totals', () => {
-        render(<JobInventoryPanel stats={stats} />);
+        renderPanel();
 
         expect(screen.getByText('Imported jobs')).toBeInTheDocument();
         expect(screen.getByText('1460')).toBeInTheDocument();
@@ -78,7 +103,7 @@ describe('JobInventoryPanel', () => {
     });
 
     it('renders imported jobs when opened', () => {
-        render(<JobInventoryPanel stats={stats} />);
+        renderPanel();
 
         fireEvent.click(screen.getByRole('button', { name: /browse jobs/i }));
 
@@ -93,7 +118,7 @@ describe('JobInventoryPanel', () => {
     });
 
     it('updates processing filters and resets to the first page', () => {
-        render(<JobInventoryPanel stats={stats} />);
+        renderPanel();
         fireEvent.click(screen.getByRole('button', { name: /browse jobs/i }));
 
         fireEvent.click(screen.getByRole('button', { name: /^Pending extract$/i }));
@@ -102,5 +127,13 @@ describe('JobInventoryPanel', () => {
             expect.objectContaining({ processing_status: 'pending_extraction', offset: 0 }),
             true,
         );
+    });
+
+    it('starts queued job processing from the inventory header', async () => {
+        renderPanel();
+
+        fireEvent.click(screen.getByRole('button', { name: /process queued imported jobs/i }));
+
+        await waitFor(() => expect(mockProcessJobs).toHaveBeenCalledTimes(1));
     });
 });

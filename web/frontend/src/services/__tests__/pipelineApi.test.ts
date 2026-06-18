@@ -92,6 +92,7 @@ describe('pipelineApi', () => {
         const file = new File(['resume'], 'resume.txt', { type: 'text/plain' });
 
         await pipelineApi.runMatching();
+        await pipelineApi.processJobs();
         await pipelineApi.getPipelineStatus('task-1');
         await pipelineApi.getActivePipeline();
         await pipelineApi.getResumeEligibility();
@@ -104,6 +105,7 @@ describe('pipelineApi', () => {
         await pipelineApi.retryResume('upload-1');
 
         expect(mockPost).toHaveBeenCalledWith('/pipeline/run-matching');
+        expect(mockPost).toHaveBeenCalledWith('/pipeline/process-jobs');
         expect(mockGet).toHaveBeenCalledWith('/pipeline/status/task-1');
         expect(mockGet).toHaveBeenCalledWith('/pipeline/active');
         expect(mockGet).toHaveBeenCalledWith('/pipeline/resume-eligibility');

@@ -318,6 +318,29 @@ class TestThreeStagePipeline:
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
+    def test_limit_and_offset_page_after_ranking(
+        self, mock_store, mock_rank, mock_db, service
+    ):
+        from core.ranking.policy import RankingConfig
+        cfg = RankingConfig(
+            balanced_w_pref=0.6, balanced_w_fit=0.4,
+            max_ranking_candidates=500, default_top_k=2, max_top_k=100,
+        )
+        mock_store.return_value.get_current_config.return_value = cfg
+
+        primary = [_make_match(f"p{i}") for i in range(4)]
+        _wire_rankable_pool(service, primary)
+        mock_rank.side_effect = lambda p, ctx: p
+
+        results = service.get_matches(tier="all", top_k=None, limit=2, offset=1)
+
+        assert [match.match_id for match in results] == ["p1", "p2"]
+        assert service.last_matches_total == 4
+        assert service.last_matches_limit == 2
+        assert service.last_matches_offset == 1
+
+    @patch("web.backend.services.match_service.rank_matches")
+    @patch("web.backend.services.match_service.get_ranking_policy_store")
     def test_missing_canonical_resume_returns_empty_list(
         self, mock_store, mock_rank, mock_db, service
     ):

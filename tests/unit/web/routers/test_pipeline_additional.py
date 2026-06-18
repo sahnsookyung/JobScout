@@ -173,6 +173,18 @@ class TestMatchingTaskHelpers:
 
         assert exc_info.value.status_code == 409
 
+    def test_ensure_no_active_matching_task_raises_for_queued_state(self):
+        from web.backend.routers.pipeline import _ensure_no_active_matching_task
+
+        redis = MagicMock()
+        redis.get.return_value = b"process-jobs-1"
+
+        with patch("web.backend.routers.pipeline.get_task_state", return_value={"status": "queued"}):
+            with pytest.raises(HTTPException) as exc_info:
+                _ensure_no_active_matching_task(redis, "owner-1")
+
+        assert exc_info.value.status_code == 409
+
     def test_ensure_no_active_matching_task_ignores_redis_failure(self):
         from web.backend.routers.pipeline import _ensure_no_active_matching_task
 
@@ -180,6 +192,18 @@ class TestMatchingTaskHelpers:
         redis.get.side_effect = RuntimeError("redis down")
 
         _ensure_no_active_matching_task(redis, "owner-1")
+
+    def test_ensure_task_visible_to_owner_allows_active_ownerless_task(self):
+        from web.backend.routers.pipeline import _ensure_task_visible_to_owner
+
+        with patch(
+            "web.backend.routers.pipeline._active_task_id_for_owner",
+            return_value="process-jobs-1",
+        ):
+            _ensure_task_visible_to_owner(
+                {"task_id": "process-jobs-1", "status": "running"},
+                "owner-1",
+            )
 
     def test_enqueue_matching_job_or_500_cleans_up_active_marker(self):
         from web.backend.routers.pipeline import _enqueue_matching_job_or_500

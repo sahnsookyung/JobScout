@@ -47,6 +47,11 @@ function makeVariant(overrides: Partial<ResumeVariant> = {}): ResumeVariant {
             targeted_evidence: [{ text: 'Built FastAPI services with Redis queues.' }],
             skills: [{ text: 'Python' }, { text: 'Redis' }],
             experience: [],
+            gaps: [{ text: 'Kubernetes leadership' }],
+            source_quality: {
+                job_description_completeness: 'full',
+                job_description_source: 'ats.greenhouse',
+            },
         },
         evidence_map: {
             claim_count: 4,
@@ -93,6 +98,10 @@ describe('ResumeVariantPanel', () => {
         });
         expect(screen.getByText('Backend engineer with Python and Redis experience.')).toBeInTheDocument();
         expect(screen.getByText(/4 sourced claims from structured_resume, job_match_requirement/i)).toBeInTheDocument();
+        expect(screen.getByText('Not claimed')).toBeInTheDocument();
+        expect(screen.getByText('Kubernetes leadership')).toBeInTheDocument();
+        expect(screen.getByText('Source quality')).toBeInTheDocument();
+        expect(screen.getByText('ats.greenhouse')).toBeInTheDocument();
         expect(screen.getByText('Unsupported requirement not claimed: Kubernetes leadership')).toBeInTheDocument();
         expect(screen.getByRole('button', { name: /download markdown/i })).toBeEnabled();
         expect(toast.success).toHaveBeenCalledWith('Resume draft generated.');

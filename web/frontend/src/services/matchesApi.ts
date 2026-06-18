@@ -18,6 +18,8 @@ export interface GetMatchesParams {
     show_hidden?: boolean;
     ranking_mode?: RankingMode;
     tier?: 'primary' | 'all';
+    limit?: number;
+    offset?: number;
 }
 
 export interface GetStatsParams {

@@ -200,6 +200,10 @@ class OrchestratorClient(ServiceClient):
         """Start the canonical scrape -> extract -> embed pipeline task."""
         return self.post("/orchestrate/pipelines/scrape-extract-embed", json={})
 
+    def start_process_imported_jobs_pipeline(self) -> dict:
+        """Start extract -> embed processing for already imported jobs."""
+        return self.post("/orchestrate/pipelines/process-imported-jobs", json={})
+
     def get_task_status(self, task_id: str) -> dict:
         """Get status of a specific task."""
         return self.get(f"/orchestrate/tasks/{task_id}")

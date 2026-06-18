@@ -168,6 +168,10 @@ export interface MatchLlmEvaluationMutationResponse {
 export interface MatchesResponse {
     success: boolean;
     count: number;
+    total?: number;
+    limit?: number | null;
+    offset?: number;
+    has_more?: boolean;
     matches: MatchSummary[];
     llm_rerank?: {
         enabled: boolean;
@@ -330,6 +334,8 @@ export interface ProcessingFailure {
 }
 
 export interface PipelineStats {
+    jobs_extracted?: number;
+    jobs_embedded?: number;
     jobs_seen?: number;
     jobs_ready_to_score?: number;
     jobs_pending_extraction?: number;
@@ -735,6 +741,14 @@ export interface ResumeVariantContent {
     targeted_evidence?: ResumeVariantClaim[];
     skills?: ResumeVariantClaim[];
     experience?: ResumeVariantExperience[];
+    gaps?: ResumeVariantClaim[];
+    source_quality?: {
+        job_description_completeness?: string | null;
+        job_description_source?: string | null;
+        job_description_warning_code?: string | null;
+        fit_score?: number | null;
+        required_coverage?: number | null;
+    };
 }
 
 export interface ResumeVariant {

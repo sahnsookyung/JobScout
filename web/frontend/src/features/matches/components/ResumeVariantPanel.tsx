@@ -100,6 +100,8 @@ export const ResumeVariantPanel: React.FC<ResumeVariantPanelProps> = ({ matchId 
     const summary = variant ? claimText(variant.content.summary, 'No summary text generated.') : null;
     const targetedEvidence = variant ? claimText(variant.content.targeted_evidence, 'No targeted evidence generated.') : null;
     const skillLabels = variant?.content.skills?.map((skill) => skill.text).filter(Boolean).slice(0, 8) ?? [];
+    const gapLabels = variant?.content.gaps?.map((gap) => gap.text).filter(Boolean).slice(0, 6) ?? [];
+    const sourceQuality = variant?.content.source_quality;
     const isGenerating = createMutation.isPending;
 
     const handleGenerate = () => {
@@ -167,6 +169,42 @@ export const ResumeVariantPanel: React.FC<ResumeVariantPanelProps> = ({ matchId 
                                 )}
                             </div>
                         </div>
+
+                        {(gapLabels.length > 0 || sourceQuality) && (
+                            <div className="grid gap-5 px-5 py-4 md:grid-cols-2">
+                                {gapLabels.length > 0 && (
+                                    <div>
+                                        <p className="caption">Not claimed</p>
+                                        <ul className="mt-2 space-y-1 text-[13px] leading-5 text-ink-soft">
+                                            {gapLabels.map((gap) => (
+                                                <li key={gap}>{gap}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                                {sourceQuality && (
+                                    <div>
+                                        <p className="caption">Source quality</p>
+                                        <dl className="mt-2 grid gap-1.5 text-[13px] text-ink-soft">
+                                            <div className="flex justify-between gap-4">
+                                                <dt>Description</dt>
+                                                <dd className="text-ink">{sourceQuality.job_description_completeness ?? 'unknown'}</dd>
+                                            </div>
+                                            <div className="flex justify-between gap-4">
+                                                <dt>Source</dt>
+                                                <dd className="text-ink">{sourceQuality.job_description_source ?? 'unknown'}</dd>
+                                            </div>
+                                            {sourceQuality.job_description_warning_code && (
+                                                <div className="flex justify-between gap-4">
+                                                    <dt>Warning</dt>
+                                                    <dd className="text-ink">{sourceQuality.job_description_warning_code}</dd>
+                                                </div>
+                                            )}
+                                        </dl>
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         {variant.warnings.length > 0 && (
                             <div className="px-5 py-4">

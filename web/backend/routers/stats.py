@@ -138,25 +138,25 @@ def _job_processing_stats(repo) -> dict[str, int]:
         .filter(JobPost.extraction_status == "pending")
         .label("pending_extraction_job_posts"),
         func.count(JobPost.id)
-        .filter(JobPost.extraction_status == "processing")
+        .filter(JobPost.extraction_status.in_(("in_progress", "processing")))
         .label("processing_extraction_job_posts"),
         func.count(JobPost.id)
         .filter(JobPost.extraction_status == "failed_retryable")
         .label("retryable_extraction_job_posts"),
         func.count(JobPost.id)
-        .filter(JobPost.extraction_status == "failed")
+        .filter(JobPost.extraction_status.in_(("failed_terminal", "failed")))
         .label("failed_extraction_job_posts"),
         func.count(JobPost.id)
         .filter(JobPost.embedding_status == "pending")
         .label("pending_embedding_job_posts"),
         func.count(JobPost.id)
-        .filter(JobPost.embedding_status == "processing")
+        .filter(JobPost.embedding_status.in_(("in_progress", "processing")))
         .label("processing_embedding_job_posts"),
         func.count(JobPost.id)
         .filter(JobPost.embedding_status == "failed_retryable")
         .label("retryable_embedding_job_posts"),
         func.count(JobPost.id)
-        .filter(JobPost.embedding_status == "failed")
+        .filter(JobPost.embedding_status.in_(("failed_terminal", "failed")))
         .label("failed_embedding_job_posts"),
     ).one()
     return {

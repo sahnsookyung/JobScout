@@ -19,6 +19,8 @@ vi.mock('@/services/pipelineApi', () => ({
         pipelineApi: {
             getSources: vi.fn(),
             fetchSource: vi.fn(),
+            processJobs: vi.fn(),
+            getPipelineStatus: vi.fn(),
             getCloudIntegrations: vi.fn(),
             updateCloudIntegration: vi.fn(),
             deleteCloudIntegration: vi.fn(),
@@ -51,6 +53,8 @@ const mockUseAuth = useAuth as ReturnType<typeof vi.fn>;
 const mockPipelineApi = pipelineApi as unknown as {
     getSources: ReturnType<typeof vi.fn>;
     fetchSource: ReturnType<typeof vi.fn>;
+    processJobs: ReturnType<typeof vi.fn>;
+    getPipelineStatus: ReturnType<typeof vi.fn>;
     getCloudIntegrations: ReturnType<typeof vi.fn>;
     updateCloudIntegration: ReturnType<typeof vi.fn>;
     deleteCloudIntegration: ReturnType<typeof vi.fn>;

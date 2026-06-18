@@ -1208,6 +1208,26 @@ class TestStageTaskRunners:
         assert "extract broke" in state.error
         assert "embed broke" in state.error
 
+    @pytest.mark.asyncio
+    async def test_run_process_imported_jobs_pipeline_task_completes(self):
+        from services.orchestrator.main import (
+            OrchestratorRegistry,
+            OrchestrationState,
+            _run_process_imported_jobs_pipeline_task,
+        )
+
+        registry = OrchestratorRegistry()
+        state = OrchestrationState("process-jobs-task-1")
+
+        with patch("services.orchestrator.main.get_or_create_orchestration", new_callable=AsyncMock, return_value=state), \
+             patch("services.orchestrator.main.run_batch_stage", new_callable=AsyncMock, side_effect=[(7, None), (5, None)]) as mock_stage:
+            await _run_process_imported_jobs_pipeline_task("process-jobs-task-1", registry, Mock())
+
+        assert state.status == "completed"
+        assert state.result["extracted_count"] == 7
+        assert state.result["embedded_count"] == 5
+        assert mock_stage.await_count == 2
+
 
 class TestGetActiveOrchestration:
     """Test get_active_orchestration endpoint."""

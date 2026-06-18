@@ -5,7 +5,9 @@ import { useStats } from '@/hooks/useStats';
 import { MatchCard } from './MatchCard';
 import { MatchFilters } from './MatchFilters';
 import { Button } from '@/components/ui/Button';
-import type { MatchStatus, PolicyConfig, RankingMode } from '@/types/api';
+import type { MatchStatus, MatchSummary, PolicyConfig, RankingMode } from '@/types/api';
+
+const ALL_CANDIDATES_PAGE_SIZE = 100;
 
 interface MatchListProps {
     onMatchSelect: (matchId: string) => void;
@@ -52,6 +54,8 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
     const [remoteOnly, setRemoteOnly] = useState(false);
     const [rankingMode, setRankingMode] = useState<RankingMode>('balanced');
     const [showAllProcessed, setShowAllProcessed] = useState(initialShowAllProcessed);
+    const [allCandidatesOffset, setAllCandidatesOffset] = useState(0);
+    const [allCandidates, setAllCandidates] = useState<MatchSummary[]>([]);
     const [showHidden, setShowHidden] = useState(() => {
         const saved = localStorage.getItem('jobscout_show_hidden');
         return saved === 'true';
@@ -63,7 +67,12 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
     }, [showHidden]);
 
     const effectivePolicy = policy ?? DEFAULT_POLICY;
-    const { data, isLoading, error, refetch } = useMatches({
+    useEffect(() => {
+        setAllCandidatesOffset(0);
+        setAllCandidates([]);
+    }, [status, remoteOnly, rankingMode, showHidden, showAllProcessed]);
+
+    const { data, isLoading, isFetching, error, refetch } = useMatches({
         status,
         min_fit: showAllProcessed ? undefined : effectivePolicy.min_fit,
         top_k: showAllProcessed ? undefined : effectivePolicy.top_k,
@@ -71,24 +80,48 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
         show_hidden: showHidden,
         ranking_mode: rankingMode,
         tier: 'all',
+        limit: showAllProcessed ? ALL_CANDIDATES_PAGE_SIZE : undefined,
+        offset: showAllProcessed ? allCandidatesOffset : 0,
     });
     const { data: stats } = useStats({
         min_fit: effectivePolicy.min_fit,
         top_k: effectivePolicy.top_k,
     });
 
-    const matches = data?.matches ?? [];
+    useEffect(() => {
+        if (!showAllProcessed || !data?.matches) return;
+        setAllCandidates((previous) => {
+            if (allCandidatesOffset === 0) {
+                const samePage = (
+                    previous.length === data.matches.length
+                    && previous.every((match, index) => match.match_id === data.matches[index]?.match_id)
+                );
+                return samePage ? previous : data.matches;
+            }
+            const seen = new Set(previous.map((match) => match.match_id));
+            const next = data.matches.filter((match) => !seen.has(match.match_id));
+            if (next.length === 0) return previous;
+            return [...previous, ...next];
+        });
+    }, [allCandidatesOffset, data?.matches, showAllProcessed]);
+
+    const matches = showAllProcessed ? allCandidates : (data?.matches ?? []);
     const degradedReason = matches.find((m) => m.scoring_degraded_reason)?.scoring_degraded_reason ?? null;
     const processedCount = stats?.total_scored ?? stats?.total_matches ?? 0;
     const hiddenByCurrentFilters = Math.max(processedCount - matches.length, 0);
-    const processedToggleCount = showAllProcessed || hiddenByCurrentFilters > 0
+    const processedToggleCount = showAllProcessed || processedCount > matches.length
         ? processedCount
         : 0;
+    const totalAvailable = data?.total ?? processedCount;
+    const hasMoreAllCandidates = showAllProcessed && (
+        data?.has_more === true || matches.length < totalAvailable
+    );
     const llmOrdering = llmRerankSummary(data?.llm_rerank);
 
     const strongCount = matches.filter((m) => !m.is_hidden && (m.fit_score ?? 0) >= 80).length;
+    const initialLoading = isLoading && (!showAllProcessed || matches.length === 0);
 
-    if (isLoading) {
+    if (initialLoading) {
         return (
             <section aria-busy="true" aria-label="Loading matches" className="py-20">
                 <div className="mx-auto max-w-md text-center">
@@ -151,9 +184,11 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                         {matches.length}
                     </span>
                     <span className="text-[13px] text-ink-soft">
-                        {showAllProcessed
-                            ? (matches.length === 1 ? 'matched candidate' : 'matched candidates')
-                            : (matches.length === 1 ? 'match' : 'matches')}
+                        {showAllProcessed && totalAvailable > matches.length
+                            ? `${matches.length} of ${totalAvailable} matched candidates`
+                            : showAllProcessed
+                                ? (matches.length === 1 ? 'matched candidate' : 'matched candidates')
+                                : (matches.length === 1 ? 'match' : 'matches')}
                         {strongCount > 0 && (
                             <>
                                 <span className="mx-2 text-ink-faint">·</span>
@@ -191,6 +226,19 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                     ))}
                 </div>
             )}
+
+            {hasMoreAllCandidates ? (
+                <div className="flex justify-center">
+                    <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={isFetching}
+                        onClick={() => setAllCandidatesOffset(matches.length)}
+                    >
+                        {isFetching ? 'Loading candidates' : 'Load more candidates'}
+                    </Button>
+                </div>
+            ) : null}
         </section>
     );
 };

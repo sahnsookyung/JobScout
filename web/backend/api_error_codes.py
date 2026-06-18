@@ -11,6 +11,7 @@ PIPELINE_MATCH_ALREADY_RUNNING = "pipeline.match.already_running"
 PIPELINE_MATCH_START_FAILED = "pipeline.match.start_failed"
 PIPELINE_MATCH_STOP_NOT_FOUND = "pipeline.match.stop_not_found"
 PIPELINE_MATCH_STOP_FAILED = "pipeline.match.stop_failed"
+PIPELINE_JOB_PROCESSING_START_FAILED = "pipeline.job_processing.start_failed"
 
 PIPELINE_RESUME_UPLOAD_IN_PROGRESS = "pipeline.resume.upload_in_progress"
 PIPELINE_RESUME_NOT_READY = "pipeline.resume.not_ready"

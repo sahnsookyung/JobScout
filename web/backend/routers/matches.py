@@ -94,6 +94,13 @@ def _request_tenant_id(request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="X-Tenant-Id must be a UUID.") from exc
 
+def _safe_nonnegative_int(value, fallback: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return max(parsed, 0)
+
 
 @router.get(
     "",
@@ -114,6 +121,8 @@ def get_matches(
     show_hidden: Annotated[bool, Query(description="Include hidden primary-tier matches in results")] = False,
     ranking_mode: Annotated[str | None, Query(description="Ranking mode: preference_first, fit_first, or balanced")] = None,
     tier: Annotated[str, Query(description="Selection tier: primary (default) or all (include excluded; status/show_hidden only apply to primary items)")] = "primary",
+    limit: Annotated[int | None, Query(ge=1, le=500, description="Optional response page size applied after ranking")] = None,
+    offset: Annotated[int, Query(ge=0, description="Response page offset applied with limit")] = 0,
 ):
     """
     Get a list of job matches ranked by the declared mode.
@@ -174,15 +183,39 @@ def get_matches(
         ranking_mode=ranking_mode,
         tier=tier,
         tenant_id=_request_tenant_id(request),
+        limit=limit,
+        offset=offset,
     )
 
     llm_rerank = getattr(service, "last_llm_rerank_metadata", None)
     if not isinstance(llm_rerank, dict):
         llm_rerank = {}
+    total = _safe_nonnegative_int(
+        getattr(service, "last_matches_total", None),
+        len(matches),
+    )
+    response_limit = getattr(service, "last_matches_limit", limit)
+    if response_limit is not None:
+        try:
+            response_limit = max(int(response_limit), 0)
+        except (TypeError, ValueError):
+            response_limit = limit
+    response_offset = _safe_nonnegative_int(
+        getattr(service, "last_matches_offset", None),
+        offset,
+    )
+    has_more = (
+        response_limit is not None
+        and response_offset + len(matches) < total
+    )
 
     return MatchesResponse(
         success=True,
         count=len(matches),
+        total=total,
+        limit=response_limit,
+        offset=response_offset,
+        has_more=has_more,
         matches=matches,
         llm_rerank=llm_rerank,
     )

@@ -480,6 +480,20 @@ class TestOrchestratorClient:
             )
             assert result["task_id"] == "pipeline-abc123"
 
+    def test_start_process_imported_jobs_pipeline(self):
+        """Test canonical process-imported-jobs pipeline trigger."""
+        client = OrchestratorClient("http://orchestrator:8084")
+
+        with patch.object(client, 'post') as mock_post:
+            mock_post.return_value = {"success": True, "task_id": "process-jobs-abc123"}
+
+            result = client.start_process_imported_jobs_pipeline()
+
+            mock_post.assert_called_once_with(
+                "/orchestrate/pipelines/process-imported-jobs", json={}
+            )
+            assert result["task_id"] == "process-jobs-abc123"
+
     def test_get_task_status(self):
         """Test get_task_status method."""
         client = OrchestratorClient("http://orchestrator:8084")

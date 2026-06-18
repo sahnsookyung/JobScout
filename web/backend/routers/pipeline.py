@@ -46,6 +46,7 @@ from database.uow import job_uow
 from database.repositories.resume import ResumeUploadCreateParams
 from web.backend.api_error_codes import (
     COMMON_RATE_LIMIT_EXCEEDED,
+    PIPELINE_JOB_PROCESSING_START_FAILED,
     PIPELINE_MATCH_ALREADY_RUNNING,
     PIPELINE_MATCH_START_FAILED,
     PIPELINE_MATCH_STOP_FAILED,
@@ -142,6 +143,7 @@ RESUME_PHASES = (
     "completed",
 )
 ACTIVE_MATCHING_STATUSES = {
+    "queued",
     "pending",
     "running",
     "cancellation_requested",
@@ -632,6 +634,22 @@ def fetch_seed_source_endpoint(
 
 
 @router.post(
+    "/process-jobs",
+    response_model=PipelineTaskResponse,
+    responses={
+        409: {"model": ApiError, "description": "A matching or processing task is already in progress."},
+        500: {"model": ApiError, "description": "Internal server error"},
+    },
+)
+def process_imported_jobs_endpoint(user: Annotated[None, Depends(get_current_user)] = None):
+    """Trigger extraction and embedding for already imported jobs."""
+    try:
+        return _start_imported_job_processing(user)
+    except PipelineApiError as exc:
+        return _pipeline_error_response(exc)
+
+
+@router.post(
     "/run-matching",
     response_model=PipelineTaskResponse,
     responses={
@@ -757,6 +775,9 @@ def _task_state_belongs_to_owner(state: dict, owner_id) -> bool:
 def _ensure_task_visible_to_owner(state: dict, owner_id) -> None:
     """Hide task state unless Redis says it belongs to the authenticated owner."""
     if _task_state_belongs_to_owner(state, owner_id):
+        return
+    task_id = state.get("task_id")
+    if task_id and _active_task_id_for_owner(owner_id) == str(task_id):
         return
     _raise_pipeline_error(
         status_code=404,
@@ -981,6 +1002,10 @@ def _public_stats_from_state(state: dict) -> dict[str, Any]:
         stats.setdefault("matches_saved", result_data.get("saved_count") or 0)
     if "notified_count" in result_data:
         stats.setdefault("notifications_sent", result_data.get("notified_count") or 0)
+    if "extracted_count" in result_data:
+        stats.setdefault("jobs_extracted", result_data.get("extracted_count") or 0)
+    if "embedded_count" in result_data:
+        stats.setdefault("jobs_embedded", result_data.get("embedded_count") or 0)
     return stats
 
 
@@ -1729,6 +1754,60 @@ def _start_matching(user) -> PipelineTaskResponse:
         success=True,
         task_id=task_id,
         message="Matching pipeline started. Use SSE /api/pipeline/events/{task_id} to track progress.",
+    )
+
+
+def _start_imported_job_processing(user) -> PipelineTaskResponse:
+    """Start extract/embed processing for imported jobs through the orchestrator."""
+    owner_id = resolve_owner_id(user)
+    owner_key = serialize_owner_id(owner_id)
+    redis = get_redis_client()
+    _ensure_no_active_matching_task(redis, owner_key)
+
+    try:
+        from web.backend.services.clients import orchestrator_client
+
+        result = orchestrator_client.start_process_imported_jobs_pipeline()
+    except Exception:
+        logger.exception("Failed to start imported job processing pipeline")
+        _raise_pipeline_error(
+            status_code=500,
+            code=PIPELINE_JOB_PROCESSING_START_FAILED,
+            message="Failed to start imported job processing.",
+        )
+
+    task_id = str(result.get("task_id") or "").strip()
+    if not task_id:
+        _raise_pipeline_error(
+            status_code=500,
+            code=PIPELINE_JOB_PROCESSING_START_FAILED,
+            message="Failed to start imported job processing.",
+        )
+
+    now = _utc_now_iso()
+    try:
+        redis.set(_active_task_key(owner_key), task_id, ex=3600)
+        set_task_state(
+            task_id,
+            {
+                "task_id": task_id,
+                "status": result.get("status") or "pending",
+                "step": result.get("current_stage") or "loading_resume",
+                "task_type": "job_processing",
+                "owner_id": owner_key,
+                "result": result.get("result", {}) or {},
+                "started_at": now,
+                "updated_at": now,
+            },
+            ttl=3600,
+        )
+    except Exception:
+        logger.warning("Failed to persist imported job processing task marker", exc_info=True)
+
+    return PipelineTaskResponse(
+        success=True,
+        task_id=task_id,
+        message="Imported job processing started. Extraction and embeddings will run in the background.",
     )
 
 

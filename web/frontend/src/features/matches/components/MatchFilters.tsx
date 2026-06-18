@@ -30,7 +30,7 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
     processedCount = 0,
 }) => {
     return (
-        <div className="grid grid-cols-1 gap-5 border-b border-rule pb-5 sm:grid-cols-[1fr_1fr_auto] sm:gap-8 sm:items-end">
+        <div className="grid grid-cols-1 gap-5 border-b border-rule pb-5 md:grid-cols-[minmax(9rem,14rem)_minmax(9rem,14rem)_minmax(0,1fr)] md:items-end md:gap-8">
             <SelectField
                 id="match-filter-status"
                 label="Status"
@@ -45,7 +45,7 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
                 onChange={(value) => onRankingModeChange(value as RankingMode)}
                 options={RANKING_MODE_OPTIONS}
             />
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 md:justify-end">
                 <Toggle
                     label="Remote only"
                     checked={remoteOnly}
@@ -107,7 +107,7 @@ interface ToggleProps {
 }
 
 const Toggle: React.FC<ToggleProps> = ({ label, checked, onChange }) => (
-    <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] text-ink-soft">
+    <label className="inline-flex min-w-0 cursor-pointer items-center gap-2 text-[13px] text-ink-soft">
         <span className="relative">
             <input
                 type="checkbox"
@@ -127,6 +127,6 @@ const Toggle: React.FC<ToggleProps> = ({ label, checked, onChange }) => (
                 />
             </span>
         </span>
-        <span className={checked ? 'text-ink' : ''}>{label}</span>
+        <span className={`min-w-0 ${checked ? 'text-ink' : ''}`}>{label}</span>
     </label>
 );
