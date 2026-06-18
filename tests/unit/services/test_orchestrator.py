@@ -1169,7 +1169,7 @@ class TestStageTaskRunners:
                  "results_by_scraper": [{"scraper_id": "tokyodev", "jobs_scraped": 4}],
                  "errors": [],
              }), \
-             patch("services.orchestrator.main.run_batch_stage", new_callable=AsyncMock, return_value=(2, None)) as mock_stage, \
+             patch("services.orchestrator.main.run_embedding_stage_until_drained", new_callable=AsyncMock, return_value=(2, [], 1)) as mock_embed, \
              patch("services.orchestrator.main.enqueue_best_effort_extraction_backfill", new_callable=AsyncMock, return_value={
                  "extraction_task_id": "pipeline-task-1-extract",
                  "followup_embedding_task_id": "pipeline-task-1-post-extract-embed",
@@ -1182,11 +1182,11 @@ class TestStageTaskRunners:
         assert state.result["scraped_jobs"] == 4
         assert state.result["extracted_count"] == 0
         assert state.result["embedded_count"] == 2
+        assert state.result["embedding_batches"] == 1
         assert state.result["extraction_enqueued"] is True
         assert state.result["extraction_task_id"] == "pipeline-task-1-extract"
         assert state.result["followup_embedding_task_id"] == "pipeline-task-1-post-extract-embed"
-        mock_stage.assert_awaited_once()
-        assert mock_stage.await_args.kwargs["stage"] == "embed"
+        mock_embed.assert_awaited_once()
         mock_backfill.assert_awaited_once()
         mock_redis.aclose.assert_awaited_once()
 
@@ -1208,7 +1208,7 @@ class TestStageTaskRunners:
                  "results_by_scraper": [],
                  "errors": ["scrape broke"],
              }), \
-             patch("services.orchestrator.main.run_batch_stage", new_callable=AsyncMock, return_value=(0, "embed broke")), \
+             patch("services.orchestrator.main.run_embedding_stage_until_drained", new_callable=AsyncMock, return_value=(0, ["embed broke"], 1)), \
              patch("services.orchestrator.main.enqueue_best_effort_extraction_backfill", new_callable=AsyncMock, side_effect=RuntimeError("extract enqueue broke")):
             mock_redis = AsyncMock()
             mock_from_url.return_value = mock_redis
@@ -1231,7 +1231,7 @@ class TestStageTaskRunners:
         state = OrchestrationState("process-jobs-task-1")
 
         with patch("services.orchestrator.main.get_or_create_orchestration", new_callable=AsyncMock, return_value=state), \
-             patch("services.orchestrator.main.run_batch_stage", new_callable=AsyncMock, return_value=(5, None)) as mock_stage, \
+             patch("services.orchestrator.main.run_embedding_stage_until_drained", new_callable=AsyncMock, return_value=(5, [], 2)) as mock_embed, \
              patch("services.orchestrator.main.enqueue_best_effort_extraction_backfill", new_callable=AsyncMock, return_value={
                  "extraction_task_id": "process-jobs-task-1-extract",
                  "followup_embedding_task_id": "process-jobs-task-1-post-extract-embed",
@@ -1241,11 +1241,11 @@ class TestStageTaskRunners:
         assert state.status == "completed"
         assert state.result["extracted_count"] == 0
         assert state.result["embedded_count"] == 5
+        assert state.result["embedding_batches"] == 2
         assert state.result["extraction_enqueued"] is True
         assert state.result["extraction_task_id"] == "process-jobs-task-1-extract"
         assert state.result["followup_embedding_task_id"] == "process-jobs-task-1-post-extract-embed"
-        mock_stage.assert_awaited_once()
-        assert mock_stage.await_args.kwargs["stage"] == "embed"
+        mock_embed.assert_awaited_once()
         mock_backfill.assert_awaited_once()
 
 
@@ -4136,21 +4136,47 @@ class TestRunPostScrapeJobPipeline:
     """Test post-scrape reconciliation pipeline."""
 
     @pytest.mark.asyncio
+    async def test_embedding_stage_drains_until_empty_batch(self):
+        """Test embedding backfill keeps running until no work remains."""
+        from services.orchestrator.main import run_embedding_stage_until_drained
+
+        with patch("services.orchestrator.main.run_batch_stage", new_callable=AsyncMock) as mock_stage:
+            mock_stage.side_effect = [
+                (100, None),
+                (50, None),
+                (0, None),
+            ]
+
+            embedded, errors, batches = await run_embedding_stage_until_drained(
+                Mock(),
+                task_id="drain-task",
+                limit=100,
+                max_batches=5,
+            )
+
+        assert embedded == 150
+        assert errors == []
+        assert batches == 3
+        assert mock_stage.await_count == 3
+        assert mock_stage.await_args_list[0].kwargs["task_id"] == "drain-task"
+        assert mock_stage.await_args_list[1].kwargs["task_id"] == "drain-task-embed-2"
+
+    @pytest.mark.asyncio
     async def test_runs_embed_and_queues_extraction_backfill(self):
         """Test post-scrape processing embeds first and queues extraction separately."""
         from services.orchestrator.main import run_post_scrape_job_pipeline
 
-        with patch("services.orchestrator.main.run_batch_stage", new_callable=AsyncMock, return_value=(3, None)) as mock_run_stage, \
+        with patch("services.orchestrator.main.run_embedding_stage_until_drained", new_callable=AsyncMock, return_value=(3, [], 2)) as mock_embed, \
              patch("services.orchestrator.main.enqueue_best_effort_extraction_backfill", new_callable=AsyncMock, return_value={
                  "extraction_task_id": "scrape-batch-test-extract",
                  "followup_embedding_task_id": "scrape-batch-test-post-extract-embed",
              }):
             result = await run_post_scrape_job_pipeline(Mock())
 
-        mock_run_stage.assert_awaited_once()
-        assert mock_run_stage.await_args.kwargs["stage"] == "embed"
+        mock_embed.assert_awaited_once()
         assert result["extracted"] == 0
         assert result["embedded"] == 3
+        assert result["embedding_batches"] == 2
         assert result["extraction_queued"] is True
         assert result["extraction_task_id"] == "scrape-batch-test-extract"
         assert result["followup_embedding_task_id"] == "scrape-batch-test-post-extract-embed"
@@ -4161,7 +4187,7 @@ class TestRunPostScrapeJobPipeline:
         """Test extraction enqueue warnings do not block embedding completion."""
         from services.orchestrator.main import run_post_scrape_job_pipeline
 
-        with patch("services.orchestrator.main.run_batch_stage", new_callable=AsyncMock, return_value=(3, None)), \
+        with patch("services.orchestrator.main.run_embedding_stage_until_drained", new_callable=AsyncMock, return_value=(3, [], 1)), \
              patch("services.orchestrator.main.enqueue_best_effort_extraction_backfill", new_callable=AsyncMock, side_effect=RuntimeError("quota exhausted")):
             result = await run_post_scrape_job_pipeline(Mock())
 

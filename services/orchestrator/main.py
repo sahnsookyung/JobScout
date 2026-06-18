@@ -75,6 +75,9 @@ SCRAPER_LOCK_TTL_SECONDS = 30 * 60  # 30 minutes
 SCRAPER_RETRY_INTERVALS = [1, 6, 60, 600, 6000]  # Exponential backoff in seconds
 SCRAPER_EXTRACTION_LIMIT = int(os.getenv("SCRAPER_EXTRACTION_LIMIT", "200"))
 SCRAPER_EMBEDDING_LIMIT = int(os.getenv("SCRAPER_EMBEDDING_LIMIT", "100"))
+PROCESS_IMPORTED_EMBEDDING_MAX_BATCHES = int(
+    os.getenv("PROCESS_IMPORTED_EMBEDDING_MAX_BATCHES", "50")
+)
 BATCH_STAGE_TIMEOUT_SECONDS = float(os.getenv("BATCH_STAGE_TIMEOUT_SECONDS", "600"))
 RECENT_TASK_LIMIT = 10
 RECENT_TASK_SCAN_LIMIT = 50
@@ -730,6 +733,41 @@ async def enqueue_best_effort_extraction_backfill(
     }
 
 
+async def run_embedding_stage_until_drained(
+    ctx: AppContext,
+    *,
+    task_id: str,
+    limit: int,
+    max_batches: int = PROCESS_IMPORTED_EMBEDDING_MAX_BATCHES,
+) -> tuple[int, List[str], int]:
+    """Run embedding batches until no eligible jobs/requirements remain."""
+    total_embedded = 0
+    errors: List[str] = []
+    batches_run = 0
+
+    for batch_index in range(max_batches):
+        batch_task_id = task_id if batch_index == 0 else f"{task_id}-embed-{batch_index + 1}"
+        embedded, embed_error = await run_batch_stage(
+            ctx,
+            task_id=batch_task_id,
+            stage="embed",
+            limit=limit,
+        )
+        batches_run += 1
+        total_embedded += embedded
+        if embed_error:
+            errors.append(embed_error)
+            break
+        if embedded <= 0:
+            break
+    else:
+        errors.append(
+            f"embedding max batch guard reached after {max_batches} batches"
+        )
+
+    return total_embedded, errors, batches_run
+
+
 async def run_post_scrape_job_pipeline(
     ctx: AppContext,
     task_id: Optional[str] = None,
@@ -738,14 +776,13 @@ async def run_post_scrape_job_pipeline(
     stage_errors: Dict[str, List[str]] = {}
     pipeline_task_id = task_id or f"scrape-batch-{uuid.uuid4().hex[:8]}"
 
-    embedded, embed_error = await run_batch_stage(
+    embedded, embed_errors, embedding_batches = await run_embedding_stage_until_drained(
         ctx,
         task_id=pipeline_task_id,
-        stage="embed",
         limit=SCRAPER_EMBEDDING_LIMIT,
     )
-    if embed_error:
-        stage_errors.setdefault("embed", []).append(embed_error)
+    if embed_errors:
+        stage_errors.setdefault("embed", []).extend(embed_errors)
 
     extraction_queued = False
     extraction_task_id = None
@@ -765,6 +802,7 @@ async def run_post_scrape_job_pipeline(
     return {
         "extracted": 0,
         "embedded": embedded,
+        "embedding_batches": embedding_batches,
         "extraction_queued": extraction_queued,
         "extraction_task_id": extraction_task_id,
         "followup_embedding_task_id": followup_embedding_task_id,
@@ -1468,6 +1506,7 @@ async def _run_scrape_extract_embed_pipeline_task(
         "errors": [],
         "extracted_count": 0,
         "embedded_count": 0,
+        "embedding_batches": 0,
         "extraction_enqueued": False,
         "extraction_task_id": None,
         "followup_embedding_task_id": None,
@@ -1504,15 +1543,15 @@ async def _run_scrape_extract_embed_pipeline_task(
                 "message": "Embedding scraped jobs",
             }
         )
-        embedded, embed_error = await run_batch_stage(
+        embedded, embed_errors, embedding_batches = await run_embedding_stage_until_drained(
             ctx,
             task_id=task_id,
-            stage="embed",
             limit=SCRAPER_EMBEDDING_LIMIT,
         )
         state.result["embedded_count"] = embedded
-        if embed_error:
-            state.result["stage_errors"].setdefault("embed", []).append(embed_error)
+        state.result["embedding_batches"] = embedding_batches
+        if embed_errors:
+            state.result["stage_errors"].setdefault("embed", []).extend(embed_errors)
 
         state.current_stage = "extract"
         await state._save_to_redis()
@@ -1594,6 +1633,7 @@ async def _run_process_imported_jobs_pipeline_task(
     state.result = {
         "extracted_count": 0,
         "embedded_count": 0,
+        "embedding_batches": 0,
         "extraction_enqueued": False,
         "extraction_task_id": None,
         "followup_embedding_task_id": None,
@@ -1613,15 +1653,15 @@ async def _run_process_imported_jobs_pipeline_task(
                 "message": "Processing imported jobs: embeddings",
             }
         )
-        embedded, embed_error = await run_batch_stage(
+        embedded, embed_errors, embedding_batches = await run_embedding_stage_until_drained(
             ctx,
             task_id=task_id,
-            stage="embed",
             limit=SCRAPER_EMBEDDING_LIMIT,
         )
         state.result["embedded_count"] = embedded
-        if embed_error:
-            state.result["stage_errors"].setdefault("embed", []).append(embed_error)
+        state.result["embedding_batches"] = embedding_batches
+        if embed_errors:
+            state.result["stage_errors"].setdefault("embed", []).extend(embed_errors)
 
         state.current_stage = "extract"
         await state._save_to_redis()
@@ -1652,8 +1692,8 @@ async def _run_process_imported_jobs_pipeline_task(
             flat_errors.extend(errors)
         state.result["errors"] = flat_errors
 
-        if embed_error:
-            raise RuntimeError(embed_error)
+        if embed_errors:
+            raise RuntimeError("; ".join(embed_errors))
 
         state.status = "completed"
         await state._save_to_redis()
