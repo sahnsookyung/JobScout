@@ -93,6 +93,50 @@ class JobETLService:
             "extraction_warning": reason,
         }
 
+    @staticmethod
+    def _normalize_extraction_result(extraction_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize provider-specific requirement aliases into the canonical shape."""
+        if not isinstance(extraction_result, dict):
+            return {}
+
+        normalized = dict(extraction_result)
+        current_requirements = normalized.get("requirements")
+        if isinstance(current_requirements, list) and current_requirements:
+            return normalized
+
+        alias_requirements: List[Dict[str, Any]] = []
+        alias_map = (
+            ("required", "must_have"),
+            ("must_have", "must_have"),
+            ("preferred", "nice_to_have"),
+            ("nice_to_have", "nice_to_have"),
+            ("responsibilities", "responsibility"),
+            ("responsibility", "responsibility"),
+        )
+        for alias, req_type in alias_map:
+            raw_items = normalized.get(alias)
+            if not isinstance(raw_items, list):
+                continue
+            for raw_item in raw_items:
+                if isinstance(raw_item, dict):
+                    item = dict(raw_item)
+                elif isinstance(raw_item, str) and len(raw_item.strip()) > 10 and " " in raw_item:
+                    item = {"text": raw_item.strip()}
+                else:
+                    continue
+
+                text = str(item.get("text") or "").strip()
+                if not text:
+                    continue
+                item["text"] = text
+                item.setdefault("req_type", req_type)
+                alias_requirements.append(item)
+
+        if alias_requirements:
+            normalized["requirements"] = alias_requirements
+
+        return normalized
+
     def ingest_one(self, repo: JobRepository, job_data: Dict[str, Any], site_name: str) -> None:
         record = NormalizedJobRecord.from_scraper_payload(job_data, site_name)
         self.import_record(repo, record)
@@ -172,6 +216,7 @@ class JobETLService:
                 job,
                 "description_too_short_for_llm_extraction",
             )
+        extraction_result = self._normalize_extraction_result(extraction_result)
 
         # Check if extraction returned meaningful data
         requirements = extraction_result.get('requirements', [])

@@ -194,6 +194,48 @@ class TestExtractOne:
         assert update_payload["extraction_warning"] == "empty_requirements_extraction"
         assert "canonical_job_summary" in update_payload
 
+    def test_extract_normalizes_top_level_required_alias(self):
+        """Provider outputs using required/preferred aliases become requirements."""
+        from etl.orchestrator import JobETLService
+
+        mock_ai = Mock()
+        mock_ai.extract_requirements_data.return_value = {
+            "required": [
+                {
+                    "text": "Minimum 3 years of customer success experience",
+                    "section": "WHAT YOU NEED",
+                }
+            ],
+            "preferred": [
+                "Experience with partner ecosystem operations",
+            ],
+            "benefits": []
+        }
+
+        service = JobETLService(mock_ai)
+
+        mock_repo = Mock()
+        mock_job = Mock()
+        mock_job.id = "job-alias"
+        mock_job.title = "Customer Activation"
+        mock_job.company = "Ramp"
+        mock_job.description = "Customer activation, partnerships, technical feedback, and product operations. " * 4
+
+        service.extract_one(mock_repo, mock_job)
+
+        saved_requirements = mock_repo.save_requirements.call_args[0][1]
+        assert saved_requirements == [
+            {
+                "text": "Minimum 3 years of customer success experience",
+                "section": "WHAT YOU NEED",
+                "req_type": "must_have",
+            },
+            {
+                "text": "Experience with partner ecosystem operations",
+                "req_type": "nice_to_have",
+            },
+        ]
+
     def test_extract_validation_error_uses_raw_data(self):
         """Test extraction handles validation errors gracefully."""
         from etl.orchestrator import JobETLService
