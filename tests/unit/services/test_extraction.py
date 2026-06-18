@@ -450,6 +450,44 @@ class TestExtractionConsumer:
         )
 
     @pytest.mark.asyncio
+    async def test_batch_consumer_backs_off_on_provider_quota(self):
+        """Provider quota failures should pause before bounded requeue."""
+        from services.base.extraction import ProviderQuotaExceeded
+        from services.extraction.main import ExtractionBatchConsumer
+
+        mock_ctx = Mock()
+        stop_event = threading.Event()
+        consumer = ExtractionBatchConsumer(mock_ctx, stop_event)
+
+        with patch(
+            "services.extraction.main.run_job_extraction",
+            side_effect=ProviderQuotaExceeded("tokens per day limit exceeded"),
+        ), patch("services.extraction.main.enqueue_job", return_value="1-0") as enqueue, patch(
+            "services.extraction.main.asyncio.sleep",
+            new_callable=AsyncMock,
+        ) as sleep:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {"task_id": "extract-1", "limit": 25},
+            )
+
+        assert success is False
+        assert result["status"] == "failed"
+        assert result["retry_enqueued"] is True
+        assert result["batch_retry_count"] == 0
+        assert result["batch_quota_retry_count"] == 1
+        assert result["provider_quota_backoff_seconds"] == 900
+        sleep.assert_awaited_once_with(900)
+        enqueue.assert_called_once_with(
+            "extraction:batch",
+            {
+                "task_id": "extract-1",
+                "limit": 25,
+                "batch_quota_retry_count": 1,
+            },
+        )
+
+    @pytest.mark.asyncio
     async def test_batch_consumer_does_not_requeue_after_retry_cap(self):
         """Batch retry payloads stop after the configured retry cap."""
         from services.extraction.main import ExtractionBatchConsumer

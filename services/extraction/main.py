@@ -33,7 +33,11 @@ from core.redis_streams import (
     STREAM_EXTRACTION,
     enqueue_job,
 )
-from services.base.extraction import run_job_extraction, extract_resume as extract_resume_file
+from services.base.extraction import (
+    ProviderQuotaExceeded,
+    run_job_extraction,
+    extract_resume as extract_resume_file,
+)
 from database.init_db import init_db
 from database.models import SYSTEM_OWNER_ID
 from database.uow import job_uow
@@ -44,6 +48,9 @@ CONSUMER_GROUP = os.getenv("EXTRACTION_CONSUMER_GROUP", "extraction-service")
 CONSUMER_NAME = os.getenv("HOSTNAME", "extraction-1")
 DEFAULT_BATCH_MAX_RETRIES = 3
 BATCH_RETRY_COUNT_FIELD = "batch_retry_count"
+BATCH_QUOTA_RETRY_COUNT_FIELD = "batch_quota_retry_count"
+DEFAULT_BATCH_QUOTA_BACKOFF_SECONDS = 120
+DEFAULT_BATCH_DAILY_QUOTA_BACKOFF_SECONDS = 900
 
 
 def _batch_max_retries() -> int:
@@ -51,6 +58,27 @@ def _batch_max_retries() -> int:
         return max(0, int(os.getenv("EXTRACTION_BATCH_MAX_RETRIES", DEFAULT_BATCH_MAX_RETRIES)))
     except (TypeError, ValueError):
         return DEFAULT_BATCH_MAX_RETRIES
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.getenv(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _batch_quota_backoff_seconds(exc: Exception) -> int:
+    message = str(exc).lower()
+    daily_quota = any(token in message for token in ("per day", "tpd", "daily"))
+    if daily_quota:
+        return _env_int(
+            "EXTRACTION_BATCH_DAILY_QUOTA_BACKOFF_SECONDS",
+            DEFAULT_BATCH_DAILY_QUOTA_BACKOFF_SECONDS,
+        )
+    return _env_int(
+        "EXTRACTION_BATCH_QUOTA_BACKOFF_SECONDS",
+        DEFAULT_BATCH_QUOTA_BACKOFF_SECONDS,
+    )
 
 
 def _enqueue_followup_embeddings_batch(msg: dict) -> dict | None:
@@ -68,21 +96,33 @@ def _enqueue_followup_embeddings_batch(msg: dict) -> dict | None:
     return payload
 
 
-def _requeue_extraction_batch(msg: dict) -> tuple[bool, int]:
+def _requeue_extraction_batch(
+    msg: dict,
+    *,
+    count_against_retry_cap: bool = True,
+) -> tuple[bool, int, int]:
     retry_count = int(msg.get(BATCH_RETRY_COUNT_FIELD, 0) or 0)
-    next_retry_count = retry_count + 1
-    if retry_count >= _batch_max_retries():
-        return False, retry_count
+    quota_retry_count = int(msg.get(BATCH_QUOTA_RETRY_COUNT_FIELD, 0) or 0)
+    next_retry_count = retry_count + 1 if count_against_retry_cap else retry_count
+    next_quota_retry_count = (
+        quota_retry_count if count_against_retry_cap else quota_retry_count + 1
+    )
+    if count_against_retry_cap and retry_count >= _batch_max_retries():
+        return False, retry_count, quota_retry_count
 
     payload = dict(msg)
-    payload[BATCH_RETRY_COUNT_FIELD] = next_retry_count
+    if count_against_retry_cap:
+        payload[BATCH_RETRY_COUNT_FIELD] = next_retry_count
+    else:
+        payload[BATCH_QUOTA_RETRY_COUNT_FIELD] = next_quota_retry_count
     enqueue_job(STREAM_EXTRACTION_BATCH, payload)
     logger.info(
-        "Requeued extraction batch: task_id=%s, retry_count=%d",
+        "Requeued extraction batch: task_id=%s, retry_count=%d, quota_retry_count=%d",
         payload.get("task_id"),
         next_retry_count,
+        next_quota_retry_count,
     )
-    return True, next_retry_count
+    return True, next_retry_count, next_quota_retry_count
 
 
 # ---------------------------------------------------------------------------
@@ -243,13 +283,25 @@ class ExtractionBatchConsumer(StreamConsumerWithCompletion):
             processed = await asyncio.to_thread(
                 run_job_extraction, self.ctx, self.stop_event, limit
             )
-        except Exception as exc:
-            retry_enqueued, retry_count = _requeue_extraction_batch(msg)
+        except ProviderQuotaExceeded as exc:
+            backoff_seconds = _batch_quota_backoff_seconds(exc)
+            if backoff_seconds:
+                logger.warning(
+                    "Extraction provider quota exhausted; delaying batch retry for %ds: task_id=%s",
+                    backoff_seconds,
+                    msg["task_id"],
+                )
+                await asyncio.sleep(backoff_seconds)
+            retry_enqueued, retry_count, quota_retry_count = _requeue_extraction_batch(
+                msg,
+                count_against_retry_cap=False,
+            )
             logger.warning(
-                "Extraction batch failed: task_id=%s, retry_enqueued=%s, retry_count=%d",
+                "Extraction batch quota failure: task_id=%s, retry_enqueued=%s, retry_count=%d, quota_retry_count=%d",
                 msg["task_id"],
                 retry_enqueued,
                 retry_count,
+                quota_retry_count,
                 exc_info=True,
             )
             return False, {
@@ -257,6 +309,25 @@ class ExtractionBatchConsumer(StreamConsumerWithCompletion):
                 "error": str(exc),
                 "retry_enqueued": retry_enqueued,
                 "batch_retry_count": retry_count,
+                "batch_quota_retry_count": quota_retry_count,
+                "provider_quota_backoff_seconds": backoff_seconds,
+            }
+        except Exception as exc:
+            retry_enqueued, retry_count, quota_retry_count = _requeue_extraction_batch(msg)
+            logger.warning(
+                "Extraction batch failed: task_id=%s, retry_enqueued=%s, retry_count=%d, quota_retry_count=%d",
+                msg["task_id"],
+                retry_enqueued,
+                retry_count,
+                quota_retry_count,
+                exc_info=True,
+            )
+            return False, {
+                "status": "failed",
+                "error": str(exc),
+                "retry_enqueued": retry_enqueued,
+                "batch_retry_count": retry_count,
+                "batch_quota_retry_count": quota_retry_count,
             }
 
         result = {"status": "completed", "processed": processed}
