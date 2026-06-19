@@ -49,6 +49,12 @@ function initialShowAllProcessed(): boolean {
     );
 }
 
+function primaryPageSize(policy: PolicyConfig): number {
+    const parsed = Number(policy.top_k ?? DEFAULT_POLICY.top_k);
+    if (!Number.isFinite(parsed)) return DEFAULT_POLICY.top_k;
+    return Math.max(1, Math.min(Math.floor(parsed), 500));
+}
+
 export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
     const [status, setStatus] = useState<MatchStatus>('active');
     const [remoteOnly, setRemoteOnly] = useState(false);
@@ -72,6 +78,7 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
         setAllCandidates([]);
     }, [status, remoteOnly, rankingMode, showHidden, showAllProcessed]);
 
+    const primaryLimit = primaryPageSize(effectivePolicy);
     const { data, isLoading, isFetching, error, refetch } = useMatches({
         status,
         min_fit: showAllProcessed ? undefined : effectivePolicy.min_fit,
@@ -79,8 +86,8 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
         remote_only: remoteOnly,
         show_hidden: showHidden,
         ranking_mode: rankingMode,
-        tier: 'all',
-        limit: showAllProcessed ? ALL_CANDIDATES_PAGE_SIZE : undefined,
+        tier: showAllProcessed ? 'all' : 'primary',
+        limit: showAllProcessed ? ALL_CANDIDATES_PAGE_SIZE : primaryLimit,
         offset: showAllProcessed ? allCandidatesOffset : 0,
     });
     const { data: stats } = useStats({

@@ -399,7 +399,7 @@ describe('MatchList', () => {
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
 
         expect(mockUseMatches).toHaveBeenLastCalledWith(
-            expect.objectContaining({ tier: 'all', min_fit: 55, top_k: 50 }),
+            expect.objectContaining({ tier: 'primary', min_fit: 55, top_k: 50, limit: 50 }),
         );
         expect(screen.getByText(/remote cross-encoder is unreachable/i)).toBeInTheDocument();
 
@@ -447,7 +447,7 @@ describe('MatchList', () => {
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
 
         expect(mockUseMatches).toHaveBeenLastCalledWith(
-            expect.objectContaining({ top_k: 50, limit: undefined, offset: 0 }),
+            expect.objectContaining({ tier: 'primary', top_k: 50, limit: 50, offset: 0 }),
         );
 
         fireEvent.click(screen.getByRole('checkbox', { name: /all matched candidates \(3\)/i }));
@@ -488,7 +488,7 @@ describe('MatchList', () => {
         expect(screen.getByText('1 strong')).toBeInTheDocument();
     });
 
-    it('uses a relaxed result policy to show previously excluded scored matches', () => {
+    it('uses relaxed policy filters without requesting all candidates by default', () => {
         mockUsePolicy.mockReturnValue({
             policy: { min_fit: 0, top_k: 100, min_jd_required_coverage: null },
             isLoading: false,
@@ -516,7 +516,7 @@ describe('MatchList', () => {
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
 
         expect(mockUseMatches).toHaveBeenLastCalledWith(
-            expect.objectContaining({ tier: 'all', min_fit: 0, top_k: 100 }),
+            expect.objectContaining({ tier: 'primary', min_fit: 0, top_k: 100, limit: 100 }),
         );
         expect(screen.getByText('Backend Engineer')).toBeInTheDocument();
         expect(screen.queryByText(/Nothing above your threshold/i)).not.toBeInTheDocument();
