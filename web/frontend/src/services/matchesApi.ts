@@ -54,6 +54,9 @@ export const matchesApi = {
     getStats: (params: GetStatsParams = {}) =>
         apiClient.get<StatsResponse>('/stats', { params }),
 
+    getMatchSummary: (params: GetStatsParams = {}) =>
+        apiClient.get<StatsResponse>('/matches/summary', { params }),
+
     toggleHidden: (matchId: string) =>
         apiClient.post<{ success: boolean; match_id: string; is_hidden: boolean }>(`/matches/${matchId}/hide`),
 };

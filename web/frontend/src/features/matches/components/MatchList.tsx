@@ -40,15 +40,6 @@ function llmRerankSummary(rerank: any): string | null {
     return null;
 }
 
-function initialShowAllProcessed(): boolean {
-    const params = new URLSearchParams(globalThis.location.search);
-    return (
-        params.get('tier') === 'all'
-        || params.get('showExcluded') === 'true'
-        || params.get('showAllProcessed') === 'true'
-    );
-}
-
 function primaryPageSize(policy: PolicyConfig): number {
     const parsed = Number(policy.top_k ?? DEFAULT_POLICY.top_k);
     if (!Number.isFinite(parsed)) return DEFAULT_POLICY.top_k;
@@ -59,7 +50,7 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
     const [status, setStatus] = useState<MatchStatus>('active');
     const [remoteOnly, setRemoteOnly] = useState(false);
     const [rankingMode, setRankingMode] = useState<RankingMode>('balanced');
-    const [showAllProcessed, setShowAllProcessed] = useState(initialShowAllProcessed);
+    const [showAllProcessed, setShowAllProcessed] = useState(false);
     const [allCandidatesOffset, setAllCandidatesOffset] = useState(0);
     const [allCandidates, setAllCandidates] = useState<MatchSummary[]>([]);
     const [showHidden, setShowHidden] = useState(() => {

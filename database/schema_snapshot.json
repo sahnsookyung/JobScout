@@ -217,6 +217,42 @@
       "type": "UNIQUE"
     },
     {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE SET NULL",
+      "name": "pipeline_run_owner_id_fkey",
+      "table": "pipeline_run",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "pipeline_run_pkey",
+      "table": "pipeline_run",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "UNIQUE (task_id)",
+      "name": "pipeline_run_task_id_key",
+      "table": "pipeline_run",
+      "type": "UNIQUE"
+    },
+    {
+      "definition": "FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE",
+      "name": "pipeline_run_tenant_id_fkey",
+      "table": "pipeline_run",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "pipeline_run_stage_pkey",
+      "table": "pipeline_run_stage",
+      "type": "PRIMARY KEY"
+    },
+    {
+      "definition": "FOREIGN KEY (run_id) REFERENCES pipeline_run(id) ON DELETE CASCADE",
+      "name": "pipeline_run_stage_run_id_fkey",
+      "table": "pipeline_run_stage",
+      "type": "FOREIGN KEY"
+    },
+    {
       "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
       "name": "resume_evidence_unit_embedding_owner_id_fkey",
       "table": "resume_evidence_unit_embedding",
@@ -921,6 +957,78 @@
       "predicate": null,
       "reloptions": null,
       "table": "notification_tracker",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_pipeline_run_created_at ON public.pipeline_run USING btree (created_at)",
+      "name": "idx_pipeline_run_created_at",
+      "predicate": null,
+      "reloptions": null,
+      "table": "pipeline_run",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_pipeline_run_heartbeat ON public.pipeline_run USING btree (heartbeat_at)",
+      "name": "idx_pipeline_run_heartbeat",
+      "predicate": null,
+      "reloptions": null,
+      "table": "pipeline_run",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_pipeline_run_owner_tenant ON public.pipeline_run USING btree (owner_id, tenant_id)",
+      "name": "idx_pipeline_run_owner_tenant",
+      "predicate": null,
+      "reloptions": null,
+      "table": "pipeline_run",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_pipeline_run_status_stage ON public.pipeline_run USING btree (status, current_stage)",
+      "name": "idx_pipeline_run_status_stage",
+      "predicate": null,
+      "reloptions": null,
+      "table": "pipeline_run",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_pipeline_run_task_id ON public.pipeline_run USING btree (task_id)",
+      "name": "idx_pipeline_run_task_id",
+      "predicate": null,
+      "reloptions": null,
+      "table": "pipeline_run",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_pipeline_run_stage_created_at ON public.pipeline_run_stage USING btree (created_at)",
+      "name": "idx_pipeline_run_stage_created_at",
+      "predicate": null,
+      "reloptions": null,
+      "table": "pipeline_run_stage",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_pipeline_run_stage_run_stage ON public.pipeline_run_stage USING btree (run_id, stage)",
+      "name": "idx_pipeline_run_stage_run_stage",
+      "predicate": null,
+      "reloptions": null,
+      "table": "pipeline_run_stage",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_pipeline_run_stage_status ON public.pipeline_run_stage USING btree (status, stage)",
+      "name": "idx_pipeline_run_stage_status",
+      "predicate": null,
+      "reloptions": null,
+      "table": "pipeline_run_stage",
       "unique": false
     },
     {
@@ -2627,6 +2735,242 @@
           "name": "subject",
           "nullable": true,
           "type": "text"
+        }
+      ]
+    },
+    "pipeline_run": {
+      "columns": [
+        {
+          "default": null,
+          "name": "completed_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "current_stage",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "failed_count",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "heartbeat_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "last_error",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "'{}'::jsonb",
+          "name": "metadata",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "owner_id",
+          "nullable": true,
+          "type": "uuid"
+        },
+        {
+          "default": "0",
+          "name": "processed_count",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": "0",
+          "name": "queued_count",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "resume_fingerprint",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "false",
+          "name": "retry_eligible",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "run_type",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "skipped_count",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "'pending'::text",
+          "name": "status",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "succeeded_count",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "task_id",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "tenant_id",
+          "nullable": true,
+          "type": "uuid"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        }
+      ]
+    },
+    "pipeline_run_stage": {
+      "columns": [
+        {
+          "default": null,
+          "name": "completed_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "0",
+          "name": "failed_count",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "last_error",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "'{}'::jsonb",
+          "name": "metadata",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": "0",
+          "name": "processed_count",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": "0",
+          "name": "queued_count",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": "0",
+          "name": "retry_count",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": "false",
+          "name": "retry_eligible",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "run_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": "0",
+          "name": "skipped_count",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "stage",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "'pending'::text",
+          "name": "status",
+          "nullable": false,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "succeeded_count",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
         }
       ]
     },

@@ -3964,12 +3964,18 @@ class TestScrapeSingleScraper:
             ]
         )
 
-        result = await _scrape_single_scraper(
-            mock_ctx, mock_redis_client, mock_scraper_cfg
-        )
+        with patch("database.uow.job_uow") as mock_uow:
+            mock_repo = MagicMock()
+            mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
+            mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+            result = await _scrape_single_scraper(
+                mock_ctx, mock_redis_client, mock_scraper_cfg
+            )
 
         assert result["scraper_id"] == "tokyodev"
         assert result["jobs_scraped"] == 2
+        assert result["jobs_imported"] == 2
+        assert result["ingest_failed"] == 0
         assert result["error"] is None
 
     @pytest.mark.asyncio
@@ -4015,13 +4021,24 @@ class TestScrapeSingleScraper:
             ]
         )
 
-        result = await _scrape_single_scraper(
-            mock_ctx, mock_redis_client, mock_scraper_cfg
+        mock_ctx.job_etl_service.ingest_one = MagicMock(
+            side_effect=[None, RuntimeError("bad source payload"), None],
         )
+
+        with patch("database.uow.job_uow") as mock_uow:
+            mock_repo = MagicMock()
+            mock_uow.return_value.__enter__ = MagicMock(return_value=mock_repo)
+            mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+            result = await _scrape_single_scraper(
+                mock_ctx, mock_redis_client, mock_scraper_cfg
+            )
 
         assert result["scraper_id"] == "tokyodev"
         assert result["jobs_scraped"] == 3
-        assert result["error"] is None
+        assert result["jobs_imported"] == 2
+        assert result["ingest_failed"] == 1
+        assert result["ingest_errors"] == ["job 2: bad source payload"]
+        assert result["error"] == "ingest failed for 1 of 3 jobs"
 
     @pytest.mark.asyncio
     async def test_scraper_finally_releases_lock(self, mock_redis_client, mock_scraper_cfg, mock_ctx):
@@ -4693,6 +4710,64 @@ class TestTaskSnapshot:
         snap = _task_snapshot(state)
 
         assert snap["result"]["matches_count"] == 7  # original preserved
+
+
+class TestDurablePipelineStageProjection:
+    @pytest.mark.asyncio
+    async def test_run_pipeline_stage_records_stage_ids_and_completion(self):
+        from services.orchestrator.main import OrchestrationState, _run_pipeline_stage
+
+        state = OrchestrationState("match-1")
+        state.result = {"pipeline_run_id": "run-1"}
+        state._save_to_redis = AsyncMock()
+        state.notify = AsyncMock()
+        payload = {"task_id": "match-1", "resume_fingerprint": "fp-1"}
+
+        class FakePipelineRuns:
+            def __init__(self):
+                self.started = []
+                self.completed = []
+
+            def start_stage(self, **kwargs):
+                self.started.append(kwargs)
+                return {
+                    "pipeline_run_id": "run-1",
+                    "result": {
+                        "stages": [
+                            {"stage": "matching", "id": "stage-1"},
+                        ],
+                    },
+                }
+
+            def complete_stage(self, **kwargs):
+                self.completed.append(kwargs)
+                return {}
+
+        pipeline_runs = FakePipelineRuns()
+
+        with patch("services.orchestrator.main.enqueue_job") as enqueue_job, \
+             patch(
+                 "services.orchestrator.main._wait_for_task_message",
+                 AsyncMock(return_value={"status": "completed", "matches_count": 3}),
+             ), \
+             patch("services.orchestrator.main.record_jobs_matched") as record_matched:
+            success, data = await _run_pipeline_stage(
+                state=state,
+                pubsub=Mock(),
+                stream="matching:jobs",
+                job_payload=payload,
+                stage_name="matching",
+                pipeline_runs=pipeline_runs,
+            )
+
+        assert success is True
+        assert data["matches_count"] == 3
+        assert payload["pipeline_run_id"] == "run-1"
+        assert payload["pipeline_stage_id"] == "stage-1"
+        assert pipeline_runs.started[0]["stage"] == "matching"
+        assert pipeline_runs.completed[0]["processed_count"] == 3
+        enqueue_job.assert_called_once()
+        record_matched.assert_called_once_with(3)
 
 
 class TestTaskStatusResponse:

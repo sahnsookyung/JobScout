@@ -1,22 +1,31 @@
 import React, { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+    Activity,
     AlertTriangle,
     ChevronLeft,
     ChevronRight,
+    Clock3,
     ExternalLink,
     ListChecks,
     RefreshCw,
+    RotateCcw,
     Search,
+    XCircle,
 } from 'lucide-react';
 
 import { useJobs } from '@/hooks/useJobs';
+import { jobsApi } from '@/services/jobsApi';
 import { pipelineApi } from '@/services/pipelineApi';
+import { pipelineRunsApi } from '@/services/pipelineRunsApi';
 import type {
     JobInventoryItem,
     JobLifecycleStatus,
     JobProcessingStatus,
+    LlmEvaluationQueueStatusResponse,
+    PipelineRunSummary,
     PipelineStatusResponse,
+    ProcessingBlockerItem,
 } from '@/types/api';
 
 const PAGE_SIZE = 50;
@@ -177,6 +186,255 @@ function FilterButton({
     );
 }
 
+function runStatusTone(status: string): string {
+    if (status === 'completed') return 'border-success/40 bg-success-soft text-ink';
+    if (status === 'failed' || status === 'cancelled') return 'border-warn/50 bg-warn-soft text-warn';
+    if (status === 'running') return 'border-accent bg-accent-soft text-ink';
+    return 'border-rule bg-surface-sunk text-ink-soft';
+}
+
+function runTitle(run: PipelineRunSummary): string {
+    return run.run_type.replace(/_/g, ' ');
+}
+
+function StageCounts({ run }: Readonly<{ run: PipelineRunSummary }>) {
+    return (
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-ink-muted sm:grid-cols-4">
+            <div>
+                <dt>Queued</dt>
+                <dd className="num text-ink">{run.queued_count}</dd>
+            </div>
+            <div>
+                <dt>Done</dt>
+                <dd className="num text-ink">{run.succeeded_count || run.processed_count}</dd>
+            </div>
+            <div>
+                <dt>Failed</dt>
+                <dd className="num text-ink">{run.failed_count}</dd>
+            </div>
+            <div>
+                <dt>Skipped</dt>
+                <dd className="num text-ink">{run.skipped_count}</dd>
+            </div>
+        </dl>
+    );
+}
+
+function PipelineRunButton({
+    run,
+    active,
+    onSelect,
+}: Readonly<{
+    run: PipelineRunSummary;
+    active: boolean;
+    onSelect: () => void;
+}>) {
+    return (
+        <button
+            type="button"
+            onClick={onSelect}
+            className={`grid w-full gap-2 border-t border-rule py-3 text-left transition-colors hover:bg-surface-sunk ${
+                active ? 'bg-surface-sunk' : ''
+            }`}
+        >
+            <div className="flex min-w-0 flex-wrap items-center gap-2 px-3">
+                <span className={`inline-flex min-h-6 items-center border px-2 text-[10px] uppercase tracking-[0.12em] ${runStatusTone(run.status)}`}>
+                    {run.status}
+                </span>
+                <span className="min-w-0 break-words text-[13px] font-medium capitalize text-ink">
+                    {runTitle(run)}
+                </span>
+                {run.current_stage ? (
+                    <span className="caption text-[10px] text-ink-muted">{run.current_stage}</span>
+                ) : null}
+            </div>
+            <div className="px-3">
+                <StageCounts run={run} />
+                <p className="mt-2 break-all text-[11px] text-ink-muted">{run.task_id}</p>
+            </div>
+        </button>
+    );
+}
+
+function PipelineRunDetail({
+    run,
+    isLoading,
+    onCancel,
+    onRequeue,
+    onRetry,
+    actionPending,
+}: Readonly<{
+    run?: PipelineRunSummary | null;
+    isLoading: boolean;
+    onCancel: (runId: string) => void;
+    onRequeue: (runId: string) => void;
+    onRetry: (runId: string) => void;
+    actionPending: boolean;
+}>) {
+    if (isLoading) {
+        return <div className="border-t border-rule p-4 text-[13px] text-ink-muted">Loading run</div>;
+    }
+    if (!run) {
+        return <div className="border-t border-rule p-4 text-[13px] text-ink-muted">No pipeline run selected.</div>;
+    }
+    return (
+        <div className="border-t border-rule p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                    <p className="caption">Run detail</p>
+                    <h4 className="mt-1 break-words text-[14px] font-medium capitalize text-ink">{runTitle(run)}</h4>
+                </div>
+                <span className={`inline-flex min-h-7 items-center border px-2 text-[10px] uppercase tracking-[0.12em] ${runStatusTone(run.status)}`}>
+                    {run.status}
+                </span>
+            </div>
+            <div className="mt-3">
+                <StageCounts run={run} />
+            </div>
+            <dl className="mt-3 grid gap-2 text-[12px] text-ink-muted">
+                <div className="flex justify-between gap-3">
+                    <dt>Started</dt>
+                    <dd className="text-right text-ink-soft">{formatDateTime(run.started_at ?? run.created_at)}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                    <dt>Heartbeat</dt>
+                    <dd className="text-right text-ink-soft">{formatDateTime(run.heartbeat_at)}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                    <dt>Retry</dt>
+                    <dd className="text-right text-ink-soft">{run.retry_eligible ? 'Eligible' : 'No'}</dd>
+                </div>
+            </dl>
+            {run.allowed_actions.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                    {run.allowed_actions.includes('cancel') ? (
+                        <button
+                            type="button"
+                            onClick={() => onCancel(run.id)}
+                            disabled={actionPending}
+                            aria-label="Cancel pipeline run"
+                            className="inline-flex h-8 items-center justify-center gap-2 border border-rule px-3 text-[12px] text-ink-soft transition-colors hover:border-warn hover:text-warn disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                            Cancel
+                        </button>
+                    ) : null}
+                    {run.allowed_actions.includes('requeue') ? (
+                        <button
+                            type="button"
+                            onClick={() => onRequeue(run.id)}
+                            disabled={actionPending}
+                            aria-label="Requeue pipeline run"
+                            className="inline-flex h-8 items-center justify-center gap-2 border border-rule px-3 text-[12px] text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                            Requeue
+                        </button>
+                    ) : null}
+                    {run.allowed_actions.includes('retry') ? (
+                        <button
+                            type="button"
+                            onClick={() => onRetry(run.id)}
+                            disabled={actionPending}
+                            aria-label="Retry pipeline run"
+                            className="inline-flex h-8 items-center justify-center gap-2 border border-rule px-3 text-[12px] text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                            Retry
+                        </button>
+                    ) : null}
+                </div>
+            ) : null}
+            {run.last_error ? (
+                <p className="mt-3 flex gap-2 text-[12px] leading-5 text-warn">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-none" aria-hidden="true" />
+                    <span className="min-w-0 break-words">{run.last_error}</span>
+                </p>
+            ) : null}
+            {run.stages.length > 0 ? (
+                <ol className="mt-3 border-t border-rule">
+                    {run.stages.map((stage) => (
+                        <li key={stage.id} className="grid gap-1 border-b border-rule py-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[12px] font-medium text-ink">{stage.stage}</span>
+                                <span className={`inline-flex min-h-5 items-center border px-1.5 text-[9px] uppercase tracking-[0.1em] ${runStatusTone(stage.status)}`}>
+                                    {stage.status}
+                                </span>
+                                {stage.retry_eligible ? <span className="text-[11px] text-warn">Retryable</span> : null}
+                            </div>
+                            <p className="num text-[11px] text-ink-muted">
+                                q {stage.queued_count} / ok {stage.succeeded_count || stage.processed_count} / fail {stage.failed_count}
+                            </p>
+                        </li>
+                    ))}
+                </ol>
+            ) : null}
+        </div>
+    );
+}
+
+function LlmQueueHealth({
+    status,
+    isLoading,
+    error,
+}: Readonly<{
+    status?: LlmEvaluationQueueStatusResponse;
+    isLoading: boolean;
+    error: unknown;
+}>) {
+    const failed = status?.failed ?? 0;
+    const active = (status?.queued ?? 0) + (status?.started ?? 0) + (status?.deferred ?? 0) + (status?.scheduled ?? 0);
+    return (
+        <div className="border-t border-rule px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                    <p className="caption text-[10px]">LLM queue</p>
+                    <p className={`mt-1 text-[12px] ${status?.ready ? 'text-ink-soft' : 'text-warn'}`}>
+                        {isLoading
+                            ? 'Checking queue'
+                            : error
+                                ? 'Queue status unavailable'
+                                : status?.ready
+                                    ? 'Ready'
+                                    : 'Degraded'}
+                    </p>
+                </div>
+                <dl className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink-muted">
+                    <div className="flex gap-1">
+                        <dt>Active</dt>
+                        <dd className="num text-ink">{active}</dd>
+                    </div>
+                    <div className="flex gap-1">
+                        <dt>Failed</dt>
+                        <dd className={`num ${failed > 0 ? 'text-warn' : 'text-ink'}`}>{failed}</dd>
+                    </div>
+                </dl>
+            </div>
+            {status?.error ? (
+                <p className="mt-2 break-words text-[11px] leading-5 text-warn">{status.error}</p>
+            ) : null}
+        </div>
+    );
+}
+
+function BlockerRow({ blocker }: Readonly<{ blocker: ProcessingBlockerItem }>) {
+    return (
+        <li className="border-t border-rule py-3">
+            <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex min-h-6 items-center border border-rule bg-surface-sunk px-2 text-[10px] uppercase tracking-[0.12em] text-ink-soft">
+                    {blocker.stage}
+                </span>
+                <span className="break-words text-[12px] font-medium text-ink">{blocker.blocker_code}</span>
+                {blocker.retry_eligible ? <span className="text-[11px] text-warn">Retryable</span> : null}
+            </div>
+            <p className="mt-2 text-[12px] leading-5 text-ink-soft">{blocker.blocker_detail}</p>
+            <p className="mt-1 text-[11px] text-ink-muted">
+                {blocker.status} · attempts <span className="num">{blocker.attempts}</span> · {formatDateTime(blocker.last_attempt_at ?? blocker.first_seen_at)}
+            </p>
+        </li>
+    );
+}
+
 export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [processingStatus, setProcessingStatus] = useState<JobProcessingStatus>('all');
@@ -185,6 +443,7 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
     const [search, setSearch] = useState('');
     const [offset, setOffset] = useState(0);
     const [processTaskId, setProcessTaskId] = useState<string | null>(null);
+    const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
     const queryClient = useQueryClient();
     const pendingExtraction = (stats?.pending_extraction_job_posts ?? 0) + (stats?.retryable_extraction_job_posts ?? 0);
     const pendingEmbedding = (stats?.pending_embedding_job_posts ?? 0) + (stats?.retryable_embedding_job_posts ?? 0);
@@ -219,15 +478,88 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
             return status && TERMINAL_PROCESS_STATUSES.has(status) ? false : 2500;
         },
     });
+    const pipelineRuns = useQuery({
+        queryKey: ['pipeline-runs', 'latest'],
+        queryFn: async () => {
+            const response = await pipelineRunsApi.getPipelineRuns({ limit: 5 });
+            return response.data;
+        },
+        refetchInterval: 5000,
+    });
+    const llmQueueStatus = useQuery({
+        queryKey: ['llm-evaluation-queue'],
+        queryFn: async () => {
+            const response = await pipelineRunsApi.getLlmEvaluationQueueStatus();
+            return response.data;
+        },
+        refetchInterval: 10000,
+    });
+    const processingBlockers = useQuery({
+        queryKey: ['processing-blockers', 'oldest'],
+        queryFn: async () => {
+            const response = await jobsApi.getProcessingBlockers({ stage: 'all', limit: 5 });
+            return response.data;
+        },
+        refetchInterval: 10000,
+    });
+    const selectedRunDetail = useQuery({
+        queryKey: ['pipeline-run-detail', selectedRunId],
+        queryFn: async () => {
+            const response = await pipelineRunsApi.getPipelineRun(selectedRunId ?? '');
+            return response.data;
+        },
+        enabled: Boolean(selectedRunId),
+        refetchInterval: (query) => {
+            const status = query.state.data?.run.status;
+            return status && TERMINAL_PROCESS_STATUSES.has(status) ? false : 5000;
+        },
+    });
+    const invalidatePipelineOps = () => {
+        void queryClient.invalidateQueries({ queryKey: ['pipeline-runs'] });
+        void queryClient.invalidateQueries({ queryKey: ['pipeline-run-detail'] });
+        void queryClient.invalidateQueries({ queryKey: ['processing-blockers'] });
+    };
+    const cancelRun = useMutation({
+        mutationFn: async (runId: string) => {
+            const response = await pipelineRunsApi.cancelPipelineRun(runId);
+            return response.data;
+        },
+        onSuccess: invalidatePipelineOps,
+    });
+    const requeueRun = useMutation({
+        mutationFn: async (runId: string) => {
+            const response = await pipelineRunsApi.requeuePipelineRun(runId);
+            return response.data;
+        },
+        onSuccess: invalidatePipelineOps,
+    });
+    const retryRun = useMutation({
+        mutationFn: async (runId: string) => {
+            const response = await pipelineRunsApi.retryPipelineRun(runId);
+            return response.data;
+        },
+        onSuccess: invalidatePipelineOps,
+    });
 
     const total = data?.total ?? 0;
     const jobs = data?.jobs ?? [];
+    const latestRuns = pipelineRuns.data?.runs ?? [];
+    const blockers = processingBlockers.data?.blockers ?? [];
+    const firstRunId = latestRuns[0]?.id ?? null;
+    const selectedRun = selectedRunDetail.data?.run
+        ?? latestRuns.find((run) => run.id === selectedRunId)
+        ?? null;
+    const pipelineActionPending = cancelRun.isPending || requeueRun.isPending || retryRun.isPending;
     const canPageBack = offset > 0;
     const canPageForward = offset + PAGE_SIZE < total;
     const processStatusData = processStatus.data;
+    const processedJobs = processStatusData?.stats?.jobs_processed ?? processStatusData?.stats?.jobs_embedded ?? 0;
+    const importedJobs = processStatusData?.stats?.jobs_imported;
     const processStatusText = processTaskId
         ? processStatusData?.status === 'completed'
-            ? `Processed ${processStatusData.stats?.jobs_extracted ?? 0} extracted and ${processStatusData.stats?.jobs_embedded ?? 0} embedded jobs.`
+            ? importedJobs != null
+                ? `Imported ${importedJobs} jobs and processed ${processedJobs} for semantic search.`
+                : `Processed ${processedJobs} jobs for semantic search.`
             : processStatusData?.status === 'failed'
                 ? 'Queued job processing failed. Check logs, then retry.'
                 : 'Processing imported jobs in the background.'
@@ -245,7 +577,15 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
         }
         void queryClient.invalidateQueries({ queryKey: ['stats'] });
         void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        void queryClient.invalidateQueries({ queryKey: ['pipeline-runs'] });
+        void queryClient.invalidateQueries({ queryKey: ['processing-blockers'] });
     }, [processStatusData?.status, queryClient]);
+
+    useEffect(() => {
+        if (!selectedRunId && firstRunId) {
+            setSelectedRunId(firstRunId);
+        }
+    }, [firstRunId, selectedRunId]);
 
     return (
         <section className="mt-8 border-t border-rule pt-8">
@@ -295,6 +635,78 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
                         <ListChecks className="h-4 w-4" aria-hidden="true" />
                         {isOpen ? 'Hide jobs' : 'Browse jobs'}
                     </button>
+                </div>
+            </div>
+
+            <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)]">
+                <div className="border border-rule bg-surface">
+                    <div className="flex items-center justify-between gap-3 p-4">
+                        <div className="min-w-0">
+                            <p className="caption">Pipeline runs</p>
+                            <h4 className="mt-1 text-[14px] font-medium text-ink">Latest durable runs</h4>
+                        </div>
+                        <Activity className="h-4 w-4 flex-none text-ink-muted" aria-hidden="true" />
+                    </div>
+                    <LlmQueueHealth
+                        status={llmQueueStatus.data}
+                        isLoading={llmQueueStatus.isLoading}
+                        error={llmQueueStatus.error}
+                    />
+                    {pipelineRuns.isLoading ? (
+                        <div className="border-t border-rule p-4 text-[13px] text-ink-muted">Loading runs</div>
+                    ) : pipelineRuns.error ? (
+                        <div className="border-t border-rule p-4 text-[13px] text-warn">
+                            {pipelineRuns.error instanceof Error ? pipelineRuns.error.message : 'Runs failed to load.'}
+                        </div>
+                    ) : latestRuns.length === 0 ? (
+                        <div className="border-t border-rule p-4 text-[13px] text-ink-muted">No pipeline runs recorded.</div>
+                    ) : (
+                        <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.9fr)]">
+                            <div className="border-t border-rule lg:border-r">
+                                {latestRuns.map((run) => (
+                                    <PipelineRunButton
+                                        key={run.id}
+                                        run={run}
+                                        active={run.id === selectedRunId}
+                                        onSelect={() => setSelectedRunId(run.id)}
+                                    />
+                                ))}
+                            </div>
+                            <PipelineRunDetail
+                                run={selectedRun}
+                                isLoading={selectedRunDetail.isFetching && Boolean(selectedRunId)}
+                                onCancel={(runId) => cancelRun.mutate(runId)}
+                                onRequeue={(runId) => requeueRun.mutate(runId)}
+                                onRetry={(runId) => retryRun.mutate(runId)}
+                                actionPending={pipelineActionPending}
+                            />
+                        </div>
+                    )}
+                </div>
+
+                <div className="border border-rule bg-surface">
+                    <div className="flex items-center justify-between gap-3 p-4">
+                        <div className="min-w-0">
+                            <p className="caption">Processing blockers</p>
+                            <h4 className="mt-1 text-[14px] font-medium text-ink">Oldest blockers</h4>
+                        </div>
+                        <Clock3 className="h-4 w-4 flex-none text-ink-muted" aria-hidden="true" />
+                    </div>
+                    {processingBlockers.isLoading ? (
+                        <div className="border-t border-rule p-4 text-[13px] text-ink-muted">Loading blockers</div>
+                    ) : processingBlockers.error ? (
+                        <div className="border-t border-rule p-4 text-[13px] text-warn">
+                            {processingBlockers.error instanceof Error ? processingBlockers.error.message : 'Blockers failed to load.'}
+                        </div>
+                    ) : blockers.length === 0 ? (
+                        <div className="border-t border-rule p-4 text-[13px] text-ink-muted">No blockers found.</div>
+                    ) : (
+                        <ol className="px-4">
+                            {blockers.map((blocker) => (
+                                <BlockerRow key={`${blocker.stage}-${blocker.job_id}-${blocker.blocker_code}`} blocker={blocker} />
+                            ))}
+                        </ol>
+                    )}
                 </div>
             </div>
 

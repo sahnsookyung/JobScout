@@ -82,6 +82,16 @@ const mockDetail = { id: 'match-1', fit_score: 90 };
         expect(mockGet).toHaveBeenCalledWith('/stats', { params });
     });
 
+    it('getMatchSummary calls GET /matches/summary with policy params', async () => {
+        mockGet.mockResolvedValue({ data: { stats: {} } });
+        const { matchesApi } = await import('../matchesApi');
+
+        const params = { min_fit: 42, top_k: 100 };
+        await matchesApi.getMatchSummary(params);
+
+        expect(mockGet).toHaveBeenCalledWith('/matches/summary', { params });
+    });
+
     it('toggleHidden calls POST /matches/:id/hide', async () => {
         mockPost.mockResolvedValue({ data: { success: true, match_id: 'match-3', is_hidden: true } });
         const { matchesApi } = await import('../matchesApi');

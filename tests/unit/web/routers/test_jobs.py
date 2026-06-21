@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 import uuid
@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from web.backend.dependencies import get_current_user, get_db
-from web.backend.routers.jobs import _job_inventory_item, router
+from web.backend.routers.jobs import _embedding_blocker, _extraction_blocker, _job_inventory_item, router
 
 
 class TestJobsRouter:
@@ -120,3 +120,104 @@ def test_job_inventory_item_serializes_source_and_limited_errors():
     assert item.description_warning_code == "truncated_by_ingest_cap"
     assert item.extraction_last_error is not None
     assert len(item.extraction_last_error) == 240
+
+
+def test_processing_blockers_include_queued_extraction_and_embedding_jobs():
+    now = datetime.now(timezone.utc)
+    stale_cutoff = now - timedelta(minutes=30)
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        description="Full job description",
+        is_extracted=False,
+        is_embedded=False,
+        extraction_status="queued",
+        embedding_status="queued",
+        extraction_attempts=0,
+        embedding_attempts=0,
+        extraction_last_error=None,
+        embedding_last_error=None,
+        extraction_last_attempt_at=None,
+        embedding_last_attempt_at=None,
+        extraction_next_retry_at=None,
+        embedding_next_retry_at=None,
+        first_seen_at=now,
+        last_seen_at=now,
+    )
+
+    extraction = _extraction_blocker(job, now=now, stale_cutoff=stale_cutoff)
+    job.is_extracted = True
+    embedding = _embedding_blocker(job, now=now, stale_cutoff=stale_cutoff)
+
+    assert extraction is not None
+    assert extraction.blocker_code == "pending_queue"
+    assert extraction.status == "queued"
+    assert "queued for extraction" in extraction.blocker_detail
+    assert embedding is not None
+    assert embedding.blocker_code == "pending_queue"
+    assert embedding.status == "queued"
+    assert "queued for embedding" in embedding.blocker_detail
+
+def test_processing_blockers_classify_stale_and_retryable_states():
+    now = datetime.now(timezone.utc)
+    stale_cutoff = now - timedelta(minutes=30)
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        description="Full job description",
+        is_extracted=False,
+        is_embedded=False,
+        extraction_status="in_progress",
+        embedding_status="failed_retryable",
+        extraction_attempts=1,
+        embedding_attempts=2,
+        extraction_last_error="worker disappeared",
+        embedding_last_error="provider timeout",
+        extraction_last_attempt_at=now - timedelta(hours=2),
+        embedding_last_attempt_at=now - timedelta(minutes=5),
+        extraction_next_retry_at=None,
+        embedding_next_retry_at=now - timedelta(minutes=1),
+        first_seen_at=now - timedelta(days=1),
+        last_seen_at=now,
+    )
+
+    extraction = _extraction_blocker(job, now=now, stale_cutoff=stale_cutoff)
+    job.is_extracted = True
+    embedding = _embedding_blocker(job, now=now, stale_cutoff=stale_cutoff)
+
+    assert extraction is not None
+    assert extraction.blocker_code == "stale_extraction"
+    assert extraction.retry_eligible is True
+    assert embedding is not None
+    assert embedding.blocker_code == "retryable_embedding"
+    assert embedding.retry_eligible is True
+
+def test_processing_blockers_classify_queued_too_long_and_terminal_failures():
+    now = datetime.now(timezone.utc)
+    stale_cutoff = now - timedelta(minutes=30)
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        description="Full job description",
+        is_extracted=False,
+        is_embedded=False,
+        extraction_status="queued",
+        embedding_status="failed_terminal",
+        extraction_attempts=0,
+        embedding_attempts=3,
+        extraction_last_error=None,
+        embedding_last_error="invalid payload",
+        extraction_last_attempt_at=now - timedelta(hours=1),
+        embedding_last_attempt_at=now - timedelta(hours=2),
+        extraction_next_retry_at=None,
+        embedding_next_retry_at=None,
+        first_seen_at=now - timedelta(days=1),
+        last_seen_at=now,
+    )
+
+    extraction = _extraction_blocker(job, now=now, stale_cutoff=stale_cutoff)
+    job.is_extracted = True
+    embedding = _embedding_blocker(job, now=now, stale_cutoff=stale_cutoff)
+
+    assert extraction is not None
+    assert extraction.blocker_code == "queued_too_long"
+    assert embedding is not None
+    assert embedding.blocker_code == "non_retryable_failure"
+    assert embedding.retry_eligible is False

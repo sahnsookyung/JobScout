@@ -5,15 +5,15 @@ Match service - business logic for job match operations.
 
 import json
 import logging
-from dataclasses import dataclass
 from typing import List, Optional, Dict, Any
 from core.redis_streams import _sanitize_log
 from sqlalchemy.orm import Session
 
 from core.llm_evaluation import MatchLlmEvaluationService
 from core.match_selection import resolve_canonical_resume_selection
+from core.metrics import record_match_query_degraded
 from core.policy import get_result_policy_store
-from core.ranking import rank_matches, RankingContext, RankingMode, get_ranking_policy_store
+from core.ranking import RankingMode, get_ranking_policy_store, rank_matches
 from database.models import (
     JobMatch,
     JobMatchRequirement,
@@ -34,8 +34,18 @@ from ..models.responses import (
 )
 from ..utils import safe_float, safe_int, safe_str, safe_datetime_iso
 from ..exceptions import InvalidMatchOperationException, MatchNotFoundException
+from web.backend.services.match_query import (
+    MatchPagination,
+    MatchQueryBuilder,
+    MatchRankingService,
+    MatchSummaryCandidate,
+    MatchSummaryPresenter,
+)
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_ALL_TIER_PAGE_LIMIT = 100
+MAX_MATCH_PAGE_LIMIT = 500
 
 _PREFERENCE_COMPONENT_KEYS = {
     "preference_confidence",
@@ -48,42 +58,6 @@ _PREFERENCE_COMPONENT_KEYS = {
 }
 
 
-@dataclass
-class MatchSummaryCandidate:
-    """Selection-run backed candidate used for read-time presentation reranking."""
-
-    id: str
-    job_id: str
-    title: str
-    company: str
-    location: Optional[str]
-    is_remote: bool
-    fit_score: Optional[float]
-    preference_score: Optional[float]
-    job_similarity: Optional[float]
-    penalties: Optional[float]
-    required_coverage: Optional[float]
-    preferred_requirement_coverage: Optional[float]
-    match_type: str
-    is_hidden: bool
-    created_at: Any
-    calculated_at: Any
-    ranking_explanation: Any = None
-    selection_tier: str = "primary"
-    excluded_reason: Optional[str] = None
-    llm_evaluation: Any = None
-    resume_fingerprint: Optional[str] = None
-    job_post_id: Optional[str] = None
-    job_content_hash: Optional[str] = None
-    llm_original_rank: Optional[int] = None
-    llm_reranked_rank: Optional[int] = None
-    llm_effective_for_rerank: bool = False
-    llm_ignored_for_rerank_reason: Optional[str] = None
-    llm_stale_status: Optional[str] = None
-    llm_rerank_score: Optional[float] = None
-    llm_rerank_confidence: Optional[float] = None
-
-
 class MatchService:
     """Service for managing job matches."""
     
@@ -92,6 +66,7 @@ class MatchService:
         self.last_llm_rerank_metadata: Dict[str, Any] = self._empty_llm_rerank_metadata(
             reason="not_evaluated"
         )
+        self.last_degraded_reasons: List[Dict[str, str]] = []
         self.last_matches_total: int = 0
         self.last_matches_limit: Optional[int] = None
         self.last_matches_offset: int = 0
@@ -126,18 +101,21 @@ class MatchService:
         Args:
             status: Match status filter ("active", "stale", or "all").
             min_fit: Minimum fit score filter.
-            top_k: Maximum number of results (capped to config.max_top_k).
+            top_k: Maximum number of primary/all results before response paging.
             remote_only: Filter to remote jobs only.
             show_hidden: Include hidden matches in results.
             ranking_mode: One of "preference_first", "fit_first", "balanced".
                 Defaults to config.active_default_mode.
             limit: Optional page size applied after ranking/top_k selection.
+                tier='all' defaults to a bounded page when omitted.
             offset: Optional page offset applied with `limit`.
 
         Returns:
             List of match summaries with ranking explanation fields.
         """
         ranking_config = get_ranking_policy_store().get_current_config()
+        self.last_degraded_reasons = []
+        page_limit = MatchPagination.normalize_limit(tier=tier, limit=limit)
 
         # Resolve ranking mode
         try:
@@ -145,15 +123,16 @@ class MatchService:
         except ValueError:
             mode = RankingMode(ranking_config.active_default_mode)
 
-        canonical_selection = self._resolve_canonical_selection(
+        query_builder = MatchQueryBuilder(self)
+        canonical_selection = query_builder.resolve_canonical_selection(
             owner_id=owner_id,
             tenant_id=tenant_id,
         )
         if canonical_selection is None:
-            self._set_match_page_metadata(total=0, limit=limit, offset=offset)
+            self._set_match_page_metadata(total=0, limit=page_limit, offset=offset)
             return []
 
-        pool = self._load_rankable_pool(
+        pool = query_builder.load_rankable_pool(
             canonical_selection,
             status=status,
             min_fit=min_fit,
@@ -163,50 +142,27 @@ class MatchService:
             tenant_id=tenant_id,
         )
 
-        # Stage 2: Python rank the primary tier only. Excluded items were
-        # never ranked against the active policy and do not compete for top-K.
-        primary_pool = [
-            m for m in pool
-            if getattr(m, "selection_tier", "primary") == "primary"
-        ]
-        excluded_pool = [
-            m for m in pool
-            if getattr(m, "selection_tier", "primary") != "primary"
-        ]
-        ctx = RankingContext(mode=mode, config=ranking_config)
-        rank_matches(primary_pool, ctx)
-        for index, candidate in enumerate(primary_pool, start=1):
-            setattr(candidate, "llm_original_rank", index)
-
-        self._attach_latest_evaluations(
-            primary_pool,
+        ranked, self.last_llm_rerank_metadata = MatchRankingService(self).rank(
+            pool,
+            mode=mode,
+            ranking_config=ranking_config,
+            top_k=top_k,
+            tier=tier,
             owner_id=owner_id,
             tenant_id=tenant_id,
         )
-        self.last_llm_rerank_metadata = self._apply_llm_rerank(
-            primary_pool,
-            owner_id=owner_id,
-            tenant_id=tenant_id,
-        )
-
-        if tier == "all":
-            self._attach_latest_evaluations(
-                excluded_pool,
-                owner_id=owner_id,
-                tenant_id=tenant_id,
-            )
-            ranked = primary_pool + excluded_pool
-            if top_k is not None:
-                ranked = ranked[:ranking_config.effective_top_k(top_k)]
-        else:
-            effective_k = ranking_config.effective_top_k(top_k)
-            ranked = primary_pool[:effective_k]
 
         total = len(ranked)
-        ranked = self._page_ranked_matches(ranked, limit=limit, offset=offset)
-        self._set_match_page_metadata(total=total, limit=limit, offset=offset)
+        ranked = MatchPagination.page(ranked, limit=page_limit, offset=offset)
+        self._set_match_page_metadata(total=total, limit=page_limit, offset=offset)
 
-        return [self._to_match_summary(m) for m in ranked]
+        return MatchSummaryPresenter(self).present(ranked)
+
+    @staticmethod
+    def _normalize_page_limit(*, tier: str, limit: Optional[int]) -> Optional[int]:
+        if limit is None:
+            return DEFAULT_ALL_TIER_PAGE_LIMIT if tier == "all" else None
+        return max(1, min(int(limit), MAX_MATCH_PAGE_LIMIT))
 
     @staticmethod
     def _page_ranked_matches(matches: List[Any], *, limit: Optional[int], offset: int) -> List[Any]:
@@ -227,6 +183,12 @@ class MatchService:
         self.last_matches_limit = None if limit is None else max(int(limit), 0)
         self.last_matches_offset = max(int(offset or 0), 0)
 
+    def _record_degraded_reason(self, code: str, exc: Exception) -> None:
+        self.last_degraded_reasons.append(
+            {"code": code, "detail": exc.__class__.__name__}
+        )
+        record_match_query_degraded(code)
+
     def _resolve_canonical_selection(
         self,
         owner_id: Optional[Any] = None,
@@ -240,7 +202,8 @@ class MatchService:
                     tenant_id=tenant_id,
                 )
         except Exception as exc:
-            logger.warning("Could not resolve canonical resume fingerprint: %s", exc)
+            self._record_degraded_reason("canonical_selection_unavailable", exc)
+            logger.warning("Could not resolve canonical resume fingerprint: %s", exc, exc_info=True)
             return None
 
     def _load_rankable_pool(

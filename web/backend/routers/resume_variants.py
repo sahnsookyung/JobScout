@@ -22,7 +22,7 @@ from core.resume_variants.service import (
     ResumeVariantValidationError,
     variant_to_response,
 )
-from web.backend.dependencies import get_current_user, get_db
+from web.backend.dependencies import TenantContext, get_current_user, get_db, get_tenant_context
 from web.backend.models.resume_variants import (
     ResumeVariantCreateRequest,
     ResumeVariantEnvelope,
@@ -48,19 +48,7 @@ def _uuid_or_400(value: str, field: str) -> uuid.UUID:
 
 
 def _request_tenant_id(request: Request) -> uuid.UUID | None:
-    state_tenant_id = getattr(request.state, "tenant_id", None)
-    if state_tenant_id is not None:
-        try:
-            return uuid.UUID(str(state_tenant_id))
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Trusted tenant context must be a UUID.") from exc
-    tenant_header = request.headers.get("X-Tenant-Id", "").strip()
-    if not tenant_header:
-        return None
-    try:
-        return uuid.UUID(tenant_header)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="X-Tenant-Id must be a UUID.") from exc
+    return get_tenant_context(request).tenant_id
 
 
 def _service(db: Session) -> ResumeVariantService:
@@ -86,12 +74,13 @@ def create_resume_variant(
     request: Request,
     db: DbSession,
     user: Annotated[object, Depends(get_current_user)],
+    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> ResumeVariantEnvelope:
     result = _run_service_call(
         lambda: _service(db).create_for_match(
             match_id=_uuid_or_400(match_id, "match_id"),
             owner_id=getattr(user, "id", None),
-            tenant_id=_request_tenant_id(request),
+            tenant_id=tenant_context.tenant_id,
             request=ResumeVariantRequest(
                 template_key=body.template_key,
                 tone=body.tone,
@@ -115,12 +104,13 @@ def get_resume_variant(
     request: Request,
     db: DbSession,
     user: Annotated[object, Depends(get_current_user)],
+    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> ResumeVariantEnvelope:
     variant = _run_service_call(
         lambda: _service(db).get_variant(
             variant_id=_uuid_or_400(variant_id, "variant_id"),
             owner_id=getattr(user, "id", None),
-            tenant_id=_request_tenant_id(request),
+            tenant_id=tenant_context.tenant_id,
         )
     )
     return ResumeVariantEnvelope(success=True, variant=variant_to_response(variant))
@@ -132,13 +122,14 @@ def list_resume_variants(
     request: Request,
     db: DbSession,
     user: Annotated[object, Depends(get_current_user)],
+    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     limit: Annotated[int, Query(ge=1, le=50)] = 25,
 ) -> ResumeVariantListResponse:
     variants = _run_service_call(
         lambda: _service(db).list_for_match(
             match_id=_uuid_or_400(match_id, "match_id"),
             owner_id=getattr(user, "id", None),
-            tenant_id=_request_tenant_id(request),
+            tenant_id=tenant_context.tenant_id,
             limit=limit,
         )
     )
@@ -155,13 +146,14 @@ def download_resume_variant(
     request: Request,
     db: DbSession,
     user: Annotated[object, Depends(get_current_user)],
+    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     format: Annotated[str, Query(pattern="^(markdown|html|docx)$")] = "markdown",
 ) -> StreamingResponse:
     variant = _run_service_call(
         lambda: _service(db).get_variant(
             variant_id=_uuid_or_400(variant_id, "variant_id"),
             owner_id=getattr(user, "id", None),
-            tenant_id=_request_tenant_id(request),
+            tenant_id=tenant_context.tenant_id,
         )
     )
     renderer = ResumeVariantRenderer()

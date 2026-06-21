@@ -49,6 +49,7 @@ vi.mock('../usePipelineEvents', () => ({
 vi.mock('@/services/matchesApi', () => ({
     matchesApi: {
         getStats: vi.fn(),
+        getMatchSummary: vi.fn(),
     },
 }));
 
@@ -75,6 +76,7 @@ describe('useStats', () => {
         // Get fresh reference to mocked function after clearAllMocks
         const { matchesApi } = await import('@/services/matchesApi');
         (matchesApi.getStats as any).mockReset();
+        (matchesApi.getMatchSummary as any).mockReset();
     });
 
     it('fetches stats on mount', async () => {
@@ -86,7 +88,7 @@ describe('useStats', () => {
             below_threshold_count: 25,
         };
 
-        (matchesApi.getStats as any).mockResolvedValue({ data: { stats: mockStats } });
+        (matchesApi.getMatchSummary as any).mockResolvedValue({ data: { stats: mockStats } });
 
         const { result } = renderHook(() => useStats(), { wrapper: createWrapper() });
 
@@ -95,12 +97,12 @@ describe('useStats', () => {
         });
 
         expect(result.current.data).toEqual(mockStats);
-        expect(matchesApi.getStats).toHaveBeenCalledWith({});
+        expect(matchesApi.getMatchSummary).toHaveBeenCalledWith({});
     });
 
     it('handles fetch error', async () => {
         const { matchesApi } = await import('@/services/matchesApi');
-        (matchesApi.getStats as any).mockRejectedValue(new Error('Network error'));
+        (matchesApi.getMatchSummary as any).mockRejectedValue(new Error('Network error'));
 
         const { result } = renderHook(() => useStats(), { wrapper: createWrapper() });
 
@@ -113,18 +115,18 @@ describe('useStats', () => {
 
     it('uses correct staleTime', async () => {
         const { matchesApi } = await import('@/services/matchesApi');
-        (matchesApi.getStats as any).mockResolvedValue({ data: { stats: {} } });
+        (matchesApi.getMatchSummary as any).mockResolvedValue({ data: { stats: {} } });
 
         renderHook(() => useStats({ min_fit: 60, top_k: 100 }), { wrapper: createWrapper() });
 
         await waitFor(() => {
-            expect(matchesApi.getStats).toHaveBeenCalled();
+            expect(matchesApi.getMatchSummary).toHaveBeenCalled();
         });
 
         // Query should have staleTime of 60000ms (1 minute)
         // This is configured in the hook, verified by checking query options
-        expect(matchesApi.getStats).toHaveBeenCalledTimes(1);
-        expect(matchesApi.getStats).toHaveBeenCalledWith({ min_fit: 60, top_k: 100 });
+        expect(matchesApi.getMatchSummary).toHaveBeenCalledTimes(1);
+        expect(matchesApi.getMatchSummary).toHaveBeenCalledWith({ min_fit: 60, top_k: 100 });
     });
 });
 

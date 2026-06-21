@@ -295,6 +295,9 @@ class StreamConsumerWithCompletion(StreamConsumer):
                 k: v for k, v in result_data.items()
                 if k not in ("status",)
             })
+            for correlation_key in ("pipeline_run_id", "pipeline_stage_id"):
+                if correlation_key in msg and correlation_key not in completion_payload:
+                    completion_payload[correlation_key] = msg[correlation_key]
 
             await asyncio.to_thread(
                 publish_completion,
@@ -343,6 +346,11 @@ class StreamConsumerWithCompletion(StreamConsumer):
                     "task_id": task_id,
                     "status": "failed",
                     "error": str(e),
+                    **{
+                        correlation_key: msg[correlation_key]
+                        for correlation_key in ("pipeline_run_id", "pipeline_stage_id")
+                        if correlation_key in msg
+                    },
                 },
                 warn_on_no_subscribers=warn_on_no_subscribers,
             )

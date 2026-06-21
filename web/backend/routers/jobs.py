@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Job inventory endpoints - inspect imported jobs and processing state."""
 
-import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -10,8 +10,18 @@ from sqlalchemy.orm import Session, selectinload
 
 from database.models import JobPost, JobPostSource
 
-from ..dependencies import get_current_user, get_db
-from ..models.responses import JobInventoryItem, JobsResponse
+from ..dependencies import TenantContext, get_current_user, get_db, get_tenant_context
+from ..models.responses import JobInventoryItem, JobsResponse, ProcessingBlockerItem, ProcessingBlockersResponse
+from ..services.processing_blocker_service import (
+    VALID_BLOCKER_STAGES,
+    aware_datetime,
+    blocker_sort_key,
+    default_processing_blocker_service,
+    is_retry_due,
+    is_stale,
+    tenant_filter,
+    truncate_error,
+)
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -27,24 +37,15 @@ _VALID_PROCESSING_STATUSES = {
     "pending_embedding",
     "failed",
 }
-_RETRYABLE_OR_PENDING = {"pending", "in_progress", "processing", "failed_retryable"}
+_RETRYABLE_OR_PENDING = {"pending", "queued", "in_progress", "processing", "failed_retryable"}
 _FAILED_STATUSES = {"failed_terminal", "failed", "failed_retryable"}
 _ERROR_TEXT_LIMIT = 240
+_STALE_STAGE_MINUTES = 30
 
 
 def _request_tenant_id(request: Request):
-    """Return the cloud-selected tenant ID when the SaaS wrapper set one."""
-    state_tenant_id = getattr(request.state, "tenant_id", None)
-    if state_tenant_id is not None:
-        return state_tenant_id
-
-    tenant_header = request.headers.get("X-Tenant-Id", "").strip()
-    if not tenant_header:
-        return None
-    try:
-        return uuid.UUID(tenant_header)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="X-Tenant-Id must be a UUID.") from exc
+    """Compatibility wrapper for callers importing the old helper."""
+    return get_tenant_context(request).tenant_id
 
 
 def _isoformat(value) -> str | None:
@@ -52,9 +53,7 @@ def _isoformat(value) -> str | None:
 
 
 def _truncate_error(value: str | None) -> str | None:
-    if not value:
-        return None
-    return value if len(value) <= _ERROR_TEXT_LIMIT else f"{value[:_ERROR_TEXT_LIMIT - 3]}..."
+    return truncate_error(value)
 
 
 def _primary_source(job: JobPost) -> JobPostSource | None:
@@ -178,6 +177,118 @@ def list_job_inventory(
     return [_job_inventory_item(job) for job in jobs], total
 
 
+def _aware_datetime(value):
+    return aware_datetime(value)
+
+
+def _is_retry_due(next_retry_at, *, now: datetime) -> bool:
+    return is_retry_due(next_retry_at, now=now)
+
+
+def _is_stale(last_attempt_at, *, stale_cutoff: datetime) -> bool:
+    return is_stale(last_attempt_at, stale_cutoff=stale_cutoff)
+
+
+def _tenant_filter(tenant_id):
+    return tenant_filter(tenant_id)
+
+
+def _blocker_sort_key(item: ProcessingBlockerItem):
+    return blocker_sort_key(item)
+
+
+def _processing_blocker_item(
+    job: JobPost,
+    *,
+    stage: str,
+    blocker_code: str,
+    blocker_detail: str,
+    status: str,
+    attempts: int,
+    last_error: str | None,
+    retry_eligible: bool,
+    last_attempt_at,
+    next_retry_at,
+) -> ProcessingBlockerItem:
+    return default_processing_blocker_service.item(
+        job,
+        stage=stage,
+        blocker_code=blocker_code,
+        blocker_detail=blocker_detail,
+        status=status,
+        attempts=attempts,
+        last_error=last_error,
+        retry_eligible=retry_eligible,
+        last_attempt_at=last_attempt_at,
+        next_retry_at=next_retry_at,
+    )
+
+
+def _extraction_blocker(job: JobPost, *, now: datetime, stale_cutoff: datetime) -> ProcessingBlockerItem | None:
+    return default_processing_blocker_service.extraction_blocker(
+        job,
+        now=now,
+        stale_cutoff=stale_cutoff,
+    )
+
+
+def _embedding_blocker(job: JobPost, *, now: datetime, stale_cutoff: datetime) -> ProcessingBlockerItem | None:
+    return default_processing_blocker_service.embedding_blocker(
+        job,
+        now=now,
+        stale_cutoff=stale_cutoff,
+    )
+
+
+def _matching_blocker(job: JobPost) -> ProcessingBlockerItem:
+    return default_processing_blocker_service.matching_blocker(job)
+
+
+def list_processing_blockers(
+    db: Session,
+    *,
+    tenant_id,
+    stage: str,
+    limit: int,
+) -> list[ProcessingBlockerItem]:
+    return default_processing_blocker_service.list_blockers(
+        db,
+        tenant_id=tenant_id,
+        stage=stage,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/processing-blockers",
+    response_model=ProcessingBlockersResponse,
+    responses={
+        400: {"description": "Invalid tenant header"},
+        422: {"description": "Invalid query parameter"},
+    },
+)
+def get_processing_blockers(
+    db: DbSession,
+    _user: Annotated[object, Depends(get_current_user)],
+    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+    stage: Annotated[str, Query(description="Pipeline stage: all, extraction, embedding, or matching")] = "all",
+    limit: Annotated[int, Query(ge=1, le=100, description="Maximum blockers to return")] = 25,
+) -> ProcessingBlockersResponse:
+    """Return the oldest DB-backed job processing blockers."""
+    if stage not in VALID_BLOCKER_STAGES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid stage '{stage}'. Valid values: {', '.join(sorted(VALID_BLOCKER_STAGES))}",
+        )
+    blockers = list_processing_blockers(
+        db,
+        tenant_id=tenant_context.tenant_id,
+        stage=stage,
+        limit=limit,
+    )
+    return ProcessingBlockersResponse(success=True, count=len(blockers), blockers=blockers)
+
+
 @router.get(
     "",
     response_model=JobsResponse,
@@ -190,6 +301,7 @@ def get_jobs(
     request: Request,
     db: DbSession,
     _user: Annotated[object, Depends(get_current_user)],
+    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     job_status: Annotated[str, Query(description="Job lifecycle status: active, inactive, expired, unknown, or all")] = "all",
     processing_status: Annotated[str, Query(description="Processing filter: all, ready, extracted, embedded, pending_extraction, pending_embedding, or failed")] = "all",
     search: Annotated[str | None, Query(max_length=120, description="Search title, company, or location")] = None,
@@ -210,7 +322,7 @@ def get_jobs(
 
     jobs, total = list_job_inventory(
         db,
-        tenant_id=_request_tenant_id(request),
+        tenant_id=tenant_context.tenant_id,
         job_status=job_status,
         processing_status=processing_status,
         search=search,

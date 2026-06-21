@@ -43,13 +43,13 @@ class JobMatch(Base):
     fit_score = Column(Numeric(5, 2))
     preference_score = Column(Numeric(5, 4), nullable=True)  # 0–1; NULL = not evaluated
 
-    fit_components = Column(JSONB, default={})
-    preference_components = Column(JSONB, nullable=True, default={})
-    ranking_snapshot = Column(JSONB, nullable=True, default={})
+    fit_components = Column(JSONB, default=dict)
+    preference_components = Column(JSONB, nullable=True, default=dict)
+    ranking_snapshot = Column(JSONB, nullable=True, default=dict)
 
     base_score = Column(Numeric(5, 2))
     penalties = Column(Numeric(5, 2), default=0)
-    penalty_details = Column(JSONB, default={})
+    penalty_details = Column(JSONB, default=dict)
 
     required_coverage = Column(Numeric(3, 2))
     preferred_requirement_coverage = Column(Numeric(3, 2))
@@ -99,7 +99,7 @@ class JobMatchRequirement(Base):
     # Evidence details
     evidence_text = Column(Text, nullable=False)  # The resume evidence text that matched
     evidence_section = Column(Text, nullable=True)  # Section of resume (e.g., "Skills", "Experience")
-    evidence_tags = Column(JSONB, default={})  # Tags from the evidence
+    evidence_tags = Column(JSONB, default=dict)  # Tags from the evidence
     
     # Match details
     similarity_score = Column(Numeric(3, 2), nullable=False)  # Cosine similarity (0.00-1.00)

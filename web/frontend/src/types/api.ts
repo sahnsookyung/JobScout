@@ -183,6 +183,8 @@ export interface MatchesResponse {
         reranked_count: number;
         reason?: string | null;
     };
+    degraded?: boolean;
+    degraded_reasons?: Array<{ code: string; detail: string }>;
 }
 
 export interface JobInventoryItem {
@@ -229,6 +231,105 @@ export interface JobsResponse {
     limit: number;
     offset: number;
     jobs: JobInventoryItem[];
+}
+
+export interface ProcessingBlockerItem {
+    job_id: string;
+    stage: 'extraction' | 'embedding' | 'matching' | string;
+    blocker_code: string;
+    blocker_detail: string;
+    status: string;
+    attempts: number;
+    last_error?: string | null;
+    retry_eligible: boolean;
+    first_seen_at?: string | null;
+    last_seen_at?: string | null;
+    last_attempt_at?: string | null;
+    next_retry_at?: string | null;
+}
+
+export interface ProcessingBlockersResponse {
+    success: boolean;
+    count: number;
+    blockers: ProcessingBlockerItem[];
+}
+
+export interface PipelineRunStageSummary {
+    id: string;
+    stage: string;
+    status: string;
+    queued_count: number;
+    processed_count: number;
+    succeeded_count: number;
+    failed_count: number;
+    skipped_count: number;
+    retry_count: number;
+    retry_eligible: boolean;
+    last_error?: string | null;
+    started_at?: string | null;
+    completed_at?: string | null;
+    metadata: Record<string, any>;
+}
+
+export interface PipelineRunSummary {
+    id: string;
+    task_id: string;
+    run_type: string;
+    status: string;
+    current_stage?: string | null;
+    queued_count: number;
+    processed_count: number;
+    succeeded_count: number;
+    failed_count: number;
+    skipped_count: number;
+    retry_eligible: boolean;
+    last_error?: string | null;
+    owner_id?: string | null;
+    tenant_id?: string | null;
+    resume_fingerprint?: string | null;
+    started_at?: string | null;
+    completed_at?: string | null;
+    heartbeat_at?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+    metadata: Record<string, any>;
+    stages: PipelineRunStageSummary[];
+    allowed_actions: string[];
+}
+
+export interface PipelineRunsResponse {
+    success: boolean;
+    count: number;
+    total: number;
+    limit: number;
+    offset: number;
+    runs: PipelineRunSummary[];
+}
+
+export interface PipelineRunDetailResponse {
+    success: boolean;
+    run: PipelineRunSummary;
+}
+
+export interface PipelineRunOperationResponse {
+    success: boolean;
+    action: string;
+    message: string;
+    run: PipelineRunSummary;
+    source_run_id?: string | null;
+    enqueued_task_id?: string | null;
+}
+
+export interface LlmEvaluationQueueStatusResponse {
+    success: boolean;
+    ready: boolean;
+    queue: string;
+    queued: number;
+    started: number;
+    deferred: number;
+    scheduled: number;
+    failed: number;
+    error?: string | null;
 }
 
 export interface StatsResponse {
@@ -334,6 +435,8 @@ export interface ProcessingFailure {
 }
 
 export interface PipelineStats {
+    jobs_imported?: number;
+    jobs_processed?: number;
     jobs_extracted?: number;
     jobs_embedded?: number;
     jobs_seen?: number;

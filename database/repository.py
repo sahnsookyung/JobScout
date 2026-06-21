@@ -10,6 +10,7 @@ from database.repositories.match_selection import MatchSelectionRepository
 from database.repositories.embedding import EmbeddingRepository
 from database.repositories.candidate_preferences import CandidatePreferencesRepository
 from database.repositories.notification_settings import NotificationSettingsRepository
+from database.repositories.pipeline_run import PipelineRunRepository
 from database.repositories.user_feature_capability import UserFeatureCapabilityRepository
 
 class JobRepository:
@@ -21,6 +22,7 @@ class JobRepository:
         self._embedding_repo: Optional[EmbeddingRepository] = None
         self._candidate_preferences_repo: Optional[CandidatePreferencesRepository] = None
         self._notification_settings_repo: Optional[NotificationSettingsRepository] = None
+        self._pipeline_run_repo: Optional[PipelineRunRepository] = None
         self._user_feature_capability_repo: Optional[UserFeatureCapabilityRepository] = None
         self._match_selection_repo: Optional[MatchSelectionRepository] = None
 
@@ -65,6 +67,12 @@ class JobRepository:
         if self._notification_settings_repo is None:
             self._notification_settings_repo = NotificationSettingsRepository(self.db)
         return self._notification_settings_repo
+
+    @property
+    def pipeline_run(self) -> PipelineRunRepository:
+        if self._pipeline_run_repo is None:
+            self._pipeline_run_repo = PipelineRunRepository(self.db)
+        return self._pipeline_run_repo
 
     @property
     def user_feature_capability(self) -> UserFeatureCapabilityRepository:

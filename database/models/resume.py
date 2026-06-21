@@ -85,7 +85,7 @@ class ResumeEvidenceUnitEmbedding(Base):
     evidence_unit_id = Column(Text, nullable=False)
     source_text = Column(Text, nullable=False)
     source_section = Column(Text)
-    tags = Column(JSONB, default={})
+    tags = Column(JSONB, default=dict)
     embedding = Column(Vector(1024), nullable=False)
     years_value = Column(Float)
     years_context = Column(Text)
@@ -118,7 +118,7 @@ class StructuredResume(Base):
     extracted_data = Column(JSONB, nullable=False)
     total_experience_years = Column(Numeric(4, 1))
     extraction_confidence = Column(Numeric(3, 2))
-    extraction_warnings = Column(JSONB, default=[])
+    extraction_warnings = Column(JSONB, default=list)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text(UTC_NOW_SQL))
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text(UTC_NOW_SQL), onupdate=sql_text(UTC_NOW_SQL))
 

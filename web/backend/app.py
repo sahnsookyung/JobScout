@@ -28,6 +28,7 @@ from core.logging_utils import (
     setup_logging as setup_shared_logging,
 )
 from core.metrics_router import router as metrics_router
+from core.llm_evaluation_queue import enqueue_stale_or_retryable_evaluations
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -46,6 +47,7 @@ from .routers import (
     stats_router,
     policy_router,
     pipeline_router,
+    pipeline_runs_router,
     notifications_router,
     candidate_preferences_router,
     resume_variants_router,
@@ -106,6 +108,10 @@ def _dashboard_response() -> HTMLResponse:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     _ensure_dev_bypass_allowed()
+    try:
+        enqueue_stale_or_retryable_evaluations()
+    except Exception:
+        logger.warning("Failed to enqueue stale LLM evaluations during startup", exc_info=True)
     yield
 
 
@@ -156,6 +162,7 @@ def create_app() -> FastAPI:
     _app.include_router(stats_router)
     _app.include_router(policy_router)
     _app.include_router(pipeline_router)
+    _app.include_router(pipeline_runs_router)
     _app.include_router(notifications_router)
     _app.include_router(candidate_preferences_router)
     _app.include_router(resume_variants_router)

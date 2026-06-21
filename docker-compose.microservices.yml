@@ -150,6 +150,35 @@ services:
     ports:
       - "9464:9464"  # Prometheus scrape endpoint (prometheus_client.start_http_server)
 
+  llm-evaluation-worker:
+    <<: *service-common
+    container_name: ${LLM_EVALUATION_WORKER_CONTAINER_NAME:-jobscout-llm-evaluation-worker}
+    build:
+      context: .
+      dockerfile: services/llm_evaluation_worker/Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-jobscout}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-jobscoutredis}@redis:6379/0
+      - PYTHONUNBUFFERED=1
+      - LLM_EVALUATION_METRICS_PORT=9474
+      - LLM_EVALUATION_RETRY_MAX=${LLM_EVALUATION_RETRY_MAX:-3}
+      - LLM_EVALUATION_RETRY_INTERVALS_SECONDS=${LLM_EVALUATION_RETRY_INTERVALS_SECONDS:-60,300,900}
+    ports:
+      - "${LLM_EVALUATION_WORKER_METRICS_PORT:-9474}:9474"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-m",
+          "core.llm_evaluation_worker",
+          "--check-readiness",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   orchestrator:
     <<: *service-common
     container_name: ${ORCHESTRATOR_CONTAINER_NAME:-jobscout-orchestrator}

@@ -205,7 +205,7 @@ class TestMatchesRouter:
         assert call_kwargs['min_fit'] is None
         assert call_kwargs['top_k'] == 100  # From policy
 
-    def test_get_matches_tier_all_without_explicit_top_k_returns_full_run(self, client, mock_match_service, mock_policy_service):
+    def test_get_matches_tier_all_without_explicit_limit_uses_bounded_page(self, client, mock_match_service, mock_policy_service):
         mock_match_service.get_matches.return_value = []
         cfg = SimpleNamespace(matching=SimpleNamespace(two_tier_selection_enabled=True))
         with patch("core.config_loader.load_config", return_value=cfg):
@@ -213,6 +213,7 @@ class TestMatchesRouter:
 
         assert response.status_code == 200
         assert mock_match_service.get_matches.call_args.kwargs["top_k"] is None
+        assert mock_match_service.get_matches.call_args.kwargs["limit"] == 100
 
     def test_get_matches_returns_pagination_metadata(self, client, mock_match_service, mock_policy_service):
         match_id = str(uuid.uuid4())
@@ -332,6 +333,7 @@ class TestMatchesRouter:
             response = client.get('/api/matches', params={'tier': 'all'})
         assert response.status_code == 200
         assert mock_match_service.get_matches.call_args.kwargs["tier"] == "all"
+        assert mock_match_service.get_matches.call_args.kwargs["limit"] == 100
 
     def test_get_matches_tier_all_collapses_to_primary_when_disabled(
         self, client, mock_match_service, mock_policy_service
@@ -352,6 +354,35 @@ class TestMatchesRouter:
         assert response.status_code == 200
         mock_load.assert_not_called()
         assert mock_match_service.get_matches.call_args.kwargs["tier"] == "primary"
+
+    def test_get_match_summary_uses_stats_builder_before_match_id_route(
+        self, client, mock_match_service, mock_policy_service
+    ):
+        with patch("web.backend.routers.matches.build_stats_response") as build_stats:
+            build_stats.return_value = {
+                "success": True,
+                "stats": {
+                    "total_matches": 0,
+                    "active_matches": 0,
+                    "hidden_count": 0,
+                    "below_threshold_count": 0,
+                    "min_fit_threshold": 55,
+                    "score_distribution": {
+                        "excellent": 0,
+                        "good": 0,
+                        "average": 0,
+                        "poor": 0,
+                    },
+                },
+            }
+            response = client.get('/api/matches/summary', params={"min_fit": 42, "top_k": 12})
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        build_stats.assert_called_once()
+        assert build_stats.call_args.kwargs["min_fit"] == 42
+        assert build_stats.call_args.kwargs["top_k"] == 12
+        mock_match_service.get_match_detail.assert_not_called()
 
     def test_get_match_details_success(self, client, mock_match_service):
         """Test successful get match details."""

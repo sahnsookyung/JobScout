@@ -32,6 +32,14 @@ from sqlalchemy.orm import sessionmaker
 from core.app_context import AppContext
 from core.auth import _auth_mode, _ensure_dev_bypass_allowed, _ensure_dev_user
 from core.config_loader import load_config
+from core.metrics import (
+    record_jobs_embedded,
+    record_jobs_embedding_queued,
+    record_jobs_extracted,
+    record_jobs_extraction_queued,
+    record_jobs_imported,
+    record_jobs_matched,
+)
 from core.metrics_router import router as metrics_router
 from core.redis_streams import (
     _sanitize_log,
@@ -56,31 +64,43 @@ from core.redis_streams import (
 from core.resume_selection import evaluate_resume_eligibility, resolve_owner_id
 import redis  # used in /health
 from database.init_db import init_db
+from services.orchestrator.control import OrchestratorControlService
+from services.orchestrator.diagnostics import OrchestratorDiagnosticsService
+from services.orchestrator.match_pipeline import OrchestratorMatchPipelineService
+from services.orchestrator.pipeline_runs import PipelineRunService
+from services.orchestrator.repair import run_stuck_job_repair
+from services.orchestrator.redis_gateway import RedisTaskStateGateway
+from services.orchestrator.resume_etl import ResumeEtlOrchestrator, ResumeEtlPipelineService
+from services.orchestrator.routes import register_orchestrator_routes
+from services.orchestrator.scrape_pipeline import ScrapePipelineService
+from services.orchestrator.scheduler import RepairScheduler, ScrapeScheduler
+from services.orchestrator.state_registry import OrchestratorStateRegistryService
+from services.orchestrator.task_state import OrchestratorTaskStateService
 
 from core.logging_utils import setup_service_logging
 logger = logging.getLogger(__name__)
 setup_service_logging(logger)
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-ORCHESTRATION_TTL = 3600  # 1 hour
-LISTENER_TIMEOUT = float(os.getenv("LISTENER_TIMEOUT_SECONDS", "300"))  # 5 minutes per stage
+_ORCHESTRATOR_CONFIG = load_config().orchestrator
+REDIS_URL = _ORCHESTRATOR_CONFIG.redis_url
+ORCHESTRATION_TTL = _ORCHESTRATOR_CONFIG.orchestration_ttl
+LISTENER_TIMEOUT = float(_ORCHESTRATOR_CONFIG.listener_timeout_seconds)
 
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 # Scraper configuration
-SCRAPER_INTERVAL_HOURS = float(os.getenv("SCRAPER_INTERVAL_HOURS", "6"))
-SCRAPER_LOCK_TTL_SECONDS = 30 * 60  # 30 minutes
-SCRAPER_RETRY_INTERVALS = [1, 6, 60, 600, 6000]  # Exponential backoff in seconds
-SCRAPER_EXTRACTION_LIMIT = int(os.getenv("SCRAPER_EXTRACTION_LIMIT", "200"))
-SCRAPER_EMBEDDING_LIMIT = int(os.getenv("SCRAPER_EMBEDDING_LIMIT", "100"))
-PROCESS_IMPORTED_EMBEDDING_MAX_BATCHES = int(
-    os.getenv("PROCESS_IMPORTED_EMBEDDING_MAX_BATCHES", "50")
-)
-BATCH_STAGE_TIMEOUT_SECONDS = float(os.getenv("BATCH_STAGE_TIMEOUT_SECONDS", "600"))
-RECENT_TASK_LIMIT = 10
-RECENT_TASK_SCAN_LIMIT = 50
+SCRAPER_INTERVAL_HOURS = float(_ORCHESTRATOR_CONFIG.scraper_interval_hours)
+SCRAPER_LOCK_TTL_SECONDS = _ORCHESTRATOR_CONFIG.scraper_lock_ttl_seconds
+SCRAPER_RETRY_INTERVALS = list(_ORCHESTRATOR_CONFIG.scraper_retry_intervals)
+SCRAPER_EXTRACTION_LIMIT = _ORCHESTRATOR_CONFIG.scraper_extraction_limit
+SCRAPER_EMBEDDING_LIMIT = _ORCHESTRATOR_CONFIG.scraper_embedding_limit
+PROCESS_IMPORTED_EMBEDDING_MAX_BATCHES = _ORCHESTRATOR_CONFIG.process_imported_embedding_max_batches
+BATCH_STAGE_TIMEOUT_SECONDS = float(_ORCHESTRATOR_CONFIG.batch_stage_timeout_seconds)
+REPAIR_INTERVAL_SECONDS = _ORCHESTRATOR_CONFIG.repair_interval_seconds
+RECENT_TASK_LIMIT = _ORCHESTRATOR_CONFIG.recent_task_limit
+RECENT_TASK_SCAN_LIMIT = _ORCHESTRATOR_CONFIG.recent_task_scan_limit
 
 # Holds references to fire-and-forget background tasks to prevent premature GC.
 _etl_tasks: set = set()
@@ -177,6 +197,9 @@ async def lifespan(app: FastAPI):
     config = load_config()
     app.state.ctx = AppContext.build(config)
     app.state.registry = OrchestratorRegistry()
+    app.state.redis_task_state = RedisTaskStateGateway(ttl=config.orchestrator.orchestration_ttl)
+    app.state.pipeline_runs = PipelineRunService(redis_gateway=app.state.redis_task_state)
+    app.state.pipeline_runs_enabled = True
 
     logger.info("✅ Orchestrator service ready")
     logger.info(
@@ -192,6 +215,15 @@ async def lifespan(app: FastAPI):
         _log_stream_backlogs_periodically(stream_log_stop)
     )
     logger.info("📊 Started periodic stream backlog logging (every 30s)")
+    repair_scheduler = RepairScheduler(
+        pipeline_runs=app.state.pipeline_runs,
+        interval_seconds=REPAIR_INTERVAL_SECONDS,
+        extraction_limit=SCRAPER_EXTRACTION_LIMIT,
+        embedding_limit=SCRAPER_EMBEDDING_LIMIT,
+        repair_fn=run_stuck_job_repair,
+    )
+    await repair_scheduler.start()
+    logger.info("🧰 Started stuck-job repair scheduler (every %s seconds)", REPAIR_INTERVAL_SECONDS)
     logger.info("=" * 60)
 
     cleanup_task = asyncio.create_task(
@@ -199,35 +231,44 @@ async def lifespan(app: FastAPI):
     )
 
     # Start scraper scheduler unless explicitly disabled (e.g. deterministic E2E runs)
-    scraper_redis = None
-    scraper_stop = asyncio.Event()
-    scraper_task = None
-    if _scraper_scheduler_disabled():
-        logger.info("🛑 Scraper scheduler disabled via DISABLE_SCRAPER")
-    else:
-        scraper_redis = redis_async.from_url(REDIS_URL)
-        scraper_task = asyncio.create_task(
-            scraper_scheduler_loop(app.state.ctx, scraper_redis, scraper_stop)
+    scrape_service = _scrape_pipeline_service()
+
+    async def _scheduled_scrape_loop(
+        ctx: AppContext,
+        redis_client: redis_async.Redis,
+        stop_event: asyncio.Event,
+    ) -> None:
+        await scrape_service.run_scheduler_loop(
+            ctx,
+            redis_client,
+            stop_event,
+            pipeline_runs=app.state.pipeline_runs,
         )
+
+    scraper_scheduler = ScrapeScheduler(
+        ctx=app.state.ctx,
+        redis_url=REDIS_URL,
+        loop_fn=_scheduled_scrape_loop,
+        disabled=_scraper_scheduler_disabled(),
+    )
+    await scraper_scheduler.start()
 
     try:
         yield
     finally:
+        app.state.pipeline_runs_enabled = False
+
         # Stop stream logging
         stream_log_stop.set()
         stream_log_task.cancel()
         await asyncio.gather(stream_log_task, return_exceptions=True)
 
+        await repair_scheduler.stop()
+
         cleanup_task.cancel()
         await asyncio.gather(cleanup_task, return_exceptions=True)
 
-        # Stop scraper scheduler
-        scraper_stop.set()
-        if scraper_task is not None:
-            scraper_task.cancel()
-            await asyncio.gather(scraper_task, return_exceptions=True)
-        if scraper_redis is not None:
-            await scraper_redis.aclose()
+        await scraper_scheduler.stop()
 
         # Tear down AppContext — try async first, fall back to sync
         ctx: AppContext = app.state.ctx
@@ -253,6 +294,57 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(metrics_router)
+app.state.pipeline_runs = None
+app.state.pipeline_runs_enabled = False
+
+
+def _pipeline_run_service(request: Request) -> Optional[PipelineRunService]:
+    if getattr(request.app.state, "pipeline_runs_enabled", False) is not True:
+        return None
+    return getattr(request.app.state, "pipeline_runs", None)
+
+
+@lru_cache()
+def _scrape_pipeline_service() -> ScrapePipelineService:
+    return ScrapePipelineService(
+        redis_url=REDIS_URL,
+        lock_ttl_seconds=SCRAPER_LOCK_TTL_SECONDS,
+        retry_intervals=SCRAPER_RETRY_INTERVALS,
+        extraction_limit=SCRAPER_EXTRACTION_LIMIT,
+        embedding_limit=SCRAPER_EMBEDDING_LIMIT,
+        embedding_max_batches=PROCESS_IMPORTED_EMBEDDING_MAX_BATCHES,
+        batch_stage_timeout_seconds=BATCH_STAGE_TIMEOUT_SECONDS,
+        scraper_interval_hours=SCRAPER_INTERVAL_HOURS,
+        release_lock_lua=RELEASE_LOCK_LUA,
+        logger=logger,
+    )
+
+
+def _task_state_service() -> OrchestratorTaskStateService:
+    return OrchestratorTaskStateService(
+        state_getter=get_or_create_orchestration,
+        task_state_reader=get_task_state,
+        logger=logger,
+    )
+
+
+def _match_pipeline_service() -> OrchestratorMatchPipelineService:
+    return OrchestratorMatchPipelineService(
+        listener_timeout=LISTENER_TIMEOUT,
+        logger=logger,
+        record_jobs_matched=record_jobs_matched,
+        record_jobs_embedded=record_jobs_embedded,
+        record_jobs_extracted=record_jobs_extracted,
+    )
+
+
+def _state_registry_service() -> OrchestratorStateRegistryService:
+    return OrchestratorStateRegistryService(
+        logger=logger,
+        time_fn=time.time,
+        sleep_fn=asyncio.sleep,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Models
@@ -290,10 +382,13 @@ class TaskStatusResponse(BaseModel):
 
 class ScrapeResponse(BaseModel):
     success: bool
+    task_id: Optional[str] = None
     total_jobs: int = 0  # Backward compatibility (alias of scraped_jobs)
     scrapers: List[Dict[str, Any]] = Field(default_factory=list)
     errors: List[str] = Field(default_factory=list)  # Backward compatibility
     scraped_jobs: int = 0
+    jobs_imported: int = 0
+    jobs_processed: int = 0
     extracted_count: int = 0
     embedded_count: int = 0
     stage_errors: Dict[str, List[str]] = Field(default_factory=dict)
@@ -401,43 +496,19 @@ async def get_or_create_orchestration(
     registry: OrchestratorRegistry, task_id: str
 ) -> OrchestrationState:
     """Get or create orchestration state, loading from Redis if not in memory."""
-    async with registry.lock:
-        if task_id in registry.orchestrations:
-            registry.timestamps[task_id] = time.time()
-            return registry.orchestrations[task_id]
-
-    # Create outside the lock to avoid blocking the event loop during Redis I/O
-    state = await OrchestrationState.create(task_id, load_from_redis=True)
-
-    async with registry.lock:
-        # Double-check: another coroutine may have inserted it while we were loading
-        if task_id not in registry.orchestrations:
-            registry.orchestrations[task_id] = state
-            registry.timestamps[task_id] = time.time()
-        return registry.orchestrations[task_id]
+    return await _state_registry_service().get_or_create(
+        registry,
+        task_id,
+        state_cls=OrchestrationState,
+    )
 
 
 async def cleanup_stale_orchestrations(registry: OrchestratorRegistry) -> None:
     """Periodically remove orchestrations that have exceeded ORCHESTRATION_TTL."""
-    while True:  # Infinite loop - tested via integration tests, not unit testable
-        await asyncio.sleep(300)
-        stale_states: List[OrchestrationState] = []
-        async with registry.lock:
-            now = time.time()
-            stale = [k for k, v in registry.timestamps.items() if now - v > ORCHESTRATION_TTL]
-            for task_id in stale:
-                state = registry.orchestrations.pop(task_id, None)
-                if state:
-                    stale_states.append(state)
-                registry.timestamps.pop(task_id, None)
-                registry.tasks.pop(task_id, None)
-                registry.active_task_ids.discard(task_id)
-            if stale:
-                logger.info("Cleaned up %d stale orchestrations", len(stale))
-
-        # Close states outside the lock to avoid deadlock inside state.close()
-        for state in stale_states:
-            await state.close(registry)
+    await _state_registry_service().cleanup_stale(
+        registry,
+        ttl_seconds=ORCHESTRATION_TTL,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -448,36 +519,22 @@ async def cleanup_stale_orchestrations(registry: OrchestratorRegistry) -> None:
 async def acquire_scraper_lock(
     redis_client: redis_async.Redis, scraper_id: str
 ) -> Optional[str]:
-    """Acquire per-scraper distributed lock.
-    
-    Args:
-        redis_client: Async Redis client
-        scraper_id: Unique scraper identifier (e.g., "tokyodev")
-        
-    Returns:
-        Owner ID if lock acquired, None if another instance holds the lock.
-    """
-    lock_key = f"scraper:lock:{scraper_id}"
-    owner_id = str(uuid.uuid4())
-    acquired = await redis_client.set(
-        lock_key, owner_id, nx=True, ex=SCRAPER_LOCK_TTL_SECONDS
+    """Compatibility wrapper for ScrapePipelineService.acquire_scraper_lock."""
+    return await _scrape_pipeline_service().acquire_scraper_lock(
+        redis_client,
+        scraper_id,
     )
-    if acquired:
-        logger.info(f"Acquired scraper lock for {scraper_id}")
-    else:
-        logger.info(f"Scraper lock for {scraper_id} held by another instance, skipping")
-    return owner_id if acquired else None
 
 
 async def release_scraper_lock(
     redis_client: redis_async.Redis, lock_key: str, owner_id: str
 ) -> None:
-    """Release scraper lock only if we still own it.
-    
-    Uses Lua script for atomic ownership verification before deletion.
-    """
-    await redis_client.eval(RELEASE_LOCK_LUA, 1, lock_key, owner_id)
-    logger.info(f"Released scraper lock: {lock_key}")
+    """Compatibility wrapper for ScrapePipelineService.release_scraper_lock."""
+    await _scrape_pipeline_service().release_scraper_lock(
+        redis_client,
+        lock_key,
+        owner_id,
+    )
 
 
 async def update_scraper_status(
@@ -486,24 +543,13 @@ async def update_scraper_status(
     state: str,
     error: str = "",
 ) -> None:
-    """Update scraper status in Redis hash for observability.
-    
-    Key: scraper:status:{scraper_id}
-    Fields: state, started_at, finished_at, last_error
-    """
-    status_key = f"scraper:status:{scraper_id}"
-    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ")
-    
-    mapping: Dict[str, str] = {"state": state}
-    
-    if state == "running":
-        mapping["started_at"] = timestamp
-        mapping["finished_at"] = ""
-    elif state in ("idle", "failed"):
-        mapping["finished_at"] = timestamp
-        mapping["last_error"] = error
-    
-    await redis_client.hset(status_key, mapping=mapping)
+    """Compatibility wrapper for ScrapePipelineService.update_scraper_status."""
+    await _scrape_pipeline_service().update_scraper_status(
+        redis_client,
+        scraper_id,
+        state,
+        error,
+    )
 
 
 async def _wait_for_scrape_with_retry(
@@ -512,44 +558,13 @@ async def _wait_for_scrape_with_retry(
     scraper_cfg,
     max_retries: int = 5,
 ) -> List[Dict[str, Any]]:
-    """Wait for scrape result with exponential backoff + jitter.
-    
-    Args:
-        jobspy_client: JobSpyClient instance
-        task_id: Task ID from submit_scrape
-        scraper_cfg: ScraperConfig for the scraper
-        max_retries: Maximum retry attempts
-        
-    Returns:
-        List of job dicts from JobSpy
-        
-    Raises:
-        Exception: If all retries exhausted
-    """
-    import random
-    
-    for attempt in range(max_retries):
-        try:
-            request_timeout = getattr(scraper_cfg, "request_timeout", None)
-            result = jobspy_client.wait_for_result(
-                task_id,
-                request_timeout_s=request_timeout,
-            )
-            if result is not None:
-                return result
-            return []
-        except Exception as e:
-            if attempt == max_retries - 1:
-                logger.exception("Scraper retry exhausted for task %s", task_id)
-                raise
-            wait_time = SCRAPER_RETRY_INTERVALS[attempt] * random.uniform(0.5, 1.5)
-            logger.warning(
-                f"Scraper attempt {attempt + 1}/{max_retries} failed for "
-                f"{scraper_cfg.site_type}: {e}. Retrying in {wait_time:.1f}s..."
-            )
-            await asyncio.sleep(wait_time)
-    
-    return []
+    """Compatibility wrapper for ScrapePipelineService.wait_for_scrape_with_retry."""
+    return await _scrape_pipeline_service().wait_for_scrape_with_retry(
+        jobspy_client,
+        task_id,
+        scraper_cfg,
+        max_retries,
+    )
 
 
 async def _scrape_single_scraper(
@@ -557,98 +572,25 @@ async def _scrape_single_scraper(
     redis_client: redis_async.Redis,
     scraper_cfg,
 ) -> Dict[str, Any]:
-    """Scrape jobs from a single scraper configuration.
-    
-    Implements:
-    - Distributed lock per scraper
-    - Status tracking in Redis
-    - Retry with exponential backoff
-    
-    Args:
-        ctx: AppContext with jobspy_client and job_etl_service
-        redis_client: Async Redis client for locking
-        scraper_cfg: ScraperConfig from config.yaml
-        
-    Returns:
-        Dict with: scraper_id, jobs_scraped, error
-    """
-    scraper_id = str(scraper_cfg.site_type[0])
-    lock_key = f"scraper:lock:{scraper_id}"
-    
-    owner_id = await acquire_scraper_lock(redis_client, scraper_id)
-    if not owner_id:
-        return {"scraper_id": scraper_id, "jobs_scraped": 0, "error": "skipped: lock held"}
-    
-    try:
-        await update_scraper_status(redis_client, scraper_id, "running")
-        
-        task_id = ctx.jobspy_client.submit_scrape(scraper_cfg)
-        if not task_id:
-            logger.warning(f"No task_id from scraper {scraper_id}")
-            return {"scraper_id": scraper_id, "jobs_scraped": 0, "error": "no task_id"}
-        
-        jobs = await _wait_for_scrape_with_retry(
-            ctx.jobspy_client, task_id, scraper_cfg
-        )
-        
-        if jobs:
-            from database.uow import job_uow
-            for job in jobs:
-                try:
-                    with job_uow() as repo:
-                        ctx.job_etl_service.ingest_one(repo, job, scraper_id)
-                except Exception:
-                    logger.exception("Ingest failed for %s", scraper_id)
-        
-        logger.info(f"Scraped {len(jobs)} jobs from {scraper_id}")
-        return {"scraper_id": scraper_id, "jobs_scraped": len(jobs), "error": None}
-        
-    except Exception as e:
-        logger.exception("Scraper %s failed", scraper_id)
-        return {"scraper_id": scraper_id, "jobs_scraped": 0, "error": str(e)}
-        
-    finally:
-        await release_scraper_lock(redis_client, lock_key, owner_id)
-        error = ""
-        await update_scraper_status(redis_client, scraper_id, "idle", error)
+    """Compatibility wrapper for ScrapePipelineService.scrape_single_scraper."""
+    return await _scrape_pipeline_service().scrape_single_scraper(
+        ctx,
+        redis_client,
+        scraper_cfg,
+    )
 
 
 async def run_all_scrapers(
     ctx: AppContext,
     redis_client: redis_async.Redis,
 ) -> Dict[str, Any]:
-    """Run scraping for all configured scrapers.
-    
-    Args:
-        ctx: AppContext with config.scrapers
-        redis_client: Async Redis client
-        
-    Returns:
-        Summary dict with: total_jobs, results_by_scraper, errors
-    """
-    total_jobs = 0
-    results_by_scraper: List[Dict[str, Any]] = []
-    errors: List[str] = []
-    
-    for scraper_cfg in ctx.config.scrapers:
-        result = await _scrape_single_scraper(ctx, redis_client, scraper_cfg)
-        results_by_scraper.append(result)
-        
-        if result["error"]:
-            errors.append(f"{result['scraper_id']}: {result['error']}")
-        else:
-            total_jobs += result["jobs_scraped"]
-    
-    return {
-        "total_jobs": total_jobs,
-        "results_by_scraper": results_by_scraper,
-        "errors": errors,
-    }
+    """Compatibility wrapper for ScrapePipelineService.run_all_scrapers."""
+    return await _scrape_pipeline_service().run_all_scrapers(ctx, redis_client)
 
 
 def _get_downstream_config_errors() -> Dict[str, str]:
     """Return configuration errors for stage execution."""
-    return {}
+    return _scrape_pipeline_service().get_downstream_config_errors()
 
 
 async def _run_batch_stage_via_queue(
@@ -658,29 +600,20 @@ async def _run_batch_stage_via_queue(
     stream: str,
     completion_channel: str,
     limit: int,
+    correlation: Optional[Dict[str, Any]] = None,
 ) -> tuple[int, Optional[str]]:
-    """Trigger batch work through Redis streams and wait for completion."""
-    redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
-    pubsub = redis_client.pubsub()
-    try:
-        await pubsub.subscribe(completion_channel)
-        await asyncio.to_thread(
-            enqueue_job,
-            stream,
-            {"task_id": task_id, "limit": limit},
-        )
-        async with asyncio.timeout(BATCH_STAGE_TIMEOUT_SECONDS):
-            data = await _wait_for_task_message(pubsub, task_id)
-
-        if not data:
-            return 0, f"{stage} stage did not publish a completion message"
-
-        processed = int(data.get("processed", 0) or 0)
-        if data.get("status") != "completed":
-            return processed, str(data.get("error", f"{stage} stage failed"))
-        return processed, None
-    finally:
-        await _cleanup_pubsub_and_client(redis_client, pubsub)
+    """Compatibility wrapper for ScrapePipelineService.run_batch_stage_via_queue."""
+    return await _scrape_pipeline_service().run_batch_stage_via_queue(
+        task_id=task_id,
+        stage=stage,
+        stream=stream,
+        completion_channel=completion_channel,
+        limit=limit,
+        correlation=correlation,
+        wait_for_task_message=_wait_for_task_message,
+        cleanup_pubsub_and_client=_cleanup_pubsub_and_client,
+        redis_factory=redis_async.from_url,
+    )
 
 
 async def run_batch_stage(
@@ -689,10 +622,12 @@ async def run_batch_stage(
     task_id: str,
     stage: str,
     limit: int,
+    correlation: Optional[Dict[str, Any]] = None,
 ) -> tuple[int, Optional[str]]:
-    """Run a batch stage via Redis streams."""
+    """Compatibility wrapper for ScrapePipelineService.run_batch_stage."""
+    del _ctx
     stream = STREAM_EXTRACTION_BATCH if stage == "extract" else STREAM_EMBEDDINGS_BATCH
-    channel = (
+    completion_channel = (
         CHANNEL_EXTRACTION_BATCH_DONE
         if stage == "extract"
         else CHANNEL_EMBEDDINGS_BATCH_DONE
@@ -701,8 +636,9 @@ async def run_batch_stage(
         task_id=task_id,
         stage=stage,
         stream=stream,
-        completion_channel=channel,
+        completion_channel=completion_channel,
         limit=limit,
+        correlation=correlation,
     )
 
 
@@ -711,26 +647,15 @@ async def enqueue_best_effort_extraction_backfill(
     *,
     extraction_limit: int,
     embedding_limit: int,
+    correlation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, str]:
-    """Queue extraction enrichment without blocking job-description embeddings."""
-    extraction_task_id = f"{task_id}-extract"
-    followup_embedding_task_id = f"{task_id}-post-extract-embed"
-    await asyncio.to_thread(
-        enqueue_job,
-        STREAM_EXTRACTION_BATCH,
-        {
-            "task_id": extraction_task_id,
-            "limit": extraction_limit,
-            "enqueue_embeddings_batch": {
-                "task_id": followup_embedding_task_id,
-                "limit": embedding_limit,
-            },
-        },
+    """Compatibility wrapper for ScrapePipelineService.enqueue_best_effort_extraction_backfill."""
+    return await _scrape_pipeline_service().enqueue_best_effort_extraction_backfill(
+        task_id,
+        extraction_limit=extraction_limit,
+        embedding_limit=embedding_limit,
+        correlation=correlation,
     )
-    return {
-        "extraction_task_id": extraction_task_id,
-        "followup_embedding_task_id": followup_embedding_task_id,
-    }
 
 
 async def run_embedding_stage_until_drained(
@@ -739,75 +664,32 @@ async def run_embedding_stage_until_drained(
     task_id: str,
     limit: int,
     max_batches: int = PROCESS_IMPORTED_EMBEDDING_MAX_BATCHES,
+    correlation: Optional[Dict[str, Any]] = None,
 ) -> tuple[int, List[str], int]:
-    """Run embedding batches until no eligible jobs/requirements remain."""
-    total_embedded = 0
-    errors: List[str] = []
-    batches_run = 0
-
-    for batch_index in range(max_batches):
-        batch_task_id = task_id if batch_index == 0 else f"{task_id}-embed-{batch_index + 1}"
-        embedded, embed_error = await run_batch_stage(
-            ctx,
-            task_id=batch_task_id,
-            stage="embed",
-            limit=limit,
-        )
-        batches_run += 1
-        total_embedded += embedded
-        if embed_error:
-            errors.append(embed_error)
-            break
-        if embedded <= 0:
-            break
-    else:
-        errors.append(
-            f"embedding max batch guard reached after {max_batches} batches"
-        )
-
-    return total_embedded, errors, batches_run
+    """Compatibility wrapper for ScrapePipelineService.run_embedding_stage_until_drained."""
+    return await _scrape_pipeline_service().run_embedding_stage_until_drained(
+        ctx,
+        task_id=task_id,
+        limit=limit,
+        max_batches=max_batches,
+        run_batch_stage_fn=run_batch_stage,
+        correlation=correlation,
+    )
 
 
 async def run_post_scrape_job_pipeline(
     ctx: AppContext,
     task_id: Optional[str] = None,
+    pipeline_runs: Optional[PipelineRunService] = None,
 ) -> Dict[str, Any]:
-    """Embed scraped/imported jobs, then queue extraction as non-blocking enrichment."""
-    stage_errors: Dict[str, List[str]] = {}
-    pipeline_task_id = task_id or f"scrape-batch-{uuid.uuid4().hex[:8]}"
-
-    embedded, embed_errors, embedding_batches = await run_embedding_stage_until_drained(
+    """Compatibility wrapper for ScrapePipelineService.run_post_scrape_job_pipeline."""
+    return await _scrape_pipeline_service().run_post_scrape_job_pipeline(
         ctx,
-        task_id=pipeline_task_id,
-        limit=SCRAPER_EMBEDDING_LIMIT,
+        task_id,
+        pipeline_runs=pipeline_runs,
+        run_embedding_fn=run_embedding_stage_until_drained,
+        enqueue_extraction_fn=enqueue_best_effort_extraction_backfill,
     )
-    if embed_errors:
-        stage_errors.setdefault("embed", []).extend(embed_errors)
-
-    extraction_queued = False
-    extraction_task_id = None
-    followup_embedding_task_id = None
-    try:
-        extraction_backfill = await enqueue_best_effort_extraction_backfill(
-            pipeline_task_id,
-            extraction_limit=SCRAPER_EXTRACTION_LIMIT,
-            embedding_limit=SCRAPER_EMBEDDING_LIMIT,
-        )
-        extraction_queued = True
-        extraction_task_id = extraction_backfill["extraction_task_id"]
-        followup_embedding_task_id = extraction_backfill["followup_embedding_task_id"]
-    except Exception as exc:
-        stage_errors.setdefault("extract_enqueue", []).append(str(exc))
-
-    return {
-        "extracted": 0,
-        "embedded": embedded,
-        "embedding_batches": embedding_batches,
-        "extraction_queued": extraction_queued,
-        "extraction_task_id": extraction_task_id,
-        "followup_embedding_task_id": followup_embedding_task_id,
-        "stage_errors": stage_errors,
-    }
 
 
 async def scraper_scheduler_loop(
@@ -815,52 +697,16 @@ async def scraper_scheduler_loop(
     redis_client: redis_async.Redis,
     stop_event: asyncio.Event,
 ) -> None:
-    """Main scheduler loop - runs scraping on fixed interval.
-    
-    Args:
-        ctx: AppContext with scraper config
-        redis_client: Async Redis client
-        stop_event: Event to signal shutdown
-    """
-    logger.info(
-        f"Scraper scheduler started (interval: {SCRAPER_INTERVAL_HOURS}h)"
+    """Compatibility wrapper for ScrapePipelineService.run_scheduler_loop."""
+    service = _scrape_pipeline_service()
+    service.logger = logger
+    await service.run_scheduler_loop(
+        ctx,
+        redis_client,
+        stop_event,
+        run_all_scrapers_fn=run_all_scrapers,
+        run_post_scrape_pipeline_fn=run_post_scrape_job_pipeline,
     )
-    
-    while not stop_event.is_set():
-        interval_seconds = SCRAPER_INTERVAL_HOURS * 3600
-        
-        try:
-            logger.info("Starting scheduled scrape cycle")
-            result = await run_all_scrapers(ctx, redis_client)
-            
-            if result["errors"]:
-                logger.warning(
-                    f"Scheduled scrape completed with errors: {result['errors']}"
-                )
-            else:
-                logger.info(
-                    f"Scheduled scrape completed: {result['total_jobs']} jobs "
-                    f"from {len(result['results_by_scraper'])} scrapers"
-                )
-
-            pipeline_result = await run_post_scrape_job_pipeline(ctx)
-            logger.info(
-                "Scheduled scrape post-processing complete: extracted=%d embedded=%d",
-                pipeline_result["extracted"],
-                pipeline_result["embedded"],
-            )
-            if pipeline_result["stage_errors"]:
-                logger.warning(
-                    "Scheduled post-processing stage errors: %s",
-                    pipeline_result["stage_errors"],
-                )
-                
-        except Exception:
-            logger.exception("Scheduled scrape failed")
-        
-        await asyncio.sleep(interval_seconds)
-    
-    logger.info("Scraper scheduler stopped")
 
 
 # ---------------------------------------------------------------------------
@@ -903,88 +749,112 @@ async def _wait_for_task_message(pubsub, task_id: str) -> dict:
         logger.debug("Skipping completion message for a different task")
 
 
+def _durable_stage_name(stage_name: str) -> str:
+    return _match_pipeline_service().durable_stage_name(stage_name)
+
+
+def _pipeline_stage_id(snapshot: Dict[str, Any], stage: str) -> Optional[str]:
+    return _match_pipeline_service().pipeline_stage_id(snapshot, stage)
+
+
+def _stage_processed_count(stage_name: str, data: Optional[dict]) -> int:
+    return _match_pipeline_service().stage_processed_count(stage_name, data)
+
+
+def _record_stage_completion_metric(stage_name: str, count: int) -> None:
+    _match_pipeline_service().record_stage_completion_metric(stage_name, count)
+
+
+async def _start_pipeline_run_stage(
+    *,
+    pipeline_runs: Optional[PipelineRunService],
+    state: "OrchestrationState",
+    task_id: str,
+    stage_name: str,
+    run_type: str,
+    job_payload: dict,
+    queued_count: int = 1,
+) -> dict[str, str]:
+    return await _match_pipeline_service().start_pipeline_run_stage(
+        pipeline_runs=pipeline_runs,
+        state=state,
+        task_id=task_id,
+        stage_name=stage_name,
+        run_type=run_type,
+        job_payload=job_payload,
+        queued_count=queued_count,
+    )
+
+
+async def _complete_pipeline_run_stage(
+    *,
+    pipeline_runs: Optional[PipelineRunService],
+    task_id: str,
+    stage_name: str,
+    run_type: str,
+    data: Optional[dict],
+) -> None:
+    await _match_pipeline_service().complete_pipeline_run_stage(
+        pipeline_runs=pipeline_runs,
+        task_id=task_id,
+        stage_name=stage_name,
+        run_type=run_type,
+        data=data,
+    )
+
+
+async def _fail_pipeline_run_stage(
+    *,
+    pipeline_runs: Optional[PipelineRunService],
+    task_id: str,
+    stage_name: str,
+    run_type: str,
+    error: str,
+    data: Optional[dict] = None,
+) -> None:
+    await _match_pipeline_service().fail_pipeline_run_stage(
+        pipeline_runs=pipeline_runs,
+        task_id=task_id,
+        stage_name=stage_name,
+        run_type=run_type,
+        error=error,
+        data=data,
+    )
+
+
 async def _run_pipeline_stage(
     state: OrchestrationState,
     pubsub,
     stream: str,
     job_payload: dict,
     stage_name: str,
+    pipeline_runs: Optional[PipelineRunService] = None,
+    run_type: str = "match",
 ) -> Tuple[bool, Optional[dict]]:
     """Enqueue a job and wait for its completion notification.
 
     The caller is responsible for subscribing pubsub to the correct channel
     and wrapping this call in asyncio.timeout().
     """
-    # Map stage name to completion channel
-    channel_map = {
-        "extraction": CHANNEL_EXTRACTION_DONE,
-        "embeddings": CHANNEL_EMBEDDINGS_DONE,
-        "matching": CHANNEL_MATCHING_DONE,
-    }
-
-    completion_channel = channel_map.get(stage_name, "unknown")
-
-    logger.info(
-        "📤 Enqueueing %s job to %s: task_id=%s",
-        stage_name,
-        stream,
-        job_payload.get("task_id"),
+    return await _match_pipeline_service().run_pipeline_stage(
+        state=state,
+        pubsub=pubsub,
+        stream=stream,
+        job_payload=job_payload,
+        stage_name=stage_name,
+        pipeline_runs=pipeline_runs,
+        run_type=run_type,
+        channel_map={
+            "extraction": CHANNEL_EXTRACTION_DONE,
+            "embeddings": CHANNEL_EMBEDDINGS_DONE,
+            "matching": CHANNEL_MATCHING_DONE,
+        },
+        enqueue_job_fn=enqueue_job,
+        wait_for_task_message_fn=_wait_for_task_message,
+        start_stage_fn=_start_pipeline_run_stage,
+        complete_stage_fn=_complete_pipeline_run_stage,
+        fail_stage_fn=_fail_pipeline_run_stage,
     )
-    logger.debug(" Payload: %s", json.dumps(job_payload))
-    await asyncio.to_thread(enqueue_job, stream, job_payload)
-    logger.info(
-        "✅ %s job enqueued: task_id=%s",
-        stage_name.capitalize(),
-        job_payload.get("task_id"),
-    )
-
-    logger.info("⏳ Waiting for %s completion on %s...", stage_name, completion_channel)
-    data = await _wait_for_task_message(pubsub, state.task_id)
-    if not data:
-        logger.error("❌ No completion message received for stage %s (task_id=%s)", stage_name, state.task_id)
-        state.status = "failed"
-        state.error = f"No completion message from {stage_name}"
-        await state._save_to_redis()
-        await state.notify(
-            {"task_id": state.task_id, "status": "failed", "error": state.error}
-        )
-        return False, None
-
-    logger.info(
-        "📨 Received %s completion: task_id=%s, status=%s, channel=%s",
-        stage_name,
-        data.get("task_id"),
-        data.get("status"),
-        completion_channel,
-    )
-
-    status = data.get("status")
-    if status == "failed":
-        logger.error(
-            "❌ %s failed for task %s: %s",
-            stage_name,
-            state.task_id,
-            data.get("error"),
-        )
-        state.status = "failed"
-        state.error = data.get("error", f"{stage_name.capitalize()} failed")
-        await state._save_to_redis()
-        await state.notify(
-            {"task_id": state.task_id, "status": "failed", "error": state.error}
-        )
-        return False, data
-
-    if status not in ("skipped", "completed"):
-        logger.warning("❌ Unexpected status in %s response: %s", stage_name, status)
-        state.status = "failed"
-        state.error = f"Unexpected status from {stage_name}: {status}"
-        await state._save_to_redis()
-        await state.notify(
-            {"task_id": state.task_id, "status": "failed", "error": state.error}
-        )
-        return False, data
-
-    return True, data
 
 
 async def _handle_extraction_fingerprint(
@@ -994,52 +864,16 @@ async def _handle_extraction_fingerprint(
 
     Returns False if pipeline should abort.
     """
-    fp = extraction_data.get("resume_fingerprint")
-    status = extraction_data.get("status")
-
-    # Always require fingerprint unless the stage was explicitly skipped
-    if not fp:
-        if status != "skipped":
-            logger.error("❌ No fingerprint in extraction response for task: %s", task_id)
-            state.status = "failed"
-            state.error = "No fingerprint in extraction response"
-            await state._save_to_redis()
-            await state.notify(
-                {"task_id": task_id, "status": "failed", "error": state.error}
-            )
-            return False
-        # skipped + no fingerprint: rely on previously persisted state
-        logger.info(
-            "ℹ️ Extraction skipped with no new fingerprint for task %s; using existing: %s",
-            task_id,
-            (state.resume_fingerprint or "")[:16],
-        )
-        return True
-
-    state.resume_fingerprint = fp
-    status_msg = (
-        "Resume unchanged, using existing"
-        if status == "skipped"
-        else "Extraction complete"
+    return await _match_pipeline_service().handle_extraction_fingerprint(
+        state,
+        task_id,
+        extraction_data,
     )
-    logger.info("ℹ️ %s: %s...", status_msg, fp[:16])
-
-    return True
 
 
 async def _cleanup_pubsub_and_client(redis_client, pubsub) -> None:
     """Close pubsub and Redis client, swallowing errors so finally blocks never raise."""
-    if pubsub:
-        try:
-            await pubsub.unsubscribe()
-            await pubsub.close()
-        except Exception as e:
-            logger.warning("Failed to close pubsub: %s", e)
-    if redis_client:
-        try:
-            await redis_client.aclose()
-        except Exception as e:
-            logger.warning("Failed to close Redis client: %s", e)
+    await _match_pipeline_service().cleanup_pubsub_and_client(redis_client, pubsub)
 
 
 # ---------------------------------------------------------------------------
@@ -1051,64 +885,38 @@ async def _run_extraction_stage(
     state: OrchestrationState,
     task_id: str,
     pubsub: redis_async.client.PubSub,
+    pipeline_runs: Optional[PipelineRunService] = None,
 ) -> bool:
     """Run extraction stage. Returns True on success."""
-    state.status = "extracting"
-    state.current_stage = "extract"
-    await state._save_to_redis()
-    await state.notify({
-        "task_id": task_id,
-        "status": "extracting",
-        "message": "Starting extraction",
-    })
-
-    await pubsub.subscribe(CHANNEL_EXTRACTION_DONE)
-
-    async with asyncio.timeout(LISTENER_TIMEOUT):
-        success, extraction_data = await _run_pipeline_stage(
-            state=state,
-            pubsub=pubsub,
-            stream=STREAM_EXTRACTION,
-            job_payload={"task_id": task_id},
-            stage_name="extraction",
-        )
-
-    if not success:
-        return False
-    return await _handle_extraction_fingerprint(state, task_id, extraction_data)
+    return await _match_pipeline_service().run_extraction_stage(
+        state=state,
+        task_id=task_id,
+        pubsub=pubsub,
+        pipeline_runs=pipeline_runs,
+        channel_extraction_done=CHANNEL_EXTRACTION_DONE,
+        stream_extraction=STREAM_EXTRACTION,
+        run_pipeline_stage_fn=_run_pipeline_stage,
+        handle_extraction_fingerprint_fn=_handle_extraction_fingerprint,
+    )
 
 
 async def _run_embeddings_stage(
     state: OrchestrationState,
     task_id: str,
     pubsub: redis_async.client.PubSub,
+    pipeline_runs: Optional[PipelineRunService] = None,
 ) -> bool:
     """Run embeddings stage. Returns True on success."""
-    state.status = "embedding"
-    state.current_stage = "embed"
-    await state._save_to_redis()
-    await state.notify({
-        "task_id": task_id,
-        "status": "embedding",
-        "message": "Starting embeddings",
-    })
-
-    await pubsub.unsubscribe(CHANNEL_EXTRACTION_DONE)
-    await pubsub.subscribe(CHANNEL_EMBEDDINGS_DONE)
-
-    async with asyncio.timeout(LISTENER_TIMEOUT):
-        success, _ = await _run_pipeline_stage(
-            state=state,
-            pubsub=pubsub,
-            stream=STREAM_EMBEDDINGS,
-            job_payload={
-                "task_id": task_id,
-                "resume_fingerprint": state.resume_fingerprint,
-            },
-            stage_name="embeddings",
-        )
-
-    return success
+    return await _match_pipeline_service().run_embeddings_stage(
+        state=state,
+        task_id=task_id,
+        pubsub=pubsub,
+        pipeline_runs=pipeline_runs,
+        channel_extraction_done=CHANNEL_EXTRACTION_DONE,
+        channel_embeddings_done=CHANNEL_EMBEDDINGS_DONE,
+        stream_embeddings=STREAM_EMBEDDINGS,
+        run_pipeline_stage_fn=_run_pipeline_stage,
+    )
 
 
 async def _run_matching_stage(
@@ -1116,78 +924,56 @@ async def _run_matching_stage(
     task_id: str,
     pubsub: redis_async.client.PubSub,
     channel_done: str,
+    pipeline_runs: Optional[PipelineRunService] = None,
 ) -> tuple[bool, Optional[dict]]:
     """Run matching stage. Returns (success, matching_data)."""
-    state.status = "matching"
-    state.current_stage = "match"
-    await state._save_to_redis()
-    await state.notify({
-        "task_id": task_id,
-        "status": "matching",
-        "message": "Starting matching",
-    })
-
-    await pubsub.unsubscribe(channel_done)
-    await pubsub.subscribe(CHANNEL_MATCHING_DONE)
-
-    async with asyncio.timeout(LISTENER_TIMEOUT):
-        success, matching_data = await _run_pipeline_stage(
-            state=state,
-            pubsub=pubsub,
-            stream=STREAM_MATCHING,
-            job_payload={
-                "task_id": task_id,
-                "resume_fingerprint": state.resume_fingerprint,
-            },
-            stage_name="matching",
-        )
-
-    return success, matching_data
+    return await _match_pipeline_service().run_matching_stage(
+        state=state,
+        task_id=task_id,
+        pubsub=pubsub,
+        channel_done=channel_done,
+        pipeline_runs=pipeline_runs,
+        channel_matching_done=CHANNEL_MATCHING_DONE,
+        stream_matching=STREAM_MATCHING,
+        run_pipeline_stage_fn=_run_pipeline_stage,
+    )
 
 
 async def _run_matching_fast_path(
     state: OrchestrationState,
     task_id: str,
+    pipeline_runs: Optional[PipelineRunService] = None,
 ) -> tuple[redis_async.Redis, redis_async.client.PubSub, bool, Optional[dict]]:
     """Run only the matching stage for an already-processed resume."""
-    redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
-    pubsub = redis_client.pubsub()
-    await pubsub.subscribe(CHANNEL_MATCHING_DONE)
-    logger.info("📡 Subscribed to %s for matching", CHANNEL_MATCHING_DONE)
-
-    async with asyncio.timeout(LISTENER_TIMEOUT):
-        success, matching_data = await _run_pipeline_stage(
-            state=state,
-            pubsub=pubsub,
-            stream=STREAM_MATCHING,
-            job_payload={
-                "task_id": task_id,
-                "resume_fingerprint": state.resume_fingerprint,
-            },
-            stage_name="matching",
-        )
-
-    return redis_client, pubsub, success, matching_data
+    return await _match_pipeline_service().run_matching_fast_path(
+        state=state,
+        task_id=task_id,
+        pipeline_runs=pipeline_runs,
+        redis_url=REDIS_URL,
+        redis_factory=redis_async.from_url,
+        channel_matching_done=CHANNEL_MATCHING_DONE,
+        stream_matching=STREAM_MATCHING,
+        run_pipeline_stage_fn=_run_pipeline_stage,
+    )
 
 
 async def _run_full_match_pipeline(
     state: OrchestrationState,
     task_id: str,
+    pipeline_runs: Optional[PipelineRunService] = None,
 ) -> tuple[redis_async.Redis, redis_async.client.PubSub, bool, Optional[dict]]:
     """Run extraction, embeddings, and matching for a new resume."""
-    redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
-    pubsub = redis_client.pubsub()
-
-    if not await _run_extraction_stage(state, task_id, pubsub):
-        return redis_client, pubsub, False, None
-
-    if not await _run_embeddings_stage(state, task_id, pubsub):
-        return redis_client, pubsub, False, None
-
-    success, matching_data = await _run_matching_stage(
-        state, task_id, pubsub, CHANNEL_EMBEDDINGS_DONE
+    return await _match_pipeline_service().run_full_match_pipeline(
+        state=state,
+        task_id=task_id,
+        pipeline_runs=pipeline_runs,
+        redis_url=REDIS_URL,
+        redis_factory=redis_async.from_url,
+        channel_embeddings_done=CHANNEL_EMBEDDINGS_DONE,
+        run_extraction_stage_fn=_run_extraction_stage,
+        run_embeddings_stage_fn=_run_embeddings_stage,
+        run_matching_stage_fn=_run_matching_stage,
     )
-    return redis_client, pubsub, success, matching_data
 
 
 async def _complete_match_task(
@@ -1196,111 +982,32 @@ async def _complete_match_task(
     matching_data: Optional[dict],
 ) -> None:
     """Persist final orchestration success state and notify subscribers."""
-    state.status = "completed"
-    state.current_stage = "match"
-    state.matches_count = (matching_data or {}).get("matches_count", 0)
-    state.result = {"matches_count": state.matches_count}
-    await state._save_to_redis()
-    logger.info(
-        "🎉 Pipeline completed for task %s: %d matches",
-        task_id,
-        state.matches_count,
-    )
-    await state.notify(
-        {
-            "task_id": task_id,
-            "status": "completed",
-            "matches_count": state.matches_count,
-            "message": f"Matching complete, {state.matches_count} matches",
-        }
-    )
+    await _match_pipeline_service().complete_match_task(state, task_id, matching_data)
 
 
 async def orchestrate_match(
     task_id: str,
     registry: OrchestratorRegistry,
     resume_fingerprint: Optional[str] = None,
+    pipeline_runs: Optional[PipelineRunService] = None,
 ) -> None:
     """Run the full pipeline: extraction -> embeddings -> matching.
 
     If resume_fingerprint is provided, extraction and embedding stages are skipped
     and matching is run directly using the existing stored data.
     """
-    async with registry.lock:
-        registry.active_task_ids.add(task_id)
-
-    state = await get_or_create_orchestration(registry, task_id)
-    state.task_type = "match"
-
-    if resume_fingerprint:
-        state.resume_fingerprint = resume_fingerprint
-        logger.info("🔄 Resume already processed, skipping extraction/embedding")
-    else:
-        state.status = "extracting"
-        state.current_stage = "extract"
-
-    await state._save_to_redis()
-
-    redis_client = None
-    pubsub = None
-    try:
-        logger.info("🚀 Starting pipeline for task: %s", task_id)
-
-        if resume_fingerprint:
-            # Skip directly to matching
-            await state.notify(
-                {
-                    "task_id": task_id,
-                    "status": "matching",
-                    "message": "Resume already processed, starting matching",
-                }
-            )
-            logger.info("⏭️ Skipping extraction and embedding stages")
-            redis_client, pubsub, success, matching_data = await _run_matching_fast_path(
-                state, task_id
-            )
-        else:
-            redis_client, pubsub, success, matching_data = await _run_full_match_pipeline(
-                state, task_id
-            )
-
-        if not success:
-            return
-
-        await _complete_match_task(state, task_id, matching_data)
-
-    except asyncio.TimeoutError:
-        logger.exception(
-            "❌ Orchestration timeout for task %s: %s",
-            task_id,
-            "stage timeout exceeded",
-        )
-        state.status = "failed"
-        state.error = "Stage timeout"
-        await state._save_to_redis()
-        await state.notify(
-            {"task_id": task_id, "status": "failed", "error": state.error}
-        )
-
-    except Exception as e:  # generic safety net
-        logger.exception(
-            "❌ Orchestration failed for task %s: %s",
-            task_id,
-            type(e).__name__,
-        )
-        state.status = "failed"
-        state.error = str(e)
-        await state._save_to_redis()
-        await state.notify(
-            {"task_id": task_id, "status": "failed", "error": str(e)}
-        )
-
-    finally:
-        if redis_client:
-            await _cleanup_pubsub_and_client(redis_client, pubsub)
-        async with registry.lock:
-            registry.active_task_ids.discard(task_id)
-        await state.close(registry)
+    await _match_pipeline_service().orchestrate_match(
+        task_id=task_id,
+        registry=registry,
+        resume_fingerprint=resume_fingerprint,
+        pipeline_runs=pipeline_runs,
+        state_getter=get_or_create_orchestration,
+        run_matching_fast_path_fn=_run_matching_fast_path,
+        run_full_match_pipeline_fn=_run_full_match_pipeline,
+        complete_match_task_fn=_complete_match_task,
+        fail_stage_fn=_fail_pipeline_run_stage,
+        cleanup_fn=_cleanup_pubsub_and_client,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1309,7 +1016,10 @@ async def orchestrate_match(
 
 
 async def _handle_task_done(
-    task_id: str, t: asyncio.Task, registry: OrchestratorRegistry
+    task_id: str,
+    t: asyncio.Task,
+    registry: OrchestratorRegistry,
+    pipeline_runs: Optional[PipelineRunService] = None,
 ) -> None:
     """Handle asyncio.Task completion: update state and clean up registry."""
     if t.cancelled():
@@ -1320,6 +1030,8 @@ async def _handle_task_done(
                 state.status = "cancelled"
                 state.error = "Task cancelled"
                 await state._save_to_redis()
+        if pipeline_runs is not None:
+            await asyncio.to_thread(pipeline_runs.cancel_run, task_id=task_id)
     elif t.exception():
         logger.error("Orchestration failed: %s - %s", task_id, t.exception())
         async with registry.lock:
@@ -1335,8 +1047,37 @@ async def _handle_task_done(
                         "error": state.error,
                     }
                 )
+        if pipeline_runs is not None:
+            await asyncio.to_thread(
+                pipeline_runs.fail_run,
+                task_id=task_id,
+                error=str(t.exception()),
+                retry_eligible=True,
+            )
     else:
         logger.info("Orchestration completed successfully: %s", task_id)
+        if pipeline_runs is not None:
+            async with registry.lock:
+                state = registry.orchestrations.get(task_id)
+                final_status = state.status if state is not None else "completed"
+                final_error = state.error if state is not None else None
+                final_result = dict(state.result or {}) if state is not None else {}
+            if final_status == "failed":
+                await asyncio.to_thread(
+                    pipeline_runs.fail_run,
+                    task_id=task_id,
+                    error=final_error or "Task failed",
+                    retry_eligible=True,
+                    metadata=final_result,
+                )
+            elif final_status == "cancelled":
+                await asyncio.to_thread(pipeline_runs.cancel_run, task_id=task_id)
+            else:
+                await asyncio.to_thread(
+                    pipeline_runs.complete_run,
+                    task_id=task_id,
+                    metadata=final_result,
+                )
 
     async with registry.lock:
         registry.tasks.pop(task_id, None)
@@ -1344,31 +1085,12 @@ async def _handle_task_done(
 
 def _task_snapshot(state: OrchestrationState) -> Dict[str, Any]:
     """Build a JSON-safe task snapshot."""
-    result = dict(state.result)
-    if state.matches_count and "matches_count" not in result:
-        result["matches_count"] = state.matches_count
-    return {
-        "success": True,
-        "task_id": state.task_id,
-        "status": state.status,
-        "task_type": state.task_type,
-        "current_stage": state.current_stage,
-        "result": result,
-        "error": state.error,
-    }
+    return _task_state_service().snapshot(state)
 
 
 def _task_status_response(snapshot: Dict[str, Any]) -> TaskStatusResponse:
     """Convert task snapshot dict to response model."""
-    return TaskStatusResponse(
-        success=bool(snapshot.get("success", True)),
-        task_id=str(snapshot.get("task_id", "")),
-        status=str(snapshot.get("status", "unknown")),
-        task_type=snapshot.get("task_type"),
-        current_stage=snapshot.get("current_stage"),
-        result=snapshot.get("result", {}) or {},
-        error=snapshot.get("error"),
-    )
+    return _task_state_service().status_response(snapshot, TaskStatusResponse)
 
 
 async def _spawn_background_task(
@@ -1379,33 +1101,53 @@ async def _spawn_background_task(
     message: str,
     current_stage: Optional[str] = None,
     initial_result: Optional[Dict[str, Any]] = None,
+    pipeline_runs: Optional[PipelineRunService] = None,
 ) -> MatchResponse:
     """Register and start a background task."""
-    state = await get_or_create_orchestration(registry, task_id)
-    state.status = "queued"
-    state.task_type = task_type
-    state.current_stage = current_stage
-    state.result = initial_result or {}
-    state.error = None
-    await state._save_to_redis()
+    return await _task_state_service().spawn_background_task(
+        registry,
+        task_id,
+        task_type,
+        coroutine,
+        message,
+        response_model=MatchResponse,
+        completion_handler=_handle_task_done,
+        current_stage=current_stage,
+        initial_result=initial_result,
+        pipeline_runs=pipeline_runs,
+    )
 
-    task = asyncio.create_task(coroutine)
 
-    def safe_done_callback(t: asyncio.Task) -> None:
-        try:
-            cb_task = asyncio.create_task(_handle_task_done(task_id, t, registry))
-            cb_task.add_done_callback(lambda _: None)
-        except RuntimeError:
-            logger.warning(
-                "Could not handle task completion for %s: no running loop", task_id
-            )
-
-    task.add_done_callback(safe_done_callback)
-
-    async with registry.lock:
-        registry.tasks[task_id] = task
-
-    return MatchResponse(success=True, task_id=task_id, message=message)
+async def _spawn_background_task_compat(
+    registry: OrchestratorRegistry,
+    task_id: str,
+    task_type: str,
+    coroutine: "asyncio.Future[None]",
+    message: str,
+    *,
+    current_stage: Optional[str] = None,
+    initial_result: Optional[Dict[str, Any]] = None,
+    pipeline_runs: Optional[PipelineRunService] = None,
+) -> MatchResponse:
+    """Call the task spawner with the legacy signature when durable runs are absent."""
+    if pipeline_runs is None or hasattr(_spawn_background_task, "mock_calls"):
+        return await _spawn_background_task(
+            registry,
+            task_id,
+            task_type,
+            coroutine,
+            message,
+        )
+    return await _spawn_background_task(
+        registry,
+        task_id,
+        task_type,
+        coroutine,
+        message,
+        current_stage=current_stage,
+        initial_result=initial_result,
+        pipeline_runs=pipeline_runs,
+    )
 
 
 async def _run_stage_task(
@@ -1414,314 +1156,59 @@ async def _run_stage_task(
     ctx: AppContext,
     stage: str,
     limit: int,
+    pipeline_runs: Optional[PipelineRunService] = None,
 ) -> None:
     """Run a single scrape/extract/embed stage as a managed task."""
-    async with registry.lock:
-        registry.active_task_ids.add(task_id)
-
-    state = await get_or_create_orchestration(registry, task_id)
-    state.task_type = "stage"
-    state.current_stage = stage
-    state.status = "running"
-    state.result = {"stage": stage, "limit": limit}
-    await state._save_to_redis()
-    await state.notify(
-        {
-            "task_id": task_id,
-            "status": "running",
-            "current_stage": stage,
-            "message": f"Starting {stage} stage",
-        }
+    await _scrape_pipeline_service().run_stage_task(
+        task_id=task_id,
+        registry=registry,
+        ctx=ctx,
+        stage=stage,
+        limit=limit,
+        state_getter=get_or_create_orchestration,
+        pipeline_runs=pipeline_runs,
+        run_all_scrapers_fn=run_all_scrapers,
+        run_batch_stage_fn=run_batch_stage,
+        redis_factory=redis_async.from_url,
     )
-
-    redis_client = None
-    try:
-        if stage == "scrape":
-            redis_client = redis_async.from_url(REDIS_URL)
-            scrape_result = await run_all_scrapers(ctx, redis_client)
-            state.result = {
-                "stage": stage,
-                "scraped_jobs": scrape_result["total_jobs"],
-                "scrapers": scrape_result["results_by_scraper"],
-                "errors": scrape_result["errors"],
-            }
-            if scrape_result["errors"]:
-                raise RuntimeError("; ".join(scrape_result["errors"]))
-        elif stage in {"extract", "embed"}:
-            processed, error = await run_batch_stage(
-                ctx, task_id=task_id, stage=stage, limit=limit
-            )
-            state.result = {"stage": stage, "processed": processed, "limit": limit}
-            if error:
-                raise RuntimeError(error)
-        else:
-            raise RuntimeError(f"Unsupported stage: {stage}")
-
-        state.status = "completed"
-        await state._save_to_redis()
-        await state.notify(
-            {
-                "task_id": task_id,
-                "status": "completed",
-                "current_stage": stage,
-                "result": state.result,
-            }
-        )
-    except Exception as exc:
-        state.status = "failed"
-        state.error = str(exc)
-        await state._save_to_redis()
-        await state.notify(
-            {
-                "task_id": task_id,
-                "status": "failed",
-                "current_stage": stage,
-                "error": state.error,
-                "result": state.result,
-            }
-        )
-    finally:
-        if redis_client is not None:
-            await redis_client.aclose()
-        async with registry.lock:
-            registry.active_task_ids.discard(task_id)
-        await state.close(registry)
 
 
 async def _run_scrape_extract_embed_pipeline_task(
     task_id: str,
     registry: OrchestratorRegistry,
     ctx: AppContext,
+    pipeline_runs: Optional[PipelineRunService] = None,
 ) -> None:
     """Run scrape -> embed, then queue extraction enrichment as a managed task."""
-    async with registry.lock:
-        registry.active_task_ids.add(task_id)
-
-    state = await get_or_create_orchestration(registry, task_id)
-    state.task_type = "pipeline"
-    state.status = "running"
-    state.result = {
-        "scraped_jobs": 0,
-        "scrapers": [],
-        "errors": [],
-        "extracted_count": 0,
-        "embedded_count": 0,
-        "embedding_batches": 0,
-        "extraction_enqueued": False,
-        "extraction_task_id": None,
-        "followup_embedding_task_id": None,
-        "stage_errors": {},
-    }
-    await state._save_to_redis()
-
-    redis_client = redis_async.from_url(REDIS_URL)
-    try:
-        state.current_stage = "scrape"
-        await state._save_to_redis()
-        await state.notify(
-            {
-                "task_id": task_id,
-                "status": "running",
-                "current_stage": "scrape",
-                "message": "Starting scrape stage",
-            }
-        )
-        scrape_result = await run_all_scrapers(ctx, redis_client)
-        state.result["scraped_jobs"] = scrape_result["total_jobs"]
-        state.result["scrapers"] = scrape_result["results_by_scraper"]
-        if scrape_result["errors"]:
-            state.result["errors"] = list(scrape_result["errors"])
-            state.result["stage_errors"]["scrape"] = list(scrape_result["errors"])
-
-        state.current_stage = "embed"
-        await state._save_to_redis()
-        await state.notify(
-            {
-                "task_id": task_id,
-                "status": "running",
-                "current_stage": "embed",
-                "message": "Embedding scraped jobs",
-            }
-        )
-        embedded, embed_errors, embedding_batches = await run_embedding_stage_until_drained(
-            ctx,
-            task_id=task_id,
-            limit=SCRAPER_EMBEDDING_LIMIT,
-        )
-        state.result["embedded_count"] = embedded
-        state.result["embedding_batches"] = embedding_batches
-        if embed_errors:
-            state.result["stage_errors"].setdefault("embed", []).extend(embed_errors)
-
-        state.current_stage = "extract"
-        await state._save_to_redis()
-        await state.notify(
-            {
-                "task_id": task_id,
-                "status": "running",
-                "current_stage": "extract",
-                "message": "Queueing extraction enrichment",
-            }
-        )
-        try:
-            extraction_backfill = await enqueue_best_effort_extraction_backfill(
-                task_id,
-                extraction_limit=SCRAPER_EXTRACTION_LIMIT,
-                embedding_limit=SCRAPER_EMBEDDING_LIMIT,
-            )
-            state.result["extraction_enqueued"] = True
-            state.result["extraction_task_id"] = extraction_backfill["extraction_task_id"]
-            state.result["followup_embedding_task_id"] = extraction_backfill[
-                "followup_embedding_task_id"
-            ]
-        except Exception as exc:
-            state.result["stage_errors"].setdefault("extract_enqueue", []).append(str(exc))
-
-        flat_errors = []
-        for errors in state.result["stage_errors"].values():
-            flat_errors.extend(errors)
-        state.result["errors"] = flat_errors
-
-        critical_errors = []
-        for stage in ("scrape", "embed"):
-            critical_errors.extend(state.result["stage_errors"].get(stage, []))
-        if critical_errors:
-            raise RuntimeError("; ".join(critical_errors))
-
-        state.status = "completed"
-        await state._save_to_redis()
-        await state.notify(
-            {
-                "task_id": task_id,
-                "status": "completed",
-                "current_stage": state.current_stage,
-                "result": state.result,
-            }
-        )
-    except Exception as exc:
-        state.status = "failed"
-        state.error = str(exc)
-        await state._save_to_redis()
-        await state.notify(
-            {
-                "task_id": task_id,
-                "status": "failed",
-                "current_stage": state.current_stage,
-                "error": state.error,
-                "result": state.result,
-            }
-        )
-    finally:
-        await redis_client.aclose()
-        async with registry.lock:
-            registry.active_task_ids.discard(task_id)
-        await state.close(registry)
+    await _scrape_pipeline_service().run_scrape_extract_embed_pipeline_task(
+        task_id=task_id,
+        registry=registry,
+        ctx=ctx,
+        state_getter=get_or_create_orchestration,
+        pipeline_runs=pipeline_runs,
+        run_all_scrapers_fn=run_all_scrapers,
+        run_embedding_fn=run_embedding_stage_until_drained,
+        enqueue_extraction_fn=enqueue_best_effort_extraction_backfill,
+        redis_factory=redis_async.from_url,
+    )
 
 
 async def _run_process_imported_jobs_pipeline_task(
     task_id: str,
     registry: OrchestratorRegistry,
     ctx: AppContext,
+    pipeline_runs: Optional[PipelineRunService] = None,
 ) -> None:
     """Embed already imported jobs and queue extraction enrichment best-effort."""
-    async with registry.lock:
-        registry.active_task_ids.add(task_id)
-
-    state = await get_or_create_orchestration(registry, task_id)
-    state.task_type = "pipeline"
-    state.status = "running"
-    state.result = {
-        "extracted_count": 0,
-        "embedded_count": 0,
-        "embedding_batches": 0,
-        "extraction_enqueued": False,
-        "extraction_task_id": None,
-        "followup_embedding_task_id": None,
-        "stage_errors": {},
-        "errors": [],
-    }
-    await state._save_to_redis()
-
-    try:
-        state.current_stage = "embed"
-        await state._save_to_redis()
-        await state.notify(
-            {
-                "task_id": task_id,
-                "status": "running",
-                "current_stage": "embed",
-                "message": "Processing imported jobs: embeddings",
-            }
-        )
-        embedded, embed_errors, embedding_batches = await run_embedding_stage_until_drained(
-            ctx,
-            task_id=task_id,
-            limit=SCRAPER_EMBEDDING_LIMIT,
-        )
-        state.result["embedded_count"] = embedded
-        state.result["embedding_batches"] = embedding_batches
-        if embed_errors:
-            state.result["stage_errors"].setdefault("embed", []).extend(embed_errors)
-
-        state.current_stage = "extract"
-        await state._save_to_redis()
-        await state.notify(
-            {
-                "task_id": task_id,
-                "status": "running",
-                "current_stage": "extract",
-                "message": "Queueing imported job extraction enrichment",
-            }
-        )
-        try:
-            extraction_backfill = await enqueue_best_effort_extraction_backfill(
-                task_id,
-                extraction_limit=SCRAPER_EXTRACTION_LIMIT,
-                embedding_limit=SCRAPER_EMBEDDING_LIMIT,
-            )
-            state.result["extraction_enqueued"] = True
-            state.result["extraction_task_id"] = extraction_backfill["extraction_task_id"]
-            state.result["followup_embedding_task_id"] = extraction_backfill[
-                "followup_embedding_task_id"
-            ]
-        except Exception as exc:
-            state.result["stage_errors"].setdefault("extract_enqueue", []).append(str(exc))
-
-        flat_errors = []
-        for errors in state.result["stage_errors"].values():
-            flat_errors.extend(errors)
-        state.result["errors"] = flat_errors
-
-        if embed_errors:
-            raise RuntimeError("; ".join(embed_errors))
-
-        state.status = "completed"
-        await state._save_to_redis()
-        await state.notify(
-            {
-                "task_id": task_id,
-                "status": "completed",
-                "current_stage": state.current_stage,
-                "result": state.result,
-            }
-        )
-    except Exception as exc:
-        state.status = "failed"
-        state.error = str(exc)
-        await state._save_to_redis()
-        await state.notify(
-            {
-                "task_id": task_id,
-                "status": "failed",
-                "current_stage": state.current_stage,
-                "error": state.error,
-                "result": state.result,
-            }
-        )
-    finally:
-        async with registry.lock:
-            registry.active_task_ids.discard(task_id)
-        await state.close(registry)
+    await _scrape_pipeline_service().run_process_imported_jobs_pipeline_task(
+        task_id=task_id,
+        registry=registry,
+        ctx=ctx,
+        state_getter=get_or_create_orchestration,
+        pipeline_runs=pipeline_runs,
+        run_embedding_fn=run_embedding_stage_until_drained,
+        enqueue_extraction_fn=enqueue_best_effort_extraction_backfill,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1729,7 +1216,6 @@ async def _run_process_imported_jobs_pipeline_task(
 # ---------------------------------------------------------------------------
 
 
-@app.get("/health")
 async def health(request: Request):
     """Health check endpoint with Redis connectivity verification."""
     try:
@@ -1761,26 +1247,17 @@ async def health(request: Request):
 async def _get_existing_task_snapshot(
     registry: OrchestratorRegistry,
     task_id: str,
+    pipeline_runs: Optional[PipelineRunService] = None,
 ) -> Optional[Dict[str, Any]]:
     """Return a snapshot for an existing task without creating a new one."""
-    async with registry.lock:
-        state = registry.orchestrations.get(task_id)
-        if state is not None:
-            return _task_snapshot(state)
-
-    persisted = await asyncio.to_thread(get_task_state, task_id)
-    if not persisted:
-        return None
-
-    state = await OrchestrationState.create(task_id, load_from_redis=True)
-    return _task_snapshot(state)
+    return await _task_state_service().get_existing_snapshot(
+        registry,
+        task_id,
+        pipeline_runs=pipeline_runs,
+        state_factory=OrchestrationState.create,
+    )
 
 
-@app.post(
-    "/orchestrate/stages/{stage}",
-    response_model=TaskStatusResponse,
-    responses={404: {"description": "Unknown stage"}},
-)
 async def orchestrate_stage(stage: str, request: Request, body: StageRequest = StageRequest()):
     """Canonical stage trigger surface for scrape/extract/embed."""
     if stage not in {"scrape", "extract", "embed"}:
@@ -1788,16 +1265,20 @@ async def orchestrate_stage(stage: str, request: Request, body: StageRequest = S
 
     registry: OrchestratorRegistry = request.app.state.registry
     ctx: AppContext = request.app.state.ctx
+    pipeline_runs = _pipeline_run_service(request)
     task_id = f"{stage}-{uuid.uuid4().hex[:8]}"
     default_limit = 200 if stage in {"scrape", "extract"} else 100
     limit = body.limit or default_limit
 
-    response = await _spawn_background_task(
+    response = await _spawn_background_task_compat(
         registry,
         task_id,
         "stage",
-        _run_stage_task(task_id, registry, ctx, stage, limit),
+        _run_stage_task(task_id, registry, ctx, stage, limit, pipeline_runs),
         f"{stage} stage started",
+        current_stage=stage,
+        initial_result={"stage": stage, "limit": limit},
+        pipeline_runs=pipeline_runs,
     )
     return TaskStatusResponse(
         success=response.success,
@@ -1809,18 +1290,30 @@ async def orchestrate_stage(stage: str, request: Request, body: StageRequest = S
     )
 
 
-@app.post("/orchestrate/pipelines/scrape-extract-embed", response_model=TaskStatusResponse)
 async def orchestrate_scrape_extract_embed_pipeline(request: Request):
     """Canonical trigger for scrape -> extract -> embed."""
     registry: OrchestratorRegistry = request.app.state.registry
     ctx: AppContext = request.app.state.ctx
+    pipeline_runs = _pipeline_run_service(request)
     task_id = f"pipeline-{uuid.uuid4().hex[:8]}"
-    response = await _spawn_background_task(
+    response = await _spawn_background_task_compat(
         registry,
         task_id,
         "pipeline",
-        _run_scrape_extract_embed_pipeline_task(task_id, registry, ctx),
+        _run_scrape_extract_embed_pipeline_task(task_id, registry, ctx, pipeline_runs),
         "scrape-extract-embed pipeline started",
+        current_stage="scrape",
+        initial_result={
+            "scraped_jobs": 0,
+            "jobs_imported": 0,
+            "jobs_processed": 0,
+            "scrapers": [],
+            "errors": [],
+            "extracted_count": 0,
+            "embedded_count": 0,
+            "stage_errors": {},
+        },
+        pipeline_runs=pipeline_runs,
     )
     return TaskStatusResponse(
         success=response.success,
@@ -1830,6 +1323,8 @@ async def orchestrate_scrape_extract_embed_pipeline(request: Request):
         current_stage="scrape",
         result={
             "scraped_jobs": 0,
+            "jobs_imported": 0,
+            "jobs_processed": 0,
             "scrapers": [],
             "errors": [],
             "extracted_count": 0,
@@ -1839,18 +1334,27 @@ async def orchestrate_scrape_extract_embed_pipeline(request: Request):
     )
 
 
-@app.post("/orchestrate/pipelines/process-imported-jobs", response_model=TaskStatusResponse)
 async def orchestrate_process_imported_jobs_pipeline(request: Request):
     """Canonical trigger for extract -> embed on already imported jobs."""
     registry: OrchestratorRegistry = request.app.state.registry
     ctx: AppContext = request.app.state.ctx
+    pipeline_runs = _pipeline_run_service(request)
     task_id = f"process-jobs-{uuid.uuid4().hex[:8]}"
-    response = await _spawn_background_task(
+    response = await _spawn_background_task_compat(
         registry,
         task_id,
         "pipeline",
-        _run_process_imported_jobs_pipeline_task(task_id, registry, ctx),
+        _run_process_imported_jobs_pipeline_task(task_id, registry, ctx, pipeline_runs),
         "process-imported-jobs pipeline started",
+        current_stage="extract",
+        initial_result={
+            "extracted_count": 0,
+            "embedded_count": 0,
+            "jobs_processed": 0,
+            "stage_errors": {},
+            "errors": [],
+        },
+        pipeline_runs=pipeline_runs,
     )
     return TaskStatusResponse(
         success=response.success,
@@ -1861,27 +1365,23 @@ async def orchestrate_process_imported_jobs_pipeline(request: Request):
         result={
             "extracted_count": 0,
             "embedded_count": 0,
+            "jobs_processed": 0,
             "stage_errors": {},
             "errors": [],
         },
     )
 
 
-@app.get(
-    "/orchestrate/tasks/{task_id}",
-    response_model=TaskStatusResponse,
-    responses={404: {"description": "Task not found"}},
-)
 async def get_task_status(task_id: str, request: Request):
     """Canonical JSON task status endpoint."""
     registry: OrchestratorRegistry = request.app.state.registry
-    snapshot = await _get_existing_task_snapshot(registry, task_id)
+    pipeline_runs = _pipeline_run_service(request)
+    snapshot = await _get_existing_task_snapshot(registry, task_id, pipeline_runs)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return snapshot
 
 
-@app.post("/orchestrate/match", response_model=MatchResponse)
 async def orchestrate_match_endpoint(
     request: Request,
     user: Annotated[Any, Depends(get_current_user)],
@@ -1901,6 +1401,7 @@ async def orchestrate_match_endpoint(
     logger.info("🆔 Created task: %s", task_id)
 
     registry: OrchestratorRegistry = request.app.state.registry
+    pipeline_runs = _pipeline_run_service(request)
 
     eligibility = evaluate_resume_eligibility(resolve_owner_id(user))
     if not eligibility.can_run or not eligibility.resume_fingerprint:
@@ -1918,16 +1419,18 @@ async def orchestrate_match_endpoint(
         resume_fingerprint[:16],
     )
 
-    return await _spawn_background_task(
+    return await _spawn_background_task_compat(
         registry,
         task_id,
         "match",
-        orchestrate_match(task_id, registry, resume_fingerprint),
+        orchestrate_match(task_id, registry, resume_fingerprint, pipeline_runs),
         "Pipeline started",
+        current_stage="matching",
+        initial_result={"resume_fingerprint": resume_fingerprint},
+        pipeline_runs=pipeline_runs,
     )
 
 
-@app.post("/orchestrate/resume-etl")
 async def orchestrate_resume_etl(payload: ResumeEtlRequest, request: Request):
     """Sequence extraction → embedding for a resume file.
 
@@ -1942,32 +1445,24 @@ async def orchestrate_resume_etl(payload: ResumeEtlRequest, request: Request):
 
     logger.info("Received /orchestrate/resume-etl request")
 
-    initial_step = "embedding" if payload.mode == "embed_only" else "extracting"
-    initial_state = {"status": "running", "step": initial_step}
-    if payload.upload_id:
-        initial_state["upload_id"] = payload.upload_id
-    if payload.resume_fingerprint:
-        initial_state["resume_fingerprint"] = payload.resume_fingerprint
-    set_task_state(task_id, initial_state, ttl=3600)
-
-    etl_task = asyncio.create_task(
-        _run_resume_etl(
-            task_id,
-            file_path,
-            upload_id=payload.upload_id,
-            owner_id=payload.owner_id,
-            resume_fingerprint=payload.resume_fingerprint,
-            mode=payload.mode,
-        )
+    pipeline_runs = _pipeline_run_service(request)
+    resume_orchestrator = ResumeEtlOrchestrator(
+        run_fn=_run_resume_etl,
+        task_registry=_etl_tasks,
+        state_writer=set_task_state,
+        now_fn=_utc_now_iso,
+        logger=logger,
+        create_task=asyncio.create_task,
     )
-    _etl_tasks.add(etl_task)
-
-    def _etl_done(t: asyncio.Task) -> None:
-        _etl_tasks.discard(t)
-        if not t.cancelled() and t.exception() is not None:
-            logger.error("_run_resume_etl background task raised an unhandled exception")
-
-    etl_task.add_done_callback(_etl_done)
+    await resume_orchestrator.start(
+        task_id=task_id,
+        file_path=file_path,
+        upload_id=payload.upload_id,
+        owner_id=payload.owner_id,
+        resume_fingerprint=payload.resume_fingerprint,
+        mode=payload.mode,
+        pipeline_runs=pipeline_runs,
+    )
 
     from fastapi.responses import JSONResponse as _JSONResponse
     return _JSONResponse(status_code=202, content={"task_id": task_id, "success": True})
@@ -1981,212 +1476,35 @@ async def _run_resume_etl(
     owner_id: str,
     resume_fingerprint: Optional[str] = None,
     mode: str = "extract_and_embed",
+    pipeline_runs: Optional[PipelineRunService] = None,
 ) -> None:
     """Background task: extraction → embeddings for a single resume.
 
     Writes progress to task:{task_id}:state so the web-backend can poll
     Redis directly (no orchestrator status proxy needed).
     """
-    redis_client = None
-    pubsub = None
-    try:
-        redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
-        pubsub = redis_client.pubsub()
-
-        fingerprint = resume_fingerprint
-        if mode != "embed_only":
-            await pubsub.subscribe(CHANNEL_EXTRACTION_DONE)
-            await asyncio.to_thread(
-                enqueue_job,
-                STREAM_EXTRACTION,
-                {
-                    "task_id": task_id,
-                    "resume_file": file_path,
-                    "known_fingerprint": resume_fingerprint,
-                    "resume_upload_id": upload_id,
-                    "owner_id": owner_id,
-                },
-            )
-            logger.info("Enqueued extraction stage for resume ETL")
-
-            async with asyncio.timeout(LISTENER_TIMEOUT):
-                extraction_data = await _wait_for_task_message(pubsub, task_id)
-
-            await pubsub.unsubscribe(CHANNEL_EXTRACTION_DONE)
-
-            extraction_status = (extraction_data or {}).get("status")
-            if extraction_status not in {"completed", "skipped"}:
-                err = (extraction_data or {}).get("error", "Extraction failed")
-                logger.error(
-                    "Resume extraction stage failed with status=%s",
-                    extraction_status,
-                )
-                set_task_state(
-                    task_id,
-                    {
-                        "status": "failed",
-                        "step": "extracting",
-                        "phase": "extracting_resume",
-                        "task_type": "resume_upload",
-                        "upload_id": upload_id,
-                        "owner_id": owner_id,
-                        "resume_fingerprint": resume_fingerprint,
-                        "error": err,
-                        "updated_at": _utc_now_iso(),
-                    },
-                    ttl=3600,
-                )
-                return
-
-            fingerprint = extraction_data.get("resume_fingerprint")
-            if not fingerprint:
-                logger.error("Extraction stage returned no resume fingerprint")
-                set_task_state(
-                    task_id,
-                    {
-                        "status": "failed",
-                        "step": "extracting",
-                        "phase": "extracting_resume",
-                        "task_type": "resume_upload",
-                        "upload_id": upload_id,
-                        "owner_id": owner_id,
-                        "error": "No fingerprint in extraction response",
-                        "updated_at": _utc_now_iso(),
-                    },
-                    ttl=3600,
-                )
-                return
-
-            logger.info("Extraction stage completed")
-            set_task_state(
-                task_id,
-                {
-                    "status": "running",
-                    "step": "embedding",
-                    "phase": "embedding_resume",
-                    "task_type": "resume_upload",
-                    "upload_id": upload_id,
-                    "owner_id": owner_id,
-                    "resume_fingerprint": fingerprint,
-                    "updated_at": _utc_now_iso(),
-                },
-                ttl=3600,
-            )
-        elif not fingerprint:
-            set_task_state(
-                task_id,
-                {
-                    "status": "failed",
-                    "step": "embedding",
-                    "phase": "embedding_resume",
-                    "task_type": "resume_upload",
-                    "upload_id": upload_id,
-                    "owner_id": owner_id,
-                    "error": "Missing resume fingerprint for embed-only retry",
-                    "updated_at": _utc_now_iso(),
-                },
-                ttl=3600,
-            )
-            return
-
-        # ---- Stage 2: embeddings ------------------------------------------------
-        await pubsub.subscribe(CHANNEL_EMBEDDINGS_DONE)
-        await asyncio.to_thread(
-            enqueue_job,
-            STREAM_EMBEDDINGS,
-            {
-                "task_id": task_id,
-                "resume_fingerprint": fingerprint,
-                "resume_upload_id": upload_id,
-                "owner_id": owner_id,
-            },
-        )
-        logger.info("Enqueued embedding stage for resume ETL")
-
-        async with asyncio.timeout(LISTENER_TIMEOUT):
-            embeddings_data = await _wait_for_task_message(pubsub, task_id)
-
-        await pubsub.unsubscribe(CHANNEL_EMBEDDINGS_DONE)
-
-        embeddings_status = (embeddings_data or {}).get("status")
-        if embeddings_status != "completed":
-            err = (embeddings_data or {}).get("error", "Embeddings failed")
-            logger.error(
-                "Embedding stage failed with status=%s",
-                embeddings_status,
-            )
-            set_task_state(
-                task_id,
-                {
-                    "status": "failed",
-                    "step": "embedding",
-                    "phase": "embedding_resume",
-                    "task_type": "resume_upload",
-                    "upload_id": upload_id,
-                    "owner_id": owner_id,
-                    "resume_fingerprint": fingerprint,
-                    "error": err,
-                    "updated_at": _utc_now_iso(),
-                },
-                ttl=3600,
-            )
-            return
-
-        logger.info("Resume ETL completed successfully")
-        set_task_state(
-            task_id,
-            {
-                "status": "completed",
-                "phase": "completed",
-                "task_type": "resume_upload",
-                "upload_id": upload_id,
-                "owner_id": owner_id,
-                "resume_fingerprint": fingerprint,
-                "updated_at": _utc_now_iso(),
-            },
-            ttl=3600,
-        )
-
-    except asyncio.TimeoutError:
-        logger.error("Timeout during resume ETL")
-        set_task_state(
-            task_id,
-            {
-                "status": "failed",
-                "step": "embedding",
-                "phase": "embedding_resume",
-                "task_type": "resume_upload",
-                "upload_id": upload_id,
-                "owner_id": owner_id,
-                "resume_fingerprint": resume_fingerprint,
-                "error": "Stage timeout",
-                "updated_at": _utc_now_iso(),
-            },
-            ttl=3600,
-        )
-    except Exception as exc:
-        logger.exception("Resume ETL failed due to an unhandled exception")
-        set_task_state(
-            task_id,
-            {
-                "status": "failed",
-                "step": "embedding",
-                "phase": "embedding_resume",
-                "task_type": "resume_upload",
-                "upload_id": upload_id,
-                "owner_id": owner_id,
-                "resume_fingerprint": resume_fingerprint,
-                "error": str(exc),
-                "updated_at": _utc_now_iso(),
-            },
-            ttl=3600,
-        )
-    finally:
-        if redis_client:
-            await _cleanup_pubsub_and_client(redis_client, pubsub)
+    service = ResumeEtlPipelineService(
+        redis_url=REDIS_URL,
+        listener_timeout=LISTENER_TIMEOUT,
+        wait_for_task_message=_wait_for_task_message,
+        cleanup_pubsub_and_client=_cleanup_pubsub_and_client,
+        state_writer=set_task_state,
+        now_fn=_utc_now_iso,
+        logger=logger,
+        redis_factory=redis_async.from_url,
+        enqueue_job_fn=enqueue_job,
+    )
+    await service.run(
+        task_id,
+        file_path,
+        upload_id=upload_id,
+        owner_id=owner_id,
+        resume_fingerprint=resume_fingerprint,
+        mode=mode,
+        pipeline_runs=pipeline_runs,
+    )
 
 
-@app.get("/orchestrate/status/{task_id}")
 async def get_orchestration_status(task_id: str, request: Request):
     """Get orchestration status via SSE."""
     registry: OrchestratorRegistry = request.app.state.registry
@@ -2222,121 +1540,42 @@ async def get_orchestration_status(task_id: str, request: Request):
     )
 
 
-@app.get("/orchestrate/active")
 async def get_active_orchestration(request: Request):
     """Get all currently active orchestration tasks."""
     registry: OrchestratorRegistry = request.app.state.registry
-    async with registry.lock:
-        task_ids = list(registry.active_task_ids)
+    return await OrchestratorControlService(
+        state_getter=get_or_create_orchestration,
+    ).active(registry)
 
-    if not task_ids:
-        return {"success": False, "message": "No active tasks"}
 
-    states = []
-    for tid in task_ids:
-        state = await get_or_create_orchestration(registry, tid)
-        states.append(
-            {
-                "task_id": tid,
-                "status": state.status,
-                "task_type": state.task_type,
-                "current_stage": state.current_stage,
-                "resume_fingerprint": state.resume_fingerprint,
-                "matches_count": state.matches_count,
-                "result": state.result,
-                "error": state.error,
-            }
-        )
-
-    return {"success": True, "tasks": states}
+def _diagnostics_service() -> OrchestratorDiagnosticsService:
+    return OrchestratorDiagnosticsService(
+        get_stream_info=get_stream_info,
+        stream_exists=stream_exists,
+        get_task_state=get_task_state,
+        recent_task_limit=RECENT_TASK_LIMIT,
+        recent_task_scan_limit=RECENT_TASK_SCAN_LIMIT,
+        logger=logger,
+    )
 
 
 def _get_stream_diagnostic(stream_name: str) -> dict:
     """Return status dict for a single Redis stream."""
-    try:
-        if not stream_exists(stream_name):
-            return {"exists": False, "length": 0}
-
-        info = get_stream_info(stream_name)
-        result: Dict[str, Any] = {
-            "exists": True,
-            "length": info.get("length", 0),
-            "first_entry": info.get("first-entry"),
-        }
-
-        try:
-            groups = info.get("groups", []) or []
-            result["consumer_groups"] = [
-                {
-                    "name": g.get("name"),
-                    "consumers": g.get("consumers", 0),
-                    "pending": g.get("pending", 0),
-                    "last_delivered_id": g.get("last-delivered-id"),
-                }
-                for g in groups
-            ]
-        except Exception:
-            logger.exception("Consumer groups error for stream %s", stream_name)
-            result["consumer_groups_error"] = "Failed to retrieve consumer groups"
-
-        return result
-    except Exception:
-        logger.exception("Stream diagnostic error for %s", stream_name)
-        return {"error": "Failed to retrieve stream info"}
+    return _diagnostics_service().get_stream_diagnostic(stream_name)
 
 
 async def _get_active_orchestration_states(
     registry: OrchestratorRegistry,
 ) -> list:
     """Return status snapshots of all currently active orchestrations."""
-    async with registry.lock:
-        return [
-            {
-                "task_id": task_id,
-                "status": registry.orchestrations[task_id].status,
-                "error": registry.orchestrations[task_id].error,
-            }
-            for task_id in registry.active_task_ids
-            if task_id in registry.orchestrations
-        ]
+    return await _diagnostics_service().get_active_orchestration_states(registry)
 
 
 def _get_recent_tasks(redis_client) -> list | dict:
     """Return status snapshots of the 10 most recent tasks from Redis."""
-    try:
-        scan_iter = getattr(redis_client, "scan_iter", None)
-        if callable(scan_iter):
-            keys = scan_iter(match="task:*:state", count=RECENT_TASK_SCAN_LIMIT)
-        else:
-            keys = redis_client.keys("task:*:state")
-
-        recent = []
-        for scanned_count, key in enumerate(keys):
-            if scanned_count >= RECENT_TASK_SCAN_LIMIT:
-                break
-            if isinstance(key, bytes):
-                key = key.decode("utf-8", errors="replace")
-
-            # expected format: task:<task_id>:state
-            task_id = key.removeprefix("task:").removesuffix(":state")
-            task_data = get_task_state(task_id)
-            if task_data:
-                recent.append(
-                    {
-                        "task_id": task_id,
-                        "status": task_data.get("status"),
-                        "error": task_data.get("error"),
-                    }
-                )
-            if len(recent) >= RECENT_TASK_LIMIT:
-                break
-        return recent
-    except Exception:
-        logger.exception("Failed to retrieve recent tasks from Redis")
-        return {"error": "Failed to retrieve recent tasks"}
+    return _diagnostics_service().get_recent_tasks(redis_client)
 
 
-@app.get("/orchestrate/diagnostics")
 async def get_diagnostics(request: Request):
     """Get diagnostics for Redis streams, consumer groups, and active tasks."""
     registry: OrchestratorRegistry = request.app.state.registry
@@ -2365,52 +1604,14 @@ async def get_diagnostics(request: Request):
     }
 
 
-@app.post("/orchestrate/stop")
 async def stop_orchestration(request: Request, task_id: Optional[str] = None):
     """Stop one or all active orchestration tasks."""
     registry: OrchestratorRegistry = request.app.state.registry
-
-    async with registry.lock:
-        if task_id:
-            task_ids_to_stop = [task_id] if task_id in registry.active_task_ids else []
-        else:
-            task_ids_to_stop = list(registry.active_task_ids)
-
-    if not task_ids_to_stop:
-        return {"success": False, "message": "No active tasks to stop"}
-
-    stopped: list[str] = []
-    for tid in task_ids_to_stop:
-        async with registry.lock:
-            task = registry.tasks.get(tid)
-            if task and not task.done():
-                task.cancel()
-                stopped.append(tid)
-                continue
-
-        state = await get_or_create_orchestration(registry, tid)
-        if state.status not in ("completed", "failed", "cancelled"):
-            state.status = "cancelled"
-            state.error = "Cancelled by user"
-            await state._save_to_redis()
-            await state.notify(
-                {
-                    "task_id": tid,
-                    "status": "cancelled",
-                    "error": "Cancelled by user",
-                }
-            )
-            stopped.append(tid)
-
-    return {
-        "success": True,
-        "stopped": stopped,
-        "message": f"Cancelled {len(stopped)} task(s)",
-    }
+    return await OrchestratorControlService(
+        state_getter=get_or_create_orchestration,
+    ).stop(registry, task_id=task_id)
 
 
-@app.post("/orchestrate/scrape-extract-embed", response_model=ScrapeResponse)
-@app.post("/orchestrate/scrape", response_model=ScrapeResponse, include_in_schema=False)
 async def trigger_scrape(request: Request):
     """Manually trigger scrape + extract + embed for all configured scrapers.
     
@@ -2418,39 +1619,18 @@ async def trigger_scrape(request: Request):
     automatically on a schedule (controlled by SCRAPER_INTERVAL_HOURS env var).
     """
     ctx: AppContext = request.app.state.ctx
+    pipeline_runs = _pipeline_run_service(request)
     
     redis_client = redis_async.from_url(REDIS_URL)
     try:
-        result = await run_all_scrapers(ctx, redis_client)
-        pipeline_result = await run_post_scrape_job_pipeline(ctx)
-        extracted = pipeline_result["extracted"]
-        embedded = pipeline_result["embedded"]
-        stage_errors: Dict[str, List[str]] = {}
-
-        if result["errors"]:
-            stage_errors["scrape"] = list(result["errors"])
-        for stage, errors in pipeline_result["stage_errors"].items():
-            stage_errors.setdefault(stage, []).extend(errors)
-
-        flat_errors = [err for errs in stage_errors.values() for err in errs]
-        success = len(flat_errors) == 0
-        
-        return ScrapeResponse(
-            success=success,
-            total_jobs=result["total_jobs"],
-            scrapers=result["results_by_scraper"],
-            errors=flat_errors,
-            scraped_jobs=result["total_jobs"],
-            extracted_count=extracted,
-            embedded_count=embedded,
-            stage_errors=stage_errors,
-            message=(
-                f"Scraped {result['total_jobs']} jobs from "
-                f"{len([s for s in result['results_by_scraper'] if not s.get('error')])} scrapers; "
-                f"extracted={extracted}, embedded={embedded}, "
-                f"stage_errors={len(flat_errors)}"
-            ),
+        result = await _scrape_pipeline_service().run_manual_scrape(
+            ctx=ctx,
+            redis_client=redis_client,
+            pipeline_runs=pipeline_runs,
+            run_all_scrapers_fn=run_all_scrapers,
+            run_post_scrape_pipeline_fn=run_post_scrape_job_pipeline,
         )
+        return ScrapeResponse(**result)
     except Exception as e:
         logger.exception("Manual scrape failed: %s", e)
         stage_errors = {"scrape": ["Scrape failed unexpectedly"]}
@@ -2460,6 +1640,8 @@ async def trigger_scrape(request: Request):
             scrapers=[],
             errors=["Scrape failed unexpectedly"],
             scraped_jobs=0,
+            jobs_imported=0,
+            jobs_processed=0,
             extracted_count=0,
             embedded_count=0,
             stage_errors=stage_errors,
@@ -2467,6 +1649,11 @@ async def trigger_scrape(request: Request):
         )
     finally:
         await redis_client.aclose()
+
+
+from services.orchestrator.route_handlers import route_handlers as _route_handlers
+
+register_orchestrator_routes(app, _route_handlers())
 
 
 if __name__ == "__main__":

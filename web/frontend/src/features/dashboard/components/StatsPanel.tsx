@@ -57,8 +57,8 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
     const belowArc = arcFor(belowThreshold);
 
     return (
-        <div className="grid grid-cols-1 gap-7 lg:grid-cols-[minmax(16rem,0.9fr)_minmax(14rem,0.7fr)_minmax(14rem,0.8fr)] lg:items-stretch">
-            <div className="min-w-0 flex flex-col justify-between lg:pr-6">
+        <div className="grid grid-cols-1 gap-7 lg:grid-cols-[minmax(15rem,1.05fr)_minmax(14rem,0.8fr)_minmax(16rem,1fr)] lg:items-stretch lg:gap-x-10">
+            <div className="min-w-0 flex flex-col justify-between">
                 <p className="caption">Total</p>
                 <div className="mt-2 flex flex-wrap items-end gap-x-3 gap-y-1">
                     <span className="display-numeral text-[56px] leading-none sm:text-[64px]">
@@ -78,7 +78,7 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
                 </dl>
             </div>
 
-            <div className="min-w-0 border-t border-rule pt-6 md:flex md:items-center md:gap-5 lg:border-l lg:border-t-0 lg:px-6 lg:pt-0">
+            <div className="min-w-0 border-t border-rule pt-6 md:flex md:items-center md:gap-5 lg:border-t-0 lg:pt-0">
                 <SegmentedCircle
                     activeMatches={activeMatches}
                     activeArc={activeArc}
@@ -98,7 +98,7 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
                 </dl>
             </div>
 
-            <div className="min-w-0 border-t border-rule pt-6 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+            <div className="min-w-0 border-t border-rule pt-6 lg:border-t-0 lg:pt-0">
                 <p className="caption">Score distribution</p>
                 <div className="mt-3 space-y-2.5">
                     <CompactScoreBar label="Strong" range="80+" value={scoreDist?.excellent ?? 0} total={totalMatches} tone="accent" />

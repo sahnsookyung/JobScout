@@ -394,6 +394,36 @@ class TestGetStats:
         assert data["stats"]["excluded_count"] == 0
         assert data["stats"]["total_matches"] == 0
 
+    def test_tenant_header_scopes_canonical_selection(self, client, app):
+        canonical = SimpleNamespace(selection_run_id="run-tenant")
+        mock_db = Mock()
+        repo = self._fake_repo(primary_count=1, items=[_make_item(fit_score=90.0)])
+        tenant_id = "00000000-0000-4000-8000-000000000201"
+
+        @contextmanager
+        def fake_uow():
+            yield repo
+
+        with self._setup(app, mock_db, _make_policy_mock()), \
+             patch("web.backend.routers.stats.job_uow", fake_uow), \
+             patch(
+                 "web.backend.routers.stats.resolve_canonical_resume_selection",
+                 return_value=canonical,
+             ) as resolve_selection:
+            response = client.get("/api/stats", headers={"X-Tenant-Id": tenant_id})
+
+        assert response.status_code == 200
+        assert str(resolve_selection.call_args.kwargs["tenant_id"]) == tenant_id
+
+    def test_invalid_tenant_header_returns_400(self, client, app):
+        mock_db = Mock()
+
+        with self._setup(app, mock_db, _make_policy_mock()):
+            response = client.get("/api/stats", headers={"X-Tenant-Id": "not-a-uuid"})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "X-Tenant-Id must be a UUID."
+
     def test_job_processing_stats_are_serialized(self):
         row = SimpleNamespace(
             job_post_total=1459,

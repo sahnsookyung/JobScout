@@ -421,6 +421,67 @@ class MatchLlmEvaluationService:
         self.db.commit()
         return evaluation
 
+    def resume_pending_evaluation(self, evaluation_id: Any) -> LlmMatchEvaluation | None:
+        """Rebuild judge input and run a pending, stale-running, or retryable failed row."""
+        try:
+            lookup_id = uuid.UUID(str(evaluation_id))
+        except (TypeError, ValueError):
+            logger.warning("Skipping invalid LLM evaluation id %s", _sanitize_log(evaluation_id))
+            return None
+
+        evaluation = self.db.get(LlmMatchEvaluation, lookup_id)
+        if evaluation is None:
+            logger.warning("Skipping missing LLM evaluation %s", _sanitize_log(evaluation_id))
+            return None
+        if evaluation.deleted_at is not None:
+            logger.info("Skipping deleted LLM evaluation %s", _sanitize_log(evaluation_id))
+            return evaluation
+        if evaluation.status == LLM_EVALUATION_FAILED and not evaluation.retryable:
+            logger.info("Skipping terminal failed LLM evaluation %s", _sanitize_log(evaluation_id))
+            return evaluation
+        if evaluation.status not in {LLM_EVALUATION_PENDING, LLM_EVALUATION_RUNNING, LLM_EVALUATION_FAILED}:
+            logger.info(
+                "Skipping LLM evaluation %s with status %s",
+                _sanitize_log(evaluation_id),
+                _sanitize_log(evaluation.status),
+            )
+            return evaluation
+
+        match = None
+        if evaluation.job_match_id is not None:
+            match = self.db.get(JobMatch, evaluation.job_match_id)
+        if match is None:
+            stmt = select(JobMatch).where(
+                JobMatch.job_post_id == evaluation.job_post_id,
+                JobMatch.resume_fingerprint == evaluation.resume_fingerprint,
+            )
+            match = self.db.execute(stmt).scalar_one_or_none()
+        if match is None:
+            evaluation.status = LLM_EVALUATION_FAILED
+            evaluation.error_code = "match_not_found"
+            evaluation.retryable = False
+            evaluation.completed_at = datetime.now(timezone.utc)
+            self.db.commit()
+            return evaluation
+
+        if evaluation.status == LLM_EVALUATION_FAILED:
+            evaluation.status = LLM_EVALUATION_PENDING
+            evaluation.retryable = False
+            evaluation.error_code = None
+            evaluation.completed_at = None
+            self.db.flush()
+
+        judge_input = self.build_judge_input(
+            match,
+            owner_id=evaluation.owner_id,
+            tenant_id=evaluation.tenant_id,
+        )
+        return self.run_pending_evaluation(
+            evaluation.id,
+            judge_input.provider_payload,
+            truncation=judge_input.truncation,
+        )
+
     def delete_evaluation(
         self,
         match_id: Any,

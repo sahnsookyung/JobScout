@@ -5,7 +5,7 @@ export const useStats = (params: GetStatsParams = {}) => {
     return useQuery({
         queryKey: ['stats', params],
         queryFn: async () => {
-            const response = await matchesApi.getStats(params);
+            const response = await matchesApi.getMatchSummary(params);
             return response.data.stats;
         },
         staleTime: 60000,

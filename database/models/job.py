@@ -82,7 +82,7 @@ class JobPost(Base):
     description_warning_code = Column(Text)
     description_hash = Column(Text)
     skills_raw = Column(Text) # CSV or raw string
-    raw_payload = Column(JSONB, nullable=False, default={})
+    raw_payload = Column(JSONB, nullable=False, default=dict)
     content_hash = Column(Text)  # Hash of description for content change detection
     canonical_job_summary = Column(Text)
     canonical_job_summary_version = Column(
@@ -194,7 +194,7 @@ class JobRequirementUnit(Base):
     
     req_type = Column(Text, nullable=False) # required|preferred|responsibility|constraint|benefit
     text = Column(Text, nullable=False)
-    tags = Column(JSONB, nullable=False, default={})
+    tags = Column(JSONB, nullable=False, default=dict)
     ordinal = Column(Integer)
     
     # Experience requirement (parsed from text like "5+ years Python")

@@ -47,6 +47,11 @@ _PREF_REASONS = frozenset({
     "preference_reranker_unavailable",
     "preference_profile_unavailable",
 })
+_MATCH_DEGRADED_REASONS = frozenset({
+    "canonical_selection_unavailable",
+    "match_query_unavailable",
+    "degraded",
+})
 _EMAIL_EVENTS = frozenset({
     "sent",
     "verified",
@@ -55,8 +60,18 @@ _EMAIL_EVENTS = frozenset({
     "invalid_address",
     "cleared",
 })
-_WORKER_SERVICES = frozenset({"extraction", "embeddings", "matcher"})
-_WORKER_NAMES = frozenset({"consumer", "batch_consumer"})
+_WORKER_SERVICES = frozenset({"extraction", "embeddings", "matcher", "llm_evaluation"})
+_WORKER_NAMES = frozenset({"consumer", "batch_consumer", "worker"})
+_PIPELINE_STAGES = frozenset({
+    "scrape",
+    "extraction",
+    "embedding",
+    "matching",
+    "repair",
+    "resume_extraction",
+    "resume_embedding",
+})
+_LLM_EVALUATION_QUEUE_REGISTRIES = frozenset({"queued", "started", "deferred", "scheduled", "failed"})
 
 
 def _safe(value: str, allowed: frozenset[str]) -> str:
@@ -98,6 +113,12 @@ preference_reranker_status_total = Counter(
     labelnames=("applied", "reason"),
 )
 
+match_query_degraded_reason_total = Counter(
+    f"{NAMESPACE}_match_query_degraded_reason_total",
+    "Soft-degrade trigger that affected the match query read path.",
+    labelnames=("reason",),
+)
+
 email_verification_events_total = Counter(
     f"{NAMESPACE}_email_verification_events_total",
     "Lifecycle events for the user's notification email override.",
@@ -108,6 +129,69 @@ worker_running = Gauge(
     f"{NAMESPACE}_worker_running",
     "Whether a background worker loop is currently running (1) or stopped (0).",
     labelnames=("service", "worker"),
+)
+
+jobs_imported = Counter(
+    f"{NAMESPACE}_jobs_imported",
+    "Jobs imported into the durable inventory.",
+)
+
+jobs_extraction_queued = Counter(
+    f"{NAMESPACE}_jobs_extraction_queued",
+    "Jobs queued for extraction.",
+)
+
+jobs_extracted = Counter(
+    f"{NAMESPACE}_jobs_extracted",
+    "Jobs that completed extraction.",
+)
+
+jobs_embedding_queued = Counter(
+    f"{NAMESPACE}_jobs_embedding_queued",
+    "Jobs queued for embedding.",
+)
+
+jobs_embedded = Counter(
+    f"{NAMESPACE}_jobs_embedded",
+    "Jobs that completed embedding.",
+)
+
+jobs_matched = Counter(
+    f"{NAMESPACE}_jobs_matched",
+    "Jobs that produced persisted matches.",
+)
+
+jobs_eligible_for_extraction = Gauge(
+    f"{NAMESPACE}_jobs_eligible_for_extraction",
+    "Current jobs eligible to queue for extraction.",
+)
+
+jobs_eligible_for_embedding = Gauge(
+    f"{NAMESPACE}_jobs_eligible_for_embedding",
+    "Current jobs eligible to queue for embedding.",
+)
+
+jobs_ready_for_matching = Gauge(
+    f"{NAMESPACE}_jobs_ready_for_matching",
+    "Current jobs extracted and embedded, ready for matching.",
+)
+
+jobs_inventory_total = Gauge(
+    f"{NAMESPACE}_jobs_inventory",
+    "Current job inventory count by lifecycle bucket.",
+    labelnames=("bucket",),
+)
+
+jobs_stuck_by_stage = Gauge(
+    f"{NAMESPACE}_jobs_stuck_by_stage",
+    "Current jobs stuck or retryable by bounded pipeline stage.",
+    labelnames=("stage",),
+)
+
+llm_evaluation_queue_jobs = Gauge(
+    f"{NAMESPACE}_llm_evaluation_queue_jobs",
+    "Current LLM evaluation RQ job count by bounded registry.",
+    labelnames=("registry",),
 )
 
 
@@ -176,6 +260,12 @@ def record_preference_status(applied: bool, reason: str | None) -> None:
     ).inc()
 
 
+def record_match_query_degraded(reason: str | None = None) -> None:
+    match_query_degraded_reason_total.labels(
+        reason=_safe(reason or "degraded", _MATCH_DEGRADED_REASONS),
+    ).inc()
+
+
 def record_email_event(event: str) -> None:
     email_verification_events_total.labels(event=_safe(event, _EMAIL_EVENTS)).inc()
 
@@ -187,9 +277,96 @@ def record_worker_running(service: str, worker: str, running: bool) -> None:
     ).set(1 if running else 0)
 
 
+def _inc_counter(counter: Counter, count: int | float = 1) -> None:
+    value = max(float(count or 0), 0.0)
+    if value:
+        counter.inc(value)
+
+
+def _stage(value: str) -> str:
+    aliases = {
+        "extract": "extraction",
+        "embed": "embedding",
+        "match": "matching",
+        "extracting": "resume_extraction",
+        "resume_etl": "resume_embedding",
+    }
+    return _safe(aliases.get(value, value), _PIPELINE_STAGES)
+
+
+def record_jobs_imported(count: int | float = 1) -> None:
+    _inc_counter(jobs_imported, count)
+
+
+def record_jobs_extraction_queued(count: int | float = 1) -> None:
+    _inc_counter(jobs_extraction_queued, count)
+
+
+def record_jobs_extracted(count: int | float = 1) -> None:
+    _inc_counter(jobs_extracted, count)
+
+
+def record_jobs_embedding_queued(count: int | float = 1) -> None:
+    _inc_counter(jobs_embedding_queued, count)
+
+
+def record_jobs_embedded(count: int | float = 1) -> None:
+    _inc_counter(jobs_embedded, count)
+
+
+def record_jobs_matched(count: int | float = 1) -> None:
+    _inc_counter(jobs_matched, count)
+
+
+def set_jobs_stuck_by_stage(stage: str, count: int | float) -> None:
+    jobs_stuck_by_stage.labels(stage=_stage(stage)).set(max(float(count or 0), 0.0))
+
+
+def set_llm_evaluation_queue_depth(registry: str, count: int | float) -> None:
+    llm_evaluation_queue_jobs.labels(
+        registry=_safe(registry, _LLM_EVALUATION_QUEUE_REGISTRIES),
+    ).set(max(float(count or 0), 0.0))
+
+
+def set_job_inventory_metrics(stats: dict[str, object]) -> None:
+    """Project job inventory/eligibility stats into bounded gauges."""
+    jobs_inventory_total.labels(bucket="total").set(float(stats.get("job_post_total") or 0))
+    jobs_inventory_total.labels(bucket="active").set(float(stats.get("active_job_posts") or 0))
+    jobs_inventory_total.labels(bucket="inactive").set(float(stats.get("inactive_job_posts") or 0))
+    jobs_eligible_for_extraction.set(
+        float(stats.get("pending_extraction_job_posts") or 0)
+        + float(stats.get("retryable_extraction_job_posts") or 0)
+    )
+    jobs_eligible_for_embedding.set(
+        float(stats.get("pending_embedding_job_posts") or 0)
+        + float(stats.get("retryable_embedding_job_posts") or 0)
+    )
+    jobs_ready_for_matching.set(float(stats.get("ready_to_score_job_posts") or 0))
+    set_jobs_stuck_by_stage(
+        "extraction",
+        float(stats.get("processing_extraction_job_posts") or 0)
+        + float(stats.get("retryable_extraction_job_posts") or 0)
+        + float(stats.get("failed_extraction_job_posts") or 0),
+    )
+    set_jobs_stuck_by_stage(
+        "embedding",
+        float(stats.get("processing_embedding_job_posts") or 0)
+        + float(stats.get("retryable_embedding_job_posts") or 0)
+        + float(stats.get("failed_embedding_job_posts") or 0),
+    )
+
+
 def bind_worker_running(service: str, worker: str, callback: Callable[[], bool]) -> None:
     """Expose worker liveness as a scrape-time callback-backed gauge."""
     worker_running.labels(
         service=_safe(service, _WORKER_SERVICES),
         worker=_safe(worker, _WORKER_NAMES),
     ).set_function(lambda: 1 if callback() else 0)
+
+
+def bind_llm_evaluation_queue_depths(callback: Callable[[], dict[str, int]]) -> None:
+    """Expose LLM evaluation RQ registry depths as scrape-time gauges."""
+    for registry in _LLM_EVALUATION_QUEUE_REGISTRIES:
+        llm_evaluation_queue_jobs.labels(registry=registry).set_function(
+            lambda registry=registry: float(callback().get(registry, 0) or 0)
+        )

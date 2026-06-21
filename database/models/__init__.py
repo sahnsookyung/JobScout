@@ -36,6 +36,17 @@ from .llm_evaluation import (
 )
 from .notification import NotificationTracker
 from .notification_settings import UserNotificationSettings, UserNotificationChannel
+from .pipeline_run import (
+    PIPELINE_RUN_CANCELLED,
+    PIPELINE_RUN_CANONICAL_STAGES,
+    PIPELINE_RUN_COMPLETED,
+    PIPELINE_RUN_FAILED,
+    PIPELINE_RUN_PENDING,
+    PIPELINE_RUN_RUNNING,
+    PIPELINE_RUN_TERMINAL_STATUSES,
+    PipelineRun,
+    PipelineRunStage,
+)
 from .resume_variant import ResumeVariant
 from .settings import AppSettings
 from .user import User, UserAuthIdentity, UserFile
@@ -83,6 +94,15 @@ __all__ = [
     'NotificationTracker',
     'UserNotificationSettings',
     'UserNotificationChannel',
+    'PipelineRun',
+    'PipelineRunStage',
+    'PIPELINE_RUN_PENDING',
+    'PIPELINE_RUN_RUNNING',
+    'PIPELINE_RUN_COMPLETED',
+    'PIPELINE_RUN_FAILED',
+    'PIPELINE_RUN_CANCELLED',
+    'PIPELINE_RUN_TERMINAL_STATUSES',
+    'PIPELINE_RUN_CANONICAL_STAGES',
     'ResumeVariant',
     'AppSettings',
     'User',

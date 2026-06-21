@@ -36,8 +36,8 @@ class ResumeVariant(Base):
     source_resume_content_hash = Column(Text, nullable=False)
 
     content_json = Column(JSONB, nullable=False)
-    evidence_map = Column(JSONB, nullable=False, default={})
-    warnings = Column(JSONB, nullable=False, default=[])
+    evidence_map = Column(JSONB, nullable=False, default=dict)
+    warnings = Column(JSONB, nullable=False, default=list)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW, onupdate=UTC_NOW)
 

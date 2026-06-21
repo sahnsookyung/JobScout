@@ -197,6 +197,35 @@ class TestThreeStagePipeline:
         assert service.last_llm_rerank_metadata["applied"] is True
         assert service.last_llm_rerank_metadata["eligible_count"] == 2
 
+    @patch("web.backend.services.match_service.record_match_query_degraded")
+    @patch("web.backend.services.match_service.job_uow")
+    @patch("web.backend.services.match_service.get_ranking_policy_store")
+    def test_canonical_selection_failure_returns_degraded_metadata(
+        self,
+        mock_store,
+        mock_uow,
+        mock_record_degraded,
+        mock_db,
+        real_service,
+    ):
+        from core.ranking.policy import RankingConfig
+
+        cfg = RankingConfig(
+            balanced_w_pref=0.6,
+            balanced_w_fit=0.4,
+            max_ranking_candidates=500,
+        )
+        mock_store.return_value.get_current_config.return_value = cfg
+        mock_uow.side_effect = RuntimeError("database unavailable")
+
+        results = real_service.get_matches(owner_id="owner-1")
+
+        assert results == []
+        assert real_service.last_degraded_reasons == [
+            {"code": "canonical_selection_unavailable", "detail": "RuntimeError"}
+        ]
+        mock_record_degraded.assert_called_once_with("canonical_selection_unavailable")
+
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")
     def test_rank_matches_receives_full_pool_before_truncation(
@@ -292,6 +321,29 @@ class TestThreeStagePipeline:
         results = service.get_matches(tier="all", top_k=None)
 
         assert len(results) == 5
+        assert service.last_matches_limit == 100
+
+    @patch("web.backend.services.match_service.rank_matches")
+    @patch("web.backend.services.match_service.get_ranking_policy_store")
+    def test_tier_all_without_limit_is_server_paged(
+        self, mock_store, mock_rank, mock_db, service
+    ):
+        from core.ranking.policy import RankingConfig
+        cfg = RankingConfig(
+            balanced_w_pref=0.6, balanced_w_fit=0.4,
+            max_ranking_candidates=500, default_top_k=50, max_top_k=500,
+        )
+        mock_store.return_value.get_current_config.return_value = cfg
+
+        primary = [_make_match(f"p{i}") for i in range(120)]
+        _wire_rankable_pool(service, primary)
+        mock_rank.side_effect = lambda p, ctx: p
+
+        results = service.get_matches(tier="all", top_k=None, limit=None)
+
+        assert len(results) == 100
+        assert service.last_matches_total == 120
+        assert service.last_matches_limit == 100
 
     @patch("web.backend.services.match_service.rank_matches")
     @patch("web.backend.services.match_service.get_ranking_policy_store")

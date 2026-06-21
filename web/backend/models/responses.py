@@ -242,6 +242,8 @@ class MatchesResponse(BaseModel):
     has_more: bool = False
     matches: List[MatchSummary]
     llm_rerank: LlmRerankMetadata = Field(default_factory=LlmRerankMetadata)
+    degraded: bool = False
+    degraded_reasons: List[Dict[str, str]] = Field(default_factory=list)
 
 
 class JobInventoryItem(BaseModel):
@@ -281,6 +283,121 @@ class JobsResponse(BaseModel):
     limit: int
     offset: int
     jobs: List[JobInventoryItem] = Field(default_factory=list)
+
+
+class ProcessingBlockerItem(BaseModel):
+    """Operational explanation for a job that is not advancing."""
+
+    job_id: str
+    stage: str
+    blocker_code: str
+    blocker_detail: str
+    status: str
+    attempts: int = 0
+    last_error: Optional[str] = None
+    retry_eligible: bool = False
+    first_seen_at: Optional[str] = None
+    last_seen_at: Optional[str] = None
+    last_attempt_at: Optional[str] = None
+    next_retry_at: Optional[str] = None
+
+
+class ProcessingBlockersResponse(BaseModel):
+    """Response containing oldest jobs blocked by durable DB state."""
+
+    success: bool
+    count: int
+    blockers: List[ProcessingBlockerItem] = Field(default_factory=list)
+
+
+class PipelineRunStageSummary(BaseModel):
+    """Durable per-stage pipeline progress."""
+
+    id: str
+    stage: str
+    status: str
+    queued_count: int = 0
+    processed_count: int = 0
+    succeeded_count: int = 0
+    failed_count: int = 0
+    skipped_count: int = 0
+    retry_count: int = 0
+    retry_eligible: bool = False
+    last_error: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PipelineRunSummary(BaseModel):
+    """Durable pipeline run summary for operations UI."""
+
+    id: str
+    task_id: str
+    run_type: str
+    status: str
+    current_stage: Optional[str] = None
+    queued_count: int = 0
+    processed_count: int = 0
+    succeeded_count: int = 0
+    failed_count: int = 0
+    skipped_count: int = 0
+    retry_eligible: bool = False
+    last_error: Optional[str] = None
+    owner_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    resume_fingerprint: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    heartbeat_at: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    stages: List[PipelineRunStageSummary] = Field(default_factory=list)
+    allowed_actions: List[str] = Field(default_factory=list)
+
+
+class PipelineRunsResponse(BaseModel):
+    """Paginated response containing durable pipeline runs."""
+
+    success: bool
+    count: int
+    total: int
+    limit: int
+    offset: int
+    runs: List[PipelineRunSummary] = Field(default_factory=list)
+
+
+class PipelineRunDetailResponse(BaseModel):
+    """Response containing one durable pipeline run."""
+
+    success: bool
+    run: PipelineRunSummary
+
+
+class PipelineRunOperationResponse(BaseModel):
+    """Response for durable pipeline run operator actions."""
+
+    success: bool
+    action: str
+    message: str
+    run: PipelineRunSummary
+    source_run_id: Optional[str] = None
+    enqueued_task_id: Optional[str] = None
+
+
+class LlmEvaluationQueueStatusResponse(BaseModel):
+    """Operational status for the durable LLM evaluation queue."""
+
+    success: bool
+    ready: bool = False
+    queue: str
+    queued: int = 0
+    started: int = 0
+    deferred: int = 0
+    scheduled: int = 0
+    failed: int = 0
+    error: Optional[str] = None
 
 
 class ScoreDistribution(BaseModel):

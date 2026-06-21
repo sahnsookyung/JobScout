@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Sequence
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,29 @@ class ScraperConfig(BaseModel):
 
 class ScheduleConfig(BaseModel):
     interval_seconds: int = 3600
+
+
+class OrchestratorConfig(BaseModel):
+    redis_url: str = "redis://localhost:6379/0"
+    orchestration_ttl: int = Field(default=3600, ge=1)
+    listener_timeout_seconds: int = Field(default=300, ge=1)
+    scraper_interval_hours: float = Field(default=6.0, gt=0)
+    scraper_lock_ttl_seconds: int = Field(default=1800, ge=1)
+    scraper_retry_intervals: List[int] = Field(default_factory=lambda: [1, 6, 60, 600, 6000])
+    scraper_extraction_limit: int = Field(default=200, ge=1)
+    scraper_embedding_limit: int = Field(default=100, ge=1)
+    process_imported_embedding_max_batches: int = Field(default=50, ge=1)
+    batch_stage_timeout_seconds: int = Field(default=600, ge=1)
+    repair_interval_seconds: int = Field(default=900, ge=1)
+    recent_task_limit: int = Field(default=10, ge=1)
+    recent_task_scan_limit: int = Field(default=50, ge=1)
+
+    @field_validator("scraper_retry_intervals", mode="before")
+    @classmethod
+    def _parse_retry_intervals(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [int(part.strip()) for part in value.split(",") if part.strip()]
+        return value
 
 
 class DatabaseConfig(BaseModel):
@@ -622,6 +645,7 @@ class AppConfig(BaseModel):
     jobspy: Optional[JobSpyConfig] = None
     etl: Optional[EtlConfig] = EtlConfig()
     matching: Optional[MatchingConfig] = MatchingConfig()
+    orchestrator: OrchestratorConfig = Field(default_factory=OrchestratorConfig)
     preferences: PreferencesConfig = Field(default_factory=PreferencesConfig)
     ranking: RankingConfig = Field(default_factory=RankingConfig)
     notifications: Optional[NotificationConfig] = NotificationConfig()
@@ -638,6 +662,19 @@ def _set_nested(data: dict, keys: list, value: Any) -> None:
 
 DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["DATABASE_URL"], ["database", "url"]),
+    (["ORCHESTRATOR_REDIS_URL", "REDIS_URL"], ["orchestrator", "redis_url"]),
+    (["ORCHESTRATION_TTL"], ["orchestrator", "orchestration_ttl"]),
+    (["LISTENER_TIMEOUT_SECONDS", "LISTENER_TIMEOUT"], ["orchestrator", "listener_timeout_seconds"]),
+    (["SCRAPER_INTERVAL_HOURS"], ["orchestrator", "scraper_interval_hours"]),
+    (["SCRAPER_LOCK_TTL_SECONDS"], ["orchestrator", "scraper_lock_ttl_seconds"]),
+    (["SCRAPER_RETRY_INTERVALS"], ["orchestrator", "scraper_retry_intervals"]),
+    (["SCRAPER_EXTRACTION_LIMIT"], ["orchestrator", "scraper_extraction_limit"]),
+    (["SCRAPER_EMBEDDING_LIMIT"], ["orchestrator", "scraper_embedding_limit"]),
+    (["PROCESS_IMPORTED_EMBEDDING_MAX_BATCHES"], ["orchestrator", "process_imported_embedding_max_batches"]),
+    (["BATCH_STAGE_TIMEOUT_SECONDS"], ["orchestrator", "batch_stage_timeout_seconds"]),
+    (["REPAIR_INTERVAL_SECONDS"], ["orchestrator", "repair_interval_seconds"]),
+    (["RECENT_TASK_LIMIT"], ["orchestrator", "recent_task_limit"]),
+    (["RECENT_TASK_SCAN_LIMIT"], ["orchestrator", "recent_task_scan_limit"]),
     (["JOBSPY_URL"], ["jobspy", "url"]),
     (["ETL_LLM_PROVIDER"], ["etl", "llm", "provider"]),
     (["ETL_LLM_EXTRACTION_BASE_URL", "ETL_LLM_BASE_URL"], ["etl", "llm", "base_url"]),

@@ -419,29 +419,76 @@ class JobPostRepository(BaseRepository):
 
         return deactivated
 
-    def get_unextracted_jobs(self, limit: int = 100) -> List[JobPost]:
+    def _unextracted_jobs_stmt(
+        self,
+        *,
+        limit: int,
+        include_queued: bool,
+        include_stale_queued: bool = False,
+    ):
         now = datetime.now(timezone.utc)
         stale_cutoff = now - timedelta(minutes=STAGE_IN_PROGRESS_STALE_MINUTES)
-        stmt = select(JobPost).where(
-            JobPost.description.isnot(None),
-            or_(
-                and_(
-                    JobPost.extraction_status.in_(["pending", "failed_retryable"]),
-                    or_(
-                        JobPost.extraction_next_retry_at.is_(None),
-                        JobPost.extraction_next_retry_at <= now,
-                    ),
+        ready_statuses = ["pending", "failed_retryable"]
+        if include_queued:
+            ready_statuses.append("queued")
+        queueable_conditions = [
+            and_(
+                JobPost.extraction_status.in_(ready_statuses),
+                or_(
+                    JobPost.extraction_next_retry_at.is_(None),
+                    JobPost.extraction_next_retry_at <= now,
                 ),
+            ),
+            and_(
+                JobPost.extraction_status == "in_progress",
+                or_(
+                    JobPost.extraction_last_attempt_at.is_(None),
+                    JobPost.extraction_last_attempt_at <= stale_cutoff,
+                ),
+            ),
+        ]
+        if include_stale_queued:
+            queueable_conditions.append(
                 and_(
-                    JobPost.extraction_status == "in_progress",
+                    JobPost.extraction_status == "queued",
                     or_(
                         JobPost.extraction_last_attempt_at.is_(None),
                         JobPost.extraction_last_attempt_at <= stale_cutoff,
                     ),
-                ),
-            ),
+                )
+            )
+        stmt = select(JobPost).where(
+            JobPost.description.isnot(None),
+            or_(*queueable_conditions),
         ).limit(limit)
+        return stmt
+
+    def get_unextracted_jobs(self, limit: int = 100) -> List[JobPost]:
+        stmt = self._unextracted_jobs_stmt(limit=limit, include_queued=True)
         return self.db.execute(stmt).scalars().all()
+
+    def claim_unextracted_jobs_for_queue(self, limit: int = 100) -> List[JobPost]:
+        stmt = self._unextracted_jobs_stmt(
+            limit=limit,
+            include_queued=False,
+            include_stale_queued=True,
+        ).with_for_update(skip_locked=True)
+        jobs = self.db.execute(stmt).scalars().all()
+        if not jobs:
+            return []
+        job_ids = [job.id for job in jobs]
+        now = datetime.now(timezone.utc)
+        self.db.execute(
+            update(JobPost)
+            .where(JobPost.id.in_(job_ids))
+            .values(
+                extraction_status="queued",
+                extraction_last_attempt_at=now,
+                extraction_next_retry_at=None,
+            )
+        )
+        self.db.flush()
+        return jobs
 
     def mark_as_extracted(self, job_post: JobPost) -> None:
         job_post.is_extracted = True
@@ -634,29 +681,76 @@ class JobPostRepository(BaseRepository):
 
         job_post.raw_payload = new_payload
 
-    def get_unembedded_jobs(self, limit: int = 100) -> List[JobPost]:
+    def _unembedded_jobs_stmt(
+        self,
+        *,
+        limit: int,
+        include_queued: bool,
+        include_stale_queued: bool = False,
+    ):
         now = datetime.now(timezone.utc)
         stale_cutoff = now - timedelta(minutes=STAGE_IN_PROGRESS_STALE_MINUTES)
-        stmt = select(JobPost).where(
-            JobPost.summary_embedding.is_(None),
-            or_(
-                and_(
-                    JobPost.embedding_status.in_(["pending", "failed_retryable"]),
-                    or_(
-                        JobPost.embedding_next_retry_at.is_(None),
-                        JobPost.embedding_next_retry_at <= now,
-                    ),
+        ready_statuses = ["pending", "failed_retryable"]
+        if include_queued:
+            ready_statuses.append("queued")
+        queueable_conditions = [
+            and_(
+                JobPost.embedding_status.in_(ready_statuses),
+                or_(
+                    JobPost.embedding_next_retry_at.is_(None),
+                    JobPost.embedding_next_retry_at <= now,
                 ),
+            ),
+            and_(
+                JobPost.embedding_status == "in_progress",
+                or_(
+                    JobPost.embedding_last_attempt_at.is_(None),
+                    JobPost.embedding_last_attempt_at <= stale_cutoff,
+                ),
+            ),
+        ]
+        if include_stale_queued:
+            queueable_conditions.append(
                 and_(
-                    JobPost.embedding_status == "in_progress",
+                    JobPost.embedding_status == "queued",
                     or_(
                         JobPost.embedding_last_attempt_at.is_(None),
                         JobPost.embedding_last_attempt_at <= stale_cutoff,
                     ),
-                ),
-            ),
+                )
+            )
+        stmt = select(JobPost).where(
+            JobPost.summary_embedding.is_(None),
+            or_(*queueable_conditions),
         ).limit(limit)
+        return stmt
+
+    def get_unembedded_jobs(self, limit: int = 100) -> List[JobPost]:
+        stmt = self._unembedded_jobs_stmt(limit=limit, include_queued=True)
         return self.db.execute(stmt).scalars().all()
+
+    def claim_unembedded_jobs_for_queue(self, limit: int = 100) -> List[JobPost]:
+        stmt = self._unembedded_jobs_stmt(
+            limit=limit,
+            include_queued=False,
+            include_stale_queued=True,
+        ).with_for_update(skip_locked=True)
+        jobs = self.db.execute(stmt).scalars().all()
+        if not jobs:
+            return []
+        job_ids = [job.id for job in jobs]
+        now = datetime.now(timezone.utc)
+        self.db.execute(
+            update(JobPost)
+            .where(JobPost.id.in_(job_ids))
+            .values(
+                embedding_status="queued",
+                embedding_last_attempt_at=now,
+                embedding_next_retry_at=None,
+            )
+        )
+        self.db.flush()
+        return jobs
 
     def get_unembedded_requirements(self, limit: int = 1000) -> List[JobRequirementUnit]:
         stmt = select(JobRequirementUnit).outerjoin(JobRequirementUnitEmbedding).where(

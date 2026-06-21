@@ -1002,6 +1002,12 @@ def _public_stats_from_state(state: dict) -> dict[str, Any]:
         stats.setdefault("matches_saved", result_data.get("saved_count") or 0)
     if "notified_count" in result_data:
         stats.setdefault("notifications_sent", result_data.get("notified_count") or 0)
+    if "jobs_imported" in result_data:
+        stats.setdefault("jobs_imported", result_data.get("jobs_imported") or 0)
+    elif "scraped_jobs" in result_data:
+        stats.setdefault("jobs_imported", result_data.get("scraped_jobs") or 0)
+    if "jobs_processed" in result_data:
+        stats.setdefault("jobs_processed", result_data.get("jobs_processed") or 0)
     if "extracted_count" in result_data:
         stats.setdefault("jobs_extracted", result_data.get("extracted_count") or 0)
     if "embedded_count" in result_data:

@@ -28,6 +28,7 @@ class TestMetricDeclarations:
             "jobscout_preference_reranker_status",
             "jobscout_email_verification_events",
             "jobscout_worker_running",
+            "jobscout_llm_evaluation_queue_jobs",
         }
         exposed = set()
         for collector in REGISTRY._collector_to_names:
@@ -180,6 +181,26 @@ class TestRecordHelpers:
                 {"service": "other", "worker": "other"},
             )
             == 0
+        )
+
+    def test_record_worker_running_accepts_llm_evaluation_worker(self):
+        m.record_worker_running("llm_evaluation", "worker", True)
+        assert (
+            self._sample(
+                "jobscout_worker_running",
+                {"service": "llm_evaluation", "worker": "worker"},
+            )
+            == 1
+        )
+
+    def test_set_llm_evaluation_queue_depth(self):
+        m.set_llm_evaluation_queue_depth("failed", 3)
+        assert (
+            self._sample(
+                "jobscout_llm_evaluation_queue_jobs",
+                {"registry": "failed"},
+            )
+            == 3
         )
 
     def test_evidence_rerank_histogram_observes(self):
