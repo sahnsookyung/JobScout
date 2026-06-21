@@ -114,24 +114,24 @@ jobs:
 
     steps:
       - name: Checkout
-        # actions/checkout v4.2.2 — verified 2026-03-30
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        # actions/checkout v6.0.3 — verified 2026-06-21
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
 
       - name: Initialize CodeQL
-        # github/codeql-action v4.36.0 — verified 2026-05-24
+        # github/codeql-action v4.36.2 — verified 2026-06-21
         # build-mode: none — all languages here are interpreted; no build step needed.
-        uses: github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
+        uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e
         with:
           languages: ${{ matrix.language }}
           build-mode: none
           queries: security-and-quality
 
       - name: Perform CodeQL Analysis
-        # github/codeql-action v4.36.0 — verified 2026-05-24
+        # github/codeql-action v4.36.2 — verified 2026-06-21
         # Unique category per language prevents ambiguous SARIF overwrite (policy §16).
-        uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
+        uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e
         with:
           category: "/language:${{ matrix.language }}"
 

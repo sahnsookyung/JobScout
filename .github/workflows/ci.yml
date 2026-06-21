@@ -51,14 +51,14 @@ jobs:
 
     steps:
       - name: Checkout
-        # actions/checkout v4.2.2 — verified 2026-03-30
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        # actions/checkout v6.0.3 — verified 2026-06-21
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
         with:
           version: "0.11.2"
 
@@ -89,14 +89,14 @@ jobs:
 
     steps:
       - name: Checkout
-        # actions/checkout v4.2.2 — verified 2026-03-30
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        # actions/checkout v6.0.3 — verified 2026-06-21
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
         with:
           version: "0.11.2"
 
@@ -127,14 +127,14 @@ jobs:
 
     steps:
       - name: Checkout
-        # actions/checkout v4.2.2 — verified 2026-03-30
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        # actions/checkout v6.0.3 — verified 2026-06-21
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
         with:
           version: "0.11.2"
 
@@ -165,14 +165,14 @@ jobs:
 
     steps:
       - name: Checkout
-        # actions/checkout v4.2.2 — verified 2026-03-30
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        # actions/checkout v6.0.3 — verified 2026-06-21
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
         with:
           version: "0.11.2"
 
@@ -199,8 +199,8 @@ jobs:
 
     steps:
       - name: Checkout
-        # actions/checkout v4.2.2 — verified 2026-03-30
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        # actions/checkout v6.0.3 — verified 2026-06-21
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
 
@@ -251,14 +251,14 @@ jobs:
 
     steps:
       - name: Checkout
-        # actions/checkout v4.2.2 — verified 2026-03-30
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        # actions/checkout v6.0.3 — verified 2026-06-21
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
         with:
           version: "0.11.2"
 
@@ -297,8 +297,8 @@ jobs:
 
     steps:
       - name: Checkout
-        # actions/checkout v4.2.2 — verified 2026-03-30
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        # actions/checkout v6.0.3 — verified 2026-06-21
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
 
@@ -349,14 +349,14 @@ jobs:
 
     steps:
       - name: Checkout
-        # actions/checkout v4.2.2 — verified 2026-03-30
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        # actions/checkout v6.0.3 — verified 2026-06-21
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v5.4.0 — verified 2026-03-30
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
         with:
           version: "0.11.2"
 
