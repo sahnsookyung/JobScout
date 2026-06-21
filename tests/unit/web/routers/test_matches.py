@@ -717,6 +717,73 @@ class TestMatchesRouter:
         )
 
     @pytest.mark.parametrize(
+        ("exc", "detail"),
+        [
+            (
+                RuntimeError("provider rate limit exceeded"),
+                "LLM evaluation queue unavailable: provider rate limit",
+            ),
+            (
+                RuntimeError("redis unavailable"),
+                "LLM evaluation queue unavailable",
+            ),
+        ],
+    )
+    def test_generate_llm_evaluation_queue_failure_detail(
+        self,
+        client,
+        mock_llm_evaluation_service,
+        exc,
+        detail,
+    ):
+        match_id = str(uuid.uuid4())
+        evaluation = self._evaluation(match_id=match_id)
+        mock_llm_evaluation_service.start_for_match.return_value = SimpleNamespace(
+            evaluation=evaluation,
+            reused=False,
+            should_run=True,
+            provider_payload={},
+            truncation={},
+        )
+
+        with patch(
+            "web.backend.routers.matches._run_match_llm_evaluation_background",
+            side_effect=exc,
+        ):
+            response = client.post(f'/api/matches/{match_id}/llm-evaluations', json={})
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == detail
+
+    def test_generate_llm_evaluation_queue_failure_detail_uses_exception_chain(
+        self,
+        client,
+        mock_llm_evaluation_service,
+    ):
+        match_id = str(uuid.uuid4())
+        evaluation = self._evaluation(match_id=match_id)
+        mock_llm_evaluation_service.start_for_match.return_value = SimpleNamespace(
+            evaluation=evaluation,
+            reused=False,
+            should_run=True,
+            provider_payload={},
+            truncation={},
+        )
+        exc = RuntimeError("queue enqueue failed")
+        exc.__cause__ = RuntimeError("429 provider rate limit")
+
+        with patch(
+            "web.backend.routers.matches._run_match_llm_evaluation_background",
+            side_effect=exc,
+        ):
+            response = client.post(f'/api/matches/{match_id}/llm-evaluations', json={})
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == (
+            "LLM evaluation queue unavailable: provider rate limit"
+        )
+
+    @pytest.mark.parametrize(
         ("exc", "status_code"),
         [
             (LookupError("missing"), 404),

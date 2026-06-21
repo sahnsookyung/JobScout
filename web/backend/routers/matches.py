@@ -56,6 +56,24 @@ def _run_match_llm_evaluation_background(
     )
 
 
+def _llm_evaluation_queue_unavailable_detail(exc: BaseException) -> str:
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        exc_name = type(current).__name__.lower()
+        message = str(current).lower()
+        if (
+            "ratelimit" in exc_name
+            or "rate limit" in message
+            or "rate_limit" in message
+            or "429" in message
+        ):
+            return "LLM evaluation queue unavailable: provider rate limit"
+        current = current.__cause__ or current.__context__
+    return "LLM evaluation queue unavailable"
+
+
 def validate_uuid(match_id: str) -> str:
     """Validate that match_id is a valid UUID format."""
     try:
@@ -470,7 +488,10 @@ def generate_match_llm_evaluation(
             )
         except Exception as exc:
             logger.exception("Failed to enqueue LLM evaluation %s", result.evaluation.id)
-            raise HTTPException(status_code=503, detail="LLM evaluation queue unavailable") from exc
+            raise HTTPException(
+                status_code=503,
+                detail=_llm_evaluation_queue_unavailable_detail(exc),
+            ) from exc
 
     return MatchLlmEvaluationMutationResponse(
         success=True,
