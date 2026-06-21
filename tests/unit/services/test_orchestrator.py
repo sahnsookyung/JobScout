@@ -953,7 +953,11 @@ class TestGetOrchestrationStatus:
         from services.orchestrator.main import app
 
         with TestClient(app) as client:
-            routes = [route.path for route in app.routes]
+            routes = [
+                route.path
+                for route in app.routes
+                if getattr(route, "path", None) is not None
+            ]
 
         assert "/orchestrate/status/{task_id}" in routes
         assert "/orchestrate/stages/{stage}" in routes

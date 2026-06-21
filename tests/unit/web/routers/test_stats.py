@@ -13,7 +13,8 @@ from unittest.mock import Mock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from web.backend.routers.stats import _job_processing_stats, router
+from web.backend.routers.stats import router
+from web.backend.services.stats_service import _job_processing_stats
 from web.backend.dependencies import get_current_user, get_db
 
 

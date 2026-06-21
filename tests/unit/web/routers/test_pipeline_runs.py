@@ -8,11 +8,17 @@ from web.backend.dependencies import get_current_user, get_db
 from web.backend.models.responses import PipelineRunSummary
 from web.backend.routers.pipeline_runs import router
 
+def _current_user():
+    return SimpleNamespace(id="user-123")
+
+def _db_session():
+    return Mock()
+
 def _client():
     app = FastAPI()
     app.include_router(router)
-    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id="user-123")
-    app.dependency_overrides[get_db] = lambda: Mock()
+    app.dependency_overrides[get_current_user] = _current_user
+    app.dependency_overrides[get_db] = _db_session
     return TestClient(app, raise_server_exceptions=True)
 
 def _run_summary() -> PipelineRunSummary:

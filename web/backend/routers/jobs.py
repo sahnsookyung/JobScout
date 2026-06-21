@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Job inventory endpoints - inspect imported jobs and processing state."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -39,8 +39,6 @@ _VALID_PROCESSING_STATUSES = {
 }
 _RETRYABLE_OR_PENDING = {"pending", "queued", "in_progress", "processing", "failed_retryable"}
 _FAILED_STATUSES = {"failed_terminal", "failed", "failed_retryable"}
-_ERROR_TEXT_LIMIT = 240
-_STALE_STAGE_MINUTES = 30
 
 
 def _request_tenant_id(request: Request):

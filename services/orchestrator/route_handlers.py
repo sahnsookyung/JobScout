@@ -9,12 +9,25 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import Depends, Request
+from fastapi import Body, Depends, Request
 
-from services.orchestrator import main as _main_mod
+_main_module: Any | None = None
+
 
 def _main():
-    return _main_mod
+    if _main_module is None:
+        raise RuntimeError("Orchestrator route handlers have not been configured")
+    return _main_module
+
+
+def _configure(main_module: Any) -> None:
+    global _main_module
+    _main_module = main_module
+
+
+def _get_current_user_dependency():
+    return _main().get_current_user()
+
 
 async def health(request: Request):
     return await _main().health(request)
@@ -22,9 +35,13 @@ async def health(request: Request):
 async def orchestrate_stage(
     stage: str,
     request: Request,
-    body: _main_mod.StageRequest = _main_mod.StageRequest(),
+    body: Any = Body(default=None),
 ):
-    return await _main_mod.orchestrate_stage(stage, request, body)
+    main = _main()
+    stage_body = body if body is not None else main.StageRequest()
+    if isinstance(stage_body, dict):
+        stage_body = main.StageRequest(**stage_body)
+    return await main.orchestrate_stage(stage, request, stage_body)
 
 async def orchestrate_scrape_extract_embed_pipeline(request: Request):
     return await _main().orchestrate_scrape_extract_embed_pipeline(request)
@@ -37,12 +54,16 @@ async def get_task_status(task_id: str, request: Request):
 
 async def orchestrate_match_endpoint(
     request: Request,
-    user: Any = Depends(_main_mod.get_current_user),
+    user: Any = Depends(_get_current_user_dependency),
 ):
     return await _main().orchestrate_match_endpoint(request, user)
 
-async def orchestrate_resume_etl(payload: _main_mod.ResumeEtlRequest, request: Request):
-    return await _main().orchestrate_resume_etl(payload, request)
+async def orchestrate_resume_etl(request: Request, payload: Any = Body(...)):
+    main = _main()
+    resume_payload = payload
+    if isinstance(resume_payload, dict):
+        resume_payload = main.ResumeEtlRequest(**resume_payload)
+    return await main.orchestrate_resume_etl(resume_payload, request)
 
 async def get_orchestration_status(task_id: str, request: Request):
     return await _main().get_orchestration_status(task_id, request)
@@ -59,15 +80,25 @@ async def stop_orchestration(request: Request, task_id: Optional[str] = None):
 async def trigger_scrape(request: Request):
     return await _main().trigger_scrape(request)
 
-def route_handlers() -> dict[str, Any]:
+def route_handlers(main_module: Any) -> dict[str, Any]:
+    _configure(main_module)
     main = _main()
+
+    async def _orchestrate_match_endpoint(
+        request: Request,
+        user: Any = Depends(main.get_current_user),
+    ):
+        return await main.orchestrate_match_endpoint(request, user)
+
+    _orchestrate_match_endpoint.__name__ = "orchestrate_match_endpoint"
+
     return {
         "health": health,
         "orchestrate_stage": orchestrate_stage,
         "orchestrate_scrape_extract_embed_pipeline": orchestrate_scrape_extract_embed_pipeline,
         "orchestrate_process_imported_jobs_pipeline": orchestrate_process_imported_jobs_pipeline,
         "get_task_status": get_task_status,
-        "orchestrate_match_endpoint": orchestrate_match_endpoint,
+        "orchestrate_match_endpoint": _orchestrate_match_endpoint,
         "orchestrate_resume_etl": orchestrate_resume_etl,
         "get_orchestration_status": get_orchestration_status,
         "get_active_orchestration": get_active_orchestration,

@@ -2727,6 +2727,7 @@ def _compute_and_verify_hash(content: bytes, provided_hash: Optional[str]) -> st
         code=PIPELINE_RESUME_HASH_MISMATCH,
         message="File hash mismatch. The provided hash does not match the file content.",
     )
+    raise AssertionError("unreachable after resume hash mismatch")
 
 
 def _process_resume_background(

@@ -472,6 +472,31 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(runtime.structured_output_mode, "auto")
         self.assertEqual(config.matching.llm_judge.requirement_text_max_chars, 420)
 
+    def test_match_llm_judge_env_does_not_match_groq_lookalike_host(self):
+        config_yaml = yaml.dump({
+            "database": {"url": "test"},
+            "matching": {
+                "llm_judge": {
+                    "enabled": True,
+                    "runtime": {
+                        "base_url": "https://api.groq.com.evil.test/openai/v1",
+                    },
+                }
+            },
+            "schedule": {"interval_seconds": 60},
+            "scrapers": [],
+        })
+        env = {"GROQ_API_KEY": "groq-key"}
+
+        with patch("builtins.open", mock_open(read_data=config_yaml)):
+            with patch("os.path.exists", return_value=True):
+                with patch.dict(os.environ, env, clear=True):
+                    config = load_config("dummy")
+
+        runtime = config.matching.llm_judge.runtime
+        self.assertEqual(runtime.base_url, "https://api.groq.com.evil.test/openai/v1")
+        self.assertIsNone(runtime.api_key)
+
     def test_semantic_fit_raises_when_default_mode_not_in_deploy_allowed(self):
         with self.assertRaises(ValidationError) as ctx:
             SemanticFitConfig(

@@ -15,6 +15,7 @@ import inspect
 import json
 import logging
 import os
+import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -34,10 +35,7 @@ from core.auth import _auth_mode, _ensure_dev_bypass_allowed, _ensure_dev_user
 from core.config_loader import load_config
 from core.metrics import (
     record_jobs_embedded,
-    record_jobs_embedding_queued,
     record_jobs_extracted,
-    record_jobs_extraction_queued,
-    record_jobs_imported,
     record_jobs_matched,
 )
 from core.metrics_router import router as metrics_router
@@ -1653,7 +1651,7 @@ async def trigger_scrape(request: Request):
 
 from services.orchestrator.route_handlers import route_handlers as _route_handlers
 
-register_orchestrator_routes(app, _route_handlers())
+register_orchestrator_routes(app, _route_handlers(sys.modules[__name__]))
 
 
 if __name__ == "__main__":

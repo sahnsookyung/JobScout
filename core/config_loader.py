@@ -3,6 +3,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Sequence
+from urllib.parse import urlparse
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -809,6 +810,10 @@ def _get_nested(data: Dict[str, Any], keys: Sequence[str]) -> Any:
     return current
 
 
+def _base_url_host(base_url: str) -> str:
+    return (urlparse(base_url).hostname or "").lower()
+
+
 def _apply_llm_judge_provider_api_key_override(data: Dict[str, Any]) -> None:
     if os.environ.get("LLM_AS_A_JUDGE_API_KEY"):
         return
@@ -825,9 +830,10 @@ def _apply_llm_judge_provider_api_key_override(data: Dict[str, Any]) -> None:
     ).strip().lower()
 
     provider_api_key = None
-    if provider == "cerebras" or "api.cerebras.ai" in base_url:
+    base_url_host = _base_url_host(base_url)
+    if provider == "cerebras" or base_url_host == "api.cerebras.ai":
         provider_api_key = os.environ.get("CEREBRAS_API_KEY")
-    elif provider == "groq" or "api.groq.com" in base_url:
+    elif provider == "groq" or base_url_host == "api.groq.com":
         provider_api_key = os.environ.get("GROQ_API_KEY")
 
     if provider_api_key:

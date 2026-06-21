@@ -18,17 +18,6 @@ from ..services.policy_service import get_policy_service
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
-_canonical_stats_payload = _stats_service._canonical_stats_payload
-_count_excluded_items_by_reason = _stats_service._count_excluded_items_by_reason
-_count_items_for_run_by_tier = _stats_service._count_items_for_run_by_tier
-_empty_stats_payload = _stats_service._empty_stats_payload
-_item_fit_score = _stats_service._item_fit_score
-_item_is_hidden_primary = _stats_service._item_is_hidden_primary
-_job_processing_stats = _stats_service._job_processing_stats
-_preference_status_for_selection_run = _stats_service._preference_status_for_selection_run
-_selection_run_item_stats = _stats_service._selection_run_item_stats
-_selection_run_item_stats_from_items = _stats_service._selection_run_item_stats_from_items
-
 
 def _request_tenant_id(request: Request):
     """Compatibility wrapper for tests and callers importing the old helper."""

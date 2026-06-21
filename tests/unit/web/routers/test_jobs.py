@@ -11,11 +11,19 @@ from web.backend.routers.jobs import _embedding_blocker, _extraction_blocker, _j
 
 
 class TestJobsRouter:
+    @staticmethod
+    def _current_user():
+        return Mock(id="user-123")
+
+    @staticmethod
+    def _db_session():
+        return Mock()
+
     def _client(self):
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_current_user] = lambda: Mock(id="user-123")
-        app.dependency_overrides[get_db] = lambda: Mock()
+        app.dependency_overrides[get_current_user] = self._current_user
+        app.dependency_overrides[get_db] = self._db_session
         return TestClient(app, raise_server_exceptions=True)
 
     def test_get_jobs_returns_paginated_inventory(self):

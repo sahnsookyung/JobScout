@@ -14,10 +14,10 @@ import redis.asyncio as redis_async
 
 from core.app_context import AppContext
 from core.metrics import (
+    record_jobs_extraction_queued,
     record_jobs_imported,
 )
 from core.redis_streams import (
-    STREAM_EMBEDDINGS_BATCH,
     STREAM_EXTRACTION_BATCH,
     enqueue_job,
 )

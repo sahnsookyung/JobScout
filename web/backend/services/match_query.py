@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from core.ranking import RankingContext, RankingMode
+from core.ranking import RankingContext, RankingMode, rank_matches as _default_rank_matches
 from web.backend.models.responses import MatchSummary
 
-if TYPE_CHECKING:
-    from web.backend.services.match_service import MatchService
+DEFAULT_ALL_TIER_PAGE_LIMIT = 100
+MAX_MATCH_PAGE_LIMIT = 500
 
 
 @dataclass
@@ -51,7 +52,7 @@ class MatchSummaryCandidate:
 class MatchQueryBuilder:
     """Canonical DB retrieval boundary for match list queries."""
 
-    def __init__(self, service: "MatchService") -> None:
+    def __init__(self, service: Any) -> None:
         self.service = service
 
     def resolve_canonical_selection(self, *, owner_id: Optional[Any], tenant_id: Optional[Any]):
@@ -82,8 +83,14 @@ class MatchQueryBuilder:
 class MatchRankingService:
     """Deterministic ranking plus optional LLM display-time reranking."""
 
-    def __init__(self, service: "MatchService") -> None:
+    def __init__(
+        self,
+        service: Any,
+        *,
+        rank_matches_func: Optional[Callable[[List[Any], RankingContext], Any]] = None,
+    ) -> None:
         self.service = service
+        self.rank_matches_func = rank_matches_func or _default_rank_matches
 
     def rank(
         self,
@@ -105,9 +112,7 @@ class MatchRankingService:
             if getattr(candidate, "selection_tier", "primary") != "primary"
         ]
         ctx = RankingContext(mode=mode, config=ranking_config)
-        from web.backend.services import match_service as match_service_module
-
-        match_service_module.rank_matches(primary_pool, ctx)
+        self.rank_matches_func(primary_pool, ctx)
         for index, candidate in enumerate(primary_pool, start=1):
             setattr(candidate, "llm_original_rank", index)
 
@@ -142,21 +147,22 @@ class MatchPagination:
 
     @staticmethod
     def normalize_limit(*, tier: str, limit: Optional[int]) -> Optional[int]:
-        from web.backend.services.match_service import MatchService
-
-        return MatchService._normalize_page_limit(tier=tier, limit=limit)
+        if limit is None:
+            return DEFAULT_ALL_TIER_PAGE_LIMIT if tier == "all" else None
+        return max(1, min(int(limit), MAX_MATCH_PAGE_LIMIT))
 
     @staticmethod
     def page(matches: List[Any], *, limit: Optional[int], offset: int) -> List[Any]:
-        from web.backend.services.match_service import MatchService
-
-        return MatchService._page_ranked_matches(matches, limit=limit, offset=offset)
+        start = max(0, int(offset or 0))
+        if limit is None:
+            return matches[start:]
+        return matches[start:start + limit]
 
 
 class MatchSummaryPresenter:
     """Presentation adapter from rank candidates to API response models."""
 
-    def __init__(self, service: "MatchService") -> None:
+    def __init__(self, service: Any) -> None:
         self.service = service
 
     def present(self, matches: List[MatchSummaryCandidate]) -> List[MatchSummary]:

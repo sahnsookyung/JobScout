@@ -142,7 +142,10 @@ class MatchService:
             tenant_id=tenant_id,
         )
 
-        ranked, self.last_llm_rerank_metadata = MatchRankingService(self).rank(
+        ranked, self.last_llm_rerank_metadata = MatchRankingService(
+            self,
+            rank_matches_func=rank_matches,
+        ).rank(
             pool,
             mode=mode,
             ranking_config=ranking_config,
