@@ -511,9 +511,10 @@ class MatchLlmEvaluationService:
         top_n: int,
     ) -> dict[str, int]:
         if not self.is_available() or top_n <= 0:
-            return {"attempted": 0, "reused": 0, "created": 0, "failed": 0}
+            return {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0}
 
         from database.models import MatchSelectionItem
+        from core.llm_evaluation_queue import enqueue_llm_evaluation
 
         stmt = (
             select(MatchSelectionItem)
@@ -526,14 +527,14 @@ class MatchLlmEvaluationService:
             .limit(min(top_n, int(self.judge_config.max_per_run)))
         )
         items = list(self.db.execute(stmt).scalars().all())
-        stats = {"attempted": 0, "reused": 0, "created": 0, "failed": 0}
+        stats = {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0}
         for item in items:
             match = item.job_match
             if match is None:
                 continue
             stats["attempted"] += 1
             try:
-                result = self.generate_for_match(
+                result = self.start_for_match(
                     match.id,
                     owner_id=owner_id,
                     tenant_id=tenant_id,
@@ -543,6 +544,13 @@ class MatchLlmEvaluationService:
                     stats["reused"] += 1
                 else:
                     stats["created"] += 1
+                if getattr(result, "should_run", False):
+                    enqueue_llm_evaluation(
+                        result.evaluation.id,
+                        provider_payload=getattr(result, "provider_payload", None) or {},
+                        truncation=getattr(result, "truncation", None) or {},
+                    )
+                    stats["enqueued"] += 1
             except LlmJudgeQuotaExceededError:
                 logger.info("LLM judge daily quota exhausted for owner %s", _sanitize_log(owner_id))
                 break

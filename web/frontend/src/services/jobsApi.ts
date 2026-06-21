@@ -18,6 +18,13 @@ export const jobsApi = {
     getJobs: (params: GetJobsParams = {}) =>
         apiClient.get<JobsResponse>('/jobs', { params }),
 
-    getProcessingBlockers: (params: { stage?: string; limit?: number } = {}) =>
+    getProcessingBlockers: (
+        params: {
+            stage?: string;
+            limit?: number;
+            cursor?: string | null;
+            view?: 'compact' | 'detail';
+        } = {}
+    ) =>
         apiClient.get<ProcessingBlockersResponse>('/jobs/processing-blockers', { params }),
 };

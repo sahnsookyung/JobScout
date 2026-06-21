@@ -50,8 +50,14 @@ _PREF_REASONS = frozenset({
 _MATCH_DEGRADED_REASONS = frozenset({
     "canonical_selection_unavailable",
     "match_query_unavailable",
+    "llm_evaluation_lookup_unavailable",
+    "policy_llm_enqueue_unavailable",
+    "policy_unavailable",
+    "unsupported_cursor_ranking_mode",
     "degraded",
 })
+_MATCH_QUERY_MODES = frozenset({"offset", "cursor"})
+_MATCH_QUERY_VIEWS = frozenset({"summary", "compact"})
 _EMAIL_EVENTS = frozenset({
     "sent",
     "verified",
@@ -117,6 +123,32 @@ match_query_degraded_reason_total = Counter(
     f"{NAMESPACE}_match_query_degraded_reason_total",
     "Soft-degrade trigger that affected the match query read path.",
     labelnames=("reason",),
+)
+
+match_query_rows_loaded = Histogram(
+    f"{NAMESPACE}_match_query_rows_loaded",
+    "Rows loaded by the match list read path per request.",
+    labelnames=("mode", "view"),
+    buckets=(0, 1, 5, 10, 25, 50, 100, 250, 500),
+)
+
+match_query_payload_bytes = Histogram(
+    f"{NAMESPACE}_match_query_payload_bytes",
+    "Serialized match list response size in bytes.",
+    labelnames=("mode", "view"),
+    buckets=(512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072),
+)
+
+llm_rerank_window_size = Histogram(
+    f"{NAMESPACE}_llm_rerank_window_size",
+    "Candidates included in the display-time LLM rerank window.",
+    labelnames=("mode",),
+    buckets=(0, 1, 3, 5, 10, 25, 50),
+)
+
+llm_rerank_policy_revision = Gauge(
+    f"{NAMESPACE}_llm_rerank_policy_revision",
+    "Last applied LLM judge policy revision observed by the match read path.",
 )
 
 email_verification_events_total = Counter(
@@ -264,6 +296,28 @@ def record_match_query_degraded(reason: str | None = None) -> None:
     match_query_degraded_reason_total.labels(
         reason=_safe(reason or "degraded", _MATCH_DEGRADED_REASONS),
     ).inc()
+
+def record_match_query_rows_loaded(mode: str, view: str, count: int | float) -> None:
+    match_query_rows_loaded.labels(
+        mode=_safe(mode, _MATCH_QUERY_MODES),
+        view=_safe(view, _MATCH_QUERY_VIEWS),
+    ).observe(max(float(count or 0), 0.0))
+
+def record_match_query_payload_bytes(mode: str, view: str, byte_count: int | float) -> None:
+    match_query_payload_bytes.labels(
+        mode=_safe(mode, _MATCH_QUERY_MODES),
+        view=_safe(view, _MATCH_QUERY_VIEWS),
+    ).observe(max(float(byte_count or 0), 0.0))
+
+def record_llm_rerank_window_size(mode: str, count: int | float) -> None:
+    llm_rerank_window_size.labels(
+        mode=_safe(mode, _MATCH_QUERY_MODES),
+    ).observe(max(float(count or 0), 0.0))
+
+def set_llm_rerank_policy_revision(revision: int | float | None) -> None:
+    if revision is None:
+        return
+    llm_rerank_policy_revision.set(max(float(revision or 0), 0.0))
 
 
 def record_email_event(event: str) -> None:

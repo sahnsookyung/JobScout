@@ -34,8 +34,15 @@ def _run_summary() -> PipelineRunSummary:
         failed_count=1,
         skipped_count=1,
         retry_eligible=False,
-        metadata={},
-        stages=[],
+        metadata={"expensive": "payload"},
+        stages=[
+            {
+                "id": "stage-1",
+                "stage": "matching",
+                "status": "completed",
+                "metadata": {"detail": "payload"},
+            }
+        ],
         allowed_actions=[],
     )
 
@@ -63,6 +70,67 @@ def test_get_pipeline_runs_returns_service_payload():
     assert kwargs["status"] == "completed"
     assert kwargs["run_type"] == "pipeline"
     assert kwargs["limit"] == 5
+
+def test_get_pipeline_runs_returns_cursor_metadata():
+    client = _client()
+    run = _run_summary()
+
+    with patch(
+        "web.backend.routers.pipeline_runs.pipeline_run_read_service.list_runs",
+        return_value=([run], 2, "next-run-cursor", True, "cursor", 0),
+    ) as list_runs:
+        response = client.get(
+            "/api/pipeline-runs",
+            params={"limit": 1, "cursor": "run-cursor"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["page_mode"] == "cursor"
+    assert data["next_cursor"] == "next-run-cursor"
+    assert data["has_more"] is True
+    assert list_runs.call_args.kwargs["cursor"] == "run-cursor"
+
+def test_get_pipeline_runs_accepts_cursor_page_mode_without_cursor():
+    client = _client()
+    run = _run_summary()
+
+    with patch(
+        "web.backend.routers.pipeline_runs.pipeline_run_read_service.list_runs",
+        return_value=([run], 2, "next-run-cursor", True, "cursor", 0),
+    ) as list_runs:
+        response = client.get(
+            "/api/pipeline-runs",
+            params={"limit": 1, "page_mode": "cursor"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["next_cursor"] == "next-run-cursor"
+    assert list_runs.call_args.kwargs["page_mode"] == "cursor"
+
+def test_get_pipeline_runs_compact_view_strips_stage_and_metadata_payloads():
+    client = _client()
+    run = _run_summary()
+
+    with patch(
+        "web.backend.routers.pipeline_runs.pipeline_run_read_service.list_runs",
+        return_value=([run], 1, None, False, "offset", 0),
+    ):
+        response = client.get("/api/pipeline-runs", params={"view": "compact"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["view"] == "compact"
+    assert data["runs"][0]["metadata"] == {}
+    assert data["runs"][0]["stages"] == []
+
+def test_get_pipeline_runs_rejects_invalid_view():
+    client = _client()
+
+    response = client.get("/api/pipeline-runs", params={"view": "tiny"})
+
+    assert response.status_code == 422
+    assert "Invalid view" in response.json()["detail"]
 
 def test_get_pipeline_run_returns_404_when_missing():
     client = _client()

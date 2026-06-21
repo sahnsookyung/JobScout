@@ -139,6 +139,7 @@ class MatchSelectionItem(Base):
         Index("idx_match_selection_item_run", "selection_run_id", "rank_position", unique=True),
         Index("idx_match_selection_item_match", "job_match_id"),
         Index("idx_msi_run_tier", "selection_run_id", "selection_tier"),
+        Index("idx_msi_run_tier_rank_id", "selection_run_id", "selection_tier", "rank_position", "id"),
         CheckConstraint(
             "selection_tier IN ('primary', 'excluded')",
             name="msi_selection_tier_chk",

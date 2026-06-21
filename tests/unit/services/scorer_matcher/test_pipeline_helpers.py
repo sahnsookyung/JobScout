@@ -1346,7 +1346,7 @@ class TestPipelineNotificationAndPublicationHelpers:
             owner_id="owner-1",
         )
 
-        assert stats == {"attempted": 0, "reused": 0, "created": 0, "failed": 0}
+        assert stats == {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0}
         mock_uow.assert_not_called()
 
 

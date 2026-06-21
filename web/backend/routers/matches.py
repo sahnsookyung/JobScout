@@ -17,11 +17,13 @@ from core.llm_evaluation import (
     evaluation_public_dict,
 )
 from core.llm_evaluation_queue import enqueue_llm_evaluation
+from core.metrics import record_match_query_payload_bytes
 from ..dependencies import TenantContext, get_current_user, get_db, get_tenant_context
 from ..exceptions import InvalidMatchOperationException
 from ..models.requests import MatchLlmEvaluationRequest
 from ..services.match_service import DEFAULT_ALL_TIER_PAGE_LIMIT, MatchService
 from ..services.policy_service import get_policy_service
+from ..services.cursors import CursorDecodeError
 from ..models.responses import (
     MatchesResponse,
     MatchDetailResponse,
@@ -72,6 +74,9 @@ def _to_evaluation_summary(evaluation) -> MatchLlmEvaluationSummary:
 
 _VALID_RANKING_MODES = {"preference_first", "fit_first", "balanced"}
 _VALID_TIERS = {"primary", "all"}
+_VALID_PAGE_MODES = {"offset", "cursor"}
+_VALID_VIEWS = {"summary", "compact"}
+_VALID_INCLUDES = {"llm"}
 
 
 def _request_tenant_id(request: Request):
@@ -84,6 +89,14 @@ def _safe_nonnegative_int(value, fallback: int) -> int:
     except (TypeError, ValueError):
         return fallback
     return max(parsed, 0)
+
+def _safe_str_attr(obj, name: str, fallback: str) -> str:
+    value = getattr(obj, name, fallback)
+    return value if isinstance(value, str) else fallback
+
+def _safe_optional_str_attr(obj, name: str):
+    value = getattr(obj, name, None)
+    return value if isinstance(value, str) else None
 
 
 @router.get(
@@ -108,6 +121,10 @@ def get_matches(
     tier: Annotated[str, Query(description="Selection tier: primary (default) or all (include excluded; status/show_hidden only apply to primary items)")] = "primary",
     limit: Annotated[int | None, Query(ge=1, le=500, description="Response page size applied after ranking. tier=all defaults to a bounded first page when omitted.")] = None,
     offset: Annotated[int, Query(ge=0, description="Response page offset applied with limit")] = 0,
+    cursor: Annotated[str | None, Query(description="Opaque cursor returned by a prior cursor-mode response")] = None,
+    page_mode: Annotated[str, Query(description="Pagination mode: offset (default) or cursor")] = "offset",
+    view: Annotated[str, Query(description="Payload view: summary (default) or compact")] = "summary",
+    include: Annotated[str | None, Query(description="Comma-delimited optional expansions; currently supports llm")] = None,
 ):
     """
     Get a list of job matches ranked by the declared mode.
@@ -139,6 +156,24 @@ def get_matches(
             status_code=422,
             detail=f"Invalid tier '{tier}'. Valid values: {', '.join(sorted(_VALID_TIERS))}"
         )
+    if page_mode not in _VALID_PAGE_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid page_mode '{page_mode}'. Valid values: {', '.join(sorted(_VALID_PAGE_MODES))}"
+        )
+    if view not in _VALID_VIEWS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid view '{view}'. Valid values: {', '.join(sorted(_VALID_VIEWS))}"
+        )
+    if include:
+        include_values = {value.strip() for value in include.split(",") if value.strip()}
+        unknown_includes = include_values - _VALID_INCLUDES
+        if unknown_includes:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid include '{sorted(unknown_includes)[0]}'. Valid values: {', '.join(sorted(_VALID_INCLUDES))}"
+            )
 
     # Rollout gate: when two-tier selection is disabled, tier=all collapses
     # to tier=primary so the API behaves like the pre-§C single-tier contract.
@@ -161,19 +196,26 @@ def get_matches(
         effective_limit = DEFAULT_ALL_TIER_PAGE_LIMIT
 
     service = MatchService(db)
-    matches = service.get_matches(
-        owner_id=getattr(user, "id", None),
-        status=status,
-        min_fit=min_fit,
-        top_k=effective_top_k,
-        remote_only=remote_only,
-        show_hidden=show_hidden,
-        ranking_mode=ranking_mode,
-        tier=tier,
-        tenant_id=tenant_context.tenant_id,
-        limit=effective_limit,
-        offset=offset,
-    )
+    try:
+        matches = service.get_matches(
+            owner_id=getattr(user, "id", None),
+            status=status,
+            min_fit=min_fit,
+            top_k=effective_top_k,
+            remote_only=remote_only,
+            show_hidden=show_hidden,
+            ranking_mode=ranking_mode,
+            tier=tier,
+            tenant_id=tenant_context.tenant_id,
+            limit=effective_limit,
+            offset=offset,
+            cursor=cursor,
+            page_mode=page_mode,
+            view=view,
+            include=include,
+        )
+    except CursorDecodeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     llm_rerank = getattr(service, "last_llm_rerank_metadata", None)
     if not isinstance(llm_rerank, dict):
@@ -199,19 +241,33 @@ def get_matches(
         response_limit is not None
         and response_offset + len(matches) < total
     )
+    explicit_has_more = getattr(service, "last_matches_has_more", None)
+    if isinstance(explicit_has_more, bool):
+        has_more = bool(explicit_has_more)
 
-    return MatchesResponse(
+    response = MatchesResponse(
         success=True,
         count=len(matches),
         total=total,
         limit=response_limit,
         offset=response_offset,
         has_more=has_more,
+        page_mode=_safe_str_attr(service, "last_matches_page_mode", page_mode),
+        view=_safe_str_attr(service, "last_matches_view", view),
+        next_cursor=_safe_optional_str_attr(service, "last_matches_next_cursor"),
+        llm_judge_revision=_safe_nonnegative_int(llm_rerank.get("policy_revision"), 0),
+        rank_source=_safe_str_attr(service, "last_matches_rank_source", "computed"),
         matches=matches,
         llm_rerank=llm_rerank,
         degraded=bool(degraded_reasons),
         degraded_reasons=degraded_reasons,
     )
+    record_match_query_payload_bytes(
+        response.page_mode,
+        response.view,
+        len(response.model_dump_json().encode("utf-8")),
+    )
+    return response
 
 
 @router.get(

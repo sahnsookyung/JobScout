@@ -252,6 +252,61 @@ class TestMatchesRouter:
         assert call_kwargs["limit"] == 100
         assert call_kwargs["offset"] == 100
 
+    def test_get_matches_accepts_cursor_mode_without_changing_endpoint(
+        self, client, mock_match_service, mock_policy_service
+    ):
+        mock_match_service.get_matches.return_value = []
+        mock_match_service.last_matches_total = 12
+        mock_match_service.last_matches_limit = 5
+        mock_match_service.last_matches_offset = 0
+        mock_match_service.last_matches_page_mode = "cursor"
+        mock_match_service.last_matches_view = "compact"
+        mock_match_service.last_matches_next_cursor = "next-token"
+        mock_match_service.last_matches_has_more = True
+        mock_match_service.last_matches_rank_source = "selection_run"
+        mock_match_service.last_llm_rerank_metadata = {
+            "enabled": True,
+            "available": True,
+            "applied": False,
+            "top_n": 5,
+            "window_size": 0,
+            "eligible_count": 0,
+            "reranked_count": 0,
+            "policy_revision": 9,
+            "reason": "no_current_successful_evaluations",
+        }
+
+        response = client.get(
+            "/api/matches",
+            params={
+                "page_mode": "cursor",
+                "view": "compact",
+                "include": "llm",
+                "cursor": "cursor-token",
+                "limit": 5,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["page_mode"] == "cursor"
+        assert data["view"] == "compact"
+        assert data["next_cursor"] == "next-token"
+        assert data["llm_judge_revision"] == 9
+        assert data["rank_source"] == "selection_run"
+        call_kwargs = mock_match_service.get_matches.call_args.kwargs
+        assert call_kwargs["page_mode"] == "cursor"
+        assert call_kwargs["view"] == "compact"
+        assert call_kwargs["include"] == "llm"
+        assert call_kwargs["cursor"] == "cursor-token"
+
+    def test_get_matches_rejects_unknown_include(self, client, mock_match_service, mock_policy_service):
+        response = client.get("/api/matches", params={"include": "full_jobs"})
+
+        assert response.status_code == 422
+        assert "Invalid include" in response.json()["detail"]
+        mock_match_service.get_matches.assert_not_called()
+
     def test_get_matches_invalid_status(self, client):
         """Test get matches with invalid status parameter."""
         response = client.get('/api/matches', params={'status': 'invalid_status'})

@@ -399,7 +399,16 @@ describe('MatchList', () => {
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
 
         expect(mockUseMatches).toHaveBeenLastCalledWith(
-            expect.objectContaining({ tier: 'primary', min_fit: 55, top_k: 50, limit: 50 }),
+            expect.objectContaining({
+                tier: 'primary',
+                min_fit: 55,
+                top_k: 50,
+                limit: 50,
+                cursor: null,
+                page_mode: 'cursor',
+                view: 'compact',
+                include: 'llm',
+            }),
         );
         expect(screen.getByText(/remote cross-encoder is unreachable/i)).toBeInTheDocument();
 
@@ -417,7 +426,8 @@ describe('MatchList', () => {
                 min_fit: undefined,
                 top_k: undefined,
                 limit: 100,
-                offset: 0,
+                cursor: null,
+                page_mode: 'cursor',
             }),
         );
     });
@@ -425,13 +435,17 @@ describe('MatchList', () => {
     it('loads all matched candidates in pages after the user opts in', async () => {
         mockUseStats.mockReturnValue({ data: { total_scored: 3, excluded_count: 2 } });
         mockUseMatches.mockImplementation((params) => ({
-            data: params.limit
+            data: params.tier === 'all'
                 ? {
                     matches: [
-                        makeMatch({ match_id: `match-${params.offset ?? 0}`, title: `Candidate ${params.offset ?? 0}` }),
+                        makeMatch({
+                            match_id: params.cursor ? 'match-1' : 'match-0',
+                            title: params.cursor ? 'Candidate 1' : 'Candidate 0',
+                        }),
                     ],
                     total: 3,
-                    has_more: (params.offset ?? 0) < 2,
+                    has_more: !params.cursor,
+                    next_cursor: params.cursor ? null : 'cursor-1',
                 }
                 : {
                     matches: [makeMatch({ match_id: 'base-1', title: 'Base Candidate' })],
@@ -447,7 +461,13 @@ describe('MatchList', () => {
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
 
         expect(mockUseMatches).toHaveBeenLastCalledWith(
-            expect.objectContaining({ tier: 'primary', top_k: 50, limit: 50, offset: 0 }),
+            expect.objectContaining({
+                tier: 'primary',
+                top_k: 50,
+                limit: 50,
+                cursor: null,
+                page_mode: 'cursor',
+            }),
         );
 
         fireEvent.click(screen.getByRole('checkbox', { name: /all matched candidates \(3\)/i }));
@@ -457,14 +477,14 @@ describe('MatchList', () => {
         });
         expect(screen.getByText('1 of 3 matched candidates')).toBeInTheDocument();
         expect(mockUseMatches).toHaveBeenLastCalledWith(
-            expect.objectContaining({ top_k: undefined, limit: 100, offset: 0 }),
+            expect.objectContaining({ top_k: undefined, limit: 100, cursor: null }),
         );
 
         fireEvent.click(screen.getByRole('button', { name: /load more candidates/i }));
 
         await waitFor(() => {
             expect(mockUseMatches).toHaveBeenLastCalledWith(
-                expect.objectContaining({ top_k: undefined, limit: 100, offset: 1 }),
+                expect.objectContaining({ top_k: undefined, limit: 100, cursor: 'cursor-1' }),
             );
         });
     });
@@ -516,7 +536,14 @@ describe('MatchList', () => {
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
 
         expect(mockUseMatches).toHaveBeenLastCalledWith(
-            expect.objectContaining({ tier: 'primary', min_fit: 0, top_k: 100, limit: 100 }),
+            expect.objectContaining({
+                tier: 'primary',
+                min_fit: 0,
+                top_k: 100,
+                limit: 100,
+                cursor: null,
+                page_mode: 'cursor',
+            }),
         );
         expect(screen.getByText('Backend Engineer')).toBeInTheDocument();
         expect(screen.queryByText(/Nothing above your threshold/i)).not.toBeInTheDocument();

@@ -172,6 +172,11 @@ export interface MatchesResponse {
     limit?: number | null;
     offset?: number;
     has_more?: boolean;
+    page_mode?: 'offset' | 'cursor';
+    view?: 'summary' | 'compact';
+    next_cursor?: string | null;
+    llm_judge_revision?: number;
+    rank_source?: string;
     matches: MatchSummary[];
     llm_rerank?: {
         enabled: boolean;
@@ -181,6 +186,7 @@ export interface MatchesResponse {
         window_size: number;
         eligible_count: number;
         reranked_count: number;
+        policy_revision?: number;
         reason?: string | null;
     };
     degraded?: boolean;
@@ -251,6 +257,13 @@ export interface ProcessingBlockerItem {
 export interface ProcessingBlockersResponse {
     success: boolean;
     count: number;
+    total?: number;
+    limit?: number;
+    offset?: number;
+    has_more?: boolean;
+    page_mode?: 'offset' | 'cursor';
+    view?: 'compact' | 'detail';
+    next_cursor?: string | null;
     blockers: ProcessingBlockerItem[];
 }
 
@@ -303,6 +316,10 @@ export interface PipelineRunsResponse {
     total: number;
     limit: number;
     offset: number;
+    has_more?: boolean;
+    page_mode?: 'offset' | 'cursor';
+    view?: 'compact' | 'detail';
+    next_cursor?: string | null;
     runs: PipelineRunSummary[];
 }
 
@@ -385,6 +402,15 @@ export interface PolicyConfig {
     llm_judge_available?: boolean;
     llm_judge_unavailable_reason?: string;
     llm_judge_revision?: number;
+    llm_judge_enqueue_stats?: {
+        attempted: number;
+        reused: number;
+        created: number;
+        enqueued: number;
+        failed: number;
+    } | null;
+    degraded?: boolean;
+    degraded_reasons?: Array<{ reason: string; detail?: string }>;
 }
 
 export type PolicyUpdatePayload = Pick<

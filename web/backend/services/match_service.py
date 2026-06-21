@@ -11,7 +11,12 @@ from sqlalchemy.orm import Session
 
 from core.llm_evaluation import MatchLlmEvaluationService
 from core.match_selection import resolve_canonical_resume_selection
-from core.metrics import record_match_query_degraded
+from core.metrics import (
+    record_llm_rerank_window_size,
+    record_match_query_degraded,
+    record_match_query_rows_loaded,
+    set_llm_rerank_policy_revision,
+)
 from core.policy import get_result_policy_store
 from core.ranking import RankingMode, get_ranking_policy_store, rank_matches
 from database.models import (
@@ -36,6 +41,7 @@ from ..utils import safe_float, safe_int, safe_str, safe_datetime_iso
 from ..exceptions import InvalidMatchOperationException, MatchNotFoundException
 from web.backend.services.match_query import (
     MatchPagination,
+    MatchListReadService,
     MatchQueryBuilder,
     MatchRankingService,
     MatchSummaryCandidate,
@@ -70,6 +76,11 @@ class MatchService:
         self.last_matches_total: int = 0
         self.last_matches_limit: Optional[int] = None
         self.last_matches_offset: int = 0
+        self.last_matches_page_mode: str = "offset"
+        self.last_matches_view: str = "summary"
+        self.last_matches_next_cursor: Optional[str] = None
+        self.last_matches_has_more: Optional[bool] = None
+        self.last_matches_rank_source: str = "computed"
 
     def get_matches(
         self,
@@ -84,6 +95,10 @@ class MatchService:
         tier: str = "primary",
         limit: Optional[int] = None,
         offset: int = 0,
+        cursor: Optional[str] = None,
+        page_mode: str = "offset",
+        view: str = "summary",
+        include: Optional[str] = None,
     ) -> List[MatchSummary]:
         """
         Get filtered job matches, ranked by the requested mode.
@@ -115,6 +130,17 @@ class MatchService:
         """
         ranking_config = get_ranking_policy_store().get_current_config()
         self.last_degraded_reasons = []
+        page_mode = "cursor" if page_mode == "cursor" else "offset"
+        view = "compact" if view == "compact" else "summary"
+        include_llm = include is None or "llm" in {
+            value.strip() for value in str(include).split(",") if value.strip()
+        }
+        self.last_matches_page_mode = page_mode
+        self.last_matches_view = view
+        self.last_matches_next_cursor = None
+        self.last_matches_has_more = None
+        self.last_matches_rank_source = "computed"
+
         page_limit = MatchPagination.normalize_limit(tier=tier, limit=limit)
 
         # Resolve ranking mode
@@ -129,8 +155,53 @@ class MatchService:
             tenant_id=tenant_id,
         )
         if canonical_selection is None:
-            self._set_match_page_metadata(total=0, limit=page_limit, offset=offset)
+            self._set_match_page_metadata(
+                total=0,
+                limit=page_limit,
+                offset=offset,
+                page_mode=page_mode,
+                view=view,
+            )
             return []
+
+        if page_mode == "cursor":
+            if (
+                ranking_mode is not None
+                and getattr(canonical_selection, "ranking_mode_used", None)
+                and ranking_mode != getattr(canonical_selection, "ranking_mode_used", None)
+            ):
+                self._record_degraded_reason(
+                    "unsupported_cursor_ranking_mode",
+                    ValueError("cursor mode uses persisted selection ranking"),
+                )
+            page = MatchListReadService(self).load_cursor_page(
+                canonical_selection,
+                status=status,
+                min_fit=min_fit,
+                top_k=top_k,
+                remote_only=remote_only,
+                show_hidden=show_hidden,
+                tier=tier,
+                tenant_id=tenant_id,
+                owner_id=owner_id,
+                limit=limit,
+                cursor=cursor,
+                include_llm=include_llm,
+                ranking_config=ranking_config,
+            )
+            self.last_llm_rerank_metadata = page.llm_rerank
+            self._set_match_page_metadata(
+                total=page.total,
+                limit=page.limit,
+                offset=page.offset,
+                page_mode=page_mode,
+                view=view,
+                next_cursor=page.next_cursor,
+                has_more=page.has_more,
+                rank_source=page.rank_source,
+            )
+            record_match_query_rows_loaded(page_mode, view, page.rows_loaded)
+            return MatchSummaryPresenter(self).present(page.candidates)
 
         pool = query_builder.load_rankable_pool(
             canonical_selection,
@@ -141,6 +212,7 @@ class MatchService:
             tier=tier,
             tenant_id=tenant_id,
         )
+        record_match_query_rows_loaded(page_mode, view, len(pool))
 
         ranked, self.last_llm_rerank_metadata = MatchRankingService(
             self,
@@ -157,7 +229,14 @@ class MatchService:
 
         total = len(ranked)
         ranked = MatchPagination.page(ranked, limit=page_limit, offset=offset)
-        self._set_match_page_metadata(total=total, limit=page_limit, offset=offset)
+        self._set_match_page_metadata(
+            total=total,
+            limit=page_limit,
+            offset=offset,
+            page_mode=page_mode,
+            view=view,
+            has_more=page_limit is not None and offset + len(ranked) < total,
+        )
 
         return MatchSummaryPresenter(self).present(ranked)
 
@@ -181,10 +260,20 @@ class MatchService:
         total: int,
         limit: Optional[int],
         offset: int,
+        page_mode: str = "offset",
+        view: str = "summary",
+        next_cursor: Optional[str] = None,
+        has_more: Optional[bool] = None,
+        rank_source: str = "computed",
     ) -> None:
         self.last_matches_total = max(int(total or 0), 0)
         self.last_matches_limit = None if limit is None else max(int(limit), 0)
         self.last_matches_offset = max(int(offset or 0), 0)
+        self.last_matches_page_mode = page_mode
+        self.last_matches_view = view
+        self.last_matches_next_cursor = next_cursor
+        self.last_matches_has_more = has_more
+        self.last_matches_rank_source = rank_source
 
     def _record_degraded_reason(self, code: str, exc: Exception) -> None:
         self.last_degraded_reasons.append(
@@ -311,6 +400,8 @@ class MatchService:
             resume_fingerprint=getattr(match, "resume_fingerprint", None),
             job_post_id=str(getattr(match, "job_post_id", "")),
             job_content_hash=getattr(match, "job_content_hash", None),
+            selection_item_id=str(getattr(item, "id", "")),
+            rank_position=getattr(item, "rank_position", None),
         )
 
     def _attach_latest_evaluations(
@@ -345,6 +436,7 @@ class MatchService:
         try:
             evaluations = stmt.all()
         except Exception as exc:
+            self._record_degraded_reason("llm_evaluation_lookup_unavailable", exc)
             logger.warning("Could not attach LLM evaluation markers: %s", exc)
             return
         try:
@@ -370,7 +462,32 @@ class MatchService:
             "window_size": 0,
             "eligible_count": 0,
             "reranked_count": 0,
+            "policy_revision": 0,
             "reason": reason,
+        }
+
+    def _llm_policy_metadata(self, *, owner_id: Optional[Any]) -> Dict[str, Any]:
+        if owner_id is None:
+            return self._empty_llm_rerank_metadata(reason="owner_missing")
+        try:
+            policy = get_result_policy_store().get_llm_judge_policy(owner_id)
+        except Exception as exc:
+            self._record_degraded_reason("policy_unavailable", exc)
+            logger.warning("Could not load LLM rerank policy: %s", exc)
+            return self._empty_llm_rerank_metadata(reason="policy_unavailable")
+        top_n = max(0, int(getattr(policy, "top_n", 0) or 0))
+        revision = max(0, int(getattr(policy, "revision", 0) or 0))
+        return {
+            "enabled": bool(getattr(policy, "enabled", False)),
+            "available": bool(getattr(policy, "available", False)),
+            "applied": False,
+            "top_n": top_n,
+            "window_size": 0,
+            "eligible_count": 0,
+            "reranked_count": 0,
+            "policy_revision": revision,
+            "reason": None,
+            "unavailable_reason": getattr(policy, "unavailable_reason", None),
         }
 
     def _apply_llm_rerank(
@@ -379,33 +496,21 @@ class MatchService:
         *,
         owner_id: Optional[Any],
         tenant_id: Optional[Any],
+        page_mode: str = "offset",
+        policy_metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         if owner_id is None:
             return self._empty_llm_rerank_metadata(reason="owner_missing")
         if not primary_pool:
             return self._empty_llm_rerank_metadata(reason="empty_primary_pool")
 
-        try:
-            policy = get_result_policy_store().get_llm_judge_policy(owner_id)
-        except Exception as exc:
-            logger.warning("Could not load LLM rerank policy: %s", exc)
-            return self._empty_llm_rerank_metadata(reason="policy_unavailable")
-
-        top_n = max(0, int(getattr(policy, "top_n", 0) or 0))
-        metadata = {
-            "enabled": bool(getattr(policy, "enabled", False)),
-            "available": bool(getattr(policy, "available", False)),
-            "applied": False,
-            "top_n": top_n,
-            "window_size": 0,
-            "eligible_count": 0,
-            "reranked_count": 0,
-            "reason": None,
-        }
-        if not getattr(policy, "available", False):
-            metadata["reason"] = getattr(policy, "unavailable_reason", None) or "unavailable"
+        metadata = dict(policy_metadata or self._llm_policy_metadata(owner_id=owner_id))
+        top_n = max(0, int(metadata.get("top_n", 0) or 0))
+        set_llm_rerank_policy_revision(metadata.get("policy_revision"))
+        if not metadata.get("available", False):
+            metadata["reason"] = metadata.get("unavailable_reason") or "unavailable"
             return metadata
-        if not getattr(policy, "enabled", False):
+        if not metadata.get("enabled", False):
             metadata["reason"] = "disabled"
             return metadata
         if top_n <= 0:
@@ -415,6 +520,7 @@ class MatchService:
         window_size = min(top_n, len(primary_pool))
         window = primary_pool[:window_size]
         metadata["window_size"] = window_size
+        record_llm_rerank_window_size(page_mode, window_size)
         judge_service = MatchLlmEvaluationService(self.db)
         eligible_count = 0
         for candidate in window:

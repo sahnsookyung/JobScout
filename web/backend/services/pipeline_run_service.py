@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from database.models import PipelineRun, PipelineRunStage
+from web.backend.services.cursors import MatchCursorCodec
 from web.backend.models.responses import PipelineRunStageSummary, PipelineRunSummary
 
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
@@ -96,7 +98,9 @@ class PipelineRunReadService:
         run_type: str,
         limit: int,
         offset: int,
-    ) -> tuple[list[PipelineRunSummary], int]:
+        cursor: str | None = None,
+        page_mode: str = "offset",
+    ) -> tuple[list[PipelineRunSummary], int, str | None, bool, str, int]:
         filters = []
         filters.append(PipelineRun.tenant_id.is_(None) if tenant_id is None else PipelineRun.tenant_id == tenant_id)
         if status != "all":
@@ -105,16 +109,41 @@ class PipelineRunReadService:
             filters.append(PipelineRun.run_type == run_type)
 
         total = int(db.execute(select(func.count(PipelineRun.id)).where(*filters)).scalar_one() or 0)
+        effective_page_mode = "cursor" if cursor or page_mode == "cursor" else "offset"
+        effective_offset = 0 if effective_page_mode == "cursor" else offset
+        if cursor:
+            decoded = MatchCursorCodec.decode(cursor, expected_kind="pipeline_runs")
+            try:
+                after_created_at = datetime.fromisoformat(str(decoded.get("created_at")))
+                after_id = uuid.UUID(str(decoded.get("id")))
+                filters.append(
+                    or_(
+                        PipelineRun.created_at < after_created_at,
+                        (PipelineRun.created_at == after_created_at) & (PipelineRun.id < after_id),
+                    )
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Invalid pipeline run cursor.") from exc
         stmt = (
             select(PipelineRun)
             .options(selectinload(PipelineRun.stages))
             .where(*filters)
             .order_by(PipelineRun.created_at.desc(), PipelineRun.id.desc())
-            .offset(offset)
-            .limit(limit)
+            .offset(0 if effective_page_mode == "cursor" else offset)
+            .limit(limit + 1 if effective_page_mode == "cursor" else limit)
         )
-        runs = db.execute(stmt).scalars().all()
-        return [pipeline_run_summary(run) for run in runs], total
+        loaded_runs = list(db.execute(stmt).scalars().all())
+        has_more = bool(effective_page_mode == "cursor" and len(loaded_runs) > limit)
+        runs = loaded_runs[:limit]
+        next_cursor = None
+        if has_more and runs:
+            last = runs[-1]
+            next_cursor = MatchCursorCodec.encode(
+                "pipeline_runs",
+                created_at=_isoformat(last.created_at),
+                id=str(last.id),
+            )
+        return [pipeline_run_summary(run) for run in runs], total, next_cursor, has_more, effective_page_mode, effective_offset
 
     def get_run(
         self,

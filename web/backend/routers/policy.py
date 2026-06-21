@@ -3,14 +3,22 @@
 Policy endpoints - manage result filtering policies.
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 from typing import Annotated, cast
 
-from ..dependencies import get_current_user
+from core.metrics import record_match_query_degraded
+
+from ..dependencies import TenantContext, get_current_user, get_db, get_tenant_context
+from ..services.match_service import MatchService
 from ..services.policy_service import get_policy_service
 from ..models.requests import PolicyUpdate
 from ..models.responses import PolicyResponse, ScoringWeightsResponse
 from ..config import get_config
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api",
@@ -18,11 +26,86 @@ router = APIRouter(
     dependencies=[Depends(get_current_user)],
 )
 
+DbSession = Annotated[Session, Depends(get_db)]
 
-def _policy_response(policy, llm_policy) -> PolicyResponse:
+_ZERO_LLM_ENQUEUE_STATS = {
+    "attempted": 0,
+    "reused": 0,
+    "created": 0,
+    "enqueued": 0,
+    "failed": 0,
+}
+
+
+def _zero_llm_enqueue_stats() -> dict[str, int]:
+    return dict(_ZERO_LLM_ENQUEUE_STATS)
+
+
+def _should_enqueue_llm_top_n(previous_policy, next_policy) -> bool:
+    return (
+        bool(getattr(next_policy, "enabled", False))
+        and bool(getattr(next_policy, "available", False))
+        and (
+            not bool(getattr(previous_policy, "enabled", False))
+            or int(getattr(next_policy, "top_n", 0) or 0)
+            > int(getattr(previous_policy, "top_n", 0) or 0)
+        )
+    )
+
+
+def _enqueue_llm_top_n_after_policy_update(
+    db,
+    *,
+    owner_id,
+    tenant_id,
+    previous_policy,
+    next_policy,
+) -> tuple[dict[str, int], list[dict[str, str]]]:
+    if not _should_enqueue_llm_top_n(previous_policy, next_policy):
+        return _zero_llm_enqueue_stats(), []
+
+    try:
+        canonical_selection = MatchService(db)._resolve_canonical_selection(
+            owner_id=owner_id,
+            tenant_id=tenant_id,
+        )
+        if canonical_selection is None:
+            return _zero_llm_enqueue_stats(), []
+
+        from core.llm_evaluation import MatchLlmEvaluationService
+
+        stats = MatchLlmEvaluationService(db).evaluate_selection_run(
+            canonical_selection.selection_run_id,
+            owner_id=owner_id,
+            tenant_id=tenant_id,
+            top_n=int(getattr(next_policy, "top_n", 0) or 0),
+        )
+        return {
+            **_zero_llm_enqueue_stats(),
+            **{key: int(value or 0) for key, value in stats.items()},
+        }, []
+    except Exception as exc:
+        logger.warning("Could not enqueue LLM top-N evaluations after policy update: %s", exc)
+        record_match_query_degraded("policy_llm_enqueue_unavailable")
+        return _zero_llm_enqueue_stats(), [
+            {
+                "reason": "policy_llm_enqueue_unavailable",
+                "detail": exc.__class__.__name__,
+            }
+        ]
+
+
+def _policy_response(
+    policy,
+    llm_policy,
+    *,
+    llm_enqueue_stats: dict[str, int] | None = None,
+    degraded_reasons: list[dict[str, str]] | None = None,
+) -> PolicyResponse:
     unavailable_reason = getattr(llm_policy, "unavailable_reason", "available")
     if not isinstance(unavailable_reason, str):
         unavailable_reason = "available" if getattr(llm_policy, "available", False) else "unknown"
+    degraded_reasons = degraded_reasons or []
     return PolicyResponse(
         min_fit=policy.min_fit,
         top_k=policy.top_k,
@@ -33,6 +116,9 @@ def _policy_response(policy, llm_policy) -> PolicyResponse:
         llm_judge_available=llm_policy.available,
         llm_judge_unavailable_reason=unavailable_reason,
         llm_judge_revision=llm_policy.revision,
+        llm_judge_enqueue_stats=llm_enqueue_stats,
+        degraded=bool(degraded_reasons),
+        degraded_reasons=degraded_reasons,
     )
 
 
@@ -54,6 +140,8 @@ def get_policy(user: Annotated[object, Depends(get_current_user)]):
 def update_policy(
     policy_update: PolicyUpdate,
     user: Annotated[object, Depends(get_current_user)],
+    db: DbSession,
+    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
 ):
     """
     Update result policy configuration.
@@ -66,6 +154,7 @@ def update_policy(
     """
     policy_service = get_policy_service()
     current_policy = policy_service.get_current_policy()
+    previous_llm_policy = policy_service.get_llm_judge_policy(getattr(user, "id", None))
     fields_set = policy_update.model_fields_set
 
     policy = policy_service.update_policy(
@@ -92,8 +181,20 @@ def update_policy(
         enabled=policy_update.llm_judge_enabled,
         top_n=policy_update.llm_judge_top_n,
     )
+    enqueue_stats, degraded_reasons = _enqueue_llm_top_n_after_policy_update(
+        db,
+        owner_id=getattr(user, "id", None),
+        tenant_id=tenant_context.tenant_id,
+        previous_policy=previous_llm_policy,
+        next_policy=llm_policy,
+    )
 
-    return _policy_response(policy, llm_policy)
+    return _policy_response(
+        policy,
+        llm_policy,
+        llm_enqueue_stats=enqueue_stats,
+        degraded_reasons=degraded_reasons,
+    )
 
 
 @router.post(

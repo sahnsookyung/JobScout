@@ -14,7 +14,13 @@ import { StatusBanner } from './StatusBanner';
 import { FetchSourcesPanel } from './FetchSourcesPanel';
 import { JobInventoryPanel } from './JobInventoryPanel';
 
-export const DashboardControls: React.FC = () => {
+interface DashboardControlsProps {
+    includeManagementSections?: boolean;
+}
+
+export const DashboardControls: React.FC<DashboardControlsProps> = ({
+    includeManagementSections = true,
+}) => {
     const {
         runPipeline,
         stopPipeline,
@@ -115,8 +121,12 @@ export const DashboardControls: React.FC = () => {
                     />
                 </div>
             </div>
-            <JobInventoryPanel stats={stats} />
-            <FetchSourcesPanel />
+            {includeManagementSections ? (
+                <>
+                    <FetchSourcesPanel />
+                    <JobInventoryPanel stats={stats} />
+                </>
+            ) : null}
             {showStatusBanner && statusData && <StatusBanner {...statusData} />}
         </DashboardWrapper>
     );

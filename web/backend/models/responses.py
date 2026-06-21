@@ -229,6 +229,7 @@ class LlmRerankMetadata(BaseModel):
     window_size: int = 0
     eligible_count: int = 0
     reranked_count: int = 0
+    policy_revision: int = 0
     reason: Optional[str] = None
 
 
@@ -240,6 +241,11 @@ class MatchesResponse(BaseModel):
     limit: Optional[int] = None
     offset: int = 0
     has_more: bool = False
+    page_mode: str = "offset"
+    view: str = "summary"
+    next_cursor: Optional[str] = None
+    llm_judge_revision: int = 0
+    rank_source: str = "computed"
     matches: List[MatchSummary]
     llm_rerank: LlmRerankMetadata = Field(default_factory=LlmRerankMetadata)
     degraded: bool = False
@@ -307,6 +313,13 @@ class ProcessingBlockersResponse(BaseModel):
 
     success: bool
     count: int
+    total: int = 0
+    limit: int = 0
+    offset: int = 0
+    has_more: bool = False
+    page_mode: str = "offset"
+    view: str = "detail"
+    next_cursor: Optional[str] = None
     blockers: List[ProcessingBlockerItem] = Field(default_factory=list)
 
 
@@ -365,6 +378,10 @@ class PipelineRunsResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    has_more: bool = False
+    page_mode: str = "offset"
+    view: str = "detail"
+    next_cursor: Optional[str] = None
     runs: List[PipelineRunSummary] = Field(default_factory=list)
 
 
@@ -431,6 +448,9 @@ class PolicyResponse(BaseModel):
     llm_judge_available: bool = False
     llm_judge_unavailable_reason: str = "available"
     llm_judge_revision: int = 0
+    llm_judge_enqueue_stats: Optional[Dict[str, int]] = None
+    degraded: bool = False
+    degraded_reasons: List[Dict[str, str]] = Field(default_factory=list)
 
 
 class ProcessingProgress(BaseModel):

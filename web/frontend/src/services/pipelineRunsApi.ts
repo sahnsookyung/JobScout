@@ -11,6 +11,9 @@ export interface GetPipelineRunsParams {
     run_type?: string;
     limit?: number;
     offset?: number;
+    cursor?: string | null;
+    page_mode?: 'offset' | 'cursor';
+    view?: 'compact' | 'detail';
 }
 
 export const pipelineRunsApi = {

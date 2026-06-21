@@ -11,11 +11,13 @@ from ..dependencies import TenantContext, get_current_user, get_db, get_tenant_c
 from ..models.responses import (
     LlmEvaluationQueueStatusResponse,
     PipelineRunDetailResponse,
+    PipelineRunSummary,
     PipelineRunOperationResponse,
     PipelineRunsResponse,
 )
 from ..services.pipeline_run_ops_service import pipeline_run_ops_service
 from ..services.pipeline_run_service import pipeline_run_read_service
+from ..services.cursors import CursorDecodeError
 
 router = APIRouter(prefix="/api/pipeline-runs", tags=["pipeline-runs"])
 
@@ -31,6 +33,14 @@ VALID_RUN_TYPES = {
     "repair",
     "scrape",
 }
+VALID_PAGE_MODES = {"offset", "cursor"}
+VALID_RUN_VIEWS = {"compact", "detail"}
+
+
+def _pipeline_run_for_view(run: PipelineRunSummary, view: str) -> PipelineRunSummary:
+    if view != "compact":
+        return run
+    return run.model_copy(update={"metadata": {}, "stages": []})
 
 
 @router.get(
@@ -49,6 +59,9 @@ def get_pipeline_runs(
     run_type: Annotated[str, Query(description="Run type or all")] = "all",
     limit: Annotated[int, Query(ge=1, le=100)] = 25,
     offset: Annotated[int, Query(ge=0)] = 0,
+    cursor: Annotated[str | None, Query(description="Opaque cursor returned by a prior response")] = None,
+    page_mode: Annotated[str, Query(description="Pagination mode: offset (default) or cursor")] = "offset",
+    view: Annotated[str, Query(description="Payload view: detail (default) or compact")] = "detail",
 ) -> PipelineRunsResponse:
     if status not in VALID_RUN_STATUSES:
         raise HTTPException(
@@ -60,22 +73,51 @@ def get_pipeline_runs(
             status_code=422,
             detail=f"Invalid run_type '{run_type}'. Valid values: {', '.join(sorted(VALID_RUN_TYPES))}",
         )
+    if page_mode not in VALID_PAGE_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid page_mode '{page_mode}'. Valid values: {', '.join(sorted(VALID_PAGE_MODES))}",
+        )
+    if view not in VALID_RUN_VIEWS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid view '{view}'. Valid values: {', '.join(sorted(VALID_RUN_VIEWS))}",
+        )
 
-    runs, total = pipeline_run_read_service.list_runs(
-        db,
-        tenant_id=tenant_context.tenant_id,
-        status=status,
-        run_type=run_type,
-        limit=limit,
-        offset=offset,
-    )
+    try:
+        result = pipeline_run_read_service.list_runs(
+            db,
+            tenant_id=tenant_context.tenant_id,
+            status=status,
+            run_type=run_type,
+            limit=limit,
+            offset=offset,
+            cursor=cursor,
+            page_mode=page_mode,
+        )
+    except (CursorDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if len(result) == 2:
+        runs, total = result
+        next_cursor = None
+        page_mode = "offset"
+        response_offset = offset
+        has_more = response_offset + len(runs) < total
+    else:
+        runs, total, next_cursor, has_more, page_mode, response_offset = result
+        if page_mode == "offset":
+            has_more = response_offset + len(runs) < total
     return PipelineRunsResponse(
         success=True,
         count=len(runs),
         total=total,
         limit=limit,
-        offset=offset,
-        runs=runs,
+        offset=response_offset,
+        has_more=has_more,
+        page_mode=page_mode,
+        view=view,
+        next_cursor=next_cursor,
+        runs=[_pipeline_run_for_view(run, view) for run in runs],
     )
 @router.get(
     "/llm-evaluations/queue",

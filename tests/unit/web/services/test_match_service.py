@@ -12,6 +12,7 @@ Key invariants verified:
 """
 
 import pytest
+import uuid
 from unittest.mock import Mock, MagicMock, patch
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
@@ -537,6 +538,223 @@ class TestThreeStagePipeline:
         assert len(results) == 1
         assert results[0].fit_score == pytest.approx(82.0)
         mock_db.query.assert_not_called()
+
+    @patch("web.backend.services.match_service.get_ranking_policy_store")
+    def test_cursor_mode_uses_bounded_projection_instead_of_full_pool(
+        self,
+        mock_store,
+        mock_db,
+        service,
+    ):
+        from core.ranking.policy import RankingConfig
+
+        cfg = RankingConfig(
+            balanced_w_pref=0.6,
+            balanced_w_fit=0.4,
+            max_ranking_candidates=500,
+            default_top_k=10,
+            max_top_k=100,
+        )
+        mock_store.return_value.get_current_config.return_value = cfg
+        service._resolve_canonical_selection.return_value = SimpleNamespace(
+            resume_fingerprint="fp-123",
+            selection_run_id=uuid.uuid4(),
+            ranking_mode_used="balanced",
+        )
+
+        def row(rank: int):
+            return SimpleNamespace(
+                selection_item_id=uuid.uuid4(),
+                rank_position=rank,
+                fit_score_at_selection=90 - rank,
+                preference_score_at_selection=0.7,
+                job_similarity_at_selection=0.8,
+                required_coverage_at_selection=0.9,
+                selection_tier="primary",
+                excluded_reason=None,
+                match_id=uuid.uuid4(),
+                job_post_id=uuid.uuid4(),
+                penalties=0.0,
+                preferred_requirement_coverage=0.5,
+                match_type="requirements_only",
+                is_hidden=False,
+                created_at=datetime.now(timezone.utc),
+                calculated_at=datetime.now(timezone.utc),
+                resume_fingerprint="fp-123",
+                job_content_hash="hash",
+                title=f"Engineer {rank}",
+                company="Acme",
+                location_text="Remote",
+                is_remote=True,
+            )
+
+        count_result = Mock()
+        count_result.scalar_one.return_value = 3
+        rows_result = Mock()
+        rows_result.all.return_value = [row(1), row(2), row(3)]
+        mock_db.execute.side_effect = [count_result, rows_result]
+
+        results = service.get_matches(
+            owner_id="owner-1",
+            page_mode="cursor",
+            view="compact",
+            include="",
+            limit=2,
+            top_k=10,
+        )
+
+        assert [item.title for item in results] == ["Engineer 1", "Engineer 2"]
+        service._load_rankable_pool.assert_not_called()
+        assert service.last_matches_page_mode == "cursor"
+        assert service.last_matches_view == "compact"
+        assert service.last_matches_limit == 2
+        assert service.last_matches_next_cursor is not None
+        assert service.last_matches_has_more is True
+        assert mock_db.execute.call_count == 2
+
+    @patch("web.backend.services.match_service.get_result_policy_store")
+    @patch("web.backend.services.match_service.get_ranking_policy_store")
+    def test_cursor_mode_expands_sql_window_to_llm_top_n_before_page_slice(
+        self,
+        mock_ranking_store,
+        mock_policy_store,
+        mock_db,
+        service,
+    ):
+        from core.ranking.policy import RankingConfig
+
+        cfg = RankingConfig(
+            balanced_w_pref=0.6,
+            balanced_w_fit=0.4,
+            max_ranking_candidates=500,
+            default_top_k=2,
+            max_top_k=100,
+        )
+        mock_ranking_store.return_value.get_current_config.return_value = cfg
+        mock_policy_store.return_value.get_llm_judge_policy.return_value = SimpleNamespace(
+            enabled=True,
+            available=True,
+            top_n=4,
+            revision=9,
+            unavailable_reason="available",
+        )
+        service._resolve_canonical_selection.return_value = SimpleNamespace(
+            resume_fingerprint="fp-123",
+            selection_run_id=uuid.uuid4(),
+            ranking_mode_used="balanced",
+        )
+        service._attach_latest_evaluations = Mock()
+        service._apply_llm_rerank = Mock(
+            side_effect=lambda candidates, **_: {
+                "enabled": True,
+                "available": True,
+                "applied": False,
+                "top_n": 4,
+                "window_size": len(candidates),
+                "eligible_count": len(candidates),
+                "reranked_count": 0,
+                "policy_revision": 9,
+                "reason": "no_effective_evaluations",
+            }
+        )
+
+        def row(rank: int):
+            return SimpleNamespace(
+                selection_item_id=uuid.uuid4(),
+                rank_position=rank,
+                fit_score_at_selection=90 - rank,
+                preference_score_at_selection=0.7,
+                job_similarity_at_selection=0.8,
+                required_coverage_at_selection=0.9,
+                selection_tier="primary",
+                excluded_reason=None,
+                match_id=uuid.uuid4(),
+                job_post_id=uuid.uuid4(),
+                penalties=0.0,
+                preferred_requirement_coverage=0.5,
+                match_type="requirements_only",
+                is_hidden=False,
+                created_at=datetime.now(timezone.utc),
+                calculated_at=datetime.now(timezone.utc),
+                resume_fingerprint="fp-123",
+                job_content_hash="hash",
+                title=f"Engineer {rank}",
+                company="Acme",
+                location_text="Remote",
+                is_remote=True,
+            )
+
+        count_result = Mock()
+        count_result.scalar_one.return_value = 4
+        rows_result = Mock()
+        rows_result.all.return_value = [row(1), row(2), row(3), row(4)]
+        mock_db.execute.side_effect = [count_result, rows_result]
+
+        results = service.get_matches(
+            owner_id="owner-1",
+            page_mode="cursor",
+            view="compact",
+            limit=2,
+            top_k=2,
+        )
+
+        assert [item.title for item in results] == [
+            "Engineer 1",
+            "Engineer 2",
+            "Engineer 3",
+            "Engineer 4",
+        ]
+        count_stmt = mock_db.execute.call_args_list[0].args[0]
+        assert 4 in count_stmt.compile().params.values()
+        assert service.last_matches_limit == 4
+        service._apply_llm_rerank.assert_called_once()
+        assert len(service._apply_llm_rerank.call_args.args[0]) == 4
+
+    @patch("web.backend.services.match_service.MatchLlmEvaluationService")
+    @patch("web.backend.services.match_service.get_result_policy_store")
+    def test_llm_rerank_window_uses_policy_top_n_and_revision(
+        self,
+        mock_llm_policy_store,
+        mock_judge_service_cls,
+        service,
+    ):
+        mock_llm_policy_store.return_value.get_llm_judge_policy.return_value = SimpleNamespace(
+            enabled=True,
+            available=True,
+            top_n=3,
+            revision=7,
+            unavailable_reason="available",
+        )
+        mock_judge_service = mock_judge_service_cls.return_value
+        mock_judge_service.evaluation_effectiveness.return_value = {
+            "effective_for_rerank": True,
+            "ignored_for_rerank_reason": None,
+            "stale_status": "current",
+        }
+        now = datetime.now(timezone.utc)
+        candidates = [_make_match(f"m{i}", fit_score=100 - i) for i in range(5)]
+        for index, candidate in enumerate(candidates, start=1):
+            candidate.llm_original_rank = index
+            if index <= 3:
+                candidate.llm_evaluation = SimpleNamespace(
+                    id=f"eval-{index}",
+                    status="succeeded",
+                    llm_score=80 + index,
+                    confidence=0.9,
+                    completed_at=now,
+                )
+
+        metadata = service._apply_llm_rerank(
+            candidates,
+            owner_id="owner-1",
+            tenant_id=None,
+        )
+
+        assert metadata["top_n"] == 3
+        assert metadata["window_size"] == 3
+        assert metadata["policy_revision"] == 7
+        assert mock_judge_service.evaluation_effectiveness.call_count == 3
+        assert candidates[3].llm_reranked_rank == 4
 
 
 class TestRankablePoolHelpers:

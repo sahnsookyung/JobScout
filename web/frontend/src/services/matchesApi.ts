@@ -20,6 +20,10 @@ export interface GetMatchesParams {
     tier?: 'primary' | 'all';
     limit?: number;
     offset?: number;
+    cursor?: string | null;
+    page_mode?: 'offset' | 'cursor';
+    view?: 'summary' | 'compact';
+    include?: 'llm' | string;
 }
 
 export interface GetStatsParams {

@@ -222,7 +222,7 @@ describe('JobInventoryPanel', () => {
         });
     });
 
-    it('stays collapsed by default while showing inventory totals', () => {
+    it('stays collapsed by default while showing inventory totals', async () => {
         renderPanel();
 
         expect(screen.getByText('Imported jobs')).toBeInTheDocument();
@@ -234,6 +234,14 @@ describe('JobInventoryPanel', () => {
             expect.objectContaining({ processing_status: 'all', limit: 50, offset: 0 }),
             false,
         );
+        await waitFor(() => {
+            expect(mockGetPipelineRuns).toHaveBeenCalledWith({ limit: 5, view: 'compact' });
+            expect(mockGetProcessingBlockers).toHaveBeenCalledWith({
+                stage: 'all',
+                limit: 5,
+                view: 'compact',
+            });
+        });
     });
 
     it('renders imported jobs when opened', () => {

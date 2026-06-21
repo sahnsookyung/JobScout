@@ -950,10 +950,10 @@ def test_evaluate_selection_run_returns_zero_when_unavailable_or_disabled():
         "selection-1",
         owner_id="owner-1",
         top_n=5,
-    ) == {"attempted": 0, "reused": 0, "created": 0, "failed": 0}
+    ) == {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0}
 
 
-def test_evaluate_selection_run_counts_reuse_create_failure_and_quota_stop():
+def test_evaluate_selection_run_counts_reuse_create_enqueue_failure_and_quota_stop(monkeypatch):
     db = Mock()
     matches = [
         SimpleNamespace(id="match-1"),
@@ -966,14 +966,22 @@ def test_evaluate_selection_run_counts_reuse_create_failure_and_quota_stop():
         SimpleNamespace(job_match=match) for match in matches
     ]
     service = _service(db=db)
-    service.generate_for_match = Mock(
+    service.start_for_match = Mock(
         side_effect=[
-            SimpleNamespace(reused=True),
-            SimpleNamespace(reused=False),
+            SimpleNamespace(reused=True, should_run=False),
+            SimpleNamespace(
+                reused=False,
+                should_run=True,
+                evaluation=SimpleNamespace(id="evaluation-2"),
+                provider_payload={"job": "payload"},
+                truncation={"truncated": False},
+            ),
             RuntimeError("transient"),
             LlmJudgeQuotaExceededError("quota"),
         ]
     )
+    enqueue = Mock()
+    monkeypatch.setattr("core.llm_evaluation_queue.enqueue_llm_evaluation", enqueue)
 
     stats = service.evaluate_selection_run(
         "selection-1",
@@ -982,8 +990,13 @@ def test_evaluate_selection_run_counts_reuse_create_failure_and_quota_stop():
         top_n=99,
     )
 
-    assert stats == {"attempted": 4, "reused": 1, "created": 1, "failed": 1}
-    assert service.generate_for_match.call_count == 4
+    assert stats == {"attempted": 4, "reused": 1, "created": 1, "enqueued": 1, "failed": 1}
+    assert service.start_for_match.call_count == 4
+    enqueue.assert_called_once_with(
+        "evaluation-2",
+        provider_payload={"job": "payload"},
+        truncation={"truncated": False},
+    )
 
 
 def test_model_has_partial_unique_active_cache_indexes():

@@ -17,7 +17,18 @@ JobScout is an AI-assisted job search workshop. It ingests jobs, preserves the b
 
 ## Current UI
 
-The current frontend is a workbench, not a static report. The main page combines source status, result policy controls, ranking mode controls, preference visibility, notifications, and the live match list in one place.
+The current frontend is a workbench, not a static report. The workspace is split into two tabs:
+
+- **Jobs** is the primary review surface for result policy controls, ranking mode controls, preference visibility, notifications, and the live match list.
+- **Job Management** is the operations surface for provider/source configuration, durable pipeline runs, processing blockers, and imported-job state.
+
+The match list is bounded and projection-based: the frontend renders the current page of compact rows, opens full match details lazily, and applies LLM reranking only to the configured Top N window after canonical filters and deterministic ordering.
+
+### Job Management
+
+Provider management appears first so source configuration and health are visible before inventory operations. The lower inventory area shows imported-job counts, latest durable runs, LLM queue state, and the oldest processing blockers from DB-backed pipeline state.
+
+![Job management](docs/assets/readme-job-management.png)
 
 ### Match Review
 
@@ -40,7 +51,7 @@ JobScout now displays the best available job description in the modal, including
 5. **Generate candidates** with hybrid lexical and semantic retrieval.
 6. **Score deterministically** with requirement coverage, preference penalties, confidence, and fit thresholds.
 7. **Optionally judge with an LLM** using the full packed job description and owner-scoped resume evidence. The LLM review is cached by prompt, schema, config, resume, and job-content hashes so stale reviews can be displayed but ignored for ordering.
-8. **Rerank the configured top-N window** only when a current successful LLM evaluation is eligible.
+8. **Rerank the configured Top N window** after canonical filters and deterministic ranking. The backend fetches only the bounded rerank window plus the requested page, not the full job list.
 9. **Draft a tailored resume** from the selected job, resume profile, and match context.
 
 ## LLM Runtime
@@ -73,7 +84,8 @@ The runtime configuration lives under `matching.llm_judge` in `config.yaml`. Hos
 Runtime services:
 
 - PostgreSQL with pgvector for jobs, resumes, requirements, embeddings, matches, and cached evaluations.
-- Redis for queue-backed workers and background processing.
+- Durable `PipelineRun` / `PipelineRunStage` rows as the source of truth for scrape, extraction, embedding, matching, repair, resume ETL, and worker progress.
+- Redis for queue-backed workers, streams, task projections, and SSE fan-out.
 - Optional Ollama/local embedding services depending on configuration.
 - Cerebras or another configured OpenAI-compatible provider for the second-pass judge.
 
@@ -115,14 +127,15 @@ npm run dev -- --host 127.0.0.1 --port 5174
 
 ## Common Workflow
 
-1. Open the web UI and review source status.
-2. Add or refresh job sources.
+1. Open the web UI and review the Jobs tab.
+2. Tune result policy, including Top N for LLM reranking, and run matching.
 3. Upload or update the resume profile.
-4. Run matching and tune the result policy.
-5. Open a job's match details to inspect deterministic requirement evidence.
-6. Generate or refresh the LLM second-pass review.
-7. Generate a tailored resume draft for jobs worth applying to.
-8. Hide, exclude, or notify on jobs as the shortlist changes.
+4. Open a job's match details to inspect deterministic requirement evidence, LLM status, and the original posting.
+5. Generate or refresh the LLM second-pass review.
+6. Generate a tailored resume draft for jobs worth applying to.
+7. Use Job Management to add or refresh providers and job sources.
+8. Watch imported-job state, pipeline runs, and processing blockers when operations need attention.
+9. Hide, exclude, or notify on jobs as the shortlist changes.
 
 ## Configuration
 

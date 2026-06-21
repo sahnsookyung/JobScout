@@ -22,6 +22,7 @@ from ..services.processing_blocker_service import (
     tenant_filter,
     truncate_error,
 )
+from ..services.cursors import CursorDecodeError, MatchCursorCodec
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -39,6 +40,7 @@ _VALID_PROCESSING_STATUSES = {
 }
 _RETRYABLE_OR_PENDING = {"pending", "queued", "in_progress", "processing", "failed_retryable"}
 _FAILED_STATUSES = {"failed_terminal", "failed", "failed_retryable"}
+_VALID_BLOCKER_VIEWS = {"compact", "detail"}
 
 
 def _request_tenant_id(request: Request):
@@ -271,6 +273,8 @@ def get_processing_blockers(
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     stage: Annotated[str, Query(description="Pipeline stage: all, extraction, embedding, or matching")] = "all",
     limit: Annotated[int, Query(ge=1, le=100, description="Maximum blockers to return")] = 25,
+    cursor: Annotated[str | None, Query(description="Opaque cursor returned by a prior blockers response")] = None,
+    view: Annotated[str, Query(description="Payload view: detail (default) or compact")] = "detail",
 ) -> ProcessingBlockersResponse:
     """Return the oldest DB-backed job processing blockers."""
     if stage not in VALID_BLOCKER_STAGES:
@@ -278,13 +282,45 @@ def get_processing_blockers(
             status_code=422,
             detail=f"Invalid stage '{stage}'. Valid values: {', '.join(sorted(VALID_BLOCKER_STAGES))}",
         )
-    blockers = list_processing_blockers(
+    if view not in _VALID_BLOCKER_VIEWS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid view '{view}'. Valid values: {', '.join(sorted(_VALID_BLOCKER_VIEWS))}",
+        )
+    effective_offset = 0
+    if cursor:
+        try:
+            decoded = MatchCursorCodec.decode(cursor, expected_kind="processing_blockers")
+            effective_offset = max(int(decoded.get("offset", 0) or 0), 0)
+        except (CursorDecodeError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    fetch_limit = effective_offset + limit + 1
+    fetched_blockers = list_processing_blockers(
         db,
         tenant_id=tenant_context.tenant_id,
         stage=stage,
-        limit=limit,
+        limit=fetch_limit,
     )
-    return ProcessingBlockersResponse(success=True, count=len(blockers), blockers=blockers)
+    page_blockers = fetched_blockers[effective_offset:effective_offset + limit]
+    has_more = len(fetched_blockers) > effective_offset + limit
+    next_cursor = (
+        MatchCursorCodec.encode("processing_blockers", offset=effective_offset + len(page_blockers))
+        if has_more
+        else None
+    )
+    total = effective_offset + len(page_blockers) + (1 if has_more else 0)
+    return ProcessingBlockersResponse(
+        success=True,
+        count=len(page_blockers),
+        total=total,
+        limit=limit,
+        offset=effective_offset,
+        has_more=has_more,
+        page_mode="cursor" if cursor else "offset",
+        view=view,
+        next_cursor=next_cursor,
+        blockers=page_blockers,
+    )
 
 
 @router.get(

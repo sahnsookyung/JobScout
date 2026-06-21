@@ -11,6 +11,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from web.backend.dependencies import get_db
+from web.backend.routers import policy as policy_router
 from web.backend.routers.policy import router
 
 def _llm_policy(
@@ -37,6 +39,13 @@ class TestPolicyRouter:
     def app(self):
         """Create test FastAPI app with policy router."""
         app = FastAPI()
+        test_db = Mock()
+
+        def override_get_db():
+            yield test_db
+
+        app.dependency_overrides[get_db] = override_get_db
+        app.state.test_db = test_db
         app.include_router(router)
         return app
 
@@ -130,6 +139,13 @@ class TestPolicyRouter:
         """Test updating owner-scoped LLM judge controls."""
         default_policy = Mock(min_fit=50.0, top_k=100, min_jd_required_coverage=None)
         mock_policy_service.get_current_policy.return_value = default_policy
+        mock_policy_service.get_llm_judge_policy.return_value = _llm_policy(
+            enabled=False,
+            top_n=5,
+            top_n_max=8,
+            available=True,
+            revision=1,
+        )
         mock_policy_service.update_policy.return_value = default_policy
         mock_policy_service.update_llm_judge_policy.return_value = _llm_policy(
             enabled=True,
@@ -139,10 +155,17 @@ class TestPolicyRouter:
             revision=2,
         )
 
-        response = client.put(
-            '/api/v1/policy',
-            json={'llm_judge_enabled': True, 'llm_judge_top_n': 3}
-        )
+        with patch(
+            'web.backend.routers.policy._enqueue_llm_top_n_after_policy_update',
+            return_value=(
+                {"attempted": 3, "reused": 1, "created": 2, "enqueued": 2, "failed": 0},
+                [],
+            ),
+        ) as enqueue:
+            response = client.put(
+                '/api/v1/policy',
+                json={'llm_judge_enabled': True, 'llm_judge_top_n': 3}
+            )
 
         assert response.status_code == 200
         data = response.json()
@@ -151,9 +174,63 @@ class TestPolicyRouter:
         assert data['llm_judge_top_n_max'] == 8
         assert data['llm_judge_available'] is True
         assert data['llm_judge_revision'] == 2
+        assert data['llm_judge_enqueue_stats']['enqueued'] == 2
         mock_policy_service.update_llm_judge_policy.assert_called_once()
         assert mock_policy_service.update_llm_judge_policy.call_args.kwargs["enabled"] is True
         assert mock_policy_service.update_llm_judge_policy.call_args.kwargs["top_n"] == 3
+        enqueue.assert_called_once()
+
+    def test_llm_policy_enqueue_helper_queues_increased_top_n(self):
+        previous = _llm_policy(enabled=True, top_n=2, available=True, revision=1)
+        next_policy = _llm_policy(enabled=True, top_n=4, available=True, revision=2)
+        db = Mock()
+
+        with patch('web.backend.routers.policy.MatchService') as match_service_cls:
+            with patch('core.llm_evaluation.MatchLlmEvaluationService') as llm_service_cls:
+                match_service_cls.return_value._resolve_canonical_selection.return_value = (
+                    SimpleNamespace(selection_run_id='selection-run-1')
+                )
+                llm_service_cls.return_value.evaluate_selection_run.return_value = {
+                    "attempted": 4,
+                    "reused": 2,
+                    "created": 2,
+                    "enqueued": 2,
+                    "failed": 0,
+                }
+
+                stats, degraded = policy_router._enqueue_llm_top_n_after_policy_update(
+                    db,
+                    owner_id='owner-1',
+                    tenant_id='tenant-1',
+                    previous_policy=previous,
+                    next_policy=next_policy,
+                )
+
+        assert degraded == []
+        assert stats["enqueued"] == 2
+        llm_service_cls.return_value.evaluate_selection_run.assert_called_once_with(
+            'selection-run-1',
+            owner_id='owner-1',
+            tenant_id='tenant-1',
+            top_n=4,
+        )
+
+    def test_llm_policy_enqueue_helper_skips_decreased_top_n(self):
+        previous = _llm_policy(enabled=True, top_n=5, available=True, revision=1)
+        next_policy = _llm_policy(enabled=True, top_n=3, available=True, revision=2)
+
+        with patch('web.backend.routers.policy.MatchService') as match_service_cls:
+            stats, degraded = policy_router._enqueue_llm_top_n_after_policy_update(
+                Mock(),
+                owner_id='owner-1',
+                tenant_id=None,
+                previous_policy=previous,
+                next_policy=next_policy,
+            )
+
+        assert stats == {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0}
+        assert degraded == []
+        match_service_cls.assert_not_called()
 
     def test_update_policy_partial(self, client, mock_policy_service):
         """Test policy update with partial fields."""
@@ -317,6 +394,12 @@ class TestPolicyRouterIntegration:
     def app(self):
         """Create test FastAPI app with policy router."""
         app = FastAPI()
+        test_db = Mock()
+
+        def override_get_db():
+            yield test_db
+
+        app.dependency_overrides[get_db] = override_get_db
         app.include_router(router)
         return app
 

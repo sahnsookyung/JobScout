@@ -862,6 +862,15 @@
     },
     {
       "access_method": "btree",
+      "definition": "CREATE INDEX idx_msi_run_tier_rank_id ON public.match_selection_item USING btree (selection_run_id, selection_tier, rank_position, id)",
+      "name": "idx_msi_run_tier_rank_id",
+      "predicate": null,
+      "reloptions": null,
+      "table": "match_selection_item",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
       "definition": "CREATE UNIQUE INDEX idx_match_selection_run_current ON public.match_selection_run USING btree (owner_id, resume_fingerprint) WHERE (is_current AND (lifecycle_status = 'committed'::text))",
       "name": "idx_match_selection_run_current",
       "predicate": "(is_current AND (lifecycle_status = 'committed'::text))",

@@ -86,6 +86,71 @@ class TestJobsRouter:
         assert response.status_code == 422
         assert "Invalid processing_status" in response.json()["detail"]
 
+    def test_processing_blockers_returns_cursor_metadata(self):
+        client = self._client()
+        blockers = [
+            {
+                "job_id": str(uuid.uuid4()),
+                "stage": "extraction",
+                "blocker_code": "queued_too_long",
+                "blocker_detail": "Queued too long.",
+                "status": "queued",
+                "attempts": 0,
+                "retry_eligible": True,
+            },
+            {
+                "job_id": str(uuid.uuid4()),
+                "stage": "embedding",
+                "blocker_code": "retryable_embedding",
+                "blocker_detail": "Retryable.",
+                "status": "failed_retryable",
+                "attempts": 1,
+                "retry_eligible": True,
+            },
+            {
+                "job_id": str(uuid.uuid4()),
+                "stage": "matching",
+                "blocker_code": "matching_not_queued",
+                "blocker_detail": "Not queued.",
+                "status": "active",
+                "attempts": 0,
+                "retry_eligible": True,
+            },
+        ]
+
+        with patch("web.backend.routers.jobs.list_processing_blockers", return_value=blockers) as list_blockers:
+            response = client.get("/api/jobs/processing-blockers", params={"limit": 2})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 2
+        assert data["has_more"] is True
+        assert data["next_cursor"]
+        assert list_blockers.call_args.kwargs["limit"] == 3
+
+    def test_processing_blockers_accepts_compact_view(self):
+        client = self._client()
+
+        with patch("web.backend.routers.jobs.list_processing_blockers", return_value=[]) as list_blockers:
+            response = client.get(
+                "/api/jobs/processing-blockers",
+                params={"view": "compact", "limit": 5},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["view"] == "compact"
+        assert data["blockers"] == []
+        assert list_blockers.call_args.kwargs["limit"] == 6
+
+    def test_processing_blockers_rejects_invalid_view(self):
+        client = self._client()
+
+        response = client.get("/api/jobs/processing-blockers", params={"view": "tiny"})
+
+        assert response.status_code == 422
+        assert "Invalid view" in response.json()["detail"]
+
 
 def test_job_inventory_item_serializes_source_and_limited_errors():
     job_id = uuid.uuid4()

@@ -481,7 +481,7 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
     const pipelineRuns = useQuery({
         queryKey: ['pipeline-runs', 'latest'],
         queryFn: async () => {
-            const response = await pipelineRunsApi.getPipelineRuns({ limit: 5 });
+            const response = await pipelineRunsApi.getPipelineRuns({ limit: 5, view: 'compact' });
             return response.data;
         },
         refetchInterval: 5000,
@@ -497,7 +497,7 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
     const processingBlockers = useQuery({
         queryKey: ['processing-blockers', 'oldest'],
         queryFn: async () => {
-            const response = await jobsApi.getProcessingBlockers({ stage: 'all', limit: 5 });
+            const response = await jobsApi.getProcessingBlockers({ stage: 'all', limit: 5, view: 'compact' });
             return response.data;
         },
         refetchInterval: 10000,

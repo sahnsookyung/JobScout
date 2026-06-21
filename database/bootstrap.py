@@ -177,6 +177,9 @@ def _upgrade_legacy_schema_to_current(conn: Connection) -> None:
             CREATE INDEX IF NOT EXISTS idx_msi_run_tier
             ON match_selection_item (selection_run_id, selection_tier);
 
+            CREATE INDEX IF NOT EXISTS idx_msi_run_tier_rank_id
+            ON match_selection_item (selection_run_id, selection_tier, rank_position, id);
+
             CREATE INDEX IF NOT EXISTS idx_notification_owner_last_sent
             ON notification_tracker (owner_id, last_sent_at);
 
@@ -217,6 +220,9 @@ def _apply_current_additive_schema_upgrades(conn: Connection) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_llm_eval_owner_match_created
             ON llm_match_evaluation (owner_id, job_match_id, created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_msi_run_tier_rank_id
+            ON match_selection_item (selection_run_id, selection_tier, rank_position, id);
             """
         )
     )

@@ -497,12 +497,12 @@ def _run_llm_judge_for_selection(
 ) -> dict[str, int]:
     """Run optional match-level LLM judging for the current selected top-N."""
     if not selection_run_id or not owner_id:
-        return {"attempted": 0, "reused": 0, "created": 0, "failed": 0}
+        return {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0}
 
     try:
         llm_policy = get_result_policy_store().get_llm_judge_policy(owner_id)
         if not llm_policy.enabled or not llm_policy.available:
-            return {"attempted": 0, "reused": 0, "created": 0, "failed": 0}
+            return {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0}
 
         with job_uow() as repo:
             service = MatchLlmEvaluationService(repo.db)
@@ -516,7 +516,7 @@ def _run_llm_judge_for_selection(
             return stats
     except Exception:
         logger.exception("Optional LLM judge failed after selection publication")
-        return {"attempted": 0, "reused": 0, "created": 0, "failed": 1}
+        return {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 1}
 
 
 def _active_job_ids_for_selection(

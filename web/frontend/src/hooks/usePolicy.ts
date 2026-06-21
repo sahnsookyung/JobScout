@@ -40,6 +40,11 @@ export const usePolicy = () => {
             queryClient.setQueryData<PolicyConfig>(policyQueryKey, response.data);
             queryClient.invalidateQueries({ queryKey: ['matches'] });
             queryClient.invalidateQueries({ queryKey: ['stats'] });
+            queryClient.invalidateQueries({ queryKey: ['pipeline-runs'] });
+            queryClient.invalidateQueries({ queryKey: ['pipeline-run-detail'] });
+            queryClient.invalidateQueries({ queryKey: ['processing-blockers'] });
+            queryClient.invalidateQueries({ queryKey: ['llm-evaluation-queue'] });
+            queryClient.invalidateQueries({ queryKey: ['match-llm-evaluations'] });
         },
         onSettled: () => {
             queryClient.invalidateQueries({ queryKey: policyQueryKey });
@@ -68,6 +73,11 @@ export const usePolicy = () => {
             queryClient.setQueryData<PolicyConfig>(policyQueryKey, response.data);
             queryClient.invalidateQueries({ queryKey: ['matches'] });
             queryClient.invalidateQueries({ queryKey: ['stats'] });
+            queryClient.invalidateQueries({ queryKey: ['pipeline-runs'] });
+            queryClient.invalidateQueries({ queryKey: ['pipeline-run-detail'] });
+            queryClient.invalidateQueries({ queryKey: ['processing-blockers'] });
+            queryClient.invalidateQueries({ queryKey: ['llm-evaluation-queue'] });
+            queryClient.invalidateQueries({ queryKey: ['match-llm-evaluations'] });
         },
         onSettled: () => {
             queryClient.invalidateQueries({ queryKey: policyQueryKey });
