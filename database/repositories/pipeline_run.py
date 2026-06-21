@@ -8,7 +8,6 @@ from sqlalchemy import select
 
 from database.models import (
     PIPELINE_RUN_CANCELLED,
-    PIPELINE_RUN_CANONICAL_STAGES,
     PIPELINE_RUN_COMPLETED,
     PIPELINE_RUN_FAILED,
     PIPELINE_RUN_PENDING,

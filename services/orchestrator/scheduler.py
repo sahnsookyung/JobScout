@@ -25,8 +25,7 @@ async def _close_async_client(client: Any) -> None:
         return
     result = close_fn()
     if hasattr(result, "__await__"):
-        return await result
-    return None
+        await result
 
 
 class ScrapeScheduler:
