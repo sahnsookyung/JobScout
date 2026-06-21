@@ -210,6 +210,28 @@ def _structured_json_object_validation_failed(exc: BaseException) -> bool:
     return "json_validate_failed" in message or "failed to validate json" in message
 
 
+def _extract_fenced_json_candidate(stripped: str) -> str:
+    """Return the content inside a Markdown JSON fence, if one wraps the payload."""
+    fence_start = stripped.find("```")
+    if fence_start == -1:
+        return stripped
+
+    header_start = fence_start + 3
+    header_end = stripped.find("\n", header_start)
+    if header_end == -1:
+        return stripped
+
+    fence_label = stripped[header_start:header_end].strip().lower()
+    if fence_label not in ("", "json"):
+        return stripped
+
+    fence_end = stripped.find("```", header_end + 1)
+    if fence_end == -1:
+        return stripped
+
+    return stripped[header_end + 1:fence_end].strip()
+
+
 def _parse_structured_json_content(content: Any) -> Dict[str, Any]:
     """Parse a JSON object from an LLM response, tolerating common fenced forms."""
     if not isinstance(content, str):
@@ -219,8 +241,7 @@ def _parse_structured_json_content(content: Any) -> Dict[str, Any]:
     try:
         parsed = json.loads(stripped)
     except json.JSONDecodeError:
-        fenced = re.search(r"```(?:json)?\s*(.*?)```", stripped, flags=re.IGNORECASE | re.DOTALL)
-        candidate = fenced.group(1).strip() if fenced else stripped
+        candidate = _extract_fenced_json_candidate(stripped)
         start = candidate.find("{")
         end = candidate.rfind("}")
         if start == -1 or end == -1 or end <= start:

@@ -44,8 +44,7 @@ _STAGE_ALIASES = {
 
 def normalize_pipeline_stage(stage: str) -> str:
     """Return the canonical durable pipeline stage label."""
-    candidate = _STAGE_ALIASES.get(stage, stage)
-    return candidate if candidate in PIPELINE_RUN_CANONICAL_STAGES else candidate
+    return _STAGE_ALIASES.get(stage, stage)
 
 
 class PipelineRunRepository(BaseRepository):

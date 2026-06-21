@@ -113,3 +113,6 @@ def test_resume_stage_aliases_normalize_to_canonical_names():
     assert normalize_pipeline_stage("extracting") == "resume_extraction"
     assert normalize_pipeline_stage("resume-embedding") == "resume_embedding"
     assert normalize_pipeline_stage("match") == "matching"
+
+def test_unknown_stage_normalization_preserves_value():
+    assert normalize_pipeline_stage("custom_stage") == "custom_stage"

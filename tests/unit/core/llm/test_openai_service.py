@@ -18,6 +18,7 @@ from core.llm.openai_service import (
     _unwrap_schema_spec,
     _is_retryable,
     _parse_reset_duration,
+    _parse_structured_json_content,
     _structured_output_rejected,
     _wait_from_rate_limit_headers,
     _wait_respecting_retry_after,
@@ -246,6 +247,29 @@ class TestRetryHelpers:
     def test_structured_output_rejection_detector(self):
         assert _structured_output_rejected(RuntimeError("response_format json_schema unsupported"))
         assert not _structured_output_rejected(RuntimeError("bad api key"))
+
+
+class TestParseStructuredJsonContent:
+    """Tests for structured JSON response parsing."""
+
+    def test_parses_plain_json_object(self):
+        assert _parse_structured_json_content('{"result": "test"}') == {"result": "test"}
+
+    def test_parses_json_markdown_fence(self):
+        content = '```json\n{"result": "test"}\n```'
+        assert _parse_structured_json_content(content) == {"result": "test"}
+
+    def test_parses_unlabeled_markdown_fence(self):
+        content = '```\n{"result": "test"}\n```'
+        assert _parse_structured_json_content(content) == {"result": "test"}
+
+    def test_parses_surrounding_text_by_json_bounds(self):
+        content = 'Here is the result:\n{"result": "test"}\nThanks.'
+        assert _parse_structured_json_content(content) == {"result": "test"}
+
+    def test_rejects_non_object_json(self):
+        with pytest.raises(ValueError, match="did not contain a JSON object"):
+            _parse_structured_json_content('[{"result": "test"}]')
 
 
 class TestParseResetDuration:
