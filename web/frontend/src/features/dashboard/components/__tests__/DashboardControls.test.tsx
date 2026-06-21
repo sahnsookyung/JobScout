@@ -589,8 +589,9 @@ describe('DashboardControls', () => {
             });
 
             render(<DashboardControls />, { wrapper: createWrapper() });
-            expect(screen.getByText('Active')).toBeInTheDocument();
-            expect(screen.getByText('Starting up')).toBeInTheDocument();
+            const startingUp = screen.getByText('Starting up');
+            expect(startingUp).toBeInTheDocument();
+            expect(within(startingUp.parentElement as HTMLElement).getByText('Active')).toBeInTheDocument();
         });
 
         it('renders the completed state alongside the idle action label', () => {
