@@ -25,7 +25,9 @@ async def _close_async_client(client: Any) -> None:
         return
     result = close_fn()
     if hasattr(result, "__await__"):
-        await result
+        close_result = await result
+        if close_result is not None:
+            logger.debug("Async Redis client close returned %r", close_result)
 
 
 class ScrapeScheduler:
