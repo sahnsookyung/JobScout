@@ -14,7 +14,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from web.backend.routers.stats import router
-from web.backend.services.stats_service import _job_processing_stats
+from web.backend.services.stats_service import (
+    _canonical_stats_payload,
+    _count_excluded_items_by_reason,
+    _count_items_for_run_by_tier,
+    _job_processing_stats,
+    _preference_status_for_selection_run,
+    _selection_run_item_stats,
+)
 from web.backend.dependencies import get_current_user, get_db
 
 
@@ -455,3 +462,182 @@ class TestGetStats:
         assert stats["processing_embedding_job_posts"] == 5
         assert stats["retryable_embedding_job_posts"] == 7
         assert stats["failed_embedding_job_posts"] == 11
+
+
+class _QueryChain:
+    def __init__(self, *, rows=None, row=None):
+        self.rows = rows or []
+        self.row = row
+        self.join_calls = 0
+        self.filter_calls = 0
+
+    def join(self, *args, **kwargs):
+        self.join_calls += 1
+        return self
+
+    def filter(self, *args, **kwargs):
+        self.filter_calls += 1
+        return self
+
+    def group_by(self, *args, **kwargs):
+        return self
+
+    def limit(self, *args, **kwargs):
+        return self
+
+    def select_from(self, *args, **kwargs):
+        return self
+
+    def all(self):
+        return self.rows
+
+    def one(self):
+        return self.row
+
+
+def test_canonical_stats_payload_records_job_and_canonical_degradation():
+    reasons = []
+    repo = SimpleNamespace()
+
+    with patch(
+        "web.backend.services.stats_service._job_processing_stats",
+        side_effect=RuntimeError("job stats down"),
+    ), patch("web.backend.services.stats_service.set_job_inventory_metrics"):
+        stats = _canonical_stats_payload(
+            repo,
+            "owner-1",
+            min_fit=55.0,
+            top_k=10,
+            tenant_id=None,
+            degraded_reasons=reasons,
+            canonical_resolver=Mock(side_effect=RuntimeError("canonical down")),
+        )
+
+    assert stats["total_matches"] == 0
+    assert [reason["code"] for reason in reasons] == [
+        "job_processing_stats_unavailable",
+        "canonical_selection_unavailable",
+    ]
+
+
+def test_canonical_stats_payload_uses_fallback_counts_and_item_stats():
+    canonical = SimpleNamespace(selection_run_id="run-1")
+    repo = SimpleNamespace(match_selection=Mock())
+    repo.match_selection.count_items_for_run_by_tier.side_effect = RuntimeError("tier fallback down")
+    repo.match_selection.count_excluded_items_by_reason.side_effect = RuntimeError("reason fallback down")
+    repo.match_selection.get_items_for_run.return_value = [
+        _make_item(fit_score=82.0, preference_status={"applied": True}),
+        _make_item(fit_score=20.0, tier="excluded"),
+    ]
+    reasons = []
+
+    with patch(
+        "web.backend.services.stats_service._job_processing_stats",
+        return_value={"job_post_total": 1},
+    ), patch("web.backend.services.stats_service.set_job_inventory_metrics"), patch(
+        "web.backend.services.stats_service._count_items_for_run_by_tier",
+        side_effect=RuntimeError("tenant tier down"),
+    ), patch(
+        "web.backend.services.stats_service._count_excluded_items_by_reason",
+        side_effect=RuntimeError("tenant reason down"),
+    ), patch(
+        "web.backend.services.stats_service._selection_run_item_stats",
+        side_effect=RuntimeError("tenant stats down"),
+    ):
+        stats = _canonical_stats_payload(
+            repo,
+            "owner-1",
+            min_fit=55.0,
+            top_k=10,
+            tenant_id="tenant-1",
+            degraded_reasons=reasons,
+            canonical_resolver=Mock(return_value=canonical),
+        )
+
+    assert stats["job_post_total"] == 1
+    assert stats["active_matches"] == 1
+    assert stats["below_threshold_count"] == 1
+    assert stats["preference_status"] == {"applied": True}
+    assert [reason["code"] for reason in reasons] == [
+        "tenant_scoped_tier_counts_unavailable",
+        "tier_counts_unavailable",
+        "tenant_scoped_excluded_reason_counts_unavailable",
+        "excluded_reason_counts_unavailable",
+        "tenant_scoped_selection_item_stats_unavailable",
+    ]
+
+
+def test_canonical_stats_payload_handles_item_stats_fallback_failure():
+    canonical = SimpleNamespace(selection_run_id="run-1")
+    repo = SimpleNamespace(match_selection=Mock())
+    repo.match_selection.count_items_for_run_by_tier.return_value = {"primary": 2}
+    repo.match_selection.count_excluded_items_by_reason.return_value = {}
+    repo.match_selection.get_items_for_run.side_effect = RuntimeError("items down")
+    reasons = []
+
+    with patch(
+        "web.backend.services.stats_service._job_processing_stats",
+        return_value={},
+    ), patch("web.backend.services.stats_service.set_job_inventory_metrics"), patch(
+        "web.backend.services.stats_service._selection_run_item_stats",
+        side_effect=RuntimeError("tenant stats down"),
+    ):
+        stats = _canonical_stats_payload(
+            repo,
+            "owner-1",
+            min_fit=55.0,
+            top_k=10,
+            tenant_id=None,
+            degraded_reasons=reasons,
+            canonical_resolver=Mock(return_value=canonical),
+        )
+
+    assert stats["active_matches"] == 0
+    assert reasons[-1]["code"] == "selection_item_stats_unavailable"
+
+
+def test_tenant_scoped_count_helpers_apply_tenant_joins():
+    tier_query = _QueryChain(rows=[(None, 2), ("excluded", 3)])
+    reason_query = _QueryChain(rows=[(None, 1), ("below_min_fit", 4)])
+    db = Mock()
+    db.query.side_effect = [tier_query, reason_query]
+    repo = SimpleNamespace(db=db)
+
+    tier_counts = _count_items_for_run_by_tier(repo, "run-1", tenant_id="tenant-1")
+    reason_counts = _count_excluded_items_by_reason(repo, "run-1", tenant_id="tenant-1")
+
+    assert tier_counts == {"primary": 2, "excluded": 3}
+    assert reason_counts == {"unknown": 1, "below_min_fit": 4}
+    assert tier_query.join_calls >= 2
+    assert reason_query.join_calls >= 2
+
+
+def test_preference_status_and_selection_item_stats_query_helpers():
+    preference_query = _QueryChain(rows=[("not-json",), ({"preference_status": {"applied": True}},)])
+    stats_row = SimpleNamespace(
+        below_threshold_count=1,
+        hidden_count=2,
+        visible_qualifying_count=5,
+        excellent_count=3,
+        good_count=2,
+        average_count=1,
+        poor_count=0,
+    )
+    stats_query = _QueryChain(row=stats_row)
+    db = Mock()
+    db.query.side_effect = [preference_query, stats_query, preference_query]
+    repo = SimpleNamespace(db=db)
+
+    assert _preference_status_for_selection_run(repo, "run-1", tenant_id="tenant-1") == {"applied": True}
+    stats = _selection_run_item_stats(
+        repo,
+        "run-1",
+        min_fit=55.0,
+        top_k=3,
+        tenant_id="tenant-1",
+    )
+
+    assert stats["active_matches"] == 3
+    assert stats["beyond_top_k_count"] == 2
+    assert stats["qualifying_count"] == 7
+    assert stats["score_distribution"]["excellent"] == 3

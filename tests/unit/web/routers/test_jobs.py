@@ -7,7 +7,23 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from web.backend.dependencies import get_current_user, get_db
-from web.backend.routers.jobs import _embedding_blocker, _extraction_blocker, _job_inventory_item, router
+from web.backend.routers.jobs import (
+    _blocker_sort_key,
+    _embedding_blocker,
+    _extraction_blocker,
+    _is_retry_due,
+    _is_stale,
+    _job_inventory_filters,
+    _job_inventory_item,
+    _matching_blocker,
+    _primary_source,
+    _processing_blocker_item,
+    _request_tenant_id,
+    _tenant_filter,
+    list_job_inventory,
+    router,
+)
+from web.backend.services.cursors import MatchCursorCodec
 
 
 class TestJobsRouter:
@@ -86,6 +102,14 @@ class TestJobsRouter:
         assert response.status_code == 422
         assert "Invalid processing_status" in response.json()["detail"]
 
+    def test_get_jobs_rejects_invalid_job_status(self):
+        client = self._client()
+
+        response = client.get("/api/jobs", params={"job_status": "archived"})
+
+        assert response.status_code == 422
+        assert "Invalid job_status" in response.json()["detail"]
+
     def test_processing_blockers_returns_cursor_metadata(self):
         client = self._client()
         blockers = [
@@ -151,6 +175,50 @@ class TestJobsRouter:
         assert response.status_code == 422
         assert "Invalid view" in response.json()["detail"]
 
+    def test_processing_blockers_rejects_invalid_stage_and_cursor(self):
+        client = self._client()
+
+        bad_stage = client.get("/api/jobs/processing-blockers", params={"stage": "parse"})
+        bad_cursor = client.get(
+            "/api/jobs/processing-blockers",
+            params={"cursor": MatchCursorCodec.encode("jobs", offset=10)},
+        )
+
+        assert bad_stage.status_code == 422
+        assert "Invalid stage" in bad_stage.json()["detail"]
+        assert bad_cursor.status_code == 422
+        assert "Cursor does not apply" in bad_cursor.json()["detail"]
+
+    def test_processing_blockers_uses_cursor_offset(self):
+        client = self._client()
+        blockers = [
+            {
+                "job_id": str(uuid.uuid4()),
+                "stage": "extraction",
+                "blocker_code": f"blocker-{idx}",
+                "blocker_detail": "Queued.",
+                "status": "queued",
+                "attempts": 0,
+                "retry_eligible": True,
+            }
+            for idx in range(4)
+        ]
+        cursor = MatchCursorCodec.encode("processing_blockers", offset=1)
+
+        with patch("web.backend.routers.jobs.list_processing_blockers", return_value=blockers) as list_blockers:
+            response = client.get(
+                "/api/jobs/processing-blockers",
+                params={"limit": 2, "cursor": cursor},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["page_mode"] == "cursor"
+        assert data["offset"] == 1
+        assert data["count"] == 2
+        assert data["has_more"] is True
+        assert list_blockers.call_args.kwargs["limit"] == 4
+
 
 def test_job_inventory_item_serializes_source_and_limited_errors():
     job_id = uuid.uuid4()
@@ -193,6 +261,107 @@ def test_job_inventory_item_serializes_source_and_limited_errors():
     assert item.description_warning_code == "truncated_by_ingest_cap"
     assert item.extraction_last_error is not None
     assert len(item.extraction_last_error) == 240
+
+
+def test_primary_source_prefers_active_then_most_recent_source():
+    older = SimpleNamespace(site="older", job_url="old", is_active=True, last_seen_at=datetime(2026, 1, 1))
+    newer = SimpleNamespace(site="newer", job_url="new", is_active=True, last_seen_at=datetime(2026, 1, 2))
+    inactive_newest = SimpleNamespace(site="inactive", job_url="inactive", is_active=False, last_seen_at=datetime(2026, 1, 3))
+
+    assert _primary_source(SimpleNamespace(sources=[])) is None
+    assert _primary_source(SimpleNamespace(sources=[inactive_newest, older, newer])) is newer
+    assert _primary_source(SimpleNamespace(sources=[inactive_newest])).site == "inactive"
+
+
+def test_job_inventory_filters_cover_processing_states_and_search():
+    assert len(_job_inventory_filters(tenant_id=None, job_status="active", processing_status="ready", search="  ai ")) == 5
+    assert len(_job_inventory_filters(tenant_id=uuid.uuid4(), job_status="all", processing_status="extracted", search=None)) == 2
+    assert len(_job_inventory_filters(tenant_id=None, job_status="all", processing_status="embedded", search=None)) == 2
+    assert len(_job_inventory_filters(tenant_id=None, job_status="all", processing_status="pending_extraction", search=None)) == 3
+    assert len(_job_inventory_filters(tenant_id=None, job_status="all", processing_status="pending_embedding", search=None)) == 3
+    assert len(_job_inventory_filters(tenant_id=None, job_status="all", processing_status="failed", search=None)) == 2
+
+
+def test_list_job_inventory_executes_count_and_page_queries():
+    db = Mock()
+    count_result = Mock()
+    count_result.scalar_one.return_value = 2
+    rows_result = Mock()
+    rows_result.scalars.return_value.all.return_value = [
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            title="Backend Engineer",
+            company="Example",
+            location_text="Remote",
+            is_remote=True,
+            status="active",
+            is_extracted=True,
+            is_embedded=True,
+            extraction_status="succeeded",
+            embedding_status="succeeded",
+            description_completeness=None,
+            description_source=None,
+            description_warning_code=None,
+            sources=[],
+            first_seen_at=None,
+            last_seen_at=None,
+            extraction_attempts=None,
+            extraction_last_error=None,
+            extraction_next_retry_at=None,
+            embedding_attempts=None,
+            embedding_last_error=None,
+            embedding_next_retry_at=None,
+        )
+    ]
+    db.execute.side_effect = [count_result, rows_result]
+
+    jobs, total = list_job_inventory(
+        db,
+        tenant_id=None,
+        job_status="all",
+        processing_status="all",
+        search=None,
+        limit=10,
+        offset=0,
+    )
+
+    assert total == 2
+    assert jobs[0].description_completeness == "unknown"
+    assert db.execute.call_count == 2
+
+
+def test_compatibility_wrappers_delegate_to_processing_blocker_service():
+    now = datetime.now(timezone.utc)
+    stale_cutoff = now - timedelta(minutes=30)
+    job = SimpleNamespace(id=uuid.uuid4(), first_seen_at=now, last_seen_at=now)
+    blocker = _processing_blocker_item(
+        job,
+        stage="matching",
+        blocker_code="missing_embedding",
+        blocker_detail="Missing embedding.",
+        status="active",
+        attempts=1,
+        last_error="err",
+        retry_eligible=False,
+        last_attempt_at=now,
+        next_retry_at=None,
+    )
+
+    assert _request_tenant_id(SimpleNamespace(state=SimpleNamespace(tenant_id=None), headers={})) is None
+    assert _is_retry_due(now - timedelta(minutes=1), now=now) is True
+    assert _is_stale(now - timedelta(hours=1), stale_cutoff=stale_cutoff) is True
+    assert _tenant_filter(None) is not None
+    assert _blocker_sort_key(blocker)
+    assert blocker.blocker_code == "missing_embedding"
+    assert _matching_blocker(
+        SimpleNamespace(
+                id=uuid.uuid4(),
+                is_embedded=False,
+                status="active",
+                first_seen_at=now,
+                last_seen_at=now,
+            )
+    ).stage == "matching"
 
 
 def test_processing_blockers_include_queued_extraction_and_embedding_jobs():

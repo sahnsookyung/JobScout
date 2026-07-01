@@ -1542,3 +1542,254 @@ class TestSelectionItemFiltersByTier:
             show_hidden=True,
             tier="excluded",
         )
+
+
+class TestCoverageFocusedHelpers:
+    def test_page_limit_and_ranked_match_helpers(self, real_service):
+        matches = [1, 2, 3, 4]
+
+        assert real_service._normalize_page_limit(tier="all", limit=None) == 100
+        assert real_service._normalize_page_limit(tier="primary", limit=None) is None
+        assert real_service._normalize_page_limit(tier="primary", limit=999) == 500
+        assert real_service._page_ranked_matches(matches, limit=None, offset=2) == [3, 4]
+        assert real_service._page_ranked_matches(matches, limit=2, offset=-5) == [1, 2]
+        assert real_service._page_ranked_matches(matches, limit=0, offset=1) == []
+
+    def test_attach_latest_evaluations_handles_empty_exception_non_iterable_and_success(
+        self,
+        real_service,
+        mock_db,
+    ):
+        real_service._has_real_query_session = Mock(return_value=True)
+        real_service._attach_latest_evaluations([], owner_id="owner-1", tenant_id=None)
+        real_service._attach_latest_evaluations(
+            [SimpleNamespace(id=None)],
+            owner_id="owner-1",
+            tenant_id=None,
+        )
+
+        query = MagicMock()
+        mock_db.query.return_value = query
+        query.filter.return_value = query
+        query.order_by.return_value = query
+        query.all.side_effect = RuntimeError("db down")
+        with patch("web.backend.services.match_service.record_match_query_degraded") as record:
+            real_service._attach_latest_evaluations(
+                [SimpleNamespace(id="match-1")],
+                owner_id="owner-1",
+                tenant_id=None,
+            )
+        record.assert_called_once_with("llm_evaluation_lookup_unavailable")
+
+        query.all.side_effect = None
+        query.all.return_value = object()
+        real_service._attach_latest_evaluations(
+            [SimpleNamespace(id="match-1")],
+            owner_id="owner-1",
+            tenant_id=None,
+        )
+
+        evaluation = SimpleNamespace(job_match_id="match-1")
+        match = SimpleNamespace(id="match-1")
+        query.all.return_value = [evaluation]
+        real_service._attach_latest_evaluations(
+            [match],
+            owner_id="owner-1",
+            tenant_id="tenant-1",
+        )
+        assert match.llm_evaluation is evaluation
+
+    def test_llm_policy_metadata_and_apply_rerank_early_exits(self, real_service):
+        assert real_service._llm_policy_metadata(owner_id=None)["reason"] == "owner_missing"
+
+        with patch(
+            "web.backend.services.match_service.get_result_policy_store",
+            side_effect=RuntimeError("policy down"),
+        ), patch("web.backend.services.match_service.record_match_query_degraded") as record:
+            metadata = real_service._llm_policy_metadata(owner_id="owner-1")
+
+        assert metadata["reason"] == "policy_unavailable"
+        record.assert_called_once_with("policy_unavailable")
+
+        candidate = SimpleNamespace(id="m1")
+        assert real_service._apply_llm_rerank([], owner_id="owner-1", tenant_id=None)["reason"] == "empty_primary_pool"
+        assert (
+            real_service._apply_llm_rerank(
+                [candidate],
+                owner_id="owner-1",
+                tenant_id=None,
+                policy_metadata={"available": False, "unavailable_reason": "quota"},
+            )["reason"]
+            == "quota"
+        )
+        assert (
+            real_service._apply_llm_rerank(
+                [candidate],
+                owner_id="owner-1",
+                tenant_id=None,
+                policy_metadata={"available": True, "enabled": False, "top_n": 1},
+            )["reason"]
+            == "disabled"
+        )
+        assert (
+            real_service._apply_llm_rerank(
+                [candidate],
+                owner_id="owner-1",
+                tenant_id=None,
+                policy_metadata={"available": True, "enabled": True, "top_n": 0},
+            )["reason"]
+            == "top_n_zero"
+        )
+
+    def test_apply_llm_rerank_marks_no_eligible_and_sorts_eligible_window(self, real_service):
+        no_eval = SimpleNamespace(id="m1", llm_original_rank=1, llm_evaluation=None)
+        with patch("web.backend.services.match_service.MatchLlmEvaluationService") as judge_cls:
+            judge_cls.return_value.evaluation_effectiveness.return_value = {
+                "effective_for_rerank": False,
+                "ignored_for_rerank_reason": "stale",
+                "stale_status": "stale",
+            }
+            metadata = real_service._apply_llm_rerank(
+                [no_eval],
+                owner_id="owner-1",
+                tenant_id=None,
+                policy_metadata={"available": True, "enabled": True, "top_n": 1},
+            )
+        assert metadata["reason"] == "no_current_successful_evaluations"
+        assert no_eval.llm_reranked_rank == 1
+
+        low = SimpleNamespace(
+            id="low",
+            llm_original_rank=1,
+            llm_evaluation=SimpleNamespace(llm_score=10, confidence=0.9),
+        )
+        high = SimpleNamespace(
+            id="high",
+            llm_original_rank=2,
+            llm_evaluation=SimpleNamespace(llm_score=99, confidence=0.7),
+        )
+        with patch("web.backend.services.match_service.MatchLlmEvaluationService") as judge_cls:
+            judge_cls.return_value.evaluation_effectiveness.return_value = {
+                "effective_for_rerank": True,
+                "ignored_for_rerank_reason": None,
+                "stale_status": "current",
+            }
+            pool = [low, high]
+            metadata = real_service._apply_llm_rerank(
+                pool,
+                owner_id="owner-1",
+                tenant_id=None,
+                policy_metadata={"available": True, "enabled": True, "top_n": 2},
+            )
+
+        assert metadata["reason"] == "applied"
+        assert [candidate.id for candidate in pool] == ["high", "low"]
+        assert high.llm_reranked_rank == 1
+
+    def test_real_query_session_detection_and_owner_lookup_branches(self, real_service, mock_db):
+        real_service.db = SimpleNamespace(query=None)
+        assert real_service._has_real_query_session() is False
+        real_service.db = mock_db
+        assert real_service._has_real_query_session() is False
+
+        query = MagicMock()
+        mock_db.query.return_value = query
+        query.join.return_value = query
+        query.filter.return_value = query
+        query.one_or_none.return_value = None
+
+        with pytest.raises(Exception, match="not found"):
+            real_service._get_match_for_owner(
+                "match-1",
+                owner_id="owner-1",
+                tenant_id="tenant-1",
+            )
+
+        query.one_or_none.return_value = SimpleNamespace(id="match-1")
+        assert real_service._get_match_for_owner("match-1").id == "match-1"
+
+    def test_toggle_hidden_rejects_tenant_mismatch_and_excluded_owner_match(
+        self,
+        real_service,
+        mock_db,
+    ):
+        match = SimpleNamespace(
+            id="match-1",
+            job_post_id="job-1",
+            job_post=SimpleNamespace(tenant_id="tenant-a"),
+            is_hidden=False,
+        )
+        with patch("database.repositories.match.MatchRepository") as repo_cls:
+            repo_cls.return_value.get_match_by_id_for_owner.return_value = match
+            with pytest.raises(Exception, match="not found"):
+                real_service.toggle_hidden(
+                    "match-1",
+                    owner_id="owner-1",
+                    tenant_id="tenant-b",
+                )
+
+        with patch("database.repositories.match.MatchRepository") as repo_cls:
+            repo_cls.return_value.get_match_by_id_for_owner.return_value = match
+            real_service._selection_tier_for_current_owner_run = Mock(return_value="excluded")
+            with pytest.raises(Exception, match="Excluded matches"):
+                real_service.toggle_hidden("match-1", owner_id="owner-1")
+
+    def test_optional_attr_latest_eval_marker_and_job_detail_helpers(self, real_service, mock_db):
+        assert real_service._optional_int_attr(SimpleNamespace(value=True), "value") is None
+        assert real_service._optional_int_attr(SimpleNamespace(value="bad"), "value") is None
+        assert real_service._optional_str_attr(SimpleNamespace(value=123), "value") is None
+
+        query = MagicMock()
+        mock_db.query.return_value = query
+        query.filter.return_value = query
+        query.order_by.return_value = query
+        evaluation = SimpleNamespace(id="eval-1")
+        query.first.return_value = evaluation
+        match = SimpleNamespace(id="match-1", resume_fingerprint="fp")
+
+        assert real_service._latest_evaluation_for_match(
+            match,
+            owner_id="owner-1",
+            tenant_id=None,
+        ) is evaluation
+        assert real_service._latest_evaluation_for_match(
+            match,
+            owner_id="owner-1",
+            tenant_id="tenant-1",
+        ) is evaluation
+
+        assert real_service._llm_marker_fields(None)["llm_evaluation_status"] is None
+        judged_at = datetime.now(timezone.utc)
+        fields = real_service._llm_marker_fields(
+            SimpleNamespace(
+                id="eval-1",
+                status="succeeded",
+                llm_score="95.5",
+                confidence="0.8",
+                completed_at=judged_at,
+                llm_effectiveness={"effective_for_rerank": True, "stale_status": "current"},
+            )
+        )
+        assert fields["llm_score"] == 95.5
+        assert fields["llm_effective_for_rerank"] is True
+
+        job = SimpleNamespace(
+            id="job-1",
+            title="Backend Engineer",
+            company="Example",
+            location_text="Remote",
+            is_remote=True,
+            description=None,
+            description_source=None,
+            description_completeness=None,
+            description_warning_code=None,
+            salary_min=None,
+            salary_max=None,
+            currency="USD",
+            min_years_experience=None,
+            requires_degree=False,
+            security_clearance=None,
+            job_level="senior",
+        )
+        details = real_service._to_job_details(job)
+        assert details.description_completeness == "missing"

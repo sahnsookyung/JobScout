@@ -1,5 +1,6 @@
 """Tests for match-level LLM evaluation caching."""
 
+from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -288,6 +289,110 @@ def test_run_pending_evaluation_loads_row_and_runs_provider():
         truncation={"truncated": False, "fields": {}},
     )
     db.commit.assert_called_once()
+
+
+def test_run_pending_evaluation_skips_invalid_missing_deleted_and_terminal_rows():
+    service = _service(db=Mock())
+
+    assert service.run_pending_evaluation("not-a-uuid", {"safe": "payload"}) is None
+
+    db = Mock()
+    db.get.return_value = None
+    service = _service(db=db)
+    assert service.run_pending_evaluation(
+        "00000000-0000-4000-8000-000000000302",
+        {"safe": "payload"},
+    ) is None
+
+    deleted = _evaluation(status=LLM_EVALUATION_PENDING)
+    deleted.deleted_at = datetime.now(timezone.utc)
+    db = Mock()
+    db.get.return_value = deleted
+    service = _service(db=db)
+    assert service.run_pending_evaluation(
+        "00000000-0000-4000-8000-000000000303",
+        {"safe": "payload"},
+    ) is deleted
+
+    terminal = _evaluation(status=LLM_EVALUATION_SUCCEEDED)
+    db = Mock()
+    db.get.return_value = terminal
+    service = _service(db=db)
+    assert service.run_pending_evaluation(
+        "00000000-0000-4000-8000-000000000304",
+        {"safe": "payload"},
+    ) is terminal
+
+
+def test_resume_pending_evaluation_covers_guard_and_rebuild_paths():
+    service = _service(db=Mock())
+    assert service.resume_pending_evaluation("not-a-uuid") is None
+
+    db = Mock()
+    db.get.return_value = None
+    service = _service(db=db)
+    assert service.resume_pending_evaluation("00000000-0000-4000-8000-000000000305") is None
+
+    deleted = _evaluation(status=LLM_EVALUATION_PENDING)
+    deleted.deleted_at = datetime.now(timezone.utc)
+    db = Mock()
+    db.get.return_value = deleted
+    service = _service(db=db)
+    assert service.resume_pending_evaluation("00000000-0000-4000-8000-000000000306") is deleted
+
+    terminal_failed = _evaluation(status=LLM_EVALUATION_FAILED)
+    terminal_failed.retryable = False
+    db = Mock()
+    db.get.return_value = terminal_failed
+    service = _service(db=db)
+    assert service.resume_pending_evaluation("00000000-0000-4000-8000-000000000307") is terminal_failed
+
+    succeeded = _evaluation(status=LLM_EVALUATION_SUCCEEDED)
+    db = Mock()
+    db.get.return_value = succeeded
+    service = _service(db=db)
+    assert service.resume_pending_evaluation("00000000-0000-4000-8000-000000000308") is succeeded
+
+    missing_match = _evaluation(status=LLM_EVALUATION_PENDING)
+    missing_match.job_match_id = None
+    db = Mock()
+    db.get.return_value = missing_match
+    db.execute.return_value = _ScalarResult(value=None)
+    service = _service(db=db)
+    assert service.resume_pending_evaluation("00000000-0000-4000-8000-000000000309") is missing_match
+    assert missing_match.status == LLM_EVALUATION_FAILED
+    assert missing_match.error_code == "match_not_found"
+    assert missing_match.retryable is False
+    db.commit.assert_called_once()
+
+    retryable = _evaluation(status=LLM_EVALUATION_FAILED)
+    retryable.retryable = True
+    match = _match()
+
+    def get_model(model, _id):
+        return retryable if model is LlmMatchEvaluation else match
+
+    db = Mock()
+    db.get.side_effect = get_model
+    service = _service(db=db)
+    judge_input = SimpleNamespace(
+        provider_payload={"safe": "payload"},
+        truncation={"truncated": False},
+    )
+    service.build_judge_input = Mock(return_value=judge_input)
+    service.run_pending_evaluation = Mock(return_value=retryable)
+
+    assert service.resume_pending_evaluation("00000000-0000-4000-8000-000000000310") is retryable
+    assert retryable.status == LLM_EVALUATION_PENDING
+    assert retryable.retryable is False
+    assert retryable.error_code is None
+    assert retryable.completed_at is None
+    db.flush.assert_called_once()
+    service.run_pending_evaluation.assert_called_once_with(
+        retryable.id,
+        {"safe": "payload"},
+        truncation={"truncated": False},
+    )
 
 
 def test_run_provider_embeds_payload_in_user_message_for_openai_provider_path():
@@ -1009,3 +1114,281 @@ def test_model_has_partial_unique_active_cache_indexes():
     assert global_index.unique is True
     assert tenant_index.dialect_options["postgresql"]["where"] is not None
     assert global_index.dialect_options["postgresql"]["where"] is not None
+
+
+class _Query:
+    def __init__(self, *, rows=None, first=None, get=None, fail=False):
+        self.rows = rows or []
+        self.first_value = first
+        self.get_value = get
+        self.fail = fail
+
+    def filter(self, *args, **kwargs):
+        if self.fail:
+            raise RuntimeError("query failed")
+        return self
+
+    def options(self, *args, **kwargs):
+        return self
+
+    def order_by(self, *args, **kwargs):
+        return self
+
+    def limit(self, *args, **kwargs):
+        return self
+
+    def all(self):
+        return self.rows
+
+    def first(self):
+        return self.first_value
+
+    def get(self, _id):
+        return self.get_value
+
+
+def _truncation():
+    return {"truncated": False, "fields": {}}
+
+
+def test_load_helpers_cover_query_success_and_fallback_paths():
+    job = SimpleNamespace(id="job-1")
+    service = _service(db=Mock())
+
+    assert service._load_job_for_match(SimpleNamespace(job_post=job)) is job
+    assert service._load_job_for_match(SimpleNamespace(job_post_id=None, job_id=None)) is None
+
+    service.db.query.return_value = _Query(get=job)
+    assert service._load_job_for_match(SimpleNamespace(job_post_id="job-1")) is job
+
+    service.db.query.return_value = _Query(fail=True)
+    assert service._load_job_for_match(SimpleNamespace(job_post_id="job-1")) is None
+
+    requirements = [
+        SimpleNamespace(id="b", ordinal=None),
+        SimpleNamespace(id="a", ordinal=2),
+        SimpleNamespace(id="c", ordinal=1),
+    ]
+    sorted_requirements = service._load_job_requirements(
+        SimpleNamespace(id="job-1", requirements=requirements)
+    )
+    assert [item.id for item in sorted_requirements] == ["c", "a", "b"]
+    assert service._load_job_requirements(None) == []
+    assert service._load_job_requirements(SimpleNamespace(id=None, requirements=[])) == []
+
+    service.db.query.return_value = _Query(rows=[SimpleNamespace(id="req-1")])
+    assert len(service._load_job_requirements(SimpleNamespace(id="job-1", requirements=[]))) == 1
+    assert len(service._load_match_requirements(SimpleNamespace(id="match-1"))) == 1
+
+    service.db.query.return_value = _Query(first=SimpleNamespace(id="resume-1"))
+    assert service._load_resume("owner-1", "fp").id == "resume-1"
+    assert service._load_resume(None, "fp") is None
+    assert service._load_resume("owner-1", None) is None
+
+    service.db.query.return_value = _Query(rows=[SimpleNamespace(id="ev-1")])
+    assert len(service._load_resume_evidence_units("owner-1", "fp")) == 1
+    assert service._load_resume_evidence_units(None, "fp") == []
+
+    service.db.query.return_value = _Query(fail=True)
+    assert service._load_job_requirements(SimpleNamespace(id="job-1", requirements=[])) == []
+    assert service._load_match_requirements(SimpleNamespace(id="match-1")) == []
+    assert service._load_resume("owner-1", "fp") is None
+    assert service._load_resume_evidence_units("owner-1", "fp") == []
+
+
+def test_judge_input_serializers_record_truncation_metadata():
+    service = _service()
+    service._judge_limit = Mock(
+        side_effect=lambda name, default: {
+            "requirements_max_count": 1,
+            "requirement_text_max_chars": 8,
+            "resume_summary_max_chars": 20,
+            "evidence_units_max_count": 1,
+            "evidence_unit_max_chars": 8,
+        }.get(name, default)
+    )
+
+    truncation = _truncation()
+    grouped = service._serialize_requirements(
+        [
+            SimpleNamespace(
+                req_type="required",
+                text="x" * 20,
+                tags={"k": ["a", object(), 3]},
+                min_years=Decimal("2.5"),
+                years_context="context",
+            ),
+            SimpleNamespace(req_type="unknown", text="ignored"),
+        ],
+        truncation,
+    )
+
+    assert truncation["truncated"] is True
+    assert truncation["fields"]["requirements"]["original_count"] == 2
+    assert grouped["required"][0]["text"].endswith("...")
+    assert grouped["required"][0]["tags"] == {"k": ["a", 3]}
+    assert grouped["required"][0]["min_years"] == 2.5
+
+    resume = SimpleNamespace(
+        extracted_data={
+            "skills": ["Python", object()],
+            "embedding": "secret",
+            "nested": {"resume_fingerprint": "secret", "ok": "\x00 kept "},
+        },
+        total_experience_years=Decimal("7.5"),
+    )
+    summary = service._serialize_resume_summary(resume, _truncation())
+    assert "summary_text" in summary
+    public_summary = service._public_resume_summary(resume.extracted_data)
+    assert "embedding" not in public_summary
+    assert public_summary["nested"] == {"ok": "kept"}
+    assert service._serialize_resume_summary(None, _truncation()) == {}
+
+    evidence_truncation = _truncation()
+    evidence = service._serialize_resume_evidence_units(
+        [
+            SimpleNamespace(
+                source_section="experience",
+                source_text="y" * 20,
+                tags={"years": [1, object(), "two"]},
+                years_value="3",
+                years_context="context",
+                is_total_years_claim=True,
+            ),
+            SimpleNamespace(source_section="ignored", source_text="ignored"),
+        ],
+        evidence_truncation,
+    )
+    assert len(evidence) == 1
+    assert evidence_truncation["fields"]["resume_evidence_units"]["original_count"] == 2
+    assert evidence[0]["source_text"].endswith("...")
+
+
+def test_json_and_scalar_helpers_cover_edge_cases():
+    service = _service()
+    truncation = _truncation()
+
+    sentinel = object()
+    assert service._public_resume_value([" ok ", sentinel])[0] == "ok"
+    assert service._public_resume_value({"embedding": "secret", "keep": sentinel}) == {
+        "keep": str(sentinel)
+    }
+    capped = service._cap_json_payload({"text": "z" * 50}, 12, truncation, "payload")
+    assert capped["summary_text"].endswith("...")
+    assert truncation["fields"]["payload"]["included_chars"] == 12
+    assert service._cap_json_payload({"ok": True}, 1_000, _truncation(), "payload") == {"ok": True}
+    assert service._safe_json_object(None) == {}
+    assert service._safe_json_object({"nested": {"ignored": True}, "ok": True}) == {"ok": True}
+    assert service._truncate("abcdef", 3) == "abc"
+    assert service._float(Decimal("1.25")) == 1.25
+    assert service._float("not-a-number") is None
+
+
+def test_reuse_error_classification_and_public_dict_edges():
+    service = _service()
+
+    assert service._is_reusable(_evaluation(status=LLM_EVALUATION_PENDING)) is False
+    assert service._is_reusable(_evaluation(completed_at=None)) is True
+
+    too_large = RuntimeError("request too large")
+    too_large.status_code = 400
+    assert service._provider_error_code(too_large) == "llm_judge_input_too_large"
+    quota = RuntimeError("token_quota_exceeded")
+    assert service._provider_error_code(quota) == "llm_judge_token_quota_exceeded"
+    assert service._hash_json({"b": 2, "a": 1}) == service._hash_json({"a": 1, "b": 2})
+    assert service._safe_reason_codes(["Skills Match", "bad-code!", ""]) == [
+        "skills_match",
+        "badcode",
+    ]
+
+    evaluation = _evaluation()
+    evaluation.analysis = {
+        "provider_payload": "secret",
+        "notes": ["x" * 2100 for _ in range(2)],
+        "nested": {"raw_payload": "secret", "visible": "ok"},
+    }
+    public = evaluation_public_dict(evaluation)
+    assert "provider_payload" not in public["analysis"]
+    assert public["analysis"]["nested"] == {"visible": "ok"}
+    assert public["analysis"]["notes"][0].endswith("...")
+
+
+def test_evaluation_effectiveness_covers_ignored_stale_and_current_metadata():
+    service = _service()
+    match = _match()
+
+    deleted = _evaluation()
+    deleted.deleted_at = datetime.now(timezone.utc)
+    assert service.evaluation_effectiveness(
+        match,
+        deleted,
+        owner_id="owner-1",
+    )["ignored_for_rerank_reason"] == "deleted"
+
+    missing_score = _evaluation()
+    missing_score.llm_score = None
+    assert service.evaluation_effectiveness(
+        match,
+        missing_score,
+        owner_id="owner-1",
+    )["ignored_for_rerank_reason"] == "missing_llm_score"
+
+    stale_job = _evaluation()
+    stale_match = _match()
+    stale_match.job_content_hash = "old-hash"
+    service._load_job_for_match = Mock(return_value=SimpleNamespace(content_hash="new-hash"))
+    assert service.evaluation_effectiveness(
+        stale_match,
+        stale_job,
+        owner_id="owner-1",
+    )["ignored_for_rerank_reason"] == "stale_job_content"
+
+    service._load_job_for_match = Mock(return_value=SimpleNamespace(content_hash="content-hash"))
+    service.build_judge_input = Mock(side_effect=RuntimeError("cannot rebuild"))
+    assert service.evaluation_effectiveness(
+        _match(),
+        _evaluation(),
+        owner_id="owner-1",
+    )["ignored_for_rerank_reason"] == "current_input_unavailable"
+
+    stale_input = _evaluation()
+    service.build_judge_input = Mock(
+        return_value=SimpleNamespace(
+            hashes={
+                "judge_config_hash": stale_input.judge_config_hash,
+                "input_hash": stale_input.input_hash,
+                "evidence_hash": "changed-evidence",
+            },
+            truncation={"truncated": True},
+        )
+    )
+    stale_result = service.evaluation_effectiveness(
+        _match(),
+        stale_input,
+        owner_id="owner-1",
+    )
+    assert stale_result["ignored_for_rerank_reason"] == "stale_evidence_hash"
+    assert stale_result["input_truncation"] == {"truncated": True}
+
+    current = _evaluation()
+    service.build_judge_input = Mock(
+        return_value=SimpleNamespace(
+            hashes={
+                "judge_config_hash": current.judge_config_hash,
+                "input_hash": current.input_hash,
+                "evidence_hash": current.evidence_hash,
+            },
+            truncation={"truncated": False},
+        )
+    )
+    current_result = service.evaluation_effectiveness(
+        _match(),
+        current,
+        owner_id="owner-1",
+    )
+    assert current_result == {
+        "effective_for_rerank": True,
+        "ignored_for_rerank_reason": None,
+        "stale_status": "current",
+        "input_truncation": {"truncated": False},
+    }

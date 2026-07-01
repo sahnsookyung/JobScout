@@ -6,7 +6,12 @@ from unittest.mock import Mock, patch
 import pytest
 
 from database.models import PIPELINE_RUN_FAILED, PIPELINE_RUN_RUNNING
-from web.backend.services.pipeline_run_ops_service import PipelineRunOpsService
+from web.backend.services.pipeline_run_ops_service import (
+    PipelineRunOpsService,
+    _coerce_run_id,
+    _stage_limit,
+    _target_stage,
+)
 
 
 def _stage(stage: str = "matching", status: str = PIPELINE_RUN_FAILED):
@@ -178,3 +183,143 @@ def test_requeue_run_validates_matching_resume_before_creating_retry_run():
     repo_cls.assert_not_called()
     enqueue_job.assert_not_called()
     db.commit.assert_not_called()
+
+
+def test_helpers_handle_invalid_ids_stage_fallbacks_and_limits():
+    run = _run(stage="custom")
+    run.stages = [
+        _stage(stage="extraction", status="completed"),
+        _stage(stage="embedding", status="running"),
+    ]
+    run.stages[0].retry_eligible = False
+    run.stages[1].retry_eligible = False
+    run.stages[1].queued_count = 0
+    run.current_stage = "custom"
+    run.queued_count = 0
+
+    assert _coerce_run_id("not-a-uuid") is None
+    assert _target_stage(run) == "custom"
+    assert _stage_limit(run, "embedding") == 1
+
+    run.stages[0].retry_eligible = True
+    assert _target_stage(run) == "extraction"
+    assert _stage_limit(run, "extraction") == 7
+
+
+def test_get_run_model_returns_none_for_invalid_id_without_querying_db():
+    service = PipelineRunOpsService()
+    db = Mock()
+
+    assert service.get_run_model(db, tenant_id=None, run_id="not-a-uuid") is None
+    db.execute.assert_not_called()
+
+
+def test_cancel_run_rejects_missing_or_non_cancelable_run():
+    service = PipelineRunOpsService()
+    db = Mock()
+
+    with patch.object(service, "get_run_model", return_value=None):
+        with pytest.raises(LookupError, match="not found"):
+            service.cancel_run(db, tenant_id=None, run_id="missing")
+
+    completed = _run(status="completed", retry_eligible=False)
+    with patch.object(service, "get_run_model", return_value=completed):
+        with pytest.raises(ValueError, match="cannot be cancelled"):
+            service.cancel_run(db, tenant_id=None, run_id=str(completed.id))
+
+
+def test_requeue_run_rejects_missing_disallowed_and_non_requeueable_runs():
+    service = PipelineRunOpsService()
+    db = Mock()
+
+    with patch.object(service, "get_run_model", return_value=None):
+        with pytest.raises(LookupError, match="not found"):
+            service.requeue_run(db, tenant_id=None, run_id="missing")
+
+    running = _run(status=PIPELINE_RUN_RUNNING, retry_eligible=False)
+    with patch.object(service, "get_run_model", return_value=running):
+        with pytest.raises(ValueError, match="cannot be requeued"):
+            service.requeue_run(db, tenant_id=None, run_id=str(running.id))
+
+    failed = _run(status=PIPELINE_RUN_FAILED, retry_eligible=True, stage="extraction")
+    with patch.object(service, "get_run_model", return_value=failed), patch.dict(
+        "web.backend.services.pipeline_run_ops_service.REQUEUE_STAGE_STREAMS",
+        {},
+        clear=True,
+    ):
+        with pytest.raises(ValueError, match="does not have a requeueable"):
+            service.requeue_run(db, tenant_id=None, run_id=str(failed.id))
+
+
+def test_requeue_run_enqueues_extraction_with_stage_limit():
+    service = PipelineRunOpsService()
+    db = Mock()
+    source = _run(status=PIPELINE_RUN_FAILED, retry_eligible=True, stage="extraction")
+    retry_run = _run(status=PIPELINE_RUN_RUNNING, retry_eligible=False, stage="extraction")
+    retry_run.stages = []
+    stage_row = _stage(stage="extraction", status=PIPELINE_RUN_RUNNING)
+    repo = Mock()
+    repo.create_run.return_value = retry_run
+    repo.start_stage.return_value = stage_row
+
+    with patch.object(service, "get_run_model", return_value=source), patch(
+        "web.backend.services.pipeline_run_ops_service.PipelineRunRepository",
+        return_value=repo,
+    ), patch("web.backend.services.pipeline_run_ops_service.enqueue_job") as enqueue_job:
+        summary, task_id = service.requeue_run(db, tenant_id=None, run_id=str(source.id))
+
+    stream, payload = enqueue_job.call_args.args
+    assert stream == "extraction:batch"
+    assert payload["limit"] == 7
+    assert summary.id == str(retry_run.id)
+    assert task_id.startswith("match-1234-requeue-")
+    db.commit.assert_called_once()
+
+
+def test_retry_run_delegates_to_requeue_action():
+    service = PipelineRunOpsService()
+    db = Mock()
+
+    with patch.object(
+        service,
+        "requeue_run",
+        return_value=("summary", "task-retry"),
+    ) as requeue:
+        assert service.retry_run(db, tenant_id=None, run_id="run-1") == (
+            "summary",
+            "task-retry",
+        )
+
+    requeue.assert_called_once_with(
+        db,
+        tenant_id=None,
+        run_id="run-1",
+        action="retry",
+    )
+
+
+def test_llm_queue_status_wraps_success_and_degraded_error():
+    service = PipelineRunOpsService()
+
+    with patch(
+        "web.backend.services.pipeline_run_ops_service.check_llm_evaluation_queue_readiness",
+        return_value={"ready": True, "queue": "llm_evaluations", "queued": 2},
+    ):
+        assert service.llm_queue_status() == {
+            "success": True,
+            "ready": True,
+            "queue": "llm_evaluations",
+            "queued": 2,
+        }
+
+    with patch(
+        "web.backend.services.pipeline_run_ops_service.check_llm_evaluation_queue_readiness",
+        side_effect=RuntimeError("redis unavailable"),
+    ):
+        status = service.llm_queue_status()
+
+    assert status["success"] is False
+    assert status["ready"] is False
+    assert status["queue"] == "llm_evaluations"
+    assert status["queued"] == 0
+    assert status["error"] == "redis unavailable"

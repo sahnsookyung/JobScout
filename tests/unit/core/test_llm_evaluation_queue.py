@@ -150,3 +150,311 @@ def test_queue_status_reports_bounded_registry_depths():
         "scheduled": 3,
         "failed": 5,
     }
+
+
+def test_env_int_uses_default_invalid_and_clamps_negative(monkeypatch, caplog):
+    monkeypatch.delenv("LLM_EVALUATION_RETRY_MAX", raising=False)
+    assert llm_evaluation_queue._env_int("LLM_EVALUATION_RETRY_MAX", 3) == 3
+
+    monkeypatch.setenv("LLM_EVALUATION_RETRY_MAX", "7")
+    assert llm_evaluation_queue._env_int("LLM_EVALUATION_RETRY_MAX", 3) == 7
+
+    monkeypatch.setenv("LLM_EVALUATION_RETRY_MAX", "-2")
+    assert llm_evaluation_queue._env_int("LLM_EVALUATION_RETRY_MAX", 3) == 0
+
+    monkeypatch.setenv("LLM_EVALUATION_RETRY_MAX", "oops")
+    assert llm_evaluation_queue._env_int("LLM_EVALUATION_RETRY_MAX", 3) == 3
+    assert "Invalid LLM_EVALUATION_RETRY_MAX" in caplog.text
+
+
+def test_env_int_list_uses_default_invalid_and_clamps_negative(monkeypatch, caplog):
+    monkeypatch.delenv("LLM_EVALUATION_RETRY_INTERVALS_SECONDS", raising=False)
+    assert llm_evaluation_queue._env_int_list(
+        "LLM_EVALUATION_RETRY_INTERVALS_SECONDS",
+        [60, 300],
+    ) == [60, 300]
+
+    monkeypatch.setenv("LLM_EVALUATION_RETRY_INTERVALS_SECONDS", "5,-1, 20")
+    assert llm_evaluation_queue._env_int_list(
+        "LLM_EVALUATION_RETRY_INTERVALS_SECONDS",
+        [60, 300],
+    ) == [5, 0, 20]
+
+    monkeypatch.setenv("LLM_EVALUATION_RETRY_INTERVALS_SECONDS", "")
+    assert llm_evaluation_queue._env_int_list(
+        "LLM_EVALUATION_RETRY_INTERVALS_SECONDS",
+        [60, 300],
+    ) == [60, 300]
+
+    monkeypatch.setenv("LLM_EVALUATION_RETRY_INTERVALS_SECONDS", "5,bad,20")
+    assert llm_evaluation_queue._env_int_list(
+        "LLM_EVALUATION_RETRY_INTERVALS_SECONDS",
+        [60, 300],
+    ) == [60, 300]
+    assert "Invalid LLM_EVALUATION_RETRY_INTERVALS_SECONDS" in caplog.text
+
+
+def test_retry_policy_uses_retry_environment(monkeypatch):
+    monkeypatch.setenv("LLM_EVALUATION_RETRY_MAX", "4")
+    monkeypatch.setenv("LLM_EVALUATION_RETRY_INTERVALS_SECONDS", "1,2,3")
+
+    retry = llm_evaluation_queue._retry_policy()
+
+    assert retry.max == 4
+    assert retry.intervals == [1, 2, 3]
+
+
+def test_queue_uses_configured_redis_url():
+    config = SimpleNamespace(
+        orchestrator=SimpleNamespace(redis_url="redis://queue-host:6379/4"),
+    )
+    redis_conn = Mock()
+
+    with patch("core.llm_evaluation_queue.load_config", return_value=config), patch(
+        "core.llm_evaluation_queue.Redis.from_url",
+        return_value=redis_conn,
+    ) as from_url, patch("core.llm_evaluation_queue.Queue") as queue_cls:
+        queue = llm_evaluation_queue._queue()
+
+    from_url.assert_called_once_with("redis://queue-host:6379/4")
+    queue_cls.assert_called_once_with(
+        llm_evaluation_queue.LLM_EVALUATION_QUEUE,
+        connection=redis_conn,
+    )
+    assert queue is queue_cls.return_value
+
+
+def test_enqueue_llm_evaluation_normalizes_inputs():
+    queue = Mock()
+
+    with patch("core.llm_evaluation_queue._queue", return_value=queue), patch(
+        "core.llm_evaluation_queue._enqueue_unique",
+        return_value="llm-evaluation:42",
+    ) as enqueue_unique:
+        job_id = llm_evaluation_queue.enqueue_llm_evaluation(
+            42,
+            provider_payload={"raw": True},
+        )
+
+    assert job_id == "llm-evaluation:42"
+    enqueue_unique.assert_called_once_with(queue, "42", {"raw": True}, {})
+
+
+def test_check_readiness_pings_redis_and_reports_queue_status():
+    redis_conn = Mock()
+    queue = Mock()
+    status = {"queue": "llm_evaluations", "queued": 1, "started": 0}
+
+    with patch(
+        "core.llm_evaluation_queue._redis_url",
+        return_value="redis://ready:6379/0",
+    ), patch(
+        "core.llm_evaluation_queue.Redis.from_url",
+        return_value=redis_conn,
+    ) as from_url, patch(
+        "core.llm_evaluation_queue.Queue",
+        return_value=queue,
+    ) as queue_cls, patch(
+        "core.llm_evaluation_queue.get_llm_evaluation_queue_status",
+        return_value=status,
+    ) as queue_status:
+        result = llm_evaluation_queue.check_llm_evaluation_queue_readiness()
+
+    from_url.assert_called_once_with("redis://ready:6379/0")
+    redis_conn.ping.assert_called_once_with()
+    queue_cls.assert_called_once_with(
+        llm_evaluation_queue.LLM_EVALUATION_QUEUE,
+        connection=redis_conn,
+    )
+    queue_status.assert_called_once_with(queue)
+    assert result == {"ready": True, **status}
+
+
+def test_claim_evaluation_rejects_invalid_id_without_db(caplog):
+    with patch("core.llm_evaluation_queue.SessionLocal") as session_local:
+        assert llm_evaluation_queue._claim_evaluation_for_execution("not-a-uuid") is False
+
+    session_local.assert_not_called()
+    assert "Skipping invalid LLM evaluation id" in caplog.text
+
+
+def test_claim_evaluation_commits_rowcount_result():
+    db = Mock()
+    db.execute.return_value.rowcount = 1
+
+    with patch("core.llm_evaluation_queue.SessionLocal", return_value=db):
+        claimed = llm_evaluation_queue._claim_evaluation_for_execution(
+            "11111111-1111-1111-1111-111111111111",
+        )
+
+    assert claimed is True
+    db.execute.assert_called_once()
+    db.commit.assert_called_once_with()
+    db.rollback.assert_not_called()
+    db.close.assert_called_once_with()
+
+
+def test_claim_evaluation_rolls_back_on_db_error():
+    db = Mock()
+    db.execute.side_effect = RuntimeError("database unavailable")
+
+    with patch("core.llm_evaluation_queue.SessionLocal", return_value=db):
+        with pytest.raises(RuntimeError, match="database unavailable"):
+            llm_evaluation_queue._claim_evaluation_for_execution(
+                "11111111-1111-1111-1111-111111111111",
+            )
+
+    db.rollback.assert_called_once_with()
+    db.close.assert_called_once_with()
+
+
+def test_mark_worker_failure_rejects_invalid_id_without_db(caplog):
+    with patch("core.llm_evaluation_queue.SessionLocal") as session_local:
+        assert llm_evaluation_queue._mark_evaluation_worker_failure(None) is False
+
+    session_local.assert_not_called()
+    assert "Skipping invalid failed LLM evaluation id" in caplog.text
+
+
+def test_mark_worker_failure_commits_retryable_failure_state():
+    db = Mock()
+    db.execute.return_value.rowcount = 0
+
+    with patch("core.llm_evaluation_queue.SessionLocal", return_value=db):
+        marked = llm_evaluation_queue._mark_evaluation_worker_failure(
+            "22222222-2222-2222-2222-222222222222",
+            error_code="provider_error",
+        )
+
+    assert marked is False
+    db.execute.assert_called_once()
+    db.commit.assert_called_once_with()
+    db.rollback.assert_not_called()
+    db.close.assert_called_once_with()
+
+
+def test_mark_worker_failure_rolls_back_on_db_error():
+    db = Mock()
+    db.execute.side_effect = RuntimeError("update failed")
+
+    with patch("core.llm_evaluation_queue.SessionLocal", return_value=db):
+        with pytest.raises(RuntimeError, match="update failed"):
+            llm_evaluation_queue._mark_evaluation_worker_failure(
+                "22222222-2222-2222-2222-222222222222",
+            )
+
+    db.rollback.assert_called_once_with()
+    db.close.assert_called_once_with()
+
+
+def test_process_task_runs_provider_payload_path():
+    db = Mock()
+    evaluation = SimpleNamespace(id="eval-provider", status="succeeded", retryable=False)
+
+    with patch(
+        "core.llm_evaluation_queue._claim_evaluation_for_execution",
+        return_value=True,
+    ), patch("core.llm_evaluation_queue.SessionLocal", return_value=db), patch(
+        "core.llm_evaluation_queue.MatchLlmEvaluationService",
+    ) as service_cls:
+        service_cls.return_value.run_pending_evaluation.return_value = evaluation
+
+        result = llm_evaluation_queue.process_llm_evaluation_task(
+            "eval-provider",
+            provider_payload={"prompt": "payload"},
+            truncation={"was_truncated": False},
+        )
+
+    assert result == "eval-provider"
+    service_cls.return_value.run_pending_evaluation.assert_called_once_with(
+        "eval-provider",
+        {"prompt": "payload"},
+        truncation={"was_truncated": False},
+    )
+    service_cls.return_value.resume_pending_evaluation.assert_not_called()
+    db.rollback.assert_not_called()
+    db.close.assert_called_once_with()
+
+
+def test_process_task_logs_when_marking_worker_failure_also_fails(caplog):
+    db = Mock()
+
+    with patch(
+        "core.llm_evaluation_queue._claim_evaluation_for_execution",
+        return_value=True,
+    ), patch("core.llm_evaluation_queue.SessionLocal", return_value=db), patch(
+        "core.llm_evaluation_queue.MatchLlmEvaluationService",
+    ) as service_cls, patch(
+        "core.llm_evaluation_queue._mark_evaluation_worker_failure",
+        side_effect=RuntimeError("cannot mark"),
+    ):
+        service_cls.return_value.resume_pending_evaluation.side_effect = RuntimeError(
+            "provider failed",
+        )
+
+        with pytest.raises(RuntimeError, match="provider failed"):
+            llm_evaluation_queue.process_llm_evaluation_task("eval-fail")
+
+    assert "Failed to mark LLM evaluation eval-fail as retryable" in caplog.text
+    db.rollback.assert_called_once_with()
+    db.close.assert_called_once_with()
+
+
+def test_is_retryable_failed_evaluation_requires_failed_retryable_status():
+    assert (
+        llm_evaluation_queue._is_retryable_failed_evaluation(
+            SimpleNamespace(status=LLM_EVALUATION_FAILED, retryable=True),
+        )
+        is True
+    )
+    assert (
+        llm_evaluation_queue._is_retryable_failed_evaluation(
+            SimpleNamespace(status=LLM_EVALUATION_FAILED, retryable=False),
+        )
+        is False
+    )
+    assert (
+        llm_evaluation_queue._is_retryable_failed_evaluation(
+            SimpleNamespace(status="succeeded", retryable=True),
+        )
+        is False
+    )
+
+
+def test_enqueue_stale_or_retryable_evaluations_enqueues_each_row(caplog):
+    db = Mock()
+    execute_result = Mock()
+    execute_result.scalars.return_value.all.return_value = [
+        SimpleNamespace(id="eval-1"),
+        SimpleNamespace(id="eval-2"),
+    ]
+    db.execute.return_value = execute_result
+
+    with patch("core.llm_evaluation_queue.SessionLocal", return_value=db), patch(
+        "core.llm_evaluation_queue.enqueue_llm_evaluation",
+    ) as enqueue:
+        count = llm_evaluation_queue.enqueue_stale_or_retryable_evaluations(
+            stale_after_minutes=5,
+            limit=2,
+        )
+
+    assert count == 2
+    assert [call.args[0] for call in enqueue.call_args_list] == ["eval-1", "eval-2"]
+    db.close.assert_called_once_with()
+    assert "Enqueued 2 stale or retryable LLM evaluations" in caplog.text
+
+
+def test_enqueue_stale_or_retryable_evaluations_handles_empty_result():
+    db = Mock()
+    execute_result = Mock()
+    execute_result.scalars.return_value.all.return_value = []
+    db.execute.return_value = execute_result
+
+    with patch("core.llm_evaluation_queue.SessionLocal", return_value=db), patch(
+        "core.llm_evaluation_queue.enqueue_llm_evaluation",
+    ) as enqueue:
+        count = llm_evaluation_queue.enqueue_stale_or_retryable_evaluations()
+
+    assert count == 0
+    enqueue.assert_not_called()
+    db.close.assert_called_once_with()
