@@ -39,6 +39,25 @@ class TestPolicyService:
             min_jd_required_coverage=0.8,
         )
 
+    def test_update_llm_judge_policy_delegates_to_store(self):
+        store = Mock()
+        store.update_llm_judge_policy.return_value = Mock()
+
+        service = PolicyService(store=store)
+        service.update_llm_judge_policy(
+            owner_id="owner-1",
+            enabled=True,
+            auto_enqueue_enabled=True,
+            top_n=3,
+        )
+
+        store.update_llm_judge_policy.assert_called_once_with(
+            owner_id="owner-1",
+            enabled=True,
+            auto_enqueue_enabled=True,
+            top_n=3,
+        )
+
     def test_update_policy_translates_validation_errors(self):
         store = Mock()
         store.update_policy.side_effect = ValueError("min_fit must be between 0 and 100")

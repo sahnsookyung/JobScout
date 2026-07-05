@@ -44,12 +44,14 @@ class PolicyService:
         *,
         owner_id: object | None,
         enabled: Optional[bool] = None,
+        auto_enqueue_enabled: Optional[bool] = None,
         top_n: Optional[int] = None,
     ) -> LlmJudgePolicy:
         try:
             return self._store.update_llm_judge_policy(
                 owner_id=owner_id,
                 enabled=enabled,
+                auto_enqueue_enabled=auto_enqueue_enabled,
                 top_n=top_n,
             )
         except ValueError as exc:
