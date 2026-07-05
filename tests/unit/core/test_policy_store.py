@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from core.config_loader import ResultPolicy
+from core.config_loader import LlmJudgeRuntimeConfig, ResultPolicy
 from core.policy import POLICY_PRESETS, ResultPolicyStore
 
 
@@ -26,12 +26,14 @@ def _make_config(
     model="judge-model",
     top_n_default=5,
     top_n_max=10,
+    auto_enqueue_enabled=False,
 ):
     return SimpleNamespace(
         matching=SimpleNamespace(
             result_policy=ResultPolicy(),
             llm_judge=SimpleNamespace(
                 enabled=judge_enabled,
+                auto_enqueue_enabled=auto_enqueue_enabled,
                 top_n_default=top_n_default,
                 top_n_max=top_n_max,
                 runtime=SimpleNamespace(
@@ -166,6 +168,7 @@ class TestResultPolicyStore:
             policy = store.get_llm_judge_policy(owner_id=None)
 
         assert policy.enabled is True
+        assert policy.auto_enqueue_enabled is False
         assert policy.available is True
         assert policy.top_n == 10
         assert policy.top_n_max == 10
@@ -177,11 +180,34 @@ class TestResultPolicyStore:
 
         assert policy.enabled is False
         assert policy.available is False
+        assert policy.auto_enqueue_enabled is False
+
+    def test_get_llm_judge_policy_uses_configured_provider_chain_availability(self):
+        with patch.dict("os.environ", {"NVIDIA_API_KEY": "nvidia-key"}, clear=True):
+            config = SimpleNamespace(
+                matching=SimpleNamespace(
+                    result_policy=ResultPolicy(),
+                    llm_judge=SimpleNamespace(
+                        enabled=True,
+                        top_n_default=5,
+                        top_n_max=10,
+                        runtime=LlmJudgeRuntimeConfig(),
+                    ),
+                )
+            )
+
+        with patch("core.policy.load_config", return_value=config):
+            store = ResultPolicyStore()
+            policy = store.get_llm_judge_policy(owner_id=None)
+
+        assert policy.enabled is True
+        assert policy.available is True
+        assert policy.auto_enqueue_enabled is False
 
     def test_get_llm_judge_policy_merges_owner_setting_and_caps_top_n(self):
         capability = Mock()
         capability.enabled = True
-        capability.value_json = {"top_n": 99, "revision": 7}
+        capability.value_json = {"top_n": 99, "auto_enqueue_enabled": True, "revision": 7}
         _, cm = _make_db(setting=capability)
 
         with patch("core.policy.load_config", return_value=_make_config(top_n_default=4, top_n_max=8)), \
@@ -190,8 +216,24 @@ class TestResultPolicyStore:
             policy = store.get_llm_judge_policy(owner_id="user-1")
 
         assert policy.enabled is True
+        assert policy.auto_enqueue_enabled is True
         assert policy.top_n == 8
         assert policy.revision == 7
+
+    def test_get_llm_judge_policy_uses_config_auto_enqueue_default_when_missing(self):
+        capability = Mock()
+        capability.enabled = True
+        capability.value_json = {"top_n": 5, "revision": 2}
+        _, cm = _make_db(setting=capability)
+
+        with patch(
+            "core.policy.load_config",
+            return_value=_make_config(auto_enqueue_enabled=True),
+        ), patch("core.policy.db_session_scope", return_value=cm):
+            store = ResultPolicyStore()
+            policy = store.get_llm_judge_policy(owner_id="user-1")
+
+        assert policy.auto_enqueue_enabled is True
 
     def test_update_llm_judge_policy_persists_owner_capability(self):
         session, cm = _make_db(setting=None)
@@ -202,15 +244,21 @@ class TestResultPolicyStore:
             policy = store.update_llm_judge_policy(
                 owner_id="user-1",
                 enabled=True,
+                auto_enqueue_enabled=True,
                 top_n=99,
             )
 
         assert policy.enabled is True
+        assert policy.auto_enqueue_enabled is True
         assert policy.top_n == 8
         assert policy.revision == 1
         session.add.assert_called_once()
         added = session.add.call_args.args[0]
         assert added.feature_key == "match.llm_judge"
-        assert added.value_json == {"top_n": 8, "revision": 1}
+        assert added.value_json == {
+            "top_n": 8,
+            "auto_enqueue_enabled": True,
+            "revision": 1,
+        }
         assert added.source == "user"
         session.commit.assert_called()

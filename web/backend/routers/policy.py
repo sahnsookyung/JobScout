@@ -40,10 +40,13 @@ _ZERO_LLM_ENQUEUE_STATS = {
 def _zero_llm_enqueue_stats() -> dict[str, int]:
     return dict(_ZERO_LLM_ENQUEUE_STATS)
 
-
-def _should_enqueue_llm_top_n(previous_policy, next_policy) -> bool:
+def _should_enqueue_llm_top_n(
+    previous_policy,
+    next_policy,
+) -> bool:
     return (
-        bool(getattr(next_policy, "enabled", False))
+        bool(getattr(next_policy, "auto_enqueue_enabled", False))
+        and bool(getattr(next_policy, "enabled", False))
         and bool(getattr(next_policy, "available", False))
         and (
             not bool(getattr(previous_policy, "enabled", False))
@@ -111,6 +114,7 @@ def _policy_response(
         top_k=policy.top_k,
         min_jd_required_coverage=policy.min_jd_required_coverage,
         llm_judge_enabled=llm_policy.enabled,
+        llm_judge_auto_enqueue_enabled=getattr(llm_policy, "auto_enqueue_enabled", False),
         llm_judge_top_n=llm_policy.top_n,
         llm_judge_top_n_max=llm_policy.top_n_max,
         llm_judge_available=llm_policy.available,
@@ -179,6 +183,7 @@ def update_policy(
     llm_policy = policy_service.update_llm_judge_policy(
         owner_id=getattr(user, "id", None),
         enabled=policy_update.llm_judge_enabled,
+        auto_enqueue_enabled=policy_update.llm_judge_auto_enqueue_enabled,
         top_n=policy_update.llm_judge_top_n,
     )
     enqueue_stats, degraded_reasons = _enqueue_llm_top_n_after_policy_update(

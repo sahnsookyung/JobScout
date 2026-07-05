@@ -443,6 +443,7 @@ class PolicyResponse(BaseModel):
     top_k: int
     min_jd_required_coverage: Optional[float] = None
     llm_judge_enabled: bool = False
+    llm_judge_auto_enqueue_enabled: bool = False
     llm_judge_top_n: int = 5
     llm_judge_top_n_max: int = 10
     llm_judge_available: bool = False
@@ -532,6 +533,8 @@ class FetchSourceExternalStatusResponse(BaseModel):
     next_eligible_at: Optional[str] = None
     failure_class: Optional[str] = None
     budget_remaining: Optional[int] = None
+    reason: Optional[str] = None
+    disabled_reason: Optional[str] = None
 
 
 class FetchSourceResponse(BaseModel):
@@ -553,6 +556,8 @@ class FetchSourceResponse(BaseModel):
     options: Dict[str, Any] = Field(default_factory=dict)
     api_health: Optional[FetchSourceHealthResponse] = None
     external_fetch_status: Optional[FetchSourceExternalStatusResponse] = None
+    deployment_allowed: bool = True
+    disabled_reason: Optional[str] = None
 
 
 class FetchSourcesResponse(BaseModel):

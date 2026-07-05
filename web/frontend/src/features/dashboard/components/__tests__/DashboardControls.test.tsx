@@ -1064,6 +1064,37 @@ describe('DashboardControls', () => {
                             },
                         },
                         {
+                            site_type: 'worker_policy_disabled',
+                            display_name: 'Worker Policy Disabled',
+                            seed_url: 'https://japan-dev.com/jobs',
+                            description: 'Disabled for hosted deployment.',
+                            tags: ['seed'],
+                            search_keywords: ['worker'],
+                            fetch_mode: 'seed_website',
+                            provider_name: 'Worker seed fetcher',
+                            search_term: '',
+                            location: null,
+                            country: null,
+                            results_wanted: 7,
+                            hours_old: null,
+                            options: {},
+                            api_health: null,
+                            deployment_allowed: false,
+                            disabled_reason: 'disabled_by_deployment_policy',
+                            external_fetch_status: {
+                                enabled: false,
+                                configured: false,
+                                status: 'disabled',
+                                provider: 'cloudflare_worker_seed',
+                                last_attempt_at: null,
+                                last_success_at: null,
+                                next_eligible_at: null,
+                                failure_class: null,
+                                budget_remaining: null,
+                                disabled_reason: 'disabled_by_deployment_policy',
+                            },
+                        },
+                        {
                             site_type: 'jobspy_timeout',
                             display_name: 'JobSpy Timeout',
                             seed_url: 'https://www.indeed.com',
@@ -1156,6 +1187,8 @@ describe('DashboardControls', () => {
             expect(screen.getByText('Worker updated')).toBeInTheDocument();
             expect(screen.getByText('Worker degraded')).toBeInTheDocument();
             expect(screen.getByText('Worker disabled')).toBeInTheDocument();
+            expect(screen.getByText('Policy disabled')).toBeInTheDocument();
+            expect(screen.getByText('Disabled by deployment policy')).toBeInTheDocument();
             expect(screen.getByText('JobSpy timeout')).toBeInTheDocument();
             expect(screen.getByText('JobSpy not configured')).toBeInTheDocument();
             expect(screen.getAllByText('Ready to fetch').length).toBeGreaterThan(0);

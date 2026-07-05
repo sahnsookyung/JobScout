@@ -501,7 +501,11 @@ def _run_llm_judge_for_selection(
 
     try:
         llm_policy = get_result_policy_store().get_llm_judge_policy(owner_id)
-        if not llm_policy.enabled or not llm_policy.available:
+        if (
+            not getattr(llm_policy, "auto_enqueue_enabled", False)
+            or not llm_policy.enabled
+            or not llm_policy.available
+        ):
             return {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0}
 
         with job_uow() as repo:

@@ -397,6 +397,7 @@ export interface PolicyConfig {
     top_k: number;
     min_jd_required_coverage: number | null;
     llm_judge_enabled?: boolean;
+    llm_judge_auto_enqueue_enabled?: boolean;
     llm_judge_top_n?: number;
     llm_judge_top_n_max?: number;
     llm_judge_available?: boolean;
@@ -418,6 +419,7 @@ export type PolicyUpdatePayload = Pick<
     'min_fit' | 'top_k' | 'min_jd_required_coverage'
 > & {
     llm_judge_enabled?: boolean;
+    llm_judge_auto_enqueue_enabled?: boolean;
     llm_judge_top_n?: number;
 };
 
@@ -711,7 +713,11 @@ export interface FetchSource {
         next_eligible_at?: string | null;
         failure_class?: string | null;
         budget_remaining?: number | null;
+        reason?: string | null;
+        disabled_reason?: string | null;
     } | null;
+    deployment_allowed?: boolean;
+    disabled_reason?: string | null;
 }
 
 export interface FetchSourcesResponse {

@@ -1,4 +1,5 @@
 import unittest
+import json
 import os
 import yaml
 from unittest.mock import patch, mock_open
@@ -6,6 +7,7 @@ from pydantic import ValidationError
 
 from core.config_loader import (
     AppConfig,
+    LlmJudgeProviderRuntimeConfig,
     LlmJudgeRuntimeConfig,
     MatcherConfig,
     ScorerConfig,
@@ -76,6 +78,14 @@ class TestConfigLoader(unittest.TestCase):
             "NOTIFICATION_DRY_RUN",
             "LLM_AS_A_JUDGE_BASE_URL",
             "LLM_AS_A_JUDGE_API_KEY",
+            "LLM_AS_A_JUDGE_PROVIDERS_JSON",
+            "MATCH_LLM_JUDGE_AUTO_ENQUEUE_ENABLED",
+            "NVIDIA_API_KEY",
+            "NVIDIA_MODEL",
+            "NVIDIA_MAX_CONTEXT",
+            "NVIDIA_REQUESTS_PER_MINUTE",
+            "NVIDIA_RATE_LIMIT_MAX_WAIT_SECONDS",
+            "NVIDIA_FALLBACK_ON_RATE_LIMIT",
             "CEREBRAS_API_KEY",
             "GROQ_API_KEY",
             "LLM_AS_A_JUDGE_MODEL",
@@ -449,6 +459,7 @@ class TestConfigLoader(unittest.TestCase):
 
         env = {
             "MATCH_LLM_JUDGE_ENABLED": "true",
+            "MATCH_LLM_JUDGE_AUTO_ENQUEUE_ENABLED": "false",
             "MATCH_LLM_JUDGE_TOP_N_DEFAULT": "3",
             "LLM_AS_A_JUDGE_BASE_URL": "https://api.groq.com/openai/v1",
             "GROQ_API_KEY": "groq-key",
@@ -464,6 +475,7 @@ class TestConfigLoader(unittest.TestCase):
 
         runtime = config.matching.llm_judge.runtime
         self.assertTrue(config.matching.llm_judge.enabled)
+        self.assertFalse(config.matching.llm_judge.auto_enqueue_enabled)
         self.assertEqual(config.matching.llm_judge.top_n_default, 3)
         self.assertEqual(runtime.provider, "openai_compatible")
         self.assertEqual(runtime.base_url, "https://api.groq.com/openai/v1")
@@ -754,6 +766,109 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config.structured_output_mode, "json_object")
         self.assertEqual(config.max_input_tokens, 24000)
 
+    def test_match_llm_judge_runtime_defaults_provider_chain_from_paired_env_keys(self):
+        with patch.dict(
+            os.environ,
+            {
+                "NVIDIA_API_KEY": "nvidia-key",
+                "NVIDIA_MODEL": "nvidia-model",
+                "NVIDIA_MAX_CONTEXT": "12000",
+                "NVIDIA_REQUESTS_PER_MINUTE": "37",
+                "NVIDIA_RATE_LIMIT_MAX_WAIT_SECONDS": "12",
+                "NVIDIA_FALLBACK_ON_RATE_LIMIT": "true",
+                "GROQ_API_KEY": "groq-key",
+                "CEREBRAS_API_KEY": "cerebras-key",
+            },
+            clear=True,
+        ):
+            config = LlmJudgeRuntimeConfig()
+
+        providers = config.providers
+        self.assertEqual([provider.name for provider in providers], ["nvidia", "groq", "cerebras"])
+        self.assertEqual(providers[0].provider, "nvidia")
+        self.assertEqual(providers[0].base_url, "https://integrate.api.nvidia.com/v1")
+        self.assertEqual(providers[0].api_key, "nvidia-key")
+        self.assertEqual(providers[0].model, "nvidia-model")
+        self.assertEqual(providers[0].max_input_tokens, 12000)
+        self.assertEqual(providers[0].requests_per_minute, 37)
+        self.assertEqual(providers[0].rate_limit_max_wait_seconds, 12)
+        self.assertTrue(providers[0].fallback_on_rate_limit)
+        self.assertEqual(providers[1].api_key, "groq-key")
+        self.assertEqual(providers[2].api_key, "cerebras-key")
+
+    def test_match_llm_judge_runtime_defaults_nvidia_to_nemotron_ultra(self):
+        with patch.dict(os.environ, {"NVIDIA_API_KEY": "nvidia-key"}, clear=True):
+            config = LlmJudgeRuntimeConfig()
+
+        nvidia = config.providers[0]
+        self.assertEqual(nvidia.provider, "nvidia")
+        self.assertEqual(nvidia.model, "nvidia/nemotron-3-ultra-550b-a55b")
+        self.assertEqual(nvidia.max_input_tokens, 262144)
+        self.assertEqual(nvidia.requests_per_minute, 40)
+        self.assertEqual(nvidia.rate_limit_max_wait_seconds, 90)
+        self.assertFalse(nvidia.fallback_on_rate_limit)
+
+    def test_match_llm_judge_runtime_respects_explicit_nvidia_context_cap(self):
+        with patch.dict(os.environ, {"NVIDIA_API_KEY": "nvidia-key"}, clear=True):
+            provider = LlmJudgeProviderRuntimeConfig(
+                name="nvidia",
+                provider="nvidia",
+                max_input_tokens=65536,
+            )
+
+        self.assertEqual(provider.max_input_tokens, 65536)
+
+    def test_match_llm_judge_provider_entry_rejects_invalid_rate_limits(self):
+        invalid_cases = [
+            {"requests_per_minute": 0},
+            {"rate_limit_max_wait_seconds": -1},
+        ]
+
+        for overrides in invalid_cases:
+            with self.subTest(overrides=overrides):
+                with patch.dict(os.environ, {}, clear=True):
+                    with self.assertRaises(ValidationError):
+                        LlmJudgeProviderRuntimeConfig(
+                            name="nvidia",
+                            provider="nvidia",
+                            api_key="nvidia-key",
+                            **overrides,
+                        )
+
+    def test_match_llm_judge_provider_entry_rejects_known_provider_base_url_mismatch(self):
+        with self.assertRaises(ValidationError) as ctx:
+            LlmJudgeProviderRuntimeConfig(
+                name="groq",
+                provider="groq",
+                base_url="https://api.cerebras.ai/v1",
+                api_key="groq-key",
+                model="groq-model",
+            )
+
+        self.assertIn("base_url host must be api.groq.com", str(ctx.exception))
+
+    def test_match_llm_judge_env_pairs_key_with_explicit_base_url_before_provider_alias(self):
+        data = {
+            "matching": {
+                "llm_judge": {
+                    "runtime": {
+                        "provider": "cerebras",
+                        "base_url": "https://api.groq.com/openai/v1",
+                    }
+                }
+            }
+        }
+        env = {
+            "GROQ_API_KEY": "groq-key",
+            "CEREBRAS_API_KEY": "cerebras-key",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            updated = apply_env_overrides(data)
+
+        runtime = updated["matching"]["llm_judge"]["runtime"]
+        self.assertEqual(runtime["api_key"], "groq-key")
+
     def test_match_llm_judge_env_accepts_groq_provider(self):
         data = {"database": {"url": "test"}, "schedule": {"interval_seconds": 60}, "scrapers": []}
         env = {
@@ -794,6 +909,41 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config.matching.llm_judge.job_description_max_chars, 128000)
         self.assertEqual(config.matching.llm_judge.evidence_units_max_count, 200)
         self.assertEqual(config.matching.llm_judge.resume_summary_max_chars, 64000)
+
+    def test_match_llm_judge_env_accepts_provider_chain_json(self):
+        data = {"database": {"url": "test"}, "schedule": {"interval_seconds": 60}, "scrapers": []}
+        providers = [
+            {
+                "name": "nvidia",
+                "provider": "nvidia",
+                "api_key_env": "NVIDIA_API_KEY",
+                "model": "nvidia-model",
+                "max_input_tokens": 16000,
+            },
+            {
+                "name": "groq",
+                "provider": "groq",
+                "api_key_env": "GROQ_API_KEY",
+                "model": "groq-model",
+            },
+        ]
+        env = {
+            "MATCH_LLM_JUDGE_ENABLED": "true",
+            "LLM_AS_A_JUDGE_PROVIDERS_JSON": json.dumps(providers),
+            "NVIDIA_API_KEY": "nvidia-key",
+        }
+
+        with patch("builtins.open", mock_open(read_data=yaml.dump(data))):
+            with patch("os.path.exists", return_value=True):
+                with patch.dict(os.environ, env, clear=True):
+                    config = load_config("dummy")
+
+        runtime = config.matching.llm_judge.runtime
+        self.assertEqual(len(runtime.providers), 2)
+        self.assertEqual(runtime.providers[0].api_key, "nvidia-key")
+        self.assertEqual(runtime.providers[0].model, "nvidia-model")
+        self.assertEqual(runtime.providers[0].max_input_tokens, 16000)
+        self.assertEqual(runtime.providers[0].requests_per_minute, 40)
 
     def test_semantic_fit_raises_for_blank_llm_model(self):
         with self.assertRaises(ValidationError) as ctx:

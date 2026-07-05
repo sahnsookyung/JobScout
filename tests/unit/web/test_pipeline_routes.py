@@ -171,6 +171,36 @@ class TestPipelineRoutes(unittest.TestCase):
         self.assertEqual(sources[1]["fetch_mode"], "custom_source")
         self.assertIsNone(sources[1]["api_health"])
 
+    @patch("web.backend.routers.pipeline.get_config")
+    def test_fetch_sources_endpoint_marks_web_sources_disabled_in_production(self, mock_config):
+        from core.config_loader import ScraperConfig
+
+        mock_config.return_value = SimpleNamespace(
+            jobspy=SimpleNamespace(url="http://jobspy:8000"),
+            scrapers=[
+                ScraperConfig(site_type=["tokyodev"], search_term="", results_wanted=5),
+                ScraperConfig(site_type=["indeed"], search_term="platform"),
+                ScraperConfig(site_type=["greenhouse"], display_name="Greenhouse"),
+            ],
+        )
+
+        with patch.dict(os.environ, {"JOBSCOUT_ENV": "production"}):
+            response = self.client.get("/api/pipeline/sources")
+
+        self.assertEqual(response.status_code, 200)
+        sources = response.json()["sources"]
+        self.assertFalse(sources[0]["deployment_allowed"])
+        self.assertEqual(sources[0]["disabled_reason"], "disabled_by_deployment_policy")
+        self.assertEqual(
+            sources[0]["external_fetch_status"]["disabled_reason"],
+            "disabled_by_deployment_policy",
+        )
+        self.assertFalse(sources[1]["deployment_allowed"])
+        self.assertEqual(sources[1]["disabled_reason"], "disabled_by_deployment_policy")
+        self.assertTrue(sources[2]["deployment_allowed"])
+        self.assertEqual(sources[2]["fetch_mode"], "ats_api")
+        self.assertTrue(response.json()["api_based_fetching"])
+
     @patch("web.backend.routers.pipeline.set_task_state")
     @patch("web.backend.routers.pipeline.get_redis_client")
     @patch("web.backend.services.clients.orchestrator_client")

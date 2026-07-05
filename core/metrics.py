@@ -78,6 +78,21 @@ _PIPELINE_STAGES = frozenset({
     "resume_embedding",
 })
 _LLM_EVALUATION_QUEUE_REGISTRIES = frozenset({"queued", "started", "deferred", "scheduled", "failed"})
+_LLM_JUDGE_PROVIDERS = frozenset({"nvidia", "groq", "cerebras", "openai_compatible"})
+_LLM_JUDGE_ERROR_CATEGORIES = frozenset(
+    {
+        "rate_limit",
+        "timeout",
+        "connection_error",
+        "server_error",
+        "invalid_auth",
+        "invalid_request",
+        "schema_error",
+        "unsupported_model",
+        "input_too_large",
+        "unknown",
+    }
+)
 
 
 def _safe(value: str, allowed: frozenset[str]) -> str:
@@ -226,6 +241,12 @@ llm_evaluation_queue_jobs = Gauge(
     labelnames=("registry",),
 )
 
+llm_judge_provider_fallbacks_total = Counter(
+    f"{NAMESPACE}_llm_judge_provider_fallbacks_total",
+    "Match-level LLM judge provider fallbacks after transient provider failures.",
+    labelnames=("from_provider", "to_provider", "error_category"),
+)
+
 
 # ---------------------------------------------------------------------------
 # Classifiers
@@ -329,6 +350,18 @@ def record_worker_running(service: str, worker: str, running: bool) -> None:
         service=_safe(service, _WORKER_SERVICES),
         worker=_safe(worker, _WORKER_NAMES),
     ).set(1 if running else 0)
+
+
+def record_llm_judge_provider_fallback(
+    from_provider: str,
+    to_provider: str,
+    error_category: str,
+) -> None:
+    llm_judge_provider_fallbacks_total.labels(
+        from_provider=_safe(from_provider, _LLM_JUDGE_PROVIDERS),
+        to_provider=_safe(to_provider, _LLM_JUDGE_PROVIDERS),
+        error_category=_safe(error_category, _LLM_JUDGE_ERROR_CATEGORIES),
+    ).inc()
 
 
 def _inc_counter(counter: Counter, count: int | float = 1) -> None:

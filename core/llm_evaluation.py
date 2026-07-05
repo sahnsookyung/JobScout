@@ -19,6 +19,13 @@ from sqlalchemy.orm import Session, joinedload
 
 from core.config_loader import load_config
 from core.llm.interfaces import LLMProvider
+from core.llm.provider_chain import (
+    build_match_judge_provider,
+    classify_llm_provider_error,
+    configured_provider_entries,
+    llm_error_is_retryable,
+    sanitized_provider_config,
+)
 from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_match_judge
 from core.redis_streams import _sanitize_log
 from core.resume_evidence_selection import select_relevant_resume_evidence_units
@@ -180,6 +187,10 @@ class MatchLlmEvaluationService:
             return False, "disabled"
         if self.llm_config is None:
             return False, "runtime_missing"
+
+        provider_entries = self._configured_provider_entries()
+        if provider_entries:
+            return True, "available"
 
         base_url = str(self.llm_config.base_url or "").strip()
         model = str(self.llm_config.model or "").strip()
@@ -832,7 +843,21 @@ class MatchLlmEvaluationService:
         except Exception:
             return default
 
+    def _configured_provider_entries(self):
+        try:
+            return configured_provider_entries(self.llm_config)
+        except Exception:
+            return []
+
     def _judge_token_budget(self) -> int:
+        provider_budgets = []
+        for entry in self._configured_provider_entries():
+            try:
+                provider_budgets.append(max(1, int(entry.max_input_tokens)))
+            except Exception:
+                continue
+        if provider_budgets:
+            return min(provider_budgets)
         value = getattr(self.llm_config, "max_input_tokens", DEFAULT_LLM_JUDGE_MAX_INPUT_TOKENS)
         try:
             return max(1, int(value))
@@ -993,10 +1018,23 @@ class MatchLlmEvaluationService:
         field["reason"] = "runtime_token_budget"
 
     def _judge_config_payload(self) -> dict[str, Any]:
+        provider_entries = self._configured_provider_entries()
+        runtime_payload: dict[str, Any]
+        if provider_entries:
+            runtime_payload = {
+                "providers": [
+                    sanitized_provider_config(entry)
+                    for entry in provider_entries
+                ],
+            }
+        else:
+            runtime_payload = {
+                "provider": str(self.llm_config.provider),
+                "model": str(self.llm_config.model),
+                "structured_output_mode": str(self.llm_config.structured_output_mode),
+            }
         return {
-            "provider": str(self.llm_config.provider),
-            "model": str(self.llm_config.model),
-            "structured_output_mode": str(self.llm_config.structured_output_mode),
+            **runtime_payload,
             "max_input_tokens": self._judge_token_budget(),
             "prompt_version": str(self.judge_config.prompt_version),
             "schema_version": str(self.judge_config.schema_version),
@@ -1302,6 +1340,13 @@ class MatchLlmEvaluationService:
                 ]
         return safe
 
+    def _initial_provider_identity(self) -> tuple[str, str]:
+        provider_entries = self._configured_provider_entries()
+        if provider_entries:
+            entry = provider_entries[0]
+            return str(entry.name or entry.provider), str(entry.model or "")
+        return str(self.llm_config.provider), str(self.llm_config.model)
+
     def _create_pending_evaluation(
         self,
         *,
@@ -1310,14 +1355,15 @@ class MatchLlmEvaluationService:
         tenant_id: Any | None,
         hashes: dict[str, str],
     ) -> LlmMatchEvaluation:
+        provider_name, model_name = self._initial_provider_identity()
         evaluation = LlmMatchEvaluation(
             owner_id=owner_id,
             tenant_id=tenant_id,
             job_post_id=match.job_post_id,
             job_match_id=match.id,
             resume_fingerprint=match.resume_fingerprint,
-            provider=str(self.llm_config.provider),
-            model=str(self.llm_config.model),
+            provider=provider_name,
+            model=model_name,
             prompt_version=str(self.judge_config.prompt_version),
             schema_version=str(self.judge_config.schema_version),
             judge_config_hash=hashes["judge_config_hash"],
@@ -1355,6 +1401,10 @@ class MatchLlmEvaluationService:
             )
             parsed = MatchEvaluationResponse.model_validate(raw)
             evaluation.status = LLM_EVALUATION_SUCCEEDED
+            success_metadata = self._provider_success_metadata(provider)
+            if success_metadata:
+                evaluation.provider = success_metadata["provider"]
+                evaluation.model = success_metadata["model"]
             evaluation.llm_score = round(float(parsed.score), 2)
             evaluation.confidence = round(float(parsed.confidence), 4)
             evaluation.verdict = parsed.verdict
@@ -1363,11 +1413,19 @@ class MatchLlmEvaluationService:
             evaluation.requirement_verdicts = [
                 item.model_dump() for item in parsed.requirement_verdicts[:50]
             ]
-            evaluation.analysis = self._analysis_payload(parsed, truncation or {})
+            evaluation.analysis = self._analysis_payload(
+                parsed,
+                truncation or {},
+                provider_attempts=self._provider_attempts(provider),
+            )
             evaluation.error_code = None
             evaluation.retryable = False
         except Exception as exc:
-            logger.exception("LLM match evaluation failed for %s", _sanitize_log(evaluation.id))
+            logger.warning(
+                "LLM match evaluation failed for %s with %s",
+                _sanitize_log(evaluation.id),
+                self._provider_error_code(exc),
+            )
             evaluation.status = LLM_EVALUATION_FAILED
             evaluation.llm_score = None
             evaluation.confidence = None
@@ -1375,9 +1433,12 @@ class MatchLlmEvaluationService:
             evaluation.summary = None
             evaluation.reason_codes = []
             evaluation.requirement_verdicts = []
-            evaluation.analysis = {}
+            evaluation.analysis = self._failure_analysis_payload(
+                truncation or {},
+                provider_attempts=self._provider_attempts(self._llm_provider),
+            )
             evaluation.error_code = self._provider_error_code(exc)
-            evaluation.retryable = True
+            evaluation.retryable = self._provider_error_retryable(exc)
         finally:
             evaluation.completed_at = self._utcnow()
             self.db.flush()
@@ -1385,7 +1446,11 @@ class MatchLlmEvaluationService:
     def _provider(self) -> LLMProvider:
         if self._llm_provider is not None:
             return self._llm_provider
-        self._llm_provider = build_llm_provider(runtime_llm_config_from_match_judge(self.llm_config))
+        self._llm_provider = build_match_judge_provider(self.llm_config)
+        if self._llm_provider is None:
+            self._llm_provider = build_llm_provider(
+                runtime_llm_config_from_match_judge(self.llm_config)
+            )
         return self._llm_provider
 
     @staticmethod
@@ -1406,24 +1471,79 @@ class MatchLlmEvaluationService:
             "model_missing": "LLM judge model is missing.",
             "credentials_missing": (
                 "LLM judge provider credentials are missing. "
-                "Set CEREBRAS_API_KEY or LLM_AS_A_JUDGE_API_KEY."
+                "Set NVIDIA_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY, "
+                "or LLM_AS_A_JUDGE_API_KEY."
             ),
         }
         return messages.get(reason, "LLM judge is unavailable.")
 
     @staticmethod
     def _provider_error_code(exc: Exception) -> str:
-        status_code = getattr(exc, "status_code", None)
-        message = str(exc).lower()
-        if status_code == 413 or "request too large" in message:
+        category = getattr(exc, "error_category", None) or classify_llm_provider_error(exc)
+        if category == "input_too_large":
             return "llm_judge_input_too_large"
-        if (
-            status_code == 429
-            or "token_quota_exceeded" in message
-            or "tokens per minute" in message
-        ):
+        if category == "rate_limit":
             return "llm_judge_token_quota_exceeded"
+        if category == "timeout":
+            return "llm_judge_provider_timeout"
+        if category == "connection_error":
+            return "llm_judge_provider_connection_error"
+        if category == "server_error":
+            return "llm_judge_provider_unavailable"
+        if category == "invalid_auth":
+            return "llm_judge_invalid_credentials"
+        if category == "invalid_request":
+            return "llm_judge_invalid_request"
+        if category == "schema_error":
+            return "llm_judge_invalid_schema_response"
+        if category == "unsupported_model":
+            return "llm_judge_unsupported_model"
         return "llm_judge_failed"
+
+    @staticmethod
+    def _provider_error_retryable(exc: Exception) -> bool:
+        retryable = getattr(exc, "retryable", None)
+        if retryable is not None:
+            return bool(retryable)
+        category = getattr(exc, "error_category", None) or classify_llm_provider_error(exc)
+        return llm_error_is_retryable(category)
+
+    @staticmethod
+    def _provider_attempts(provider: LLMProvider | None) -> list[dict[str, Any]]:
+        attempts = getattr(provider, "last_attempts", None)
+        if not isinstance(attempts, list):
+            return []
+        sanitized: list[dict[str, Any]] = []
+        for attempt in attempts[:8]:
+            if not isinstance(attempt, dict):
+                continue
+            try:
+                elapsed_ms = max(int(attempt.get("elapsed_ms") or 0), 0)
+            except (TypeError, ValueError):
+                elapsed_ms = 0
+            sanitized.append(
+                {
+                    "provider": str(attempt.get("provider") or "")[:80],
+                    "provider_type": str(attempt.get("provider_type") or "")[:80],
+                    "model": str(attempt.get("model") or "")[:120],
+                    "status": str(attempt.get("status") or "unknown")[:40],
+                    "error_category": attempt.get("error_category"),
+                    "retryable": bool(attempt.get("retryable", False)),
+                    "elapsed_ms": elapsed_ms,
+                }
+            )
+        return sanitized
+
+    @staticmethod
+    def _provider_success_metadata(provider: LLMProvider | None) -> dict[str, str] | None:
+        success = getattr(provider, "last_success", None)
+        if not isinstance(success, dict):
+            return None
+        provider_name = str(success.get("provider") or "").strip()
+        model_name = str(success.get("model") or "").strip()
+        if not provider_name or not model_name:
+            return None
+        return {"provider": provider_name, "model": model_name}
 
     def _is_reusable(self, evaluation: LlmMatchEvaluation) -> bool:
         if evaluation.status != LLM_EVALUATION_SUCCEEDED:
@@ -1461,8 +1581,10 @@ class MatchLlmEvaluationService:
         self,
         parsed: MatchEvaluationResponse,
         truncation: dict[str, Any],
+        *,
+        provider_attempts: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        return {
+        payload = {
             "transferable_strengths": [
                 self._truncate(item, 240)
                 for item in parsed.transferable_strengths[:8]
@@ -1479,6 +1601,22 @@ class MatchLlmEvaluationService:
             ),
             "input_truncation": truncation if isinstance(truncation, dict) else {},
         }
+        if provider_attempts:
+            payload["provider_attempts"] = provider_attempts
+        return payload
+
+    @staticmethod
+    def _failure_analysis_payload(
+        truncation: dict[str, Any],
+        *,
+        provider_attempts: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "input_truncation": truncation if isinstance(truncation, dict) else {},
+        }
+        if provider_attempts:
+            payload["provider_attempts"] = provider_attempts
+        return payload
 
     @staticmethod
     def _utcnow() -> datetime:

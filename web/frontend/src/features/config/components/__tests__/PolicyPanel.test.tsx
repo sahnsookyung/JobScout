@@ -199,6 +199,7 @@ describe('PolicyPanel', () => {
                     top_k: 50,
                     min_jd_required_coverage: null,
                     llm_judge_enabled: false,
+                    llm_judge_auto_enqueue_enabled: false,
                     llm_judge_top_n: 2,
                     llm_judge_top_n_max: 4,
                     llm_judge_available: true,
@@ -208,6 +209,7 @@ describe('PolicyPanel', () => {
             render(<PolicyPanel />);
 
             fireEvent.click(screen.getByRole('checkbox', { name: /enable llm judging/i }));
+            fireEvent.click(screen.getByRole('checkbox', { name: /automatically queue top n llm judging/i }));
             fireEvent.click(screen.getByRole('button', { name: /increase llm judge top n/i }));
 
             await act(async () => { vi.advanceTimersByTime(300); });
@@ -217,8 +219,37 @@ describe('PolicyPanel', () => {
                 top_k: 50,
                 min_jd_required_coverage: null,
                 llm_judge_enabled: true,
+                llm_judge_auto_enqueue_enabled: true,
                 llm_judge_top_n: 3,
             });
+        });
+
+        it('turns off auto top-N when LLM judging is disabled', async () => {
+            mockUsePolicy.mockReturnValue({
+                ...defaultHook,
+                policy: {
+                    min_fit: 55,
+                    top_k: 50,
+                    min_jd_required_coverage: null,
+                    llm_judge_enabled: true,
+                    llm_judge_auto_enqueue_enabled: true,
+                    llm_judge_top_n: 2,
+                    llm_judge_top_n_max: 4,
+                    llm_judge_available: true,
+                },
+            });
+            render(<PolicyPanel />);
+
+            fireEvent.click(screen.getByRole('checkbox', { name: /enable llm judging/i }));
+
+            await act(async () => { vi.advanceTimersByTime(300); });
+
+            expect(defaultHook.updatePolicy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    llm_judge_enabled: false,
+                    llm_judge_auto_enqueue_enabled: false,
+                })
+            );
         });
 
         it('calls updatePolicy after debounce when topK changes', async () => {

@@ -1301,6 +1301,7 @@ class TestPipelineNotificationAndPublicationHelpers:
         mock_uow.return_value = _uow(repo)
         mock_policy_store.return_value.get_llm_judge_policy.return_value = SimpleNamespace(
             enabled=True,
+            auto_enqueue_enabled=True,
             available=True,
             top_n=3,
         )
@@ -1337,6 +1338,7 @@ class TestPipelineNotificationAndPublicationHelpers:
     ):
         mock_policy_store.return_value.get_llm_judge_policy.return_value = SimpleNamespace(
             enabled=False,
+            auto_enqueue_enabled=True,
             available=True,
             top_n=3,
         )
@@ -1348,6 +1350,26 @@ class TestPipelineNotificationAndPublicationHelpers:
 
         assert stats == {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0}
         mock_uow.assert_not_called()
+
+    @patch("services.scorer_matcher.pipeline.get_result_policy_store")
+    def test_run_llm_judge_for_selection_skips_when_auto_enqueue_disabled(
+        self,
+        mock_policy_store,
+    ):
+        mock_policy_store.return_value.get_llm_judge_policy.return_value = SimpleNamespace(
+            enabled=True,
+            auto_enqueue_enabled=False,
+            available=True,
+            top_n=3,
+        )
+
+        stats = _run_llm_judge_for_selection(
+            selection_run_id="selection-run-1",
+            owner_id="owner-1",
+        )
+
+        assert stats == {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0}
+        mock_policy_store.return_value.get_llm_judge_policy.assert_called_once_with("owner-1")
 
 
 class TestDtoRankingSnapshot:

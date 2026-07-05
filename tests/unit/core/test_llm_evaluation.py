@@ -15,6 +15,7 @@ from core.llm_evaluation import (
     MatchLlmEvaluationService,
     evaluation_public_dict,
 )
+from core.llm.provider_chain import LLMProviderCandidate, LLMProviderChain
 from core.resume_evidence_selection import select_relevant_resume_evidence_units
 from database.models import (
     LLM_EVALUATION_DELETED,
@@ -97,6 +98,7 @@ def _evaluation(status=LLM_EVALUATION_SUCCEEDED, completed_at=None):
         summary="Good fit.",
         reason_codes=["skills_match"],
         requirement_verdicts=[{"requirement_id": "req-1", "verdict": "strong"}],
+        analysis={},
         error_code=None,
         retryable=False,
         created_at=now,
@@ -168,6 +170,25 @@ class _CapturingProvider:
             "ranking_rationale": "Strong adjacent JVM evidence with a remaining direct-language gap.",
         }
 
+    def extract_resume_data(self, text):
+        raise NotImplementedError
+
+    def extract_requirements_data(self, text):
+        raise NotImplementedError
+
+    def generate_embedding(self, text):
+        raise NotImplementedError
+
+
+class _FailingProvider(_CapturingProvider):
+    def __init__(self, error):
+        super().__init__()
+        self.error = error
+
+    def extract_structured_data(self, text, schema_spec, system_prompt=None, user_message=None):
+        self.calls.append({"text": text})
+        raise self.error
+
 
 def _wire_minimal_generation(service, *, match=None, existing=None, created=None):
     service._get_match_for_owner = Mock(return_value=match or _match())
@@ -202,6 +223,32 @@ def test_unavailable_provider_requires_credentials_for_remote_endpoint():
         service.generate_for_match("match-1", owner_id="owner-1")
     assert exc_info.value.reason == "credentials_missing"
     assert "CEREBRAS_API_KEY" in str(exc_info.value)
+
+
+def test_provider_chain_availability_uses_configured_entries_without_legacy_key():
+    config = _config(llm_enabled=False, base_url=None, model=None)
+    config.matching.llm_judge.runtime.providers = [
+        SimpleNamespace(
+            name="groq",
+            provider="groq",
+            base_url="https://api.groq.com/openai/v1",
+            api_key="groq-key",
+            api_secret=None,
+            headers=None,
+            model="groq-model",
+            structured_output_mode="auto",
+            timeout_seconds=20,
+            max_input_tokens=12000,
+            api_key_env="GROQ_API_KEY",
+        )
+    ]
+    service = _service(config)
+
+    assert service.availability_status() == (True, "available")
+    payload = service._judge_config_payload()
+    assert payload["providers"][0]["name"] == "groq"
+    assert payload["max_input_tokens"] == 12000
+    assert "groq-key" not in str(payload)
 
 
 def test_generate_reuses_fresh_successful_cache_without_quota():
@@ -1012,7 +1059,7 @@ def test_run_provider_marks_oversized_provider_request_with_specific_error():
 
     assert evaluation.status == LLM_EVALUATION_FAILED
     assert evaluation.error_code == "llm_judge_input_too_large"
-    assert evaluation.retryable is True
+    assert evaluation.retryable is False
 
 
 def test_run_provider_marks_token_quota_failure_with_specific_error():
@@ -1029,6 +1076,75 @@ def test_run_provider_marks_token_quota_failure_with_specific_error():
     assert evaluation.status == LLM_EVALUATION_FAILED
     assert evaluation.error_code == "llm_judge_token_quota_exceeded"
     assert evaluation.retryable is True
+
+
+def test_run_provider_records_successful_fallback_provider_attempts():
+    db = Mock()
+    timeout = TimeoutError("timed out")
+    primary = _FailingProvider(timeout)
+    fallback = _CapturingProvider()
+    provider = LLMProviderChain(
+        [
+            LLMProviderCandidate(
+                name="nvidia",
+                provider_name="nvidia",
+                model="nvidia-model",
+                provider=primary,
+            ),
+            LLMProviderCandidate(
+                name="groq",
+                provider_name="groq",
+                model="groq-model",
+                provider=fallback,
+            ),
+        ]
+    )
+    service = MatchLlmEvaluationService(db, config=_config(), llm_provider=provider)
+    evaluation = _evaluation(status=LLM_EVALUATION_PENDING)
+
+    service._run_provider(evaluation, {"safe": "payload"})
+
+    assert evaluation.status == LLM_EVALUATION_SUCCEEDED
+    assert evaluation.provider == "groq"
+    assert evaluation.model == "groq-model"
+    attempts = evaluation.analysis["provider_attempts"]
+    assert [attempt["status"] for attempt in attempts] == ["failed", "succeeded"]
+    assert attempts[0]["error_category"] == "timeout"
+    assert "payload" not in str(attempts)
+
+
+def test_run_provider_does_not_retry_terminal_provider_chain_failure():
+    db = Mock()
+    auth_error = RuntimeError("invalid api key")
+    auth_error.status_code = 401
+    primary = _FailingProvider(auth_error)
+    fallback = _CapturingProvider()
+    provider = LLMProviderChain(
+        [
+            LLMProviderCandidate(
+                name="nvidia",
+                provider_name="nvidia",
+                model="nvidia-model",
+                provider=primary,
+            ),
+            LLMProviderCandidate(
+                name="groq",
+                provider_name="groq",
+                model="groq-model",
+                provider=fallback,
+            ),
+        ]
+    )
+    service = MatchLlmEvaluationService(db, config=_config(), llm_provider=provider)
+    evaluation = _evaluation(status=LLM_EVALUATION_PENDING)
+
+    service._run_provider(evaluation, {"safe": "payload"})
+
+    assert evaluation.status == LLM_EVALUATION_FAILED
+    assert evaluation.error_code == "llm_judge_invalid_credentials"
+    assert evaluation.retryable is False
+    assert len(evaluation.analysis["provider_attempts"]) == 1
+    assert fallback.calls == []
 
 
 def test_provider_is_built_lazily_and_cached():

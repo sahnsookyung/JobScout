@@ -20,6 +20,10 @@ class PolicyUpdate(BaseModel):
         None,
         description="Whether to run optional LLM judging for top selected matches",
     )
+    llm_judge_auto_enqueue_enabled: Optional[bool] = Field(
+        None,
+        description="Whether matching and policy updates should automatically queue top-N LLM judging",
+    )
     llm_judge_top_n: Optional[int] = Field(
         None,
         ge=1,

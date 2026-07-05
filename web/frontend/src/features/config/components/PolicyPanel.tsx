@@ -23,6 +23,7 @@ export const PolicyPanel: React.FC = () => {
     const [minFit, setMinFit] = useState(55);
     const [topK, setTopK] = useState(50);
     const [llmJudgeEnabled, setLlmJudgeEnabled] = useState(false);
+    const [llmJudgeAutoEnqueueEnabled, setLlmJudgeAutoEnqueueEnabled] = useState(false);
     const [llmJudgeTopN, setLlmJudgeTopN] = useState(5);
     const [preset, setPreset] = useState<PolicyPreset>('balanced');
     const hasHydratedPolicy = useRef(false);
@@ -33,6 +34,7 @@ export const PolicyPanel: React.FC = () => {
             setMinFit(policy.min_fit);
             setTopK(policy.top_k);
             setLlmJudgeEnabled(Boolean(policy.llm_judge_enabled));
+            setLlmJudgeAutoEnqueueEnabled(Boolean(policy.llm_judge_auto_enqueue_enabled));
             setLlmJudgeTopN(policy.llm_judge_top_n ?? 5);
             setPreset(presetForPolicy(policy) ?? 'balanced');
             hasHydratedPolicy.current = true;
@@ -46,6 +48,7 @@ export const PolicyPanel: React.FC = () => {
                 top_k: topK,
                 min_jd_required_coverage: policy?.min_jd_required_coverage ?? null,
                 llm_judge_enabled: llmJudgeEnabled,
+                llm_judge_auto_enqueue_enabled: llmJudgeAutoEnqueueEnabled,
                 llm_judge_top_n: llmJudgeTopN,
             });
         }, 250);
@@ -55,6 +58,7 @@ export const PolicyPanel: React.FC = () => {
         minFit,
         topK,
         llmJudgeEnabled,
+        llmJudgeAutoEnqueueEnabled,
         llmJudgeTopN,
         policy?.min_jd_required_coverage,
         updatePolicy,
@@ -97,6 +101,19 @@ export const PolicyPanel: React.FC = () => {
         hasUserAdjustedSettings.current = true;
         hasHydratedPolicy.current = true;
         setLlmJudgeEnabled(value);
+        if (!value) {
+            setLlmJudgeAutoEnqueueEnabled(false);
+        }
+        setPreset('balanced');
+    };
+
+    const handleLlmAutoEnqueueChange = (value: boolean) => {
+        hasUserAdjustedSettings.current = true;
+        hasHydratedPolicy.current = true;
+        setLlmJudgeAutoEnqueueEnabled(value);
+        if (value) {
+            setLlmJudgeEnabled(true);
+        }
         setPreset('balanced');
     };
 
@@ -228,6 +245,24 @@ export const PolicyPanel: React.FC = () => {
                                 aria-label="Enable LLM judging"
                             />
                             <span>{policy?.llm_judge_available ? 'On' : 'Unavailable'}</span>
+                        </label>
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between gap-4">
+                        <label className="caption" htmlFor="llm-auto-enqueue">
+                            Auto top-N
+                        </label>
+                        <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] text-ink">
+                            <input
+                                id="llm-auto-enqueue"
+                                type="checkbox"
+                                checked={llmJudgeAutoEnqueueEnabled}
+                                disabled={!policy?.llm_judge_available}
+                                onChange={(event) => handleLlmAutoEnqueueChange(event.target.checked)}
+                                className="h-4 w-4 accent-accent"
+                                aria-label="Automatically queue top N LLM judging"
+                            />
+                            <span>{llmJudgeAutoEnqueueEnabled ? 'On' : 'Off'}</span>
                         </label>
                     </div>
 

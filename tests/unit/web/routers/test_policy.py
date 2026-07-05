@@ -18,6 +18,7 @@ from web.backend.routers.policy import router
 def _llm_policy(
     *,
     enabled=False,
+    auto_enqueue_enabled=False,
     top_n=5,
     top_n_max=10,
     available=False,
@@ -25,6 +26,7 @@ def _llm_policy(
 ):
     return SimpleNamespace(
         enabled=enabled,
+        auto_enqueue_enabled=auto_enqueue_enabled,
         top_n=top_n,
         top_n_max=top_n_max,
         available=available,
@@ -81,6 +83,7 @@ class TestPolicyRouter:
         assert data['top_k'] == 50
         assert data['min_jd_required_coverage'] == 0.6
         assert data['llm_judge_enabled'] is False
+        assert data['llm_judge_auto_enqueue_enabled'] is False
         assert data['llm_judge_top_n'] == 5
         assert data['llm_judge_top_n_max'] == 10
         mock_policy_service.get_current_policy.assert_called_once()
@@ -133,6 +136,12 @@ class TestPolicyRouter:
         )
         mock_policy_service.update_llm_judge_policy.assert_called_once()
         assert mock_policy_service.update_llm_judge_policy.call_args.kwargs["enabled"] is None
+        assert (
+            mock_policy_service.update_llm_judge_policy.call_args.kwargs[
+                "auto_enqueue_enabled"
+            ]
+            is None
+        )
         assert mock_policy_service.update_llm_judge_policy.call_args.kwargs["top_n"] is None
 
     def test_update_policy_updates_llm_judge_fields(self, client, mock_policy_service):
@@ -141,6 +150,7 @@ class TestPolicyRouter:
         mock_policy_service.get_current_policy.return_value = default_policy
         mock_policy_service.get_llm_judge_policy.return_value = _llm_policy(
             enabled=False,
+            auto_enqueue_enabled=False,
             top_n=5,
             top_n_max=8,
             available=True,
@@ -149,6 +159,7 @@ class TestPolicyRouter:
         mock_policy_service.update_policy.return_value = default_policy
         mock_policy_service.update_llm_judge_policy.return_value = _llm_policy(
             enabled=True,
+            auto_enqueue_enabled=True,
             top_n=3,
             top_n_max=8,
             available=True,
@@ -164,12 +175,17 @@ class TestPolicyRouter:
         ) as enqueue:
             response = client.put(
                 '/api/v1/policy',
-                json={'llm_judge_enabled': True, 'llm_judge_top_n': 3}
+                json={
+                    'llm_judge_enabled': True,
+                    'llm_judge_auto_enqueue_enabled': True,
+                    'llm_judge_top_n': 3,
+                }
             )
 
         assert response.status_code == 200
         data = response.json()
         assert data['llm_judge_enabled'] is True
+        assert data['llm_judge_auto_enqueue_enabled'] is True
         assert data['llm_judge_top_n'] == 3
         assert data['llm_judge_top_n_max'] == 8
         assert data['llm_judge_available'] is True
@@ -177,12 +193,24 @@ class TestPolicyRouter:
         assert data['llm_judge_enqueue_stats']['enqueued'] == 2
         mock_policy_service.update_llm_judge_policy.assert_called_once()
         assert mock_policy_service.update_llm_judge_policy.call_args.kwargs["enabled"] is True
+        assert (
+            mock_policy_service.update_llm_judge_policy.call_args.kwargs[
+                "auto_enqueue_enabled"
+            ]
+            is True
+        )
         assert mock_policy_service.update_llm_judge_policy.call_args.kwargs["top_n"] == 3
         enqueue.assert_called_once()
 
     def test_llm_policy_enqueue_helper_queues_increased_top_n(self):
         previous = _llm_policy(enabled=True, top_n=2, available=True, revision=1)
-        next_policy = _llm_policy(enabled=True, top_n=4, available=True, revision=2)
+        next_policy = _llm_policy(
+            enabled=True,
+            auto_enqueue_enabled=True,
+            top_n=4,
+            available=True,
+            revision=2,
+        )
         db = Mock()
 
         with patch('web.backend.routers.policy.MatchService') as match_service_cls:
@@ -214,6 +242,23 @@ class TestPolicyRouter:
             tenant_id='tenant-1',
             top_n=4,
         )
+
+    def test_llm_policy_enqueue_helper_skips_when_auto_enqueue_disabled(self):
+        previous = _llm_policy(enabled=False, top_n=2, available=True, revision=1)
+        next_policy = _llm_policy(enabled=True, top_n=4, available=True, revision=2)
+
+        with patch('web.backend.routers.policy.MatchService') as match_service_cls:
+            stats, degraded = policy_router._enqueue_llm_top_n_after_policy_update(
+                Mock(),
+                owner_id='owner-1',
+                tenant_id='tenant-1',
+                previous_policy=previous,
+                next_policy=next_policy,
+            )
+
+        assert stats == {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0}
+        assert degraded == []
+        match_service_cls.assert_not_called()
 
     def test_llm_policy_enqueue_helper_skips_decreased_top_n(self):
         previous = _llm_policy(enabled=True, top_n=5, available=True, revision=1)

@@ -41,6 +41,7 @@ RUNTIME_MAX_TIMEOUT_SECONDS = 15.0
 DAILY_WINDOW_SECONDS = 24 * 60 * 60
 STATUS_TTL_SECONDS = 14 * DAILY_WINDOW_SECONDS
 ALLOWED_SOURCES = frozenset({"tokyodev", "japandev"})
+SOURCE_POLICY_DISABLED_REASON = "disabled_by_deployment_policy"
 SOURCE_URLS = {
     "tokyodev": "https://www.tokyodev.com/jobs",
     "japandev": "https://japan-dev.com/jobs",
@@ -79,10 +80,16 @@ class ExternalSeedFetcherConfig:
     max_calls_per_day: int
     max_calls_per_source_per_day: int
     oci_direct_fallback_enabled: bool
+    policy_disabled_reason: str | None = None
 
     @property
     def configured(self) -> bool:
-        return bool(self.worker_url and self.secret and self.sources)
+        return bool(
+            not self.policy_disabled_reason
+            and self.worker_url
+            and self.secret
+            and self.sources
+        )
 
 
 @dataclass(frozen=True)
@@ -195,10 +202,12 @@ def _production_like() -> bool:
 
 
 def get_external_seed_fetcher_config() -> ExternalSeedFetcherConfig:
-    sources = tuple(
+    policy_disabled_reason = SOURCE_POLICY_DISABLED_REASON if _production_like() else None
+    configured_sources = tuple(
         source for source in _split_csv(os.getenv("JOBSCOUT_EXTERNAL_SEED_FETCHER_SOURCES"))
         if source in ALLOWED_SOURCES
     )
+    sources = () if policy_disabled_reason else configured_sources
     max_jobs = min(
         max(_env_int("JOBSCOUT_EXTERNAL_SEED_FETCHER_MAX_JOBS_PER_SOURCE", MAX_JOBS_PER_SOURCE), 1),
         MAX_JOBS_PER_SOURCE,
@@ -257,6 +266,7 @@ def get_external_seed_fetcher_config() -> ExternalSeedFetcherConfig:
         max_calls_per_day=max_calls,
         max_calls_per_source_per_day=max_source_calls,
         oci_direct_fallback_enabled=False,
+        policy_disabled_reason=policy_disabled_reason,
     )
 
 
@@ -268,6 +278,15 @@ def external_seed_fetcher_catalog_status(
     cfg = config or get_external_seed_fetcher_config()
     if source not in ALLOWED_SOURCES:
         return None
+    if cfg.policy_disabled_reason:
+        return {
+            "enabled": False,
+            "configured": False,
+            "status": "disabled",
+            "provider": PROVIDER_NAME,
+            "reason": cfg.policy_disabled_reason,
+            "disabled_reason": cfg.policy_disabled_reason,
+        }
     if source not in cfg.sources:
         return {
             "enabled": cfg.enabled,
@@ -549,6 +568,13 @@ class ExternalSeedFetcherClient:
     def fetch_source(self, source: str, *, limit: int | None = None) -> ExternalSeedFetchResult:
         config = self.config
         normalized_source = source.strip().lower()
+        if config.policy_disabled_reason:
+            raise ExternalSeedFetchError(
+                "external_seed_disabled_by_deployment_policy",
+                "External seed fetching is disabled by deployment policy.",
+                status_code=403,
+                failure_class=config.policy_disabled_reason,
+            )
         if not config.enabled:
             raise ExternalSeedFetchError(
                 "external_seed_disabled",
@@ -823,6 +849,13 @@ def fetch_and_import_external_seed_source(
             "The requested source is not supported by the external seed fetcher.",
             status_code=404,
         )
+    if cfg.policy_disabled_reason:
+        raise ExternalSeedFetchError(
+            "external_seed_disabled_by_deployment_policy",
+            "External seed fetching is disabled by deployment policy.",
+            status_code=403,
+            failure_class=cfg.policy_disabled_reason,
+        )
     if not cfg.enabled:
         raise ExternalSeedFetchError(
             "external_seed_disabled",
@@ -938,9 +971,11 @@ def get_external_seed_fetcher_status(tenant_id: Any | None = None) -> dict[str, 
             **_load_status(redis_client, tenant_id, source),
         }
     return {
-        "enabled": cfg.enabled,
+        "enabled": bool(cfg.enabled and not cfg.policy_disabled_reason),
         "configured": cfg.configured,
         "provider": PROVIDER_NAME,
+        "reason": cfg.policy_disabled_reason,
+        "disabled_reason": cfg.policy_disabled_reason,
         "allowed_sources": list(cfg.sources),
         "limits": {
             "max_jobs_per_source": cfg.max_jobs_per_source,

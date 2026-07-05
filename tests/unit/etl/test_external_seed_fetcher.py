@@ -131,6 +131,29 @@ def test_external_seed_config_rejects_insecure_worker_url_in_production(monkeypa
     assert config.configured is False
 
 
+def test_external_seed_config_disables_sources_by_deployment_policy_in_production(monkeypatch) -> None:
+    monkeypatch.setenv("JOBSCOUT_ENV", "production")
+    monkeypatch.setenv("JOBSCOUT_EXTERNAL_SEED_FETCHER_ENABLED", "true")
+    monkeypatch.setenv("JOBSCOUT_EXTERNAL_SEED_FETCHER_URL", "https://worker.example/fetch")
+    monkeypatch.setenv("JOBSCOUT_EXTERNAL_SEED_FETCHER_SECRET", "secret")
+    monkeypatch.setenv("JOBSCOUT_EXTERNAL_SEED_FETCHER_SOURCES", "tokyodev,japandev")
+
+    config = external_seed_fetcher.get_external_seed_fetcher_config()
+    catalog = external_seed_fetcher.external_seed_fetcher_catalog_status(
+        "tokyodev",
+        config=config,
+    )
+
+    assert config.sources == ()
+    assert config.configured is False
+    assert config.policy_disabled_reason == "disabled_by_deployment_policy"
+    assert catalog["status"] == "disabled"
+    assert catalog["disabled_reason"] == "disabled_by_deployment_policy"
+    with pytest.raises(ExternalSeedFetchError) as exc_info:
+        fetch_and_import_external_seed_source("tokyodev", config=config)
+    assert exc_info.value.code == "external_seed_disabled_by_deployment_policy"
+
+
 def test_external_seed_client_signs_worker_request(monkeypatch) -> None:
     captured: dict[str, Any] = {}
 

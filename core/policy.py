@@ -18,6 +18,7 @@ LLM_JUDGE_FEATURE_KEY = "match.llm_judge"
 @dataclass(frozen=True)
 class LlmJudgePolicy:
     enabled: bool
+    auto_enqueue_enabled: bool
     top_n: int
     top_n_max: int
     available: bool
@@ -68,6 +69,14 @@ def _llm_judge_availability(judge_config=None, runtime_config=None) -> tuple[boo
     if runtime_config is None:
         return False, "runtime_missing"
 
+    try:
+        from core.llm.provider_chain import configured_provider_entries
+
+        if configured_provider_entries(runtime_config):
+            return True, "available"
+    except Exception as exc:
+        logger.warning("Could not inspect LLM judge provider chain: %s", exc)
+
     base_url = str(getattr(runtime_config, "base_url", "") or "").strip()
     if not base_url:
         return False, "base_url_missing"
@@ -93,6 +102,7 @@ def _default_llm_judge_policy() -> LlmJudgePolicy:
     if judge_config is None:
         return LlmJudgePolicy(
             enabled=False,
+            auto_enqueue_enabled=False,
             top_n=5,
             top_n_max=10,
             available=False,
@@ -103,6 +113,7 @@ def _default_llm_judge_policy() -> LlmJudgePolicy:
     available, unavailable_reason = _llm_judge_availability(judge_config, runtime_config)
     return LlmJudgePolicy(
         enabled=bool(getattr(judge_config, "enabled", False)) and available,
+        auto_enqueue_enabled=bool(getattr(judge_config, "auto_enqueue_enabled", False)),
         top_n=top_n,
         top_n_max=top_n_max,
         available=available,
@@ -147,9 +158,16 @@ class ResultPolicyStore:
                     value.get("top_n", default_policy.top_n),
                     default_policy.top_n_max,
                 )
+                auto_enqueue_enabled = bool(
+                    value.get(
+                        "auto_enqueue_enabled",
+                        default_policy.auto_enqueue_enabled,
+                    )
+                )
                 revision = int(value.get("revision", 0) or 0)
                 return LlmJudgePolicy(
                     enabled=bool(capability.enabled) and default_policy.available,
+                    auto_enqueue_enabled=auto_enqueue_enabled,
                     top_n=top_n,
                     top_n_max=default_policy.top_n_max,
                     available=default_policy.available,
@@ -165,15 +183,22 @@ class ResultPolicyStore:
         *,
         owner_id: object | None,
         enabled: Optional[bool] = None,
+        auto_enqueue_enabled: Optional[bool] = None,
         top_n: Optional[int] = None,
     ) -> LlmJudgePolicy:
         current = self.get_llm_judge_policy(owner_id)
         next_enabled = current.enabled if enabled is None else bool(enabled)
+        next_auto_enqueue_enabled = (
+            current.auto_enqueue_enabled
+            if auto_enqueue_enabled is None
+            else bool(auto_enqueue_enabled)
+        )
         next_top_n = current.top_n if top_n is None else self._clamp_llm_top_n(top_n, current.top_n_max)
 
         if owner_id is None:
             return LlmJudgePolicy(
                 enabled=next_enabled and current.available,
+                auto_enqueue_enabled=next_auto_enqueue_enabled,
                 top_n=next_top_n,
                 top_n_max=current.top_n_max,
                 available=current.available,
@@ -191,6 +216,7 @@ class ResultPolicyStore:
             next_revision = current.revision + 1
             value_json = {
                 "top_n": next_top_n,
+                "auto_enqueue_enabled": next_auto_enqueue_enabled,
                 "revision": next_revision,
             }
             if capability is None:
@@ -207,6 +233,7 @@ class ResultPolicyStore:
 
         return LlmJudgePolicy(
             enabled=next_enabled and current.available,
+            auto_enqueue_enabled=next_auto_enqueue_enabled,
             top_n=next_top_n,
             top_n_max=current.top_n_max,
             available=current.available,

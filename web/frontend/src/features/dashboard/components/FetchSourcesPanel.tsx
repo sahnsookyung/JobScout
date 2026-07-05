@@ -125,6 +125,7 @@ function healthLabel(source: FetchSource): string {
 
 function externalSeedLabel(source: FetchSource): string {
     if (source.fetch_mode !== 'seed_website' || !source.external_fetch_status) return '';
+    if (source.external_fetch_status.disabled_reason === 'disabled_by_deployment_policy') return '';
     if (source.external_fetch_status.status === 'ok') return 'Worker updated';
     if (source.external_fetch_status.status === 'rate_limited') return 'Worker cooling down';
     if (source.external_fetch_status.status === 'configured') return 'Worker ready';
@@ -282,6 +283,7 @@ function sourceHasAction(source: FetchSource, action: string): boolean {
 }
 
 function sourceIsPaused(source: FetchSource): boolean {
+    if (source.deployment_allowed === false) return true;
     if (atsStatus(source) === 'disabled') return true;
     return source.fetch_mode === 'seed_website' && source.external_fetch_status?.status === 'disabled';
 }
@@ -304,6 +306,7 @@ function sourceNeedsAttention(source: FetchSource): boolean {
 
 function sourceStatusLabel(source: FetchSource): string {
     const status = atsStatus(source);
+    if (source.disabled_reason === 'disabled_by_deployment_policy') return 'Policy disabled';
     if (sourceNeedsAttention(source)) return 'Needs attention';
     if (sourceIsPaused(source)) return 'Paused';
     if (status === 'active') return 'Active';
@@ -534,7 +537,9 @@ function sourceMatchesSearch(source: FetchSource, query: string): boolean {
 
 function canFetchExternalSeed(source: FetchSource): boolean {
     const status = source.external_fetch_status;
-    return source.fetch_mode === 'seed_website' && Boolean(status?.enabled && status.configured);
+    return source.deployment_allowed !== false
+        && source.fetch_mode === 'seed_website'
+        && Boolean(status?.enabled && status.configured);
 }
 
 function apiErrorMessage(error: unknown): string {
@@ -662,6 +667,9 @@ function SourceCard({
     const canToggleSource = sourceHasAction(source, isDisabled ? 'enable' : 'disable');
     const isMutatingAtsSource = isSyncingAtsSource || isUpdatingAtsSource || isDeletingAtsSource;
     const providerLabel = modeLabel(source);
+    const deploymentDisabledText = source.disabled_reason === 'disabled_by_deployment_policy'
+        ? 'Disabled by deployment policy'
+        : null;
     const lastError = textOption(source, 'last_error');
     const lastValidated = textOption(source, 'last_validated_at');
     const statusReason = textOption(source, 'status_reason');
@@ -757,6 +765,11 @@ function SourceCard({
                         {externalText ? (
                             <span className={metaChipClasses(`${externalSeedTone(source)} tabular-nums`)}>
                                 {externalText}
+                            </span>
+                        ) : null}
+                        {deploymentDisabledText ? (
+                            <span className={metaChipClasses('border-rule bg-surface-sunk text-ink-soft')}>
+                                {deploymentDisabledText}
                             </span>
                         ) : null}
                         {optionCount(source) > 0 ? (

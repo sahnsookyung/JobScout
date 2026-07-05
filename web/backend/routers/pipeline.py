@@ -91,6 +91,7 @@ from ..models.requests import (
 )
 from etl.external_seed_fetcher import (
     ExternalSeedFetchError,
+    SOURCE_POLICY_DISABLED_REASON,
     external_seed_fetcher_catalog_status,
     fetch_and_import_external_seed_source,
     get_external_seed_fetcher_config,
@@ -188,6 +189,7 @@ XXH64_HEX_PATTERN = re.compile(r'^[0-9a-fA-F]{16}$')
 JOB_BOARD_TAG = "job board"
 JOBSPY_SITE_TYPES = {"indeed", "glassdoor", "linkedin", "google", "zip_recruiter"}
 ATS_SITE_TYPES = {"greenhouse", "lever", "ashby", "hubspot", "workday"}
+DEPLOYMENT_POLICY_DISABLED_FETCH_MODES = {"seed_website", "jobspy_api"}
 PROVIDER_NAMES = {
     "jobspy_api": "JobSpy",
     "seed_website": "Seed website",
@@ -256,6 +258,11 @@ SOURCE_METADATA: dict[str, dict[str, object]] = {
     "hubspot": {
         "display_name": "HubSpot",
         "description": "HubSpot ATS API source when configured by the deployment.",
+        "tags": ["ats", "api", "company careers"],
+    },
+    "workday": {
+        "display_name": "Workday",
+        "description": "Workday ATS API source when configured by the deployment.",
         "tags": ["ats", "api", "company careers"],
     },
 }
@@ -391,6 +398,15 @@ def _source_fetch_mode(site_type: str, scraper_cfg, seed_url: Optional[str]) -> 
         return "seed_website"
     return "custom_source"
 
+def _production_like_deployment() -> bool:
+    env = (
+        os.getenv("JOBSCOUT_ENV")
+        or os.getenv("APP_ENV")
+        or os.getenv("ENVIRONMENT")
+        or "development"
+    )
+    return env.strip().lower() in {"production", "prod", "staging"}
+
 def _source_provider_name(
     site_type: str,
     fetch_mode: str,
@@ -419,6 +435,11 @@ def _build_fetch_source_response(
     description = scraper_cfg.description or metadata.get("description")
     tags = _dedupe_strings([*list(metadata.get("tags") or []), *list(scraper_cfg.tags or [])])
     fetch_mode = _source_fetch_mode(site_type, scraper_cfg, str(seed_url) if seed_url else None)
+    disabled_reason = (
+        SOURCE_POLICY_DISABLED_REASON
+        if _production_like_deployment() and fetch_mode in DEPLOYMENT_POLICY_DISABLED_FETCH_MODES
+        else None
+    )
     external_status = (
         (external_statuses or {}).get(site_type)
         if fetch_mode == "seed_website"
@@ -452,6 +473,8 @@ def _build_fetch_source_response(
             if external_status
             else None
         ),
+        deployment_allowed=disabled_reason is None,
+        disabled_reason=disabled_reason,
     )
 
 def _source_matches_query(source: FetchSourceResponse, search: Optional[str]) -> bool:
@@ -574,10 +597,14 @@ def get_fetch_sources(
         for source in sources
         if source.seed_url is not None
     ]
+    deployment_api_sources_available = any(
+        source.deployment_allowed and source.fetch_mode in {"ats_api", "jobspy_api"}
+        for source in sources
+    )
     return FetchSourcesResponse(
         success=True,
         jobspy_url=config.jobspy.url if config.jobspy else None,
-        api_based_fetching=bool(config.jobspy and config.jobspy.url),
+        api_based_fetching=deployment_api_sources_available,
         search_query=search,
         total_count=len(all_sources),
         filtered_count=len(sources),

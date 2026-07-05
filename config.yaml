@@ -171,6 +171,7 @@ matching:
 
   llm_judge:
     enabled: false
+    auto_enqueue_enabled: false
     runtime:
       provider: "cerebras"
       model: "gpt-oss-120b"
@@ -178,6 +179,36 @@ matching:
       timeout_seconds: 60
       structured_output_mode: "json_object"
       max_input_tokens: 24000
+      # Ordered fallback chain for match-level judging. Providers with missing
+      # key env vars are skipped; fallback is only used for transient failures.
+      providers:
+        - name: "nvidia"
+          provider: "nvidia"
+          base_url: "https://integrate.api.nvidia.com/v1"
+          api_key_env: "NVIDIA_API_KEY"
+          model: "nvidia/nemotron-3-ultra-550b-a55b"
+          structured_output_mode: "json_schema"
+          timeout_seconds: 60
+          max_input_tokens: 262144
+          requests_per_minute: 40
+          rate_limit_max_wait_seconds: 90
+          fallback_on_rate_limit: false
+        - name: "groq"
+          provider: "groq"
+          base_url: "https://api.groq.com/openai/v1"
+          api_key_env: "GROQ_API_KEY"
+          model: "openai/gpt-oss-120b"
+          structured_output_mode: "auto"
+          timeout_seconds: 60
+          max_input_tokens: 24000
+        - name: "cerebras"
+          provider: "cerebras"
+          base_url: "https://api.cerebras.ai/v1"
+          api_key_env: "CEREBRAS_API_KEY"
+          model: "gpt-oss-120b"
+          structured_output_mode: "json_object"
+          timeout_seconds: 60
+          max_input_tokens: 24000
     top_n_default: 5
     top_n_max: 10
     max_per_run: 10

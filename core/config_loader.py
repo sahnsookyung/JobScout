@@ -15,8 +15,15 @@ HeaderMapping = tuple[str, Sequence[str]]
 ConfigPath = str | os.PathLike[str]
 DEFAULT_CONFIG_FILENAME = "config.yaml"
 LlmJudgeProvider = Literal["openai_compatible", "groq", "cerebras"]
+LlmJudgeProviderChainProvider = Literal["openai_compatible", "groq", "cerebras", "nvidia"]
+NVIDIA_OPENAI_COMPATIBLE_BASE_URL = "https://integrate.api.nvidia.com/v1"
 GROQ_OPENAI_COMPATIBLE_BASE_URL = "https://api.groq.com/openai/v1"
 CEREBRAS_OPENAI_COMPATIBLE_BASE_URL = "https://api.cerebras.ai/v1"
+NVIDIA_DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
+NVIDIA_DEFAULT_MAX_INPUT_TOKENS = 262_144
+NVIDIA_DEFAULT_REQUESTS_PER_MINUTE = 40
+NVIDIA_DEFAULT_RATE_LIMIT_MAX_WAIT_SECONDS = 90
+GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
 CEREBRAS_DEFAULT_MODEL = "gpt-oss-120b"
 CEREBRAS_DEFAULT_MAX_INPUT_TOKENS = 24_000
 
@@ -167,6 +174,195 @@ class ResultPolicy(BaseModel):
     min_jd_required_coverage: Optional[float] = None
 
 
+def _env_positive_int(names: Sequence[str], default: int) -> int:
+    for name in names:
+        raw = os.getenv(name)
+        if raw is None or not raw.strip():
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        if value > 0:
+            return value
+    return default
+
+
+def _env_nonnegative_int(names: Sequence[str], default: int) -> int:
+    for name in names:
+        raw = os.getenv(name)
+        if raw is None or not raw.strip():
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        if value >= 0:
+            return value
+    return default
+
+
+def _env_bool(names: Sequence[str], default: bool) -> bool:
+    for name in names:
+        raw = os.getenv(name)
+        if raw is None or not raw.strip():
+            continue
+        normalized = raw.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off"}:
+            return False
+    return default
+
+
+def _expected_llm_judge_base_host(provider: str) -> str | None:
+    if provider == "nvidia":
+        return "integrate.api.nvidia.com"
+    if provider == "groq":
+        return "api.groq.com"
+    if provider == "cerebras":
+        return "api.cerebras.ai"
+    return None
+
+
+def _validate_llm_judge_provider_base_url(
+    *,
+    provider: str,
+    base_url: str | None,
+    field_path: str,
+) -> None:
+    expected_host = _expected_llm_judge_base_host(provider)
+    if not expected_host:
+        return
+    actual_host = (urlparse(str(base_url or "")).hostname or "").lower()
+    if actual_host and actual_host != expected_host:
+        raise ValueError(
+            f"{field_path}.base_url host must be {expected_host} when "
+            f"{field_path}.provider is '{provider}'. Use provider='openai_compatible' "
+            "for a custom proxy endpoint."
+        )
+
+
+class LlmJudgeProviderRuntimeConfig(BaseModel):
+    """One ordered provider candidate for match-level LLM judging."""
+
+    name: Optional[str] = None
+    provider: LlmJudgeProviderChainProvider = "openai_compatible"
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    api_key_env: Optional[str] = None
+    api_secret: Optional[str] = None
+    headers: Optional[Dict[str, str]] = None
+    model: Optional[str] = None
+    temperature: float = 0.0
+    timeout_seconds: int = 60
+    structured_output_mode: Literal["auto", "json_schema", "json_object"] = "auto"
+    max_input_tokens: int = CEREBRAS_DEFAULT_MAX_INPUT_TOKENS
+    requests_per_minute: Optional[int] = None
+    rate_limit_max_wait_seconds: int = NVIDIA_DEFAULT_RATE_LIMIT_MAX_WAIT_SECONDS
+    fallback_on_rate_limit: bool = False
+
+    def model_post_init(self, __context: Any) -> None:
+        del __context
+        self.name = str(self.name or self.provider).strip().lower() or self.provider
+        if self.api_key_env and not str(self.api_key or "").strip():
+            self.api_key = os.getenv(str(self.api_key_env).strip()) or None
+        if self.provider == "nvidia":
+            if not str(self.base_url or "").strip():
+                self.base_url = NVIDIA_OPENAI_COMPATIBLE_BASE_URL
+            if not str(self.model or "").strip():
+                self.model = os.getenv("NVIDIA_MODEL") or NVIDIA_DEFAULT_MODEL
+            default_max_input_tokens = (
+                int(self.max_input_tokens)
+                if "max_input_tokens" in self.model_fields_set
+                else NVIDIA_DEFAULT_MAX_INPUT_TOKENS
+            )
+            self.max_input_tokens = _env_positive_int(
+                ("NVIDIA_MAX_CONTEXT", "NVIDIA_MAX_INPUT_TOKENS"),
+                default_max_input_tokens,
+            )
+            default_requests_per_minute = (
+                int(self.requests_per_minute)
+                if "requests_per_minute" in self.model_fields_set
+                and self.requests_per_minute is not None
+                else NVIDIA_DEFAULT_REQUESTS_PER_MINUTE
+            )
+            self.requests_per_minute = _env_positive_int(
+                ("NVIDIA_REQUESTS_PER_MINUTE",),
+                default_requests_per_minute,
+            )
+            default_max_wait_seconds = (
+                int(self.rate_limit_max_wait_seconds)
+                if "rate_limit_max_wait_seconds" in self.model_fields_set
+                else NVIDIA_DEFAULT_RATE_LIMIT_MAX_WAIT_SECONDS
+            )
+            self.rate_limit_max_wait_seconds = _env_nonnegative_int(
+                ("NVIDIA_RATE_LIMIT_MAX_WAIT_SECONDS",),
+                default_max_wait_seconds,
+            )
+            self.fallback_on_rate_limit = _env_bool(
+                ("NVIDIA_FALLBACK_ON_RATE_LIMIT",),
+                bool(self.fallback_on_rate_limit),
+            )
+        if self.provider == "groq":
+            if not str(self.base_url or "").strip():
+                self.base_url = GROQ_OPENAI_COMPATIBLE_BASE_URL
+            if not str(self.model or "").strip():
+                self.model = os.getenv("GROQ_MODEL") or GROQ_DEFAULT_MODEL
+        if self.provider == "cerebras":
+            if not str(self.base_url or "").strip():
+                self.base_url = CEREBRAS_OPENAI_COMPATIBLE_BASE_URL
+            if not str(self.model or "").strip():
+                self.model = os.getenv("CEREBRAS_MODEL") or CEREBRAS_DEFAULT_MODEL
+            if self.structured_output_mode == "auto":
+                self.structured_output_mode = "json_object"
+        _validate_llm_judge_provider_base_url(
+            provider=self.provider,
+            base_url=self.base_url,
+            field_path=f"matching.llm_judge.runtime.providers[{self.name}]",
+        )
+        if int(self.timeout_seconds) <= 0:
+            raise ValueError(
+                f"matching.llm_judge.runtime.providers[{self.name}].timeout_seconds must be positive"
+            )
+        if int(self.max_input_tokens) <= 0:
+            raise ValueError(
+                f"matching.llm_judge.runtime.providers[{self.name}].max_input_tokens must be positive"
+            )
+        if self.requests_per_minute is not None:
+            self.requests_per_minute = int(self.requests_per_minute)
+            if self.requests_per_minute <= 0:
+                raise ValueError(
+                    f"matching.llm_judge.runtime.providers[{self.name}].requests_per_minute must be positive when set"
+                )
+        self.rate_limit_max_wait_seconds = int(self.rate_limit_max_wait_seconds)
+        if self.rate_limit_max_wait_seconds < 0:
+            raise ValueError(
+                f"matching.llm_judge.runtime.providers[{self.name}].rate_limit_max_wait_seconds must be non-negative"
+            )
+
+
+def _default_llm_judge_provider_chain() -> List[LlmJudgeProviderRuntimeConfig]:
+    return [
+        LlmJudgeProviderRuntimeConfig(
+            name="nvidia",
+            provider="nvidia",
+            api_key_env="NVIDIA_API_KEY",
+            structured_output_mode="json_schema",
+        ),
+        LlmJudgeProviderRuntimeConfig(
+            name="groq",
+            provider="groq",
+            api_key_env="GROQ_API_KEY",
+        ),
+        LlmJudgeProviderRuntimeConfig(
+            name="cerebras",
+            provider="cerebras",
+            api_key_env="CEREBRAS_API_KEY",
+        ),
+    ]
+
+
 class LlmJudgeRuntimeConfig(BaseModel):
     """OpenAI-compatible runtime used only for match-level LLM judging."""
 
@@ -180,6 +376,9 @@ class LlmJudgeRuntimeConfig(BaseModel):
     timeout_seconds: int = 60
     structured_output_mode: Literal["auto", "json_schema", "json_object"] = "auto"
     max_input_tokens: int = CEREBRAS_DEFAULT_MAX_INPUT_TOKENS
+    providers: List[LlmJudgeProviderRuntimeConfig] = Field(
+        default_factory=_default_llm_judge_provider_chain
+    )
 
     def model_post_init(self, __context: Any) -> None:
         del __context
@@ -202,6 +401,7 @@ class MatchLlmJudgeConfig(BaseModel):
     """Optional match-level LLM judge controls and safety budgets."""
 
     enabled: bool = False
+    auto_enqueue_enabled: bool = False
     runtime: LlmJudgeRuntimeConfig = Field(default_factory=LlmJudgeRuntimeConfig)
     top_n_default: int = 5
     top_n_max: int = 10
@@ -720,6 +920,7 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["EVIDENCE_LLM_ESCALATION"], ["matching", "scorer", "semantic_fit", "evidence_llm_escalation"]),
     (["TWO_TIER_SELECTION_ENABLED"], ["matching", "two_tier_selection_enabled"]),
     (["MATCH_LLM_JUDGE_ENABLED"], ["matching", "llm_judge", "enabled"]),
+    (["MATCH_LLM_JUDGE_AUTO_ENQUEUE_ENABLED"], ["matching", "llm_judge", "auto_enqueue_enabled"]),
     (["MATCH_LLM_JUDGE_TOP_N_DEFAULT"], ["matching", "llm_judge", "top_n_default"]),
     (["MATCH_LLM_JUDGE_TOP_N_MAX"], ["matching", "llm_judge", "top_n_max"]),
     (["MATCH_LLM_JUDGE_MAX_PER_RUN"], ["matching", "llm_judge", "max_per_run"]),
@@ -831,13 +1032,31 @@ def _apply_llm_judge_provider_api_key_override(data: Dict[str, Any]) -> None:
 
     provider_api_key = None
     base_url_host = _base_url_host(base_url)
-    if provider == "cerebras" or base_url_host == "api.cerebras.ai":
+    if base_url_host == "integrate.api.nvidia.com":
+        provider_api_key = os.environ.get("NVIDIA_API_KEY")
+    elif base_url_host == "api.cerebras.ai":
         provider_api_key = os.environ.get("CEREBRAS_API_KEY")
-    elif provider == "groq" or base_url_host == "api.groq.com":
+    elif base_url_host == "api.groq.com":
+        provider_api_key = os.environ.get("GROQ_API_KEY")
+    elif provider == "nvidia":
+        provider_api_key = os.environ.get("NVIDIA_API_KEY")
+    elif provider == "cerebras":
+        provider_api_key = os.environ.get("CEREBRAS_API_KEY")
+    elif provider == "groq":
         provider_api_key = os.environ.get("GROQ_API_KEY")
 
     if provider_api_key:
         _set_nested(data, ["matching", "llm_judge", "runtime", "api_key"], provider_api_key)
+
+
+def _apply_llm_judge_provider_chain_override(data: Dict[str, Any]) -> None:
+    raw = os.environ.get("LLM_AS_A_JUDGE_PROVIDERS_JSON")
+    if not raw:
+        return
+    providers = json.loads(raw)
+    if not isinstance(providers, list):
+        raise ValueError("LLM_AS_A_JUDGE_PROVIDERS_JSON must be a JSON list.")
+    _set_nested(data, ["matching", "llm_judge", "runtime", "providers"], providers)
 
 
 def resolve_config_path(
@@ -872,6 +1091,7 @@ def apply_env_overrides(
         val = next((os.environ.get(env_var) for env_var in env_vars if os.environ.get(env_var)), None)
         if val:
             _set_nested(data, list(keys), val)
+    _apply_llm_judge_provider_chain_override(data)
     _apply_llm_judge_provider_api_key_override(data)
 
     for env_var, keys in header_mappings:
