@@ -221,6 +221,16 @@ def _apply_current_additive_schema_upgrades(conn: Connection) -> None:
             CREATE INDEX IF NOT EXISTS idx_llm_eval_owner_match_created
             ON llm_match_evaluation (owner_id, job_match_id, created_at);
 
+            CREATE INDEX IF NOT EXISTS idx_llm_eval_backlog_status_created
+            ON llm_match_evaluation (status, created_at)
+            WHERE deleted_at IS NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_llm_eval_retryable_failed_created
+            ON llm_match_evaluation (created_at)
+            WHERE deleted_at IS NULL
+              AND status = 'failed'
+              AND retryable = TRUE;
+
             CREATE INDEX IF NOT EXISTS idx_msi_run_tier_rank_id
             ON match_selection_item (selection_run_id, selection_tier, rank_position, id);
             """

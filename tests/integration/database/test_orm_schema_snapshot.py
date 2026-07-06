@@ -108,6 +108,8 @@ def _capture_additive_upgrade_path() -> dict:
                         DROP COLUMN IF EXISTS analysis;
 
                         DROP INDEX IF EXISTS idx_llm_eval_owner_match_created;
+                        DROP INDEX IF EXISTS idx_llm_eval_backlog_status_created;
+                        DROP INDEX IF EXISTS idx_llm_eval_retryable_failed_created;
                         """
                     )
                 )
