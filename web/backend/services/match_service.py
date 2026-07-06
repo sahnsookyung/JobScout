@@ -540,7 +540,7 @@ class MatchService:
                 eligible_count += 1
                 candidate.llm_rerank_score = normalize_llm_score(
                     evaluation.llm_score,
-                    evaluation.verdict,
+                    getattr(evaluation, "verdict", None),
                 )
                 candidate.llm_rerank_confidence = safe_float(evaluation.confidence)
 
