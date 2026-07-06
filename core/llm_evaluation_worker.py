@@ -23,6 +23,7 @@ from core.llm_evaluation_queue import (
     schedule_llm_recovery_sweep,
 )
 from core.metrics import bind_llm_evaluation_queue_depths, record_worker_running
+from core.oci_critical_logging import emit_oci_critical_event
 
 logging.basicConfig(
     level=logging.INFO,
@@ -75,6 +76,17 @@ def start_worker(*, burst: bool = False, queue_names: list[str] | None = None) -
 
 def check_readiness() -> None:
     status = check_llm_evaluation_queue_readiness()
+    emit_oci_critical_event(
+        "readiness_check",
+        ready=bool(status.get("ready")),
+        queue=status.get("queue"),
+        queued=status.get("queued"),
+        started=status.get("started"),
+        failed=status.get("failed"),
+        db_pending=status.get("db_pending"),
+        db_retryable_failed=status.get("db_retryable_failed"),
+        paused=status.get("paused"),
+    )
     logger.info("LLM evaluation worker readiness: %s", status)
 
 

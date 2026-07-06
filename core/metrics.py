@@ -100,6 +100,34 @@ _LLM_JUDGE_CIRCUIT_EVENTS = frozenset({"opened", "skip", "closed", "manual_reset
 _LLM_JUDGE_WAIT_OUTCOMES = frozenset({"waited", "retry_after", "unavailable"})
 _LLM_QUEUE_OPERATOR_ACTIONS = frozenset({"pause", "resume", "retry"})
 _LLM_PROVIDER_CANARY_STATUSES = frozenset({"succeeded", "failed", "rate_limited", "circuit_open"})
+_OCI_CRITICAL_LOG_EVENT_TYPES = frozenset({
+    "deploy_event",
+    "provider_canary",
+    "provider_circuit",
+    "queue_operator_action",
+    "readiness_check",
+    "scheduler_job",
+    "source_sync_failure",
+    "worker_started",
+    "worker_stopped",
+})
+_OCI_CRITICAL_LOG_OUTCOMES = frozenset({"disabled", "dropped", "error", "written"})
+_OCI_CRITICAL_LOG_DROP_REASONS = frozenset({
+    "cap_disabled",
+    "cap_exceeded",
+    "disabled",
+    "write_error",
+})
+_OCI_CRITICAL_LOG_SERVICES = frozenset({
+    "app",
+    "cloud_ops",
+    "embeddings",
+    "extraction",
+    "llm_evaluation_worker",
+    "notification_worker",
+    "orchestrator",
+    "scorer_matcher",
+})
 
 
 def _safe(value: str, allowed: frozenset[str]) -> str:
@@ -297,6 +325,30 @@ llm_judge_provider_canaries_total = Counter(
     labelnames=("provider", "status", "error_category"),
 )
 
+oci_critical_log_events_total = Counter(
+    f"{NAMESPACE}_oci_critical_log_events_total",
+    "OCI critical-only JSONL logging outcomes.",
+    labelnames=("event_type", "outcome"),
+)
+
+oci_critical_log_bytes_total = Counter(
+    f"{NAMESPACE}_oci_critical_log_bytes_total",
+    "Bytes written to the OCI critical-only JSONL log stream.",
+    labelnames=("event_type",),
+)
+
+oci_critical_log_dropped_total = Counter(
+    f"{NAMESPACE}_oci_critical_log_dropped_total",
+    "OCI critical-only JSONL events dropped before write.",
+    labelnames=("reason",),
+)
+
+oci_critical_log_budget_usage_ratio = Gauge(
+    f"{NAMESPACE}_oci_critical_log_budget_usage_ratio",
+    "Per-service fraction of the daily OCI critical-only log byte cap already used.",
+    labelnames=("service",),
+)
+
 
 # ---------------------------------------------------------------------------
 # Classifiers
@@ -400,6 +452,16 @@ def record_worker_running(service: str, worker: str, running: bool) -> None:
         service=_safe(service, _WORKER_SERVICES),
         worker=_safe(worker, _WORKER_NAMES),
     ).set(1 if running else 0)
+    try:
+        from core.oci_critical_logging import emit_oci_critical_event
+
+        emit_oci_critical_event(
+            "worker_started" if running else "worker_stopped",
+            worker_service=service,
+            worker=worker,
+        )
+    except Exception:
+        pass
 
 
 def record_llm_judge_provider_fallback(
@@ -418,6 +480,12 @@ def record_llm_judge_scheduler_job(event: str) -> None:
     llm_judge_scheduler_jobs_total.labels(
         event=_safe(event, _LLM_JUDGE_SCHEDULER_EVENTS),
     ).inc()
+    try:
+        from core.oci_critical_logging import emit_oci_critical_event
+
+        emit_oci_critical_event("scheduler_job", scheduler_event=event)
+    except Exception:
+        pass
 
 
 def record_llm_judge_provider_circuit_event(provider: str, event: str) -> None:
@@ -425,6 +493,16 @@ def record_llm_judge_provider_circuit_event(provider: str, event: str) -> None:
         provider=_safe(provider, _LLM_JUDGE_PROVIDERS),
         event=_safe(event, _LLM_JUDGE_CIRCUIT_EVENTS),
     ).inc()
+    try:
+        from core.oci_critical_logging import emit_oci_critical_event
+
+        emit_oci_critical_event(
+            "provider_circuit",
+            provider=_safe(provider, _LLM_JUDGE_PROVIDERS),
+            circuit_event=event,
+        )
+    except Exception:
+        pass
 
 
 def observe_llm_judge_provider_wait_seconds(
@@ -442,6 +520,12 @@ def record_llm_evaluation_queue_operator_action(action: str) -> None:
     llm_evaluation_queue_operator_actions_total.labels(
         action=_safe(action, _LLM_QUEUE_OPERATOR_ACTIONS),
     ).inc()
+    try:
+        from core.oci_critical_logging import emit_oci_critical_event
+
+        emit_oci_critical_event("queue_operator_action", action=action)
+    except Exception:
+        pass
 
 
 def record_llm_judge_provider_canary(
@@ -454,6 +538,45 @@ def record_llm_judge_provider_canary(
         status=_safe(status, _LLM_PROVIDER_CANARY_STATUSES),
         error_category=_safe(error_category or "unknown", _LLM_JUDGE_ERROR_CATEGORIES),
     ).inc()
+    try:
+        from core.oci_critical_logging import emit_oci_critical_event
+
+        emit_oci_critical_event(
+            "provider_canary",
+            provider=_safe(provider, _LLM_JUDGE_PROVIDERS),
+            status=status,
+            error_category=error_category or "unknown",
+        )
+    except Exception:
+        pass
+
+
+def record_oci_critical_log_event(event_type: str, outcome: str) -> None:
+    oci_critical_log_events_total.labels(
+        event_type=_safe(event_type, _OCI_CRITICAL_LOG_EVENT_TYPES),
+        outcome=_safe(outcome, _OCI_CRITICAL_LOG_OUTCOMES),
+    ).inc()
+
+
+def observe_oci_critical_log_bytes(event_type: str, byte_count: int | float) -> None:
+    _inc_counter(
+        oci_critical_log_bytes_total.labels(
+            event_type=_safe(event_type, _OCI_CRITICAL_LOG_EVENT_TYPES),
+        ),
+        byte_count,
+    )
+
+
+def record_oci_critical_log_drop(reason: str) -> None:
+    oci_critical_log_dropped_total.labels(
+        reason=_safe(reason, _OCI_CRITICAL_LOG_DROP_REASONS),
+    ).inc()
+
+
+def set_oci_critical_log_budget_usage_ratio(service: str, ratio: int | float) -> None:
+    oci_critical_log_budget_usage_ratio.labels(
+        service=_safe(service, _OCI_CRITICAL_LOG_SERVICES),
+    ).set(max(min(float(ratio or 0), 1.0), 0.0))
 
 
 def _inc_counter(counter: Counter, count: int | float = 1) -> None:

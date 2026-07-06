@@ -29,6 +29,10 @@ class TestMetricDeclarations:
             "jobscout_email_verification_events",
             "jobscout_worker_running",
             "jobscout_llm_evaluation_queue_jobs",
+            "jobscout_oci_critical_log_events",
+            "jobscout_oci_critical_log_bytes",
+            "jobscout_oci_critical_log_dropped",
+            "jobscout_oci_critical_log_budget_usage_ratio",
         }
         exposed = set()
         for collector in REGISTRY._collector_to_names:
