@@ -156,7 +156,9 @@ def emit_oci_critical_event(
 
     service_name = _service_name(service)
     event = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .strftime("%Y-%m-%dT%H:%M:%SZ"),
         "schema_version": 1,
         "service": service_name,
         "event_type": _sanitize_key(event_type),

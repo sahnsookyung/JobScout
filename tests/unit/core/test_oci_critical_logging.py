@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from core.oci_critical_logging import emit_oci_critical_event
 
@@ -42,6 +43,7 @@ def test_critical_logging_writes_redacted_jsonl(monkeypatch, tmp_path):
     events = _read_events(tmp_path / "llm_evaluation_worker.jsonl")
     assert events[0]["event_type"] == "provider_canary"
     assert events[0]["service"] == "llm_evaluation_worker"
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", events[0]["timestamp"])
     assert events[0]["provider"] == "nvidia"
     assert events[0]["error_category"] == "timeout"
     assert "api_key" not in events[0]
