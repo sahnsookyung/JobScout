@@ -186,7 +186,6 @@ matching:
           provider: "nvidia"
           base_url: "https://integrate.api.nvidia.com/v1"
           api_key_env: "NVIDIA_API_KEY"
-          model: "nvidia/nemotron-3-ultra-550b-a55b"
           structured_output_mode: "json_schema"
           timeout_seconds: 60
           max_input_tokens: 262144
