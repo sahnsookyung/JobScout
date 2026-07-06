@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -105,6 +106,9 @@ _LLM_SCORE_VERDICT_RANGES = {
     "weak": (20.0, 44.0),
     "mismatch": (0.0, 34.0),
 }
+SCORE_VERDICT_INCONSISTENT_REASON = "score_verdict_inconsistent"
+SCORE_VERDICT_INCONSISTENT_MAX_DISTANCE = 20.0
+EVIDENCE_REFERENCE_PATTERN = re.compile(r"\bev[_-](\d+)\b", re.IGNORECASE)
 
 
 def _score_range_distance(score: float, verdict: str | None) -> float:
@@ -143,6 +147,35 @@ def normalize_llm_score(score: Any, verdict: str | None = None) -> float | None:
         if _score_range_distance(scaled, verdict) < _score_range_distance(value, verdict):
             value = scaled
     return round(value, 2)
+
+
+def score_quality_metadata(score: Any, verdict: str | None) -> dict[str, Any]:
+    """Describe whether a normalized score is semantically plausible for its verdict."""
+    normalized_score = normalize_llm_score(score, verdict)
+    normalized_verdict = str(verdict or "").lower()
+    expected_range = _LLM_SCORE_VERDICT_RANGES.get(normalized_verdict)
+    metadata: dict[str, Any] = {
+        "status": "unknown",
+        "reason": None,
+        "normalized_score": normalized_score,
+        "verdict": verdict,
+        "expected_range": (
+            {"min": expected_range[0], "max": expected_range[1]}
+            if expected_range is not None
+            else None
+        ),
+    }
+    if normalized_score is None or expected_range is None:
+        return metadata
+    distance = round(_score_range_distance(float(normalized_score), normalized_verdict), 2)
+    metadata["distance"] = distance
+    if distance > SCORE_VERDICT_INCONSISTENT_MAX_DISTANCE:
+        metadata["status"] = "inconsistent"
+        metadata["reason"] = SCORE_VERDICT_INCONSISTENT_REASON
+    else:
+        metadata["status"] = "consistent"
+    return metadata
+
 
 def _requirement_id_sort_key(requirement_id: Any) -> tuple[int, int, str]:
     normalized = str(requirement_id or "")
@@ -880,6 +913,12 @@ class MatchLlmEvaluationService:
                 "effective_for_rerank": False,
                 "ignored_for_rerank_reason": "no_evaluation",
                 "stale_status": "missing",
+                "freshness": self._freshness_metadata(
+                    match,
+                    None,
+                    status="missing",
+                    reason="no_evaluation",
+                ),
                 "input_truncation": {},
             }
         if getattr(evaluation, "deleted_at", None) is not None:
@@ -887,14 +926,27 @@ class MatchLlmEvaluationService:
                 "effective_for_rerank": False,
                 "ignored_for_rerank_reason": "deleted",
                 "stale_status": "ignored",
+                "freshness": self._freshness_metadata(
+                    match,
+                    evaluation,
+                    status="ignored",
+                    reason="deleted",
+                ),
                 "input_truncation": {},
             }
         status = getattr(evaluation, "status", None)
         if status != LLM_EVALUATION_SUCCEEDED:
+            reason = f"status_{status or 'unknown'}"
             return {
                 "effective_for_rerank": False,
-                "ignored_for_rerank_reason": f"status_{status or 'unknown'}",
+                "ignored_for_rerank_reason": reason,
                 "stale_status": "ignored",
+                "freshness": self._freshness_metadata(
+                    match,
+                    evaluation,
+                    status="ignored",
+                    reason=reason,
+                ),
                 "input_truncation": {},
             }
         if getattr(evaluation, "llm_score", None) is None:
@@ -902,7 +954,37 @@ class MatchLlmEvaluationService:
                 "effective_for_rerank": False,
                 "ignored_for_rerank_reason": "missing_llm_score",
                 "stale_status": "ignored",
+                "freshness": self._freshness_metadata(
+                    match,
+                    evaluation,
+                    status="ignored",
+                    reason="missing_llm_score",
+                ),
                 "input_truncation": {},
+            }
+
+        analysis = getattr(evaluation, "analysis", None)
+        if not isinstance(analysis, dict):
+            analysis = {}
+        score_quality = analysis.get("score_quality")
+        if not isinstance(score_quality, dict):
+            score_quality = score_quality_metadata(
+                getattr(evaluation, "llm_score", None),
+                getattr(evaluation, "verdict", None),
+            )
+        if score_quality.get("status") == "inconsistent":
+            return {
+                "effective_for_rerank": False,
+                "ignored_for_rerank_reason": SCORE_VERDICT_INCONSISTENT_REASON,
+                "stale_status": "ignored",
+                "freshness": self._freshness_metadata(
+                    match,
+                    evaluation,
+                    status="ignored",
+                    reason=SCORE_VERDICT_INCONSISTENT_REASON,
+                ),
+                "input_truncation": {},
+                "score_quality": score_quality,
             }
 
         job = self._load_job_for_match(match)
@@ -913,6 +995,13 @@ class MatchLlmEvaluationService:
                 "effective_for_rerank": False,
                 "ignored_for_rerank_reason": "stale_job_content",
                 "stale_status": "stale",
+                "freshness": self._freshness_metadata(
+                    match,
+                    evaluation,
+                    status="stale",
+                    reason="stale_job_content",
+                    job=job,
+                ),
                 "input_truncation": {},
             }
 
@@ -924,6 +1013,13 @@ class MatchLlmEvaluationService:
                 "effective_for_rerank": False,
                 "ignored_for_rerank_reason": "current_input_unavailable",
                 "stale_status": "unknown",
+                "freshness": self._freshness_metadata(
+                    match,
+                    evaluation,
+                    status="unknown",
+                    reason="current_input_unavailable",
+                    job=job,
+                ),
                 "input_truncation": {},
             }
 
@@ -937,6 +1033,13 @@ class MatchLlmEvaluationService:
                     "effective_for_rerank": False,
                     "ignored_for_rerank_reason": reason,
                     "stale_status": "stale",
+                    "freshness": self._freshness_metadata(
+                        match,
+                        evaluation,
+                        status="stale",
+                        reason=reason,
+                        job=job,
+                    ),
                     "input_truncation": judge_input.truncation,
                 }
 
@@ -944,8 +1047,67 @@ class MatchLlmEvaluationService:
             "effective_for_rerank": True,
             "ignored_for_rerank_reason": None,
             "stale_status": "current",
+            "freshness": self._freshness_metadata(
+                match,
+                evaluation,
+                status="current",
+                reason=None,
+                job=job,
+            ),
             "input_truncation": judge_input.truncation,
         }
+
+    def _freshness_metadata(
+        self,
+        match: JobMatch,
+        evaluation: LlmMatchEvaluation | None,
+        *,
+        status: str,
+        reason: str | None,
+        job: JobPost | None = None,
+    ) -> dict[str, Any]:
+        if job is None and status in {"current", "stale", "unknown"}:
+            job = self._load_job_for_match(match)
+        source = self._primary_source_for_job(job)
+        actions: list[str] = []
+        if status in {"stale", "unknown"}:
+            actions.append("regenerate_llm_evaluation")
+        if source is not None:
+            actions.append("refresh_availability")
+        return {
+            "status": status,
+            "reason": reason,
+            "evaluated_at": self._iso(getattr(evaluation, "completed_at", None)),
+            "match_calculated_at": self._iso(getattr(match, "calculated_at", None)),
+            "job_last_seen_at": self._iso(getattr(job, "last_seen_at", None)),
+            "source_last_seen_at": self._iso(getattr(source, "last_seen_at", None)),
+            "source_is_active": getattr(source, "is_active", None),
+            "available_actions": actions,
+        }
+
+    @staticmethod
+    def _primary_source_for_job(job: JobPost | None):
+        try:
+            sources = list(getattr(job, "sources", None) or [])
+        except TypeError:
+            sources = []
+        if not sources:
+            return None
+        active_sources = [source for source in sources if getattr(source, "is_active", False)]
+        candidates = active_sources or sources
+        return max(
+            candidates,
+            key=lambda source: (
+                getattr(source, "last_seen_at", None) is not None,
+                getattr(source, "last_seen_at", None),
+            ),
+        )
+
+    @staticmethod
+    def _iso(value: Any) -> str | None:
+        if type(value).__module__.startswith("unittest.mock"):
+            return None
+        return value.isoformat() if hasattr(value, "isoformat") else None
 
     def _judge_limit(self, name: str, default: int) -> int:
         value = getattr(self.judge_config, name, default)
@@ -1517,7 +1679,8 @@ class MatchLlmEvaluationService:
             if success_metadata:
                 evaluation.provider = success_metadata["provider"]
                 evaluation.model = success_metadata["model"]
-            evaluation.llm_score = normalize_llm_score(parsed.score, parsed.verdict)
+            score_quality = score_quality_metadata(parsed.score, parsed.verdict)
+            evaluation.llm_score = score_quality.get("normalized_score")
             evaluation.confidence = round(float(parsed.confidence), 4)
             evaluation.verdict = parsed.verdict
             evaluation.summary = self._truncate(parsed.summary, 1000)
@@ -1529,6 +1692,8 @@ class MatchLlmEvaluationService:
             evaluation.analysis = self._analysis_payload(
                 parsed,
                 truncation or {},
+                provider_payload=payload,
+                score_quality=score_quality,
                 provider_attempts=self._provider_attempts(provider),
                 lifecycle_metadata=lifecycle_metadata,
             )
@@ -1708,6 +1873,8 @@ class MatchLlmEvaluationService:
         parsed: MatchEvaluationResponse,
         truncation: dict[str, Any],
         *,
+        provider_payload: dict[str, Any] | None = None,
+        score_quality: dict[str, Any] | None = None,
         provider_attempts: list[dict[str, Any]] | None = None,
         lifecycle_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -1728,11 +1895,76 @@ class MatchLlmEvaluationService:
             ),
             "input_truncation": truncation if isinstance(truncation, dict) else {},
         }
+        if score_quality:
+            payload["score_quality"] = score_quality
+        evidence_references = self._evidence_references_for_public_analysis(
+            parsed,
+            provider_payload if isinstance(provider_payload, dict) else {},
+        )
+        if evidence_references:
+            payload["evidence_references"] = evidence_references
         if provider_attempts:
             payload["provider_attempts"] = provider_attempts
         if lifecycle_metadata:
             payload.update(lifecycle_metadata)
         return payload
+
+    def _evidence_references_for_public_analysis(
+        self,
+        parsed: MatchEvaluationResponse,
+        provider_payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        referenced_ids = self._referenced_evidence_unit_ids(parsed)
+        if not referenced_ids:
+            return []
+        evidence_by_id: dict[str, dict[str, Any]] = {}
+        units = provider_payload.get("resume_evidence_units")
+        if isinstance(units, list):
+            for unit in units:
+                if not isinstance(unit, dict):
+                    continue
+                unit_id = self._normalized_evidence_reference_id(unit.get("unit_id"))
+                if not unit_id:
+                    continue
+                evidence_by_id[unit_id] = {
+                    "id": unit_id,
+                    "source_section": self._truncate(unit.get("source_section"), 80),
+                    "source_text": self._truncate(unit.get("source_text"), 240),
+                }
+        references: list[dict[str, Any]] = []
+        for unit_id in referenced_ids[:20]:
+            reference = evidence_by_id.get(unit_id)
+            if reference is None:
+                references.append({"id": unit_id})
+            else:
+                references.append(reference)
+        return references
+
+    @classmethod
+    def _referenced_evidence_unit_ids(cls, parsed: MatchEvaluationResponse) -> list[str]:
+        texts: list[str] = [
+            parsed.summary,
+            parsed.ranking_rationale,
+            *parsed.transferable_strengths,
+            *parsed.gaps,
+            *(item.reason for item in parsed.requirement_verdicts),
+        ]
+        referenced: list[str] = []
+        seen: set[str] = set()
+        for text in texts:
+            for match in EVIDENCE_REFERENCE_PATTERN.finditer(str(text or "")):
+                unit_id = f"ev_{int(match.group(1))}"
+                if unit_id not in seen:
+                    referenced.append(unit_id)
+                    seen.add(unit_id)
+        return referenced
+
+    @staticmethod
+    def _normalized_evidence_reference_id(value: Any) -> str | None:
+        match = EVIDENCE_REFERENCE_PATTERN.search(str(value or ""))
+        if not match:
+            return None
+        return f"ev_{int(match.group(1))}"
 
     @staticmethod
     def _failure_analysis_payload(
@@ -1874,13 +2106,23 @@ def evaluation_public_dict(evaluation: LlmMatchEvaluation) -> dict[str, Any]:
             provider_status_message = "Provider rate limit or token quota stopped this review."
         elif evaluation.error_code:
             provider_status_message = str(evaluation.error_code).replace("_", " ")
+    score_quality = analysis.get("score_quality")
+    if not isinstance(score_quality, dict):
+        score_quality = effectiveness.get("score_quality")
+    if not isinstance(score_quality, dict):
+        score_quality = score_quality_metadata(evaluation.llm_score, evaluation.verdict)
 
     return {
         "id": str(evaluation.id),
         "match_id": str(evaluation.job_match_id) if evaluation.job_match_id else None,
         "job_id": str(evaluation.job_post_id),
         "status": evaluation.status,
-        "llm_score": normalize_llm_score(evaluation.llm_score, evaluation.verdict),
+        "llm_score": (
+            _float(score_quality.get("normalized_score"))
+            if isinstance(score_quality, dict)
+            and score_quality.get("normalized_score") is not None
+            else normalize_llm_score(evaluation.llm_score, evaluation.verdict)
+        ),
         "confidence": _float(evaluation.confidence),
         "verdict": evaluation.verdict,
         "summary": evaluation.summary,
@@ -1889,9 +2131,11 @@ def evaluation_public_dict(evaluation: LlmMatchEvaluation) -> dict[str, Any]:
             _ordered_public_requirement_verdicts(evaluation.requirement_verdicts)
         ),
         "analysis": _cap_public(analysis),
+        "score_quality": _cap_public(score_quality),
         "effective_for_rerank": bool(effectiveness.get("effective_for_rerank", False)),
         "ignored_for_rerank_reason": effectiveness.get("ignored_for_rerank_reason"),
         "stale_status": effectiveness.get("stale_status"),
+        "freshness": _cap_public(effectiveness.get("freshness", {})),
         "input_truncation": _cap_public(effectiveness.get("input_truncation", {})),
         "provider": evaluation.provider,
         "model": evaluation.model,

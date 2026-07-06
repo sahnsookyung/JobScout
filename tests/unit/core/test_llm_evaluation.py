@@ -15,6 +15,7 @@ from core.llm_evaluation import (
     MatchLlmEvaluationService,
     evaluation_public_dict,
     normalize_llm_score,
+    score_quality_metadata,
 )
 from core.llm.provider_chain import LLMProviderCandidate, LLMProviderChain
 from core.resume_evidence_selection import select_relevant_resume_evidence_units
@@ -1147,12 +1148,77 @@ def test_run_provider_normalizes_fractional_score_and_orders_requirement_verdict
     ] == ["req_1", "req_2", "req_3"]
 
 
+def test_run_provider_keeps_score_verdict_inconsistency_displayable_but_ignored():
+    db = Mock()
+    provider = Mock()
+    provider.extract_structured_data.return_value = {
+        "score": 0.009,
+        "confidence": 0.95,
+        "verdict": "strong",
+        "summary": "Strong alignment based on ev_1 and ev_15.",
+        "reason_codes": [],
+        "ranking_rationale": "Direct evidence in ev_1.",
+        "requirement_verdicts": [
+            {"requirement_id": "req_1", "verdict": "strong", "reason": "Covered by ev_1."},
+            {"requirement_id": "req_2", "verdict": "partial", "reason": "Related evidence in ev_15."},
+        ],
+        "transferable_strengths": ["Backend evidence from ev_1."],
+    }
+    service = MatchLlmEvaluationService(db, config=_config(), llm_provider=provider)
+    evaluation = _evaluation(status=LLM_EVALUATION_PENDING)
+
+    service._run_provider(
+        evaluation,
+        {
+            "safe": "payload",
+            "resume_evidence_units": [
+                {
+                    "unit_id": "ev_1",
+                    "source_section": "Experience",
+                    "source_text": "Built high-throughput payment services.",
+                }
+            ],
+        },
+    )
+    effectiveness = service.evaluation_effectiveness(
+        _match(),
+        evaluation,
+        owner_id="owner-1",
+    )
+    evaluation.llm_effectiveness = effectiveness
+    public = evaluation_public_dict(evaluation)
+
+    assert evaluation.status == LLM_EVALUATION_SUCCEEDED
+    assert evaluation.llm_score == 0.9
+    assert evaluation.analysis["score_quality"]["status"] == "inconsistent"
+    assert effectiveness["effective_for_rerank"] is False
+    assert effectiveness["ignored_for_rerank_reason"] == "score_verdict_inconsistent"
+    assert public["llm_score"] == 0.9
+    assert public["score_quality"]["reason"] == "score_verdict_inconsistent"
+    assert public["analysis"]["evidence_references"] == [
+        {
+            "id": "ev_1",
+            "source_section": "Experience",
+            "source_text": "Built high-throughput payment services.",
+        },
+        {"id": "ev_15"},
+    ]
+
+
 def test_normalize_llm_score_handles_percent_fraction_and_ten_point_scales():
     assert normalize_llm_score(87.345, "good") == 87.34
     assert normalize_llm_score(0.95, "strong") == 95.0
     assert normalize_llm_score(9.5, "strong") == 95.0
     assert normalize_llm_score(1.0, "mismatch") == 1.0
     assert normalize_llm_score(3.0, "mismatch") == 3.0
+
+
+def test_score_quality_allows_consistent_verdict_ranges():
+    assert score_quality_metadata(92, "strong")["status"] == "consistent"
+    assert score_quality_metadata(72, "good")["status"] == "consistent"
+    assert score_quality_metadata(58, "borderline")["status"] == "consistent"
+    assert score_quality_metadata(35, "weak")["status"] == "consistent"
+    assert score_quality_metadata(15, "mismatch")["status"] == "consistent"
 
 
 def test_run_provider_marks_unknown_failure_terminal_without_raw_payload():
@@ -1585,6 +1651,11 @@ def test_evaluation_effectiveness_covers_ignored_stale_and_current_metadata():
         stale_job,
         owner_id="owner-1",
     )["ignored_for_rerank_reason"] == "stale_job_content"
+    assert service.evaluation_effectiveness(
+        stale_match,
+        stale_job,
+        owner_id="owner-1",
+    )["freshness"]["status"] == "stale"
 
     service._load_job_for_match = Mock(return_value=SimpleNamespace(content_hash="content-hash"))
     service.build_judge_input = Mock(side_effect=RuntimeError("cannot rebuild"))
@@ -1629,9 +1700,8 @@ def test_evaluation_effectiveness_covers_ignored_stale_and_current_metadata():
         current,
         owner_id="owner-1",
     )
-    assert current_result == {
-        "effective_for_rerank": True,
-        "ignored_for_rerank_reason": None,
-        "stale_status": "current",
-        "input_truncation": {"truncated": False},
-    }
+    assert current_result["effective_for_rerank"] is True
+    assert current_result["ignored_for_rerank_reason"] is None
+    assert current_result["stale_status"] == "current"
+    assert current_result["input_truncation"] == {"truncated": False}
+    assert current_result["freshness"]["status"] == "current"

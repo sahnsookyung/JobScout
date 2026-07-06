@@ -35,6 +35,8 @@ export interface MatchSummary {
     llm_effective_for_rerank?: boolean;
     llm_ignored_for_rerank_reason?: string | null;
     llm_stale_status?: string | null;
+    llm_freshness?: Record<string, any>;
+    llm_score_quality?: Record<string, any>;
     llm_retryable?: boolean;
     llm_queued_reason?: string | null;
     llm_queue_state?: string | null;
@@ -75,6 +77,20 @@ export interface JobDetails {
     requires_degree: boolean | null;
     security_clearance: boolean | null;
     job_level: string | null;
+    status?: string | null;
+    source_site?: string | null;
+    source_url?: string | null;
+    source_url_direct?: string | null;
+    source_job_id?: string | null;
+    source_is_active?: boolean | null;
+    source_first_seen_at?: string | null;
+    source_last_seen_at?: string | null;
+    first_seen_at?: string | null;
+    last_seen_at?: string | null;
+    availability_status?: string | null;
+    availability_reason?: string | null;
+    availability_actions?: string[];
+    lifecycle_metadata?: Record<string, any>;
 }
 
 export interface MatchDetail {
@@ -97,6 +113,8 @@ export interface MatchDetail {
     llm_effective_for_rerank?: boolean;
     llm_ignored_for_rerank_reason?: string | null;
     llm_stale_status?: string | null;
+    llm_freshness?: Record<string, any>;
+    llm_score_quality?: Record<string, any>;
     llm_retryable?: boolean;
     llm_queued_reason?: string | null;
     llm_queue_state?: string | null;
@@ -146,11 +164,15 @@ export interface MatchLlmEvaluation {
         gaps?: string[];
         ranking_rationale?: string;
         input_truncation?: Record<string, any>;
+        evidence_references?: Array<Record<string, any>>;
+        score_quality?: Record<string, any>;
         [key: string]: any;
     };
+    score_quality?: Record<string, any>;
     effective_for_rerank?: boolean;
     ignored_for_rerank_reason?: string | null;
     stale_status?: string | null;
+    freshness?: Record<string, any>;
     input_truncation?: Record<string, any>;
     provider: string;
     model: string;
@@ -227,8 +249,17 @@ export interface JobInventoryItem {
     description_warning_code?: string | null;
     source_site?: string | null;
     source_url?: string | null;
+    source_url_direct?: string | null;
+    source_job_id?: string | null;
+    source_is_active?: boolean | null;
+    source_first_seen_at?: string | null;
+    source_last_seen_at?: string | null;
     first_seen_at?: string | null;
     last_seen_at?: string | null;
+    availability_status?: string | null;
+    availability_reason?: string | null;
+    availability_actions?: string[];
+    lifecycle_metadata?: Record<string, any>;
     extraction_attempts: number;
     extraction_last_error?: string | null;
     extraction_next_retry_at?: string | null;
@@ -255,6 +286,17 @@ export interface JobsResponse {
     limit: number;
     offset: number;
     jobs: JobInventoryItem[];
+}
+
+export interface JobAvailabilityMutationResponse {
+    success: boolean;
+    job_id: string;
+    status: string;
+    availability_status: string;
+    availability_reason: string;
+    message: string;
+    queued?: boolean;
+    sync_run_id?: string | null;
 }
 
 export interface ProcessingBlockerItem {
@@ -751,12 +793,15 @@ export interface PipelineStatusResponse {
     status:
         | 'pending'
         | 'running'
+        | 'observer_timeout'
         | 'cancellation_requested'
         | 'persisting'
         | 'completed'
         | 'failed'
         | 'cancelled';
     phase?: PipelinePhase | string | null;
+    observer_timeout?: boolean;
+    reconnect_after_seconds?: number | null;
     progress?: ProcessingProgress | null;
     stats?: PipelineStats;
     warnings?: ProcessingWarning[];

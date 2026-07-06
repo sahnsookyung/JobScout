@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Job inventory endpoints - inspect imported jobs and processing state."""
 
-from datetime import datetime
+import copy
+import uuid
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -11,7 +13,13 @@ from sqlalchemy.orm import Session, selectinload
 from database.models import JobPost, JobPostSource
 
 from ..dependencies import TenantContext, get_current_user, get_db, get_tenant_context
-from ..models.responses import JobInventoryItem, JobsResponse, ProcessingBlockerItem, ProcessingBlockersResponse
+from ..models.responses import (
+    JobAvailabilityMutationResponse,
+    JobInventoryItem,
+    JobsResponse,
+    ProcessingBlockerItem,
+    ProcessingBlockersResponse,
+)
 from ..services.processing_blocker_service import (
     VALID_BLOCKER_STAGES,
     aware_datetime,
@@ -41,6 +49,9 @@ _VALID_PROCESSING_STATUSES = {
 _RETRYABLE_OR_PENDING = {"pending", "queued", "in_progress", "processing", "failed_retryable"}
 _FAILED_STATUSES = {"failed_terminal", "failed", "failed_retryable"}
 _VALID_BLOCKER_VIEWS = {"compact", "detail"}
+_LIFECYCLE_METADATA_KEY = "jobscout_lifecycle"
+_COMPLIANT_REFRESH_SOURCE_SITES = {"greenhouse", "lever", "ashby"}
+_PROHIBITED_SCRAPER_SOURCE_SITES = {"tokyodev", "japandev", "jobspy", "workday"}
 
 
 def _request_tenant_id(request: Request):
@@ -57,7 +68,10 @@ def _truncate_error(value: str | None) -> str | None:
 
 
 def _primary_source(job: JobPost) -> JobPostSource | None:
-    sources = list(getattr(job, "sources", None) or [])
+    try:
+        sources = list(getattr(job, "sources", None) or [])
+    except TypeError:
+        sources = []
     if not sources:
         return None
     active_sources = [source for source in sources if getattr(source, "is_active", False)]
@@ -71,8 +85,45 @@ def _primary_source(job: JobPost) -> JobPostSource | None:
     )
 
 
+def _lifecycle_metadata(job: JobPost) -> dict:
+    payload = getattr(job, "raw_payload", None)
+    if not isinstance(payload, dict):
+        return {}
+    metadata = payload.get(_LIFECYCLE_METADATA_KEY)
+    return copy.deepcopy(metadata) if isinstance(metadata, dict) else {}
+
+
+def _availability_status(job: JobPost, source: JobPostSource | None) -> tuple[str, str]:
+    lifecycle = _lifecycle_metadata(job)
+    if getattr(job, "status", None) == "expired" and isinstance(lifecycle.get("manual_retirement"), dict):
+        return "manually_retired", "manual_retirement"
+    if source is not None and getattr(source, "is_active", None) is False:
+        return "source_inactive", "source_sync_absent"
+    if source is None:
+        return "unknown", "source_missing"
+    if getattr(job, "status", None) == "inactive":
+        return "inactive", "job_inactive"
+    return "active", "source_sync_active"
+
+
+def _availability_actions(job: JobPost, source: JobPostSource | None) -> list[str]:
+    actions: list[str] = []
+    if source is not None and (getattr(source, "job_url_direct", None) or getattr(source, "job_url", None)):
+        actions.append("open_posting")
+    site = str(getattr(source, "site", "") or "").lower()
+    if site in _COMPLIANT_REFRESH_SOURCE_SITES:
+        actions.append("refresh_availability")
+    elif site in _PROHIBITED_SCRAPER_SOURCE_SITES:
+        actions.append("refresh_unavailable_deployment_disabled")
+    elif source is not None:
+        actions.append("refresh_unavailable")
+    actions.append("restore" if getattr(job, "status", None) == "expired" else "retire")
+    return actions
+
+
 def _job_inventory_item(job: JobPost) -> JobInventoryItem:
     source = _primary_source(job)
+    availability_status, availability_reason = _availability_status(job, source)
     return JobInventoryItem(
         job_id=str(job.id),
         title=job.title,
@@ -89,8 +140,17 @@ def _job_inventory_item(job: JobPost) -> JobInventoryItem:
         description_warning_code=job.description_warning_code,
         source_site=getattr(source, "site", None),
         source_url=getattr(source, "job_url", None),
+        source_url_direct=getattr(source, "job_url_direct", None),
+        source_job_id=getattr(source, "source_job_id", None),
+        source_is_active=getattr(source, "is_active", None),
+        source_first_seen_at=_isoformat(getattr(source, "first_seen_at", None)),
+        source_last_seen_at=_isoformat(getattr(source, "last_seen_at", None)),
         first_seen_at=_isoformat(job.first_seen_at),
         last_seen_at=_isoformat(job.last_seen_at),
+        availability_status=availability_status,
+        availability_reason=availability_reason,
+        availability_actions=_availability_actions(job, source),
+        lifecycle_metadata=_lifecycle_metadata(job),
         extraction_attempts=int(job.extraction_attempts or 0),
         extraction_last_error=_truncate_error(job.extraction_last_error),
         extraction_next_retry_at=_isoformat(job.extraction_next_retry_at),
@@ -175,6 +235,73 @@ def list_job_inventory(
     )
     jobs = db.execute(stmt).scalars().all()
     return [_job_inventory_item(job) for job in jobs], total
+
+
+def _get_scoped_job(db: Session, job_id: str, *, tenant_id) -> JobPost:
+    try:
+        lookup_id = uuid.UUID(str(job_id))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid job_id format: {job_id}.") from exc
+
+    stmt = (
+        select(JobPost)
+        .options(selectinload(JobPost.sources))
+        .where(JobPost.id == lookup_id)
+    )
+    stmt = stmt.where(JobPost.tenant_id.is_(None) if tenant_id is None else JobPost.tenant_id == tenant_id)
+    job = db.execute(stmt).scalars().first()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return job
+
+
+def _mutation_response(
+    job: JobPost,
+    message: str,
+    *,
+    queued: bool = False,
+    sync_run_id: str | None = None,
+) -> JobAvailabilityMutationResponse:
+    source = _primary_source(job)
+    availability_status, availability_reason = _availability_status(job, source)
+    return JobAvailabilityMutationResponse(
+        success=True,
+        job_id=str(job.id),
+        status=str(job.status),
+        availability_status=availability_status,
+        availability_reason=availability_reason,
+        message=message,
+        queued=queued,
+        sync_run_id=sync_run_id,
+    )
+
+
+def _set_manual_retirement(job: JobPost, *, user_id: object) -> None:
+    payload = copy.deepcopy(job.raw_payload or {})
+    lifecycle = payload.get(_LIFECYCLE_METADATA_KEY)
+    if not isinstance(lifecycle, dict):
+        lifecycle = {}
+    lifecycle["manual_retirement"] = {
+        "retired_at": datetime.now(timezone.utc).isoformat(),
+        "retired_by": str(user_id) if user_id is not None else None,
+        "reason": "manual_retire",
+    }
+    payload[_LIFECYCLE_METADATA_KEY] = lifecycle
+    job.raw_payload = payload
+    job.status = "expired"
+
+
+def _clear_manual_retirement(job: JobPost) -> None:
+    payload = copy.deepcopy(job.raw_payload or {})
+    lifecycle = payload.get(_LIFECYCLE_METADATA_KEY)
+    if isinstance(lifecycle, dict):
+        lifecycle.pop("manual_retirement", None)
+        if lifecycle:
+            payload[_LIFECYCLE_METADATA_KEY] = lifecycle
+        else:
+            payload.pop(_LIFECYCLE_METADATA_KEY, None)
+    job.raw_payload = payload
+    job.status = "active"
 
 
 def _aware_datetime(value):
@@ -371,3 +498,79 @@ def get_jobs(
         offset=offset,
         jobs=jobs,
     )
+
+
+@router.post(
+    "/{job_id}/retire",
+    response_model=JobAvailabilityMutationResponse,
+    responses={
+        400: {"description": "Invalid job id or tenant header"},
+        404: {"description": "Job not found"},
+    },
+)
+def retire_job(
+    job_id: str,
+    db: DbSession,
+    user: Annotated[object, Depends(get_current_user)],
+    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> JobAvailabilityMutationResponse:
+    """Mark a job manually retired without changing source activity."""
+    job = _get_scoped_job(db, job_id, tenant_id=tenant_context.tenant_id)
+    _set_manual_retirement(job, user_id=getattr(user, "id", None))
+    db.commit()
+    db.refresh(job)
+    return _mutation_response(job, "Job retired. Source activity was left unchanged.")
+
+
+@router.post(
+    "/{job_id}/restore",
+    response_model=JobAvailabilityMutationResponse,
+    responses={
+        400: {"description": "Invalid job id or tenant header"},
+        404: {"description": "Job not found"},
+    },
+)
+def restore_job(
+    job_id: str,
+    db: DbSession,
+    _user: Annotated[object, Depends(get_current_user)],
+    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> JobAvailabilityMutationResponse:
+    """Clear manual retirement metadata and return a job to the active pool."""
+    job = _get_scoped_job(db, job_id, tenant_id=tenant_context.tenant_id)
+    _clear_manual_retirement(job)
+    db.commit()
+    db.refresh(job)
+    return _mutation_response(job, "Job restored to active.")
+
+
+@router.post(
+    "/{job_id}/refresh-availability",
+    response_model=JobAvailabilityMutationResponse,
+    responses={
+        400: {"description": "Invalid job id or tenant header"},
+        404: {"description": "Job not found"},
+    },
+)
+def refresh_job_availability(
+    job_id: str,
+    db: DbSession,
+    _user: Annotated[object, Depends(get_current_user)],
+    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> JobAvailabilityMutationResponse:
+    """Report whether this deployment can refresh availability through a compliant source sync."""
+    job = _get_scoped_job(db, job_id, tenant_id=tenant_context.tenant_id)
+    source = _primary_source(job)
+    source_site = str(getattr(source, "site", "") or "").lower()
+    if source_site in _PROHIBITED_SCRAPER_SOURCE_SITES:
+        return _mutation_response(
+            job,
+            "Availability refresh is disabled for this source in hosted deployments.",
+        )
+    if source_site in _COMPLIANT_REFRESH_SOURCE_SITES:
+        return _mutation_response(
+            job,
+            "Refresh must be run through the configured ATS source sync for this workspace.",
+            queued=False,
+        )
+    return _mutation_response(job, "Availability refresh is not available for this source.")

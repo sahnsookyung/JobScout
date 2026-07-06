@@ -44,6 +44,7 @@ const LIFECYCLE_FILTERS: Array<{ key: JobLifecycleStatus; label: string }> = [
     { key: 'all', label: 'All jobs' },
     { key: 'active', label: 'Active' },
     { key: 'inactive', label: 'Inactive' },
+    { key: 'expired', label: 'Expired' },
 ];
 
 const TERMINAL_PROCESS_STATUSES = new Set(['completed', 'failed', 'cancelled']);
@@ -127,6 +128,12 @@ function InventoryJobRow({ job }: Readonly<{ job: JobInventoryItem }>) {
                     {job.source_site ? (
                         <span className="caption text-[10px] text-ink-muted">{job.source_site}</span>
                     ) : null}
+                    {job.source_is_active === false ? (
+                        <span className="caption text-[10px] text-warn">source inactive</span>
+                    ) : null}
+                    {job.source_job_id ? (
+                        <span className="caption text-[10px] text-ink-muted">id {job.source_job_id}</span>
+                    ) : null}
                 </div>
                 <h4 className="mt-2 break-words text-[15px] font-medium leading-6 text-ink">{job.title}</h4>
                 <p className="mt-1 text-[13px] leading-5 text-ink-soft">
@@ -149,7 +156,11 @@ function InventoryJobRow({ job }: Readonly<{ job: JobInventoryItem }>) {
                 <dl className="grid gap-1 text-[12px] text-ink-muted md:text-right">
                     <div>
                         <dt className="caption text-[10px]">Last seen</dt>
-                        <dd className="text-ink-soft">{formatDateTime(job.last_seen_at)}</dd>
+                        <dd className="text-ink-soft">{formatDateTime(job.source_last_seen_at ?? job.last_seen_at)}</dd>
+                    </div>
+                    <div>
+                        <dt className="caption text-[10px]">Availability</dt>
+                        <dd className="text-ink-soft">{job.availability_status ?? 'unknown'}</dd>
                     </div>
                     <div>
                         <dt className="caption text-[10px]">Description</dt>
@@ -415,6 +426,7 @@ function LlmQueueHealth({
     const retryableFailed = status?.db_retryable_failed ?? 0;
     const pending = status?.db_pending ?? 0;
     const paused = Boolean(status?.paused);
+    const oldestPendingAge = status?.oldest_pending_age_seconds ?? status?.oldest_retryable_failed_age_seconds ?? null;
     const providers = providerStatus?.providers ?? [];
     const canaryByProvider = new Map(
         (canaryResult?.results ?? []).map((result) => [`${result.name}:${result.model}`, result]),
@@ -453,6 +465,12 @@ function LlmQueueHealth({
                         <dt>Failed</dt>
                         <dd className={`num ${failed > 0 ? 'text-warn' : 'text-ink'}`}>{failed}</dd>
                     </div>
+                    {oldestPendingAge != null ? (
+                        <div className="flex gap-1">
+                            <dt>Oldest</dt>
+                            <dd className="num text-ink">{formatDuration(oldestPendingAge)}</dd>
+                        </div>
+                    ) : null}
                 </dl>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">

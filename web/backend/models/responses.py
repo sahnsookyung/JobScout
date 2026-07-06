@@ -38,9 +38,11 @@ class MatchLlmEvaluationSummary(BaseModel):
     reason_codes: List[str] = Field(default_factory=list)
     requirement_verdicts: List[Dict[str, Any]] = Field(default_factory=list)
     analysis: Dict[str, Any] = Field(default_factory=dict)
+    score_quality: Dict[str, Any] = Field(default_factory=dict)
     effective_for_rerank: bool = False
     ignored_for_rerank_reason: Optional[str] = None
     stale_status: Optional[str] = None
+    freshness: Dict[str, Any] = Field(default_factory=dict)
     input_truncation: Dict[str, Any] = Field(default_factory=dict)
     provider: str
     model: str
@@ -141,6 +143,8 @@ class MatchSummary(BaseModel):
     llm_effective_for_rerank: bool = False
     llm_ignored_for_rerank_reason: Optional[str] = None
     llm_stale_status: Optional[str] = None
+    llm_freshness: Dict[str, Any] = Field(default_factory=dict)
+    llm_score_quality: Dict[str, Any] = Field(default_factory=dict)
     llm_retryable: bool = False
     llm_queued_reason: Optional[str] = None
     llm_queue_state: Optional[str] = None
@@ -167,6 +171,7 @@ class RequirementDetail(BaseModel):
 
 class JobDetails(BaseModel):
     """Details of a job posting."""
+
     job_id: Optional[str] = None
     title: Optional[str] = None
     company: Optional[str] = None
@@ -183,6 +188,20 @@ class JobDetails(BaseModel):
     requires_degree: Optional[bool] = None
     security_clearance: Optional[bool] = None
     job_level: Optional[str] = None
+    status: Optional[str] = None
+    source_site: Optional[str] = None
+    source_url: Optional[str] = None
+    source_url_direct: Optional[str] = None
+    source_job_id: Optional[str] = None
+    source_is_active: Optional[bool] = None
+    source_first_seen_at: Optional[str] = None
+    source_last_seen_at: Optional[str] = None
+    first_seen_at: Optional[str] = None
+    last_seen_at: Optional[str] = None
+    availability_status: Optional[str] = None
+    availability_reason: Optional[str] = None
+    availability_actions: List[str] = Field(default_factory=list)
+    lifecycle_metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MatchDetail(BaseModel):
@@ -209,6 +228,8 @@ class MatchDetail(BaseModel):
     llm_effective_for_rerank: bool = False
     llm_ignored_for_rerank_reason: Optional[str] = None
     llm_stale_status: Optional[str] = None
+    llm_freshness: Dict[str, Any] = Field(default_factory=dict)
+    llm_score_quality: Dict[str, Any] = Field(default_factory=dict)
     llm_retryable: bool = False
     llm_queued_reason: Optional[str] = None
     llm_queue_state: Optional[str] = None
@@ -288,8 +309,17 @@ class JobInventoryItem(BaseModel):
     description_warning_code: Optional[str] = None
     source_site: Optional[str] = None
     source_url: Optional[str] = None
+    source_url_direct: Optional[str] = None
+    source_job_id: Optional[str] = None
+    source_is_active: Optional[bool] = None
+    source_first_seen_at: Optional[str] = None
+    source_last_seen_at: Optional[str] = None
     first_seen_at: Optional[str] = None
     last_seen_at: Optional[str] = None
+    availability_status: Optional[str] = None
+    availability_reason: Optional[str] = None
+    availability_actions: List[str] = Field(default_factory=list)
+    lifecycle_metadata: Dict[str, Any] = Field(default_factory=dict)
     extraction_attempts: int = 0
     extraction_last_error: Optional[str] = None
     extraction_next_retry_at: Optional[str] = None
@@ -307,6 +337,19 @@ class JobsResponse(BaseModel):
     limit: int
     offset: int
     jobs: List[JobInventoryItem] = Field(default_factory=list)
+
+
+class JobAvailabilityMutationResponse(BaseModel):
+    """Response after a local job lifecycle or availability action."""
+
+    success: bool
+    job_id: str
+    status: str
+    availability_status: str
+    availability_reason: str
+    message: str
+    queued: bool = False
+    sync_run_id: Optional[str] = None
 
 
 class ProcessingBlockerItem(BaseModel):
@@ -597,8 +640,10 @@ class PipelineTaskResponse(BaseModel):
 class PipelineStatusResponse(BaseModel):
     """Response containing pipeline task status."""
     task_id: str
-    status: str  # "pending", "running", "completed", "failed", "cancelled"
+    status: str  # "pending", "running", "observer_timeout", "completed", "failed", "cancelled"
     phase: Optional[str] = None
+    observer_timeout: bool = False
+    reconnect_after_seconds: Optional[int] = None
     progress: Optional[ProcessingProgress] = None
     stats: Dict[str, Any] = Field(default_factory=dict)
     warnings: List[ProcessingWarning] = Field(default_factory=list)

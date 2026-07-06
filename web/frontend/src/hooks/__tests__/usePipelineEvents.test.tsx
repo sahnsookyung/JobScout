@@ -167,6 +167,31 @@ describe('usePipelineEvents', () => {
                 expect(result.current.connectionState).toBe('disconnected');
             }
         );
+
+        it('should reconnect after observer timeout without treating the pipeline as failed', async () => {
+            const { result } = renderConnectedHook('test-123');
+            await waitForConnection();
+
+            await act(async () => {
+                getLastEventSource().simulateOpen();
+                getLastEventSource().simulateMessage({
+                    task_id: 'test-123',
+                    status: 'observer_timeout',
+                    observer_timeout: true,
+                    reconnect_after_seconds: 2,
+                } as PipelineStatusResponse);
+            });
+
+            expect(result.current.connectionState).toBe('reconnecting');
+            expect(result.current.error).toContain('Observer timed out');
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(2000);
+            });
+
+            expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(2);
+            expect(result.current.status?.status).toBe('observer_timeout');
+        });
     });
 
     describe('error handling', () => {

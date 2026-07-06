@@ -261,6 +261,24 @@ class TestStreamLocalTaskSse:
         assert first["step"] == "vector_matching"
         assert last["status"] == "completed"
 
+    def test_observer_timeout_is_non_terminal_reconnect_hint(self):
+        from web.backend.routers.pipeline import _stream_local_task_sse
+
+        async def run():
+            chunks = []
+            with patch("web.backend.routers.pipeline.get_task_state", return_value={"status": "running", "step": "matching"}), \
+                 patch("asyncio.sleep", new_callable=AsyncMock):
+                async for chunk in _stream_local_task_sse("task-running"):
+                    chunks.append(chunk)
+            return chunks
+
+        chunks = asyncio.run(run())
+        data = json.loads(chunks[-1].removeprefix("data: ").strip())
+        assert data["status"] == "observer_timeout"
+        assert data["observer_timeout"] is True
+        assert data["reconnect_after_seconds"] > 0
+        assert data["error"] is None
+
     def test_get_task_state_exception_treated_as_not_found(self):
         from web.backend.routers.pipeline import _stream_local_task_sse
 

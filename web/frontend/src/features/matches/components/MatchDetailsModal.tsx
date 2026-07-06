@@ -1,9 +1,13 @@
 import React from 'react';
-import { MapPin, Building2, Laptop } from 'lucide-react';
+import { Archive, ExternalLink, MapPin, Building2, Laptop, RefreshCw, RotateCcw } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ModalShell } from '@/components/ui/ModalShell';
 import { useMatchDetails } from '@/hooks/useMatchDetails';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { toast } from '@/components/ui/Toast';
 import { formatScore, formatSalary } from '@/utils/formatters';
+import { jobsApi } from '@/services/jobsApi';
 import { ResumeVariantPanel } from './ResumeVariantPanel';
 import { LlmEvaluationPanel } from './LlmEvaluationPanel';
 
@@ -154,6 +158,249 @@ function JobInfoSection({ job }: Readonly<{ job: any }>) {
                     </div>
                 )}
             </dl>
+        </section>
+    );
+}
+
+function formatDateTime(value?: string | null): string {
+    if (!value) return 'Not recorded';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Not recorded';
+    return new Intl.DateTimeFormat(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+    }).format(date);
+}
+
+function formatRelativeAge(value?: string | null): string {
+    if (!value) return 'age unknown';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'age unknown';
+    const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+    if (seconds < 60) return 'just now';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 48) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 60) return `${days}d ago`;
+    const months = Math.floor(days / 30);
+    return `${months}mo ago`;
+}
+
+function OriginalPostingSection({ job, matchId }: Readonly<{ job: any; matchId: string }>) {
+    const queryClient = useQueryClient();
+    const [availabilityResult, setAvailabilityResult] = React.useState<any>(null);
+    const jobId = typeof job.job_id === 'string' ? job.job_id : null;
+    const actions = new Set(Array.isArray(job.availability_actions) ? job.availability_actions : []);
+    const postingUrl = job.source_url_direct || job.source_url || null;
+    const lastSeenAt = job.source_last_seen_at ?? job.last_seen_at;
+    const sourceActive = job.source_is_active;
+    const availability = metadataLabel(job.availability_status);
+    const sourceLabel = job.source_site ? metadataLabel(job.source_site) : 'unknown source';
+    const refreshDisabledByPolicy = actions.has('refresh_unavailable_deployment_disabled');
+    const refreshUnavailable = actions.has('refresh_unavailable')
+        || availabilityResult?.availability_reason === 'refresh_unavailable';
+    const refreshMessage = typeof availabilityResult?.message === 'string'
+        ? availabilityResult.message
+        : null;
+
+    const invalidate = () => {
+        void queryClient.invalidateQueries({ queryKey: ['match', matchId] });
+        void queryClient.invalidateQueries({ queryKey: ['matches'] });
+        void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        void queryClient.invalidateQueries({ queryKey: ['stats'] });
+    };
+
+    const refreshMutation = useMutation({
+        mutationFn: async () => {
+            if (!jobId) throw new Error('Missing job id.');
+            const response = await jobsApi.refreshJobAvailability(jobId);
+            return response.data;
+        },
+        onMutate: () => {
+            setAvailabilityResult({
+                availability_status: 'checking',
+                message: 'Checking posting availability.',
+            });
+        },
+        onSuccess: (response) => {
+            setAvailabilityResult(response);
+            invalidate();
+            toast.success(response.message);
+        },
+        onError: (error: any) => {
+            setAvailabilityResult({
+                availability_status: 'failed',
+                availability_reason: error?.status === 409 ? 'conflict' : 'refresh_failed',
+                message: error?.message ?? 'Could not refresh availability.',
+            });
+            toast.error(error?.message ?? 'Could not refresh availability.');
+        },
+    });
+
+    const retireMutation = useMutation({
+        mutationFn: async () => {
+            if (!jobId) throw new Error('Missing job id.');
+            const response = await jobsApi.retireJob(jobId);
+            return response.data;
+        },
+        onSuccess: (response) => {
+            invalidate();
+            toast.success(response.message);
+        },
+        onError: (error: any) => {
+            toast.error(error?.message ?? 'Could not retire job.');
+        },
+    });
+
+    const restoreMutation = useMutation({
+        mutationFn: async () => {
+            if (!jobId) throw new Error('Missing job id.');
+            const response = await jobsApi.restoreJob(jobId);
+            return response.data;
+        },
+        onSuccess: (response) => {
+            invalidate();
+            toast.success(response.message);
+        },
+        onError: (error: any) => {
+            toast.error(error?.message ?? 'Could not restore job.');
+        },
+    });
+
+    const onRetire = () => {
+        if (window.confirm('Retire this job from active matching?')) {
+            retireMutation.mutate();
+        }
+    };
+
+    const openSourceManagement = () => {
+        window.dispatchEvent(new CustomEvent('jobscout:open-job-management', {
+            detail: {
+                provider: job.source_site ?? null,
+                source_url: postingUrl,
+            },
+        }));
+    };
+
+    return (
+        <section>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <p className="caption">Original posting</p>
+                    <h4 className="mt-1 text-[18px] font-medium text-ink">Source and availability</h4>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    {postingUrl ? (
+                        <a
+                            href={postingUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-rule bg-surface px-3 text-[13px] font-medium text-ink transition-colors hover:border-accent hover:text-accent"
+                        >
+                            <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                            Open
+                        </a>
+                    ) : null}
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => refreshMutation.mutate()}
+                        disabled={!jobId || refreshMutation.isPending || !actions.has('refresh_availability')}
+                        title={
+                            actions.has('refresh_availability')
+                                ? 'Check this posting through source sync'
+                                : refreshDisabledByPolicy
+                                    ? 'Refresh is disabled for this source in this deployment'
+                                    : 'Refresh is unavailable for this source'
+                        }
+                        isLoading={refreshMutation.isPending}
+                    >
+                        <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                        Refresh
+                    </Button>
+                    {actions.has('restore') ? (
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => restoreMutation.mutate()}
+                            disabled={!jobId || restoreMutation.isPending}
+                            isLoading={restoreMutation.isPending}
+                        >
+                            <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                            Restore
+                        </Button>
+                    ) : (
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={onRetire}
+                            disabled={!jobId || retireMutation.isPending}
+                            isLoading={retireMutation.isPending}
+                        >
+                            <Archive className="h-4 w-4" aria-hidden="true" />
+                            Retire
+                        </Button>
+                    )}
+                </div>
+            </div>
+
+            <dl className="mt-4 grid gap-px overflow-hidden border border-rule bg-rule md:grid-cols-4">
+                <div className="bg-surface px-4 py-3">
+                    <dt className="caption">Source</dt>
+                    <dd className="mt-1 text-[14px] text-ink">{sourceLabel}</dd>
+                </div>
+                <div className="bg-surface px-4 py-3">
+                    <dt className="caption">Source job ID</dt>
+                    <dd className="mt-1 break-words text-[14px] text-ink">{job.source_job_id ?? 'Not recorded'}</dd>
+                </div>
+                <div className="bg-surface px-4 py-3">
+                    <dt className="caption">Availability</dt>
+                    <dd className="mt-1 flex flex-wrap items-center gap-2 text-[14px] text-ink">
+                        <Badge variant={availability === 'active' ? 'success' : availability === 'manually retired' ? 'warning' : 'default'}>
+                            {availability}
+                        </Badge>
+                        {sourceActive === false ? <span className="text-warn">source inactive</span> : null}
+                    </dd>
+                </div>
+                <div className="bg-surface px-4 py-3">
+                    <dt className="caption">Last seen</dt>
+                    <dd className="mt-1 text-[14px] text-ink">{formatDateTime(lastSeenAt)}</dd>
+                    <dd className="mt-1 text-[12px] text-ink-muted">{formatRelativeAge(lastSeenAt)}</dd>
+                </div>
+            </dl>
+
+            <p className="mt-3 text-[12px] leading-5 text-ink-muted">
+                First seen {formatDateTime(job.source_first_seen_at ?? job.first_seen_at)} · {metadataLabel(job.availability_reason)}
+            </p>
+
+            {(refreshMessage || refreshDisabledByPolicy || refreshUnavailable) && (
+                <div className="mt-3 border-l-2 border-warn/60 pl-3 text-[13px] leading-relaxed text-ink-soft">
+                    {refreshMessage ? <p>{refreshMessage}</p> : null}
+                    {refreshDisabledByPolicy ? (
+                        <p>Availability refresh is disabled for this source in this deployment.</p>
+                    ) : null}
+                    {refreshUnavailable ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <span>ATS source mapping is not configured.</span>
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                onClick={openSourceManagement}
+                            >
+                                Configure ATS source
+                            </Button>
+                        </div>
+                    ) : null}
+                </div>
+            )}
         </section>
     );
 }
@@ -425,7 +672,7 @@ function JobDescriptionSection({ job }: Readonly<{ job: any }>) {
         <section>
             <p className="caption">Description</p>
             <div className="mt-1 flex flex-wrap items-center gap-2">
-                <h4 className="text-[18px] font-medium text-ink">The original posting</h4>
+                <h4 className="text-[18px] font-medium text-ink">Posting text</h4>
                 <Badge variant={completeness === 'full' ? 'success' : completeness === 'partial' ? 'warning' : 'default'}>
                     {metadataLabel(completeness)}
                 </Badge>
@@ -454,6 +701,7 @@ function ModalBody({ isLoading, data, matchId }: Readonly<{ isLoading: boolean; 
     return (
         <div className="space-y-10">
             <JobInfoSection job={data.job} />
+            <OriginalPostingSection job={data.job} matchId={matchId} />
             <ScoresSection match={data.match} />
             <LlmEvaluationPanel
                 matchId={matchId}

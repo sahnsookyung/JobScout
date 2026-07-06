@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AuthGate } from '@/features/auth/AuthGate';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MatchList } from '@/features/matches/components/MatchList';
@@ -35,6 +35,15 @@ function workspaceTabClass(isActive: boolean): string {
 function AppContent() {
     const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<WorkspaceTab>('jobs');
+
+    useEffect(() => {
+        const openManagement = () => {
+            setSelectedMatchId(null);
+            setActiveTab('management');
+        };
+        window.addEventListener('jobscout:open-job-management', openManagement);
+        return () => window.removeEventListener('jobscout:open-job-management', openManagement);
+    }, []);
 
     return (
         <div className="min-h-screen bg-canvas text-ink">

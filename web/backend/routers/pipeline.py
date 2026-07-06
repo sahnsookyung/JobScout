@@ -1136,6 +1136,8 @@ def _build_pipeline_status_response(task_id: str, state: dict) -> PipelineStatus
         task_id=task_id,
         status=status,
         phase=phase,
+        observer_timeout=bool(state.get("observer_timeout")),
+        reconnect_after_seconds=state.get("reconnect_after_seconds"),
         progress=_progress_for_phase(
             phase,
             status=status,
@@ -2337,6 +2339,7 @@ async def _stream_local_task_sse(task_id: str):
     """Poll Redis task state and emit SSE events for a running task."""
     timeout = 600.0
     poll_interval = 1.5
+    reconnect_after_seconds = 5
     elapsed = 0.0
 
     while elapsed < timeout:
@@ -2361,7 +2364,14 @@ async def _stream_local_task_sse(task_id: str):
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
 
-    yield f"data: {json.dumps({'status': 'failed', 'error': 'Timeout waiting for pipeline'})}\n\n"
+    observer_timeout_payload = {
+        "task_id": task_id,
+        "status": "observer_timeout",
+        "observer_timeout": True,
+        "reconnect_after_seconds": reconnect_after_seconds,
+        "error": None,
+    }
+    yield f"data: {json.dumps(observer_timeout_payload)}\n\n"
 
 
 @router.get(

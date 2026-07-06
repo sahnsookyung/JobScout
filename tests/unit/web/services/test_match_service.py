@@ -1793,3 +1793,26 @@ class TestCoverageFocusedHelpers:
         )
         details = real_service._to_job_details(job)
         assert details.description_completeness == "missing"
+
+        source = SimpleNamespace(
+            site="greenhouse",
+            job_url="https://boards.greenhouse.io/example/jobs/1",
+            job_url_direct="https://example.com/direct/1",
+            source_job_id="gh-1",
+            is_active=True,
+            first_seen_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            last_seen_at=datetime(2026, 6, 18, tzinfo=timezone.utc),
+        )
+        job.sources = [source]
+        job.raw_payload = {}
+        job.status = "active"
+        job.first_seen_at = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        job.last_seen_at = datetime(2026, 6, 18, tzinfo=timezone.utc)
+
+        details = real_service._to_job_details(job)
+
+        assert details.source_site == "greenhouse"
+        assert details.source_job_id == "gh-1"
+        assert details.source_is_active is True
+        assert details.availability_status == "active"
+        assert "refresh_availability" in details.availability_actions

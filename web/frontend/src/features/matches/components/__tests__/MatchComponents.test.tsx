@@ -7,17 +7,20 @@ import { MatchDetailsModal } from '../MatchDetailsModal';
 import { MatchFilters } from '../MatchFilters';
 import { MatchList } from '../MatchList';
 import { matchesApi } from '@/services/matchesApi';
+import { jobsApi } from '@/services/jobsApi';
 import { toast } from '@/components/ui/Toast';
 
 vi.mock('lucide-react', () => ({
     MapPin: ({ className }: any) => <svg data-testid="map-pin" className={className} />,
     Building2: ({ className }: any) => <svg data-testid="building2" className={className} />,
     Laptop: ({ className }: any) => <svg data-testid="laptop" className={className} />,
+    ExternalLink: ({ className }: any) => <svg data-testid="external-link" className={className} />,
     Wifi: ({ className }: any) => <svg data-testid="wifi" className={className} />,
     Eye: ({ className }: any) => <svg data-testid="eye" className={className} />,
     EyeOff: ({ className }: any) => <svg data-testid="eye-off" className={className} />,
     Sparkles: ({ className }: any) => <svg data-testid="sparkles-icon" className={className} />,
     X: ({ className }: any) => <svg data-testid="x-icon" className={className} />,
+    Archive: ({ className }: any) => <svg data-testid="archive-icon" className={className} />,
     Download: ({ className }: any) => <svg data-testid="download-icon" className={className} />,
     RefreshCw: ({ className }: any) => <svg data-testid="refresh-icon" className={className} />,
     RotateCcw: ({ className }: any) => <svg data-testid="rotate-icon" className={className} />,
@@ -68,6 +71,14 @@ vi.mock('@/services/matchesApi', () => ({
         generateLlmEvaluation: vi.fn(),
         deleteLlmEvaluation: vi.fn(),
         retryLlmEvaluation: vi.fn(),
+    },
+}));
+
+vi.mock('@/services/jobsApi', () => ({
+    jobsApi: {
+        refreshJobAvailability: vi.fn(),
+        retireJob: vi.fn(),
+        restoreJob: vi.fn(),
     },
 }));
 
@@ -658,6 +669,36 @@ describe('MatchDetailsModal', () => {
                 },
             },
         } as never);
+        vi.mocked(jobsApi.refreshJobAvailability).mockResolvedValue({
+            data: {
+                success: true,
+                job_id: 'job-1',
+                status: 'active',
+                availability_status: 'active',
+                availability_reason: 'source_sync_active',
+                message: 'Refresh must be run through the configured ATS source sync for this workspace.',
+            },
+        } as never);
+        vi.mocked(jobsApi.retireJob).mockResolvedValue({
+            data: {
+                success: true,
+                job_id: 'job-1',
+                status: 'expired',
+                availability_status: 'manually_retired',
+                availability_reason: 'manual_retirement',
+                message: 'Job retired. Source activity was left unchanged.',
+            },
+        } as never);
+        vi.mocked(jobsApi.restoreJob).mockResolvedValue({
+            data: {
+                success: true,
+                job_id: 'job-1',
+                status: 'active',
+                availability_status: 'active',
+                availability_reason: 'source_sync_active',
+                message: 'Job restored to active.',
+            },
+        } as never);
     });
 
     it('renders nothing when matchId is null', () => {
@@ -719,6 +760,45 @@ describe('MatchDetailsModal', () => {
         expect(screen.getByText('Staff Engineer')).toBeInTheDocument();
         expect(screen.getByText('Acme')).toBeInTheDocument();
         expect(screen.getByText('Remote')).toBeInTheDocument();
+    });
+
+    it('renders original posting source metadata and refresh action', async () => {
+        mockUseMatchDetails.mockReturnValue({
+            data: makeModalData({
+                job: {
+                    job_id: 'job-1',
+                    source_site: 'greenhouse',
+                    source_url: 'https://boards.greenhouse.io/acme/jobs/1',
+                    source_job_id: 'gh-1',
+                    source_is_active: true,
+                    source_first_seen_at: '2026-06-01T00:00:00Z',
+                    source_last_seen_at: '2026-06-18T00:00:00Z',
+                    availability_status: 'active',
+                    availability_reason: 'source_sync_active',
+                    availability_actions: ['open_posting', 'refresh_availability', 'retire'],
+                },
+            }),
+            isLoading: false,
+        });
+
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        expect(screen.getByText('Source and availability')).toBeInTheDocument();
+        expect(screen.getByText('greenhouse')).toBeInTheDocument();
+        expect(screen.getByText('gh-1')).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: /open/i })).toHaveAttribute(
+            'href',
+            'https://boards.greenhouse.io/acme/jobs/1',
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: /^refresh$/i }));
+
+        await waitFor(() => {
+            expect(jobsApi.refreshJobAvailability).toHaveBeenCalledWith('job-1');
+        });
+        expect(toast.success).toHaveBeenCalledWith(
+            'Refresh must be run through the configured ATS source sync for this workspace.',
+        );
     });
 
     it('renders LLM evaluation controls and supports delete', async () => {

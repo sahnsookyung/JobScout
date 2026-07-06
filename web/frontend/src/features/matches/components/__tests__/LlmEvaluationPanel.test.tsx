@@ -173,4 +173,130 @@ describe('LlmEvaluationPanel', () => {
         });
         expect(toast.success).toHaveBeenCalledWith('Queued LLM evaluation retry');
     });
+
+    it('shows stale successful analysis with ordered evidence fallback strengths', async () => {
+        vi.mocked(matchesApi.getLlmEvaluations).mockResolvedValue({
+            data: {
+                success: true,
+                count: 1,
+                evaluations: [
+                    {
+                        id: 'eval-stale',
+                        match_id: 'match-1',
+                        job_id: 'job-1',
+                        status: 'succeeded',
+                        llm_score: 91,
+                        confidence: 0.95,
+                        verdict: 'strong',
+                        summary: 'Historical review still useful for reading.',
+                        reason_codes: [],
+                        requirement_verdicts: [
+                            { requirement_id: 'req_3', verdict: 'partial', reason: 'Partial third.' },
+                            { requirement_id: 'req_2', verdict: 'strong', reason: 'Strong second.' },
+                            { requirement_id: 'req_1', verdict: 'strong', reason: 'Strong first.' },
+                        ],
+                        analysis: {
+                            ranking_rationale: 'Good fit.',
+                            gaps: ['Missing travel API depth.'],
+                        },
+                        effective_for_rerank: false,
+                        ignored_for_rerank_reason: 'stale_job_content',
+                        stale_status: 'stale',
+                        freshness: {
+                            status: 'stale',
+                            reason: 'stale_job_content',
+                            available_actions: ['regenerate_llm_evaluation'],
+                        },
+                        provider: 'nvidia',
+                        model: 'judge-model',
+                        prompt_version: 'match-judge-v1',
+                        schema_version: '1',
+                        retryable: false,
+                    },
+                ],
+            },
+        } as never);
+
+        renderPanel();
+
+        expect(await screen.findByText('Historical review still useful for reading.')).toBeInTheDocument();
+        expect(screen.getByText('Evidence-based strengths')).toBeInTheDocument();
+        const first = screen.getByText('req_1: Strong first.');
+        const second = screen.getByText('req_2: Strong second.');
+        const third = screen.getByText('req_3: Partial third.');
+        expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(second.compareDocumentPosition(third) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        const firstVerdict = screen.getByText('req_1');
+        const secondVerdict = screen.getByText('req_2');
+        const thirdVerdict = screen.getByText('req_3');
+        expect(firstVerdict.compareDocumentPosition(secondVerdict) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(secondVerdict.compareDocumentPosition(thirdVerdict) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(screen.getByText(/Historical review shown\. Regenerate before ordering because stale job content\./i))
+            .toBeInTheDocument();
+    });
+
+    it('warns when a succeeded score conflicts with the model verdict and renders evidence chips', async () => {
+        vi.mocked(matchesApi.getLlmEvaluations).mockResolvedValue({
+            data: {
+                success: true,
+                count: 1,
+                evaluations: [
+                    {
+                        id: 'eval-inconsistent',
+                        match_id: 'match-1',
+                        job_id: 'job-1',
+                        status: 'succeeded',
+                        llm_score: 0.9,
+                        confidence: 0.95,
+                        verdict: 'strong',
+                        summary: 'Model text cites ev_1 and ev_15.',
+                        reason_codes: [],
+                        requirement_verdicts: [],
+                        analysis: {
+                            ranking_rationale: 'Strong evidence but bad score scale.',
+                            evidence_references: [
+                                {
+                                    id: 'ev_1',
+                                    source_section: 'Experience',
+                                    source_text: 'Built high-throughput payment services.',
+                                },
+                                { id: 'ev_15' },
+                            ],
+                            score_quality: {
+                                status: 'inconsistent',
+                                reason: 'score_verdict_inconsistent',
+                                normalized_score: 0.9,
+                                verdict: 'strong',
+                                expected_range: { min: 80, max: 100 },
+                            },
+                        },
+                        score_quality: {
+                            status: 'inconsistent',
+                            reason: 'score_verdict_inconsistent',
+                            normalized_score: 0.9,
+                            verdict: 'strong',
+                            expected_range: { min: 80, max: 100 },
+                        },
+                        effective_for_rerank: false,
+                        ignored_for_rerank_reason: 'score_verdict_inconsistent',
+                        stale_status: 'ignored',
+                        provider: 'nvidia',
+                        model: 'judge-model',
+                        prompt_version: 'match-judge-v1',
+                        schema_version: '1',
+                        retryable: false,
+                    },
+                ],
+            },
+        } as never);
+
+        renderPanel();
+
+        expect(await screen.findByText(/Score ignored for ranking: 1% conflicts with strong; expected 80-100%\./i))
+            .toBeInTheDocument();
+        expect(screen.getByText('Resume evidence references')).toBeInTheDocument();
+        expect(screen.getByText('ev_1')).toBeInTheDocument();
+        expect(screen.getByText('Built high-throughput payment services.')).toBeInTheDocument();
+        expect(screen.getByText('ev_15')).toBeInTheDocument();
+    });
 });

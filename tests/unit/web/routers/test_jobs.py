@@ -19,7 +19,9 @@ from web.backend.routers.jobs import (
     _primary_source,
     _processing_blocker_item,
     _request_tenant_id,
+    _set_manual_retirement,
     _tenant_filter,
+    _clear_manual_retirement,
     list_job_inventory,
     router,
 )
@@ -225,7 +227,10 @@ def test_job_inventory_item_serializes_source_and_limited_errors():
     source = SimpleNamespace(
         site="greenhouse",
         job_url="https://boards.greenhouse.io/example/jobs/1",
+        job_url_direct="https://example.com/direct/1",
+        source_job_id="gh-1",
         is_active=True,
+        first_seen_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
         last_seen_at=datetime(2026, 6, 18, tzinfo=timezone.utc),
     )
     job = SimpleNamespace(
@@ -242,6 +247,7 @@ def test_job_inventory_item_serializes_source_and_limited_errors():
         description_completeness="partial",
         description_source="seed",
         description_warning_code="truncated_by_ingest_cap",
+        raw_payload={},
         sources=[source],
         first_seen_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
         last_seen_at=datetime(2026, 6, 18, tzinfo=timezone.utc),
@@ -258,6 +264,11 @@ def test_job_inventory_item_serializes_source_and_limited_errors():
     assert item.job_id == str(job_id)
     assert item.source_site == "greenhouse"
     assert item.source_url == "https://boards.greenhouse.io/example/jobs/1"
+    assert item.source_url_direct == "https://example.com/direct/1"
+    assert item.source_job_id == "gh-1"
+    assert item.source_is_active is True
+    assert item.availability_status == "active"
+    assert "refresh_availability" in item.availability_actions
     assert item.description_warning_code == "truncated_by_ingest_cap"
     assert item.extraction_last_error is not None
     assert len(item.extraction_last_error) == 240
@@ -271,6 +282,30 @@ def test_primary_source_prefers_active_then_most_recent_source():
     assert _primary_source(SimpleNamespace(sources=[])) is None
     assert _primary_source(SimpleNamespace(sources=[inactive_newest, older, newer])) is newer
     assert _primary_source(SimpleNamespace(sources=[inactive_newest])).site == "inactive"
+
+
+def test_manual_retire_and_restore_preserve_source_activity():
+    source = SimpleNamespace(is_active=True)
+    job = SimpleNamespace(
+        status="active",
+        raw_payload={"source_metadata": {"provider": "greenhouse"}},
+        sources=[source],
+    )
+
+    _set_manual_retirement(job, user_id="user-1")
+
+    assert job.status == "expired"
+    assert source.is_active is True
+    lifecycle = job.raw_payload["jobscout_lifecycle"]
+    assert lifecycle["manual_retirement"]["reason"] == "manual_retire"
+    assert lifecycle["manual_retirement"]["retired_by"] == "user-1"
+
+    _clear_manual_retirement(job)
+
+    assert job.status == "active"
+    assert source.is_active is True
+    assert "jobscout_lifecycle" not in job.raw_payload
+    assert job.raw_payload["source_metadata"]["provider"] == "greenhouse"
 
 
 def test_job_inventory_filters_cover_processing_states_and_search():

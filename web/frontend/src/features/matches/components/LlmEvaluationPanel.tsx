@@ -102,6 +102,83 @@ function stringList(value: unknown): string[] {
         : [];
 }
 
+function requirementSortKey(value: unknown): [number, number, string] {
+    const text = String(value ?? '');
+    const match = /^req[_-](\d+)$/i.exec(text);
+    if (match) return [0, Number(match[1]), text];
+    return [1, 0, text];
+}
+
+function compareRequirementIds(left: unknown, right: unknown): number {
+    const leftKey = requirementSortKey(left);
+    const rightKey = requirementSortKey(right);
+    return leftKey[0] - rightKey[0] || leftKey[1] - rightKey[1] || leftKey[2].localeCompare(rightKey[2]);
+}
+
+function fallbackEvidenceStrengths(verdicts: Array<Record<string, any>>): string[] {
+    const rank = new Map([
+        ['strong', 0],
+        ['partial', 1],
+    ]);
+    return verdicts
+        .filter((verdict) => rank.has(String(verdict.verdict ?? '').toLowerCase()))
+        .sort((left, right) => {
+            const leftVerdict = String(left.verdict ?? '').toLowerCase();
+            const rightVerdict = String(right.verdict ?? '').toLowerCase();
+            const byVerdict = (rank.get(leftVerdict) ?? 99) - (rank.get(rightVerdict) ?? 99);
+            if (byVerdict !== 0) return byVerdict;
+            return compareRequirementIds(left.requirement_id, right.requirement_id);
+        })
+        .slice(0, 5)
+        .map((verdict) => {
+            const id = String(verdict.requirement_id ?? 'requirement');
+            const reason = typeof verdict.reason === 'string' ? verdict.reason.trim() : '';
+            return reason ? `${id}: ${reason}` : `${id}: ${cleanLabel(String(verdict.verdict ?? 'evidence'))}`;
+        });
+}
+
+function scoreQualityMessage(evaluation?: MatchLlmEvaluation | null): string {
+    const analysis = evaluation?.analysis ?? {};
+    const scoreQuality = evaluation?.score_quality ?? analysis.score_quality;
+    if (!scoreQuality || scoreQuality.status !== 'inconsistent') return '';
+    const expectedRange = scoreQuality.expected_range;
+    const score = typeof scoreQuality.normalized_score === 'number'
+        ? formatScore(scoreQuality.normalized_score)
+        : 'the returned score';
+    const verdict = typeof scoreQuality.verdict === 'string'
+        ? cleanLabel(scoreQuality.verdict)
+        : 'the verdict';
+    if (
+        expectedRange
+        && typeof expectedRange.min === 'number'
+        && typeof expectedRange.max === 'number'
+    ) {
+        return `Score ignored for ranking: ${score} conflicts with ${verdict}; expected ${expectedRange.min}-${expectedRange.max}%.`;
+    }
+    return `Score ignored for ranking: ${score} conflicts with ${verdict}.`;
+}
+
+function freshnessMessage(evaluation?: MatchLlmEvaluation | null): string {
+    const freshness = evaluation?.freshness;
+    const status = typeof freshness?.status === 'string' ? freshness.status : evaluation?.stale_status;
+    const reason = typeof freshness?.reason === 'string' ? freshness.reason : evaluation?.ignored_for_rerank_reason;
+    if (evaluation?.status === 'succeeded' && status === 'stale') {
+        return `Historical review shown. Regenerate before ordering because ${cleanLabel(reason)}.`;
+    }
+    if (evaluation?.status === 'succeeded' && status === 'unknown') {
+        return 'Historical review shown. Regenerate before ordering because current freshness could not be confirmed.';
+    }
+    return '';
+}
+
+function evidenceReferences(analysis: Record<string, any>): Array<Record<string, any>> {
+    const value = analysis.evidence_references;
+    if (!Array.isArray(value)) return [];
+    return value
+        .filter((item): item is Record<string, any> => Boolean(item) && typeof item === 'object')
+        .slice(0, 20);
+}
+
 const actionButtonClasses = [
     'h-9 w-9 px-0 transition-all duration-150',
     'hover:-translate-y-0.5 hover:border-accent hover:bg-accent-soft hover:text-accent',
@@ -287,12 +364,24 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
     const canRetry = Boolean(evaluation && evaluation.status === 'failed' && evaluation.retryable);
     const score = typeof evaluation?.llm_score === 'number' ? formatScore(evaluation.llm_score) : null;
     const analysis = evaluation?.analysis ?? {};
+    const references = evidenceReferences(analysis);
     const transferableStrengths = stringList(analysis.transferable_strengths);
     const gaps = stringList(analysis.gaps);
     const rankingRationale = typeof analysis.ranking_rationale === 'string' ? analysis.ranking_rationale : '';
     const requirementVerdicts = Array.isArray(evaluation?.requirement_verdicts)
         ? evaluation.requirement_verdicts
         : [];
+    const orderedRequirementVerdicts = [...requirementVerdicts].sort((left, right) =>
+        compareRequirementIds(left.requirement_id, right.requirement_id)
+    );
+    const evidenceStrengths = transferableStrengths.length > 0
+        ? transferableStrengths
+        : fallbackEvidenceStrengths(requirementVerdicts);
+    const evidenceStrengthsLabel = transferableStrengths.length > 0
+        ? 'Transferable strengths'
+        : 'Evidence-based strengths';
+    const currentFreshnessMessage = freshnessMessage(evaluation);
+    const currentScoreQualityMessage = scoreQualityMessage(evaluation);
     const truncation = evaluation?.input_truncation ?? analysis.input_truncation ?? {};
     const hasTruncation = Boolean((truncation as any)?.truncated);
     const ignoredReason = evaluation?.ignored_for_rerank_reason;
@@ -362,7 +451,7 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                 <Badge variant={statusBadgeVariant(activeStatus)}>{statusLabel(activeStatus)}</Badge>
                 {score && (
                     <span className="caption">
-                        Score <span className="text-ink">{score}</span>
+                        Score <span className={currentScoreQualityMessage ? 'text-warn' : 'text-ink'}>{score}</span>
                     </span>
                 )}
                 {typeof evaluation?.confidence === 'number' && (
@@ -417,6 +506,18 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                 </p>
             )}
 
+            {currentScoreQualityMessage && (
+                <p className="mt-4 border-l-2 border-warn/60 pl-3 text-[13px] leading-relaxed text-ink-soft">
+                    {currentScoreQualityMessage}
+                </p>
+            )}
+
+            {currentFreshnessMessage && (
+                <p className="mt-4 border-l-2 border-warn/60 pl-3 text-[13px] leading-relaxed text-ink-soft">
+                    {currentFreshnessMessage}
+                </p>
+            )}
+
             {hasTruncation && (
                 <p className="mt-4 border-l-2 border-warn/60 pl-3 text-[13px] leading-relaxed text-ink-soft">
                     Judge input was truncated for this review.
@@ -430,13 +531,41 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                 </div>
             )}
 
-            {(transferableStrengths.length > 0 || gaps.length > 0) && (
+            {references.length > 0 && (
+                <div className="mt-5 border-t border-rule pt-4">
+                    <p className="caption">Resume evidence references</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                        {references.map((reference, index) => {
+                            const id = typeof reference.id === 'string' ? reference.id : `ev_${index + 1}`;
+                            const sourceText = typeof reference.source_text === 'string'
+                                ? reference.source_text.trim()
+                                : '';
+                            const section = typeof reference.source_section === 'string'
+                                ? reference.source_section.trim()
+                                : '';
+                            return (
+                                <span
+                                    key={`${id}-${index}`}
+                                    title={sourceText || undefined}
+                                    className="max-w-full border border-rule bg-surface-sunk px-2 py-1 text-[12px] leading-snug text-ink-soft"
+                                >
+                                    <span className="caption text-accent">{id}</span>
+                                    {section ? <span className="ml-1 text-ink-muted">{section}</span> : null}
+                                    {sourceText ? <span className="ml-1">{sourceText}</span> : null}
+                                </span>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+
+            {(evidenceStrengths.length > 0 || gaps.length > 0) && (
                 <div className="mt-5 grid gap-4 md:grid-cols-2">
-                    {transferableStrengths.length > 0 && (
+                    {evidenceStrengths.length > 0 && (
                         <div>
-                            <p className="caption">Transferable strengths</p>
+                            <p className="caption">{evidenceStrengthsLabel}</p>
                             <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-ink-soft">
-                                {transferableStrengths.map((item) => (
+                                {evidenceStrengths.map((item) => (
                                     <li key={item} className="border-l-2 border-affirm/50 pl-3">{item}</li>
                                 ))}
                             </ul>
@@ -455,11 +584,11 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                 </div>
             )}
 
-            {requirementVerdicts.length > 0 && (
+            {orderedRequirementVerdicts.length > 0 && (
                 <div className="mt-5 border-t border-rule pt-4">
                     <p className="caption">LLM requirement verdicts</p>
                     <div className="mt-3 grid gap-2">
-                        {requirementVerdicts.slice(0, 12).map((verdict, index) => (
+                        {orderedRequirementVerdicts.slice(0, 12).map((verdict, index) => (
                             <div key={`${verdict.requirement_id ?? index}`} className="border border-rule bg-surface-sunk px-3 py-2">
                                 <div className="flex flex-wrap items-center gap-2">
                                     <Badge variant={verdict.verdict === 'strong' ? 'success' : verdict.verdict === 'missing' ? 'warning' : 'info'}>

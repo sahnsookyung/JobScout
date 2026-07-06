@@ -51,7 +51,13 @@ CONSUMER_GROUP = os.getenv("MATCHER_CONSUMER_GROUP", "matcher-service")
 CONSUMER_NAME = os.getenv("HOSTNAME", "matcher-1")
 PREPARATION_BACKFILL_LOCK_KEY = "matching:preparation_backfill:lock"
 PREPARATION_BACKFILL_LOCK_TTL_SECONDS = int(os.getenv("MATCHER_PREP_BACKFILL_LOCK_TTL_SECONDS", "300"))
-PREPARATION_BACKFILL_LIMIT = int(os.getenv("MATCHER_PREP_BACKFILL_LIMIT", "10"))
+PREPARATION_BACKFILL_BATCH_SIZE = int(
+    os.getenv(
+        "MATCHER_PREP_BACKFILL_BATCH_SIZE",
+        os.getenv("MATCHER_PREP_BACKFILL_LIMIT", "50"),
+    )
+)
+PREPARATION_BACKFILL_MAX_BATCHES = int(os.getenv("MATCHER_PREP_BACKFILL_MAX_BATCHES", "10"))
 
 
 def _serialize_task_state(state: dict) -> dict:
@@ -145,13 +151,15 @@ def _job_preparation_stats() -> dict:
 
 
 def _maybe_enqueue_preparation_backfill(task_id: str, stats: dict) -> list[dict[str, str]]:
-    """Enqueue small existing preparation batches when matching finds a backlog."""
+    """Enqueue bounded existing preparation batches when matching finds a backlog."""
     pending_extraction = int(stats.get("jobs_pending_extraction") or 0)
     pending_embedding = int(stats.get("jobs_pending_embedding") or 0)
     if pending_extraction <= 0 and pending_embedding <= 0:
         return []
 
     try:
+        batch_size = max(1, PREPARATION_BACKFILL_BATCH_SIZE)
+        max_batches = max(1, PREPARATION_BACKFILL_MAX_BATCHES)
         redis_client = get_redis_client()
         if not redis_client.set(
             PREPARATION_BACKFILL_LOCK_KEY,
@@ -159,27 +167,54 @@ def _maybe_enqueue_preparation_backfill(task_id: str, stats: dict) -> list[dict[
             nx=True,
             ex=PREPARATION_BACKFILL_LOCK_TTL_SECONDS,
         ):
-            return [{"code": "jobs_preparing"}]
+            return [{
+                "code": "jobs_preparing",
+                "pending_extraction": str(pending_extraction),
+                "pending_embedding": str(pending_embedding),
+                "backfill_state": "locked",
+            }]
 
+        queued_extraction = 0
         if pending_extraction > 0:
-            enqueue_job(
-                STREAM_EXTRACTION_BATCH,
-                {
-                    "task_id": f"{task_id}-prep-extract",
-                    "limit": min(PREPARATION_BACKFILL_LIMIT, pending_extraction),
-                    "trigger": "matching_backfill",
-                },
-            )
+            extraction_batches = min(max_batches, (pending_extraction + batch_size - 1) // batch_size)
+            for index in range(extraction_batches):
+                limit = min(batch_size, pending_extraction - queued_extraction)
+                if limit <= 0:
+                    break
+                enqueue_job(
+                    STREAM_EXTRACTION_BATCH,
+                    {
+                        "task_id": f"{task_id}-prep-extract-{index + 1}",
+                        "limit": limit,
+                        "trigger": "matching_backfill",
+                    },
+                )
+                queued_extraction += limit
+        queued_embedding = 0
         if pending_embedding > 0:
-            enqueue_job(
-                STREAM_EMBEDDINGS_BATCH,
-                {
-                    "task_id": f"{task_id}-prep-embed",
-                    "limit": min(PREPARATION_BACKFILL_LIMIT, pending_embedding),
-                    "trigger": "matching_backfill",
-                },
-            )
-        return [{"code": "jobs_preparing"}]
+            embedding_batches = min(max_batches, (pending_embedding + batch_size - 1) // batch_size)
+            for index in range(embedding_batches):
+                limit = min(batch_size, pending_embedding - queued_embedding)
+                if limit <= 0:
+                    break
+                enqueue_job(
+                    STREAM_EMBEDDINGS_BATCH,
+                    {
+                        "task_id": f"{task_id}-prep-embed-{index + 1}",
+                        "limit": limit,
+                        "trigger": "matching_backfill",
+                    },
+                )
+                queued_embedding += limit
+        return [{
+            "code": "jobs_preparing",
+            "pending_extraction": str(pending_extraction),
+            "pending_embedding": str(pending_embedding),
+            "queued_extraction": str(queued_extraction),
+            "queued_embedding": str(queued_embedding),
+            "batch_size": str(batch_size),
+            "max_batches": str(max_batches),
+        }]
     except Exception:
         logger.warning("Failed to enqueue preparation backfill", exc_info=True)
         return []

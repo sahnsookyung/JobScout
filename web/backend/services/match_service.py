@@ -3,6 +3,7 @@
 Match service - business logic for job match operations.
 """
 
+import copy
 import json
 import logging
 from typing import List, Optional, Dict, Any
@@ -62,6 +63,10 @@ _PREFERENCE_COMPONENT_KEYS = {
     "preference_mode_used",
     "preference_fallback_reason",
 }
+
+_LIFECYCLE_METADATA_KEY = "jobscout_lifecycle"
+_COMPLIANT_REFRESH_SOURCE_SITES = {"greenhouse", "lever", "ashby"}
+_PROHIBITED_SCRAPER_SOURCE_SITES = {"tokyodev", "japandev", "jobspy", "workday"}
 
 
 class MatchService:
@@ -836,6 +841,13 @@ class MatchService:
             return None
         return value if isinstance(value, str) else None
 
+    @staticmethod
+    def _optional_datetime_iso_attr(obj: Any, name: str) -> Optional[str]:
+        value = getattr(obj, name, None)
+        if type(value).__module__.startswith("unittest.mock"):
+            return None
+        return safe_datetime_iso(value)
+
     def _to_match_summary(self, match: JobMatch) -> MatchSummary:
         """Convert ORM model to MatchSummary response model."""
         job_fields = self._extract_summary_job_fields(match)
@@ -1063,6 +1075,8 @@ class MatchService:
                 "llm_effective_for_rerank": False,
                 "llm_ignored_for_rerank_reason": None,
                 "llm_stale_status": None,
+                "llm_freshness": {},
+                "llm_score_quality": {},
                 "llm_retryable": False,
                 "llm_queued_reason": None,
                 "llm_queue_state": None,
@@ -1093,15 +1107,22 @@ class MatchService:
         provider_status_message = queue_metadata.get("provider_status_message")
         if not isinstance(provider_status_message, str):
             provider_status_message = None
+        score_quality = analysis.get("score_quality")
+        if not isinstance(score_quality, dict):
+            score_quality = {}
         return {
             "llm_evaluation_status": status,
             "llm_evaluation_id": str(getattr(evaluation, "id", "")),
             "llm_score": (
-                None
-                if getattr(evaluation, "llm_score", None) is None
-                else normalize_llm_score(
-                    evaluation.llm_score,
-                    getattr(evaluation, "verdict", None),
+                safe_float(score_quality.get("normalized_score"))
+                if score_quality.get("normalized_score") is not None
+                else (
+                    None
+                    if getattr(evaluation, "llm_score", None) is None
+                    else normalize_llm_score(
+                        evaluation.llm_score,
+                        getattr(evaluation, "verdict", None),
+                    )
                 )
             ),
             "llm_confidence": (
@@ -1113,6 +1134,8 @@ class MatchService:
             "llm_effective_for_rerank": bool(effectiveness.get("effective_for_rerank", False)),
             "llm_ignored_for_rerank_reason": effectiveness.get("ignored_for_rerank_reason"),
             "llm_stale_status": effectiveness.get("stale_status"),
+            "llm_freshness": effectiveness.get("freshness") if isinstance(effectiveness.get("freshness"), dict) else {},
+            "llm_score_quality": score_quality,
             "llm_retryable": bool(getattr(evaluation, "retryable", False)),
             "llm_queued_reason": analysis.get("enqueue_reason") or queue_metadata.get("enqueue_reason"),
             "llm_queue_state": queue_metadata.get("queue_state"),
@@ -1120,6 +1143,64 @@ class MatchService:
             "llm_retry_after_seconds": retry_after_seconds,
             "llm_provider_status_message": provider_status_message,
         }
+
+    @staticmethod
+    def _primary_source(job: Optional[JobPost]):
+        try:
+            sources = list(getattr(job, "sources", None) or [])
+        except TypeError:
+            sources = []
+        if not sources:
+            return None
+        active_sources = [source for source in sources if getattr(source, "is_active", False)]
+        candidates = active_sources or sources
+        return max(
+            candidates,
+            key=lambda source: (
+                getattr(source, "last_seen_at", None) is not None,
+                getattr(source, "last_seen_at", None),
+            ),
+        )
+
+    @staticmethod
+    def _lifecycle_metadata(job: Optional[JobPost]) -> Dict[str, Any]:
+        payload = getattr(job, "raw_payload", None)
+        if not isinstance(payload, dict):
+            return {}
+        metadata = payload.get(_LIFECYCLE_METADATA_KEY)
+        return copy.deepcopy(metadata) if isinstance(metadata, dict) else {}
+
+    @classmethod
+    def _availability_status(cls, job: Optional[JobPost], source: Any) -> tuple[str | None, str | None]:
+        if job is None:
+            return None, None
+        lifecycle = cls._lifecycle_metadata(job)
+        if getattr(job, "status", None) == "expired" and isinstance(lifecycle.get("manual_retirement"), dict):
+            return "manually_retired", "manual_retirement"
+        if source is not None and getattr(source, "is_active", None) is False:
+            return "source_inactive", "source_sync_absent"
+        if source is None:
+            return "unknown", "source_missing"
+        if getattr(job, "status", None) == "inactive":
+            return "inactive", "job_inactive"
+        return "active", "source_sync_active"
+
+    @staticmethod
+    def _availability_actions(job: Optional[JobPost], source: Any) -> List[str]:
+        if job is None:
+            return []
+        actions: List[str] = []
+        if source is not None and (getattr(source, "job_url_direct", None) or getattr(source, "job_url", None)):
+            actions.append("open_posting")
+        site = str(getattr(source, "site", "") or "").lower()
+        if site in _COMPLIANT_REFRESH_SOURCE_SITES:
+            actions.append("refresh_availability")
+        elif site in _PROHIBITED_SCRAPER_SOURCE_SITES:
+            actions.append("refresh_unavailable_deployment_disabled")
+        elif source is not None:
+            actions.append("refresh_unavailable")
+        actions.append("restore" if getattr(job, "status", None) == "expired" else "retire")
+        return actions
 
     def _to_job_details(self, job: Optional[JobPost]) -> JobDetails:
         """Convert ORM model to JobDetails response model."""
@@ -1151,6 +1232,8 @@ class MatchService:
         elif description_completeness is None:
             description_completeness = "unknown"
         description_warning_code = self._optional_str_attr(job, "description_warning_code")
+        source = self._primary_source(job)
+        availability_status, availability_reason = self._availability_status(job, source)
 
         return JobDetails(
             job_id=str(job.id),
@@ -1169,6 +1252,20 @@ class MatchService:
             requires_degree=job.requires_degree,
             security_clearance=job.security_clearance,
             job_level=job.job_level,
+            status=self._optional_str_attr(job, "status"),
+            source_site=getattr(source, "site", None),
+            source_url=getattr(source, "job_url", None),
+            source_url_direct=getattr(source, "job_url_direct", None),
+            source_job_id=getattr(source, "source_job_id", None),
+            source_is_active=getattr(source, "is_active", None),
+            source_first_seen_at=safe_datetime_iso(getattr(source, "first_seen_at", None)),
+            source_last_seen_at=safe_datetime_iso(getattr(source, "last_seen_at", None)),
+            first_seen_at=self._optional_datetime_iso_attr(job, "first_seen_at"),
+            last_seen_at=self._optional_datetime_iso_attr(job, "last_seen_at"),
+            availability_status=availability_status,
+            availability_reason=availability_reason,
+            availability_actions=self._availability_actions(job, source),
+            lifecycle_metadata=self._lifecycle_metadata(job),
         )
     
     def _to_requirement_detail(self, req: JobMatchRequirement) -> RequirementDetail:

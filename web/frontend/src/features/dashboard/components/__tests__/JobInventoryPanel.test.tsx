@@ -84,6 +84,12 @@ const readyJob = {
     description_source: 'ats.greenhouse',
     source_site: 'greenhouse',
     source_url: 'https://boards.greenhouse.io/ramp/jobs/1',
+    source_job_id: 'gh-1',
+    source_is_active: false,
+    source_last_seen_at: '2026-06-19T00:00:00Z',
+    availability_status: 'source_inactive',
+    availability_reason: 'source_sync_absent',
+    availability_actions: ['open_posting', 'refresh_availability', 'retire'],
     first_seen_at: '2026-06-01T00:00:00Z',
     last_seen_at: '2026-06-18T00:00:00Z',
     extraction_attempts: 1,
@@ -393,6 +399,9 @@ describe('JobInventoryPanel', () => {
         expect(screen.getByText('Software Engineer')).toBeInTheDocument();
         expect(screen.getByText(/Ramp/)).toBeInTheDocument();
         expect(screen.getAllByText('Ready').length).toBeGreaterThan(0);
+        expect(screen.getByText('source inactive')).toBeInTheDocument();
+        expect(screen.getByText('id gh-1')).toBeInTheDocument();
+        expect(screen.getByText('source_inactive')).toBeInTheDocument();
         expect(mockUseJobs).toHaveBeenLastCalledWith(
             expect.objectContaining({ processing_status: 'all', job_status: 'all' }),
             true,

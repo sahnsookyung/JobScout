@@ -86,6 +86,21 @@ export const usePipelineEvents = (
 
             setStatus(data);
 
+            if (data.status === 'observer_timeout' || data.observer_timeout) {
+                clearRetryTimeout();
+                eventSource.close();
+                eventSourceRef.current = null;
+                setConnectionState('reconnecting');
+                setError('Observer timed out while the pipeline was still running. Reconnecting...');
+                const reconnectAfter = Math.max(Number(data.reconnect_after_seconds ?? 5), 1) * 1000;
+                retryTimeoutRef.current = setTimeout(() => {
+                    if (mountedRef.current) {
+                        setRetryCount((prev) => prev + 1);
+                    }
+                }, reconnectAfter);
+                return;
+            }
+
             if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
                 clearRetryTimeout();
                 eventSource.close();
