@@ -41,6 +41,25 @@ class MatchLlmEvaluationRequest(BaseModel):
     )
 
 
+class LlmEvaluationQueuePauseRequest(BaseModel):
+    """Request to pause application-side LLM queue execution."""
+
+    reason: Optional[str] = Field(default="manual", max_length=200)
+    ttl_seconds: Optional[int] = Field(
+        default=None,
+        ge=30,
+        le=86400,
+        description="Optional automatic resume window in seconds.",
+    )
+
+
+class LlmProviderCircuitResetRequest(BaseModel):
+    """Request to reset one provider/model circuit."""
+
+    provider: str = Field(..., min_length=1, max_length=80)
+    model: str = Field(..., min_length=1, max_length=160)
+
+
 class NotificationRequest(BaseModel):
     """Request to send a notification."""
     type: str = Field(

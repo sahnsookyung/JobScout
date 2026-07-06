@@ -606,12 +606,12 @@ class TestMatchesRouter:
 
         assert response.status_code == 404
 
-    def _evaluation(self, match_id=None, evaluation_id=None):
+    def _evaluation(self, match_id=None, evaluation_id=None, status="succeeded"):
         return SimpleNamespace(
             id=evaluation_id or str(uuid.uuid4()),
             job_match_id=match_id or str(uuid.uuid4()),
             job_post_id=str(uuid.uuid4()),
-            status="succeeded",
+            status=status,
             llm_score=88.0,
             confidence=0.91,
             verdict="good",
@@ -624,6 +624,7 @@ class TestMatchesRouter:
             schema_version="1",
             error_code=None,
             retryable=False,
+            analysis={},
             created_at=None,
             started_at=None,
             completed_at=None,
@@ -714,6 +715,7 @@ class TestMatchesRouter:
             str(evaluation.id),
             {"job": {"description": "Full JD"}},
             {"truncated": False, "fields": {}},
+            enqueue_reason="manual",
         )
 
     @pytest.mark.parametrize(
@@ -829,6 +831,56 @@ class TestMatchesRouter:
         response = client.delete(f'/api/matches/{match_id}/llm-evaluations/{evaluation_id}')
 
         assert response.status_code == 404
+
+    def test_retry_llm_evaluation_reuses_failed_row_and_queues_resume_path(
+        self,
+        client,
+        mock_llm_evaluation_service,
+    ):
+        match_id = str(uuid.uuid4())
+        evaluation = self._evaluation(match_id=match_id, status="pending")
+        mock_llm_evaluation_service.retry_evaluation.return_value = SimpleNamespace(
+            evaluation=evaluation,
+            reused=False,
+            should_run=True,
+        )
+
+        with patch("web.backend.routers.matches._run_match_llm_evaluation_background") as background:
+            response = client.post(
+                f"/api/matches/{match_id}/llm-evaluations/{evaluation.id}/retry",
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["accepted"] is True
+        assert data["message"] == "Queued LLM evaluation retry."
+        mock_llm_evaluation_service.retry_evaluation.assert_called_once_with(
+            match_id,
+            str(evaluation.id),
+            owner_id="user-123",
+            tenant_id=None,
+        )
+        background.assert_called_once_with(
+            str(evaluation.id),
+            None,
+            None,
+            enqueue_reason="retry_now",
+        )
+
+    def test_retry_llm_evaluation_conflict_maps_to_409(
+        self,
+        client,
+        mock_llm_evaluation_service,
+    ):
+        match_id = str(uuid.uuid4())
+        evaluation_id = str(uuid.uuid4())
+        mock_llm_evaluation_service.retry_evaluation.side_effect = LlmJudgeConflictError(
+            "Only retryable failed LLM evaluations can be retried.",
+        )
+
+        response = client.post(f"/api/matches/{match_id}/llm-evaluations/{evaluation_id}/retry")
+
+        assert response.status_code == 409
 
 
 class TestMatchesRouterIntegration:

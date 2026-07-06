@@ -1,6 +1,10 @@
 import { apiClient } from './api';
 import type {
+    LlmEvaluationQueueOperationResponse,
     LlmEvaluationQueueStatusResponse,
+    LlmProviderCanaryResponse,
+    LlmProviderCircuitResetResponse,
+    LlmProviderStatusResponse,
     PipelineRunDetailResponse,
     PipelineRunOperationResponse,
     PipelineRunsResponse,
@@ -34,4 +38,30 @@ export const pipelineRunsApi = {
 
     getLlmEvaluationQueueStatus: () =>
         apiClient.get<LlmEvaluationQueueStatusResponse>('/pipeline-runs/llm-evaluations/queue'),
+
+    pauseLlmEvaluationQueue: (reason = 'manual', ttl_seconds?: number | null) =>
+        apiClient.post<LlmEvaluationQueueOperationResponse>('/pipeline-runs/llm-evaluations/queue/pause', {
+            reason,
+            ttl_seconds,
+        }),
+
+    resumeLlmEvaluationQueue: () =>
+        apiClient.post<LlmEvaluationQueueOperationResponse>('/pipeline-runs/llm-evaluations/queue/resume'),
+
+    retryLlmEvaluationQueue: (limit = 100) =>
+        apiClient.post<LlmEvaluationQueueOperationResponse>('/pipeline-runs/llm-evaluations/queue/retry', null, {
+            params: { limit },
+        }),
+
+    getLlmProviderStatus: () =>
+        apiClient.get<LlmProviderStatusResponse>('/pipeline-runs/llm-evaluations/providers'),
+
+    runLlmProviderCanaries: () =>
+        apiClient.post<LlmProviderCanaryResponse>('/pipeline-runs/llm-evaluations/providers/canary'),
+
+    resetLlmProviderCircuit: (provider: string, model: string) =>
+        apiClient.post<LlmProviderCircuitResetResponse>('/pipeline-runs/llm-evaluations/providers/circuit/reset', {
+            provider,
+            model,
+        }),
 };

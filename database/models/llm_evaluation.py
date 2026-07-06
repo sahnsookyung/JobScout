@@ -55,6 +55,17 @@ class LlmMatchEvaluation(Base):
 
     __table_args__ = (
         Index("idx_llm_eval_owner_status_created", "owner_id", "status", "created_at"),
+        Index(
+            "idx_llm_eval_backlog_status_created",
+            "status",
+            "created_at",
+            postgresql_where=sql_text("deleted_at IS NULL"),
+        ),
+        Index(
+            "idx_llm_eval_retryable_failed_created",
+            "created_at",
+            postgresql_where=sql_text("deleted_at IS NULL AND status = 'failed' AND retryable = TRUE"),
+        ),
         Index("idx_llm_eval_owner_resume_created", "owner_id", "resume_fingerprint", "created_at"),
         Index("idx_llm_eval_owner_match_created", "owner_id", "job_match_id", "created_at"),
         Index("idx_llm_eval_job_match", "job_match_id"),

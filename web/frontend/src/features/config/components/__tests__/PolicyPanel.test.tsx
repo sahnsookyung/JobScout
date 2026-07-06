@@ -7,6 +7,17 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { PolicyPanel } from '../PolicyPanel';
 
 vi.mock('@/hooks/usePolicy');
+vi.mock('@tanstack/react-query', () => ({
+    useQuery: () => ({
+        data: {
+            queued: 0,
+            scheduled: 0,
+            db_pending: 0,
+            db_retryable_failed: 0,
+        },
+        isLoading: false,
+    }),
+}));
 vi.mock('lucide-react', () => ({
     Sliders: () => <svg data-testid="sliders-icon" />,
     Minus: () => <svg data-testid="minus-icon" />,
@@ -21,6 +32,8 @@ const defaultHook = {
     policy: undefined,
     isLoading: false,
     updatePolicy: vi.fn(),
+    updatePolicyAsync: vi.fn().mockResolvedValue({ data: {} }),
+    isUpdatingPolicy: false,
     applyPreset: vi.fn(),
 };
 
@@ -191,7 +204,7 @@ describe('PolicyPanel', () => {
             );
         });
 
-        it('updates writable LLM judge settings after debounce', async () => {
+        it('does not auto-save writable LLM judge settings before Apply', async () => {
             mockUsePolicy.mockReturnValue({
                 ...defaultHook,
                 policy: {
@@ -214,7 +227,51 @@ describe('PolicyPanel', () => {
 
             await act(async () => { vi.advanceTimersByTime(300); });
 
-            expect(defaultHook.updatePolicy).toHaveBeenCalledWith({
+            expect(defaultHook.updatePolicy).not.toHaveBeenCalled();
+            expect(defaultHook.updatePolicyAsync).not.toHaveBeenCalled();
+        });
+
+        it('applies writable LLM judge settings explicitly', async () => {
+            const updatePolicyAsync = vi.fn().mockResolvedValue({
+                data: {
+                    min_fit: 55,
+                    top_k: 50,
+                    min_jd_required_coverage: null,
+                    llm_judge_enabled: true,
+                    llm_judge_auto_enqueue_enabled: true,
+                    llm_judge_top_n: 3,
+                    llm_judge_top_n_max: 4,
+                    llm_judge_available: true,
+                    llm_judge_enqueue_state: 'scheduled',
+                    llm_judge_enqueue_job_id: 'llm-top-n:job-1',
+                },
+            });
+            mockUsePolicy.mockReturnValue({
+                ...defaultHook,
+                updatePolicyAsync,
+                policy: {
+                    min_fit: 55,
+                    top_k: 50,
+                    min_jd_required_coverage: null,
+                    llm_judge_enabled: false,
+                    llm_judge_auto_enqueue_enabled: false,
+                    llm_judge_top_n: 2,
+                    llm_judge_top_n_max: 4,
+                    llm_judge_available: true,
+                    llm_judge_revision: 3,
+                },
+            });
+            render(<PolicyPanel />);
+
+            fireEvent.click(screen.getByRole('checkbox', { name: /enable llm judging/i }));
+            fireEvent.click(screen.getByRole('checkbox', { name: /automatically queue top n llm judging/i }));
+            fireEvent.click(screen.getByRole('button', { name: /increase llm judge top n/i }));
+
+            await act(async () => {
+                fireEvent.click(screen.getByRole('button', { name: /apply/i }));
+            });
+
+            expect(updatePolicyAsync).toHaveBeenCalledWith({
                 min_fit: 55,
                 top_k: 50,
                 min_jd_required_coverage: null,
@@ -222,11 +279,25 @@ describe('PolicyPanel', () => {
                 llm_judge_auto_enqueue_enabled: true,
                 llm_judge_top_n: 3,
             });
+            expect(screen.getByText('Scheduled')).toBeTruthy();
         });
 
         it('turns off auto top-N when LLM judging is disabled', async () => {
+            const updatePolicyAsync = vi.fn().mockResolvedValue({
+                data: {
+                    min_fit: 55,
+                    top_k: 50,
+                    min_jd_required_coverage: null,
+                    llm_judge_enabled: false,
+                    llm_judge_auto_enqueue_enabled: false,
+                    llm_judge_top_n: 2,
+                    llm_judge_top_n_max: 4,
+                    llm_judge_available: true,
+                },
+            });
             mockUsePolicy.mockReturnValue({
                 ...defaultHook,
+                updatePolicyAsync,
                 policy: {
                     min_fit: 55,
                     top_k: 50,
@@ -242,9 +313,11 @@ describe('PolicyPanel', () => {
 
             fireEvent.click(screen.getByRole('checkbox', { name: /enable llm judging/i }));
 
-            await act(async () => { vi.advanceTimersByTime(300); });
+            await act(async () => {
+                fireEvent.click(screen.getByRole('button', { name: /apply/i }));
+            });
 
-            expect(defaultHook.updatePolicy).toHaveBeenCalledWith(
+            expect(updatePolicyAsync).toHaveBeenCalledWith(
                 expect.objectContaining({
                     llm_judge_enabled: false,
                     llm_judge_auto_enqueue_enabled: false,

@@ -55,6 +55,11 @@ export const matchesApi = {
             `/matches/${matchId}/llm-evaluations/${evaluationId}`,
         ),
 
+    retryLlmEvaluation: (matchId: string, evaluationId: string) =>
+        apiClient.post<MatchLlmEvaluationMutationResponse>(
+            `/matches/${matchId}/llm-evaluations/${evaluationId}/retry`,
+        ),
+
     getStats: (params: GetStatsParams = {}) =>
         apiClient.get<StatsResponse>('/stats', { params }),
 

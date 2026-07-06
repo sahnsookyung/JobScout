@@ -189,6 +189,7 @@ XXH64_HEX_PATTERN = re.compile(r'^[0-9a-fA-F]{16}$')
 JOB_BOARD_TAG = "job board"
 JOBSPY_SITE_TYPES = {"indeed", "glassdoor", "linkedin", "google", "zip_recruiter"}
 ATS_SITE_TYPES = {"greenhouse", "lever", "ashby", "hubspot", "workday"}
+SUPPORTED_ATS_API_SITE_TYPES = {"greenhouse", "lever", "ashby"}
 DEPLOYMENT_POLICY_DISABLED_FETCH_MODES = {"seed_website", "jobspy_api"}
 PROVIDER_NAMES = {
     "jobspy_api": "JobSpy",
@@ -445,6 +446,47 @@ def _build_fetch_source_response(
         if fetch_mode == "seed_website"
         else None
     )
+    provider_diagnostics: dict[str, object] = {
+        "fetch_mode": fetch_mode,
+        "deployment_allowed": disabled_reason is None,
+    }
+    if fetch_mode == "ats_api":
+        provider_diagnostics["adapter"] = site_type
+        if site_type in SUPPORTED_ATS_API_SITE_TYPES:
+            availability_status = "available"
+            availability_reason = "ats_api_available"
+            api_fetch_available = True
+        else:
+            availability_status = "not_supported"
+            availability_reason = "not_supported_api_adapter_missing"
+            api_fetch_available = False
+    elif fetch_mode == "jobspy_api":
+        provider_diagnostics["adapter"] = "jobspy"
+        if disabled_reason is not None:
+            availability_status = "deployment_disabled"
+            availability_reason = disabled_reason
+            api_fetch_available = False
+        elif bool(api_health and api_health.available):
+            availability_status = "available"
+            availability_reason = "jobspy_api_available"
+            api_fetch_available = True
+        else:
+            availability_status = "unavailable"
+            availability_reason = (
+                api_health.status
+                if api_health is not None
+                else "jobspy_api_status_unknown"
+            )
+            api_fetch_available = False
+    elif fetch_mode == "seed_website" and disabled_reason is not None:
+        provider_diagnostics["adapter"] = "external_seed_fetcher"
+        availability_status = "deployment_disabled"
+        availability_reason = disabled_reason
+        api_fetch_available = False
+    else:
+        availability_status = "available" if disabled_reason is None else "deployment_disabled"
+        availability_reason = "custom_source" if disabled_reason is None else disabled_reason
+        api_fetch_available = False
     return FetchSourceResponse(
         site_type=site_type,
         display_name=display_name,
@@ -473,8 +515,12 @@ def _build_fetch_source_response(
             if external_status
             else None
         ),
+        api_fetch_available=api_fetch_available,
         deployment_allowed=disabled_reason is None,
         disabled_reason=disabled_reason,
+        availability_status=availability_status,
+        availability_reason=availability_reason,
+        provider_diagnostics=provider_diagnostics,
     )
 
 def _source_matches_query(source: FetchSourceResponse, search: Optional[str]) -> bool:

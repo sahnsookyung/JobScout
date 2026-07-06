@@ -772,6 +772,15 @@
     },
     {
       "access_method": "btree",
+      "definition": "CREATE INDEX idx_llm_eval_backlog_status_created ON public.llm_match_evaluation USING btree (status, created_at) WHERE (deleted_at IS NULL)",
+      "name": "idx_llm_eval_backlog_status_created",
+      "predicate": "(deleted_at IS NULL)",
+      "reloptions": null,
+      "table": "llm_match_evaluation",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
       "definition": "CREATE INDEX idx_llm_eval_job_match ON public.llm_match_evaluation USING btree (job_match_id)",
       "name": "idx_llm_eval_job_match",
       "predicate": null,
@@ -811,6 +820,15 @@
       "definition": "CREATE INDEX idx_llm_eval_owner_status_created ON public.llm_match_evaluation USING btree (owner_id, status, created_at)",
       "name": "idx_llm_eval_owner_status_created",
       "predicate": null,
+      "reloptions": null,
+      "table": "llm_match_evaluation",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_llm_eval_retryable_failed_created ON public.llm_match_evaluation USING btree (created_at) WHERE ((deleted_at IS NULL) AND (status = 'failed'::text) AND (retryable = true))",
+      "name": "idx_llm_eval_retryable_failed_created",
+      "predicate": "((deleted_at IS NULL) AND (status = 'failed'::text) AND (retryable = true))",
       "reloptions": null,
       "table": "llm_match_evaluation",
       "unique": false

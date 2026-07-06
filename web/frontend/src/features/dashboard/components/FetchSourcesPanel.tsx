@@ -134,6 +134,20 @@ function externalSeedLabel(source: FetchSource): string {
     return 'Worker unconfigured';
 }
 
+function availabilityLabel(source: FetchSource): string {
+    if (source.availability_reason === 'not_supported_api_adapter_missing') return 'API adapter missing';
+    if (source.availability_reason === 'ats_api_available') return 'ATS API available';
+    if (source.availability_reason === 'jobspy_api_available') return 'JobSpy API available';
+    if (source.availability_reason === 'disabled_by_deployment_policy') {
+        return source.fetch_mode === 'jobspy_api'
+            ? 'Scraper API disabled by deployment policy'
+            : 'Scraper disabled by deployment policy';
+    }
+    if (source.availability_status === 'deployment_disabled') return 'Deployment disabled';
+    if (source.api_fetch_available) return 'API fetch available';
+    return '';
+}
+
 function modeLabel(source: FetchSource): string {
     if (source.fetch_mode === 'seed_website') return source.provider_name || 'Seed website';
     if (source.fetch_mode === 'ats_api') return source.provider_name || 'ATS API';
@@ -153,6 +167,16 @@ function externalSeedTone(source: FetchSource): string {
     const status = source.external_fetch_status?.status;
     if (status === 'configured' || status === 'ok') return 'border-success/40 bg-success-soft text-ink';
     if (status === 'degraded' || status === 'rate_limited') return 'border-warn/40 bg-warn-soft text-ink';
+    return 'border-rule bg-surface-sunk text-ink-soft';
+}
+
+function availabilityTone(source: FetchSource): string {
+    if (source.availability_status === 'available' || source.api_fetch_available) {
+        return 'border-success/40 bg-success-soft text-ink';
+    }
+    if (source.availability_status === 'not_supported') {
+        return 'border-warn/40 bg-warn-soft text-ink';
+    }
     return 'border-rule bg-surface-sunk text-ink-soft';
 }
 
@@ -476,6 +500,17 @@ function cloudIntegrationSource(integration: CloudIntegration): FetchSource {
             deleted_at: integration.deleted_at || undefined,
         },
         api_health: null,
+        api_fetch_available: true,
+        deployment_allowed: true,
+        availability_status: 'available',
+        availability_reason: 'ats_api_available',
+        provider_diagnostics: {
+            adapter: integration.provider,
+            sync_status: status,
+            validation_status: integration.validation_status,
+            last_error: integration.last_error,
+            next_eligible_sync: integration.initial_sync?.retry_after_seconds ?? null,
+        },
     };
 }
 
@@ -667,6 +702,7 @@ function SourceCard({
     const canToggleSource = sourceHasAction(source, isDisabled ? 'enable' : 'disable');
     const isMutatingAtsSource = isSyncingAtsSource || isUpdatingAtsSource || isDeletingAtsSource;
     const providerLabel = modeLabel(source);
+    const availabilityText = availabilityLabel(source);
     const deploymentDisabledText = source.disabled_reason === 'disabled_by_deployment_policy'
         ? 'Disabled by deployment policy'
         : null;
@@ -767,6 +803,11 @@ function SourceCard({
                                 {externalText}
                             </span>
                         ) : null}
+                        {availabilityText ? (
+                            <span className={metaChipClasses(`${availabilityTone(source)} tabular-nums`)}>
+                                {availabilityText}
+                            </span>
+                        ) : null}
                         {deploymentDisabledText ? (
                             <span className={metaChipClasses('border-rule bg-surface-sunk text-ink-soft')}>
                                 {deploymentDisabledText}
@@ -785,6 +826,15 @@ function SourceCard({
                         <span className="caption">Board reference</span>
                         <span className="break-all text-ink-soft">{boardReference}</span>
                     </div>
+                    {source.provider_diagnostics?.adapter ? (
+                        <div className="grid gap-1">
+                            <span className="caption">Provider diagnostic</span>
+                            <span className="break-all text-ink-soft">
+                                {String(source.provider_diagnostics.adapter)}
+                                {source.availability_reason ? ` · ${toTitleCase(source.availability_reason)}` : ''}
+                            </span>
+                        </div>
+                    ) : null}
                     {source.tags.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
                             {source.tags.slice(0, 6).map((tag) => (

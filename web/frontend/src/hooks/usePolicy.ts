@@ -26,7 +26,10 @@ export const usePolicy = () => {
         onMutate: async (nextPolicy): Promise<PolicyMutationContext> => {
             await queryClient.cancelQueries({ queryKey: policyQueryKey });
             const previousPolicy = queryClient.getQueryData<PolicyConfig>(policyQueryKey);
-            queryClient.setQueryData<PolicyConfig>(policyQueryKey, nextPolicy);
+            queryClient.setQueryData<PolicyConfig>(
+                policyQueryKey,
+                previousPolicy ? { ...previousPolicy, ...nextPolicy } : (nextPolicy as PolicyConfig)
+            );
             return { hadPreviousPolicy: previousPolicy !== undefined, previousPolicy };
         },
         onError: (_error, _nextPolicy, context) => {
@@ -88,6 +91,8 @@ export const usePolicy = () => {
         policy: query.data,
         isLoading: query.isLoading,
         updatePolicy: updateMutation.mutate,
+        updatePolicyAsync: updateMutation.mutateAsync,
+        isUpdatingPolicy: updateMutation.isPending,
         applyPreset: presetMutation.mutate,
     };
 };

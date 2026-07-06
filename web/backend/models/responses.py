@@ -48,6 +48,12 @@ class MatchLlmEvaluationSummary(BaseModel):
     schema_version: str
     error_code: Optional[str] = None
     retryable: bool = False
+    queued_reason: Optional[str] = None
+    queue_job_id: Optional[str] = None
+    queue_state: Optional[str] = None
+    next_retry_at: Optional[str] = None
+    retry_after_seconds: Optional[int] = None
+    provider_status_message: Optional[str] = None
     created_at: Optional[str] = None
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
@@ -135,6 +141,12 @@ class MatchSummary(BaseModel):
     llm_effective_for_rerank: bool = False
     llm_ignored_for_rerank_reason: Optional[str] = None
     llm_stale_status: Optional[str] = None
+    llm_retryable: bool = False
+    llm_queued_reason: Optional[str] = None
+    llm_queue_state: Optional[str] = None
+    llm_next_retry_at: Optional[str] = None
+    llm_retry_after_seconds: Optional[int] = None
+    llm_provider_status_message: Optional[str] = None
     llm_original_rank: Optional[int] = None
     llm_reranked_rank: Optional[int] = None
     llm_rerank_score: Optional[float] = Field(default=None, ge=0, le=100)
@@ -197,6 +209,12 @@ class MatchDetail(BaseModel):
     llm_effective_for_rerank: bool = False
     llm_ignored_for_rerank_reason: Optional[str] = None
     llm_stale_status: Optional[str] = None
+    llm_retryable: bool = False
+    llm_queued_reason: Optional[str] = None
+    llm_queue_state: Optional[str] = None
+    llm_next_retry_at: Optional[str] = None
+    llm_retry_after_seconds: Optional[int] = None
+    llm_provider_status_message: Optional[str] = None
 
     # Legacy fields
     base_score: float
@@ -414,7 +432,94 @@ class LlmEvaluationQueueStatusResponse(BaseModel):
     deferred: int = 0
     scheduled: int = 0
     failed: int = 0
+    db_pending: int = 0
+    db_running: int = 0
+    db_failed: int = 0
+    db_retryable_failed: int = 0
+    oldest_pending_age_seconds: Optional[int] = None
+    oldest_retryable_failed_age_seconds: Optional[int] = None
+    drain_estimate_seconds: Optional[int] = None
+    paused: bool = False
+    pause_reason: Optional[str] = None
+    pause_ttl_seconds: Optional[int] = None
     error: Optional[str] = None
+
+
+class LlmEvaluationQueueOperationResponse(BaseModel):
+    """Response for LLM queue operator actions."""
+
+    success: bool
+    action: str
+    message: str
+    enqueued_count: int = 0
+    status: LlmEvaluationQueueStatusResponse
+
+
+class LlmProviderRuntimeStatus(BaseModel):
+    """Non-secret runtime status for a configured LLM judge provider."""
+
+    name: str
+    provider: str
+    base_url: str
+    model: str
+    structured_output_mode: str
+    timeout_seconds: int
+    max_input_tokens: int
+    requests_per_minute: Optional[int] = None
+    rate_limit_max_wait_seconds: int = 0
+    fallback_on_rate_limit: bool = False
+    api_key_env: Optional[str] = None
+    configured: bool = True
+    circuit_open: bool = False
+    circuit_retry_after_seconds: Optional[int] = None
+    circuit_failure_count: int = 0
+    last_canary_status: Optional[str] = None
+    last_canary_error_category: Optional[str] = None
+    last_canary_retryable: bool = False
+    last_canary_retry_after_seconds: Optional[float] = None
+    last_canary_elapsed_ms: Optional[int] = None
+    last_canary_checked_at: Optional[str] = None
+    last_canary_error: Optional[str] = None
+
+
+class LlmProviderStatusResponse(BaseModel):
+    """Response containing passive LLM provider status."""
+
+    success: bool
+    count: int
+    providers: List[LlmProviderRuntimeStatus] = Field(default_factory=list)
+
+
+class LlmProviderCanaryResult(LlmProviderRuntimeStatus):
+    """Result for one explicit LLM provider canary."""
+
+    status: str
+    error_category: Optional[str] = None
+    retryable: bool = False
+    retry_after_seconds: Optional[float] = None
+    elapsed_ms: int = 0
+    checked_at: Optional[str] = None
+    error: Optional[str] = None
+
+
+class LlmProviderCanaryResponse(BaseModel):
+    """Response containing explicit LLM provider canary results."""
+
+    success: bool
+    count: int
+    results: List[LlmProviderCanaryResult] = Field(default_factory=list)
+
+
+class LlmProviderCircuitResetResponse(BaseModel):
+    """Response after manually clearing provider circuit state."""
+
+    success: bool
+    provider: str
+    model: Optional[str] = None
+    circuit_open: bool = False
+    circuit_retry_after_seconds: Optional[int] = None
+    circuit_failure_count: int = 0
+    deleted_keys: int = 0
 
 
 class ScoreDistribution(BaseModel):
@@ -450,6 +555,8 @@ class PolicyResponse(BaseModel):
     llm_judge_unavailable_reason: str = "available"
     llm_judge_revision: int = 0
     llm_judge_enqueue_stats: Optional[Dict[str, int]] = None
+    llm_judge_enqueue_state: Optional[str] = None
+    llm_judge_enqueue_job_id: Optional[str] = None
     degraded: bool = False
     degraded_reasons: List[Dict[str, str]] = Field(default_factory=list)
 
@@ -556,8 +663,12 @@ class FetchSourceResponse(BaseModel):
     options: Dict[str, Any] = Field(default_factory=dict)
     api_health: Optional[FetchSourceHealthResponse] = None
     external_fetch_status: Optional[FetchSourceExternalStatusResponse] = None
+    api_fetch_available: bool = False
     deployment_allowed: bool = True
     disabled_reason: Optional[str] = None
+    availability_status: Optional[str] = None
+    availability_reason: Optional[str] = None
+    provider_diagnostics: Dict[str, Any] = Field(default_factory=dict)
 
 
 class FetchSourcesResponse(BaseModel):

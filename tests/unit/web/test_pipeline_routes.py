@@ -156,7 +156,8 @@ class TestPipelineRoutes(unittest.TestCase):
         mock_config.return_value = SimpleNamespace(
             jobspy=None,
             scrapers=[
-                ScraperConfig(site_type=["hubspot"], display_name="HubSpot Careers"),
+                ScraperConfig(site_type=["greenhouse"], display_name="Greenhouse Careers"),
+                ScraperConfig(site_type=["workday"], display_name="Workday Careers"),
                 ScraperConfig(site_type=["internal_feed"], search_term="platform"),
             ],
         )
@@ -166,10 +167,18 @@ class TestPipelineRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         sources = response.json()["sources"]
         self.assertEqual(sources[0]["fetch_mode"], "ats_api")
-        self.assertEqual(sources[0]["provider_name"], "HubSpot ATS")
+        self.assertEqual(sources[0]["provider_name"], "Greenhouse ATS")
         self.assertIsNone(sources[0]["api_health"])
-        self.assertEqual(sources[1]["fetch_mode"], "custom_source")
-        self.assertIsNone(sources[1]["api_health"])
+        self.assertTrue(sources[0]["api_fetch_available"])
+        self.assertEqual(sources[0]["availability_reason"], "ats_api_available")
+        self.assertEqual(sources[1]["fetch_mode"], "ats_api")
+        self.assertFalse(sources[1]["api_fetch_available"])
+        self.assertEqual(
+            sources[1]["availability_reason"],
+            "not_supported_api_adapter_missing",
+        )
+        self.assertEqual(sources[2]["fetch_mode"], "custom_source")
+        self.assertIsNone(sources[2]["api_health"])
 
     @patch("web.backend.routers.pipeline.get_config")
     def test_fetch_sources_endpoint_marks_web_sources_disabled_in_production(self, mock_config):
@@ -190,14 +199,17 @@ class TestPipelineRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         sources = response.json()["sources"]
         self.assertFalse(sources[0]["deployment_allowed"])
+        self.assertFalse(sources[0]["api_fetch_available"])
         self.assertEqual(sources[0]["disabled_reason"], "disabled_by_deployment_policy")
         self.assertEqual(
             sources[0]["external_fetch_status"]["disabled_reason"],
             "disabled_by_deployment_policy",
         )
         self.assertFalse(sources[1]["deployment_allowed"])
+        self.assertFalse(sources[1]["api_fetch_available"])
         self.assertEqual(sources[1]["disabled_reason"], "disabled_by_deployment_policy")
         self.assertTrue(sources[2]["deployment_allowed"])
+        self.assertTrue(sources[2]["api_fetch_available"])
         self.assertEqual(sources[2]["fetch_mode"], "ats_api")
         self.assertTrue(response.json()["api_based_fetching"])
 

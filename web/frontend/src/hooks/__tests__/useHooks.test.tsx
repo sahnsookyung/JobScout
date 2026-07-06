@@ -274,7 +274,13 @@ describe('usePolicy', () => {
 
     it('updates policy cache optimistically before updatePolicy resolves', async () => {
         const { configApi } = await import('@/services/configApi');
-        const initialPolicy = { min_fit: 55, top_k: 50, min_jd_required_coverage: null };
+        const initialPolicy = {
+            min_fit: 55,
+            top_k: 50,
+            min_jd_required_coverage: null,
+            llm_judge_available: true,
+            llm_judge_top_n_max: 10,
+        };
         const nextPolicy = { min_fit: 0, top_k: 100, min_jd_required_coverage: null };
         (configApi.getPolicy as any).mockResolvedValue({ data: initialPolicy });
         (configApi.updatePolicy as any).mockReturnValue(new Promise(() => undefined));
@@ -287,7 +293,10 @@ describe('usePolicy', () => {
         });
 
         await waitFor(() => {
-            expect(result.current.policy).toEqual(nextPolicy);
+            expect(result.current.policy).toEqual({
+                ...initialPolicy,
+                ...nextPolicy,
+            });
         });
     });
 
@@ -339,6 +348,7 @@ describe('usePolicy', () => {
         await waitFor(() => expect(result.current.isLoading).toBe(false));
 
         expect(typeof result.current.updatePolicy).toBe('function');
+        expect(typeof result.current.updatePolicyAsync).toBe('function');
         expect(typeof result.current.applyPreset).toBe('function');
     });
 

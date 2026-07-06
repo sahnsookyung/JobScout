@@ -14,6 +14,12 @@ const mockCancelPipelineRun = vi.hoisted(() => vi.fn());
 const mockRequeuePipelineRun = vi.hoisted(() => vi.fn());
 const mockRetryPipelineRun = vi.hoisted(() => vi.fn());
 const mockGetLlmEvaluationQueueStatus = vi.hoisted(() => vi.fn());
+const mockPauseLlmEvaluationQueue = vi.hoisted(() => vi.fn());
+const mockResumeLlmEvaluationQueue = vi.hoisted(() => vi.fn());
+const mockRetryLlmEvaluationQueue = vi.hoisted(() => vi.fn());
+const mockGetLlmProviderStatus = vi.hoisted(() => vi.fn());
+const mockRunLlmProviderCanaries = vi.hoisted(() => vi.fn());
+const mockResetLlmProviderCircuit = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/useJobs', () => ({
     useJobs: (params: any, enabled: boolean) => mockUseJobs(params, enabled),
@@ -40,6 +46,12 @@ vi.mock('@/services/pipelineRunsApi', () => ({
         requeuePipelineRun: mockRequeuePipelineRun,
         retryPipelineRun: mockRetryPipelineRun,
         getLlmEvaluationQueueStatus: mockGetLlmEvaluationQueueStatus,
+        pauseLlmEvaluationQueue: mockPauseLlmEvaluationQueue,
+        resumeLlmEvaluationQueue: mockResumeLlmEvaluationQueue,
+        retryLlmEvaluationQueue: mockRetryLlmEvaluationQueue,
+        getLlmProviderStatus: mockGetLlmProviderStatus,
+        runLlmProviderCanaries: mockRunLlmProviderCanaries,
+        resetLlmProviderCircuit: mockResetLlmProviderCircuit,
     },
 }));
 
@@ -196,6 +208,134 @@ describe('JobInventoryPanel', () => {
                 deferred: 0,
                 scheduled: 0,
                 failed: 0,
+                db_pending: 4,
+                db_retryable_failed: 1,
+                drain_estimate_seconds: 6,
+                paused: false,
+            },
+        });
+        mockPauseLlmEvaluationQueue.mockResolvedValue({
+            data: {
+                success: true,
+                action: 'pause_llm_queue',
+                message: 'paused',
+                enqueued_count: 0,
+                status: {
+                    success: true,
+                    ready: true,
+                    queue: 'llm_evaluations',
+                    queued: 2,
+                    started: 1,
+                    deferred: 0,
+                    scheduled: 0,
+                    failed: 0,
+                    paused: true,
+                    pause_reason: 'operator pause',
+                    pause_ttl_seconds: null,
+                },
+            },
+        });
+        mockResumeLlmEvaluationQueue.mockResolvedValue({
+            data: {
+                success: true,
+                action: 'resume_llm_queue',
+                message: 'resumed',
+                enqueued_count: 0,
+                status: {
+                    success: true,
+                    ready: true,
+                    queue: 'llm_evaluations',
+                    queued: 2,
+                    started: 1,
+                    deferred: 0,
+                    scheduled: 0,
+                    failed: 0,
+                    paused: false,
+                },
+            },
+        });
+        mockRetryLlmEvaluationQueue.mockResolvedValue({
+            data: {
+                success: true,
+                action: 'retry_llm_queue',
+                message: 'queued',
+                enqueued_count: 1,
+                status: {
+                    success: true,
+                    ready: true,
+                    queue: 'llm_evaluations',
+                    queued: 3,
+                    started: 1,
+                    deferred: 0,
+                    scheduled: 0,
+                    failed: 0,
+                    paused: false,
+                },
+            },
+        });
+        mockGetLlmProviderStatus.mockResolvedValue({
+            data: {
+                success: true,
+                count: 1,
+                providers: [
+                    {
+                        name: 'nvidia',
+                        provider: 'nvidia',
+                        base_url: 'https://integrate.api.nvidia.com/v1',
+                        model: 'nvidia-model',
+                        structured_output_mode: 'auto',
+                        timeout_seconds: 120,
+                        max_input_tokens: 8192,
+                        requests_per_minute: 40,
+                        rate_limit_max_wait_seconds: 120,
+                        fallback_on_rate_limit: false,
+                        api_key_env: 'NVIDIA_API_KEY',
+                        configured: true,
+                        circuit_open: false,
+                        circuit_retry_after_seconds: null,
+                        circuit_failure_count: 0,
+                    },
+                ],
+            },
+        });
+        mockRunLlmProviderCanaries.mockResolvedValue({
+            data: {
+                success: true,
+                count: 1,
+                results: [
+                    {
+                        name: 'nvidia',
+                        provider: 'nvidia',
+                        base_url: 'https://integrate.api.nvidia.com/v1',
+                        model: 'nvidia-model',
+                        structured_output_mode: 'auto',
+                        timeout_seconds: 120,
+                        max_input_tokens: 8192,
+                        requests_per_minute: 40,
+                        rate_limit_max_wait_seconds: 120,
+                        fallback_on_rate_limit: false,
+                        api_key_env: 'NVIDIA_API_KEY',
+                        configured: true,
+                        circuit_open: false,
+                        circuit_retry_after_seconds: null,
+                        circuit_failure_count: 0,
+                        status: 'succeeded',
+                        error_category: null,
+                        retryable: false,
+                        elapsed_ms: 25,
+                    },
+                ],
+            },
+        });
+        mockResetLlmProviderCircuit.mockResolvedValue({
+            data: {
+                success: true,
+                provider: 'nvidia',
+                model: 'nvidia-model',
+                circuit_open: false,
+                circuit_retry_after_seconds: null,
+                circuit_failure_count: 0,
+                deleted_keys: 1,
             },
         });
         mockGetProcessingBlockers.mockResolvedValue({
@@ -295,6 +435,22 @@ describe('JobInventoryPanel', () => {
         await waitFor(() => expect(mockGetLlmEvaluationQueueStatus).toHaveBeenCalledTimes(1));
         await waitFor(() => expect(screen.getByText('3')).toBeInTheDocument());
         expect(screen.getByText('Active')).toBeInTheDocument();
+        expect(screen.getAllByText('Retryable').length).toBeGreaterThan(0);
+        expect(screen.getByText((_, element) => element?.textContent === 'nvidia · nvidia-model')).toBeInTheDocument();
+    });
+
+    it('runs LLM queue and provider operator actions from the ops panel', async () => {
+        renderPanel();
+
+        await waitFor(() => expect(screen.getByRole('button', { name: /pause llm queue/i })).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: /pause llm queue/i }));
+        await waitFor(() => expect(mockPauseLlmEvaluationQueue).toHaveBeenCalledWith('operator pause', 3600));
+
+        fireEvent.click(screen.getByRole('button', { name: /retry pending llm evaluations/i }));
+        await waitFor(() => expect(mockRetryLlmEvaluationQueue).toHaveBeenCalledWith(100));
+
+        fireEvent.click(screen.getByRole('button', { name: /run llm provider canary/i }));
+        await waitFor(() => expect(mockRunLlmProviderCanaries).toHaveBeenCalledTimes(1));
     });
 
     it('surfaces degraded LLM queue metadata in the ops panel', async () => {

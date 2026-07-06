@@ -323,3 +323,69 @@ def test_llm_queue_status_wraps_success_and_degraded_error():
     assert status["queue"] == "llm_evaluations"
     assert status["queued"] == 0
     assert status["error"] == "redis unavailable"
+
+def test_llm_queue_operator_methods_delegate_to_queue_helpers():
+    service = PipelineRunOpsService()
+
+    with patch(
+        "web.backend.services.pipeline_run_ops_service.set_llm_evaluation_queue_paused",
+    ) as pause, patch.object(
+        service,
+        "llm_queue_status",
+        return_value={"success": True, "ready": True, "queue": "llm_evaluations"},
+    ) as status:
+        assert service.pause_llm_queue(reason="maintenance", ttl_seconds=60) == status.return_value
+
+    pause.assert_called_once_with(reason="maintenance", ttl_seconds=60)
+
+    with patch(
+        "web.backend.services.pipeline_run_ops_service.resume_llm_evaluation_queue",
+    ) as resume, patch.object(
+        service,
+        "llm_queue_status",
+        return_value={"success": True, "ready": True, "queue": "llm_evaluations"},
+    ) as status:
+        assert service.resume_llm_queue() == status.return_value
+
+    resume.assert_called_once_with()
+
+def test_retry_llm_queue_returns_enqueued_count_and_status():
+    service = PipelineRunOpsService()
+
+    with patch(
+        "web.backend.services.pipeline_run_ops_service.enqueue_stale_or_retryable_evaluations",
+        return_value=7,
+    ) as enqueue, patch.object(
+        service,
+        "llm_queue_status",
+        return_value={"success": True, "ready": True, "queue": "llm_evaluations"},
+    ):
+        status, enqueued = service.retry_llm_queue(limit=25)
+
+    enqueue.assert_called_once_with(limit=25)
+    assert enqueued == 7
+    assert status["queue"] == "llm_evaluations"
+
+def test_llm_provider_operator_methods_delegate_to_provider_health():
+    service = PipelineRunOpsService()
+
+    with patch(
+        "web.backend.services.pipeline_run_ops_service.configured_llm_provider_status",
+        return_value={"success": True, "count": 0, "providers": []},
+    ) as status:
+        assert service.llm_provider_status()["providers"] == []
+    status.assert_called_once_with()
+
+    with patch(
+        "web.backend.services.pipeline_run_ops_service.run_llm_provider_canaries",
+        return_value={"success": True, "count": 0, "results": []},
+    ) as canaries:
+        assert service.run_llm_provider_canaries()["results"] == []
+    canaries.assert_called_once_with()
+
+    with patch(
+        "web.backend.services.pipeline_run_ops_service.reset_llm_provider_circuit",
+        return_value={"success": True, "provider": "nvidia", "model": "model"},
+    ) as reset:
+        assert service.reset_llm_provider_circuit(provider="nvidia", model="model")["provider"] == "nvidia"
+    reset.assert_called_once_with(provider="nvidia", model="model")

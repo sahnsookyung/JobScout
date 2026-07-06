@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Minus, Plus } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { usePolicy } from '@/hooks/usePolicy';
+import { pipelineRunsApi } from '@/services/pipelineRunsApi';
 import { POLICY_PRESETS, POLICY_PRESET_VALUES } from '@/utils/constants';
 import type { PolicyConfig, PolicyPreset } from '@/types/api';
 
@@ -19,37 +21,47 @@ function presetForPolicy(policy: PolicyConfig): PolicyPreset | null {
 }
 
 export const PolicyPanel: React.FC = () => {
-    const { policy, isLoading, updatePolicy, applyPreset } = usePolicy();
+    const { policy, isLoading, updatePolicy, updatePolicyAsync, isUpdatingPolicy, applyPreset } = usePolicy();
+    const llmQueueStatus = useQuery({
+        queryKey: ['llm-evaluation-queue'],
+        queryFn: async () => {
+            const response = await pipelineRunsApi.getLlmEvaluationQueueStatus();
+            return response.data;
+        },
+        enabled: Boolean(policy?.llm_judge_available),
+    });
     const [minFit, setMinFit] = useState(55);
     const [topK, setTopK] = useState(50);
     const [llmJudgeEnabled, setLlmJudgeEnabled] = useState(false);
     const [llmJudgeAutoEnqueueEnabled, setLlmJudgeAutoEnqueueEnabled] = useState(false);
     const [llmJudgeTopN, setLlmJudgeTopN] = useState(5);
+    const [llmApplyStatus, setLlmApplyStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+    const [llmApplyMessage, setLlmApplyMessage] = useState('');
     const [preset, setPreset] = useState<PolicyPreset>('balanced');
     const hasHydratedPolicy = useRef(false);
-    const hasUserAdjustedSettings = useRef(false);
+    const hasUserAdjustedResultSettings = useRef(false);
+    const hasUserAdjustedLlmSettings = useRef(false);
 
     useEffect(() => {
         if (policy) {
             setMinFit(policy.min_fit);
             setTopK(policy.top_k);
-            setLlmJudgeEnabled(Boolean(policy.llm_judge_enabled));
-            setLlmJudgeAutoEnqueueEnabled(Boolean(policy.llm_judge_auto_enqueue_enabled));
-            setLlmJudgeTopN(policy.llm_judge_top_n ?? 5);
+            if (!hasUserAdjustedLlmSettings.current) {
+                setLlmJudgeEnabled(Boolean(policy.llm_judge_enabled));
+                setLlmJudgeAutoEnqueueEnabled(Boolean(policy.llm_judge_auto_enqueue_enabled));
+                setLlmJudgeTopN(policy.llm_judge_top_n ?? 5);
+            }
             setPreset(presetForPolicy(policy) ?? 'balanced');
             hasHydratedPolicy.current = true;
         }
     }, [policy]);
 
-    const autoApplySettings = useCallback(() => {
+    const autoApplyResultPolicy = useCallback(() => {
         const timeoutId = setTimeout(() => {
             updatePolicy({
                 min_fit: minFit,
                 top_k: topK,
                 min_jd_required_coverage: policy?.min_jd_required_coverage ?? null,
-                llm_judge_enabled: llmJudgeEnabled,
-                llm_judge_auto_enqueue_enabled: llmJudgeAutoEnqueueEnabled,
-                llm_judge_top_n: llmJudgeTopN,
             });
         }, 250);
 
@@ -57,21 +69,28 @@ export const PolicyPanel: React.FC = () => {
     }, [
         minFit,
         topK,
-        llmJudgeEnabled,
-        llmJudgeAutoEnqueueEnabled,
-        llmJudgeTopN,
         policy?.min_jd_required_coverage,
         updatePolicy,
     ]);
 
     useEffect(() => {
-        if (!hasHydratedPolicy.current || !hasUserAdjustedSettings.current) {
+        if (!hasHydratedPolicy.current || !hasUserAdjustedResultSettings.current) {
             return;
         }
 
-        const cleanup = autoApplySettings();
+        const cleanup = autoApplyResultPolicy();
         return cleanup;
-    }, [autoApplySettings, minFit, topK]);
+    }, [autoApplyResultPolicy, minFit, topK]);
+
+    const llmDraftDirty = Boolean(policy) && (
+        Boolean(policy?.llm_judge_enabled) !== llmJudgeEnabled ||
+        Boolean(policy?.llm_judge_auto_enqueue_enabled) !== llmJudgeAutoEnqueueEnabled ||
+        Number(policy?.llm_judge_top_n ?? 5) !== llmJudgeTopN
+    );
+    const queueBacklog = Number(llmQueueStatus.data?.queued ?? 0)
+        + Number(llmQueueStatus.data?.scheduled ?? 0)
+        + Number(llmQueueStatus.data?.db_pending ?? 0)
+        + Number(llmQueueStatus.data?.db_retryable_failed ?? 0);
 
     const handlePresetChange = (newPreset: PolicyPreset) => {
         const presetPolicy = POLICY_PRESET_VALUES[newPreset];
@@ -79,27 +98,29 @@ export const PolicyPanel: React.FC = () => {
         setMinFit(presetPolicy.min_fit);
         setTopK(presetPolicy.top_k);
         hasHydratedPolicy.current = true;
-        hasUserAdjustedSettings.current = false;
+        hasUserAdjustedResultSettings.current = false;
         applyPreset(newPreset);
     };
 
     const handleMinFitChange = (value: number) => {
-        hasUserAdjustedSettings.current = true;
+        hasUserAdjustedResultSettings.current = true;
         hasHydratedPolicy.current = true;
         setMinFit(value);
         setPreset('balanced');
     };
 
     const handleTopKChange = (value: number) => {
-        hasUserAdjustedSettings.current = true;
+        hasUserAdjustedResultSettings.current = true;
         hasHydratedPolicy.current = true;
         setTopK(value);
         setPreset('balanced');
     };
 
     const handleLlmEnabledChange = (value: boolean) => {
-        hasUserAdjustedSettings.current = true;
+        hasUserAdjustedLlmSettings.current = true;
         hasHydratedPolicy.current = true;
+        setLlmApplyStatus('idle');
+        setLlmApplyMessage('');
         setLlmJudgeEnabled(value);
         if (!value) {
             setLlmJudgeAutoEnqueueEnabled(false);
@@ -108,8 +129,10 @@ export const PolicyPanel: React.FC = () => {
     };
 
     const handleLlmAutoEnqueueChange = (value: boolean) => {
-        hasUserAdjustedSettings.current = true;
+        hasUserAdjustedLlmSettings.current = true;
         hasHydratedPolicy.current = true;
+        setLlmApplyStatus('idle');
+        setLlmApplyMessage('');
         setLlmJudgeAutoEnqueueEnabled(value);
         if (value) {
             setLlmJudgeEnabled(true);
@@ -119,10 +142,44 @@ export const PolicyPanel: React.FC = () => {
 
     const handleLlmTopNChange = (value: number) => {
         const maxTopN = policy?.llm_judge_top_n_max ?? 10;
-        hasUserAdjustedSettings.current = true;
+        hasUserAdjustedLlmSettings.current = true;
         hasHydratedPolicy.current = true;
+        setLlmApplyStatus('idle');
+        setLlmApplyMessage('');
         setLlmJudgeTopN(Math.max(1, Math.min(maxTopN, value)));
         setPreset('balanced');
+    };
+
+    const handleApplyLlmSettings = async () => {
+        if (!policy) return;
+        setLlmApplyStatus('saving');
+        setLlmApplyMessage('');
+        try {
+            const response = await updatePolicyAsync({
+                min_fit: policy.min_fit,
+                top_k: policy.top_k,
+                min_jd_required_coverage: policy.min_jd_required_coverage ?? null,
+                llm_judge_enabled: llmJudgeEnabled,
+                llm_judge_auto_enqueue_enabled: llmJudgeAutoEnqueueEnabled,
+                llm_judge_top_n: llmJudgeTopN,
+            });
+            const updated = response.data;
+            hasUserAdjustedLlmSettings.current = false;
+            setLlmApplyStatus('saved');
+            if (updated.llm_judge_enqueue_state === 'scheduled') {
+                setLlmApplyMessage('Scheduled');
+            } else if (updated.llm_judge_enqueue_state === 'reused') {
+                setLlmApplyMessage('Already queued');
+            } else if (updated.llm_judge_enqueue_state === 'failed' || updated.degraded) {
+                setLlmApplyStatus('failed');
+                setLlmApplyMessage('Queue unavailable');
+            } else {
+                setLlmApplyMessage('Saved');
+            }
+        } catch {
+            setLlmApplyStatus('failed');
+            setLlmApplyMessage('Save failed');
+        }
     };
 
     if (isLoading) {
@@ -304,6 +361,29 @@ export const PolicyPanel: React.FC = () => {
                                 <Plus className="mx-auto h-3.5 w-3.5" aria-hidden="true" />
                             </button>
                         </div>
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between gap-3">
+                        <span className="text-[12px] text-ink-muted">
+                            {llmApplyMessage || (
+                                llmQueueStatus.data
+                                    ? `${queueBacklog} queued`
+                                    : ''
+                            )}
+                        </span>
+                        <button
+                            type="button"
+                            className="min-h-9 border border-rule px-3 text-[13px] text-ink transition-colors hover:border-rule-strong disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={
+                                !policy?.llm_judge_available ||
+                                !llmDraftDirty ||
+                                Boolean(isUpdatingPolicy) ||
+                                llmApplyStatus === 'saving'
+                            }
+                            onClick={handleApplyLlmSettings}
+                        >
+                            {llmApplyStatus === 'saving' ? 'Saving' : 'Apply'}
+                        </button>
                     </div>
                 </section>
             </div>

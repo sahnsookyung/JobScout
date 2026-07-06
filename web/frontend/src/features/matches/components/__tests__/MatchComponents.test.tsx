@@ -67,6 +67,7 @@ vi.mock('@/services/matchesApi', () => ({
         getLlmEvaluations: vi.fn(),
         generateLlmEvaluation: vi.fn(),
         deleteLlmEvaluation: vi.fn(),
+        retryLlmEvaluation: vi.fn(),
     },
 }));
 
@@ -631,6 +632,32 @@ describe('MatchDetailsModal', () => {
                 evaluation: null,
             },
         } as never);
+        vi.mocked(matchesApi.retryLlmEvaluation).mockResolvedValue({
+            data: {
+                success: true,
+                reused: false,
+                accepted: true,
+                message: 'Queued LLM evaluation retry.',
+                evaluation: {
+                    id: 'eval-retry',
+                    match_id: 'match-1',
+                    job_id: 'job-1',
+                    status: 'pending',
+                    llm_score: null,
+                    confidence: null,
+                    verdict: null,
+                    summary: null,
+                    reason_codes: [],
+                    requirement_verdicts: [],
+                    provider: 'openai',
+                    model: 'judge-model',
+                    prompt_version: 'match-judge-v1',
+                    schema_version: '1',
+                    retryable: false,
+                    queued_reason: 'retry_now',
+                },
+            },
+        } as never);
     });
 
     it('renders nothing when matchId is null', () => {
@@ -766,12 +793,51 @@ describe('MatchDetailsModal', () => {
 
         const { container } = render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />, { wrapper: makeQueryWrapper() });
 
-        expect((await screen.findAllByText(/Cerebras is reviewing the full resume and job description/i)).length)
+        expect((await screen.findAllByText(/LLM review is running against the full resume and job description/i)).length)
             .toBeGreaterThan(0);
         const generateButton = screen.getByRole('button', { name: /^generate llm evaluation$/i });
         expect(generateButton).toBeDisabled();
         expect(screen.getByTestId('sparkles-icon').parentElement).toHaveClass('animate-pulse');
         expect(container.querySelector('.animate-spin')).not.toBeInTheDocument();
+    });
+
+    it('shows retry action for retryable LLM failures', async () => {
+        vi.mocked(matchesApi.getLlmEvaluations).mockResolvedValue({
+            data: {
+                success: true,
+                count: 1,
+                evaluations: [
+                    {
+                        id: 'eval-retryable',
+                        match_id: 'match-1',
+                        job_id: 'job-1',
+                        status: 'failed',
+                        llm_score: null,
+                        confidence: null,
+                        verdict: null,
+                        summary: null,
+                        reason_codes: [],
+                        requirement_verdicts: [],
+                        provider: 'nvidia',
+                        model: 'nvidia-model',
+                        prompt_version: 'match-judge-v1',
+                        schema_version: '1',
+                        retryable: true,
+                        retry_after_seconds: 60,
+                    },
+                ],
+            },
+        } as never);
+        mockUseMatchDetails.mockReturnValue({ data: makeModalData(), isLoading: false });
+
+        render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        expect((await screen.findAllByText(/Retryable failure/i)).length).toBeGreaterThan(0);
+        fireEvent.click(screen.getByRole('button', { name: /retry llm evaluation/i }));
+
+        await waitFor(() => {
+            expect(matchesApi.retryLlmEvaluation).toHaveBeenCalledWith('match-1', 'eval-retryable');
+        });
     });
 
     it('disables LLM generation when provider credentials are missing', async () => {
@@ -791,7 +857,7 @@ describe('MatchDetailsModal', () => {
 
         render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />, { wrapper: makeQueryWrapper() });
 
-        expect(await screen.findByText('LLM judge unavailable: Cerebras API key missing.')).toBeInTheDocument();
+        expect(await screen.findByText('LLM judge unavailable: LLM judge provider credentials are missing.')).toBeInTheDocument();
         const generateButton = screen.getByRole('button', { name: /^generate llm evaluation$/i });
         expect(generateButton).toBeDisabled();
 

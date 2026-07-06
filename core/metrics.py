@@ -78,6 +78,7 @@ _PIPELINE_STAGES = frozenset({
     "resume_embedding",
 })
 _LLM_EVALUATION_QUEUE_REGISTRIES = frozenset({"queued", "started", "deferred", "scheduled", "failed"})
+_LLM_EVALUATION_BACKLOG_STATUSES = frozenset({"pending", "running", "failed", "retryable_failed"})
 _LLM_JUDGE_PROVIDERS = frozenset({"nvidia", "groq", "cerebras", "openai_compatible"})
 _LLM_JUDGE_ERROR_CATEGORIES = frozenset(
     {
@@ -85,6 +86,7 @@ _LLM_JUDGE_ERROR_CATEGORIES = frozenset(
         "timeout",
         "connection_error",
         "server_error",
+        "circuit_open",
         "invalid_auth",
         "invalid_request",
         "schema_error",
@@ -93,6 +95,11 @@ _LLM_JUDGE_ERROR_CATEGORIES = frozenset(
         "unknown",
     }
 )
+_LLM_JUDGE_SCHEDULER_EVENTS = frozenset({"scheduled", "reused", "succeeded", "failed"})
+_LLM_JUDGE_CIRCUIT_EVENTS = frozenset({"opened", "skip", "closed", "manual_reset"})
+_LLM_JUDGE_WAIT_OUTCOMES = frozenset({"waited", "retry_after", "unavailable"})
+_LLM_QUEUE_OPERATOR_ACTIONS = frozenset({"pause", "resume", "retry"})
+_LLM_PROVIDER_CANARY_STATUSES = frozenset({"succeeded", "failed", "rate_limited", "circuit_open"})
 
 
 def _safe(value: str, allowed: frozenset[str]) -> str:
@@ -241,10 +248,53 @@ llm_evaluation_queue_jobs = Gauge(
     labelnames=("registry",),
 )
 
+llm_evaluation_backlog_rows = Gauge(
+    f"{NAMESPACE}_llm_evaluation_backlog_rows",
+    "Current durable LLM evaluation DB backlog count by bounded status.",
+    labelnames=("status",),
+)
+
+llm_evaluation_oldest_age_seconds = Gauge(
+    f"{NAMESPACE}_llm_evaluation_oldest_age_seconds",
+    "Age in seconds of the oldest durable LLM evaluation backlog row by bounded status.",
+    labelnames=("status",),
+)
+
 llm_judge_provider_fallbacks_total = Counter(
     f"{NAMESPACE}_llm_judge_provider_fallbacks_total",
     "Match-level LLM judge provider fallbacks after transient provider failures.",
     labelnames=("from_provider", "to_provider", "error_category"),
+)
+
+llm_judge_scheduler_jobs_total = Counter(
+    f"{NAMESPACE}_llm_judge_scheduler_jobs_total",
+    "Top-N LLM judge scheduler job events.",
+    labelnames=("event",),
+)
+
+llm_judge_provider_circuit_events_total = Counter(
+    f"{NAMESPACE}_llm_judge_provider_circuit_events_total",
+    "LLM judge provider circuit breaker events.",
+    labelnames=("provider", "event"),
+)
+
+llm_judge_provider_wait_seconds = Histogram(
+    f"{NAMESPACE}_llm_judge_provider_wait_seconds",
+    "LLM judge provider wait or retry-after seconds.",
+    labelnames=("provider", "outcome"),
+    buckets=(0.001, 0.01, 0.1, 0.5, 1, 2, 5, 10, 30, 60, 120),
+)
+
+llm_evaluation_queue_operator_actions_total = Counter(
+    f"{NAMESPACE}_llm_evaluation_queue_operator_actions_total",
+    "Manual LLM evaluation queue operator actions.",
+    labelnames=("action",),
+)
+
+llm_judge_provider_canaries_total = Counter(
+    f"{NAMESPACE}_llm_judge_provider_canaries_total",
+    "Explicit LLM judge provider canary outcomes.",
+    labelnames=("provider", "status", "error_category"),
 )
 
 
@@ -364,6 +414,48 @@ def record_llm_judge_provider_fallback(
     ).inc()
 
 
+def record_llm_judge_scheduler_job(event: str) -> None:
+    llm_judge_scheduler_jobs_total.labels(
+        event=_safe(event, _LLM_JUDGE_SCHEDULER_EVENTS),
+    ).inc()
+
+
+def record_llm_judge_provider_circuit_event(provider: str, event: str) -> None:
+    llm_judge_provider_circuit_events_total.labels(
+        provider=_safe(provider, _LLM_JUDGE_PROVIDERS),
+        event=_safe(event, _LLM_JUDGE_CIRCUIT_EVENTS),
+    ).inc()
+
+
+def observe_llm_judge_provider_wait_seconds(
+    provider: str,
+    outcome: str,
+    seconds: float,
+) -> None:
+    llm_judge_provider_wait_seconds.labels(
+        provider=_safe(provider, _LLM_JUDGE_PROVIDERS),
+        outcome=_safe(outcome, _LLM_JUDGE_WAIT_OUTCOMES),
+    ).observe(max(float(seconds or 0.0), 0.0))
+
+
+def record_llm_evaluation_queue_operator_action(action: str) -> None:
+    llm_evaluation_queue_operator_actions_total.labels(
+        action=_safe(action, _LLM_QUEUE_OPERATOR_ACTIONS),
+    ).inc()
+
+
+def record_llm_judge_provider_canary(
+    provider: str,
+    status: str,
+    error_category: str | None = None,
+) -> None:
+    llm_judge_provider_canaries_total.labels(
+        provider=_safe(provider, _LLM_JUDGE_PROVIDERS),
+        status=_safe(status, _LLM_PROVIDER_CANARY_STATUSES),
+        error_category=_safe(error_category or "unknown", _LLM_JUDGE_ERROR_CATEGORIES),
+    ).inc()
+
+
 def _inc_counter(counter: Counter, count: int | float = 1) -> None:
     value = max(float(count or 0), 0.0)
     if value:
@@ -413,6 +505,27 @@ def set_llm_evaluation_queue_depth(registry: str, count: int | float) -> None:
     llm_evaluation_queue_jobs.labels(
         registry=_safe(registry, _LLM_EVALUATION_QUEUE_REGISTRIES),
     ).set(max(float(count or 0), 0.0))
+
+def set_llm_evaluation_backlog_metrics(stats: dict[str, object]) -> None:
+    """Project durable LLM evaluation backlog stats into bounded gauges."""
+    llm_evaluation_backlog_rows.labels(status="pending").set(
+        float(stats.get("db_pending") or 0)
+    )
+    llm_evaluation_backlog_rows.labels(status="running").set(
+        float(stats.get("db_running") or 0)
+    )
+    llm_evaluation_backlog_rows.labels(status="failed").set(
+        float(stats.get("db_failed") or 0)
+    )
+    llm_evaluation_backlog_rows.labels(status="retryable_failed").set(
+        float(stats.get("db_retryable_failed") or 0)
+    )
+    llm_evaluation_oldest_age_seconds.labels(status="pending").set(
+        float(stats.get("oldest_pending_age_seconds") or 0)
+    )
+    llm_evaluation_oldest_age_seconds.labels(status="retryable_failed").set(
+        float(stats.get("oldest_retryable_failed_age_seconds") or 0)
+    )
 
 
 def set_job_inventory_metrics(stats: dict[str, object]) -> None:

@@ -169,8 +169,10 @@ class TestPolicyRouter:
         with patch(
             'web.backend.routers.policy._enqueue_llm_top_n_after_policy_update',
             return_value=(
-                {"attempted": 3, "reused": 1, "created": 2, "enqueued": 2, "failed": 0},
+                {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0},
                 [],
+                "scheduled",
+                "llm-top-n:owner:selection",
             ),
         ) as enqueue:
             response = client.put(
@@ -190,7 +192,9 @@ class TestPolicyRouter:
         assert data['llm_judge_top_n_max'] == 8
         assert data['llm_judge_available'] is True
         assert data['llm_judge_revision'] == 2
-        assert data['llm_judge_enqueue_stats']['enqueued'] == 2
+        assert data['llm_judge_enqueue_stats']['enqueued'] == 0
+        assert data['llm_judge_enqueue_state'] == "scheduled"
+        assert data['llm_judge_enqueue_job_id'] == "llm-top-n:owner:selection"
         mock_policy_service.update_llm_judge_policy.assert_called_once()
         assert mock_policy_service.update_llm_judge_policy.call_args.kwargs["enabled"] is True
         assert (
@@ -214,19 +218,15 @@ class TestPolicyRouter:
         db = Mock()
 
         with patch('web.backend.routers.policy.MatchService') as match_service_cls:
-            with patch('core.llm_evaluation.MatchLlmEvaluationService') as llm_service_cls:
+            with patch(
+                'core.llm_evaluation_queue.enqueue_llm_top_n_for_selection',
+                return_value={"state": "scheduled", "job_id": "llm-top-n:job-1"},
+            ) as schedule:
                 match_service_cls.return_value._resolve_canonical_selection.return_value = (
                     SimpleNamespace(selection_run_id='selection-run-1')
                 )
-                llm_service_cls.return_value.evaluate_selection_run.return_value = {
-                    "attempted": 4,
-                    "reused": 2,
-                    "created": 2,
-                    "enqueued": 2,
-                    "failed": 0,
-                }
 
-                stats, degraded = policy_router._enqueue_llm_top_n_after_policy_update(
+                stats, degraded, state, job_id = policy_router._enqueue_llm_top_n_after_policy_update(
                     db,
                     owner_id='owner-1',
                     tenant_id='tenant-1',
@@ -235,12 +235,15 @@ class TestPolicyRouter:
                 )
 
         assert degraded == []
-        assert stats["enqueued"] == 2
-        llm_service_cls.return_value.evaluate_selection_run.assert_called_once_with(
-            'selection-run-1',
+        assert stats["enqueued"] == 0
+        assert state == "scheduled"
+        assert job_id == "llm-top-n:job-1"
+        schedule.assert_called_once_with(
+            selection_run_id='selection-run-1',
             owner_id='owner-1',
             tenant_id='tenant-1',
             top_n=4,
+            policy_revision=2,
         )
 
     def test_llm_policy_enqueue_helper_skips_when_auto_enqueue_disabled(self):
@@ -248,7 +251,7 @@ class TestPolicyRouter:
         next_policy = _llm_policy(enabled=True, top_n=4, available=True, revision=2)
 
         with patch('web.backend.routers.policy.MatchService') as match_service_cls:
-            stats, degraded = policy_router._enqueue_llm_top_n_after_policy_update(
+            stats, degraded, state, job_id = policy_router._enqueue_llm_top_n_after_policy_update(
                 Mock(),
                 owner_id='owner-1',
                 tenant_id='tenant-1',
@@ -258,6 +261,8 @@ class TestPolicyRouter:
 
         assert stats == {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0}
         assert degraded == []
+        assert state is None
+        assert job_id is None
         match_service_cls.assert_not_called()
 
     def test_llm_policy_enqueue_helper_skips_decreased_top_n(self):
@@ -265,7 +270,7 @@ class TestPolicyRouter:
         next_policy = _llm_policy(enabled=True, top_n=3, available=True, revision=2)
 
         with patch('web.backend.routers.policy.MatchService') as match_service_cls:
-            stats, degraded = policy_router._enqueue_llm_top_n_after_policy_update(
+            stats, degraded, state, job_id = policy_router._enqueue_llm_top_n_after_policy_update(
                 Mock(),
                 owner_id='owner-1',
                 tenant_id=None,
@@ -275,6 +280,8 @@ class TestPolicyRouter:
 
         assert stats == {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0}
         assert degraded == []
+        assert state is None
+        assert job_id is None
         match_service_cls.assert_not_called()
 
     def test_update_policy_partial(self, client, mock_policy_service):

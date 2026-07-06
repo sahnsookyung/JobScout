@@ -20,6 +20,7 @@ from core.llm_evaluation_queue import (
     check_llm_evaluation_queue_readiness,
     enqueue_stale_or_retryable_evaluations,
     get_llm_evaluation_queue_status,
+    schedule_llm_recovery_sweep,
 )
 from core.metrics import bind_llm_evaluation_queue_depths, record_worker_running
 
@@ -59,6 +60,10 @@ def start_worker(*, burst: bool = False, queue_names: list[str] | None = None) -
         enqueue_stale_or_retryable_evaluations()
     except Exception:
         logger.warning("Failed to run LLM evaluation startup sweep", exc_info=True)
+    try:
+        schedule_llm_recovery_sweep(delay_seconds=0, queue=queues[0])
+    except Exception:
+        logger.warning("Failed to schedule LLM evaluation recovery sweep", exc_info=True)
 
     worker = Worker(queues, connection=redis_conn)
     record_worker_running("llm_evaluation", "worker", True)

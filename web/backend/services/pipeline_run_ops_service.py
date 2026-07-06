@@ -8,7 +8,18 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from core.llm_evaluation_queue import check_llm_evaluation_queue_readiness
+from core.llm.provider_health import (
+    configured_llm_provider_status,
+    reset_llm_provider_circuit,
+    run_llm_provider_canaries,
+)
+from core.llm_evaluation_queue import (
+    check_llm_evaluation_queue_readiness,
+    enqueue_stale_or_retryable_evaluations,
+    resume_llm_evaluation_queue,
+    set_llm_evaluation_queue_paused,
+)
+from core.metrics import record_llm_evaluation_queue_operator_action
 from core.redis_streams import (
     STREAM_EMBEDDINGS_BATCH,
     STREAM_EXTRACTION_BATCH,
@@ -175,7 +186,51 @@ class PipelineRunOpsService:
                 "deferred": 0,
                 "scheduled": 0,
                 "failed": 0,
+                "db_pending": 0,
+                "db_running": 0,
+                "db_failed": 0,
+                "db_retryable_failed": 0,
+                "oldest_pending_age_seconds": None,
+                "oldest_retryable_failed_age_seconds": None,
+                "drain_estimate_seconds": None,
+                "paused": False,
+                "pause_reason": None,
+                "pause_ttl_seconds": None,
                 "error": str(exc),
             }
+
+    def pause_llm_queue(
+        self,
+        *,
+        reason: str | None = None,
+        ttl_seconds: int | None = None,
+    ) -> dict[str, Any]:
+        set_llm_evaluation_queue_paused(reason=reason, ttl_seconds=ttl_seconds)
+        record_llm_evaluation_queue_operator_action("pause")
+        return self.llm_queue_status()
+
+    def resume_llm_queue(self) -> dict[str, Any]:
+        resume_llm_evaluation_queue()
+        record_llm_evaluation_queue_operator_action("resume")
+        return self.llm_queue_status()
+
+    def retry_llm_queue(self, *, limit: int = 100) -> tuple[dict[str, Any], int]:
+        enqueued = enqueue_stale_or_retryable_evaluations(limit=limit)
+        record_llm_evaluation_queue_operator_action("retry")
+        return self.llm_queue_status(), enqueued
+
+    def llm_provider_status(self) -> dict[str, Any]:
+        return configured_llm_provider_status()
+
+    def run_llm_provider_canaries(self) -> dict[str, Any]:
+        return run_llm_provider_canaries()
+
+    def reset_llm_provider_circuit(
+        self,
+        *,
+        provider: str,
+        model: str,
+    ) -> dict[str, Any]:
+        return reset_llm_provider_circuit(provider=provider, model=model)
 
 pipeline_run_ops_service = PipelineRunOpsService()

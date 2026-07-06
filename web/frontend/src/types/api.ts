@@ -35,6 +35,12 @@ export interface MatchSummary {
     llm_effective_for_rerank?: boolean;
     llm_ignored_for_rerank_reason?: string | null;
     llm_stale_status?: string | null;
+    llm_retryable?: boolean;
+    llm_queued_reason?: string | null;
+    llm_queue_state?: string | null;
+    llm_next_retry_at?: string | null;
+    llm_retry_after_seconds?: number | null;
+    llm_provider_status_message?: string | null;
     llm_original_rank?: number | null;
     llm_reranked_rank?: number | null;
     llm_rerank_score?: number | null;
@@ -91,6 +97,12 @@ export interface MatchDetail {
     llm_effective_for_rerank?: boolean;
     llm_ignored_for_rerank_reason?: string | null;
     llm_stale_status?: string | null;
+    llm_retryable?: boolean;
+    llm_queued_reason?: string | null;
+    llm_queue_state?: string | null;
+    llm_next_retry_at?: string | null;
+    llm_retry_after_seconds?: number | null;
+    llm_provider_status_message?: string | null;
     base_score: number;
     penalties: number;
     required_coverage: number;
@@ -146,6 +158,12 @@ export interface MatchLlmEvaluation {
     schema_version: string;
     error_code?: string | null;
     retryable: boolean;
+    queued_reason?: string | null;
+    queue_job_id?: string | null;
+    queue_state?: string | null;
+    next_retry_at?: string | null;
+    retry_after_seconds?: number | null;
+    provider_status_message?: string | null;
     created_at?: string | null;
     started_at?: string | null;
     completed_at?: string | null;
@@ -346,7 +364,82 @@ export interface LlmEvaluationQueueStatusResponse {
     deferred: number;
     scheduled: number;
     failed: number;
+    db_pending?: number;
+    db_running?: number;
+    db_failed?: number;
+    db_retryable_failed?: number;
+    oldest_pending_age_seconds?: number | null;
+    oldest_retryable_failed_age_seconds?: number | null;
+    drain_estimate_seconds?: number | null;
+    paused?: boolean;
+    pause_reason?: string | null;
+    pause_ttl_seconds?: number | null;
     error?: string | null;
+}
+
+export interface LlmEvaluationQueueOperationResponse {
+    success: boolean;
+    action: string;
+    message: string;
+    enqueued_count: number;
+    status: LlmEvaluationQueueStatusResponse;
+}
+
+export interface LlmProviderRuntimeStatus {
+    name: string;
+    provider: string;
+    base_url: string;
+    model: string;
+    structured_output_mode: string;
+    timeout_seconds: number;
+    max_input_tokens: number;
+    requests_per_minute?: number | null;
+    rate_limit_max_wait_seconds: number;
+    fallback_on_rate_limit: boolean;
+    api_key_env?: string | null;
+    configured: boolean;
+    circuit_open: boolean;
+    circuit_retry_after_seconds?: number | null;
+    circuit_failure_count: number;
+    last_canary_status?: string | null;
+    last_canary_error_category?: string | null;
+    last_canary_retryable?: boolean;
+    last_canary_retry_after_seconds?: number | null;
+    last_canary_elapsed_ms?: number | null;
+    last_canary_checked_at?: string | null;
+    last_canary_error?: string | null;
+}
+
+export interface LlmProviderStatusResponse {
+    success: boolean;
+    count: number;
+    providers: LlmProviderRuntimeStatus[];
+}
+
+export interface LlmProviderCanaryResult extends LlmProviderRuntimeStatus {
+    status: string;
+    error_category?: string | null;
+    retryable: boolean;
+    retry_after_seconds?: number | null;
+    elapsed_ms: number;
+    checked_at?: string | null;
+    error?: string | null;
+}
+
+export interface LlmProviderCanaryResponse {
+    success: boolean;
+    count: number;
+    results: LlmProviderCanaryResult[];
+}
+
+export interface LlmProviderCircuitResetResponse {
+    success: boolean;
+    provider: string;
+    model?: string | null;
+    circuit_open: boolean;
+    circuit_retry_after_seconds?: number | null;
+    circuit_failure_count: number;
+    deleted_keys: number;
 }
 
 export interface StatsResponse {
@@ -410,6 +503,8 @@ export interface PolicyConfig {
         enqueued: number;
         failed: number;
     } | null;
+    llm_judge_enqueue_state?: string | null;
+    llm_judge_enqueue_job_id?: string | null;
     degraded?: boolean;
     degraded_reasons?: Array<{ reason: string; detail?: string }>;
 }
@@ -716,8 +811,12 @@ export interface FetchSource {
         reason?: string | null;
         disabled_reason?: string | null;
     } | null;
+    api_fetch_available?: boolean;
     deployment_allowed?: boolean;
     disabled_reason?: string | null;
+    availability_status?: string | null;
+    availability_reason?: string | null;
+    provider_diagnostics?: Record<string, any>;
 }
 
 export interface FetchSourcesResponse {

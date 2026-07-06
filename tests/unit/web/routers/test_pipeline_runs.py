@@ -201,6 +201,110 @@ def test_llm_queue_status_preserves_degraded_error_metadata():
     assert data["ready"] is False
     assert data["error"] == "redis unavailable"
 
+def test_llm_queue_operator_endpoints_return_nested_status():
+    client = _client()
+
+    status = {
+        "success": True,
+        "ready": True,
+        "queue": "llm_evaluations",
+        "queued": 0,
+        "started": 0,
+        "deferred": 0,
+        "scheduled": 0,
+        "failed": 0,
+        "paused": True,
+        "pause_reason": "maintenance",
+        "pause_ttl_seconds": 60,
+    }
+    with patch(
+        "web.backend.routers.pipeline_runs.pipeline_run_ops_service.pause_llm_queue",
+        return_value=status,
+    ) as pause:
+        response = client.post(
+            "/api/pipeline-runs/llm-evaluations/queue/pause",
+            json={"reason": "maintenance", "ttl_seconds": 60},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["action"] == "pause_llm_queue"
+    assert data["status"]["paused"] is True
+    pause.assert_called_once_with(reason="maintenance", ttl_seconds=60)
+
+    with patch(
+        "web.backend.routers.pipeline_runs.pipeline_run_ops_service.retry_llm_queue",
+        return_value=({**status, "paused": False, "pause_reason": None, "pause_ttl_seconds": None}, 3),
+    ) as retry:
+        response = client.post("/api/pipeline-runs/llm-evaluations/queue/retry", params={"limit": 25})
+
+    assert response.status_code == 200
+    assert response.json()["enqueued_count"] == 3
+    retry.assert_called_once_with(limit=25)
+
+def test_llm_provider_status_canary_and_reset_endpoints():
+    client = _client()
+    provider = {
+        "name": "nvidia",
+        "provider": "nvidia",
+        "base_url": "https://integrate.api.nvidia.com/v1",
+        "model": "nvidia-model",
+        "structured_output_mode": "auto",
+        "timeout_seconds": 120,
+        "max_input_tokens": 8192,
+        "requests_per_minute": 40,
+        "rate_limit_max_wait_seconds": 120,
+        "fallback_on_rate_limit": False,
+        "api_key_env": "NVIDIA_API_KEY",
+        "configured": True,
+        "circuit_open": False,
+        "circuit_retry_after_seconds": None,
+        "circuit_failure_count": 0,
+    }
+
+    with patch(
+        "web.backend.routers.pipeline_runs.pipeline_run_ops_service.llm_provider_status",
+        return_value={"success": True, "count": 1, "providers": [provider]},
+    ):
+        response = client.get("/api/pipeline-runs/llm-evaluations/providers")
+
+    assert response.status_code == 200
+    assert response.json()["providers"][0]["model"] == "nvidia-model"
+
+    with patch(
+        "web.backend.routers.pipeline_runs.pipeline_run_ops_service.run_llm_provider_canaries",
+        return_value={
+            "success": True,
+            "count": 1,
+            "results": [{**provider, "status": "succeeded", "retryable": False, "elapsed_ms": 10}],
+        },
+    ):
+        response = client.post("/api/pipeline-runs/llm-evaluations/providers/canary")
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["status"] == "succeeded"
+
+    with patch(
+        "web.backend.routers.pipeline_runs.pipeline_run_ops_service.reset_llm_provider_circuit",
+        return_value={
+            "success": True,
+            "provider": "nvidia",
+            "model": "nvidia-model",
+            "circuit_open": False,
+            "circuit_retry_after_seconds": None,
+            "circuit_failure_count": 0,
+            "deleted_keys": 2,
+        },
+    ) as reset:
+        response = client.post(
+            "/api/pipeline-runs/llm-evaluations/providers/circuit/reset",
+            json={"provider": "nvidia", "model": "nvidia-model"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["deleted_keys"] == 2
+    reset.assert_called_once_with(provider="nvidia", model="nvidia-model")
+
 def test_cancel_pipeline_run_returns_operation_response():
     client = _client()
     run = _run_summary()

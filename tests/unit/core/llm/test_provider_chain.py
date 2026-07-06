@@ -14,6 +14,7 @@ from core.llm.provider_chain import (
     configured_provider_entries,
 )
 from core.llm.provider_rate_limiter import ProviderRateLimitExceeded
+from core.llm.provider_rate_limiter import ProviderCircuitOpen
 
 
 class _Provider(LLMProvider):
@@ -80,10 +81,31 @@ class _RateLimiter:
             raise self.error
 
 
+class _Circuit:
+    def __init__(self, *, open_provider: str | None = None):
+        self.open_provider = open_provider
+        self.failures: list[tuple[str, str | None]] = []
+        self.successes: list[tuple[str, str | None]] = []
+
+    def assert_available(self, provider_name: str, model: str | None = None) -> None:
+        if provider_name == self.open_provider:
+            raise ProviderCircuitOpen(provider_name, 120, model=model)
+
+    def record_failure(self, provider_name: str, model: str | None = None) -> None:
+        self.failures.append((provider_name, model))
+
+    def record_success(self, provider_name: str, model: str | None = None) -> None:
+        self.successes.append((provider_name, model))
+
+
 def test_provider_chain_falls_back_after_transient_failure() -> None:
     primary = _Provider(error=TimeoutError("timed out"))
     fallback = _Provider(response={"score": 90})
-    chain = LLMProviderChain([_candidate("nvidia", primary), _candidate("groq", fallback)])
+    circuit = _Circuit()
+    chain = LLMProviderChain(
+        [_candidate("nvidia", primary), _candidate("groq", fallback)],
+        circuit_breaker=circuit,
+    )
 
     result = chain.extract_structured_data("SAFE PAYLOAD", {}, user_message="SAFE PAYLOAD")
 
@@ -98,6 +120,8 @@ def test_provider_chain_falls_back_after_transient_failure() -> None:
         "provider_type": "groq",
         "model": "groq-model",
     }
+    assert circuit.failures == [("nvidia", "nvidia-model")]
+    assert circuit.successes == [("groq", "groq-model")]
 
 
 def test_provider_chain_does_not_fallback_after_terminal_auth_failure() -> None:
@@ -105,7 +129,11 @@ def test_provider_chain_does_not_fallback_after_terminal_auth_failure() -> None:
     error.status_code = 401
     primary = _Provider(error=error)
     fallback = _Provider(response={"score": 90})
-    chain = LLMProviderChain([_candidate("nvidia", primary), _candidate("groq", fallback)])
+    circuit = _Circuit()
+    chain = LLMProviderChain(
+        [_candidate("nvidia", primary), _candidate("groq", fallback)],
+        circuit_breaker=circuit,
+    )
 
     with pytest.raises(LLMProviderChainError) as exc_info:
         chain.extract_structured_data("SAFE PAYLOAD", {})
@@ -115,6 +143,7 @@ def test_provider_chain_does_not_fallback_after_terminal_auth_failure() -> None:
     assert primary.calls == 1
     assert fallback.calls == 0
     assert len(chain.last_attempts) == 1
+    assert circuit.failures == []
 
 
 def test_provider_chain_does_not_fallback_after_rate_limit_by_default() -> None:
@@ -122,7 +151,10 @@ def test_provider_chain_does_not_fallback_after_rate_limit_by_default() -> None:
     error.status_code = 429
     primary = _Provider(error=error)
     fallback = _Provider(response={"score": 90})
-    chain = LLMProviderChain([_candidate("nvidia", primary), _candidate("groq", fallback)])
+    chain = LLMProviderChain(
+        [_candidate("nvidia", primary), _candidate("groq", fallback)],
+        circuit_breaker=_Circuit(),
+    )
 
     with pytest.raises(LLMProviderChainError) as exc_info:
         chain.extract_structured_data("SAFE PAYLOAD", {})
@@ -143,7 +175,8 @@ def test_provider_chain_can_fallback_after_rate_limit_when_explicitly_enabled() 
         [
             _candidate("nvidia", primary, fallback_on_rate_limit=True),
             _candidate("groq", fallback),
-        ]
+        ],
+        circuit_breaker=_Circuit(),
     )
 
     result = chain.extract_structured_data("SAFE PAYLOAD", {})
@@ -166,6 +199,7 @@ def test_provider_chain_applies_configured_rate_limiter_before_provider_call() -
             )
         ],
         rate_limiter=limiter,
+        circuit_breaker=_Circuit(),
     )
 
     result = chain.extract_structured_data("SAFE PAYLOAD", {})
@@ -191,6 +225,7 @@ def test_provider_chain_rate_limiter_backpressure_does_not_call_fallback() -> No
             _candidate("groq", fallback),
         ],
         rate_limiter=limiter,
+        circuit_breaker=_Circuit(),
     )
 
     with pytest.raises(LLMProviderChainError) as exc_info:
@@ -202,6 +237,34 @@ def test_provider_chain_rate_limiter_backpressure_does_not_call_fallback() -> No
     assert fallback.calls == 0
     assert chain.last_attempts[0]["status"] == "rate_limited"
     assert chain.last_attempts[0]["retry_after_seconds"] == 12.5
+
+
+def test_provider_chain_skips_open_circuit_and_falls_back() -> None:
+    primary = _Provider(response={"score": 10})
+    fallback = _Provider(response={"score": 90})
+    chain = LLMProviderChain(
+        [_candidate("nvidia", primary), _candidate("groq", fallback)],
+        circuit_breaker=_Circuit(open_provider="nvidia"),
+    )
+
+    result = chain.extract_structured_data("SAFE PAYLOAD", {})
+
+    assert result == {"score": 90}
+    assert primary.calls == 0
+    assert fallback.calls == 1
+    assert chain.last_attempts[0]["status"] == "circuit_open"
+    assert chain.last_attempts[0]["error_category"] == "circuit_open"
+
+
+def test_provider_chain_unknown_failure_is_not_retryable() -> None:
+    primary = _Provider(error=RuntimeError("unexpected provider shape"))
+    chain = LLMProviderChain([_candidate("nvidia", primary)], circuit_breaker=_Circuit())
+
+    with pytest.raises(LLMProviderChainError) as exc_info:
+        chain.extract_structured_data("SAFE PAYLOAD", {})
+
+    assert exc_info.value.error_category == "unknown"
+    assert exc_info.value.retryable is False
 
 
 def test_provider_chain_skips_entries_without_provider_credentials(monkeypatch) -> None:

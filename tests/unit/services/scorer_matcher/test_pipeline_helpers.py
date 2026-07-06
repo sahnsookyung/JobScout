@@ -1288,45 +1288,35 @@ class TestPipelineNotificationAndPublicationHelpers:
         mock_refresh.assert_not_called()
         mock_publish.assert_not_called()
 
-    @patch("services.scorer_matcher.pipeline.job_uow")
-    @patch("services.scorer_matcher.pipeline.MatchLlmEvaluationService")
+    @patch("services.scorer_matcher.pipeline.enqueue_llm_top_n_for_selection")
     @patch("services.scorer_matcher.pipeline.get_result_policy_store")
     def test_run_llm_judge_for_selection_uses_owner_policy_and_top_n(
         self,
         mock_policy_store,
-        mock_service_cls,
-        mock_uow,
+        mock_schedule,
     ):
-        repo = SimpleNamespace(db=MagicMock())
-        mock_uow.return_value = _uow(repo)
         mock_policy_store.return_value.get_llm_judge_policy.return_value = SimpleNamespace(
             enabled=True,
             auto_enqueue_enabled=True,
             available=True,
             top_n=3,
+            revision=9,
         )
-        service = MagicMock()
-        service.evaluate_selection_run.return_value = {
-            "attempted": 3,
-            "reused": 1,
-            "created": 2,
-            "failed": 0,
-        }
-        mock_service_cls.return_value = service
+        mock_schedule.return_value = {"state": "scheduled", "job_id": "llm-top-n:job-1"}
 
         stats = _run_llm_judge_for_selection(
             selection_run_id="selection-run-1",
             owner_id="owner-1",
         )
 
-        assert stats["created"] == 2
+        assert stats["enqueued"] == 1
         mock_policy_store.return_value.get_llm_judge_policy.assert_called_once_with("owner-1")
-        mock_service_cls.assert_called_once_with(repo.db)
-        service.evaluate_selection_run.assert_called_once_with(
-            "selection-run-1",
+        mock_schedule.assert_called_once_with(
+            selection_run_id="selection-run-1",
             owner_id="owner-1",
             tenant_id=None,
             top_n=3,
+            policy_revision=9,
         )
 
     @patch("services.scorer_matcher.pipeline.job_uow")

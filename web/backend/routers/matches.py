@@ -45,14 +45,17 @@ DbSession = Annotated[Session, Depends(get_db)]
 
 def _run_match_llm_evaluation_background(
     evaluation_id: str,
-    provider_payload: dict,
+    provider_payload: dict | None,
     truncation: dict | None,
+    *,
+    enqueue_reason: str | None = None,
 ) -> str:
     """Compatibility hook that now enqueues durable RQ work."""
     return enqueue_llm_evaluation(
         evaluation_id,
         provider_payload=provider_payload,
         truncation=truncation or {},
+        enqueue_reason=enqueue_reason,
     )
 
 
@@ -485,6 +488,7 @@ def generate_match_llm_evaluation(
                 str(result.evaluation.id),
                 getattr(result, "provider_payload", None) or {},
                 getattr(result, "truncation", None) or {},
+                enqueue_reason="manual",
             )
         except Exception as exc:
             logger.exception("Failed to enqueue LLM evaluation %s", result.evaluation.id)
@@ -499,6 +503,63 @@ def generate_match_llm_evaluation(
         reused=result.reused,
         accepted=should_run,
         message="Reused cached LLM evaluation." if result.reused else "Queued LLM evaluation.",
+    )
+
+@router.post(
+    "/{match_id}/llm-evaluations/{evaluation_id}/retry",
+    response_model=MatchLlmEvaluationMutationResponse,
+    responses={
+        400: {"description": "Invalid match/evaluation ID"},
+        404: {"description": "Evaluation not found"},
+        409: {"description": "Evaluation is not retryable"},
+        503: {"description": "LLM judge unavailable"},
+    },
+)
+def retry_match_llm_evaluation(
+    match_id: str,
+    evaluation_id: str,
+    request: Request,
+    db: DbSession,
+    user: Annotated[object, Depends(get_current_user)],
+    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+):
+    validate_uuid(match_id)
+    validate_uuid(evaluation_id)
+    service = MatchLlmEvaluationService(db)
+    try:
+        result = service.retry_evaluation(
+            match_id,
+            evaluation_id,
+            owner_id=getattr(user, "id", None),
+            tenant_id=tenant_context.tenant_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Evaluation not found") from exc
+    except LlmJudgeConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LlmJudgeUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    try:
+        _run_match_llm_evaluation_background(
+            str(result.evaluation.id),
+            None,
+            None,
+            enqueue_reason="retry_now",
+        )
+    except Exception as exc:
+        logger.exception("Failed to enqueue LLM evaluation retry %s", result.evaluation.id)
+        raise HTTPException(
+            status_code=503,
+            detail=_llm_evaluation_queue_unavailable_detail(exc),
+        ) from exc
+
+    return MatchLlmEvaluationMutationResponse(
+        success=True,
+        evaluation=_to_evaluation_summary(result.evaluation),
+        reused=False,
+        accepted=True,
+        message="Queued LLM evaluation retry.",
     )
 
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from core.llm.provider_rate_limiter import (
+    ProviderCircuitBreaker,
+    ProviderCircuitOpen,
     ProviderRateLimitExceeded,
     ProviderRateLimiter,
 )
@@ -21,6 +23,42 @@ class _FakeRedis:
         if isinstance(response, Exception):
             raise response
         return response
+
+
+class _FakeCircuitRedis:
+    def __init__(self):
+        self.values: dict[str, int | str] = {}
+        self.ttls: dict[str, int] = {}
+
+    def exists(self, key):
+        return key in self.values
+
+    def ttl(self, key):
+        return self.ttls.get(key, -1)
+
+    def incr(self, key):
+        value = int(self.values.get(key, 0)) + 1
+        self.values[key] = value
+        return value
+
+    def expire(self, key, seconds):
+        self.ttls[key] = seconds
+
+    def setex(self, key, seconds, value):
+        self.values[key] = value
+        self.ttls[key] = seconds
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def delete(self, *keys):
+        deleted = 0
+        for key in keys:
+            if key in self.values:
+                deleted += 1
+                self.values.pop(key, None)
+                self.ttls.pop(key, None)
+        return deleted
 
 
 def test_provider_rate_limiter_allows_available_slot() -> None:
@@ -97,3 +135,60 @@ def test_provider_rate_limiter_fails_closed_when_redis_unavailable() -> None:
         limiter.acquire(provider_name="nvidia", requests_per_minute=40)
 
     assert exc_info.value.retry_after_seconds == 60
+
+
+def test_provider_circuit_breaker_opens_after_threshold() -> None:
+    redis = _FakeCircuitRedis()
+    circuit = ProviderCircuitBreaker(
+        client_factory=lambda: redis,
+        failure_threshold=2,
+        cooldown_seconds=120,
+    )
+
+    circuit.record_failure("nvidia")
+    circuit.assert_available("nvidia")
+    circuit.record_failure("nvidia")
+
+    with pytest.raises(ProviderCircuitOpen) as exc_info:
+        circuit.assert_available("nvidia")
+
+    assert exc_info.value.provider_name == "nvidia"
+    assert exc_info.value.retry_after_seconds == 120
+
+
+def test_provider_circuit_breaker_success_clears_state() -> None:
+    redis = _FakeCircuitRedis()
+    circuit = ProviderCircuitBreaker(
+        client_factory=lambda: redis,
+        failure_threshold=1,
+        cooldown_seconds=120,
+    )
+
+    circuit.record_failure("nvidia")
+    with pytest.raises(ProviderCircuitOpen):
+        circuit.assert_available("nvidia")
+
+    circuit.record_success("nvidia")
+    circuit.assert_available("nvidia")
+
+
+def test_provider_circuit_breaker_scopes_by_model_and_reports_status() -> None:
+    redis = _FakeCircuitRedis()
+    circuit = ProviderCircuitBreaker(
+        client_factory=lambda: redis,
+        failure_threshold=1,
+        cooldown_seconds=120,
+    )
+
+    circuit.record_failure("nvidia", model="model-a")
+
+    with pytest.raises(ProviderCircuitOpen):
+        circuit.assert_available("nvidia", model="model-a")
+    circuit.assert_available("nvidia", model="model-b")
+    status = circuit.status("nvidia", model="model-a")
+    assert status["circuit_open"] is True
+    assert status["circuit_failure_count"] == 1
+
+    reset = circuit.reset("nvidia", model="model-a")
+    assert reset["deleted_keys"] == 2
+    circuit.assert_available("nvidia", model="model-a")

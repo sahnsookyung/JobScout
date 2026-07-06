@@ -8,8 +8,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..dependencies import TenantContext, get_current_user, get_db, get_tenant_context
+from ..models.requests import LlmEvaluationQueuePauseRequest, LlmProviderCircuitResetRequest
 from ..models.responses import (
+    LlmEvaluationQueueOperationResponse,
     LlmEvaluationQueueStatusResponse,
+    LlmProviderCanaryResponse,
+    LlmProviderCircuitResetResponse,
+    LlmProviderStatusResponse,
     PipelineRunDetailResponse,
     PipelineRunSummary,
     PipelineRunOperationResponse,
@@ -119,6 +124,7 @@ def get_pipeline_runs(
         next_cursor=next_cursor,
         runs=[_pipeline_run_for_view(run, view) for run in runs],
     )
+
 @router.get(
     "/llm-evaluations/queue",
     response_model=LlmEvaluationQueueStatusResponse,
@@ -127,6 +133,99 @@ def get_llm_evaluation_queue_status(
     _user: Annotated[object, Depends(get_current_user)],
 ) -> LlmEvaluationQueueStatusResponse:
     return LlmEvaluationQueueStatusResponse(**pipeline_run_ops_service.llm_queue_status())
+
+
+@router.post(
+    "/llm-evaluations/queue/pause",
+    response_model=LlmEvaluationQueueOperationResponse,
+)
+def pause_llm_evaluation_queue(
+    request: LlmEvaluationQueuePauseRequest,
+    _user: Annotated[object, Depends(get_current_user)],
+) -> LlmEvaluationQueueOperationResponse:
+    status = pipeline_run_ops_service.pause_llm_queue(
+        reason=request.reason,
+        ttl_seconds=request.ttl_seconds,
+    )
+    return LlmEvaluationQueueOperationResponse(
+        success=True,
+        action="pause_llm_queue",
+        message="LLM queue paused. Running jobs will defer themselves without consuming retry attempts.",
+        status=LlmEvaluationQueueStatusResponse(**status),
+    )
+
+
+@router.post(
+    "/llm-evaluations/queue/resume",
+    response_model=LlmEvaluationQueueOperationResponse,
+)
+def resume_llm_evaluation_queue(
+    _user: Annotated[object, Depends(get_current_user)],
+) -> LlmEvaluationQueueOperationResponse:
+    status = pipeline_run_ops_service.resume_llm_queue()
+    return LlmEvaluationQueueOperationResponse(
+        success=True,
+        action="resume_llm_queue",
+        message="LLM queue resumed.",
+        status=LlmEvaluationQueueStatusResponse(**status),
+    )
+
+
+@router.post(
+    "/llm-evaluations/queue/retry",
+    response_model=LlmEvaluationQueueOperationResponse,
+)
+def retry_llm_evaluation_queue(
+    _user: Annotated[object, Depends(get_current_user)],
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+) -> LlmEvaluationQueueOperationResponse:
+    status, enqueued = pipeline_run_ops_service.retry_llm_queue(limit=limit)
+    return LlmEvaluationQueueOperationResponse(
+        success=True,
+        action="retry_llm_queue",
+        message=f"Queued {enqueued} pending, stale, or retryable LLM evaluations.",
+        enqueued_count=enqueued,
+        status=LlmEvaluationQueueStatusResponse(**status),
+    )
+
+
+@router.get(
+    "/llm-evaluations/providers",
+    response_model=LlmProviderStatusResponse,
+)
+def get_llm_provider_status(
+    _user: Annotated[object, Depends(get_current_user)],
+) -> LlmProviderStatusResponse:
+    return LlmProviderStatusResponse(**pipeline_run_ops_service.llm_provider_status())
+
+
+@router.post(
+    "/llm-evaluations/providers/canary",
+    response_model=LlmProviderCanaryResponse,
+)
+def run_llm_provider_canaries(
+    _user: Annotated[object, Depends(get_current_user)],
+) -> LlmProviderCanaryResponse:
+    return LlmProviderCanaryResponse(**pipeline_run_ops_service.run_llm_provider_canaries())
+
+
+@router.post(
+    "/llm-evaluations/providers/circuit/reset",
+    response_model=LlmProviderCircuitResetResponse,
+    responses={400: {"description": "Provider and model are required"}},
+)
+def reset_llm_provider_circuit(
+    request: LlmProviderCircuitResetRequest,
+    _user: Annotated[object, Depends(get_current_user)],
+) -> LlmProviderCircuitResetResponse:
+    try:
+        result = pipeline_run_ops_service.reset_llm_provider_circuit(
+            provider=request.provider,
+            model=request.model,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return LlmProviderCircuitResetResponse(**result)
 
 
 @router.post(

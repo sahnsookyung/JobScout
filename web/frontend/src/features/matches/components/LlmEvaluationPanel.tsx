@@ -47,11 +47,36 @@ function isEvaluationInFlight(status?: string | null): boolean {
     return status === 'pending' || status === 'running';
 }
 
-function progressMessage(status?: string | null): string {
-    if (status === 'pending') return 'Queued for Cerebras review. This panel will update automatically.';
-    if (status === 'running') {
-        return 'Cerebras is reviewing the full resume and job description. This panel will update automatically.';
+function formatDuration(seconds?: number | null): string {
+    if (seconds == null) return '';
+    if (seconds < 60) return `${Math.max(Math.round(seconds), 0)}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainder = Math.round(seconds % 60);
+    return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
+}
+
+function queuedReasonLabel(reason?: string | null): string {
+    if (reason === 'auto_top_n') return 'Queued by auto top-N';
+    if (reason === 'retry_now') return 'Retry queued';
+    if (reason === 'resume_sweep') return 'Recovered from backlog';
+    if (reason === 'manual') return 'Queued manually';
+    return 'Queued';
+}
+
+function progressMessage(evaluation?: MatchLlmEvaluation | null, status?: string | null): string {
+    if (status === 'pending') {
+        const reason = queuedReasonLabel(evaluation?.queued_reason);
+        return `${reason} for LLM review. This panel will update automatically.`;
     }
+    if (status === 'running') {
+        return 'LLM review is running against the full resume and job description. This panel will update automatically.';
+    }
+    if (status === 'failed' && evaluation?.retryable) {
+        if (evaluation.next_retry_at) return `Retryable failure. Next retry ${new Date(evaluation.next_retry_at).toLocaleString()}.`;
+        if (evaluation.retry_after_seconds != null) return `Retryable failure. Retry available after ${formatDuration(evaluation.retry_after_seconds)}.`;
+        return 'Retryable failure. Queue this review again when the provider is available.';
+    }
+    if (evaluation?.provider_status_message) return evaluation.provider_status_message;
     return '';
 }
 
@@ -61,7 +86,7 @@ function cleanLabel(value?: string | null): string {
 }
 
 function availabilityMessage(reason?: string | null): string {
-    if (reason === 'credentials_missing') return 'Cerebras API key missing.';
+    if (reason === 'credentials_missing') return 'LLM judge provider credentials are missing.';
     if (reason === 'disabled') return 'LLM judging is disabled.';
     if (reason === 'base_url_missing') return 'LLM judge provider URL missing.';
     if (reason === 'model_missing') return 'LLM judge model missing.';
@@ -164,7 +189,7 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
     const evaluation = latestEvaluation(data);
     const activeStatus = evaluation?.status ?? markerStatus ?? null;
     const evaluationInFlight = isEvaluationInFlight(activeStatus);
-    const currentProgressMessage = progressMessage(activeStatus);
+    const currentProgressMessage = progressMessage(evaluation, activeStatus);
 
     const invalidate = () => {
         queryClient.invalidateQueries({ queryKey });
@@ -224,6 +249,26 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
         },
     });
 
+    const retryMutation = useMutation({
+        mutationFn: (evaluationId: string) => matchesApi.retryLlmEvaluation(matchId, evaluationId),
+        onSuccess: (response) => {
+            queryClient.setQueryData<MatchLlmEvaluationListResponse>(queryKey, (old) => {
+                const nextEvaluation = response.data.evaluation;
+                if (!nextEvaluation) return old;
+                return {
+                    success: true,
+                    count: 1,
+                    evaluations: [nextEvaluation],
+                };
+            });
+            invalidate();
+            toast.success('Queued LLM evaluation retry');
+        },
+        onError: (error: any) => {
+            toast.error(error?.message ?? 'Could not retry LLM evaluation.');
+        },
+    });
+
     const previousStatusRef = React.useRef<string | null>(null);
     React.useEffect(() => {
         const previousStatus = previousStatusRef.current;
@@ -237,8 +282,9 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
         previousStatusRef.current = activeStatus;
     }, [activeStatus]);
 
-    const isBusy = generateMutation.isPending || deleteMutation.isPending || evaluationInFlight;
+    const isBusy = generateMutation.isPending || retryMutation.isPending || deleteMutation.isPending || evaluationInFlight;
     const hasEvaluation = Boolean(evaluation);
+    const canRetry = Boolean(evaluation && evaluation.status === 'failed' && evaluation.retryable);
     const score = typeof evaluation?.llm_score === 'number' ? formatScore(evaluation.llm_score) : null;
     const analysis = evaluation?.analysis ?? {};
     const transferableStrengths = stringList(analysis.transferable_strengths);
@@ -291,6 +337,15 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                         <RotateCcw className="h-4 w-4" aria-hidden="true" />
                     </LlmActionButton>
                     <LlmActionButton
+                        active={retryMutation.isPending}
+                        onClick={() => evaluation && retryMutation.mutate(evaluation.id)}
+                        label="Retry LLM evaluation"
+                        tooltip={currentProgressMessage || 'Retry this failed LLM review'}
+                        disabled={isBusy || !canRetry || !judgeAvailable}
+                    >
+                        <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                    </LlmActionButton>
+                    <LlmActionButton
                         variant="ghost"
                         tone="danger"
                         onClick={() => evaluation && deleteMutation.mutate(evaluation.id)}
@@ -319,6 +374,12 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                 {staleStatus && staleStatus !== 'current' && (
                     <span className="caption text-warn">{cleanLabel(staleStatus)}</span>
                 )}
+                {evaluation?.queued_reason ? (
+                    <span className="caption">{queuedReasonLabel(evaluation.queued_reason)}</span>
+                ) : null}
+                {evaluation?.queue_state ? (
+                    <span className="caption">{cleanLabel(evaluation.queue_state)}</span>
+                ) : null}
             </div>
 
             {unavailableMessage && (

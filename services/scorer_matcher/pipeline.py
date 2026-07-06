@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 from core.app_context import AppContext
 from core.config_loader import PreferencesConfig
-from core.llm_evaluation import MatchLlmEvaluationService
+from core.llm_evaluation_queue import enqueue_llm_top_n_for_selection
 from core.match_selection import (
     MatchSelectionItemSnapshot,
     MatchSelectionPolicySnapshot,
@@ -495,7 +495,7 @@ def _run_llm_judge_for_selection(
     selection_run_id: Optional[str],
     owner_id: Optional[str],
 ) -> dict[str, int]:
-    """Run optional match-level LLM judging for the current selected top-N."""
+    """Schedule optional match-level LLM judging for the current selected top-N."""
     if not selection_run_id or not owner_id:
         return {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0}
 
@@ -508,16 +508,21 @@ def _run_llm_judge_for_selection(
         ):
             return {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0}
 
-        with job_uow() as repo:
-            service = MatchLlmEvaluationService(repo.db)
-            stats = service.evaluate_selection_run(
-                selection_run_id,
-                owner_id=owner_id,
-                tenant_id=None,
-                top_n=llm_policy.top_n,
-            )
-            logger.info("LLM judge selection stats: %s", stats)
-            return stats
+        scheduled = enqueue_llm_top_n_for_selection(
+            selection_run_id=selection_run_id,
+            owner_id=owner_id,
+            tenant_id=None,
+            top_n=llm_policy.top_n,
+            policy_revision=int(getattr(llm_policy, "revision", 0) or 0),
+        )
+        logger.info("LLM judge selection scheduling result: %s", scheduled)
+        return {
+            "attempted": 0,
+            "reused": 0,
+            "created": 0,
+            "enqueued": 1 if scheduled.get("job_id") else 0,
+            "failed": 0,
+        }
     except Exception:
         logger.exception("Optional LLM judge failed after selection publication")
         return {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 1}

@@ -63,9 +63,9 @@ def _enqueue_llm_top_n_after_policy_update(
     tenant_id,
     previous_policy,
     next_policy,
-) -> tuple[dict[str, int], list[dict[str, str]]]:
+) -> tuple[dict[str, int], list[dict[str, str]], str | None, str | None]:
     if not _should_enqueue_llm_top_n(previous_policy, next_policy):
-        return _zero_llm_enqueue_stats(), []
+        return _zero_llm_enqueue_stats(), [], None, None
 
     try:
         canonical_selection = MatchService(db)._resolve_canonical_selection(
@@ -73,29 +73,37 @@ def _enqueue_llm_top_n_after_policy_update(
             tenant_id=tenant_id,
         )
         if canonical_selection is None:
-            return _zero_llm_enqueue_stats(), []
+            return _zero_llm_enqueue_stats(), [], "skipped", None
 
-        from core.llm_evaluation import MatchLlmEvaluationService
+        from core.llm_evaluation_queue import enqueue_llm_top_n_for_selection
 
-        stats = MatchLlmEvaluationService(db).evaluate_selection_run(
-            canonical_selection.selection_run_id,
+        scheduled = enqueue_llm_top_n_for_selection(
+            selection_run_id=canonical_selection.selection_run_id,
             owner_id=owner_id,
             tenant_id=tenant_id,
             top_n=int(getattr(next_policy, "top_n", 0) or 0),
+            policy_revision=int(getattr(next_policy, "revision", 0) or 0),
         )
-        return {
-            **_zero_llm_enqueue_stats(),
-            **{key: int(value or 0) for key, value in stats.items()},
-        }, []
+        return (
+            _zero_llm_enqueue_stats(),
+            [],
+            str(scheduled.get("state") or "scheduled"),
+            scheduled.get("job_id"),
+        )
     except Exception as exc:
         logger.warning("Could not enqueue LLM top-N evaluations after policy update: %s", exc)
         record_match_query_degraded("policy_llm_enqueue_unavailable")
-        return _zero_llm_enqueue_stats(), [
-            {
-                "reason": "policy_llm_enqueue_unavailable",
-                "detail": exc.__class__.__name__,
-            }
-        ]
+        return (
+            _zero_llm_enqueue_stats(),
+            [
+                {
+                    "reason": "policy_llm_enqueue_unavailable",
+                    "detail": exc.__class__.__name__,
+                }
+            ],
+            "failed",
+            None,
+        )
 
 
 def _policy_response(
@@ -103,6 +111,8 @@ def _policy_response(
     llm_policy,
     *,
     llm_enqueue_stats: dict[str, int] | None = None,
+    llm_enqueue_state: str | None = None,
+    llm_enqueue_job_id: str | None = None,
     degraded_reasons: list[dict[str, str]] | None = None,
 ) -> PolicyResponse:
     unavailable_reason = getattr(llm_policy, "unavailable_reason", "available")
@@ -121,6 +131,8 @@ def _policy_response(
         llm_judge_unavailable_reason=unavailable_reason,
         llm_judge_revision=llm_policy.revision,
         llm_judge_enqueue_stats=llm_enqueue_stats,
+        llm_judge_enqueue_state=llm_enqueue_state,
+        llm_judge_enqueue_job_id=llm_enqueue_job_id,
         degraded=bool(degraded_reasons),
         degraded_reasons=degraded_reasons,
     )
@@ -186,18 +198,22 @@ def update_policy(
         auto_enqueue_enabled=policy_update.llm_judge_auto_enqueue_enabled,
         top_n=policy_update.llm_judge_top_n,
     )
-    enqueue_stats, degraded_reasons = _enqueue_llm_top_n_after_policy_update(
-        db,
-        owner_id=getattr(user, "id", None),
-        tenant_id=tenant_context.tenant_id,
-        previous_policy=previous_llm_policy,
-        next_policy=llm_policy,
+    enqueue_stats, degraded_reasons, enqueue_state, enqueue_job_id = (
+        _enqueue_llm_top_n_after_policy_update(
+            db,
+            owner_id=getattr(user, "id", None),
+            tenant_id=tenant_context.tenant_id,
+            previous_policy=previous_llm_policy,
+            next_policy=llm_policy,
+        )
     )
 
     return _policy_response(
         policy,
         llm_policy,
         llm_enqueue_stats=enqueue_stats,
+        llm_enqueue_state=enqueue_state,
+        llm_enqueue_job_id=enqueue_job_id,
         degraded_reasons=degraded_reasons,
     )
 

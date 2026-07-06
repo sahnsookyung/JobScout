@@ -7,12 +7,18 @@ from typing import Any, Callable, Dict, List
 from core.config_loader import LlmJudgeProviderRuntimeConfig, LlmJudgeRuntimeConfig
 from core.llm.interfaces import LLMProvider
 from core.llm.provider_factory import RuntimeLLMConfig, build_llm_provider
-from core.llm.provider_rate_limiter import ProviderRateLimitExceeded, ProviderRateLimiter
+from core.llm.provider_rate_limiter import (
+    ProviderCircuitBreaker,
+    ProviderCircuitOpen,
+    ProviderRateLimitExceeded,
+    ProviderRateLimiter,
+)
 
 TRANSIENT_ERROR_CATEGORIES = frozenset(
-    {"rate_limit", "timeout", "connection_error", "server_error"}
+    {"rate_limit", "timeout", "connection_error", "server_error", "circuit_open"}
 )
-RETRYABLE_ERROR_CATEGORIES = TRANSIENT_ERROR_CATEGORIES | {"unknown"}
+RETRYABLE_ERROR_CATEGORIES = TRANSIENT_ERROR_CATEGORIES
+CIRCUIT_FAILURE_CATEGORIES = frozenset({"timeout", "connection_error", "server_error"})
 
 
 @dataclass(frozen=True)
@@ -188,11 +194,13 @@ class LLMProviderChain(LLMProvider):
         candidates: list[LLMProviderCandidate],
         *,
         rate_limiter: ProviderRateLimiter | None = None,
+        circuit_breaker: ProviderCircuitBreaker | None = None,
     ) -> None:
         if not candidates:
             raise ValueError("LLMProviderChain requires at least one provider candidate.")
         self._candidates = candidates
         self._rate_limiter = rate_limiter or ProviderRateLimiter()
+        self._circuit_breaker = circuit_breaker or ProviderCircuitBreaker()
         self.last_attempts: list[dict[str, Any]] = []
         self.last_success: dict[str, str] | None = None
 
@@ -221,6 +229,9 @@ class LLMProviderChain(LLMProvider):
             requests_per_minute=int(candidate.requests_per_minute),
             max_wait_seconds=int(candidate.rate_limit_max_wait_seconds),
         )
+
+    def _check_provider_circuit(self, candidate: LLMProviderCandidate) -> None:
+        self._circuit_breaker.assert_available(candidate.name, model=candidate.model)
 
     def _append_failure_attempt(
         self,
@@ -254,8 +265,33 @@ class LLMProviderChain(LLMProvider):
         for index, candidate in enumerate(self._candidates):
             started = time.monotonic()
             try:
+                self._check_provider_circuit(candidate)
                 self._rate_limit_provider(candidate)
                 result = operation(candidate.provider)
+            except ProviderCircuitOpen as exc:
+                last_error = exc
+                last_category = "circuit_open"
+                self._append_failure_attempt(
+                    candidate,
+                    started=started,
+                    status="circuit_open",
+                    error_category=last_category,
+                    retryable=True,
+                    retry_after_seconds=exc.retry_after_seconds,
+                )
+                if index < len(self._candidates) - 1:
+                    self._record_fallback(
+                        candidate,
+                        self._candidates[index + 1],
+                        last_category,
+                    )
+                    continue
+                raise LLMProviderChainError(
+                    "LLM provider chain failed.",
+                    error_category=last_category,
+                    attempts=list(self.last_attempts),
+                    retryable=True,
+                ) from exc
             except ProviderRateLimitExceeded as exc:
                 last_error = exc
                 last_category = "rate_limit"
@@ -283,6 +319,8 @@ class LLMProviderChain(LLMProvider):
             except Exception as exc:
                 last_error = exc
                 last_category = classify_llm_provider_error(exc)
+                if last_category in CIRCUIT_FAILURE_CATEGORIES:
+                    self._circuit_breaker.record_failure(candidate.name, model=candidate.model)
                 self._append_failure_attempt(
                     candidate,
                     started=started,
@@ -325,6 +363,7 @@ class LLMProviderChain(LLMProvider):
                     "elapsed_ms": max(elapsed_ms, 0),
                 }
             )
+            self._circuit_breaker.record_success(candidate.name, model=candidate.model)
             return result
         raise LLMProviderChainError(
             "LLM provider chain failed.",

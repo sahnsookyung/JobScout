@@ -1060,12 +1060,36 @@ class MatchService:
                 "llm_effective_for_rerank": False,
                 "llm_ignored_for_rerank_reason": None,
                 "llm_stale_status": None,
+                "llm_retryable": False,
+                "llm_queued_reason": None,
+                "llm_queue_state": None,
+                "llm_next_retry_at": None,
+                "llm_retry_after_seconds": None,
+                "llm_provider_status_message": None,
             }
         judged_at = getattr(evaluation, "completed_at", None)
         judged_at_iso = safe_datetime_iso(judged_at) if hasattr(judged_at, "isoformat") else None
         effectiveness = getattr(evaluation, "llm_effectiveness", None)
         if not isinstance(effectiveness, dict):
             effectiveness = {}
+        analysis = getattr(evaluation, "analysis", None)
+        if not isinstance(analysis, dict):
+            analysis = {}
+        queue_metadata = analysis.get("queue")
+        if not isinstance(queue_metadata, dict):
+            queue_metadata = {}
+        retry_after_seconds = queue_metadata.get("retry_after_seconds")
+        try:
+            retry_after_seconds = (
+                None
+                if retry_after_seconds is None
+                else max(int(float(retry_after_seconds)), 0)
+            )
+        except (TypeError, ValueError):
+            retry_after_seconds = None
+        provider_status_message = queue_metadata.get("provider_status_message")
+        if not isinstance(provider_status_message, str):
+            provider_status_message = None
         return {
             "llm_evaluation_status": status,
             "llm_evaluation_id": str(getattr(evaluation, "id", "")),
@@ -1083,6 +1107,12 @@ class MatchService:
             "llm_effective_for_rerank": bool(effectiveness.get("effective_for_rerank", False)),
             "llm_ignored_for_rerank_reason": effectiveness.get("ignored_for_rerank_reason"),
             "llm_stale_status": effectiveness.get("stale_status"),
+            "llm_retryable": bool(getattr(evaluation, "retryable", False)),
+            "llm_queued_reason": analysis.get("enqueue_reason") or queue_metadata.get("enqueue_reason"),
+            "llm_queue_state": queue_metadata.get("queue_state"),
+            "llm_next_retry_at": queue_metadata.get("next_retry_at"),
+            "llm_retry_after_seconds": retry_after_seconds,
+            "llm_provider_status_message": provider_status_message,
         }
 
     def _to_job_details(self, job: Optional[JobPost]) -> JobDetails:

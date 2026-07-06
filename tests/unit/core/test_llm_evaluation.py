@@ -441,6 +441,42 @@ def test_resume_pending_evaluation_covers_guard_and_rebuild_paths():
         truncation={"truncated": False},
     )
 
+def test_retry_evaluation_resets_retryable_failed_row_without_tombstoning():
+    db = Mock()
+    service = _service(db=db)
+    match = _match()
+    failed = _evaluation(status=LLM_EVALUATION_FAILED)
+    failed.retryable = True
+    failed.error_code = "llm_judge_provider_timeout"
+    failed.analysis = {"queue": {"enqueue_reason": "auto_top_n"}}
+    service._get_match_for_owner = Mock(return_value=match)
+    service._get_evaluation_for_owner = Mock(return_value=failed)
+
+    result = service.retry_evaluation(
+        match.id,
+        failed.id,
+        owner_id="owner-1",
+    )
+
+    assert result.evaluation is failed
+    assert result.should_run is True
+    assert failed.status == LLM_EVALUATION_PENDING
+    assert failed.retryable is False
+    assert failed.error_code is None
+    assert failed.analysis["enqueue_reason"] == "retry_now"
+    assert failed.analysis["queue"]["queue_state"] == "pending"
+    db.commit.assert_called_once()
+
+def test_retry_evaluation_rejects_terminal_failed_row():
+    service = _service(db=Mock())
+    terminal = _evaluation(status=LLM_EVALUATION_FAILED)
+    terminal.retryable = False
+    service._get_match_for_owner = Mock(return_value=_match())
+    service._get_evaluation_for_owner = Mock(return_value=terminal)
+
+    with pytest.raises(LlmJudgeConflictError):
+        service.retry_evaluation("match-1", terminal.id, owner_id="owner-1")
+
 
 def test_run_provider_embeds_payload_in_user_message_for_openai_provider_path():
     db = Mock()
@@ -594,6 +630,33 @@ def test_public_serialization_excludes_cache_hashes_and_raw_inputs():
     assert "input_hash" not in public
     assert "owner_id" not in public
     assert "tenant_id" not in public
+
+def test_public_serialization_includes_lifecycle_fields_without_raw_queue_payloads():
+    evaluation = _evaluation(status=LLM_EVALUATION_FAILED)
+    evaluation.retryable = True
+    evaluation.analysis = {
+        "enqueue_reason": "auto_top_n",
+        "queue_job_id": "llm-evaluation:eval-1",
+        "queue": {
+            "enqueue_reason": "auto_top_n",
+            "queue_job_id": "llm-evaluation:eval-1",
+            "queue_state": "deferred",
+            "next_retry_at": "2026-07-06T12:00:00+00:00",
+            "retry_after_seconds": 120,
+            "provider_status_message": "Provider temporarily paused.",
+        },
+        "provider_payload": "secret",
+    }
+
+    public = evaluation_public_dict(evaluation)
+
+    assert public["queued_reason"] == "auto_top_n"
+    assert public["queue_job_id"] == "llm-evaluation:eval-1"
+    assert public["queue_state"] == "deferred"
+    assert public["next_retry_at"] == "2026-07-06T12:00:00+00:00"
+    assert public["retry_after_seconds"] == 120
+    assert public["provider_status_message"] == "Provider temporarily paused."
+    assert "provider_payload" not in public["analysis"]
 
 
 def test_public_serialization_handles_missing_optional_values():
@@ -1029,7 +1092,7 @@ def test_run_provider_persists_successful_structured_response():
     assert db.flush.call_count >= 2
 
 
-def test_run_provider_marks_failure_retryable_without_raw_payload():
+def test_run_provider_marks_unknown_failure_terminal_without_raw_payload():
     db = Mock()
     provider = Mock()
     provider.extract_structured_data.side_effect = RuntimeError("provider down")
@@ -1042,7 +1105,7 @@ def test_run_provider_marks_failure_retryable_without_raw_payload():
     assert evaluation.llm_score is None
     assert evaluation.summary is None
     assert evaluation.error_code == "llm_judge_failed"
-    assert evaluation.retryable is True
+    assert evaluation.retryable is False
     assert db.flush.call_count >= 2
 
 
@@ -1217,6 +1280,7 @@ def test_evaluate_selection_run_counts_reuse_create_enqueue_failure_and_quota_st
         "evaluation-2",
         provider_payload={"job": "payload"},
         truncation={"truncated": False},
+        enqueue_reason="auto_top_n",
     )
 
 

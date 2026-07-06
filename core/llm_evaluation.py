@@ -493,6 +493,55 @@ class MatchLlmEvaluationService:
             truncation=judge_input.truncation,
         )
 
+    def retry_evaluation(
+        self,
+        match_id: Any,
+        evaluation_id: Any,
+        *,
+        owner_id: Any,
+        tenant_id: Any | None = None,
+    ) -> EvaluationStartResult:
+        """Reset one retryable failed evaluation row for queue-based execution."""
+        available, reason = self.availability_status()
+        if not available:
+            raise LlmJudgeUnavailableError(
+                self._unavailable_message(reason),
+                reason=reason,
+            )
+
+        match = self._get_match_for_owner(match_id, owner_id=owner_id, tenant_id=tenant_id)
+        effective_tenant_id = self._effective_tenant_id(match, tenant_id)
+        evaluation = self._get_evaluation_for_owner(
+            evaluation_id,
+            owner_id=owner_id,
+            tenant_id=effective_tenant_id,
+        )
+        if str(evaluation.job_match_id) != str(match.id):
+            raise LookupError("Evaluation not found")
+        if evaluation.status != LLM_EVALUATION_FAILED or not bool(evaluation.retryable):
+            raise LlmJudgeConflictError("Only retryable failed LLM evaluations can be retried.")
+
+        analysis = evaluation.analysis if isinstance(evaluation.analysis, dict) else {}
+        queue_metadata = analysis.get("queue")
+        if not isinstance(queue_metadata, dict):
+            queue_metadata = {}
+        queue_metadata.update(
+            {
+                "enqueue_reason": "retry_now",
+                "queue_state": "pending",
+                "provider_status_message": "Retry requested by operator.",
+            }
+        )
+        analysis["queue"] = queue_metadata
+        analysis["enqueue_reason"] = "retry_now"
+        evaluation.analysis = analysis
+        evaluation.status = LLM_EVALUATION_PENDING
+        evaluation.retryable = False
+        evaluation.error_code = None
+        evaluation.completed_at = None
+        self.db.commit()
+        return EvaluationStartResult(evaluation, reused=False, should_run=True)
+
     def delete_evaluation(
         self,
         match_id: Any,
@@ -560,6 +609,7 @@ class MatchLlmEvaluationService:
                         result.evaluation.id,
                         provider_payload=getattr(result, "provider_payload", None) or {},
                         truncation=getattr(result, "truncation", None) or {},
+                        enqueue_reason="auto_top_n",
                     )
                     stats["enqueued"] += 1
             except LlmJudgeQuotaExceededError:
@@ -1382,6 +1432,7 @@ class MatchLlmEvaluationService:
         *,
         truncation: dict[str, Any] | None = None,
     ) -> None:
+        lifecycle_metadata = self._lifecycle_metadata(evaluation.analysis)
         evaluation.status = LLM_EVALUATION_RUNNING
         evaluation.started_at = self._utcnow()
         self.db.flush()
@@ -1417,6 +1468,7 @@ class MatchLlmEvaluationService:
                 parsed,
                 truncation or {},
                 provider_attempts=self._provider_attempts(provider),
+                lifecycle_metadata=lifecycle_metadata,
             )
             evaluation.error_code = None
             evaluation.retryable = False
@@ -1436,6 +1488,7 @@ class MatchLlmEvaluationService:
             evaluation.analysis = self._failure_analysis_payload(
                 truncation or {},
                 provider_attempts=self._provider_attempts(self._llm_provider),
+                lifecycle_metadata=lifecycle_metadata,
             )
             evaluation.error_code = self._provider_error_code(exc)
             evaluation.retryable = self._provider_error_retryable(exc)
@@ -1583,6 +1636,7 @@ class MatchLlmEvaluationService:
         truncation: dict[str, Any],
         *,
         provider_attempts: list[dict[str, Any]] | None = None,
+        lifecycle_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         payload = {
             "transferable_strengths": [
@@ -1603,6 +1657,8 @@ class MatchLlmEvaluationService:
         }
         if provider_attempts:
             payload["provider_attempts"] = provider_attempts
+        if lifecycle_metadata:
+            payload.update(lifecycle_metadata)
         return payload
 
     @staticmethod
@@ -1610,13 +1666,41 @@ class MatchLlmEvaluationService:
         truncation: dict[str, Any],
         *,
         provider_attempts: list[dict[str, Any]] | None = None,
+        lifecycle_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "input_truncation": truncation if isinstance(truncation, dict) else {},
         }
         if provider_attempts:
             payload["provider_attempts"] = provider_attempts
+        if lifecycle_metadata:
+            payload.update(lifecycle_metadata)
         return payload
+
+    @staticmethod
+    def _lifecycle_metadata(analysis: Any) -> dict[str, Any]:
+        if not isinstance(analysis, dict):
+            return {}
+        preserved: dict[str, Any] = {}
+        queue_metadata = analysis.get("queue")
+        if isinstance(queue_metadata, dict):
+            preserved["queue"] = {
+                key: value
+                for key, value in queue_metadata.items()
+                if key in {
+                    "enqueue_reason",
+                    "queue_job_id",
+                    "queue_state",
+                    "queued_at",
+                    "next_retry_at",
+                    "retry_after_seconds",
+                    "provider_status_message",
+                }
+            }
+        for key in ("enqueue_reason", "queue_job_id"):
+            if key in analysis:
+                preserved[key] = analysis[key]
+        return preserved
 
     @staticmethod
     def _utcnow() -> datetime:
@@ -1683,9 +1767,32 @@ def evaluation_public_dict(evaluation: LlmMatchEvaluation) -> dict[str, Any]:
     analysis = getattr(evaluation, "analysis", None)
     if not isinstance(analysis, dict):
         analysis = {}
+    queue_metadata = analysis.get("queue")
+    if not isinstance(queue_metadata, dict):
+        queue_metadata = {}
     effectiveness = getattr(evaluation, "llm_effectiveness", None)
     if not isinstance(effectiveness, dict):
         effectiveness = {}
+    retry_after_seconds = queue_metadata.get("retry_after_seconds")
+    try:
+        retry_after_seconds = (
+            None
+            if retry_after_seconds is None
+            else max(int(float(retry_after_seconds)), 0)
+        )
+    except (TypeError, ValueError):
+        retry_after_seconds = None
+
+    provider_status_message = queue_metadata.get("provider_status_message")
+    if not isinstance(provider_status_message, str):
+        provider_status_message = None
+    if provider_status_message is None and evaluation.status == LLM_EVALUATION_FAILED:
+        if evaluation.retryable:
+            provider_status_message = "Retryable provider failure; this review can be queued again."
+        elif evaluation.error_code == "llm_judge_token_quota_exceeded":
+            provider_status_message = "Provider rate limit or token quota stopped this review."
+        elif evaluation.error_code:
+            provider_status_message = str(evaluation.error_code).replace("_", " ")
 
     return {
         "id": str(evaluation.id),
@@ -1713,6 +1820,12 @@ def evaluation_public_dict(evaluation: LlmMatchEvaluation) -> dict[str, Any]:
         "schema_version": evaluation.schema_version,
         "error_code": evaluation.error_code,
         "retryable": bool(evaluation.retryable),
+        "queued_reason": analysis.get("enqueue_reason") or queue_metadata.get("enqueue_reason"),
+        "queue_job_id": analysis.get("queue_job_id") or queue_metadata.get("queue_job_id"),
+        "queue_state": queue_metadata.get("queue_state"),
+        "next_retry_at": queue_metadata.get("next_retry_at"),
+        "retry_after_seconds": retry_after_seconds,
+        "provider_status_message": provider_status_message,
         "created_at": _iso(evaluation.created_at),
         "started_at": _iso(evaluation.started_at),
         "completed_at": _iso(evaluation.completed_at),

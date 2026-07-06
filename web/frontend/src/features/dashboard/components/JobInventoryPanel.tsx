@@ -22,6 +22,8 @@ import type {
     JobInventoryItem,
     JobLifecycleStatus,
     JobProcessingStatus,
+    LlmProviderCanaryResponse,
+    LlmProviderStatusResponse,
     LlmEvaluationQueueStatusResponse,
     PipelineRunSummary,
     PipelineStatusResponse,
@@ -67,6 +69,14 @@ function formatDateTime(value?: string | null): string {
         hour: 'numeric',
         minute: '2-digit',
     }).format(date);
+}
+
+function formatDuration(seconds?: number | null): string {
+    if (seconds == null) return 'Unknown';
+    if (seconds < 60) return `${Math.max(Math.round(seconds), 0)}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainder = Math.round(seconds % 60);
+    return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
 }
 
 function statusLabel(job: JobInventoryItem): string {
@@ -375,26 +385,53 @@ function PipelineRunDetail({
 
 function LlmQueueHealth({
     status,
+    providerStatus,
+    canaryResult,
     isLoading,
     error,
+    actionPending,
+    canaryPending,
+    onPause,
+    onResume,
+    onRetry,
+    onCanary,
+    onResetCircuit,
 }: Readonly<{
     status?: LlmEvaluationQueueStatusResponse;
+    providerStatus?: LlmProviderStatusResponse;
+    canaryResult?: LlmProviderCanaryResponse;
     isLoading: boolean;
     error: unknown;
+    actionPending: boolean;
+    canaryPending: boolean;
+    onPause: () => void;
+    onResume: () => void;
+    onRetry: () => void;
+    onCanary: () => void;
+    onResetCircuit: (provider: string, model: string) => void;
 }>) {
     const failed = status?.failed ?? 0;
     const active = (status?.queued ?? 0) + (status?.started ?? 0) + (status?.deferred ?? 0) + (status?.scheduled ?? 0);
+    const retryableFailed = status?.db_retryable_failed ?? 0;
+    const pending = status?.db_pending ?? 0;
+    const paused = Boolean(status?.paused);
+    const providers = providerStatus?.providers ?? [];
+    const canaryByProvider = new Map(
+        (canaryResult?.results ?? []).map((result) => [`${result.name}:${result.model}`, result]),
+    );
     return (
         <div className="border-t border-rule px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0">
                     <p className="caption text-[10px]">LLM queue</p>
-                    <p className={`mt-1 text-[12px] ${status?.ready ? 'text-ink-soft' : 'text-warn'}`}>
+                    <p className={`mt-1 text-[12px] ${status?.ready && !paused ? 'text-ink-soft' : 'text-warn'}`}>
                         {isLoading
                             ? 'Checking queue'
                             : error
                                 ? 'Queue status unavailable'
-                                : status?.ready
+                                : paused
+                                    ? `Paused${status?.pause_ttl_seconds ? ` for ${formatDuration(status.pause_ttl_seconds)}` : ''}`
+                                    : status?.ready
                                     ? 'Ready'
                                     : 'Degraded'}
                     </p>
@@ -405,13 +442,109 @@ function LlmQueueHealth({
                         <dd className="num text-ink">{active}</dd>
                     </div>
                     <div className="flex gap-1">
+                        <dt>Pending</dt>
+                        <dd className="num text-ink">{pending}</dd>
+                    </div>
+                    <div className="flex gap-1">
+                        <dt>Retryable</dt>
+                        <dd className={`num ${retryableFailed > 0 ? 'text-warn' : 'text-ink'}`}>{retryableFailed}</dd>
+                    </div>
+                    <div className="flex gap-1">
                         <dt>Failed</dt>
                         <dd className={`num ${failed > 0 ? 'text-warn' : 'text-ink'}`}>{failed}</dd>
                     </div>
                 </dl>
             </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                    type="button"
+                    onClick={paused ? onResume : onPause}
+                    disabled={actionPending}
+                    aria-label={paused ? 'Resume LLM queue' : 'Pause LLM queue'}
+                    className="inline-flex h-8 items-center justify-center gap-2 border border-rule px-3 text-[12px] text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                    {paused ? 'Resume' : 'Pause'}
+                </button>
+                <button
+                    type="button"
+                    onClick={onRetry}
+                    disabled={actionPending || retryableFailed <= 0}
+                    aria-label="Retry pending LLM evaluations"
+                    className="inline-flex h-8 items-center justify-center gap-2 border border-rule px-3 text-[12px] text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                    Retry backlog
+                </button>
+                <button
+                    type="button"
+                    onClick={onCanary}
+                    disabled={canaryPending}
+                    aria-label="Run LLM provider canary"
+                    className="inline-flex h-8 items-center justify-center gap-2 border border-rule px-3 text-[12px] text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                    {canaryPending ? 'Checking' : 'Run canary'}
+                </button>
+            </div>
+            {status?.drain_estimate_seconds != null ? (
+                <p className="mt-2 text-[11px] leading-5 text-ink-muted">
+                    Estimated drain {formatDuration(status.drain_estimate_seconds)} from configured provider RPM.
+                </p>
+            ) : null}
             {status?.error ? (
                 <p className="mt-2 break-words text-[11px] leading-5 text-warn">{status.error}</p>
+            ) : null}
+            {providers.length > 0 ? (
+                <ol className="mt-3 grid gap-2 border-t border-rule pt-3">
+                    {providers.map((provider) => {
+                        const canary = canaryByProvider.get(`${provider.name}:${provider.model}`)
+                            ?? (provider.last_canary_status
+                                ? {
+                                    status: provider.last_canary_status,
+                                    error: provider.last_canary_error ?? null,
+                                    error_category: provider.last_canary_error_category ?? null,
+                                    elapsed_ms: provider.last_canary_elapsed_ms ?? 0,
+                                    checked_at: provider.last_canary_checked_at ?? null,
+                                }
+                                : null);
+                        const circuitOpen = provider.circuit_open;
+                        return (
+                            <li key={`${provider.name}:${provider.model}`} className="grid gap-1 text-[11px] text-ink-muted">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <span className="min-w-0 break-words text-[12px] font-medium text-ink">
+                                        {provider.name} · {provider.model}
+                                    </span>
+                                    <span className={circuitOpen ? 'text-warn' : 'text-ink-soft'}>
+                                        {circuitOpen
+                                            ? `Circuit open ${formatDuration(provider.circuit_retry_after_seconds)}`
+                                            : 'Circuit closed'}
+                                    </span>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                    <span>{provider.requests_per_minute ?? 'No'} rpm</span>
+                                    <span>failures {provider.circuit_failure_count}</span>
+                                    {canary ? (
+                                        <span className={canary.status === 'succeeded' ? 'text-ink-soft' : 'text-warn'}>
+                                            canary {canary.status}
+                                            {canary.elapsed_ms ? ` ${canary.elapsed_ms}ms` : ''}
+                                        </span>
+                                    ) : null}
+                                    {circuitOpen ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => onResetCircuit(provider.name, provider.model)}
+                                            disabled={actionPending}
+                                            className="text-accent underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                            Reset
+                                        </button>
+                                    ) : null}
+                                </div>
+                                {canary?.error ? (
+                                    <p className="break-words text-warn">{canary.error}</p>
+                                ) : null}
+                            </li>
+                        );
+                    })}
+                </ol>
             ) : null}
         </div>
     );
@@ -494,6 +627,14 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
         },
         refetchInterval: 10000,
     });
+    const llmProviderStatus = useQuery({
+        queryKey: ['llm-provider-status'],
+        queryFn: async () => {
+            const response = await pipelineRunsApi.getLlmProviderStatus();
+            return response.data;
+        },
+        refetchInterval: 30000,
+    });
     const processingBlockers = useQuery({
         queryKey: ['processing-blockers', 'oldest'],
         queryFn: async () => {
@@ -518,6 +659,8 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
         void queryClient.invalidateQueries({ queryKey: ['pipeline-runs'] });
         void queryClient.invalidateQueries({ queryKey: ['pipeline-run-detail'] });
         void queryClient.invalidateQueries({ queryKey: ['processing-blockers'] });
+        void queryClient.invalidateQueries({ queryKey: ['llm-evaluation-queue'] });
+        void queryClient.invalidateQueries({ queryKey: ['llm-provider-status'] });
     };
     const cancelRun = useMutation({
         mutationFn: async (runId: string) => {
@@ -540,6 +683,41 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
         },
         onSuccess: invalidatePipelineOps,
     });
+    const pauseLlmQueue = useMutation({
+        mutationFn: async () => {
+            const response = await pipelineRunsApi.pauseLlmEvaluationQueue('operator pause', 3600);
+            return response.data;
+        },
+        onSuccess: invalidatePipelineOps,
+    });
+    const resumeLlmQueue = useMutation({
+        mutationFn: async () => {
+            const response = await pipelineRunsApi.resumeLlmEvaluationQueue();
+            return response.data;
+        },
+        onSuccess: invalidatePipelineOps,
+    });
+    const retryLlmQueue = useMutation({
+        mutationFn: async () => {
+            const response = await pipelineRunsApi.retryLlmEvaluationQueue(100);
+            return response.data;
+        },
+        onSuccess: invalidatePipelineOps,
+    });
+    const runLlmCanary = useMutation({
+        mutationFn: async () => {
+            const response = await pipelineRunsApi.runLlmProviderCanaries();
+            return response.data;
+        },
+        onSuccess: invalidatePipelineOps,
+    });
+    const resetLlmCircuit = useMutation({
+        mutationFn: async ({ provider, model }: { provider: string; model: string }) => {
+            const response = await pipelineRunsApi.resetLlmProviderCircuit(provider, model);
+            return response.data;
+        },
+        onSuccess: invalidatePipelineOps,
+    });
 
     const total = data?.total ?? 0;
     const jobs = data?.jobs ?? [];
@@ -550,6 +728,12 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
         ?? latestRuns.find((run) => run.id === selectedRunId)
         ?? null;
     const pipelineActionPending = cancelRun.isPending || requeueRun.isPending || retryRun.isPending;
+    const llmQueueActionPending = (
+        pauseLlmQueue.isPending
+        || resumeLlmQueue.isPending
+        || retryLlmQueue.isPending
+        || resetLlmCircuit.isPending
+    );
     const canPageBack = offset > 0;
     const canPageForward = offset + PAGE_SIZE < total;
     const processStatusData = processStatus.data;
@@ -649,8 +833,17 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
                     </div>
                     <LlmQueueHealth
                         status={llmQueueStatus.data}
+                        providerStatus={llmProviderStatus.data}
+                        canaryResult={runLlmCanary.data}
                         isLoading={llmQueueStatus.isLoading}
                         error={llmQueueStatus.error}
+                        actionPending={llmQueueActionPending}
+                        canaryPending={runLlmCanary.isPending}
+                        onPause={() => pauseLlmQueue.mutate()}
+                        onResume={() => resumeLlmQueue.mutate()}
+                        onRetry={() => retryLlmQueue.mutate()}
+                        onCanary={() => runLlmCanary.mutate()}
+                        onResetCircuit={(provider, model) => resetLlmCircuit.mutate({ provider, model })}
                     />
                     {pipelineRuns.isLoading ? (
                         <div className="border-t border-rule p-4 text-[13px] text-ink-muted">Loading runs</div>
