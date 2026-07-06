@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+from rq.job import Job
 
 from core import llm_evaluation_queue
 from database.models import LLM_EVALUATION_FAILED
@@ -78,12 +79,28 @@ class _PauseRedis:
         self.deleted = True
 
 
+def test_custom_job_ids_are_accepted_by_rq():
+    for job_id in [
+        llm_evaluation_queue._job_id("eval-1"),
+        llm_evaluation_queue._paused_job_id("llm-evaluation-paused", "eval-paused"),
+        llm_evaluation_queue._top_n_scheduler_job_id(
+            selection_run_id="selection-1",
+            owner_id="owner-1",
+            tenant_id="tenant-1",
+            policy_revision=7,
+            top_n=5,
+        ),
+        llm_evaluation_queue.LLM_RECOVERY_SWEEP_JOB_ID,
+    ]:
+        Job(connection=Mock()).set_id(job_id)
+
+
 def test_enqueue_unique_reuses_active_job():
     queue = _FakeQueue(existing=_ExistingJob("queued"))
 
     job_id = llm_evaluation_queue._enqueue_unique(queue, "eval-1", None, {})
 
-    assert job_id == "llm-evaluation:eval-1"
+    assert job_id == "llm-evaluation-eval-1"
     assert queue.enqueued == []
     assert queue.existing.deleted is False
 
@@ -94,9 +111,9 @@ def test_enqueue_unique_replaces_terminal_job():
 
     job_id = llm_evaluation_queue._enqueue_unique(queue, "eval-2", {"payload": True}, {})
 
-    assert job_id == "llm-evaluation:eval-2"
+    assert job_id == "llm-evaluation-eval-2"
     assert existing.deleted is True
-    assert queue.enqueued[0][1]["job_id"] == "llm-evaluation:eval-2"
+    assert queue.enqueued[0][1]["job_id"] == "llm-evaluation-eval-2"
 
 
 def test_process_task_skips_when_row_not_claimed():
@@ -252,7 +269,7 @@ def test_process_task_defers_without_claiming_when_queue_paused():
         {"payload": True},
         {"trimmed": False},
     )
-    assert kwargs["job_id"].startswith("llm-evaluation-paused:eval-paused:")
+    assert kwargs["job_id"].startswith("llm-evaluation-paused-eval-paused-")
 
 def test_top_n_scheduler_defers_without_db_when_queue_paused():
     queue = _FakeQueue()
@@ -287,7 +304,7 @@ def test_top_n_scheduler_defers_without_db_when_queue_paused():
         5,
         9,
     )
-    assert kwargs["job_id"].startswith("llm-top-n-paused:")
+    assert kwargs["job_id"].startswith("llm-top-n-paused-")
 
 
 def test_enqueue_top_n_scheduler_uses_stable_job_id_and_reuses_active_job():
@@ -304,7 +321,7 @@ def test_enqueue_top_n_scheduler_uses_stable_job_id_and_reuses_active_job():
 
     assert result == {
         "state": "reused",
-        "job_id": "llm-top-n:owner-1:tenant-1:selection-1:r7:n5",
+            "job_id": "llm-top-n-owner-1-tenant-1-selection-1-r7-n5",
     }
     assert queue.enqueued == []
 
@@ -324,7 +341,7 @@ def test_enqueue_top_n_scheduler_enqueues_terminal_job():
 
     assert result == {
         "state": "scheduled",
-        "job_id": "llm-top-n:owner-2:none:selection-2:r4:n3",
+            "job_id": "llm-top-n-owner-2-none-selection-2-r4-n3",
     }
     assert existing.deleted is True
     args, kwargs = queue.enqueued[0]
@@ -336,7 +353,7 @@ def test_enqueue_top_n_scheduler_enqueues_terminal_job():
         3,
         4,
     )
-    assert kwargs["job_id"] == "llm-top-n:owner-2:none:selection-2:r4:n3"
+    assert kwargs["job_id"] == "llm-top-n-owner-2-none-selection-2-r4-n3"
 
 
 def test_process_top_n_selection_task_delegates_to_evaluation_service():
@@ -442,14 +459,14 @@ def test_enqueue_llm_evaluation_normalizes_inputs():
 
     with patch("core.llm_evaluation_queue._queue", return_value=queue), patch(
         "core.llm_evaluation_queue._enqueue_unique",
-        return_value="llm-evaluation:42",
+        return_value="llm-evaluation-42",
     ) as enqueue_unique:
         job_id = llm_evaluation_queue.enqueue_llm_evaluation(
             42,
             provider_payload={"raw": True},
         )
 
-    assert job_id == "llm-evaluation:42"
+    assert job_id == "llm-evaluation-42"
     enqueue_unique.assert_called_once_with(queue, "42", {"raw": True}, {})
 
 

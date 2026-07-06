@@ -172,7 +172,7 @@ class TestPolicyRouter:
                 {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 0},
                 [],
                 "scheduled",
-                "llm-top-n:owner:selection",
+                "llm-top-n-owner-selection",
             ),
         ) as enqueue:
             response = client.put(
@@ -194,7 +194,7 @@ class TestPolicyRouter:
         assert data['llm_judge_revision'] == 2
         assert data['llm_judge_enqueue_stats']['enqueued'] == 0
         assert data['llm_judge_enqueue_state'] == "scheduled"
-        assert data['llm_judge_enqueue_job_id'] == "llm-top-n:owner:selection"
+        assert data['llm_judge_enqueue_job_id'] == "llm-top-n-owner-selection"
         mock_policy_service.update_llm_judge_policy.assert_called_once()
         assert mock_policy_service.update_llm_judge_policy.call_args.kwargs["enabled"] is True
         assert (
@@ -220,7 +220,7 @@ class TestPolicyRouter:
         with patch('web.backend.routers.policy.MatchService') as match_service_cls:
             with patch(
                 'core.llm_evaluation_queue.enqueue_llm_top_n_for_selection',
-                return_value={"state": "scheduled", "job_id": "llm-top-n:job-1"},
+                return_value={"state": "scheduled", "job_id": "llm-top-n-job-1"},
             ) as schedule:
                 match_service_cls.return_value._resolve_canonical_selection.return_value = (
                     SimpleNamespace(selection_run_id='selection-run-1')
@@ -237,7 +237,7 @@ class TestPolicyRouter:
         assert degraded == []
         assert stats["enqueued"] == 0
         assert state == "scheduled"
-        assert job_id == "llm-top-n:job-1"
+        assert job_id == "llm-top-n-job-1"
         schedule.assert_called_once_with(
             selection_run_id='selection-run-1',
             owner_id='owner-1',

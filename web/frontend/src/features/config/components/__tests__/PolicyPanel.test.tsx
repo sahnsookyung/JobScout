@@ -243,7 +243,7 @@ describe('PolicyPanel', () => {
                     llm_judge_top_n_max: 4,
                     llm_judge_available: true,
                     llm_judge_enqueue_state: 'scheduled',
-                    llm_judge_enqueue_job_id: 'llm-top-n:job-1',
+    llm_judge_enqueue_job_id: 'llm-top-n-job-1',
                 },
             });
             mockUsePolicy.mockReturnValue({

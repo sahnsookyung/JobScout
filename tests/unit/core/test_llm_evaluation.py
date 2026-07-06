@@ -636,10 +636,10 @@ def test_public_serialization_includes_lifecycle_fields_without_raw_queue_payloa
     evaluation.retryable = True
     evaluation.analysis = {
         "enqueue_reason": "auto_top_n",
-        "queue_job_id": "llm-evaluation:eval-1",
+        "queue_job_id": "llm-evaluation-eval-1",
         "queue": {
             "enqueue_reason": "auto_top_n",
-            "queue_job_id": "llm-evaluation:eval-1",
+            "queue_job_id": "llm-evaluation-eval-1",
             "queue_state": "deferred",
             "next_retry_at": "2026-07-06T12:00:00+00:00",
             "retry_after_seconds": 120,
@@ -651,7 +651,7 @@ def test_public_serialization_includes_lifecycle_fields_without_raw_queue_payloa
     public = evaluation_public_dict(evaluation)
 
     assert public["queued_reason"] == "auto_top_n"
-    assert public["queue_job_id"] == "llm-evaluation:eval-1"
+    assert public["queue_job_id"] == "llm-evaluation-eval-1"
     assert public["queue_state"] == "deferred"
     assert public["next_retry_at"] == "2026-07-06T12:00:00+00:00"
     assert public["retry_after_seconds"] == 120

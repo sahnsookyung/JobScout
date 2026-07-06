@@ -1302,7 +1302,7 @@ class TestPipelineNotificationAndPublicationHelpers:
             top_n=3,
             revision=9,
         )
-        mock_schedule.return_value = {"state": "scheduled", "job_id": "llm-top-n:job-1"}
+        mock_schedule.return_value = {"state": "scheduled", "job_id": "llm-top-n-job-1"}
 
         stats = _run_llm_judge_for_selection(
             selection_run_id="selection-run-1",

@@ -96,11 +96,11 @@ def _queue() -> Queue:
 
 
 def _job_id(evaluation_id: Any) -> str:
-    return f"llm-evaluation:{evaluation_id}"
+    return f"llm-evaluation-{_job_component(evaluation_id)}"
 
 
 def _paused_job_id(prefix: str, stable_id: str) -> str:
-    return f"{prefix}:{_job_component(stable_id)}:{int(time.time())}"
+    return f"{_job_component(prefix)}-{_job_component(stable_id)}-{int(time.time())}"
 
 
 def _job_component(value: Any) -> str:
@@ -118,11 +118,11 @@ def _top_n_scheduler_job_id(
     top_n: int,
 ) -> str:
     return (
-        "llm-top-n:"
-        f"{_job_component(owner_id)}:"
-        f"{_job_component(tenant_id)}:"
-        f"{_job_component(selection_run_id)}:"
-        f"r{_job_component(policy_revision)}:"
+        "llm-top-n-"
+        f"{_job_component(owner_id)}-"
+        f"{_job_component(tenant_id)}-"
+        f"{_job_component(selection_run_id)}-"
+        f"r{_job_component(policy_revision)}-"
         f"n{max(int(top_n), 0)}"
     )
 
