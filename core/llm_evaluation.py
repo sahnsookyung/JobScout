@@ -61,6 +61,10 @@ Task
   resume evidence units as explicit resume evidence.
 - Do not invent experience, credentials, salary, location, or authorization facts.
 - Prefer concise, user-safe explanations.
+- Score must use 0-100 percentage points. Return 92 for a strong 92% match;
+  do not return normalized 0-1 or 0-10 values such as 0.92 or 9.2.
+- Return requirement_verdicts in the same order as the input requirement IDs
+  (req_1, req_2, req_3, ...).
 
 Return structured JSON only.
 """.strip()
@@ -93,6 +97,52 @@ MATCH_LLM_JUDGE_SCHEMA_SPEC = {
     "strict": True,
     "schema": MatchEvaluationResponse.model_json_schema(),
 }
+
+_LLM_SCORE_VERDICT_RANGES = {
+    "strong": (80.0, 100.0),
+    "good": (65.0, 89.0),
+    "borderline": (45.0, 64.0),
+    "weak": (20.0, 44.0),
+    "mismatch": (0.0, 34.0),
+}
+
+
+def _score_range_distance(score: float, verdict: str | None) -> float:
+    score_range = _LLM_SCORE_VERDICT_RANGES.get(str(verdict or "").lower())
+    if score_range is None:
+        return 0.0
+    lower, upper = score_range
+    if score < lower:
+        return lower - score
+    if score > upper:
+        return score - upper
+    return 0.0
+
+
+def normalize_llm_score(score: Any, verdict: str | None = None) -> float | None:
+    """Normalize provider score variants into JobScout's 0-100 score contract."""
+    if score is None:
+        return None
+    try:
+        value = float(score)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+
+    value = max(0.0, min(value, 100.0))
+    if 0.0 < value <= 1.0:
+        scaled = value * 100.0
+        if (
+            str(verdict or "").lower() not in _LLM_SCORE_VERDICT_RANGES
+            or _score_range_distance(scaled, verdict) < _score_range_distance(value, verdict)
+        ):
+            value = scaled
+    elif 1.0 < value <= 10.0:
+        scaled = min(value * 10.0, 100.0)
+        if _score_range_distance(scaled, verdict) < _score_range_distance(value, verdict):
+            value = scaled
+    return round(value, 2)
 
 DEFAULT_JOB_DESCRIPTION_MAX_CHARS = 128_000
 DEFAULT_REQUIREMENTS_MAX_COUNT = 200
@@ -1456,13 +1506,14 @@ class MatchLlmEvaluationService:
             if success_metadata:
                 evaluation.provider = success_metadata["provider"]
                 evaluation.model = success_metadata["model"]
-            evaluation.llm_score = round(float(parsed.score), 2)
+            evaluation.llm_score = normalize_llm_score(parsed.score, parsed.verdict)
             evaluation.confidence = round(float(parsed.confidence), 4)
             evaluation.verdict = parsed.verdict
             evaluation.summary = self._truncate(parsed.summary, 1000)
             evaluation.reason_codes = self._safe_reason_codes(parsed.reason_codes)
             evaluation.requirement_verdicts = [
-                item.model_dump() for item in parsed.requirement_verdicts[:50]
+                item.model_dump()
+                for item in self._ordered_requirement_verdicts(parsed.requirement_verdicts)[:50]
             ]
             evaluation.analysis = self._analysis_payload(
                 parsed,
@@ -1597,6 +1648,24 @@ class MatchLlmEvaluationService:
         if not provider_name or not model_name:
             return None
         return {"provider": provider_name, "model": model_name}
+
+    @classmethod
+    def _ordered_requirement_verdicts(
+        cls,
+        requirement_verdicts: list[RequirementEvaluation],
+    ) -> list[RequirementEvaluation]:
+        return sorted(requirement_verdicts, key=cls._requirement_verdict_sort_key)
+
+    @staticmethod
+    def _requirement_verdict_sort_key(item: RequirementEvaluation) -> tuple[int, int, str]:
+        requirement_id = str(getattr(item, "requirement_id", "") or "")
+        for separator in ("_", "-"):
+            prefix = f"req{separator}"
+            if requirement_id.lower().startswith(prefix):
+                suffix = requirement_id[len(prefix) :]
+                if suffix.isdigit():
+                    return (0, int(suffix), requirement_id)
+        return (1, 0, requirement_id)
 
     def _is_reusable(self, evaluation: LlmMatchEvaluation) -> bool:
         if evaluation.status != LLM_EVALUATION_SUCCEEDED:
@@ -1799,7 +1868,7 @@ def evaluation_public_dict(evaluation: LlmMatchEvaluation) -> dict[str, Any]:
         "match_id": str(evaluation.job_match_id) if evaluation.job_match_id else None,
         "job_id": str(evaluation.job_post_id),
         "status": evaluation.status,
-        "llm_score": _float(evaluation.llm_score),
+        "llm_score": normalize_llm_score(evaluation.llm_score, evaluation.verdict),
         "confidence": _float(evaluation.confidence),
         "verdict": evaluation.verdict,
         "summary": evaluation.summary,

@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any
 from core.redis_streams import _sanitize_log
 from sqlalchemy.orm import Session
 
-from core.llm_evaluation import MatchLlmEvaluationService
+from core.llm_evaluation import MatchLlmEvaluationService, normalize_llm_score
 from core.match_selection import resolve_canonical_resume_selection
 from core.metrics import (
     record_llm_rerank_window_size,
@@ -538,7 +538,10 @@ class MatchService:
             candidate.llm_stale_status = effectiveness.get("stale_status")
             if candidate.llm_effective_for_rerank and evaluation is not None:
                 eligible_count += 1
-                candidate.llm_rerank_score = safe_float(evaluation.llm_score)
+                candidate.llm_rerank_score = normalize_llm_score(
+                    evaluation.llm_score,
+                    evaluation.verdict,
+                )
                 candidate.llm_rerank_confidence = safe_float(evaluation.confidence)
 
         metadata["eligible_count"] = eligible_count
@@ -1096,7 +1099,10 @@ class MatchService:
             "llm_score": (
                 None
                 if getattr(evaluation, "llm_score", None) is None
-                else safe_float(evaluation.llm_score)
+                else normalize_llm_score(
+                    evaluation.llm_score,
+                    getattr(evaluation, "verdict", None),
+                )
             ),
             "llm_confidence": (
                 None

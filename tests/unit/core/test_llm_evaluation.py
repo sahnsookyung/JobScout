@@ -14,6 +14,7 @@ from core.llm_evaluation import (
     LlmJudgeUnavailableError,
     MatchLlmEvaluationService,
     evaluation_public_dict,
+    normalize_llm_score,
 )
 from core.llm.provider_chain import LLMProviderCandidate, LLMProviderChain
 from core.resume_evidence_selection import select_relevant_resume_evidence_units
@@ -631,6 +632,17 @@ def test_public_serialization_excludes_cache_hashes_and_raw_inputs():
     assert "owner_id" not in public
     assert "tenant_id" not in public
 
+
+def test_public_serialization_normalizes_existing_fractional_llm_scores():
+    evaluation = _evaluation()
+    evaluation.llm_score = Decimal("0.92")
+    evaluation.verdict = "strong"
+
+    public = evaluation_public_dict(evaluation)
+
+    assert public["llm_score"] == 92.0
+
+
 def test_public_serialization_includes_lifecycle_fields_without_raw_queue_payloads():
     evaluation = _evaluation(status=LLM_EVALUATION_FAILED)
     evaluation.retryable = True
@@ -1090,6 +1102,41 @@ def test_run_provider_persists_successful_structured_response():
     assert evaluation.error_code is None
     assert evaluation.retryable is False
     assert db.flush.call_count >= 2
+
+
+def test_run_provider_normalizes_fractional_score_and_orders_requirement_verdicts():
+    db = Mock()
+    provider = Mock()
+    provider.extract_structured_data.return_value = {
+        "score": 0.92,
+        "confidence": 0.95,
+        "verdict": "strong",
+        "summary": "Strong evidence.",
+        "reason_codes": [],
+        "requirement_verdicts": [
+            {"requirement_id": "req_3", "verdict": "partial", "reason": "Third"},
+            {"requirement_id": "req_1", "verdict": "strong", "reason": "First"},
+            {"requirement_id": "req_2", "verdict": "missing", "reason": "Second"},
+        ],
+    }
+    service = MatchLlmEvaluationService(db, config=_config(), llm_provider=provider)
+    evaluation = _evaluation(status=LLM_EVALUATION_PENDING)
+
+    service._run_provider(evaluation, {"safe": "payload"})
+
+    assert evaluation.status == LLM_EVALUATION_SUCCEEDED
+    assert evaluation.llm_score == 92.0
+    assert [
+        item["requirement_id"] for item in evaluation.requirement_verdicts
+    ] == ["req_1", "req_2", "req_3"]
+
+
+def test_normalize_llm_score_handles_percent_fraction_and_ten_point_scales():
+    assert normalize_llm_score(87.345, "good") == 87.34
+    assert normalize_llm_score(0.95, "strong") == 95.0
+    assert normalize_llm_score(9.5, "strong") == 95.0
+    assert normalize_llm_score(1.0, "mismatch") == 1.0
+    assert normalize_llm_score(3.0, "mismatch") == 3.0
 
 
 def test_run_provider_marks_unknown_failure_terminal_without_raw_payload():
