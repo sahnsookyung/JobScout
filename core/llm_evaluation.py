@@ -144,6 +144,17 @@ def normalize_llm_score(score: Any, verdict: str | None = None) -> float | None:
             value = scaled
     return round(value, 2)
 
+def _requirement_id_sort_key(requirement_id: Any) -> tuple[int, int, str]:
+    normalized = str(requirement_id or "")
+    for separator in ("_", "-"):
+        prefix = f"req{separator}"
+        if normalized.lower().startswith(prefix):
+            suffix = normalized[len(prefix) :]
+            if suffix.isdigit():
+                return (0, int(suffix), normalized)
+    return (1, 0, normalized)
+
+
 DEFAULT_JOB_DESCRIPTION_MAX_CHARS = 128_000
 DEFAULT_REQUIREMENTS_MAX_COUNT = 200
 DEFAULT_REQUIREMENT_TEXT_MAX_CHARS = 2_000
@@ -1658,14 +1669,7 @@ class MatchLlmEvaluationService:
 
     @staticmethod
     def _requirement_verdict_sort_key(item: RequirementEvaluation) -> tuple[int, int, str]:
-        requirement_id = str(getattr(item, "requirement_id", "") or "")
-        for separator in ("_", "-"):
-            prefix = f"req{separator}"
-            if requirement_id.lower().startswith(prefix):
-                suffix = requirement_id[len(prefix) :]
-                if suffix.isdigit():
-                    return (0, int(suffix), requirement_id)
-        return (1, 0, requirement_id)
+        return _requirement_id_sort_key(getattr(item, "requirement_id", ""))
 
     def _is_reusable(self, evaluation: LlmMatchEvaluation) -> bool:
         if evaluation.status != LLM_EVALUATION_SUCCEEDED:
@@ -1833,6 +1837,14 @@ def evaluation_public_dict(evaluation: LlmMatchEvaluation) -> dict[str, Any]:
             }
         return value
 
+    def _ordered_public_requirement_verdicts(value):
+        if not isinstance(value, list):
+            return []
+        return sorted(
+            [item for item in value[:50] if isinstance(item, dict)],
+            key=lambda item: _requirement_id_sort_key(item.get("requirement_id")),
+        )
+
     analysis = getattr(evaluation, "analysis", None)
     if not isinstance(analysis, dict):
         analysis = {}
@@ -1873,10 +1885,8 @@ def evaluation_public_dict(evaluation: LlmMatchEvaluation) -> dict[str, Any]:
         "verdict": evaluation.verdict,
         "summary": evaluation.summary,
         "reason_codes": evaluation.reason_codes if isinstance(evaluation.reason_codes, list) else [],
-        "requirement_verdicts": (
-            evaluation.requirement_verdicts
-            if isinstance(evaluation.requirement_verdicts, list)
-            else []
+        "requirement_verdicts": _cap_public(
+            _ordered_public_requirement_verdicts(evaluation.requirement_verdicts)
         ),
         "analysis": _cap_public(analysis),
         "effective_for_rerank": bool(effectiveness.get("effective_for_rerank", False)),

@@ -643,6 +643,22 @@ def test_public_serialization_normalizes_existing_fractional_llm_scores():
     assert public["llm_score"] == 92.0
 
 
+def test_public_serialization_orders_stored_requirement_verdicts_by_requirement_id():
+    evaluation = _evaluation()
+    evaluation.requirement_verdicts = [
+        {"requirement_id": "req_10", "verdict": "partial", "reason": "Tenth"},
+        {"requirement_id": "req_2", "verdict": "missing", "reason": "Second"},
+        {"requirement_id": "custom", "verdict": "strong", "reason": "Custom"},
+        {"requirement_id": "req_1", "verdict": "strong", "reason": "First"},
+    ]
+
+    public = evaluation_public_dict(evaluation)
+
+    assert [
+        item["requirement_id"] for item in public["requirement_verdicts"]
+    ] == ["req_1", "req_2", "req_10", "custom"]
+
+
 def test_public_serialization_includes_lifecycle_fields_without_raw_queue_payloads():
     evaluation = _evaluation(status=LLM_EVALUATION_FAILED)
     evaluation.retryable = True
