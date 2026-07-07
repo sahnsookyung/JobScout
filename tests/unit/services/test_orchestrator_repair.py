@@ -100,7 +100,7 @@ def test_repair_uses_preference_aware_matching_backlog():
     with patch("services.orchestrator.repair.db_session_scope", fake_session_scope), \
          patch("services.orchestrator.repair.JobRepository", return_value=repo), \
          patch(
-             "services.orchestrator.repair.load_candidate_preferences",
+             "services.orchestrator.repair._load_candidate_preferences",
              return_value=preferences,
          ) as load_preferences, \
          patch("services.orchestrator.repair.enqueue_job") as enqueue_job:
@@ -141,7 +141,7 @@ def test_repair_matching_payload_includes_owner_when_backlog_exists():
     pipeline_runs = _FakePipelineRuns()
     with patch("services.orchestrator.repair.db_session_scope", fake_session_scope), \
          patch("services.orchestrator.repair.JobRepository", return_value=repo), \
-         patch("services.orchestrator.repair.load_candidate_preferences", return_value=None), \
+         patch("services.orchestrator.repair._load_candidate_preferences", return_value=None), \
          patch("services.orchestrator.repair.enqueue_job") as enqueue_job:
         result = run_stuck_job_repair(
             task_id="repair-1",

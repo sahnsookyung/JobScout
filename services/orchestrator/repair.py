@@ -13,9 +13,35 @@ from core.redis_streams import (
 from database.database import db_session_scope
 from database.repository import JobRepository
 from services.orchestrator.pipeline_runs import PipelineRunService
-from services.scorer_matcher.candidate_preferences import load_candidate_preferences
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_preference_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return " ".join(str(value).strip().lower().split())
+
+
+def _load_candidate_preferences(repo: JobRepository, owner_id: str | None) -> dict[str, Any] | None:
+    """Load hard preference fields without importing scorer-only modules."""
+    if not owner_id:
+        return None
+
+    preferences = repo.candidate_preferences.get_preferences(owner_id)
+    if preferences is None:
+        return None
+
+    return {
+        "remote_mode": _normalize_preference_text(getattr(preferences, "remote_mode", ""))
+        or "any",
+        "target_locations": list(getattr(preferences, "target_locations", []) or []),
+        "visa_sponsorship_required": bool(
+            getattr(preferences, "visa_sponsorship_required", False)
+        ),
+        "salary_min": getattr(preferences, "salary_min", None),
+        "employment_types": list(getattr(preferences, "employment_types", []) or []),
+    }
 
 
 def _stage_correlation(snapshot: dict[str, Any] | None, stage: str) -> dict[str, str]:
@@ -68,7 +94,7 @@ def run_stuck_job_repair(
                 owner_id = getattr(structured_resume, "owner_id", None)
                 tenant_id = getattr(structured_resume, "tenant_id", None)
                 matching_owner_id = str(owner_id) if owner_id is not None else None
-                candidate_preferences = load_candidate_preferences(repo, matching_owner_id)
+                candidate_preferences = _load_candidate_preferences(repo, matching_owner_id)
                 ready_unmatched_count = repo.count_pending_matching_jobs(
                     latest_resume_fingerprint,
                     tenant_id=tenant_id,
