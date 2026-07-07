@@ -74,6 +74,15 @@ class MatchResultDTO:
     penalties: float = 0.0
     penalty_details: dict = field(default_factory=dict)
     match_type: str = "requirements_only"
+    job_match_id: Optional[str] = None
+
+    @property
+    def id(self) -> str:
+        return self.job_match_id or self.job.id
+
+    @property
+    def job_id(self) -> str:
+        return self.job.id
 
 
 def penalty_details_from_orm(orm_penalty_details, total_penalties: float = 0.0, **kwargs) -> dict:

@@ -608,6 +608,11 @@ export interface PipelineStats {
     jobs_ready_to_score?: number;
     jobs_pending_extraction?: number;
     jobs_pending_embedding?: number;
+    jobs_matching_processed_fresh?: number;
+    jobs_pending_matching?: number;
+    matching_page_size?: number;
+    matching_pages_completed?: number;
+    matching_backlog_complete?: boolean;
     candidates_considered?: number;
     matches_selected?: number;
     matches_saved?: number;

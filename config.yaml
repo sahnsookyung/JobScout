@@ -69,15 +69,15 @@ matching:
   # Invalidation settings
   invalidate_on_job_change: true
   invalidate_on_resume_change: true
-  recalculate_existing: true  # If true, recalculate matches even if they exist. Very important to set to false for performance improvements (job, resume, scoring parameters being the same means the score should be the same).
+  recalculate_existing: false  # If true, recalculate matches even if they exist. Very important to set to false for performance improvements (job, resume, scoring parameters being the same means the score should be the same).
   
   # Stage 1: Matcher Service (Vector Retrieval)
   matcher:
     enabled: true
     similarity_threshold: 0.5
-    batch_size: 5000
+    batch_size: 500
     hybrid_retrieval_enabled: true
-    lexical_limit: 5000
+    lexical_limit: 500
     fusion_rank_constant: 60
     lexical_query_token_limit: 24
     # lexical_limit: 200          # Raise if dense-only retrieval misses exact skill/title matches

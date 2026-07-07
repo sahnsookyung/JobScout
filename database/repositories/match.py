@@ -3,7 +3,7 @@ from typing import List, Optional, Any
 from sqlalchemy import select, func
 from sqlalchemy.orm import joinedload
 
-from database.models import JobMatch, StructuredResume
+from database.models import JobMatch, JobMatchRequirement, JobPost, StructuredResume
 from database.repositories.base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,93 @@ class MatchRepository(BaseRepository):
         if load_job_post:
             stmt = stmt.options(joinedload(JobMatch.job_post))
         return self.db.execute(stmt).scalars().all()
+
+    def _reusable_match_filters(
+        self,
+        resume_fingerprint: str,
+        *,
+        tenant_id: Any | None = None,
+    ):
+        filters = [
+            JobMatch.resume_fingerprint == resume_fingerprint,
+            JobMatch.job_content_hash == JobPost.content_hash,
+            JobPost.status == 'active',
+            JobPost.is_extracted.is_(True),
+            JobPost.is_embedded.is_(True),
+            JobPost.summary_embedding.isnot(None),
+        ]
+        if tenant_id is not None:
+            filters.append(JobPost.tenant_id == tenant_id)
+        return filters
+
+    def get_reusable_matches_for_resume(
+        self,
+        resume_fingerprint: str,
+        *,
+        tenant_id: Any | None = None,
+    ) -> List[JobMatch]:
+        """Return content-fresh persisted matches that do not need rescoring."""
+        stmt = (
+            select(JobMatch)
+            .join(JobPost, JobPost.id == JobMatch.job_post_id)
+            .where(*self._reusable_match_filters(resume_fingerprint, tenant_id=tenant_id))
+            .options(
+                joinedload(JobMatch.job_post),
+                joinedload(JobMatch.requirement_matches).joinedload(
+                    JobMatchRequirement.requirement
+                ),
+            )
+        )
+        return list(self.db.execute(stmt).unique().scalars().all())
+
+    def count_reusable_matches_for_resume(
+        self,
+        resume_fingerprint: str,
+        *,
+        tenant_id: Any | None = None,
+    ) -> int:
+        stmt = (
+            select(func.count(JobMatch.id))
+            .join(JobPost, JobPost.id == JobMatch.job_post_id)
+            .where(*self._reusable_match_filters(resume_fingerprint, tenant_id=tenant_id))
+        )
+        return int(self.db.execute(stmt).scalar() or 0)
+
+    def count_pending_matching_jobs(
+        self,
+        resume_fingerprint: str,
+        *,
+        tenant_id: Any | None = None,
+    ) -> int:
+        reusable_exists = (
+            select(JobMatch.id)
+            .where(
+                JobMatch.job_post_id == JobPost.id,
+                JobMatch.resume_fingerprint == resume_fingerprint,
+                JobMatch.job_content_hash == JobPost.content_hash,
+            )
+            .exists()
+        )
+        stmt = select(func.count(JobPost.id)).where(
+            JobPost.status == 'active',
+            JobPost.is_extracted.is_(True),
+            JobPost.is_embedded.is_(True),
+            JobPost.summary_embedding.isnot(None),
+            ~reusable_exists,
+        )
+        if tenant_id is not None:
+            stmt = stmt.where(JobPost.tenant_id == tenant_id)
+        return int(self.db.execute(stmt).scalar() or 0)
+
+    def activate_matches_by_ids(self, match_ids: List[Any]) -> int:
+        if not match_ids:
+            return 0
+        stmt = select(JobMatch).where(JobMatch.id.in_(match_ids))
+        matches = self.db.execute(stmt).scalars().all()
+        for match in matches:
+            match.status = 'active'
+            match.invalidated_reason = None
+        return len(matches)
 
     def invalidate_matches_for_job(
         self,

@@ -10,7 +10,7 @@ from sqlalchemy import select, delete, func, update
 from sqlalchemy import and_, or_
 
 from database.models import (
-    JobPost, JobPostSource,
+    JobMatch, JobPost, JobPostSource,
     JobRequirementUnit, JobRequirementUnitEmbedding,
     JobBenefit
 )
@@ -847,11 +847,14 @@ class JobPostRepository(BaseRepository):
         resume_embedding: List[float],
         limit: Optional[int] = None,
         tenant_id: Optional[Any] = None,
-        require_remote: Optional[bool] = None
+        require_remote: Optional[bool] = None,
+        exclude_reusable_resume_fingerprint: Optional[str] = None,
     ) -> List[Tuple[JobPost, float]]:
         distance_expr = JobPost.summary_embedding.cosine_distance(resume_embedding).label("distance")
 
         stmt = select(JobPost, distance_expr).where(
+            JobPost.status == 'active',
+            JobPost.is_extracted.is_(True),
             JobPost.is_embedded.is_(True),
             JobPost.summary_embedding.isnot(None)
         )
@@ -861,6 +864,11 @@ class JobPostRepository(BaseRepository):
 
         if require_remote is not None:
             stmt = stmt.where(JobPost.is_remote == require_remote)
+
+        if exclude_reusable_resume_fingerprint:
+            stmt = stmt.where(
+                ~self._reusable_match_exists(exclude_reusable_resume_fingerprint)
+            )
 
         stmt = stmt.order_by(distance_expr)
         if limit is not None:
@@ -877,6 +885,7 @@ class JobPostRepository(BaseRepository):
         limit: Optional[int] = None,
         tenant_id: Optional[Any] = None,
         require_remote: Optional[bool] = None,
+        exclude_reusable_resume_fingerprint: Optional[str] = None,
     ) -> List[Tuple[JobPost, float, float]]:
         if not lexical_query.strip():
             return []
@@ -896,6 +905,8 @@ class JobPostRepository(BaseRepository):
         distance_expr = JobPost.summary_embedding.cosine_distance(resume_embedding).label("distance")
 
         stmt = select(JobPost, lexical_rank, distance_expr).where(
+            JobPost.status == 'active',
+            JobPost.is_extracted.is_(True),
             JobPost.is_embedded.is_(True),
             JobPost.summary_embedding.isnot(None),
             document.op("@@")(query),
@@ -906,6 +917,11 @@ class JobPostRepository(BaseRepository):
 
         if require_remote is not None:
             stmt = stmt.where(JobPost.is_remote == require_remote)
+
+        if exclude_reusable_resume_fingerprint:
+            stmt = stmt.where(
+                ~self._reusable_match_exists(exclude_reusable_resume_fingerprint)
+            )
 
         stmt = stmt.order_by(lexical_rank.desc(), distance_expr)
         if limit is not None:
@@ -920,6 +936,18 @@ class JobPostRepository(BaseRepository):
             )
             for row in rows
         ]
+
+    def _reusable_match_exists(self, resume_fingerprint: str):
+        """Return an EXISTS clause for a content-fresh match for the current job row."""
+        return (
+            select(JobMatch.id)
+            .where(
+                JobMatch.job_post_id == JobPost.id,
+                JobMatch.resume_fingerprint == resume_fingerprint,
+                JobMatch.job_content_hash == JobPost.content_hash,
+            )
+            .exists()
+        )
 
     def quarantine_null_description_jobs(self, older_than_days: int = 7) -> int:
         """Mark stale pending jobs with null descriptions as 'no_description'.

@@ -53,6 +53,7 @@ def _dto(
     job = SimpleNamespace(id=job_id, title="Engineer", company="Acme", content_hash="hash-1")
     return SimpleNamespace(
         id=match_id or f"match-{job_id}",
+        job_match_id=match_id,
         job=job,
         fit_score=fit_score,
         preference_score=preference_score,
@@ -83,6 +84,7 @@ def _prepared_selection_result(
     owner_id: str | None = "user-1",
     persist_dtos: list | None = None,
     item_snapshots: list | None = None,
+    cached_ids: dict | None = None,
 ) -> PreparedSelectionResult:
     return PreparedSelectionResult(
         match_dtos=list(dtos),
@@ -90,6 +92,7 @@ def _prepared_selection_result(
         policy_snapshot=SimpleNamespace(),
         owner_id=owner_id,
         persist_match_dtos=list(persist_dtos or []),
+        cached_job_match_ids_by_job_id=dict(cached_ids or {}),
     )
 
 
@@ -723,7 +726,7 @@ class TestRunMatchingAndScoring:
             config=SimpleNamespace(),
         )
         prepare_args = mock_prepare_selection.call_args.args
-        assert prepare_args[0] == ["reranked"]
+        assert prepare_args[0] == [_dto()]
         assert mock_prepare_selection.call_args.kwargs["matching_config"] == SimpleNamespace(scorer=scorer_config)
 
     @patch("services.scorer_matcher.pipeline._convert_matches_to_dtos", return_value=[_dto()])
@@ -845,10 +848,7 @@ class TestRunMatchingAndScoring:
 
     @patch(
         "services.scorer_matcher.pipeline._convert_matches_to_dtos",
-        side_effect=[
-            [_dto(job_id="job-primary")],
-            [_dto(job_id="job-primary"), _dto(job_id="job-excluded")],
-        ],
+        return_value=[_dto(job_id="job-primary"), _dto(job_id="job-excluded")],
     )
     @patch(
         "services.scorer_matcher.pipeline._prepare_selection_result",
@@ -917,7 +917,80 @@ class TestRunMatchingAndScoring:
             "job-primary",
             "job-excluded",
         ]
-        assert mock_convert.call_count == 2
+        assert mock_convert.call_count == 1
+
+    @patch(
+        "services.scorer_matcher.pipeline._load_reusable_match_dtos",
+        return_value=[
+            _dto(job_id="job-cached", match_id="cached-match", fit_score=88.0),
+        ],
+    )
+    @patch(
+        "services.scorer_matcher.pipeline._convert_matches_to_dtos",
+        return_value=[_dto(job_id="job-new", fit_score=82.0)],
+    )
+    @patch(
+        "services.scorer_matcher.pipeline._prepare_selection_result",
+        return_value=SimpleNamespace(
+            selected_matches=[_dto(job_id="job-cached", match_id="cached-match")],
+            item_snapshots=[
+                SimpleNamespace(job_id="job-cached", selection_tier="primary"),
+                SimpleNamespace(job_id="job-new", selection_tier="excluded"),
+            ],
+            policy_snapshot=SimpleNamespace(),
+            owner_id="user-1",
+        ),
+    )
+    @patch("services.scorer_matcher.pipeline.apply_preference_semantic_reranking", return_value=["scored"])
+    @patch("services.scorer_matcher.pipeline._run_scorer_service", return_value=["scored"])
+    @patch("services.scorer_matcher.pipeline.ScoringService")
+    @patch("services.scorer_matcher.pipeline._run_preliminary_matching", return_value=["prelim"])
+    @patch("services.scorer_matcher.pipeline._prepare_matching_run")
+    @patch("services.scorer_matcher.pipeline.job_uow")
+    def test_ranks_cached_reusable_matches_but_persists_only_new_page(
+        self,
+        mock_uow,
+        mock_prepare,
+        _mock_preliminary,
+        _mock_scorer_cls,
+        _mock_run_scorer,
+        _mock_apply_preferences,
+        mock_prepare_selection,
+        _mock_convert,
+        _mock_cached,
+    ):
+        repo = MagicMock()
+        repo.candidate_preferences.get_preferences.return_value = None
+        repo.count_pending_matching_jobs.return_value = 1
+        mock_uow.return_value = _uow(repo)
+        mock_prepare.return_value = (
+            SimpleNamespace(extracted_data={}, total_experience_years=3, owner_id="user-1"),
+            MagicMock(),
+        )
+
+        result = _run_matching_and_scoring(
+            ctx=SimpleNamespace(config=SimpleNamespace(preferences=SimpleNamespace()), ai_service=None),
+            resume_data={"profile": {}},
+            resume_fingerprint="fp-123",
+            should_re_extract=False,
+            matching_config=SimpleNamespace(
+                scorer=MagicMock(),
+                matcher=SimpleNamespace(batch_size=500),
+                recalculate_existing=False,
+            ),
+            stop_event=threading.Event(),
+            status_callback=None,
+            owner_id="user-1",
+        )
+
+        selection_job_ids = [
+            dto.job.id
+            for dto in mock_prepare_selection.call_args.args[0]
+        ]
+        assert selection_job_ids == ["job-cached", "job-new"]
+        assert [dto.job.id for dto in result.persist_match_dtos] == ["job-new"]
+        assert result.cached_job_match_ids_by_job_id == {"job-cached": "cached-match"}
+        assert result.matching_page_size == 500
 
 
 class TestRunMatchingPipeline:
@@ -1258,6 +1331,49 @@ class TestPipelineNotificationAndPublicationHelpers:
             active_job_ids=frozenset({"job-primary"}),
         )
         mock_publish.assert_called_once()
+
+    @patch("services.scorer_matcher.pipeline._publish_match_selection_run", return_value="run-1")
+    @patch("services.scorer_matcher.pipeline._reactivate_selection_matches")
+    @patch("services.scorer_matcher.pipeline._refresh_resume_match_set")
+    @patch("services.scorer_matcher.pipeline._save_matches_batch")
+    @patch("services.scorer_matcher.pipeline._run_llm_judge_for_selection")
+    def test_save_results_and_publish_selection_merges_cached_match_ids(
+        self,
+        _mock_llm_judge,
+        mock_save,
+        _mock_refresh,
+        mock_reactivate,
+        mock_publish,
+    ):
+        primary = _dto(job_id="job-new")
+        mock_save.return_value = SaveMatchesBatchResult(
+            saved_count=1,
+            failed_count=0,
+            active_job_ids=frozenset({"job-new"}),
+            job_match_ids_by_job_id={"job-new": "match-new"},
+        )
+
+        _save_results_and_publish_selection(
+            match_dtos=[primary],
+            resume_fingerprint="fp-123",
+            matching_config=SimpleNamespace(),
+            prepared_selection=_prepared_selection_result(
+                primary,
+                persist_dtos=[primary],
+                item_snapshots=[
+                    SimpleNamespace(job_id="job-cached", selection_tier="primary"),
+                    SimpleNamespace(job_id="job-new", selection_tier="primary"),
+                ],
+                cached_ids={"job-cached": "match-cached"},
+            ),
+            task_id="task-1",
+        )
+
+        mock_reactivate.assert_called_once_with({"job-cached": "match-cached"})
+        assert mock_publish.call_args.kwargs["job_match_ids_by_job_id"] == {
+            "job-cached": "match-cached",
+            "job-new": "match-new",
+        }
 
     @patch("services.scorer_matcher.pipeline._publish_match_selection_run")
     @patch("services.scorer_matcher.pipeline._refresh_resume_match_set")

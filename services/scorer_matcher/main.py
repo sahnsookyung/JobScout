@@ -58,6 +58,7 @@ PREPARATION_BACKFILL_BATCH_SIZE = int(
     )
 )
 PREPARATION_BACKFILL_MAX_BATCHES = int(os.getenv("MATCHER_PREP_BACKFILL_MAX_BATCHES", "10"))
+MATCHING_PAGE_LOCK_TTL_SECONDS = int(os.getenv("MATCHER_PAGE_LOCK_TTL_SECONDS", "900"))
 
 
 def _serialize_task_state(state: dict) -> dict:
@@ -111,7 +112,21 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _job_preparation_stats() -> dict:
+def _matching_page_size(config) -> int:
+    matcher_config = getattr(getattr(config, "matching", None), "matcher", None)
+    raw = getattr(matcher_config, "batch_size", None)
+    try:
+        return max(1, int(raw or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _job_preparation_stats(
+    resume_fingerprint: Optional[str] = None,
+    *,
+    matching_page: Optional[int] = None,
+    matching_page_size: Optional[int] = None,
+) -> dict:
     """Return user-safe active job preparation counts for pipeline visibility."""
     try:
         with job_uow() as repo:
@@ -124,6 +139,7 @@ def _job_preparation_stats() -> dict:
                     active_filter,
                     JobPost.is_extracted.is_(True),
                     JobPost.is_embedded.is_(True),
+                    JobPost.summary_embedding.isnot(None),
                 )
             ) or 0
             pending_extraction = repo.db.scalar(
@@ -139,12 +155,27 @@ def _job_preparation_stats() -> dict:
                     JobPost.is_embedded.is_(False),
                 )
             ) or 0
-            return {
+            stats = {
                 "jobs_seen": int(jobs_seen),
                 "jobs_ready_to_score": int(jobs_ready),
                 "jobs_pending_extraction": int(pending_extraction),
                 "jobs_pending_embedding": int(pending_embedding),
             }
+            if resume_fingerprint:
+                processed_fresh = repo.count_reusable_matches_for_resume(resume_fingerprint)
+                pending_matching = repo.count_pending_matching_jobs(resume_fingerprint)
+                stats.update(
+                    {
+                        "jobs_matching_processed_fresh": int(processed_fresh),
+                        "jobs_pending_matching": int(pending_matching),
+                        "matching_backlog_complete": int(pending_matching) == 0,
+                    }
+                )
+            if matching_page_size is not None:
+                stats["matching_page_size"] = int(matching_page_size)
+            if matching_page is not None:
+                stats["matching_pages_completed"] = max(0, int(matching_page) - 1)
+            return stats
     except Exception:
         logger.warning("Failed to load job preparation counts", exc_info=True)
         return {}
@@ -220,6 +251,68 @@ def _maybe_enqueue_preparation_backfill(task_id: str, stats: dict) -> list[dict[
         return []
 
 
+def _maybe_enqueue_next_matching_page(
+    *,
+    parent_task_id: str,
+    current_page: int,
+    resume_fingerprint: Optional[str],
+    owner_id: Optional[str],
+    result: Optional[object],
+    stats: dict,
+) -> list[dict[str, str]]:
+    pending_matching = int(stats.get("jobs_pending_matching") or 0)
+    if not resume_fingerprint or pending_matching <= 0:
+        return []
+    if not result or not getattr(result, "success", False) or getattr(result, "cancelled", False):
+        return []
+
+    saved_count = int(getattr(result, "saved_count", 0) or 0)
+    if saved_count <= 0:
+        return [{
+            "code": "matching_backlog_no_progress",
+            "pending_matching": str(pending_matching),
+        }]
+
+    next_page = max(1, int(current_page)) + 1
+    next_task_id = f"{parent_task_id}-match-page-{next_page}"
+    lock_key = f"matching:page:{parent_task_id}:{next_page}:lock"
+    try:
+        redis_client = get_redis_client()
+        if not redis_client.set(
+            lock_key,
+            next_task_id,
+            nx=True,
+            ex=MATCHING_PAGE_LOCK_TTL_SECONDS,
+        ):
+            return [{
+                "code": "matching_backlog_page_queued",
+                "pending_matching": str(pending_matching),
+                "next_task_id": next_task_id,
+            }]
+
+        payload = {
+            "task_id": next_task_id,
+            "resume_fingerprint": resume_fingerprint,
+            "parent_task_id": parent_task_id,
+            "matching_page": next_page,
+        }
+        if owner_id is not None:
+            payload["owner_id"] = owner_id
+        enqueue_job(STREAM_MATCHING, payload)
+        return [{
+            "code": "matching_backlog_page_enqueued",
+            "pending_matching": str(pending_matching),
+            "next_task_id": next_task_id,
+            "next_page": str(next_page),
+        }]
+    except Exception:
+        logger.warning("Failed to enqueue next matching page", exc_info=True)
+        return [{
+            "code": "matching_backlog_enqueue_failed",
+            "pending_matching": str(pending_matching),
+        }]
+
+
 # ---------------------------------------------------------------------------
 # Stream consumer for matcher service
 # ---------------------------------------------------------------------------
@@ -272,21 +365,27 @@ class MatcherConsumer(StreamConsumerWithCompletion):
         upload_id: Optional[str],
         resume_fingerprint: Optional[str],
         result: Optional[object],
+        stats: Optional[dict] = None,
+        extra_warnings: Optional[list[dict[str, str]]] = None,
     ) -> dict:
         matches_count = result.matches_count if result else 0
         saved_count = result.saved_count if result else 0
         notified_count = result.notified_count if result else 0
         execution_time = result.execution_time if result else 0.0
         stale_metadata = _compute_stale_result_metadata(owner_id, upload_id)
-        stats = {
-            **_job_preparation_stats(),
+        resolved_stats = {
+            **(stats or _job_preparation_stats(resume_fingerprint)),
             "candidates_considered": matches_count,
             "matches_selected": matches_count,
             "matches_saved": saved_count,
             "notifications_sent": notified_count,
         }
-        warnings = []
-        if final_status == "completed" and saved_count == 0 and stats.get("jobs_ready_to_score", 0) == 0:
+        warnings = list(extra_warnings or [])
+        if (
+            final_status == "completed"
+            and saved_count == 0
+            and resolved_stats.get("jobs_ready_to_score", 0) == 0
+        ):
             warnings.append({"code": "no_jobs_ready"})
         return {
             "status": final_status,
@@ -296,7 +395,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
             "upload_id": upload_id,
             "resume_fingerprint": resume_fingerprint,
             "updated_at": _utc_now_iso(),
-            "stats": stats,
+            "stats": resolved_stats,
             "warnings": warnings,
             "result": {
                 "matches_count": matches_count,
@@ -326,7 +425,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
             "resume_fingerprint": resume_fingerprint,
             "error": str(error),
             "updated_at": _utc_now_iso(),
-            "stats": _job_preparation_stats(),
+            "stats": _job_preparation_stats(resume_fingerprint),
         }
 
     async def _do_process(self, msg_id: str, msg: dict) -> tuple[bool, dict]:
@@ -343,6 +442,13 @@ class MatcherConsumer(StreamConsumerWithCompletion):
         resume_fingerprint = msg.get("resume_fingerprint")
         upload_id = msg.get("resume_upload_id")
         owner_id = msg.get("owner_id")
+        parent_task_id = msg.get("parent_task_id") or task_id
+        state_task_id = parent_task_id or task_id
+        try:
+            matching_page = max(1, int(msg.get("matching_page") or 1))
+        except (TypeError, ValueError):
+            matching_page = 1
+        matching_page_size = _matching_page_size(self.ctx.config)
 
         # Validate required fields
         is_valid, error = validate_message(msg, ["task_id", "resume_fingerprint"])
@@ -358,19 +464,33 @@ class MatcherConsumer(StreamConsumerWithCompletion):
 
         last_step = "initializing"
         task_stop_event = threading.Event()
-        initial_stats = _job_preparation_stats()
+        initial_stats = _job_preparation_stats(
+            resume_fingerprint,
+            matching_page=matching_page,
+            matching_page_size=matching_page_size,
+        )
         backfill_warnings = _maybe_enqueue_preparation_backfill(task_id, initial_stats)
 
         def _update_task_state(step: str) -> None:
             nonlocal last_step
             last_step = step
-            stats = _job_preparation_stats()
+            stats = _job_preparation_stats(
+                resume_fingerprint,
+                matching_page=matching_page,
+                matching_page_size=matching_page_size,
+            )
             self._write_task_state(
-                task_id,
+                state_task_id,
                 {
-                    "status": self._read_cancellation_status(task_id, step, task_stop_event),
+                    "status": self._read_cancellation_status(
+                        state_task_id,
+                        step,
+                        task_stop_event,
+                    ),
                     "step": step,
                     "task_type": "matching",
+                    "task_id": task_id,
+                    "parent_task_id": parent_task_id,
                     "owner_id": owner_id,
                     "upload_id": upload_id,
                     "resume_fingerprint": resume_fingerprint,
@@ -410,20 +530,40 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                 final_status = "failed"
             else:
                 final_status = "completed"
+            final_stats = _job_preparation_stats(
+                resume_fingerprint,
+                matching_page=matching_page + 1,
+                matching_page_size=matching_page_size,
+            )
+            matching_page_warnings = _maybe_enqueue_next_matching_page(
+                parent_task_id=parent_task_id,
+                current_page=matching_page,
+                resume_fingerprint=resume_fingerprint,
+                owner_id=owner_id,
+                result=result,
+                stats=final_stats,
+            )
+            terminal_state = self._terminal_task_state(
+                final_status=final_status,
+                last_step=last_step,
+                owner_id=owner_id,
+                upload_id=upload_id,
+                resume_fingerprint=resume_fingerprint,
+                result=result,
+                stats=final_stats,
+                extra_warnings=backfill_warnings + matching_page_warnings,
+            )
+            terminal_state["task_id"] = task_id
+            terminal_state["parent_task_id"] = parent_task_id
             self._write_task_state(
-                task_id,
-                self._terminal_task_state(
-                    final_status=final_status,
-                    last_step=last_step,
-                    owner_id=owner_id,
-                    upload_id=upload_id,
-                    resume_fingerprint=resume_fingerprint,
-                    result=result,
-                ),
+                state_task_id,
+                terminal_state,
                 warning_message="Failed to write completed task state for %s",
             )
 
             clear_task_cancellation_requested(task_id)
+            if state_task_id != task_id:
+                clear_task_cancellation_requested(state_task_id)
             success = bool(result and result.success and not result.cancelled) if result else True
             return success, {
                 "status": final_status,
@@ -432,18 +572,23 @@ class MatcherConsumer(StreamConsumerWithCompletion):
             }
         except Exception as e:
             logger.exception("❌ Matching failed: task_id=%s, error=%s", task_id, type(e).__name__)
+            failed_state = self._failed_task_state(
+                last_step=last_step,
+                owner_id=owner_id,
+                upload_id=upload_id,
+                resume_fingerprint=resume_fingerprint,
+                error=e,
+            )
+            failed_state["task_id"] = task_id
+            failed_state["parent_task_id"] = parent_task_id
             self._write_task_state(
-                task_id,
-                self._failed_task_state(
-                    last_step=last_step,
-                    owner_id=owner_id,
-                    upload_id=upload_id,
-                    resume_fingerprint=resume_fingerprint,
-                    error=e,
-                ),
+                state_task_id,
+                failed_state,
                 warning_message="Failed to write failed task state for %s",
             )
             clear_task_cancellation_requested(task_id)
+            if state_task_id != task_id:
+                clear_task_cancellation_requested(state_task_id)
             return False, {"status": "failed", "error": str(e)}
 
 

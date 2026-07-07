@@ -60,6 +60,7 @@ class MatcherService:
         pre_extracted_resume: Optional[Any] = None,
         resume_fingerprint: Optional[str] = None,
         owner_id: Optional[Any] = None,
+        exclude_reusable_resume_fingerprint: Optional[str] = None,
     ) -> List[JobMatchPreliminary]:
         if not resume_fingerprint:
             raise ValueError("resume_fingerprint is required for matching")
@@ -94,6 +95,7 @@ class MatcherService:
             resume_data=resume_data,
             resume_embedding=resume_embedding,
             tenant_id=tenant_id,
+            exclude_reusable_resume_fingerprint=exclude_reusable_resume_fingerprint,
         )
 
         if not candidates:
@@ -145,11 +147,13 @@ class MatcherService:
         resume_data: Dict[str, Any],
         resume_embedding,
         tenant_id: Optional[Any],
+        exclude_reusable_resume_fingerprint: Optional[str] = None,
     ) -> List[RetrievedCandidate]:
         dense_pairs = repo.get_top_jobs_by_summary_embedding(
             resume_embedding=resume_embedding,
             limit=self.config.batch_size,
             tenant_id=tenant_id,
+            exclude_reusable_resume_fingerprint=exclude_reusable_resume_fingerprint,
         )
         logger.debug("Stage 1: Retrieved %d dense candidates via vector similarity", len(dense_pairs))
 
@@ -172,6 +176,7 @@ class MatcherService:
             resume_embedding=resume_embedding,
             limit=getattr(self.config, "lexical_limit", None) or self.config.batch_size,
             tenant_id=tenant_id,
+            exclude_reusable_resume_fingerprint=exclude_reusable_resume_fingerprint,
         )
         logger.debug(
             "Stage 1: Retrieved %d lexical candidates and %d dense candidates for hybrid fusion",

@@ -330,6 +330,62 @@ class TestMatcherEndpoints:
 class TestMatcherConsumer:
     """Test MatcherConsumer class."""
 
+    def test_maybe_enqueue_next_matching_page_uses_deterministic_child_task(self):
+        from services.scorer_matcher.main import _maybe_enqueue_next_matching_page
+
+        redis_client = Mock()
+        redis_client.set.return_value = True
+
+        with patch("services.scorer_matcher.main.get_redis_client", return_value=redis_client), \
+             patch("services.scorer_matcher.main.enqueue_job") as mock_enqueue:
+            warnings = _maybe_enqueue_next_matching_page(
+                parent_task_id="parent-task",
+                current_page=1,
+                resume_fingerprint="fp-123",
+                owner_id="owner-123",
+                result=SimpleNamespace(success=True, cancelled=False, saved_count=25),
+                stats={"jobs_pending_matching": 75},
+            )
+
+        assert warnings == [{
+            "code": "matching_backlog_page_enqueued",
+            "pending_matching": "75",
+            "next_task_id": "parent-task-match-page-2",
+            "next_page": "2",
+        }]
+        redis_client.set.assert_called_once()
+        mock_enqueue.assert_called_once_with(
+            "matching:jobs",
+            {
+                "task_id": "parent-task-match-page-2",
+                "resume_fingerprint": "fp-123",
+                "parent_task_id": "parent-task",
+                "matching_page": 2,
+                "owner_id": "owner-123",
+            },
+        )
+
+    def test_maybe_enqueue_next_matching_page_stops_on_no_progress(self):
+        from services.scorer_matcher.main import _maybe_enqueue_next_matching_page
+
+        with patch("services.scorer_matcher.main.get_redis_client") as mock_redis, \
+             patch("services.scorer_matcher.main.enqueue_job") as mock_enqueue:
+            warnings = _maybe_enqueue_next_matching_page(
+                parent_task_id="parent-task",
+                current_page=1,
+                resume_fingerprint="fp-123",
+                owner_id=None,
+                result=SimpleNamespace(success=True, cancelled=False, saved_count=0),
+                stats={"jobs_pending_matching": 75},
+            )
+
+        assert warnings == [{
+            "code": "matching_backlog_no_progress",
+            "pending_matching": "75",
+        }]
+        mock_redis.assert_not_called()
+        mock_enqueue.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_do_process_validates_fields(self):
         """_do_process validates required fields."""
@@ -394,6 +450,53 @@ class TestMatcherConsumer:
         }
         assert terminal_state["stats"]["matches_saved"] == 3
         assert terminal_state["error"] is None
+
+    @pytest.mark.asyncio
+    async def test_do_process_child_page_updates_parent_task_state(self):
+        """Child matching pages keep the original parent task status current."""
+        from services.scorer_matcher.main import MatcherConsumer
+
+        consumer = MatcherConsumer(Mock())
+        mock_result = Mock(
+            matches_count=3,
+            saved_count=3,
+            notified_count=0,
+            execution_time=0.5,
+            cancelled=False,
+            success=True,
+            error=None,
+        )
+
+        with patch("services.scorer_matcher.main._run_matching_pipeline_sync",
+                   return_value=mock_result), \
+             patch("services.scorer_matcher.main.is_task_cancellation_requested", return_value=False) as mock_cancel, \
+             patch("services.scorer_matcher.main._compute_stale_result_metadata", return_value={}), \
+             patch("services.scorer_matcher.main._job_preparation_stats", return_value={}), \
+             patch("services.scorer_matcher.main._maybe_enqueue_preparation_backfill", return_value=[]), \
+             patch("services.scorer_matcher.main._maybe_enqueue_next_matching_page", return_value=[]), \
+             patch("services.scorer_matcher.main.clear_task_cancellation_requested") as mock_clear, \
+             patch("services.scorer_matcher.main.set_task_state") as mock_set_state:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {
+                    "task_id": "parent-task-match-page-2",
+                    "parent_task_id": "parent-task",
+                    "resume_fingerprint": "fp-123",
+                    "matching_page": 2,
+                },
+            )
+
+        assert success is True
+        assert result["status"] == "completed"
+        assert {call.args[0] for call in mock_set_state.call_args_list} == {"parent-task"}
+        terminal_state = mock_set_state.call_args_list[-1].args[1]
+        assert terminal_state["task_id"] == "parent-task-match-page-2"
+        assert terminal_state["parent_task_id"] == "parent-task"
+        mock_cancel.assert_called_with("parent-task")
+        assert [call.args[0] for call in mock_clear.call_args_list] == [
+            "parent-task-match-page-2",
+            "parent-task",
+        ]
 
     @pytest.mark.asyncio
     async def test_do_process_no_result(self):

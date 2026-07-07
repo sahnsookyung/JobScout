@@ -252,6 +252,25 @@ class TestRetrieveCandidates:
         call_kwargs = repo.get_top_jobs_by_summary_embedding.call_args[1]
         assert call_kwargs.get("limit") == 50
 
+    def test_passes_reusable_match_exclusion_to_retrieval(self):
+        service, _, mock_config = make_service()
+        mock_config.hybrid_retrieval_enabled = True
+        repo = make_repo()
+        repo.get_top_jobs_by_summary_embedding.return_value = []
+
+        service._retrieve_candidates(
+            repo,
+            {"summary": "Python platform engineer"},
+            [0.1],
+            tenant_id="tenant-1",
+            exclude_reusable_resume_fingerprint="resume-fp",
+        )
+
+        dense_kwargs = repo.get_top_jobs_by_summary_embedding.call_args[1]
+        lexical_kwargs = repo.get_top_jobs_by_lexical_query.call_args[1]
+        assert dense_kwargs["exclude_reusable_resume_fingerprint"] == "resume-fp"
+        assert lexical_kwargs["exclude_reusable_resume_fingerprint"] == "resume-fp"
+
     def test_hybrid_retrieval_fuses_dense_and_lexical_results(self):
         service, _, mock_config = make_service()
         mock_config.hybrid_retrieval_enabled = True

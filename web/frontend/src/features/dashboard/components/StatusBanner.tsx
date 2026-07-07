@@ -75,10 +75,12 @@ function emptyStateMessage(stats: PipelineStats | undefined, savedCount: number,
     const jobsSeen = numStat(stats, 'jobs_seen');
     const ready = numStat(stats, 'jobs_ready_to_score');
     const pending = numStat(stats, 'jobs_pending_extraction') + numStat(stats, 'jobs_pending_embedding');
+    const pendingMatching = numStat(stats, 'jobs_pending_matching');
     const candidates = numStat(stats, 'candidates_considered');
 
     if (jobsSeen === 0) return 'No jobs are currently available from enabled sources.';
     if (ready === 0 && pending > 0) return 'Jobs are still being prepared for matching.';
+    if (pendingMatching > 0) return 'Matching is continuing in smaller pages.';
     if (candidates > 0) return 'Matches were found, but none passed the current save threshold.';
     return 'No matching candidates were available for this resume.';
 }
@@ -117,6 +119,10 @@ export const StatusBanner: React.FC<StatusBannerProps> = ({
     const notified = notified_count ?? numStat(stats, 'notifications_sent');
     const emptyMessage = emptyStateMessage(stats, saved, status);
     const warningCount = warnings.length;
+    const pendingMatching = numStat(stats, 'jobs_pending_matching');
+    const processedFresh = numStat(stats, 'jobs_matching_processed_fresh');
+    const pageSize = numStat(stats, 'matching_page_size');
+    const pagesCompleted = numStat(stats, 'matching_pages_completed');
 
     let statusLabel = 'Active';
     let statusTone = 'text-accent';
@@ -260,6 +266,21 @@ export const StatusBanner: React.FC<StatusBannerProps> = ({
                             <dt className="caption">Jobs preparing</dt>
                             <dd className="num text-ink">
                                 {numStat(stats, 'jobs_pending_extraction') + numStat(stats, 'jobs_pending_embedding')}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt className="caption">Pending match</dt>
+                            <dd className="num text-ink">{pendingMatching}</dd>
+                        </div>
+                        <div>
+                            <dt className="caption">Fresh cached</dt>
+                            <dd className="num text-ink">{processedFresh}</dd>
+                        </div>
+                        <div>
+                            <dt className="caption">Match page</dt>
+                            <dd className="num text-ink">
+                                {pagesCompleted}
+                                {pageSize > 0 ? ` x ${pageSize}` : ''}
                             </dd>
                         </div>
                         <div>

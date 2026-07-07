@@ -64,6 +64,10 @@ class PreparedSelectionResult:
     policy_snapshot: MatchSelectionPolicySnapshot
     owner_id: Optional[str]
     persist_match_dtos: List[MatchResultDTO] = field(default_factory=list)
+    cached_job_match_ids_by_job_id: dict[str, str] = field(default_factory=dict)
+    matching_page_size: int = 0
+    matching_backlog_remaining: int = 0
+    reusable_match_count: int = 0
 
 
 def _cancelled_prepared_selection_result(
@@ -455,7 +459,9 @@ def _save_results_and_publish_selection(
     task_id: Optional[str],
 ) -> tuple[SaveMatchesBatchResult, Optional[str]]:
     """Persist the selected match set and publish its immutable run artifact."""
-    persist_match_dtos = prepared_selection.persist_match_dtos or match_dtos
+    persist_match_dtos = prepared_selection.persist_match_dtos
+    if not persist_match_dtos and not prepared_selection.cached_job_match_ids_by_job_id:
+        persist_match_dtos = match_dtos
     save_batch_result = _save_matches_batch(
         persist_match_dtos,
         resume_fingerprint,
@@ -469,6 +475,11 @@ def _save_results_and_publish_selection(
         )
         return save_batch_result, None
 
+    job_match_ids_by_job_id = _job_match_ids_for_selection(
+        prepared_selection,
+        save_batch_result,
+    )
+    _reactivate_selection_matches(prepared_selection.cached_job_match_ids_by_job_id)
     _refresh_resume_match_set(
         resume_fingerprint,
         active_job_ids=_active_job_ids_for_selection(
@@ -482,6 +493,7 @@ def _save_results_and_publish_selection(
         task_id=task_id,
         prepared_selection=prepared_selection,
         save_batch_result=save_batch_result,
+        job_match_ids_by_job_id=job_match_ids_by_job_id,
     )
     _run_llm_judge_for_selection(
         selection_run_id=selection_run_id,
@@ -526,6 +538,23 @@ def _run_llm_judge_for_selection(
     except Exception:
         logger.exception("Optional LLM judge failed after selection publication")
         return {"attempted": 0, "reused": 0, "created": 0, "enqueued": 0, "failed": 1}
+
+
+def _job_match_ids_for_selection(
+    prepared_selection: PreparedSelectionResult,
+    save_batch_result: SaveMatchesBatchResult,
+) -> dict[str, str]:
+    ids = dict(prepared_selection.cached_job_match_ids_by_job_id)
+    ids.update(save_batch_result.job_match_ids_by_job_id)
+    return ids
+
+
+def _reactivate_selection_matches(job_match_ids_by_job_id: dict[str, str]) -> int:
+    match_ids = list(job_match_ids_by_job_id.values())
+    if not match_ids:
+        return 0
+    with job_uow() as repo:
+        return repo.activate_matches_by_ids(match_ids)
 
 
 def _active_job_ids_for_selection(
@@ -659,6 +688,7 @@ def _run_vector_matching(
     pre_extracted_resume,
     resume_fingerprint,
     owner_id=None,
+    exclude_reusable_resume_fingerprint: Optional[str] = None,
 ):
     """Run vector-based job matching."""
     logger.info("=== MATCHING STEP 1: Running MatcherService (Vector Retrieval) ===")
@@ -669,6 +699,7 @@ def _run_vector_matching(
         pre_extracted_resume=pre_extracted_resume,
         resume_fingerprint=resume_fingerprint,
         owner_id=owner_id,
+        exclude_reusable_resume_fingerprint=exclude_reusable_resume_fingerprint,
     )
     return preliminary_matches
 
@@ -814,6 +845,7 @@ def _run_preliminary_matching(
     should_re_extract: bool,
     resume_fingerprint: str,
     owner_id=None,
+    exclude_reusable_resume_fingerprint: Optional[str] = None,
 ):
     """Run vector matching and log its completion timing."""
     step_start = time.time()
@@ -829,6 +861,7 @@ def _run_preliminary_matching(
         pre_extracted_resume,
         resume_fingerprint,
         owner_id=owner_id,
+        exclude_reusable_resume_fingerprint=exclude_reusable_resume_fingerprint,
     )
 
     step_elapsed = time.time() - step_start
@@ -995,6 +1028,26 @@ def _run_matching_and_scoring(
                 task_id=task_id,
             )
 
+        recalculate_existing = bool(getattr(matching_config, "recalculate_existing", False))
+        reusable_match_dtos: List[MatchResultDTO] = []
+        reusable_match_ids_by_job_id: dict[str, str] = {}
+        matching_backlog_remaining = 0
+        if not recalculate_existing:
+            reusable_match_dtos = _load_reusable_match_dtos(
+                repo,
+                resume_fingerprint,
+                tenant_id=None,
+            )
+            reusable_match_ids_by_job_id = {
+                str(dto.job.id): str(dto.job_match_id)
+                for dto in reusable_match_dtos
+                if dto.job_match_id
+            }
+            matching_backlog_remaining = repo.count_pending_matching_jobs(
+                resume_fingerprint,
+                tenant_id=None,
+            )
+
         preliminary_matches = _run_preliminary_matching(
             matcher,
             repo,
@@ -1005,6 +1058,9 @@ def _run_matching_and_scoring(
             should_re_extract,
             resume_fingerprint,
             owner_id=resolved_owner_id,
+            exclude_reusable_resume_fingerprint=(
+                None if recalculate_existing else resume_fingerprint
+            ),
         )
         preliminary_matches = apply_candidate_preference_filters(
             preliminary_matches,
@@ -1050,8 +1106,13 @@ def _run_matching_and_scoring(
             preference_status.applied,
             preference_status.reason,
         )
-        selection_result = _prepare_selection_result(
+        scored_match_dtos = _convert_matches_to_dtos(
             scored_matches,
+            preference_status=preference_status,
+        )
+        selection_candidates = reusable_match_dtos + scored_match_dtos
+        selection_result = _prepare_selection_result(
+            selection_candidates,
             ctx=ctx,
             owner_id=resolved_owner_id,
             ranking_context=ranking_context,
@@ -1062,22 +1123,19 @@ def _run_matching_and_scoring(
         policy_snapshot = selection_result.policy_snapshot
         item_snapshots = selection_result.item_snapshots
 
-        match_dtos = _convert_matches_to_dtos(
+        match_dtos = _selection_matches_to_dtos(
             selection_result.selected_matches,
-            preference_status=preference_status,
+            fallback_dtos=scored_match_dtos,
         )
         persist_matches = _matches_for_selection_persistence(
-            scored_matches,
+            scored_match_dtos,
             item_snapshots,
             selected_matches=selection_result.selected_matches,
         )
         persist_match_dtos = (
-            match_dtos
-            if persist_matches is selection_result.selected_matches
-            else _convert_matches_to_dtos(
-                persist_matches,
-                preference_status=preference_status,
-            )
+            persist_matches
+            if persist_matches is not selection_result.selected_matches
+            else scored_match_dtos
         )
 
     step_elapsed = time.time() - scoring_start
@@ -1097,6 +1155,12 @@ def _run_matching_and_scoring(
         policy_snapshot=policy_snapshot,
         owner_id=(str(resolved_owner_id) if resolved_owner_id is not None else None),
         persist_match_dtos=persist_match_dtos,
+        cached_job_match_ids_by_job_id=reusable_match_ids_by_job_id,
+        matching_page_size=int(
+            getattr(getattr(matching_config, "matcher", None), "batch_size", 0) or 0
+        ),
+        matching_backlog_remaining=matching_backlog_remaining,
+        reusable_match_count=len(reusable_match_dtos),
     )
 
 
@@ -1120,6 +1184,31 @@ def _matches_for_selection_persistence(
         for match in scored_matches
         if str(match.job.id) in snapshot_job_ids
     ]
+
+
+def _selection_matches_to_dtos(selected_matches, *, fallback_dtos: List[MatchResultDTO]) -> List[MatchResultDTO]:
+    selected = list(selected_matches or [])
+    if all(hasattr(match, "job") and hasattr(match, "fit_score") for match in selected):
+        return selected
+    selected_job_ids = {
+        str(match.job.id)
+        for match in selected
+        if hasattr(match, "job") and hasattr(match.job, "id")
+    }
+    if selected_job_ids:
+        return [
+            dto
+            for dto in fallback_dtos
+            if str(dto.job.id) in selected_job_ids
+        ]
+    return fallback_dtos
+
+
+def _number(value, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    return float(value)
+
 
 def _build_evidence_dto(evidence) -> Optional[JobEvidenceDTO]:
     if evidence is None:
@@ -1154,6 +1243,74 @@ def _missing_req_to_dto(req) -> RequirementMatchDTO:
         is_covered=False,
         evidence_score=getattr(req, "evidence_score", None),
     )
+
+
+def _persisted_requirement_to_dto(req) -> RequirementMatchDTO:
+    evidence = None
+    if getattr(req, "evidence_text", None):
+        evidence = JobEvidenceDTO(
+            text=req.evidence_text,
+            source_section=req.evidence_section,
+            tags=req.evidence_tags or {},
+        )
+    return RequirementMatchDTO(
+        requirement=JobRequirementDTO(
+            id=str(req.requirement.id),
+            req_type=req.req_type,
+        ),
+        evidence=evidence,
+        similarity=_number(req.similarity_score),
+        is_covered=bool(req.is_covered),
+        evidence_score=req.evidence_score,
+    )
+
+
+def _persisted_match_to_dto(match) -> MatchResultDTO:
+    requirements = [
+        _persisted_requirement_to_dto(req)
+        for req in (getattr(match, "requirement_matches", []) or [])
+    ]
+    return MatchResultDTO(
+        job=JobMatchDTO(
+            id=str(match.job_post.id),
+            title=match.job_post.title,
+            company=match.job_post.company,
+            location_text=match.job_post.location_text,
+            is_remote=match.job_post.is_remote,
+            content_hash=match.job_post.content_hash,
+        ),
+        fit_score=_number(match.fit_score),
+        preference_score=(
+            None if match.preference_score is None else float(match.preference_score)
+        ),
+        job_similarity=_number(match.job_similarity),
+        jd_required_coverage=_number(match.required_coverage),
+        jd_preferred_requirement_coverage=_number(match.preferred_requirement_coverage),
+        requirement_matches=[req for req in requirements if req.is_covered],
+        missing_requirements=[req for req in requirements if not req.is_covered],
+        resume_fingerprint=match.resume_fingerprint,
+        fit_components=match.fit_components or {},
+        preference_components=match.preference_components or {},
+        ranking_snapshot=match.ranking_snapshot or {},
+        base_score=_number(match.base_score),
+        penalties=_number(match.penalties),
+        penalty_details=penalty_details_from_orm(
+            match.penalty_details,
+            total_penalties=_number(match.penalties),
+        ),
+        match_type=match.match_type or "requirements_only",
+        job_match_id=str(match.id),
+    )
+
+
+def _load_reusable_match_dtos(repo, resume_fingerprint: str, tenant_id=None) -> List[MatchResultDTO]:
+    return [
+        _persisted_match_to_dto(match)
+        for match in repo.get_reusable_matches_for_resume(
+            resume_fingerprint,
+            tenant_id=tenant_id,
+        )
+    ]
 
 
 def _scoring_degraded_reason(match) -> Optional[str]:
@@ -1224,6 +1381,7 @@ def _convert_matches_to_dtos(
                 total_penalties=match.penalties,
             ),
             match_type=match.match_type,
+            job_match_id=getattr(match, "job_match_id", None),
         )
         match_dtos.append(dto)
     return match_dtos
@@ -1319,6 +1477,7 @@ def _publish_match_selection_run(
     task_id: Optional[str],
     prepared_selection: PreparedSelectionResult,
     save_batch_result: SaveMatchesBatchResult,
+    job_match_ids_by_job_id: Optional[dict[str, str]] = None,
 ) -> Optional[str]:
     """Publish the committed selection run that defines canonical membership."""
     with job_uow() as repo:
@@ -1327,7 +1486,11 @@ def _publish_match_selection_run(
             resume_fingerprint=resume_fingerprint,
             policy_snapshot=prepared_selection.policy_snapshot,
             item_snapshots=prepared_selection.item_snapshots,
-            job_match_ids_by_job_id=save_batch_result.job_match_ids_by_job_id,
+            job_match_ids_by_job_id=(
+                job_match_ids_by_job_id
+                if job_match_ids_by_job_id is not None
+                else save_batch_result.job_match_ids_by_job_id
+            ),
             task_id=task_id,
         )
         return str(selection_run.id)

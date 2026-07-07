@@ -200,10 +200,15 @@ class JobRepository:
         resume_embedding: List[float],
         limit: int,
         tenant_id: Optional[Any] = None,
-        require_remote: Optional[bool] = None
+        require_remote: Optional[bool] = None,
+        exclude_reusable_resume_fingerprint: Optional[str] = None,
     ) -> List[Tuple[JobPost, float]]:
         return self.job_post.get_top_jobs_by_summary_embedding(
-            resume_embedding, limit, tenant_id, require_remote
+            resume_embedding,
+            limit,
+            tenant_id,
+            require_remote,
+            exclude_reusable_resume_fingerprint,
         )
 
     def get_top_jobs_by_lexical_query(
@@ -214,6 +219,7 @@ class JobRepository:
         limit: Optional[int] = None,
         tenant_id: Optional[Any] = None,
         require_remote: Optional[bool] = None,
+        exclude_reusable_resume_fingerprint: Optional[str] = None,
     ) -> List[Tuple[JobPost, float, float]]:
         return self.job_post.get_top_jobs_by_lexical_query(
             lexical_query,
@@ -221,6 +227,7 @@ class JobRepository:
             limit=limit,
             tenant_id=tenant_id,
             require_remote=require_remote,
+            exclude_reusable_resume_fingerprint=exclude_reusable_resume_fingerprint,
         )
 
     def quarantine_null_description_jobs(self, older_than_days: int = 7) -> int:
@@ -419,6 +426,42 @@ class JobRepository:
         status: str = 'active'
     ) -> List[JobMatch]:
         return self.match.get_matches_for_resume(resume_fingerprint, min_score, status)
+
+    def get_reusable_matches_for_resume(
+        self,
+        resume_fingerprint: str,
+        *,
+        tenant_id: Optional[Any] = None,
+    ) -> List[JobMatch]:
+        return self.match.get_reusable_matches_for_resume(
+            resume_fingerprint,
+            tenant_id=tenant_id,
+        )
+
+    def count_reusable_matches_for_resume(
+        self,
+        resume_fingerprint: str,
+        *,
+        tenant_id: Optional[Any] = None,
+    ) -> int:
+        return self.match.count_reusable_matches_for_resume(
+            resume_fingerprint,
+            tenant_id=tenant_id,
+        )
+
+    def count_pending_matching_jobs(
+        self,
+        resume_fingerprint: str,
+        *,
+        tenant_id: Optional[Any] = None,
+    ) -> int:
+        return self.match.count_pending_matching_jobs(
+            resume_fingerprint,
+            tenant_id=tenant_id,
+        )
+
+    def activate_matches_by_ids(self, match_ids: List[Any]) -> int:
+        return self.match.activate_matches_by_ids(match_ids)
 
     def invalidate_matches_for_job(
         self,
