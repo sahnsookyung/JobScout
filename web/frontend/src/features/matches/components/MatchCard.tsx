@@ -106,6 +106,15 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
 
     const coveragePct = Math.max(0, Math.min(100, reqCoverage));
     const llmOrdering = llmOrderingLabel(match);
+    const llmDisplayScore = typeof match.llm_rerank_score === 'number'
+        ? match.llm_rerank_score
+        : typeof match.llm_score === 'number'
+            ? match.llm_score
+            : null;
+    const llmScoreTone = match.llm_effective_for_rerank ? 'text-accent' : 'text-ink-muted';
+    const llmScoreTitle = match.llm_ignored_for_rerank_reason
+        ? `LLM score not used for ordering: ${match.llm_ignored_for_rerank_reason.replace(/_/g, ' ')}`
+        : 'LLM second-pass score';
 
     return (
         <article
@@ -136,6 +145,15 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
                         {formatScore(fitScore)}
                     </span>
                     <span className="caption mt-0.5">Fit</span>
+                    {llmDisplayScore !== null && (
+                        <span
+                            className={`num mt-1 text-[12px] leading-tight tabular-nums ${llmScoreTone}`}
+                            title={llmScoreTitle}
+                            aria-label={`LLM second-pass score ${formatScore(llmDisplayScore)}`}
+                        >
+                            LLM {formatScore(llmDisplayScore)}
+                        </span>
+                    )}
                 </div>
 
                 {/* Meta */}

@@ -194,10 +194,10 @@ describe('LlmEvaluationPanel', () => {
                             { requirement_id: 'req_3', verdict: 'partial', reason: 'Partial third.' },
                             { requirement_id: 'req_2', verdict: 'strong', reason: 'Strong second.' },
                             { requirement_id: 'req_1', verdict: 'strong', reason: 'Strong first.' },
+                            { requirement_id: 'req_4', verdict: 'missing', reason: 'Missing fourth.' },
                         ],
                         analysis: {
                             ranking_rationale: 'Good fit.',
-                            gaps: ['Missing travel API depth.'],
                         },
                         effective_for_rerank: false,
                         ignored_for_rerank_reason: 'stale_job_content',
@@ -221,6 +221,7 @@ describe('LlmEvaluationPanel', () => {
 
         expect(await screen.findByText('Historical review still useful for reading.')).toBeInTheDocument();
         expect(screen.getByText('Evidence-based strengths')).toBeInTheDocument();
+        expect(screen.getByText('Evidence-based gaps')).toBeInTheDocument();
         const first = screen.getByText('req_1: Strong first.');
         const second = screen.getByText('req_2: Strong second.');
         const third = screen.getByText('req_3: Partial third.');
@@ -231,24 +232,25 @@ describe('LlmEvaluationPanel', () => {
         const thirdVerdict = screen.getByText('req_3');
         expect(firstVerdict.compareDocumentPosition(secondVerdict) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
         expect(secondVerdict.compareDocumentPosition(thirdVerdict) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(screen.getByText('req_4: Missing fourth.')).toBeInTheDocument();
         expect(screen.getByText(/Historical review shown\. Regenerate before ordering because stale job content\./i))
             .toBeInTheDocument();
     });
 
-    it('warns when a succeeded score conflicts with the model verdict and renders evidence chips', async () => {
+    it('trusts a valid LLM score even when the model verdict is harsh and renders evidence chips', async () => {
         vi.mocked(matchesApi.getLlmEvaluations).mockResolvedValue({
             data: {
                 success: true,
                 count: 1,
                 evaluations: [
                     {
-                        id: 'eval-inconsistent',
+                        id: 'eval-valid-harsh-verdict',
                         match_id: 'match-1',
                         job_id: 'job-1',
                         status: 'succeeded',
-                        llm_score: 0.9,
+                        llm_score: 65,
                         confidence: 0.95,
-                        verdict: 'strong',
+                        verdict: 'mismatch',
                         summary: 'Model text cites ev_1 and ev_15.',
                         reason_codes: [],
                         requirement_verdicts: [],
@@ -263,22 +265,79 @@ describe('LlmEvaluationPanel', () => {
                                 { id: 'ev_15' },
                             ],
                             score_quality: {
-                                status: 'inconsistent',
-                                reason: 'score_verdict_inconsistent',
-                                normalized_score: 0.9,
-                                verdict: 'strong',
-                                expected_range: { min: 80, max: 100 },
+                                status: 'valid',
+                                reason: null,
+                                normalized_score: 65,
+                                verdict: 'mismatch',
                             },
                         },
                         score_quality: {
-                            status: 'inconsistent',
-                            reason: 'score_verdict_inconsistent',
-                            normalized_score: 0.9,
+                            status: 'valid',
+                            reason: null,
+                            normalized_score: 65,
+                            verdict: 'mismatch',
+                        },
+                        effective_for_rerank: true,
+                        ignored_for_rerank_reason: null,
+                        stale_status: 'current',
+                        provider: 'nvidia',
+                        model: 'judge-model',
+                        prompt_version: 'match-judge-v1',
+                        schema_version: '1',
+                        retryable: false,
+                    },
+                ],
+            },
+        } as never);
+
+        renderPanel();
+
+        expect(await screen.findByText('Model text cites ev_1 and ev_15.')).toBeInTheDocument();
+        expect(screen.queryByText(/Score ignored for ranking/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Not used for ordering/i)).not.toBeInTheDocument();
+        const referenceSummary = screen.getByText('Resume evidence references');
+        const details = referenceSummary.closest('details');
+        expect(details).toBeInTheDocument();
+        expect(details).not.toHaveAttribute('open');
+        expect(screen.getByText('2 refs')).toBeInTheDocument();
+        expect(screen.getByText('ev_1')).toBeInTheDocument();
+        expect(screen.getByText('Built high-throughput payment services.')).toBeInTheDocument();
+        expect(screen.getByText('ev_15')).toBeInTheDocument();
+    });
+
+    it('shows structural invalid-score copy without expected verdict bands', async () => {
+        vi.mocked(matchesApi.getLlmEvaluations).mockResolvedValue({
+            data: {
+                success: true,
+                count: 1,
+                evaluations: [
+                    {
+                        id: 'eval-invalid-score',
+                        match_id: 'match-1',
+                        job_id: 'job-1',
+                        status: 'succeeded',
+                        llm_score: null,
+                        confidence: 0.95,
+                        verdict: 'strong',
+                        summary: 'Provider returned malformed score metadata.',
+                        reason_codes: [],
+                        requirement_verdicts: [],
+                        analysis: {
+                            score_quality: {
+                                status: 'invalid',
+                                reason: 'invalid_llm_score',
+                                normalized_score: null,
+                                verdict: 'strong',
+                            },
+                        },
+                        score_quality: {
+                            status: 'invalid',
+                            reason: 'invalid_llm_score',
+                            normalized_score: null,
                             verdict: 'strong',
-                            expected_range: { min: 80, max: 100 },
                         },
                         effective_for_rerank: false,
-                        ignored_for_rerank_reason: 'score_verdict_inconsistent',
+                        ignored_for_rerank_reason: 'invalid_llm_score',
                         stale_status: 'ignored',
                         provider: 'nvidia',
                         model: 'judge-model',
@@ -292,11 +351,8 @@ describe('LlmEvaluationPanel', () => {
 
         renderPanel();
 
-        expect(await screen.findByText(/Score ignored for ranking: 1% conflicts with strong; expected 80-100%\./i))
-            .toBeInTheDocument();
-        expect(screen.getByText('Resume evidence references')).toBeInTheDocument();
-        expect(screen.getByText('ev_1')).toBeInTheDocument();
-        expect(screen.getByText('Built high-throughput payment services.')).toBeInTheDocument();
-        expect(screen.getByText('ev_15')).toBeInTheDocument();
+        expect(await screen.findByText(/provider returned malformed score metadata/i)).toBeInTheDocument();
+        expect(screen.getByText(/provider returned an invalid numeric score/i)).toBeInTheDocument();
+        expect(screen.queryByText(/expected \d+-\d+%/i)).not.toBeInTheDocument();
     });
 });

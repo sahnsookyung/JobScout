@@ -17,13 +17,26 @@ export interface StatsPanelProps {
             poor?: number;
         };
         job_post_total?: number;
+        active_job_posts?: number;
+        inactive_job_posts?: number;
+        expired_job_posts?: number;
         extracted_job_posts?: number;
         embedded_job_posts?: number;
         ready_to_score_job_posts?: number;
+        active_ready_to_score_job_posts?: number;
         pending_extraction_job_posts?: number;
         pending_embedding_job_posts?: number;
         retryable_extraction_job_posts?: number;
         retryable_embedding_job_posts?: number;
+        active_pending_extraction_job_posts?: number;
+        active_retryable_extraction_job_posts?: number;
+        inactive_pending_extraction_job_posts?: number;
+        active_pending_embedding_job_posts?: number;
+        active_retryable_embedding_job_posts?: number;
+        inactive_pending_embedding_job_posts?: number;
+        missing_description_job_posts?: number;
+        active_missing_description_job_posts?: number;
+        inactive_missing_description_job_posts?: number;
     } | null | undefined;
 }
 
@@ -34,13 +47,35 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
     const belowThreshold = stats?.below_threshold_count ?? 0;
     const beyondTopK = stats?.beyond_top_k_count ?? 0;
     const jobPostTotal = stats?.job_post_total ?? totalMatches;
+    const activeJobs = stats?.active_job_posts ?? 0;
+    const inactiveJobs = stats?.inactive_job_posts ?? 0;
+    const expiredJobs = stats?.expired_job_posts ?? 0;
     const extractedJobs = stats?.extracted_job_posts ?? 0;
     const embeddedJobs = stats?.embedded_job_posts ?? 0;
     const readyToScoreJobs = stats?.ready_to_score_job_posts ?? 0;
+    const activeReadyToScore = stats?.active_ready_to_score_job_posts ?? readyToScoreJobs;
     const pendingExtraction = stats?.pending_extraction_job_posts ?? 0;
     const pendingEmbedding = stats?.pending_embedding_job_posts ?? 0;
     const retryableExtraction = stats?.retryable_extraction_job_posts ?? 0;
     const retryableEmbedding = stats?.retryable_embedding_job_posts ?? 0;
+    const hasExtractionBreakdown = stats?.active_pending_extraction_job_posts != null
+        || stats?.active_retryable_extraction_job_posts != null
+        || stats?.inactive_pending_extraction_job_posts != null;
+    const hasEmbeddingBreakdown = stats?.active_pending_embedding_job_posts != null
+        || stats?.active_retryable_embedding_job_posts != null
+        || stats?.inactive_pending_embedding_job_posts != null;
+    const activePendingExtraction = hasExtractionBreakdown
+        ? (stats?.active_pending_extraction_job_posts ?? 0) + (stats?.active_retryable_extraction_job_posts ?? 0)
+        : pendingExtraction + retryableExtraction;
+    const inactivePendingExtraction = hasExtractionBreakdown ? stats?.inactive_pending_extraction_job_posts ?? 0 : 0;
+    const activePendingEmbedding = hasEmbeddingBreakdown
+        ? (stats?.active_pending_embedding_job_posts ?? 0) + (stats?.active_retryable_embedding_job_posts ?? 0)
+        : pendingEmbedding + retryableEmbedding;
+    const inactivePendingEmbedding = hasEmbeddingBreakdown ? stats?.inactive_pending_embedding_job_posts ?? 0 : 0;
+    const missingDescriptions = stats?.missing_description_job_posts ?? 0;
+    const activeMissingDescriptions = stats?.active_missing_description_job_posts ?? 0;
+    const inactiveMissingDescriptions = stats?.inactive_missing_description_job_posts ?? 0;
+    const notActiveJobs = inactiveJobs + expiredJobs;
     const scoreDist = stats?.score_distribution;
     const radius = 36;
     const circumference = 2 * Math.PI * radius;
@@ -70,12 +105,33 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
                 </div>
                 <dl className="mt-4 grid grid-cols-1 gap-x-5 gap-y-2 border-t border-rule pt-3 text-[12px] min-[520px]:grid-cols-2">
                     <InventoryItem label="Imported" value={jobPostTotal} />
-                    <InventoryItem label="Embedded" value={embeddedJobs} />
-                    <InventoryItem label="Extracted" value={extractedJobs} />
-                    <InventoryItem label="Ready" value={readyToScoreJobs} />
+                    <InventoryItem label="Active" value={activeJobs} />
+                    <InventoryItem label="Ready active" value={activeReadyToScore} />
+                    <InventoryItem label="Not active" value={notActiveJobs} />
                     <InventoryItem label="Pending extract" value={pendingExtraction + retryableExtraction} />
-                    <InventoryItem label="Pending embed" value={pendingEmbedding + retryableEmbedding} />
+                    <InventoryItem label="Missing desc" value={missingDescriptions} />
+                    <InventoryItem label="Extracted all" value={extractedJobs} />
+                    <InventoryItem label="Embedded all" value={embeddedJobs} />
                 </dl>
+                {(pendingExtraction + retryableExtraction + pendingEmbedding + retryableEmbedding) > 0 && (
+                    <div className="mt-3 grid gap-2 border-t border-rule pt-3 text-[12px] leading-5 text-ink-muted">
+                        <StatusLine
+                            label="Active backlog"
+                            value={activePendingExtraction + activePendingEmbedding}
+                            detail="eligible for queued processing"
+                        />
+                        <StatusLine
+                            label="Inactive backlog"
+                            value={inactivePendingExtraction + inactivePendingEmbedding}
+                            detail="not used for matching"
+                        />
+                        <StatusLine
+                            label="Missing descriptions"
+                            value={activeMissingDescriptions + inactiveMissingDescriptions}
+                            detail="refresh from ATS or retire"
+                        />
+                    </div>
+                )}
             </div>
 
             <div className="min-w-0 border-t border-rule pt-6 md:flex md:items-center md:gap-5 lg:border-t-0 lg:pt-0">
@@ -114,8 +170,24 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
 function InventoryItem({ label, value }: Readonly<{ label: string; value: number }>) {
     return (
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-3">
-            <dt className="caption min-w-0 text-[10px] text-ink-muted">{label}</dt>
+            <dt className="caption min-w-0 break-words text-[10px] text-ink-muted">{label}</dt>
             <dd className="num text-[13px] text-ink tabular-nums">{value}</dd>
+        </div>
+    );
+}
+
+function StatusLine({
+    label,
+    value,
+    detail,
+}: Readonly<{ label: string; value: number; detail: string }>) {
+    return (
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
+            <dt className="min-w-0">
+                <span className="font-medium text-ink-soft">{label}</span>
+                <span className="ml-1 break-words text-ink-muted">{detail}</span>
+            </dt>
+            <dd className="num text-ink tabular-nums">{value}</dd>
         </div>
     );
 }

@@ -55,17 +55,30 @@ def _empty_stats_payload() -> dict[str, object]:
         "job_post_total": 0,
         "active_job_posts": 0,
         "inactive_job_posts": 0,
+        "expired_job_posts": 0,
         "extracted_job_posts": 0,
         "embedded_job_posts": 0,
         "ready_to_score_job_posts": 0,
+        "active_extracted_job_posts": 0,
+        "active_embedded_job_posts": 0,
+        "active_ready_to_score_job_posts": 0,
         "pending_extraction_job_posts": 0,
         "processing_extraction_job_posts": 0,
         "retryable_extraction_job_posts": 0,
         "failed_extraction_job_posts": 0,
+        "active_pending_extraction_job_posts": 0,
+        "active_retryable_extraction_job_posts": 0,
+        "inactive_pending_extraction_job_posts": 0,
         "pending_embedding_job_posts": 0,
         "processing_embedding_job_posts": 0,
         "retryable_embedding_job_posts": 0,
         "failed_embedding_job_posts": 0,
+        "active_pending_embedding_job_posts": 0,
+        "active_retryable_embedding_job_posts": 0,
+        "inactive_pending_embedding_job_posts": 0,
+        "missing_description_job_posts": 0,
+        "active_missing_description_job_posts": 0,
+        "inactive_missing_description_job_posts": 0,
     }
 
 
@@ -214,39 +227,87 @@ def _canonical_stats_payload(
 
 
 def _job_processing_stats(repo, tenant_id=None) -> dict[str, int]:
+    active_job = JobPost.status == "active"
+    inactive_job = JobPost.status != "active"
+    pending_extraction = JobPost.extraction_status == "pending"
+    retryable_extraction = JobPost.extraction_status == "failed_retryable"
+    pending_embedding = JobPost.embedding_status == "pending"
+    retryable_embedding = JobPost.embedding_status == "failed_retryable"
+    missing_description = or_(
+        JobPost.description.is_(None),
+        func.length(func.trim(JobPost.description)) == 0,
+        JobPost.description_completeness == "missing",
+    )
     query = repo.db.query(
         func.count(JobPost.id).label("job_post_total"),
-        func.count(JobPost.id).filter(JobPost.status == "active").label("active_job_posts"),
+        func.count(JobPost.id).filter(active_job).label("active_job_posts"),
         func.count(JobPost.id).filter(JobPost.status == "inactive").label("inactive_job_posts"),
+        func.count(JobPost.id).filter(JobPost.status == "expired").label("expired_job_posts"),
         func.count(JobPost.id).filter(JobPost.is_extracted.is_(True)).label("extracted_job_posts"),
         func.count(JobPost.id).filter(JobPost.is_embedded.is_(True)).label("embedded_job_posts"),
         func.count(JobPost.id)
         .filter(JobPost.is_extracted.is_(True), JobPost.is_embedded.is_(True))
         .label("ready_to_score_job_posts"),
         func.count(JobPost.id)
-        .filter(JobPost.extraction_status == "pending")
+        .filter(active_job, JobPost.is_extracted.is_(True))
+        .label("active_extracted_job_posts"),
+        func.count(JobPost.id)
+        .filter(active_job, JobPost.is_embedded.is_(True))
+        .label("active_embedded_job_posts"),
+        func.count(JobPost.id)
+        .filter(active_job, JobPost.is_extracted.is_(True), JobPost.is_embedded.is_(True))
+        .label("active_ready_to_score_job_posts"),
+        func.count(JobPost.id)
+        .filter(pending_extraction)
         .label("pending_extraction_job_posts"),
         func.count(JobPost.id)
         .filter(JobPost.extraction_status.in_(("in_progress", "processing")))
         .label("processing_extraction_job_posts"),
         func.count(JobPost.id)
-        .filter(JobPost.extraction_status == "failed_retryable")
+        .filter(retryable_extraction)
         .label("retryable_extraction_job_posts"),
         func.count(JobPost.id)
         .filter(JobPost.extraction_status.in_(("failed_terminal", "failed")))
         .label("failed_extraction_job_posts"),
         func.count(JobPost.id)
-        .filter(JobPost.embedding_status == "pending")
+        .filter(active_job, pending_extraction)
+        .label("active_pending_extraction_job_posts"),
+        func.count(JobPost.id)
+        .filter(active_job, retryable_extraction)
+        .label("active_retryable_extraction_job_posts"),
+        func.count(JobPost.id)
+        .filter(inactive_job, JobPost.is_extracted.is_(False), JobPost.extraction_status.in_(("pending", "failed_retryable")))
+        .label("inactive_pending_extraction_job_posts"),
+        func.count(JobPost.id)
+        .filter(pending_embedding)
         .label("pending_embedding_job_posts"),
         func.count(JobPost.id)
         .filter(JobPost.embedding_status.in_(("in_progress", "processing")))
         .label("processing_embedding_job_posts"),
         func.count(JobPost.id)
-        .filter(JobPost.embedding_status == "failed_retryable")
+        .filter(retryable_embedding)
         .label("retryable_embedding_job_posts"),
         func.count(JobPost.id)
         .filter(JobPost.embedding_status.in_(("failed_terminal", "failed")))
         .label("failed_embedding_job_posts"),
+        func.count(JobPost.id)
+        .filter(active_job, pending_embedding)
+        .label("active_pending_embedding_job_posts"),
+        func.count(JobPost.id)
+        .filter(active_job, retryable_embedding)
+        .label("active_retryable_embedding_job_posts"),
+        func.count(JobPost.id)
+        .filter(inactive_job, JobPost.is_embedded.is_(False), JobPost.embedding_status.in_(("pending", "failed_retryable")))
+        .label("inactive_pending_embedding_job_posts"),
+        func.count(JobPost.id)
+        .filter(missing_description)
+        .label("missing_description_job_posts"),
+        func.count(JobPost.id)
+        .filter(active_job, missing_description)
+        .label("active_missing_description_job_posts"),
+        func.count(JobPost.id)
+        .filter(inactive_job, missing_description)
+        .label("inactive_missing_description_job_posts"),
     )
     if tenant_id is not None:
         query = query.filter(JobPost.tenant_id == tenant_id)
@@ -257,17 +318,30 @@ def _job_processing_stats(repo, tenant_id=None) -> dict[str, int]:
             "job_post_total",
             "active_job_posts",
             "inactive_job_posts",
+            "expired_job_posts",
             "extracted_job_posts",
             "embedded_job_posts",
             "ready_to_score_job_posts",
+            "active_extracted_job_posts",
+            "active_embedded_job_posts",
+            "active_ready_to_score_job_posts",
             "pending_extraction_job_posts",
             "processing_extraction_job_posts",
             "retryable_extraction_job_posts",
             "failed_extraction_job_posts",
+            "active_pending_extraction_job_posts",
+            "active_retryable_extraction_job_posts",
+            "inactive_pending_extraction_job_posts",
             "pending_embedding_job_posts",
             "processing_embedding_job_posts",
             "retryable_embedding_job_posts",
             "failed_embedding_job_posts",
+            "active_pending_embedding_job_posts",
+            "active_retryable_embedding_job_posts",
+            "inactive_pending_embedding_job_posts",
+            "missing_description_job_posts",
+            "active_missing_description_job_posts",
+            "inactive_missing_description_job_posts",
         )
     }
 
@@ -554,17 +628,30 @@ def build_stats_response(
             "job_post_total": stats["job_post_total"],
             "active_job_posts": stats["active_job_posts"],
             "inactive_job_posts": stats["inactive_job_posts"],
+            "expired_job_posts": stats["expired_job_posts"],
             "extracted_job_posts": stats["extracted_job_posts"],
             "embedded_job_posts": stats["embedded_job_posts"],
             "ready_to_score_job_posts": stats["ready_to_score_job_posts"],
+            "active_extracted_job_posts": stats["active_extracted_job_posts"],
+            "active_embedded_job_posts": stats["active_embedded_job_posts"],
+            "active_ready_to_score_job_posts": stats["active_ready_to_score_job_posts"],
             "pending_extraction_job_posts": stats["pending_extraction_job_posts"],
             "processing_extraction_job_posts": stats["processing_extraction_job_posts"],
             "retryable_extraction_job_posts": stats["retryable_extraction_job_posts"],
             "failed_extraction_job_posts": stats["failed_extraction_job_posts"],
+            "active_pending_extraction_job_posts": stats["active_pending_extraction_job_posts"],
+            "active_retryable_extraction_job_posts": stats["active_retryable_extraction_job_posts"],
+            "inactive_pending_extraction_job_posts": stats["inactive_pending_extraction_job_posts"],
             "pending_embedding_job_posts": stats["pending_embedding_job_posts"],
             "processing_embedding_job_posts": stats["processing_embedding_job_posts"],
             "retryable_embedding_job_posts": stats["retryable_embedding_job_posts"],
             "failed_embedding_job_posts": stats["failed_embedding_job_posts"],
+            "active_pending_embedding_job_posts": stats["active_pending_embedding_job_posts"],
+            "active_retryable_embedding_job_posts": stats["active_retryable_embedding_job_posts"],
+            "inactive_pending_embedding_job_posts": stats["inactive_pending_embedding_job_posts"],
+            "missing_description_job_posts": stats["missing_description_job_posts"],
+            "active_missing_description_job_posts": stats["active_missing_description_job_posts"],
+            "inactive_missing_description_job_posts": stats["inactive_missing_description_job_posts"],
             "degraded": bool(degraded_reasons),
             "degraded_reasons": degraded_reasons,
         },

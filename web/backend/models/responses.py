@@ -269,6 +269,7 @@ class LlmRerankMetadata(BaseModel):
     eligible_count: int = 0
     reranked_count: int = 0
     policy_revision: int = 0
+    ordering_requested: bool = False
     reason: Optional[str] = None
 
 

@@ -146,6 +146,7 @@ def get_matches(
     page_mode: Annotated[str, Query(description="Pagination mode: offset (default) or cursor")] = "offset",
     view: Annotated[str, Query(description="Payload view: summary (default) or compact")] = "summary",
     include: Annotated[str | None, Query(description="Comma-delimited optional expansions; currently supports llm")] = None,
+    llm_ordering: Annotated[bool, Query(description="Apply successful current LLM evaluations to ordering when include=llm")] = True,
 ):
     """
     Get a list of job matches ranked by the declared mode.
@@ -234,6 +235,7 @@ def get_matches(
             page_mode=page_mode,
             view=view,
             include=include,
+            llm_ordering=llm_ordering,
         )
     except CursorDecodeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -227,6 +227,7 @@ export interface MatchesResponse {
         eligible_count: number;
         reranked_count: number;
         policy_revision?: number;
+        ordering_requested?: boolean;
         reason?: string | null;
     };
     degraded?: boolean;
@@ -509,17 +510,30 @@ export interface StatsResponse {
         job_post_total?: number;
         active_job_posts?: number;
         inactive_job_posts?: number;
+        expired_job_posts?: number;
         extracted_job_posts?: number;
         embedded_job_posts?: number;
         ready_to_score_job_posts?: number;
+        active_extracted_job_posts?: number;
+        active_embedded_job_posts?: number;
+        active_ready_to_score_job_posts?: number;
         pending_extraction_job_posts?: number;
         processing_extraction_job_posts?: number;
         retryable_extraction_job_posts?: number;
         failed_extraction_job_posts?: number;
+        active_pending_extraction_job_posts?: number;
+        active_retryable_extraction_job_posts?: number;
+        inactive_pending_extraction_job_posts?: number;
         pending_embedding_job_posts?: number;
         processing_embedding_job_posts?: number;
         retryable_embedding_job_posts?: number;
         failed_embedding_job_posts?: number;
+        active_pending_embedding_job_posts?: number;
+        active_retryable_embedding_job_posts?: number;
+        inactive_pending_embedding_job_posts?: number;
+        missing_description_job_posts?: number;
+        active_missing_description_job_posts?: number;
+        inactive_missing_description_job_posts?: number;
     };
 }
 

@@ -146,6 +146,8 @@ describe('MatchFilters', () => {
         onRankingModeChange: vi.fn(),
         showHidden: false,
         onShowHiddenChange: vi.fn(),
+        llmOrdering: true,
+        onLlmOrderingChange: vi.fn(),
     };
 
     beforeEach(() => vi.clearAllMocks());
@@ -158,6 +160,7 @@ describe('MatchFilters', () => {
         expect(screen.getByText('Balanced')).toBeInTheDocument();
         expect(screen.getByText('Preference First')).toBeInTheDocument();
         expect(screen.getByText('Fit First')).toBeInTheDocument();
+        expect(screen.getByText('LLM order')).toBeInTheDocument();
         expect(screen.getByText('Remote only')).toBeInTheDocument();
         expect(screen.getByText('Hidden')).toBeInTheDocument();
     });
@@ -167,6 +170,7 @@ describe('MatchFilters', () => {
         const onRankingModeChange = vi.fn();
         const onRemoteOnlyChange = vi.fn();
         const onShowHiddenChange = vi.fn();
+        const onLlmOrderingChange = vi.fn();
 
         render(
             <MatchFilters
@@ -175,6 +179,7 @@ describe('MatchFilters', () => {
                 onRankingModeChange={onRankingModeChange}
                 onRemoteOnlyChange={onRemoteOnlyChange}
                 onShowHiddenChange={onShowHiddenChange}
+                onLlmOrderingChange={onLlmOrderingChange}
             />
         );
 
@@ -184,9 +189,11 @@ describe('MatchFilters', () => {
         const checkboxes = screen.getAllByRole('checkbox');
         fireEvent.click(checkboxes[0]);
         fireEvent.click(checkboxes[1]);
+        fireEvent.click(checkboxes[2]);
 
         expect(onStatusChange).toHaveBeenCalledWith('stale');
         expect(onRankingModeChange).toHaveBeenCalledWith('fit_first');
+        expect(onLlmOrderingChange).toHaveBeenCalledWith(false);
         expect(onRemoteOnlyChange).toHaveBeenCalledWith(true);
         expect(onShowHiddenChange).toHaveBeenCalledWith(true);
     });
@@ -290,6 +297,24 @@ describe('MatchCard', () => {
         expect(screen.getByTestId('sparkles-icon')).toBeInTheDocument();
     });
 
+    it('shows the LLM second-pass score under the main fit score', () => {
+        render(
+            <MatchCard
+                match={makeMatch({
+                    llm_evaluation_status: 'succeeded',
+                    llm_score: 91,
+                    llm_rerank_score: 88,
+                    llm_effective_for_rerank: true,
+                })}
+                onSelect={vi.fn()}
+            />,
+            { wrapper: makeQueryWrapper() }
+        );
+
+        expect(screen.getByLabelText('LLM second-pass score 88%')).toBeInTheDocument();
+        expect(screen.getByText('LLM 88%')).toBeInTheDocument();
+    });
+
     it('persists hide changes and reports failures', async () => {
         vi.mocked(matchesApi.toggleHidden).mockResolvedValueOnce({
             data: { is_hidden: true },
@@ -382,7 +407,7 @@ describe('MatchList', () => {
         expect(screen.getByText(/Nothing to show yet/i)).toBeInTheDocument();
 
         const checkboxes = screen.getAllByRole('checkbox');
-        fireEvent.click(checkboxes[1]);
+        fireEvent.click(checkboxes[2]);
         await waitFor(() => {
             expect(localStorage.getItem('jobscout_show_hidden')).toBe('true');
         });
@@ -392,7 +417,7 @@ describe('MatchList', () => {
         storageMock.setItem('jobscout_show_hidden', 'true');
         mockUseMatches.mockReturnValue({ data: { matches: [] }, isLoading: false, error: null, refetch: vi.fn() });
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
-        expect(screen.getAllByRole('checkbox')[1]).toBeChecked();
+        expect(screen.getAllByRole('checkbox')[2]).toBeChecked();
     });
 
     it('shows degraded copy and can reveal all processed results', () => {
@@ -420,6 +445,7 @@ describe('MatchList', () => {
                 page_mode: 'cursor',
                 view: 'compact',
                 include: 'llm',
+                llm_ordering: true,
             }),
         );
         expect(screen.getByText(/remote cross-encoder is unreachable/i)).toBeInTheDocument();
@@ -440,8 +466,33 @@ describe('MatchList', () => {
                 limit: 100,
                 cursor: null,
                 page_mode: 'cursor',
+                llm_ordering: true,
             }),
         );
+    });
+
+    it('persists base ordering and sends the LLM ordering flag', async () => {
+        mockUseMatches.mockReturnValue({
+            data: { matches: [makeMatch()], llm_rerank: { enabled: true, reason: 'ordering_disabled' } },
+            isLoading: false,
+            error: null,
+            refetch: vi.fn(),
+        });
+
+        render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        expect(mockUseMatches).toHaveBeenLastCalledWith(
+            expect.objectContaining({ include: 'llm', llm_ordering: true }),
+        );
+        fireEvent.click(screen.getByRole('checkbox', { name: /llm order/i }));
+
+        await waitFor(() => {
+            expect(localStorage.getItem('jobscout_llm_ordering')).toBe('false');
+        });
+        expect(mockUseMatches).toHaveBeenLastCalledWith(
+            expect.objectContaining({ include: 'llm', llm_ordering: false }),
+        );
+        expect(screen.getByText('base order')).toBeInTheDocument();
     });
 
     it('loads all matched candidates in pages after the user opts in', async () => {

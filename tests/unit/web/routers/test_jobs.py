@@ -274,6 +274,50 @@ def test_job_inventory_item_serializes_source_and_limited_errors():
     assert len(item.extraction_last_error) == 240
 
 
+def test_job_inventory_item_treats_ats_url_sources_as_refreshable():
+    job_id = uuid.uuid4()
+    source = SimpleNamespace(
+        site=f"ats:{uuid.uuid4()}",
+        job_url="https://boards.greenhouse.io/example/jobs/1",
+        job_url_direct=None,
+        source_job_id="gh-1",
+        is_active=True,
+        first_seen_at=None,
+        last_seen_at=None,
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        title="Backend Engineer",
+        company="Example",
+        location_text="Remote",
+        is_remote=True,
+        status="active",
+        is_extracted=False,
+        is_embedded=False,
+        extraction_status="pending",
+        embedding_status="pending",
+        description_completeness="missing",
+        description_source="seed",
+        description_warning_code=None,
+        raw_payload={},
+        sources=[source],
+        first_seen_at=None,
+        last_seen_at=None,
+        extraction_attempts=0,
+        extraction_last_error=None,
+        extraction_next_retry_at=None,
+        embedding_attempts=0,
+        embedding_last_error=None,
+        embedding_next_retry_at=None,
+    )
+
+    item = _job_inventory_item(job)
+
+    assert item.source_site.startswith("ats:")
+    assert "refresh_availability" in item.availability_actions
+    assert "refresh_unavailable" not in item.availability_actions
+
+
 def test_primary_source_prefers_active_then_most_recent_source():
     older = SimpleNamespace(site="older", job_url="old", is_active=True, last_seen_at=datetime(2026, 1, 1))
     newer = SimpleNamespace(site="newer", job_url="new", is_active=True, last_seen_at=datetime(2026, 1, 2))

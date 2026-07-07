@@ -109,6 +109,8 @@ class MatchRankingService:
         tier: str,
         owner_id: Optional[Any],
         tenant_id: Optional[Any],
+        include_llm: bool = True,
+        apply_llm_ordering: bool = True,
     ) -> tuple[List[MatchSummaryCandidate], Dict[str, Any]]:
         primary_pool = [
             candidate for candidate in pool
@@ -123,23 +125,27 @@ class MatchRankingService:
         for index, candidate in enumerate(primary_pool, start=1):
             setattr(candidate, "llm_original_rank", index)
 
-        self.service._attach_latest_evaluations(
-            primary_pool,
-            owner_id=owner_id,
-            tenant_id=tenant_id,
-        )
-        llm_rerank_metadata = self.service._apply_llm_rerank(
-            primary_pool,
-            owner_id=owner_id,
-            tenant_id=tenant_id,
-        )
-
-        if tier == "all":
+        llm_rerank_metadata = self.service._empty_llm_rerank_metadata(reason="not_requested")
+        if include_llm:
             self.service._attach_latest_evaluations(
-                excluded_pool,
+                primary_pool,
                 owner_id=owner_id,
                 tenant_id=tenant_id,
             )
+            llm_rerank_metadata = self.service._apply_llm_rerank(
+                primary_pool,
+                owner_id=owner_id,
+                tenant_id=tenant_id,
+                apply_ordering=apply_llm_ordering,
+            )
+
+        if tier == "all":
+            if include_llm:
+                self.service._attach_latest_evaluations(
+                    excluded_pool,
+                    owner_id=owner_id,
+                    tenant_id=tenant_id,
+                )
             ranked = primary_pool + excluded_pool
             if top_k is not None:
                 ranked = ranked[:ranking_config.effective_top_k(top_k)]
@@ -210,6 +216,7 @@ class MatchListReadService:
         limit: Optional[int],
         cursor: Optional[str],
         include_llm: bool,
+        apply_llm_ordering: bool,
         ranking_config: Any,
     ) -> MatchListReadPage:
         decoded = MatchCursorCodec.decode(cursor, expected_kind="matches")
@@ -222,7 +229,11 @@ class MatchListReadService:
         base_limit = self._cursor_limit(tier=tier, limit=limit, top_k=top_k, ranking_config=ranking_config)
 
         llm_policy = self.service._llm_policy_metadata(owner_id=owner_id)
-        active_top_n = int(llm_policy.get("top_n", 0) or 0) if include_llm and not decoded else 0
+        active_top_n = (
+            int(llm_policy.get("top_n", 0) or 0)
+            if include_llm and apply_llm_ordering and not decoded
+            else 0
+        )
         effective_limit = max(base_limit, active_top_n) if active_top_n > 0 else base_limit
         effective_limit = max(1, min(effective_limit, MAX_MATCH_PAGE_LIMIT))
 
@@ -323,6 +334,7 @@ class MatchListReadService:
                 tenant_id=tenant_id,
                 page_mode="cursor",
                 policy_metadata=llm_policy,
+                apply_ordering=apply_llm_ordering,
             )
             if tier == "primary":
                 candidates = primary
@@ -334,6 +346,11 @@ class MatchListReadService:
                 ]
                 candidates = primary + excluded
         elif include_llm:
+            self.service._attach_latest_evaluations(
+                candidates,
+                owner_id=owner_id,
+                tenant_id=tenant_id,
+            )
             llm_rerank = self.service._empty_llm_rerank_metadata(
                 reason="cursor_after_rerank_window"
             )

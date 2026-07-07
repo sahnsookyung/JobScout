@@ -634,14 +634,14 @@ def test_public_serialization_excludes_cache_hashes_and_raw_inputs():
     assert "tenant_id" not in public
 
 
-def test_public_serialization_normalizes_existing_fractional_llm_scores():
+def test_public_serialization_preserves_existing_zero_to_hundred_llm_scores():
     evaluation = _evaluation()
     evaluation.llm_score = Decimal("0.92")
     evaluation.verdict = "strong"
 
     public = evaluation_public_dict(evaluation)
 
-    assert public["llm_score"] == 92.0
+    assert public["llm_score"] == 0.92
 
 
 def test_public_serialization_orders_stored_requirement_verdicts_by_requirement_id():
@@ -1121,7 +1121,7 @@ def test_run_provider_persists_successful_structured_response():
     assert db.flush.call_count >= 2
 
 
-def test_run_provider_normalizes_fractional_score_and_orders_requirement_verdicts():
+def test_run_provider_preserves_provider_score_and_orders_requirement_verdicts():
     db = Mock()
     provider = Mock()
     provider.extract_structured_data.return_value = {
@@ -1142,19 +1142,19 @@ def test_run_provider_normalizes_fractional_score_and_orders_requirement_verdict
     service._run_provider(evaluation, {"safe": "payload"})
 
     assert evaluation.status == LLM_EVALUATION_SUCCEEDED
-    assert evaluation.llm_score == 92.0
+    assert evaluation.llm_score == 0.92
     assert [
         item["requirement_id"] for item in evaluation.requirement_verdicts
     ] == ["req_1", "req_2", "req_3"]
 
 
-def test_run_provider_keeps_score_verdict_inconsistency_displayable_but_ignored():
+def test_run_provider_keeps_verdict_mismatch_displayable_and_rank_eligible():
     db = Mock()
     provider = Mock()
     provider.extract_structured_data.return_value = {
-        "score": 0.009,
+        "score": 65,
         "confidence": 0.95,
-        "verdict": "strong",
+        "verdict": "mismatch",
         "summary": "Strong alignment based on ev_1 and ev_15.",
         "reason_codes": [],
         "ranking_rationale": "Direct evidence in ev_1.",
@@ -1180,6 +1180,10 @@ def test_run_provider_keeps_score_verdict_inconsistency_displayable_but_ignored(
             ],
         },
     )
+    service._load_job_for_match = Mock(return_value=SimpleNamespace(content_hash=None))
+    service.build_judge_input = Mock(
+        return_value=SimpleNamespace(hashes=_hashes(), truncation={"truncated": False})
+    )
     effectiveness = service.evaluation_effectiveness(
         _match(),
         evaluation,
@@ -1189,12 +1193,13 @@ def test_run_provider_keeps_score_verdict_inconsistency_displayable_but_ignored(
     public = evaluation_public_dict(evaluation)
 
     assert evaluation.status == LLM_EVALUATION_SUCCEEDED
-    assert evaluation.llm_score == 0.9
-    assert evaluation.analysis["score_quality"]["status"] == "inconsistent"
-    assert effectiveness["effective_for_rerank"] is False
-    assert effectiveness["ignored_for_rerank_reason"] == "score_verdict_inconsistent"
-    assert public["llm_score"] == 0.9
-    assert public["score_quality"]["reason"] == "score_verdict_inconsistent"
+    assert evaluation.llm_score == 65.0
+    assert evaluation.verdict == "mismatch"
+    assert evaluation.analysis["score_quality"]["status"] == "valid"
+    assert effectiveness["effective_for_rerank"] is True
+    assert effectiveness["ignored_for_rerank_reason"] is None
+    assert public["llm_score"] == 65.0
+    assert public["score_quality"]["reason"] is None
     assert public["analysis"]["evidence_references"] == [
         {
             "id": "ev_1",
@@ -1205,20 +1210,35 @@ def test_run_provider_keeps_score_verdict_inconsistency_displayable_but_ignored(
     ]
 
 
-def test_normalize_llm_score_handles_percent_fraction_and_ten_point_scales():
+def test_normalize_llm_score_is_verdict_independent_and_strictly_zero_to_hundred():
     assert normalize_llm_score(87.345, "good") == 87.34
-    assert normalize_llm_score(0.95, "strong") == 95.0
-    assert normalize_llm_score(9.5, "strong") == 95.0
+    assert normalize_llm_score(0.95, "strong") == 0.95
+    assert normalize_llm_score(9.5, "strong") == 9.5
     assert normalize_llm_score(1.0, "mismatch") == 1.0
     assert normalize_llm_score(3.0, "mismatch") == 3.0
+    assert normalize_llm_score(101, "strong") is None
+    assert normalize_llm_score(-1, "mismatch") is None
+    assert normalize_llm_score("high", "strong") is None
 
 
-def test_score_quality_allows_consistent_verdict_ranges():
-    assert score_quality_metadata(92, "strong")["status"] == "consistent"
-    assert score_quality_metadata(72, "good")["status"] == "consistent"
-    assert score_quality_metadata(58, "borderline")["status"] == "consistent"
-    assert score_quality_metadata(35, "weak")["status"] == "consistent"
-    assert score_quality_metadata(15, "mismatch")["status"] == "consistent"
+def test_score_quality_is_structural_not_verdict_band_based():
+    mismatch = score_quality_metadata(65, "mismatch")
+    assert mismatch["status"] == "valid"
+    assert mismatch["reason"] is None
+    assert mismatch["normalized_score"] == 65.0
+    assert "expected_range" not in mismatch
+
+    weak_high_score = score_quality_metadata(90, "weak")
+    assert weak_high_score["status"] == "valid"
+    assert weak_high_score["reason"] is None
+
+    missing = score_quality_metadata(None, "strong")
+    assert missing["status"] == "invalid"
+    assert missing["reason"] == "missing_llm_score"
+
+    invalid = score_quality_metadata("high", "strong")
+    assert invalid["status"] == "invalid"
+    assert invalid["reason"] == "invalid_llm_score"
 
 
 def test_run_provider_marks_unknown_failure_terminal_without_raw_payload():
@@ -1642,6 +1662,16 @@ def test_evaluation_effectiveness_covers_ignored_stale_and_current_metadata():
         owner_id="owner-1",
     )["ignored_for_rerank_reason"] == "missing_llm_score"
 
+    invalid_score = _evaluation()
+    invalid_score.llm_score = 101
+    invalid_result = service.evaluation_effectiveness(
+        match,
+        invalid_score,
+        owner_id="owner-1",
+    )
+    assert invalid_result["ignored_for_rerank_reason"] == "invalid_llm_score"
+    assert invalid_result["score_quality"]["status"] == "invalid"
+
     stale_job = _evaluation()
     stale_match = _match()
     stale_match.job_content_hash = "old-hash"
@@ -1705,3 +1735,31 @@ def test_evaluation_effectiveness_covers_ignored_stale_and_current_metadata():
     assert current_result["stale_status"] == "current"
     assert current_result["input_truncation"] == {"truncated": False}
     assert current_result["freshness"]["status"] == "current"
+
+    legacy = _evaluation()
+    legacy.llm_score = 65
+    legacy.verdict = "mismatch"
+    legacy.analysis = {
+        "score_quality": {
+            "status": "inconsistent",
+            "reason": "score_verdict_inconsistent",
+            "normalized_score": 65,
+            "verdict": "mismatch",
+            "expected_range": {"min": 0, "max": 34},
+        }
+    }
+    legacy_result = service.evaluation_effectiveness(
+        _match(),
+        legacy,
+        owner_id="owner-1",
+    )
+    assert legacy_result["effective_for_rerank"] is True
+    assert legacy_result["ignored_for_rerank_reason"] is None
+    public = evaluation_public_dict(legacy)
+    assert public["score_quality"] == {
+        "status": "valid",
+        "reason": None,
+        "normalized_score": 65.0,
+        "verdict": "mismatch",
+    }
+    assert public["analysis"]["score_quality"] == public["score_quality"]

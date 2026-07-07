@@ -271,6 +271,25 @@ describe('StatsPanel', () => {
         hidden_count: 30,
         below_threshold_count: 25,
         beyond_top_k_count: 0,
+        job_post_total: 150,
+        active_job_posts: 90,
+        inactive_job_posts: 50,
+        expired_job_posts: 10,
+        ready_to_score_job_posts: 80,
+        active_ready_to_score_job_posts: 70,
+        pending_extraction_job_posts: 20,
+        retryable_extraction_job_posts: 2,
+        active_pending_extraction_job_posts: 3,
+        active_retryable_extraction_job_posts: 1,
+        inactive_pending_extraction_job_posts: 18,
+        pending_embedding_job_posts: 5,
+        retryable_embedding_job_posts: 1,
+        active_pending_embedding_job_posts: 2,
+        active_retryable_embedding_job_posts: 0,
+        inactive_pending_embedding_job_posts: 4,
+        missing_description_job_posts: 12,
+        active_missing_description_job_posts: 2,
+        inactive_missing_description_job_posts: 10,
         score_distribution: {
             excellent: 20,
             good: 25,
@@ -289,7 +308,12 @@ describe('StatsPanel', () => {
         expect(screen.getAllByText('100').length).toBeGreaterThan(0);
         expect(screen.getByText('matched candidates')).toBeInTheDocument();
         expect(screen.getByText('Imported')).toBeInTheDocument();
+        expect(screen.getByText('Ready active')).toBeInTheDocument();
+        expect(screen.getByText('Not active')).toBeInTheDocument();
         expect(screen.getByText('Pending extract')).toBeInTheDocument();
+        expect(screen.getByText('Missing desc')).toBeInTheDocument();
+        expect(screen.getByText('Active backlog')).toBeInTheDocument();
+        expect(screen.getByText('Inactive backlog')).toBeInTheDocument();
         expect(screen.getByText('Fit')).toBeInTheDocument();
         expect(screen.getByText('Below threshold')).toBeInTheDocument();
         expect(screen.getByText('Hidden')).toBeInTheDocument();
@@ -335,7 +359,7 @@ describe('StatsPanel', () => {
         );
 
         expect(screen.getByText('Above max')).toBeInTheDocument();
-        expect(screen.getByText('12')).toBeInTheDocument();
+        expect(screen.getAllByText('12').length).toBeGreaterThan(0);
     });
 });
 

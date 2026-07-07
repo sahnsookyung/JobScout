@@ -24,6 +24,7 @@ export interface GetMatchesParams {
     page_mode?: 'offset' | 'cursor';
     view?: 'summary' | 'compact';
     include?: 'llm' | string;
+    llm_ordering?: boolean;
 }
 
 export interface GetStatsParams {

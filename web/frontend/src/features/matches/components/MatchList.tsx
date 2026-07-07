@@ -57,17 +57,24 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
         const saved = localStorage.getItem('jobscout_show_hidden');
         return saved === 'true';
     });
+    const [llmOrderingEnabled, setLlmOrderingEnabled] = useState(() => {
+        const saved = localStorage.getItem('jobscout_llm_ordering');
+        return saved !== 'false';
+    });
     const { policy } = usePolicy();
 
     useEffect(() => {
         localStorage.setItem('jobscout_show_hidden', showHidden.toString());
     }, [showHidden]);
+    useEffect(() => {
+        localStorage.setItem('jobscout_llm_ordering', llmOrderingEnabled.toString());
+    }, [llmOrderingEnabled]);
 
     const effectivePolicy = policy ?? DEFAULT_POLICY;
     useEffect(() => {
         setAllCandidatesCursor(null);
         setAllCandidates([]);
-    }, [status, remoteOnly, rankingMode, showHidden, showAllProcessed]);
+    }, [status, remoteOnly, rankingMode, showHidden, showAllProcessed, llmOrderingEnabled]);
 
     const llmTopN = Number(policy?.llm_judge_top_n ?? 0);
     const primaryLimit = Math.max(primaryPageSize(effectivePolicy), Number.isFinite(llmTopN) ? llmTopN : 0);
@@ -84,6 +91,7 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
         page_mode: 'cursor',
         view: 'compact',
         include: 'llm',
+        llm_ordering: llmOrderingEnabled,
     });
     const { data: stats } = useStats({
         min_fit: effectivePolicy.min_fit,
@@ -118,7 +126,7 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
     const hasMoreAllCandidates = showAllProcessed && (
         data?.has_more === true || Boolean(data?.next_cursor)
     );
-    const llmOrdering = llmRerankSummary(data?.llm_rerank);
+    const llmOrderingSummary = llmRerankSummary(data?.llm_rerank);
 
     const strongCount = matches.filter((m) => !m.is_hidden && (m.fit_score ?? 0) >= 80).length;
     const initialLoading = isLoading && (!showAllProcessed || matches.length === 0);
@@ -168,6 +176,8 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                 onRankingModeChange={setRankingMode}
                 showHidden={showHidden}
                 onShowHiddenChange={setShowHidden}
+                llmOrdering={llmOrderingEnabled}
+                onLlmOrderingChange={setLlmOrderingEnabled}
                 showAllProcessed={showAllProcessed}
                 onShowAllProcessedChange={setShowAllProcessed}
                 processedCount={processedToggleCount}
@@ -180,7 +190,7 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                 </div>
             )}
 
-            <header className="flex items-baseline justify-between border-b border-rule pb-3">
+            <header className="flex flex-col gap-2 border-b border-rule pb-3 sm:flex-row sm:items-baseline sm:justify-between">
                 <div className="flex items-baseline gap-3">
                     <span className="num text-[22px] font-medium text-ink tabular-nums">
                         {matches.length}
@@ -199,12 +209,19 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                         )}
                     </span>
                 </div>
-                <span className="caption" aria-label={llmOrdering ? `Sorted by ${rankingMode}. ${llmOrdering}` : undefined}>
+                <span
+                    className="caption max-w-full text-left sm:max-w-[28rem] sm:text-right"
+                    aria-label={llmOrderingSummary ? `Sorted by ${rankingMode}. ${llmOrderingSummary}` : undefined}
+                >
                     Sorted by {rankingMode}
-                    {llmOrdering && (
+                    <span className="mx-2 text-ink-faint">·</span>
+                    <span className={llmOrderingEnabled ? 'text-accent' : 'text-ink-muted'}>
+                        {llmOrderingEnabled ? 'LLM order' : 'base order'}
+                    </span>
+                    {llmOrderingSummary && (
                         <>
                             <span className="mx-2 text-ink-faint">·</span>
-                            <span className="text-accent">{llmOrdering}</span>
+                            <span className="text-accent">{llmOrderingSummary}</span>
                         </>
                     )}
                 </span>

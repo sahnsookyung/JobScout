@@ -11,6 +11,8 @@ interface MatchFiltersProps {
     onRankingModeChange: (value: RankingMode) => void;
     showHidden: boolean;
     onShowHiddenChange: (value: boolean) => void;
+    llmOrdering: boolean;
+    onLlmOrderingChange: (value: boolean) => void;
     showAllProcessed?: boolean;
     onShowAllProcessedChange?: (value: boolean) => void;
     processedCount?: number;
@@ -25,6 +27,8 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
     onRankingModeChange,
     showHidden,
     onShowHiddenChange,
+    llmOrdering,
+    onLlmOrderingChange,
     showAllProcessed = false,
     onShowAllProcessedChange = () => undefined,
     processedCount = 0,
@@ -46,6 +50,11 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
                 options={RANKING_MODE_OPTIONS}
             />
             <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 md:justify-end">
+                <Toggle
+                    label="LLM order"
+                    checked={llmOrdering}
+                    onChange={onLlmOrderingChange}
+                />
                 <Toggle
                     label="Remote only"
                     checked={remoteOnly}

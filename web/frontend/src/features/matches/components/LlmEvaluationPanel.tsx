@@ -137,25 +137,32 @@ function fallbackEvidenceStrengths(verdicts: Array<Record<string, any>>): string
         });
 }
 
+function fallbackEvidenceGaps(verdicts: Array<Record<string, any>>): string[] {
+    const hasMissing = verdicts.some((verdict) => String(verdict.verdict ?? '').toLowerCase() === 'missing');
+    const allowed = hasMissing ? new Set(['missing']) : new Set(['partial']);
+    return verdicts
+        .filter((verdict) => allowed.has(String(verdict.verdict ?? '').toLowerCase()))
+        .sort((left, right) => {
+            return compareRequirementIds(left.requirement_id, right.requirement_id);
+        })
+        .slice(0, 5)
+        .map((verdict) => {
+            const id = String(verdict.requirement_id ?? 'requirement');
+            const reason = typeof verdict.reason === 'string' ? verdict.reason.trim() : '';
+            return reason ? `${id}: ${reason}` : `${id}: ${cleanLabel(String(verdict.verdict ?? 'gap'))}`;
+        });
+}
+
 function scoreQualityMessage(evaluation?: MatchLlmEvaluation | null): string {
     const analysis = evaluation?.analysis ?? {};
     const scoreQuality = evaluation?.score_quality ?? analysis.score_quality;
-    if (!scoreQuality || scoreQuality.status !== 'inconsistent') return '';
-    const expectedRange = scoreQuality.expected_range;
+    if (!scoreQuality || scoreQuality.status !== 'invalid') return '';
     const score = typeof scoreQuality.normalized_score === 'number'
         ? formatScore(scoreQuality.normalized_score)
-        : 'the returned score';
-    const verdict = typeof scoreQuality.verdict === 'string'
-        ? cleanLabel(scoreQuality.verdict)
-        : 'the verdict';
-    if (
-        expectedRange
-        && typeof expectedRange.min === 'number'
-        && typeof expectedRange.max === 'number'
-    ) {
-        return `Score ignored for ranking: ${score} conflicts with ${verdict}; expected ${expectedRange.min}-${expectedRange.max}%.`;
-    }
-    return `Score ignored for ranking: ${score} conflicts with ${verdict}.`;
+        : '';
+    return score
+        ? `LLM score was not usable for ordering because ${score} is not a valid 0-100 score.`
+        : 'LLM score was not usable for ordering because the provider returned an invalid numeric score.';
 }
 
 function freshnessMessage(evaluation?: MatchLlmEvaluation | null): string {
@@ -380,6 +387,10 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
     const evidenceStrengthsLabel = transferableStrengths.length > 0
         ? 'Transferable strengths'
         : 'Evidence-based strengths';
+    const evidenceGaps = gaps.length > 0
+        ? gaps
+        : fallbackEvidenceGaps(requirementVerdicts);
+    const evidenceGapsLabel = gaps.length > 0 ? 'Gaps' : 'Evidence-based gaps';
     const currentFreshnessMessage = freshnessMessage(evaluation);
     const currentScoreQualityMessage = scoreQualityMessage(evaluation);
     const truncation = evaluation?.input_truncation ?? analysis.input_truncation ?? {};
@@ -531,10 +542,38 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                 </div>
             )}
 
+            {(evidenceStrengths.length > 0 || evidenceGaps.length > 0) && (
+                <div className="mt-5 grid min-w-0 gap-4 border-t border-rule pt-4 md:grid-cols-2">
+                    {evidenceStrengths.length > 0 && (
+                        <div className="min-w-0">
+                            <p className="caption">{evidenceStrengthsLabel}</p>
+                            <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-ink-soft">
+                                {evidenceStrengths.map((item) => (
+                                    <li key={item} className="min-w-0 break-words border-l-2 border-affirm/50 pl-3">{item}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                    {evidenceGaps.length > 0 && (
+                        <div className="min-w-0">
+                            <p className="caption">{evidenceGapsLabel}</p>
+                            <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-ink-soft">
+                                {evidenceGaps.map((item) => (
+                                    <li key={item} className="min-w-0 break-words border-l-2 border-warn/50 pl-3">{item}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </div>
+            )}
+
             {references.length > 0 && (
-                <div className="mt-5 border-t border-rule pt-4">
-                    <p className="caption">Resume evidence references</p>
-                    <div className="mt-3 flex flex-wrap gap-2">
+                <details className="mt-5 min-w-0 border-t border-rule pt-4">
+                    <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 text-left marker:hidden">
+                        <span className="caption">Resume evidence references</span>
+                        <span className="caption text-ink-muted">{references.length} refs</span>
+                    </summary>
+                    <div className="mt-3 grid min-w-0 gap-2">
                         {references.map((reference, index) => {
                             const id = typeof reference.id === 'string' ? reference.id : `ev_${index + 1}`;
                             const sourceText = typeof reference.source_text === 'string'
@@ -547,7 +586,7 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                                 <span
                                     key={`${id}-${index}`}
                                     title={sourceText || undefined}
-                                    className="max-w-full border border-rule bg-surface-sunk px-2 py-1 text-[12px] leading-snug text-ink-soft"
+                                    className="min-w-0 max-w-full break-words border border-rule bg-surface-sunk px-2 py-1 text-[12px] leading-snug text-ink-soft"
                                 >
                                     <span className="caption text-accent">{id}</span>
                                     {section ? <span className="ml-1 text-ink-muted">{section}</span> : null}
@@ -556,32 +595,7 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                             );
                         })}
                     </div>
-                </div>
-            )}
-
-            {(evidenceStrengths.length > 0 || gaps.length > 0) && (
-                <div className="mt-5 grid gap-4 md:grid-cols-2">
-                    {evidenceStrengths.length > 0 && (
-                        <div>
-                            <p className="caption">{evidenceStrengthsLabel}</p>
-                            <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-ink-soft">
-                                {evidenceStrengths.map((item) => (
-                                    <li key={item} className="border-l-2 border-affirm/50 pl-3">{item}</li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
-                    {gaps.length > 0 && (
-                        <div>
-                            <p className="caption">Gaps</p>
-                            <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-ink-soft">
-                                {gaps.map((item) => (
-                                    <li key={item} className="border-l-2 border-warn/50 pl-3">{item}</li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
-                </div>
+                </details>
             )}
 
             {orderedRequirementVerdicts.length > 0 && (

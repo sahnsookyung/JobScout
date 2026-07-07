@@ -31,6 +31,7 @@ from ..services.processing_blocker_service import (
     truncate_error,
 )
 from ..services.cursors import CursorDecodeError, MatchCursorCodec
+from ..services.source_availability import source_refresh_kind
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -50,8 +51,6 @@ _RETRYABLE_OR_PENDING = {"pending", "queued", "in_progress", "processing", "fail
 _FAILED_STATUSES = {"failed_terminal", "failed", "failed_retryable"}
 _VALID_BLOCKER_VIEWS = {"compact", "detail"}
 _LIFECYCLE_METADATA_KEY = "jobscout_lifecycle"
-_COMPLIANT_REFRESH_SOURCE_SITES = {"greenhouse", "lever", "ashby"}
-_PROHIBITED_SCRAPER_SOURCE_SITES = {"tokyodev", "japandev", "jobspy", "workday"}
 
 
 def _request_tenant_id(request: Request):
@@ -110,10 +109,10 @@ def _availability_actions(job: JobPost, source: JobPostSource | None) -> list[st
     actions: list[str] = []
     if source is not None and (getattr(source, "job_url_direct", None) or getattr(source, "job_url", None)):
         actions.append("open_posting")
-    site = str(getattr(source, "site", "") or "").lower()
-    if site in _COMPLIANT_REFRESH_SOURCE_SITES:
+    refresh_kind = source_refresh_kind(source)
+    if refresh_kind == "compliant_ats":
         actions.append("refresh_availability")
-    elif site in _PROHIBITED_SCRAPER_SOURCE_SITES:
+    elif refresh_kind == "prohibited":
         actions.append("refresh_unavailable_deployment_disabled")
     elif source is not None:
         actions.append("refresh_unavailable")
@@ -561,13 +560,13 @@ def refresh_job_availability(
     """Report whether this deployment can refresh availability through a compliant source sync."""
     job = _get_scoped_job(db, job_id, tenant_id=tenant_context.tenant_id)
     source = _primary_source(job)
-    source_site = str(getattr(source, "site", "") or "").lower()
-    if source_site in _PROHIBITED_SCRAPER_SOURCE_SITES:
+    refresh_kind = source_refresh_kind(source)
+    if refresh_kind == "prohibited":
         return _mutation_response(
             job,
             "Availability refresh is disabled for this source in hosted deployments.",
         )
-    if source_site in _COMPLIANT_REFRESH_SOURCE_SITES:
+    if refresh_kind == "compliant_ats":
         return _mutation_response(
             job,
             "Refresh must be run through the configured ATS source sync for this workspace.",

@@ -102,10 +102,24 @@ const readyJob = {
 
 const stats = {
     job_post_total: 1460,
+    active_job_posts: 1111,
+    inactive_job_posts: 349,
+    expired_job_posts: 0,
     ready_to_score_job_posts: 353,
+    active_ready_to_score_job_posts: 320,
     pending_extraction_job_posts: 1103,
     retryable_extraction_job_posts: 4,
+    active_pending_extraction_job_posts: 8,
+    active_retryable_extraction_job_posts: 1,
+    inactive_pending_extraction_job_posts: 1098,
     pending_embedding_job_posts: 330,
+    retryable_embedding_job_posts: 0,
+    active_pending_embedding_job_posts: 2,
+    active_retryable_embedding_job_posts: 0,
+    inactive_pending_embedding_job_posts: 328,
+    missing_description_job_posts: 304,
+    active_missing_description_job_posts: 4,
+    inactive_missing_description_job_posts: 300,
 };
 
 const pipelineRun = {
@@ -373,7 +387,10 @@ describe('JobInventoryPanel', () => {
 
         expect(screen.getByText('Imported jobs')).toBeInTheDocument();
         expect(screen.getByText('1460')).toBeInTheDocument();
-        expect(screen.getByText('1107')).toBeInTheDocument();
+        expect(screen.getByText('1111')).toBeInTheDocument();
+        expect(screen.getByText('Queued active')).toBeInTheDocument();
+        expect(screen.getByText('Inactive queued')).toBeInTheDocument();
+        expect(screen.getByText('Missing desc')).toBeInTheDocument();
         expect(screen.getByRole('button', { name: /browse jobs/i })).toHaveAttribute('aria-expanded', 'false');
         expect(screen.queryByText('Software Engineer')).not.toBeInTheDocument();
         expect(mockUseJobs).toHaveBeenCalledWith(
@@ -443,7 +460,7 @@ describe('JobInventoryPanel', () => {
         await waitFor(() => expect(screen.getByText('LLM queue')).toBeInTheDocument());
         await waitFor(() => expect(mockGetLlmEvaluationQueueStatus).toHaveBeenCalledTimes(1));
         await waitFor(() => expect(screen.getByText('3')).toBeInTheDocument());
-        expect(screen.getByText('Active')).toBeInTheDocument();
+        expect(screen.getAllByText('Active').length).toBeGreaterThan(0);
         expect(screen.getAllByText('Retryable').length).toBeGreaterThan(0);
         expect(screen.getByText((_, element) => element?.textContent === 'nvidia · nvidia-model')).toBeInTheDocument();
     });

@@ -99,32 +99,14 @@ MATCH_LLM_JUDGE_SCHEMA_SPEC = {
     "schema": MatchEvaluationResponse.model_json_schema(),
 }
 
-_LLM_SCORE_VERDICT_RANGES = {
-    "strong": (80.0, 100.0),
-    "good": (65.0, 89.0),
-    "borderline": (45.0, 64.0),
-    "weak": (20.0, 44.0),
-    "mismatch": (0.0, 34.0),
-}
-SCORE_VERDICT_INCONSISTENT_REASON = "score_verdict_inconsistent"
-SCORE_VERDICT_INCONSISTENT_MAX_DISTANCE = 20.0
+INVALID_LLM_SCORE_REASON = "invalid_llm_score"
+MISSING_LLM_SCORE_REASON = "missing_llm_score"
 EVIDENCE_REFERENCE_PATTERN = re.compile(r"\bev[_-](\d+)\b", re.IGNORECASE)
 
 
-def _score_range_distance(score: float, verdict: str | None) -> float:
-    score_range = _LLM_SCORE_VERDICT_RANGES.get(str(verdict or "").lower())
-    if score_range is None:
-        return 0.0
-    lower, upper = score_range
-    if score < lower:
-        return lower - score
-    if score > upper:
-        return score - upper
-    return 0.0
-
-
 def normalize_llm_score(score: Any, verdict: str | None = None) -> float | None:
-    """Normalize provider score variants into JobScout's 0-100 score contract."""
+    """Return a structurally valid 0-100 LLM score without verdict-based inference."""
+    _ = verdict
     if score is None:
         return None
     try:
@@ -133,47 +115,24 @@ def normalize_llm_score(score: Any, verdict: str | None = None) -> float | None:
         return None
     if not math.isfinite(value):
         return None
-
-    value = max(0.0, min(value, 100.0))
-    if 0.0 < value <= 1.0:
-        scaled = value * 100.0
-        if (
-            str(verdict or "").lower() not in _LLM_SCORE_VERDICT_RANGES
-            or _score_range_distance(scaled, verdict) < _score_range_distance(value, verdict)
-        ):
-            value = scaled
-    elif 1.0 < value <= 10.0:
-        scaled = min(value * 10.0, 100.0)
-        if _score_range_distance(scaled, verdict) < _score_range_distance(value, verdict):
-            value = scaled
+    if value < 0.0 or value > 100.0:
+        return None
     return round(value, 2)
 
 
 def score_quality_metadata(score: Any, verdict: str | None) -> dict[str, Any]:
-    """Describe whether a normalized score is semantically plausible for its verdict."""
+    """Describe whether a score satisfies the LLM judge's numeric 0-100 contract."""
     normalized_score = normalize_llm_score(score, verdict)
-    normalized_verdict = str(verdict or "").lower()
-    expected_range = _LLM_SCORE_VERDICT_RANGES.get(normalized_verdict)
     metadata: dict[str, Any] = {
-        "status": "unknown",
-        "reason": None,
+        "status": "valid" if normalized_score is not None else "invalid",
+        "reason": (
+            None
+            if normalized_score is not None
+            else MISSING_LLM_SCORE_REASON if score is None else INVALID_LLM_SCORE_REASON
+        ),
         "normalized_score": normalized_score,
         "verdict": verdict,
-        "expected_range": (
-            {"min": expected_range[0], "max": expected_range[1]}
-            if expected_range is not None
-            else None
-        ),
     }
-    if normalized_score is None or expected_range is None:
-        return metadata
-    distance = round(_score_range_distance(float(normalized_score), normalized_verdict), 2)
-    metadata["distance"] = distance
-    if distance > SCORE_VERDICT_INCONSISTENT_MAX_DISTANCE:
-        metadata["status"] = "inconsistent"
-        metadata["reason"] = SCORE_VERDICT_INCONSISTENT_REASON
-    else:
-        metadata["status"] = "consistent"
     return metadata
 
 
@@ -966,22 +925,21 @@ class MatchLlmEvaluationService:
         analysis = getattr(evaluation, "analysis", None)
         if not isinstance(analysis, dict):
             analysis = {}
-        score_quality = analysis.get("score_quality")
-        if not isinstance(score_quality, dict):
-            score_quality = score_quality_metadata(
-                getattr(evaluation, "llm_score", None),
-                getattr(evaluation, "verdict", None),
-            )
-        if score_quality.get("status") == "inconsistent":
+        score_quality = score_quality_metadata(
+            getattr(evaluation, "llm_score", None),
+            getattr(evaluation, "verdict", None),
+        )
+        if score_quality.get("status") == "invalid":
+            reason = str(score_quality.get("reason") or INVALID_LLM_SCORE_REASON)
             return {
                 "effective_for_rerank": False,
-                "ignored_for_rerank_reason": SCORE_VERDICT_INCONSISTENT_REASON,
+                "ignored_for_rerank_reason": reason,
                 "stale_status": "ignored",
                 "freshness": self._freshness_metadata(
                     match,
                     evaluation,
                     status="ignored",
-                    reason=SCORE_VERDICT_INCONSISTENT_REASON,
+                    reason=reason,
                 ),
                 "input_truncation": {},
                 "score_quality": score_quality,
@@ -2080,6 +2038,7 @@ def evaluation_public_dict(evaluation: LlmMatchEvaluation) -> dict[str, Any]:
     analysis = getattr(evaluation, "analysis", None)
     if not isinstance(analysis, dict):
         analysis = {}
+    public_analysis = dict(analysis)
     queue_metadata = analysis.get("queue")
     if not isinstance(queue_metadata, dict):
         queue_metadata = {}
@@ -2106,11 +2065,10 @@ def evaluation_public_dict(evaluation: LlmMatchEvaluation) -> dict[str, Any]:
             provider_status_message = "Provider rate limit or token quota stopped this review."
         elif evaluation.error_code:
             provider_status_message = str(evaluation.error_code).replace("_", " ")
-    score_quality = analysis.get("score_quality")
-    if not isinstance(score_quality, dict):
-        score_quality = effectiveness.get("score_quality")
-    if not isinstance(score_quality, dict):
-        score_quality = score_quality_metadata(evaluation.llm_score, evaluation.verdict)
+    score_quality = score_quality_metadata(evaluation.llm_score, evaluation.verdict)
+    if isinstance(effectiveness.get("score_quality"), dict):
+        score_quality = effectiveness["score_quality"]
+    public_analysis["score_quality"] = score_quality
 
     return {
         "id": str(evaluation.id),
@@ -2130,7 +2088,7 @@ def evaluation_public_dict(evaluation: LlmMatchEvaluation) -> dict[str, Any]:
         "requirement_verdicts": _cap_public(
             _ordered_public_requirement_verdicts(evaluation.requirement_verdicts)
         ),
-        "analysis": _cap_public(analysis),
+        "analysis": _cap_public(public_analysis),
         "score_quality": _cap_public(score_quality),
         "effective_for_rerank": bool(effectiveness.get("effective_for_rerank", False)),
         "ignored_for_rerank_reason": effectiveness.get("ignored_for_rerank_reason"),

@@ -52,11 +52,24 @@ const TERMINAL_PROCESS_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 export interface JobInventoryPanelProps {
     stats?: {
         job_post_total?: number;
+        active_job_posts?: number;
+        inactive_job_posts?: number;
+        expired_job_posts?: number;
         ready_to_score_job_posts?: number;
+        active_ready_to_score_job_posts?: number;
         pending_extraction_job_posts?: number;
         retryable_extraction_job_posts?: number;
         pending_embedding_job_posts?: number;
         retryable_embedding_job_posts?: number;
+        active_pending_extraction_job_posts?: number;
+        active_retryable_extraction_job_posts?: number;
+        inactive_pending_extraction_job_posts?: number;
+        active_pending_embedding_job_posts?: number;
+        active_retryable_embedding_job_posts?: number;
+        inactive_pending_embedding_job_posts?: number;
+        missing_description_job_posts?: number;
+        active_missing_description_job_posts?: number;
+        inactive_missing_description_job_posts?: number;
     } | null;
 }
 
@@ -598,7 +611,24 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
     const queryClient = useQueryClient();
     const pendingExtraction = (stats?.pending_extraction_job_posts ?? 0) + (stats?.retryable_extraction_job_posts ?? 0);
     const pendingEmbedding = (stats?.pending_embedding_job_posts ?? 0) + (stats?.retryable_embedding_job_posts ?? 0);
-    const queuedWork = pendingExtraction + pendingEmbedding;
+    const hasExtractionBreakdown = stats?.active_pending_extraction_job_posts != null
+        || stats?.active_retryable_extraction_job_posts != null
+        || stats?.inactive_pending_extraction_job_posts != null;
+    const hasEmbeddingBreakdown = stats?.active_pending_embedding_job_posts != null
+        || stats?.active_retryable_embedding_job_posts != null
+        || stats?.inactive_pending_embedding_job_posts != null;
+    const activePendingExtraction = hasExtractionBreakdown
+        ? (stats?.active_pending_extraction_job_posts ?? 0) + (stats?.active_retryable_extraction_job_posts ?? 0)
+        : pendingExtraction;
+    const activePendingEmbedding = hasEmbeddingBreakdown
+        ? (stats?.active_pending_embedding_job_posts ?? 0) + (stats?.active_retryable_embedding_job_posts ?? 0)
+        : pendingEmbedding;
+    const inactivePendingExtraction = hasExtractionBreakdown ? stats?.inactive_pending_extraction_job_posts ?? 0 : 0;
+    const inactivePendingEmbedding = hasEmbeddingBreakdown ? stats?.inactive_pending_embedding_job_posts ?? 0 : 0;
+    const activeQueuedWork = activePendingExtraction + activePendingEmbedding;
+    const inactiveQueuedWork = inactivePendingExtraction + inactivePendingEmbedding;
+    const queuedWork = activeQueuedWork;
+    const missingDescriptions = stats?.missing_description_job_posts ?? 0;
     const { data, isLoading, error, refetch } = useJobs({
         job_status: jobStatus,
         processing_status: processingStatus,
@@ -796,23 +826,39 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
                     <p className="caption">Job inventory</p>
                     <h3 className="mt-2 text-[16px] font-medium text-ink">Imported jobs</h3>
                     <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-[12px] text-ink-muted">
-                        <div className="flex gap-1.5">
+                        <div className="flex min-w-0 gap-1.5">
                             <dt>Imported</dt>
                             <dd className="num text-ink">{stats?.job_post_total ?? 0}</dd>
                         </div>
-                        <div className="flex gap-1.5">
-                            <dt>Ready</dt>
-                            <dd className="num text-ink">{stats?.ready_to_score_job_posts ?? 0}</dd>
+                        <div className="flex min-w-0 gap-1.5">
+                            <dt>Active</dt>
+                            <dd className="num text-ink">{stats?.active_job_posts ?? 0}</dd>
                         </div>
-                        <div className="flex gap-1.5">
-                            <dt>Pending extract</dt>
-                            <dd className="num text-ink">{pendingExtraction}</dd>
+                        <div className="flex min-w-0 gap-1.5">
+                            <dt>Ready active</dt>
+                            <dd className="num text-ink">
+                                {stats?.active_ready_to_score_job_posts ?? stats?.ready_to_score_job_posts ?? 0}
+                            </dd>
                         </div>
-                        <div className="flex gap-1.5">
-                            <dt>Pending embed</dt>
-                            <dd className="num text-ink">{pendingEmbedding}</dd>
+                        <div className="flex min-w-0 gap-1.5">
+                            <dt>Queued active</dt>
+                            <dd className="num text-ink">{activeQueuedWork}</dd>
+                        </div>
+                        <div className="flex min-w-0 gap-1.5">
+                            <dt>Inactive queued</dt>
+                            <dd className="num text-ink">{inactiveQueuedWork}</dd>
+                        </div>
+                        <div className="flex min-w-0 gap-1.5">
+                            <dt>Missing desc</dt>
+                            <dd className="num text-ink">{missingDescriptions}</dd>
                         </div>
                     </dl>
+                    {(pendingExtraction + pendingEmbedding) > 0 ? (
+                        <p className="mt-3 max-w-[44rem] break-words text-[12px] leading-5 text-ink-muted">
+                            Active queued jobs can be processed now. Inactive or missing-description jobs need an ATS refresh,
+                            restore, or retire action before they become matchable.
+                        </p>
+                    ) : null}
                     {processStatusText ? (
                         <p className="mt-3 text-[12px] leading-5 text-ink-muted">{processStatusText}</p>
                     ) : null}

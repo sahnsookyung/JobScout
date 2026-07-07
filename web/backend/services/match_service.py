@@ -10,7 +10,11 @@ from typing import List, Optional, Dict, Any
 from core.redis_streams import _sanitize_log
 from sqlalchemy.orm import Session
 
-from core.llm_evaluation import MatchLlmEvaluationService, normalize_llm_score
+from core.llm_evaluation import (
+    MatchLlmEvaluationService,
+    normalize_llm_score,
+    score_quality_metadata,
+)
 from core.match_selection import resolve_canonical_resume_selection
 from core.metrics import (
     record_llm_rerank_window_size,
@@ -48,6 +52,7 @@ from web.backend.services.match_query import (
     MatchSummaryCandidate,
     MatchSummaryPresenter,
 )
+from web.backend.services.source_availability import source_refresh_kind
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +70,6 @@ _PREFERENCE_COMPONENT_KEYS = {
 }
 
 _LIFECYCLE_METADATA_KEY = "jobscout_lifecycle"
-_COMPLIANT_REFRESH_SOURCE_SITES = {"greenhouse", "lever", "ashby"}
-_PROHIBITED_SCRAPER_SOURCE_SITES = {"tokyodev", "japandev", "jobspy", "workday"}
 
 
 class MatchService:
@@ -104,6 +107,7 @@ class MatchService:
         page_mode: str = "offset",
         view: str = "summary",
         include: Optional[str] = None,
+        llm_ordering: bool = True,
     ) -> List[MatchSummary]:
         """
         Get filtered job matches, ranked by the requested mode.
@@ -140,6 +144,7 @@ class MatchService:
         include_llm = include is None or "llm" in {
             value.strip() for value in str(include).split(",") if value.strip()
         }
+        apply_llm_ordering = bool(include_llm and llm_ordering)
         self.last_matches_page_mode = page_mode
         self.last_matches_view = view
         self.last_matches_next_cursor = None
@@ -192,6 +197,7 @@ class MatchService:
                 limit=limit,
                 cursor=cursor,
                 include_llm=include_llm,
+                apply_llm_ordering=apply_llm_ordering,
                 ranking_config=ranking_config,
             )
             self.last_llm_rerank_metadata = page.llm_rerank
@@ -230,6 +236,8 @@ class MatchService:
             tier=tier,
             owner_id=owner_id,
             tenant_id=tenant_id,
+            include_llm=include_llm,
+            apply_llm_ordering=apply_llm_ordering,
         )
 
         total = len(ranked)
@@ -468,6 +476,7 @@ class MatchService:
             "eligible_count": 0,
             "reranked_count": 0,
             "policy_revision": 0,
+            "ordering_requested": False,
             "reason": reason,
         }
 
@@ -491,6 +500,7 @@ class MatchService:
             "eligible_count": 0,
             "reranked_count": 0,
             "policy_revision": revision,
+            "ordering_requested": True,
             "reason": None,
             "unavailable_reason": getattr(policy, "unavailable_reason", None),
         }
@@ -503,6 +513,7 @@ class MatchService:
         tenant_id: Optional[Any],
         page_mode: str = "offset",
         policy_metadata: Optional[Dict[str, Any]] = None,
+        apply_ordering: bool = True,
     ) -> Dict[str, Any]:
         if owner_id is None:
             return self._empty_llm_rerank_metadata(reason="owner_missing")
@@ -510,6 +521,7 @@ class MatchService:
             return self._empty_llm_rerank_metadata(reason="empty_primary_pool")
 
         metadata = dict(policy_metadata or self._llm_policy_metadata(owner_id=owner_id))
+        metadata["ordering_requested"] = bool(apply_ordering)
         top_n = max(0, int(metadata.get("top_n", 0) or 0))
         set_llm_rerank_policy_revision(metadata.get("policy_revision"))
         if not metadata.get("available", False):
@@ -554,6 +566,24 @@ class MatchService:
             metadata["reason"] = "no_current_successful_evaluations"
             for index, candidate in enumerate(primary_pool, start=1):
                 candidate.llm_reranked_rank = index
+            return metadata
+
+        if not apply_ordering:
+            metadata["applied"] = False
+            metadata["reranked_count"] = 0
+            metadata["reason"] = "ordering_disabled"
+            for index, candidate in enumerate(primary_pool, start=1):
+                candidate.llm_reranked_rank = index
+                if getattr(candidate, "llm_effective_for_rerank", False):
+                    candidate.llm_effective_for_rerank = False
+                    candidate.llm_ignored_for_rerank_reason = "ordering_disabled"
+                    evaluation = getattr(candidate, "llm_evaluation", None)
+                    effectiveness = getattr(evaluation, "llm_effectiveness", None)
+                    if isinstance(effectiveness, dict):
+                        effectiveness = dict(effectiveness)
+                        effectiveness["effective_for_rerank"] = False
+                        effectiveness["ignored_for_rerank_reason"] = "ordering_disabled"
+                        setattr(evaluation, "llm_effectiveness", effectiveness)
             return metadata
 
         def sort_key(candidate: Any):
@@ -1107,9 +1137,12 @@ class MatchService:
         provider_status_message = queue_metadata.get("provider_status_message")
         if not isinstance(provider_status_message, str):
             provider_status_message = None
-        score_quality = analysis.get("score_quality")
-        if not isinstance(score_quality, dict):
-            score_quality = {}
+        score_quality = score_quality_metadata(
+            getattr(evaluation, "llm_score", None),
+            getattr(evaluation, "verdict", None),
+        )
+        if isinstance(effectiveness.get("score_quality"), dict):
+            score_quality = effectiveness["score_quality"]
         return {
             "llm_evaluation_status": status,
             "llm_evaluation_id": str(getattr(evaluation, "id", "")),
@@ -1192,10 +1225,10 @@ class MatchService:
         actions: List[str] = []
         if source is not None and (getattr(source, "job_url_direct", None) or getattr(source, "job_url", None)):
             actions.append("open_posting")
-        site = str(getattr(source, "site", "") or "").lower()
-        if site in _COMPLIANT_REFRESH_SOURCE_SITES:
+        refresh_kind = source_refresh_kind(source)
+        if refresh_kind == "compliant_ats":
             actions.append("refresh_availability")
-        elif site in _PROHIBITED_SCRAPER_SOURCE_SITES:
+        elif refresh_kind == "prohibited":
             actions.append("refresh_unavailable_deployment_disabled")
         elif source is not None:
             actions.append("refresh_unavailable")

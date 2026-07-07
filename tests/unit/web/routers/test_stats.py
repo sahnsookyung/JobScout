@@ -437,25 +437,44 @@ class TestGetStats:
             job_post_total=1459,
             active_job_posts=1050,
             inactive_job_posts=409,
+            expired_job_posts=5,
             extracted_job_posts=352,
             embedded_job_posts=1129,
             ready_to_score_job_posts=352,
+            active_extracted_job_posts=300,
+            active_embedded_job_posts=940,
+            active_ready_to_score_job_posts=300,
             pending_extraction_job_posts=1103,
             processing_extraction_job_posts=2,
             retryable_extraction_job_posts=4,
             failed_extraction_job_posts=3,
+            active_pending_extraction_job_posts=22,
+            active_retryable_extraction_job_posts=3,
+            inactive_pending_extraction_job_posts=1082,
             pending_embedding_job_posts=330,
             processing_embedding_job_posts=5,
             retryable_embedding_job_posts=7,
             failed_embedding_job_posts=11,
+            active_pending_embedding_job_posts=9,
+            active_retryable_embedding_job_posts=1,
+            inactive_pending_embedding_job_posts=327,
+            missing_description_job_posts=304,
+            active_missing_description_job_posts=12,
+            inactive_missing_description_job_posts=292,
         )
         repo = SimpleNamespace(db=_FakeJobStatsDb(row))
 
         stats = _job_processing_stats(repo)
 
         assert stats["job_post_total"] == 1459
+        assert stats["expired_job_posts"] == 5
         assert stats["embedded_job_posts"] == 1129
+        assert stats["active_ready_to_score_job_posts"] == 300
         assert stats["pending_extraction_job_posts"] == 1103
+        assert stats["active_pending_extraction_job_posts"] == 22
+        assert stats["inactive_pending_extraction_job_posts"] == 1082
+        assert stats["missing_description_job_posts"] == 304
+        assert stats["inactive_missing_description_job_posts"] == 292
         assert stats["processing_extraction_job_posts"] == 2
         assert stats["retryable_extraction_job_posts"] == 4
         assert stats["failed_extraction_job_posts"] == 3
