@@ -42,6 +42,7 @@ from services.scorer_matcher.candidate_preferences import (
     PreferenceRerankResult,
     apply_candidate_preference_filters,
     apply_preference_semantic_reranking,
+    job_matches_candidate_preferences,
     load_candidate_preferences,
 )
 
@@ -1037,6 +1038,7 @@ def _run_matching_and_scoring(
                 repo,
                 resume_fingerprint,
                 tenant_id=None,
+                candidate_preferences=candidate_preferences,
             )
             reusable_match_ids_by_job_id = {
                 str(dto.job.id): str(dto.job_match_id)
@@ -1303,13 +1305,25 @@ def _persisted_match_to_dto(match) -> MatchResultDTO:
     )
 
 
-def _load_reusable_match_dtos(repo, resume_fingerprint: str, tenant_id=None) -> List[MatchResultDTO]:
+def _load_reusable_match_dtos(
+    repo,
+    resume_fingerprint: str,
+    tenant_id=None,
+    candidate_preferences: Optional[Dict[str, Any]] = None,
+) -> List[MatchResultDTO]:
+    reusable_matches = repo.get_reusable_matches_for_resume(
+        resume_fingerprint,
+        tenant_id=tenant_id,
+    )
+    if candidate_preferences:
+        reusable_matches = [
+            match
+            for match in reusable_matches
+            if job_matches_candidate_preferences(match.job_post, candidate_preferences)
+        ]
     return [
         _persisted_match_to_dto(match)
-        for match in repo.get_reusable_matches_for_resume(
-            resume_fingerprint,
-            tenant_id=tenant_id,
-        )
+        for match in reusable_matches
     ]
 
 

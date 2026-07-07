@@ -18,6 +18,7 @@ from services.scorer_matcher.pipeline import (
     _convert_matches_to_dtos,
     _finish_pipeline_result,
     _load_resume_from_db,
+    _load_reusable_match_dtos,
     _ranking_snapshot_from_match,
     _result_after_matching,
     _result_after_saving,
@@ -128,6 +129,79 @@ def _preliminary(
         missing_requirements=[],
         resume_fingerprint="fp-123",
     )
+
+
+def _persisted_match(
+    *,
+    job_id: str,
+    match_id: str,
+    is_remote: bool,
+    location_text: str,
+) -> SimpleNamespace:
+    job_post = SimpleNamespace(
+        id=job_id,
+        title="Engineer",
+        company="Acme",
+        location_text=location_text,
+        is_remote=is_remote,
+        content_hash="hash-1",
+        salary_min=None,
+        salary_max=None,
+        job_type=None,
+        raw_payload={},
+        description="",
+        company_description="",
+    )
+    return SimpleNamespace(
+        id=match_id,
+        job_post=job_post,
+        fit_score=80.0,
+        preference_score=None,
+        job_similarity=0.8,
+        required_coverage=0.75,
+        preferred_requirement_coverage=0.0,
+        requirement_matches=[],
+        resume_fingerprint="fp-123",
+        fit_components={},
+        preference_components={},
+        ranking_snapshot={},
+        base_score=80.0,
+        penalties=0.0,
+        penalty_details={},
+        match_type="requirements_only",
+    )
+
+
+def test_load_reusable_match_dtos_applies_current_hard_preferences():
+    repo = MagicMock()
+    repo.get_reusable_matches_for_resume.return_value = [
+        _persisted_match(
+            job_id="remote-job",
+            match_id="remote-match",
+            is_remote=True,
+            location_text="Remote",
+        ),
+        _persisted_match(
+            job_id="onsite-job",
+            match_id="onsite-match",
+            is_remote=False,
+            location_text="On-site",
+        ),
+    ]
+
+    dtos = _load_reusable_match_dtos(
+        repo,
+        "fp-123",
+        candidate_preferences={
+            "remote_mode": "remote",
+            "target_locations": ["Remote"],
+            "visa_sponsorship_required": False,
+            "salary_min": None,
+            "employment_types": [],
+        },
+    )
+
+    assert [dto.job.id for dto in dtos] == ["remote-job"]
 
 
 class TestLoadResumeFromDb:

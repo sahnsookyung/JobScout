@@ -204,10 +204,8 @@ def _job_supports_visa(job) -> bool:
     return any(pattern.search(haystack) for pattern in POSITIVE_VISA_PATTERNS)
 
 
-def _matches_candidate_preferences(preliminary, preferences: Dict[str, Any]) -> bool:
-    """Return whether a preliminary match passes all configured hard filters."""
-    job = preliminary.job
-
+def job_matches_candidate_preferences(job, preferences: Dict[str, Any]) -> bool:
+    """Return whether a job passes all configured candidate hard filters."""
     if not _job_matches_remote_mode(job, preferences["remote_mode"]):
         return False
     if not _job_matches_locations(job, preferences["target_locations"]):
@@ -219,6 +217,11 @@ def _matches_candidate_preferences(preliminary, preferences: Dict[str, Any]) -> 
     if not _job_matches_employment_types(job, preferences["employment_types"]):
         return False
     return True
+
+
+def _matches_candidate_preferences(preliminary, preferences: Dict[str, Any]) -> bool:
+    """Return whether a preliminary match passes all configured hard filters."""
+    return job_matches_candidate_preferences(preliminary.job, preferences)
 
 
 def apply_candidate_preference_filters(preliminary_matches, preferences: Optional[Dict[str, Any]]):

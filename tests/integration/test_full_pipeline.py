@@ -366,7 +366,10 @@ class TestFullPipelineIntegration(unittest.TestCase):
                 first_seen_at=datetime.now(),
                 last_seen_at=datetime.now(),
                 status="active",
+                is_extracted=True,
                 is_embedded=True,
+                extraction_status="succeeded",
+                embedding_status="succeeded",
                 summary_embedding=np.random.randn(1024),
                 raw_payload={
                     "source_site": "test-pipeline",
