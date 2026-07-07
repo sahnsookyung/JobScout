@@ -1048,6 +1048,7 @@ def _run_matching_and_scoring(
             matching_backlog_remaining = repo.count_pending_matching_jobs(
                 resume_fingerprint,
                 tenant_id=None,
+                candidate_preferences=candidate_preferences,
             )
 
         preliminary_matches = _run_preliminary_matching(

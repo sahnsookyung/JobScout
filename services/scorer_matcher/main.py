@@ -42,6 +42,7 @@ from core.redis_streams import (
 )
 from database.models import JobPost
 from database.uow import job_uow
+from services.scorer_matcher.candidate_preferences import load_candidate_preferences
 from services.scorer_matcher.pipeline import run_matching_pipeline
 from database.init_db import init_db
 
@@ -124,6 +125,7 @@ def _matching_page_size(config) -> int:
 def _job_preparation_stats(
     resume_fingerprint: Optional[str] = None,
     *,
+    owner_id: Optional[str] = None,
     matching_page: Optional[int] = None,
     matching_page_size: Optional[int] = None,
 ) -> dict:
@@ -162,8 +164,12 @@ def _job_preparation_stats(
                 "jobs_pending_embedding": int(pending_embedding),
             }
             if resume_fingerprint:
+                candidate_preferences = load_candidate_preferences(repo, owner_id)
                 processed_fresh = repo.count_reusable_matches_for_resume(resume_fingerprint)
-                pending_matching = repo.count_pending_matching_jobs(resume_fingerprint)
+                pending_matching = repo.count_pending_matching_jobs(
+                    resume_fingerprint,
+                    candidate_preferences=candidate_preferences,
+                )
                 stats.update(
                     {
                         "jobs_matching_processed_fresh": int(processed_fresh),
@@ -374,7 +380,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
         execution_time = result.execution_time if result else 0.0
         stale_metadata = _compute_stale_result_metadata(owner_id, upload_id)
         resolved_stats = {
-            **(stats or _job_preparation_stats(resume_fingerprint)),
+            **(stats or _job_preparation_stats(resume_fingerprint, owner_id=owner_id)),
             "candidates_considered": matches_count,
             "matches_selected": matches_count,
             "matches_saved": saved_count,
@@ -425,7 +431,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
             "resume_fingerprint": resume_fingerprint,
             "error": str(error),
             "updated_at": _utc_now_iso(),
-            "stats": _job_preparation_stats(resume_fingerprint),
+            "stats": _job_preparation_stats(resume_fingerprint, owner_id=owner_id),
         }
 
     async def _do_process(self, msg_id: str, msg: dict) -> tuple[bool, dict]:
@@ -466,6 +472,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
         task_stop_event = threading.Event()
         initial_stats = _job_preparation_stats(
             resume_fingerprint,
+            owner_id=owner_id,
             matching_page=matching_page,
             matching_page_size=matching_page_size,
         )
@@ -476,6 +483,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
             last_step = step
             stats = _job_preparation_stats(
                 resume_fingerprint,
+                owner_id=owner_id,
                 matching_page=matching_page,
                 matching_page_size=matching_page_size,
             )
@@ -532,6 +540,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                 final_status = "completed"
             final_stats = _job_preparation_stats(
                 resume_fingerprint,
+                owner_id=owner_id,
                 matching_page=matching_page + 1,
                 matching_page_size=matching_page_size,
             )

@@ -5,6 +5,8 @@ Tests lazy-loading properties and delegation methods of JobRepository.
 
 from unittest.mock import MagicMock
 
+from sqlalchemy.dialects import postgresql
+
 from database.models import SYSTEM_OWNER_ID
 from database.repository import JobRepository
 from database.repositories.job_post import JobPostRepository
@@ -18,6 +20,15 @@ from database.repositories.user_feature_capability import UserFeatureCapabilityR
 def make_repo():
     mock_db = MagicMock()
     return JobRepository(mock_db), mock_db
+
+
+def _compiled_sql(stmt) -> str:
+    return str(
+        stmt.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +111,54 @@ class TestJobRepositoryProperties:
         _ = repo.job_post
         assert repo._resume_repo is None
         assert repo._match_repo is None
+
+
+class TestMatchRepositoryBacklogCounts:
+    def test_pending_matching_count_applies_hard_candidate_preferences(self):
+        db = MagicMock()
+        db.execute.return_value.scalar.return_value = 0
+        repo = MatchRepository(db)
+
+        result = repo.count_pending_matching_jobs(
+            "resume-fp",
+            candidate_preferences={
+                "remote_mode": "remote",
+                "target_locations": ["Remote"],
+                "visa_sponsorship_required": False,
+                "salary_min": None,
+                "employment_types": [],
+            },
+        )
+
+        assert result == 0
+        stmt = db.execute.call_args.args[0]
+        sql = _compiled_sql(stmt).lower()
+        assert "job_match.resume_fingerprint" in sql
+        assert "job_post.is_remote is true" in sql
+        assert "job_post.location_text" in sql
+        assert "job_post.summary_embedding is not null" in sql
+
+    def test_pending_matching_count_excludes_explicit_remote_for_onsite_preference(self):
+        db = MagicMock()
+        db.execute.return_value.scalar.return_value = 0
+        repo = MatchRepository(db)
+
+        repo.count_pending_matching_jobs(
+            "resume-fp",
+            candidate_preferences={
+                "remote_mode": "onsite",
+                "target_locations": [],
+                "visa_sponsorship_required": False,
+                "salary_min": None,
+                "employment_types": [],
+            },
+        )
+
+        stmt = db.execute.call_args.args[0]
+        sql = _compiled_sql(stmt).lower()
+        assert "job_post.is_remote is true" in sql
+        assert "remote" in sql
+        assert "hybrid" in sql
 
 
 # ---------------------------------------------------------------------------

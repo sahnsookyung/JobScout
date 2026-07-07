@@ -1,6 +1,6 @@
 import logging
 from typing import List, Optional, Any
-from sqlalchemy import select, func
+from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.orm import joinedload
 
 from database.models import JobMatch, JobMatchRequirement, JobPost, StructuredResume
@@ -126,6 +126,7 @@ class MatchRepository(BaseRepository):
         resume_fingerprint: str,
         *,
         tenant_id: Any | None = None,
+        candidate_preferences: Optional[dict[str, Any]] = None,
     ) -> int:
         reusable_exists = (
             select(JobMatch.id)
@@ -145,7 +146,116 @@ class MatchRepository(BaseRepository):
         )
         if tenant_id is not None:
             stmt = stmt.where(JobPost.tenant_id == tenant_id)
+        stmt = self._apply_candidate_preference_filters(stmt, candidate_preferences)
         return int(self.db.execute(stmt).scalar() or 0)
+
+    @staticmethod
+    def _normalize_preference_text(value: Any) -> str:
+        if value is None:
+            return ""
+        return " ".join(str(value).strip().lower().split())
+
+    def _apply_candidate_preference_filters(self, stmt, preferences: Optional[dict[str, Any]]):
+        """Apply SQL-compatible hard preference filters to backlog counts."""
+        if not preferences:
+            return stmt
+
+        remote_mode = self._normalize_preference_text(preferences.get("remote_mode")) or "any"
+        work_mode_text = func.lower(func.coalesce(JobPost.work_from_home_type, ""))
+        location_text = func.lower(func.coalesce(JobPost.location_text, ""))
+
+        if remote_mode == "remote":
+            stmt = stmt.where(or_(JobPost.is_remote.is_(True), work_mode_text.like("%remote%")))
+        elif remote_mode == "hybrid":
+            stmt = stmt.where(
+                or_(
+                    JobPost.is_remote.is_(True),
+                    work_mode_text.like("%remote%"),
+                    work_mode_text.like("%hybrid%"),
+                    location_text.like("%hybrid%"),
+                )
+            )
+        elif remote_mode == "onsite":
+            stmt = stmt.where(
+                or_(
+                    ~or_(JobPost.is_remote.is_(True), work_mode_text.like("%remote%")),
+                    work_mode_text.like("%hybrid%"),
+                    location_text.like("%hybrid%"),
+                )
+            )
+
+        target_locations = [
+            self._normalize_preference_text(value)
+            for value in (preferences.get("target_locations") or [])
+            if self._normalize_preference_text(value)
+        ]
+        if target_locations:
+            location_filters = [
+                location_text.like(f"%{target.replace('%', '')}%")
+                for target in target_locations
+            ]
+            if any("remote" in target for target in target_locations):
+                location_filters.append(JobPost.is_remote.is_(True))
+                location_filters.append(work_mode_text.like("%remote%"))
+            stmt = stmt.where(or_(*location_filters))
+
+        salary_min = preferences.get("salary_min")
+        if salary_min is not None:
+            try:
+                requested_floor = float(salary_min)
+            except (TypeError, ValueError):
+                requested_floor = None
+            if requested_floor is not None:
+                stmt = stmt.where(
+                    or_(
+                        and_(JobPost.salary_min.is_(None), JobPost.salary_max.is_(None)),
+                        JobPost.salary_min >= requested_floor,
+                        JobPost.salary_max >= requested_floor,
+                    )
+                )
+
+        employment_types = [
+            self._normalize_preference_text(value)
+            for value in (preferences.get("employment_types") or [])
+            if self._normalize_preference_text(value)
+        ]
+        if employment_types:
+            job_type_text = func.lower(func.coalesce(JobPost.job_type, ""))
+            stmt = stmt.where(
+                or_(
+                    job_type_text == "",
+                    *[
+                        job_type_text.like(f"%{employment_type.replace('%', '')}%")
+                        for employment_type in employment_types
+                    ],
+                )
+            )
+
+        if preferences.get("visa_sponsorship_required"):
+            haystack = func.lower(
+                func.concat(
+                    func.coalesce(JobPost.description, ""),
+                    " ",
+                    func.coalesce(JobPost.company_description, ""),
+                    " ",
+                    func.coalesce(cast(JobPost.raw_payload, String), ""),
+                )
+            )
+            stmt = stmt.where(
+                and_(
+                    ~haystack.like("%no visa sponsorship%"),
+                    ~haystack.like("%unable to sponsor%"),
+                    ~haystack.like("%without sponsorship%"),
+                    or_(
+                        haystack.like("%visa sponsorship%"),
+                        haystack.like("%sponsor%"),
+                        haystack.like("%work authorization support%"),
+                        haystack.like("%relocation assistance%"),
+                    ),
+                )
+            )
+
+        return stmt
 
     def activate_matches_by_ids(self, match_ids: List[Any]) -> int:
         if not match_ids:

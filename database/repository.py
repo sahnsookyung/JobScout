@@ -454,10 +454,12 @@ class JobRepository:
         resume_fingerprint: str,
         *,
         tenant_id: Optional[Any] = None,
+        candidate_preferences: Optional[dict[str, Any]] = None,
     ) -> int:
         return self.match.count_pending_matching_jobs(
             resume_fingerprint,
             tenant_id=tenant_id,
+            candidate_preferences=candidate_preferences,
         )
 
     def activate_matches_by_ids(self, match_ids: List[Any]) -> int:

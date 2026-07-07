@@ -587,6 +587,34 @@ class TestPipelineRoutes(unittest.TestCase):
         self.assertEqual(data["resume_fingerprint"], "fp-old")
 
     @patch("web.backend.routers.pipeline.get_task_state")
+    def test_pipeline_status_explains_matching_backlog_no_progress(self, mock_get_task_state):
+        mock_get_task_state.return_value = {
+            "status": "completed",
+            "step": "notifying",
+            "owner_id": "00000000-0000-0000-0000-000000000001",
+            "warnings": [{"code": "matching_backlog_no_progress"}],
+            "stats": {
+                "jobs_ready_to_score": 10,
+                "jobs_pending_matching": 4,
+                "jobs_pending_extraction": 0,
+                "jobs_pending_embedding": 0,
+            },
+            "result": {
+                "matches_count": 0,
+                "saved_count": 0,
+                "notified_count": 0,
+                "execution_time": 0.5,
+            },
+        }
+
+        response = self.client.get("/api/pipeline/status/task-stalled")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["warnings"][0]["code"], "matching_backlog_no_progress")
+        self.assertIn("eligible", data["warnings"][0]["message"])
+
+    @patch("web.backend.routers.pipeline.get_task_state")
     @patch("web.backend.routers.pipeline.get_redis_client")
     def test_active_pipeline_endpoint_returns_running_task(
         self,

@@ -160,6 +160,10 @@ USER_SAFE_WARNING_MESSAGES = {
     "notification_delivery_rejected": "No notification channel accepted delivery for this run.",
     "scorer_degraded": "Some relevance scoring used the deterministic fallback.",
     "stale_resume": "A newer resume upload is active, so this run is no longer current.",
+    "matching_backlog_no_progress": "Some prepared jobs remain eligible for matching, but this page made no progress.",
+    "matching_backlog_page_queued": "More eligible jobs are waiting; another matching page is already queued.",
+    "matching_backlog_page_enqueued": "More eligible jobs are waiting; another matching page was queued.",
+    "matching_backlog_enqueue_failed": "More eligible jobs are waiting, but the next matching page could not be queued.",
 }
 USER_SAFE_FAILURES = {
     "resume_parse_failed": ("Resume parsing failed. Try a simpler PDF/DOCX or upload plain text.", "retry_resume", True),

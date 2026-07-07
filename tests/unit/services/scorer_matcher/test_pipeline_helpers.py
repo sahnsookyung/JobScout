@@ -1066,6 +1066,73 @@ class TestRunMatchingAndScoring:
         assert result.cached_job_match_ids_by_job_id == {"job-cached": "cached-match"}
         assert result.matching_page_size == 500
 
+    @patch("services.scorer_matcher.pipeline._load_reusable_match_dtos", return_value=[])
+    @patch("services.scorer_matcher.pipeline._convert_matches_to_dtos", return_value=[])
+    @patch(
+        "services.scorer_matcher.pipeline._prepare_selection_result",
+        return_value=SimpleNamespace(
+            selected_matches=[],
+            item_snapshots=[],
+            policy_snapshot=SimpleNamespace(),
+            owner_id="user-1",
+        ),
+    )
+    @patch("services.scorer_matcher.pipeline.apply_preference_semantic_reranking", return_value=[])
+    @patch("services.scorer_matcher.pipeline._run_scorer_service", return_value=[])
+    @patch("services.scorer_matcher.pipeline.ScoringService")
+    @patch("services.scorer_matcher.pipeline._run_preliminary_matching", return_value=[])
+    @patch("services.scorer_matcher.pipeline._prepare_matching_run")
+    @patch("services.scorer_matcher.pipeline.job_uow")
+    def test_pending_matching_backlog_count_uses_candidate_preferences(
+        self,
+        mock_uow,
+        mock_prepare,
+        _mock_preliminary,
+        _mock_scorer_cls,
+        _mock_run_scorer,
+        _mock_apply_preferences,
+        _mock_prepare_selection,
+        _mock_convert,
+        _mock_cached,
+    ):
+        repo = MagicMock()
+        repo.candidate_preferences.get_preferences.return_value = SimpleNamespace(
+            remote_mode="remote",
+            target_locations=["Remote"],
+            visa_sponsorship_required=False,
+            salary_min=None,
+            employment_types=[],
+            soft_preferences="",
+            preference_mode="semantic_rerank",
+            revision=3,
+        )
+        repo.count_pending_matching_jobs.return_value = 0
+        mock_uow.return_value = _uow(repo)
+        mock_prepare.return_value = (
+            SimpleNamespace(extracted_data={}, total_experience_years=3, owner_id="user-1"),
+            MagicMock(),
+        )
+
+        _run_matching_and_scoring(
+            ctx=SimpleNamespace(config=SimpleNamespace(preferences=SimpleNamespace()), ai_service=None),
+            resume_data={"profile": {}},
+            resume_fingerprint="fp-123",
+            should_re_extract=False,
+            matching_config=SimpleNamespace(
+                scorer=MagicMock(),
+                matcher=SimpleNamespace(batch_size=500),
+                recalculate_existing=False,
+            ),
+            stop_event=threading.Event(),
+            status_callback=None,
+            owner_id="user-1",
+        )
+
+        repo.count_pending_matching_jobs.assert_called_once()
+        call_kwargs = repo.count_pending_matching_jobs.call_args.kwargs
+        assert call_kwargs["candidate_preferences"]["remote_mode"] == "remote"
+        assert call_kwargs["candidate_preferences"]["target_locations"] == ["Remote"]
+
 
 class TestRunMatchingPipeline:
     def test_disabled_matching_returns_early(self):
