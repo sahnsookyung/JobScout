@@ -356,6 +356,7 @@ class TestJobPostDelegation:
             limit=10,
             tenant_id="tenant-x",
             require_remote=True,
+            exclude_reusable_resume_fingerprint=None,
         )
         assert result == [("job", 0.5, 0.8)]
 
