@@ -3,8 +3,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sqlalchemy import func, select
-
 from core.metrics import record_jobs_embedding_queued, record_jobs_extraction_queued
 from core.redis_streams import (
     STREAM_EMBEDDINGS_BATCH,
@@ -13,9 +11,9 @@ from core.redis_streams import (
     enqueue_job,
 )
 from database.database import db_session_scope
-from database.models import JobMatch, JobPost
 from database.repository import JobRepository
 from services.orchestrator.pipeline_runs import PipelineRunService
+from services.scorer_matcher.candidate_preferences import load_candidate_preferences
 
 logger = logging.getLogger(__name__)
 
@@ -62,25 +60,19 @@ def run_stuck_job_repair(
             embedding_jobs = repo.job_post.claim_unembedded_jobs_for_queue(limit=embedding_limit)
             latest_resume_fingerprint = repo.get_latest_ready_resume_fingerprint()
             ready_unmatched_count = 0
+            matching_owner_id: str | None = None
             if latest_resume_fingerprint:
-                has_match = (
-                    select(JobMatch.id)
-                    .where(
-                        JobMatch.job_post_id == JobPost.id,
-                        JobMatch.resume_fingerprint == latest_resume_fingerprint,
-                    )
-                    .exists()
+                structured_resume = repo.get_structured_resume_by_fingerprint(
+                    latest_resume_fingerprint
                 )
-                ready_unmatched_count = int(
-                    db.execute(
-                        select(func.count(JobPost.id))
-                        .where(
-                            JobPost.is_extracted.is_(True),
-                            JobPost.is_embedded.is_(True),
-                            ~has_match,
-                        )
-                    ).scalar_one()
-                    or 0
+                owner_id = getattr(structured_resume, "owner_id", None)
+                tenant_id = getattr(structured_resume, "tenant_id", None)
+                matching_owner_id = str(owner_id) if owner_id is not None else None
+                candidate_preferences = load_candidate_preferences(repo, matching_owner_id)
+                ready_unmatched_count = repo.count_pending_matching_jobs(
+                    latest_resume_fingerprint,
+                    tenant_id=tenant_id,
+                    candidate_preferences=candidate_preferences,
                 )
 
         enqueued = {
@@ -115,13 +107,16 @@ def run_stuck_job_repair(
             record_jobs_embedding_queued(len(embedding_jobs))
 
         if latest_resume_fingerprint and ready_unmatched_count:
+            matching_payload = {
+                "task_id": f"{task_id}-match",
+                "resume_fingerprint": latest_resume_fingerprint,
+                **correlation,
+            }
+            if matching_owner_id is not None:
+                matching_payload["owner_id"] = matching_owner_id
             enqueue_job(
                 STREAM_MATCHING,
-                {
-                    "task_id": f"{task_id}-match",
-                    "resume_fingerprint": latest_resume_fingerprint,
-                    **correlation,
-                },
+                matching_payload,
             )
             enqueued["matching_queued"] = ready_unmatched_count
 
