@@ -213,6 +213,36 @@ class TestPipelineRoutes(unittest.TestCase):
         self.assertEqual(sources[2]["fetch_mode"], "ats_api")
         self.assertTrue(response.json()["api_based_fetching"])
 
+    @patch("web.backend.routers.pipeline.get_config")
+    def test_fetch_sources_endpoint_allows_seed_websites_when_prod_override_enabled(self, mock_config):
+        from core.config_loader import ScraperConfig
+
+        mock_config.return_value = SimpleNamespace(
+            jobspy=SimpleNamespace(url="http://jobspy:8000"),
+            scrapers=[
+                ScraperConfig(site_type=["tokyodev"], search_term="", results_wanted=5),
+                ScraperConfig(site_type=["indeed"], search_term="platform"),
+            ],
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "JOBSCOUT_ENV": "production",
+                "JOBSCOUT_ALLOW_EXTERNAL_SEED_FETCHER_IN_PRODUCTION": "true",
+            },
+        ):
+            response = self.client.get("/api/pipeline/sources")
+
+        self.assertEqual(response.status_code, 200)
+        sources = response.json()["sources"]
+        self.assertTrue(sources[0]["deployment_allowed"])
+        self.assertEqual(sources[0]["fetch_mode"], "seed_website")
+        self.assertIsNone(sources[0]["disabled_reason"])
+        self.assertIsNone(sources[0]["external_fetch_status"].get("disabled_reason"))
+        self.assertFalse(sources[0]["api_fetch_available"])
+        self.assertEqual(sources[0]["external_fetch_status"]["status"], "unconfigured")
+
     @patch("web.backend.routers.pipeline.set_task_state")
     @patch("web.backend.routers.pipeline.get_redis_client")
     @patch("web.backend.services.clients.orchestrator_client")

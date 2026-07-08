@@ -412,6 +412,21 @@ def _production_like_deployment() -> bool:
     )
     return env.strip().lower() in {"production", "prod", "staging"}
 
+
+def _allow_seed_fetcher_in_production() -> bool:
+    raw = os.getenv("JOBSCOUT_ALLOW_EXTERNAL_SEED_FETCHER_IN_PRODUCTION")
+    if raw is None:
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _source_mode_disabled_by_deployment_policy(fetch_mode: str) -> bool:
+    if not _production_like_deployment():
+        return False
+    if fetch_mode == "seed_website":
+        return not _allow_seed_fetcher_in_production()
+    return fetch_mode in DEPLOYMENT_POLICY_DISABLED_FETCH_MODES
+
 def _source_provider_name(
     site_type: str,
     fetch_mode: str,
@@ -442,7 +457,7 @@ def _build_fetch_source_response(
     fetch_mode = _source_fetch_mode(site_type, scraper_cfg, str(seed_url) if seed_url else None)
     disabled_reason = (
         SOURCE_POLICY_DISABLED_REASON
-        if _production_like_deployment() and fetch_mode in DEPLOYMENT_POLICY_DISABLED_FETCH_MODES
+        if _source_mode_disabled_by_deployment_policy(fetch_mode)
         else None
     )
     external_status = (
