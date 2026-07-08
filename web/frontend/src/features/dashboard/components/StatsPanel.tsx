@@ -218,7 +218,7 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
                 </dl>
             </div>
 
-            <div className="min-w-0 border-t border-rule pt-6 lg:border-t-0 lg:pt-0">
+            <div className="min-w-0 border-t border-rule pt-6 lg:border-t-0 lg:pt-0 lg:flex lg:min-h-0 lg:flex-col lg:justify-center">
                 <p className="caption">Score distribution</p>
                 <div className="mt-3 space-y-2.5">
                     <CompactScoreBar label="Strong" range="80+" value={scoreDist?.excellent ?? 0} total={totalMatches} tone="accent" />
