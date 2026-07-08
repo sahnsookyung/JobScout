@@ -81,6 +81,23 @@ class JobPost(Base):
     description_completeness = Column(Text, nullable=False, default='unknown', server_default=sql_text("'unknown'"))
     description_warning_code = Column(Text)
     description_hash = Column(Text)
+    description_recovery_status = Column(
+        Text,
+        nullable=False,
+        default='not_needed',
+        server_default=sql_text("'not_needed'"),
+    )
+    description_recovery_reason = Column(Text)
+    description_recovery_attempts = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=sql_text("0"),
+    )
+    description_recovery_last_attempt_at = Column(TIMESTAMP(timezone=True))
+    description_recovery_next_retry_at = Column(TIMESTAMP(timezone=True))
+    description_recovery_last_error = Column(Text)
+    description_recovery_run_id = Column(Text)
     skills_raw = Column(Text) # CSV or raw string
     raw_payload = Column(JSONB, nullable=False, default=dict)
     content_hash = Column(Text)  # Hash of description for content change detection
@@ -116,6 +133,7 @@ class JobPost(Base):
     sources = relationship("JobPostSource", back_populates="job_post", cascade=CASCADE_DELETE_ORPHAN)
     requirements = relationship("JobRequirementUnit", back_populates="job_post", cascade=CASCADE_DELETE_ORPHAN)
     benefits = relationship("JobBenefit", back_populates="job_post", cascade=CASCADE_DELETE_ORPHAN)
+    offerings_profile = relationship("JobOfferingsProfile", uselist=False, back_populates="job_post", cascade=CASCADE_DELETE_ORPHAN)
     matches = relationship("JobMatch", back_populates="job_post", cascade=CASCADE_DELETE_ORPHAN)
 
     __table_args__ = (
@@ -140,6 +158,21 @@ class JobPost(Base):
         Index('idx_job_post_tenant', 'tenant_id'),
         Index('idx_job_post_content_hash', 'content_hash'),
         Index('idx_job_post_description_hash', 'description_hash'),
+        Index(
+            'idx_job_post_description_recovery_scan',
+            'tenant_id',
+            'status',
+            'description_recovery_status',
+            'description_recovery_next_retry_at',
+            'first_seen_at',
+        ),
+        Index(
+            'idx_job_post_missing_description',
+            'tenant_id',
+            'status',
+            'extraction_status',
+            'first_seen_at',
+        ),
         Index('idx_job_post_extraction_retry', 'extraction_status', 'extraction_next_retry_at'),
         Index('idx_job_post_embedding_retry', 'embedding_status', 'embedding_next_retry_at'),
         # HNSW index for vector similarity search on summary_embedding
@@ -241,4 +274,29 @@ class JobBenefit(Base):
     __table_args__ = (
         Index('idx_jb_job', 'job_post_id'),
         Index('idx_jb_category', 'category'),
+    )
+
+class JobOfferingsProfile(Base):
+    __tablename__ = 'job_offerings_profile'
+
+    job_post_id = Column(UUID(as_uuid=True), ForeignKey(JOB_POST_ID_FK, ondelete='CASCADE'), primary_key=True)
+    profile_json = Column(JSONB, nullable=False, default=dict, server_default=sql_text("'{}'::jsonb"))
+    profile_schema_version = Column(Integer, nullable=False, default=1, server_default=sql_text("1"))
+    source_description_hash = Column(Text)
+    extraction_provider = Column(Text)
+    extraction_model = Column(Text)
+    confidence = Column(Numeric(5, 4))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=UTC_NOW,
+        onupdate=UTC_NOW,
+    )
+
+    job_post = relationship("JobPost", back_populates="offerings_profile")
+
+    __table_args__ = (
+        Index('idx_jop_source_hash', 'source_description_hash'),
+        Index('idx_jop_schema_version', 'profile_schema_version'),
     )

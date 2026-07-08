@@ -97,6 +97,7 @@ SCRAPER_EMBEDDING_LIMIT = _ORCHESTRATOR_CONFIG.scraper_embedding_limit
 PROCESS_IMPORTED_EMBEDDING_MAX_BATCHES = _ORCHESTRATOR_CONFIG.process_imported_embedding_max_batches
 BATCH_STAGE_TIMEOUT_SECONDS = float(_ORCHESTRATOR_CONFIG.batch_stage_timeout_seconds)
 REPAIR_INTERVAL_SECONDS = _ORCHESTRATOR_CONFIG.repair_interval_seconds
+DESCRIPTION_RECOVERY_LIMIT = _ORCHESTRATOR_CONFIG.description_recovery_limit
 RECENT_TASK_LIMIT = _ORCHESTRATOR_CONFIG.recent_task_limit
 RECENT_TASK_SCAN_LIMIT = _ORCHESTRATOR_CONFIG.recent_task_scan_limit
 
@@ -218,6 +219,7 @@ async def lifespan(app: FastAPI):
         interval_seconds=REPAIR_INTERVAL_SECONDS,
         extraction_limit=SCRAPER_EXTRACTION_LIMIT,
         embedding_limit=SCRAPER_EMBEDDING_LIMIT,
+        description_recovery_limit=DESCRIPTION_RECOVERY_LIMIT,
         repair_fn=run_stuck_job_repair,
     )
     await repair_scheduler.start()

@@ -10,6 +10,7 @@ from core.config_loader import (
     LlmJudgeProviderRuntimeConfig,
     LlmJudgeRuntimeConfig,
     MatcherConfig,
+    PreferencesConfig,
     ScorerConfig,
     SemanticFitConfig,
     SemanticFitCrossEncoderLocalConfig,
@@ -483,6 +484,26 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(runtime.model, "openai/gpt-oss-20b")
         self.assertEqual(runtime.structured_output_mode, "auto")
         self.assertEqual(config.matching.llm_judge.requirement_text_max_chars, 420)
+
+    def test_preference_semantic_reranker_top_n_bounds_and_clamping(self):
+        config = PreferencesConfig.model_validate(
+            {
+                "semantic_reranker": {
+                    "top_n_default": 250,
+                    "top_n_min": 10,
+                    "top_n_max": 100,
+                }
+            }
+        )
+
+        self.assertEqual(
+            config.preference_rerank_top_n_bounds(),
+            {"min": 10, "max": 100, "default": 100},
+        )
+        self.assertEqual(config.resolve_preference_rerank_top_n(None), 100)
+        self.assertEqual(config.resolve_preference_rerank_top_n(1), 10)
+        self.assertEqual(config.resolve_preference_rerank_top_n(500), 100)
+        self.assertEqual(config.resolve_preference_rerank_top_n(25), 25)
 
     def test_match_llm_judge_env_does_not_match_groq_lookalike_host(self):
         config_yaml = yaml.dump({

@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Tuple, Optional, cast
+import hashlib
 import logging
 import os
 import math
@@ -7,7 +8,12 @@ from database.repository import JobRepository
 from core.llm.interfaces import LLMProvider
 from core.utils import JobFingerprinter
 from pydantic import ValidationError
-from core.llm.schema_models import JobExtraction, ResumeSchema
+from core.llm.schema_models import (
+    JOB_OFFERINGS_PROFILE_VERSION,
+    JobExtraction,
+    JobOfferingsProfile,
+    ResumeSchema,
+)
 from database.models import (
     RESUME_PROCESSING_EMBEDDING,
     RESUME_PROCESSING_EXTRACTED,
@@ -89,9 +95,92 @@ class JobETLService:
             "job_summary": " ".join(summary_parts),
             "requirements": [],
             "benefits": [],
+            "offerings_profile": JobETLService._sparse_job_offerings_profile(
+                job,
+                reason=reason,
+            ),
             "extraction_quality": "minimal",
             "extraction_warning": reason,
         }
+
+    @staticmethod
+    def _signal(label: str, evidence: str, confidence: float = 0.5) -> Dict[str, Any]:
+        return {
+            "label": label,
+            "evidence": evidence,
+            "confidence": max(0.0, min(1.0, float(confidence))),
+        }
+
+    @staticmethod
+    def _sparse_job_offerings_profile(job, *, reason: str) -> Dict[str, Any]:
+        """Build a conservative offerings profile from already-known metadata."""
+        location_text = str(getattr(job, "location_text", "") or "").strip()
+        work_from_home_type = str(getattr(job, "work_from_home_type", "") or "").strip()
+        work_arrangement = work_from_home_type or (
+            "remote" if getattr(job, "is_remote", None) is True else None
+        )
+        location_timezone = (
+            [JobETLService._signal("location", location_text, 0.6)]
+            if location_text
+            else []
+        )
+        flexibility = (
+            [JobETLService._signal("work arrangement", work_arrangement, 0.5)]
+            if work_arrangement
+            else []
+        )
+        tech_environment = []
+        skills_raw = str(getattr(job, "skills_raw", "") or "").strip()
+        if skills_raw:
+            tech_environment.append(JobETLService._signal("tech stack", skills_raw, 0.4))
+
+        evidence_snippets = [item for item in (location_text, work_arrangement, skills_raw) if item]
+        return {
+            "schema_version": JOB_OFFERINGS_PROFILE_VERSION,
+            "work_arrangement": work_arrangement,
+            "location_timezone": location_timezone,
+            "visa_sponsorship": None,
+            "compensation": [],
+            "benefits_perks": [],
+            "flexibility": flexibility,
+            "team_culture": [],
+            "mentorship_growth": [],
+            "product_domain": [],
+            "tech_environment": tech_environment,
+            "negative_signals": [
+                JobETLService._signal("low detail description", reason, 0.7)
+            ],
+            "evidence_snippets": evidence_snippets[:5],
+            "confidence": 0.25,
+        }
+
+    @staticmethod
+    def _description_hash(job) -> Optional[str]:
+        existing = getattr(job, "description_hash", None)
+        if existing:
+            return str(existing)
+        description = getattr(job, "description", None)
+        if not isinstance(description, str) or not description:
+            return None
+        return hashlib.sha256(description.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _normalize_offerings_profile(job, extraction_result: Dict[str, Any]) -> Dict[str, Any]:
+        raw_profile = extraction_result.get("offerings_profile")
+        if isinstance(raw_profile, JobOfferingsProfile):
+            return raw_profile.model_dump(mode="json")
+        if isinstance(raw_profile, dict):
+            try:
+                return JobOfferingsProfile.model_validate(raw_profile).model_dump(mode="json")
+            except Exception:
+                logger.warning(
+                    "Job offerings profile failed validation; using sparse fallback",
+                    exc_info=True,
+                )
+        return JobETLService._sparse_job_offerings_profile(
+            job,
+            reason=str(extraction_result.get("extraction_warning") or "offerings_profile_missing"),
+        )
 
     @staticmethod
     def _normalize_extraction_result(extraction_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -310,6 +399,10 @@ class JobETLService:
                 "description_too_short_for_llm_extraction",
             )
         extraction_result = self._normalize_extraction_result(extraction_result)
+        extraction_result["offerings_profile"] = self._normalize_offerings_profile(
+            job,
+            extraction_result,
+        )
 
         # Check if extraction returned meaningful data
         requirements = extraction_result.get('requirements', [])
@@ -348,6 +441,13 @@ class JobETLService:
         repo.update_content_metadata(job.id, data)
         repo.save_requirements(job, data.get('requirements', []))
         repo.save_benefits(job, data.get('benefits', []))
+        repo.save_job_offerings_profile(
+            job,
+            data.get("offerings_profile") or {},
+            source_description_hash=self._description_hash(job),
+            extraction_provider=type(self.ai).__name__,
+            extraction_model=getattr(self.ai, "extraction_model", None),
+        )
         repo.mark_as_extracted(job)
 
     def embed_job_one(self, repo: JobRepository, job) -> None:

@@ -150,31 +150,61 @@ def _extract_single_job(
     return False
 
 
-def _run_extraction_batch(ctx: AppContext, stop_event: threading.Event, limit: int = 200):
+def _run_extraction_batch(
+    ctx: AppContext,
+    stop_event: threading.Event,
+    limit: int = 200,
+    *,
+    job_ids: list[object] | None = None,
+    description_recovery_run_id: str | None = None,
+):
     """Run extraction batch with per-job transactions."""
     with job_uow() as repo:
-        job_ids = [j.id for j in repo.get_unextracted_jobs(limit)]
+        if job_ids:
+            selected_job_ids = [
+                j.id for j in repo.job_post.get_unextracted_jobs_by_ids(job_ids, limit=limit)
+            ]
+        elif description_recovery_run_id:
+            selected_job_ids = [
+                j.id for j in repo.job_post.get_unextracted_jobs_by_description_recovery_run(
+                    description_recovery_run_id,
+                    limit=limit,
+                )
+            ]
+        else:
+            selected_job_ids = [j.id for j in repo.get_unextracted_jobs(limit)]
 
-    if job_ids:
-        logger.info("Found %d jobs needing extraction", len(job_ids))
+    if selected_job_ids:
+        logger.info("Found %d jobs needing extraction", len(selected_job_ids))
     else:
         logger.info("No jobs need extraction — all already processed")
 
     retry_intervals = [30, 60, 120]
     success_count = 0
 
-    for job_id in job_ids:
+    for job_id in selected_job_ids:
         if stop_event.is_set():
             break
 
         if _extract_single_job(ctx, job_id, retry_intervals, stop_event):
             success_count += 1
 
-    logger.info("Extraction batch completed: %d/%d jobs", success_count, len(job_ids))
+    logger.info(
+        "Extraction batch completed: %d/%d jobs",
+        success_count,
+        len(selected_job_ids),
+    )
     return success_count
 
 
-def run_job_extraction(ctx: AppContext, stop_event: threading.Event, limit: int = 200) -> int:
+def run_job_extraction(
+    ctx: AppContext,
+    stop_event: threading.Event,
+    limit: int = 200,
+    *,
+    job_ids: list[object] | None = None,
+    description_recovery_run_id: str | None = None,
+) -> int:
     """
     Run job extraction - extract structured data from jobs.
 
@@ -186,7 +216,13 @@ def run_job_extraction(ctx: AppContext, stop_event: threading.Event, limit: int 
     Returns:
         Number of jobs processed
     """
-    return _run_extraction_batch(ctx, stop_event, limit)
+    return _run_extraction_batch(
+        ctx,
+        stop_event,
+        limit,
+        job_ids=job_ids,
+        description_recovery_run_id=description_recovery_run_id,
+    )
     
 
 def run_resume_extraction(

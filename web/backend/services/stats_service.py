@@ -3,12 +3,16 @@ Stats aggregation use cases for dashboard and match summary payloads.
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import Callable
 
 from sqlalchemy import and_, func, or_
 
 from core.match_selection import resolve_canonical_resume_selection
-from core.metrics import set_job_inventory_metrics
+from core.metrics import (
+    set_description_recovery_oldest_missing_age_seconds,
+    set_job_inventory_metrics,
+)
 from database.models import JobMatch, JobPost, MatchSelectionItem
 from database.uow import job_uow
 from web.backend.models.responses import StatsResponse
@@ -69,6 +73,8 @@ def _empty_stats_payload() -> dict[str, object]:
         "active_pending_extraction_job_posts": 0,
         "active_retryable_extraction_job_posts": 0,
         "inactive_pending_extraction_job_posts": 0,
+        "ready_for_extraction_job_posts": 0,
+        "active_ready_for_extraction_job_posts": 0,
         "pending_embedding_job_posts": 0,
         "processing_embedding_job_posts": 0,
         "retryable_embedding_job_posts": 0,
@@ -79,6 +85,15 @@ def _empty_stats_payload() -> dict[str, object]:
         "missing_description_job_posts": 0,
         "active_missing_description_job_posts": 0,
         "inactive_missing_description_job_posts": 0,
+        "description_recovery_queued_job_posts": 0,
+        "description_recovery_retryable_job_posts": 0,
+        "active_recoverable_missing_description_job_posts": 0,
+        "description_recovery_posting_not_found_job_posts": 0,
+        "description_recovery_adapter_missing_job_posts": 0,
+        "description_recovery_prohibited_job_posts": 0,
+        "description_recovery_unmapped_job_posts": 0,
+        "description_recovery_unavailable_job_posts": 0,
+        "oldest_missing_description_age_seconds": 0,
     }
 
 
@@ -237,6 +252,13 @@ def _job_processing_stats(repo, tenant_id=None) -> dict[str, int]:
         JobPost.description.is_(None),
         func.length(func.trim(JobPost.description)) == 0,
         JobPost.description_completeness == "missing",
+        JobPost.extraction_status == "no_description",
+    )
+    description_available = ~missing_description
+    ready_for_extraction = and_(
+        JobPost.is_extracted.is_(False),
+        JobPost.extraction_status.in_(("pending", "queued")),
+        description_available,
     )
     query = repo.db.query(
         func.count(JobPost.id).label("job_post_total"),
@@ -258,26 +280,37 @@ def _job_processing_stats(repo, tenant_id=None) -> dict[str, int]:
         .filter(active_job, JobPost.is_extracted.is_(True), JobPost.is_embedded.is_(True))
         .label("active_ready_to_score_job_posts"),
         func.count(JobPost.id)
-        .filter(pending_extraction)
+        .filter(pending_extraction, description_available)
         .label("pending_extraction_job_posts"),
         func.count(JobPost.id)
         .filter(JobPost.extraction_status.in_(("in_progress", "processing")))
         .label("processing_extraction_job_posts"),
         func.count(JobPost.id)
-        .filter(retryable_extraction)
+        .filter(retryable_extraction, description_available)
         .label("retryable_extraction_job_posts"),
         func.count(JobPost.id)
         .filter(JobPost.extraction_status.in_(("failed_terminal", "failed")))
         .label("failed_extraction_job_posts"),
         func.count(JobPost.id)
-        .filter(active_job, pending_extraction)
+        .filter(active_job, pending_extraction, description_available)
         .label("active_pending_extraction_job_posts"),
         func.count(JobPost.id)
-        .filter(active_job, retryable_extraction)
+        .filter(active_job, retryable_extraction, description_available)
         .label("active_retryable_extraction_job_posts"),
         func.count(JobPost.id)
-        .filter(inactive_job, JobPost.is_extracted.is_(False), JobPost.extraction_status.in_(("pending", "failed_retryable")))
+        .filter(
+            inactive_job,
+            JobPost.is_extracted.is_(False),
+            JobPost.extraction_status.in_(("pending", "failed_retryable")),
+            description_available,
+        )
         .label("inactive_pending_extraction_job_posts"),
+        func.count(JobPost.id)
+        .filter(ready_for_extraction)
+        .label("ready_for_extraction_job_posts"),
+        func.count(JobPost.id)
+        .filter(active_job, ready_for_extraction)
+        .label("active_ready_for_extraction_job_posts"),
         func.count(JobPost.id)
         .filter(pending_embedding)
         .label("pending_embedding_job_posts"),
@@ -308,12 +341,62 @@ def _job_processing_stats(repo, tenant_id=None) -> dict[str, int]:
         func.count(JobPost.id)
         .filter(inactive_job, missing_description)
         .label("inactive_missing_description_job_posts"),
+        func.count(JobPost.id)
+        .filter(JobPost.description_recovery_status.in_(("queued", "refreshing")))
+        .label("description_recovery_queued_job_posts"),
+        func.count(JobPost.id)
+        .filter(JobPost.description_recovery_status == "failed_retryable")
+        .label("description_recovery_retryable_job_posts"),
+        func.count(JobPost.id)
+        .filter(
+            active_job,
+            missing_description,
+            JobPost.description_recovery_status.in_(("not_needed", "pending", "failed_retryable")),
+        )
+        .label("active_recoverable_missing_description_job_posts"),
+        func.count(JobPost.id)
+        .filter(JobPost.description_recovery_status == "posting_not_found")
+        .label("description_recovery_posting_not_found_job_posts"),
+        func.count(JobPost.id)
+        .filter(JobPost.description_recovery_status == "source_adapter_missing")
+        .label("description_recovery_adapter_missing_job_posts"),
+        func.count(JobPost.id)
+        .filter(JobPost.description_recovery_status == "source_prohibited")
+        .label("description_recovery_prohibited_job_posts"),
+        func.count(JobPost.id)
+        .filter(JobPost.description_recovery_status == "source_unmapped")
+        .label("description_recovery_unmapped_job_posts"),
+        func.count(JobPost.id)
+        .filter(
+            JobPost.description_recovery_status.in_(
+                (
+                    "source_unsupported",
+                    "source_prohibited",
+                    "source_unmapped",
+                    "source_adapter_missing",
+                )
+            )
+        )
+        .label("description_recovery_unavailable_job_posts"),
+        func.min(JobPost.first_seen_at)
+        .filter(active_job, missing_description)
+        .label("oldest_missing_description_first_seen_at"),
     )
     if tenant_id is not None:
         query = query.filter(JobPost.tenant_id == tenant_id)
     row = query.one()
-    return {
-        key: int(getattr(row, key) or 0)
+    oldest_missing = getattr(row, "oldest_missing_description_first_seen_at", None)
+    oldest_age_seconds = 0
+    if oldest_missing is not None:
+        if getattr(oldest_missing, "tzinfo", None) is None:
+            oldest_missing = oldest_missing.replace(tzinfo=timezone.utc)
+        oldest_age_seconds = max(
+            int((datetime.now(timezone.utc) - oldest_missing).total_seconds()),
+            0,
+        )
+    set_description_recovery_oldest_missing_age_seconds(oldest_age_seconds)
+    stats = {
+        key: int(getattr(row, key, 0) or 0)
         for key in (
             "job_post_total",
             "active_job_posts",
@@ -332,6 +415,8 @@ def _job_processing_stats(repo, tenant_id=None) -> dict[str, int]:
             "active_pending_extraction_job_posts",
             "active_retryable_extraction_job_posts",
             "inactive_pending_extraction_job_posts",
+            "ready_for_extraction_job_posts",
+            "active_ready_for_extraction_job_posts",
             "pending_embedding_job_posts",
             "processing_embedding_job_posts",
             "retryable_embedding_job_posts",
@@ -342,8 +427,18 @@ def _job_processing_stats(repo, tenant_id=None) -> dict[str, int]:
             "missing_description_job_posts",
             "active_missing_description_job_posts",
             "inactive_missing_description_job_posts",
+            "description_recovery_queued_job_posts",
+            "description_recovery_retryable_job_posts",
+            "active_recoverable_missing_description_job_posts",
+            "description_recovery_posting_not_found_job_posts",
+            "description_recovery_adapter_missing_job_posts",
+            "description_recovery_prohibited_job_posts",
+            "description_recovery_unmapped_job_posts",
+            "description_recovery_unavailable_job_posts",
         )
     }
+    stats["oldest_missing_description_age_seconds"] = oldest_age_seconds
+    return stats
 
 
 def _count_items_for_run_by_tier(
@@ -642,6 +737,8 @@ def build_stats_response(
             "active_pending_extraction_job_posts": stats["active_pending_extraction_job_posts"],
             "active_retryable_extraction_job_posts": stats["active_retryable_extraction_job_posts"],
             "inactive_pending_extraction_job_posts": stats["inactive_pending_extraction_job_posts"],
+            "ready_for_extraction_job_posts": stats["ready_for_extraction_job_posts"],
+            "active_ready_for_extraction_job_posts": stats["active_ready_for_extraction_job_posts"],
             "pending_embedding_job_posts": stats["pending_embedding_job_posts"],
             "processing_embedding_job_posts": stats["processing_embedding_job_posts"],
             "retryable_embedding_job_posts": stats["retryable_embedding_job_posts"],
@@ -652,6 +749,25 @@ def build_stats_response(
             "missing_description_job_posts": stats["missing_description_job_posts"],
             "active_missing_description_job_posts": stats["active_missing_description_job_posts"],
             "inactive_missing_description_job_posts": stats["inactive_missing_description_job_posts"],
+            "description_recovery_queued_job_posts": stats["description_recovery_queued_job_posts"],
+            "description_recovery_retryable_job_posts": stats["description_recovery_retryable_job_posts"],
+            "active_recoverable_missing_description_job_posts": stats[
+                "active_recoverable_missing_description_job_posts"
+            ],
+            "description_recovery_posting_not_found_job_posts": stats[
+                "description_recovery_posting_not_found_job_posts"
+            ],
+            "description_recovery_adapter_missing_job_posts": stats[
+                "description_recovery_adapter_missing_job_posts"
+            ],
+            "description_recovery_prohibited_job_posts": stats[
+                "description_recovery_prohibited_job_posts"
+            ],
+            "description_recovery_unmapped_job_posts": stats[
+                "description_recovery_unmapped_job_posts"
+            ],
+            "description_recovery_unavailable_job_posts": stats["description_recovery_unavailable_job_posts"],
+            "oldest_missing_description_age_seconds": stats["oldest_missing_description_age_seconds"],
             "degraded": bool(degraded_reasons),
             "degraded_reasons": degraded_reasons,
         },

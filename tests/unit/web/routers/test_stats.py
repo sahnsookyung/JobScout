@@ -451,6 +451,8 @@ class TestGetStats:
             active_pending_extraction_job_posts=22,
             active_retryable_extraction_job_posts=3,
             inactive_pending_extraction_job_posts=1082,
+            ready_for_extraction_job_posts=1103,
+            active_ready_for_extraction_job_posts=22,
             pending_embedding_job_posts=330,
             processing_embedding_job_posts=5,
             retryable_embedding_job_posts=7,
@@ -461,6 +463,10 @@ class TestGetStats:
             missing_description_job_posts=304,
             active_missing_description_job_posts=12,
             inactive_missing_description_job_posts=292,
+            description_recovery_queued_job_posts=8,
+            description_recovery_retryable_job_posts=3,
+            description_recovery_unavailable_job_posts=4,
+            oldest_missing_description_first_seen_at=None,
         )
         repo = SimpleNamespace(db=_FakeJobStatsDb(row))
 
@@ -473,8 +479,13 @@ class TestGetStats:
         assert stats["pending_extraction_job_posts"] == 1103
         assert stats["active_pending_extraction_job_posts"] == 22
         assert stats["inactive_pending_extraction_job_posts"] == 1082
+        assert stats["ready_for_extraction_job_posts"] == 1103
+        assert stats["active_ready_for_extraction_job_posts"] == 22
         assert stats["missing_description_job_posts"] == 304
         assert stats["inactive_missing_description_job_posts"] == 292
+        assert stats["description_recovery_queued_job_posts"] == 8
+        assert stats["description_recovery_retryable_job_posts"] == 3
+        assert stats["description_recovery_unavailable_job_posts"] == 4
         assert stats["processing_extraction_job_posts"] == 2
         assert stats["retryable_extraction_job_posts"] == 4
         assert stats["failed_extraction_job_posts"] == 3

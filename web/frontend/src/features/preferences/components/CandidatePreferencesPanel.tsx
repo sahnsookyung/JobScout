@@ -11,6 +11,7 @@ import type {
 type DraftPreferences = CandidatePreferencesUpdateRequest;
 
 function toDraft(preferences: CandidatePreferences): DraftPreferences {
+    const bounds = preferences.preference_rerank_top_n_bounds ?? { min: 1, max: 100, default: 25 };
     return {
         remote_mode: preferences.remote_mode,
         target_locations: preferences.target_locations,
@@ -19,6 +20,10 @@ function toDraft(preferences: CandidatePreferences): DraftPreferences {
         employment_types: preferences.employment_types,
         soft_preferences: preferences.soft_preferences,
         preference_mode: preferences.effective_preference_mode,
+        preference_rerank_top_n:
+            preferences.preference_rerank_top_n ??
+            preferences.effective_preference_rerank_top_n ??
+            bounds.default,
     };
 }
 
@@ -75,6 +80,7 @@ export function CandidatePreferencesPanel() {
         setDraft((current) => (current ? { ...current, [key]: value } : current));
         setHasUnsavedChanges(true);
     };
+    const topNBounds = preferences.preference_rerank_top_n_bounds ?? { min: 1, max: 100, default: 25 };
 
     const handleSave = async () => {
         try {
@@ -217,6 +223,29 @@ export function CandidatePreferencesPanel() {
                             <p className="mt-2 text-[13px] text-ink-soft">
                                 {PREFERENCE_MODE_OPTIONS[draft.preference_mode].description}
                             </p>
+                        </label>
+
+                        <label className="block">
+                            <span className="caption">Preference judging window</span>
+                            <input
+                                type="number"
+                                min={topNBounds.min}
+                                max={topNBounds.max}
+                                value={draft.preference_rerank_top_n ?? ''}
+                                onChange={(event) => {
+                                    const rawValue = event.target.value;
+                                    if (!rawValue) {
+                                        updateDraft('preference_rerank_top_n', null);
+                                        return;
+                                    }
+                                    const nextValue = Number(rawValue);
+                                    updateDraft(
+                                        'preference_rerank_top_n',
+                                        Math.max(topNBounds.min, Math.min(topNBounds.max, nextValue)),
+                                    );
+                                }}
+                                className={`${inputClasses} mt-2`}
+                            />
                         </label>
 
                         <label className="block">

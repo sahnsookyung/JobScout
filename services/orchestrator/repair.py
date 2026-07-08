@@ -3,7 +3,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from core.metrics import record_jobs_embedding_queued, record_jobs_extraction_queued
+from core.metrics import (
+    record_description_recovery_job,
+    record_jobs_embedding_queued,
+    record_jobs_extraction_queued,
+)
 from core.redis_streams import (
     STREAM_EMBEDDINGS_BATCH,
     STREAM_EXTRACTION_BATCH,
@@ -12,6 +16,7 @@ from core.redis_streams import (
 )
 from database.database import db_session_scope
 from database.repository import JobRepository
+from services.orchestrator.description_recovery import recover_missing_description_jobs
 from services.orchestrator.pipeline_runs import PipelineRunService
 
 logger = logging.getLogger(__name__)
@@ -63,12 +68,19 @@ def _stage_correlation(snapshot: dict[str, Any] | None, stage: str) -> dict[str,
     }
 
 
+def _coerce_job_ids(values: Any) -> list[Any]:
+    if not isinstance(values, list):
+        return []
+    return [value for value in values if value]
+
+
 def run_stuck_job_repair(
     *,
     task_id: str,
     pipeline_runs: PipelineRunService,
     extraction_limit: int,
     embedding_limit: int,
+    description_recovery_limit: int = 50,
 ) -> dict[str, Any]:
     """Requeue stale/retryable job processing work from durable DB state."""
     pipeline_runs.start_run(task_id=task_id, run_type="repair", current_stage="repair")
@@ -82,6 +94,26 @@ def run_stuck_job_repair(
     try:
         with db_session_scope() as db:
             repo = JobRepository(db)
+            description_recovery_jobs = repo.claim_missing_description_recovery_jobs(
+                limit=description_recovery_limit,
+                run_id=task_id,
+            )
+            description_recovery_stats = recover_missing_description_jobs(
+                repo,
+                description_recovery_jobs,
+                run_id=task_id,
+            )
+            recovered_job_ids = _coerce_job_ids(
+                description_recovery_stats.get("description_found_job_ids")
+            )
+            recovered_extraction_jobs = (
+                repo.job_post.claim_unextracted_jobs_by_ids_for_queue(
+                    recovered_job_ids,
+                    limit=description_recovery_limit,
+                )
+                if recovered_job_ids
+                else []
+            )
             extraction_jobs = repo.job_post.claim_unextracted_jobs_for_queue(limit=extraction_limit)
             embedding_jobs = repo.job_post.claim_unembedded_jobs_for_queue(limit=embedding_limit)
             latest_resume_fingerprint = repo.get_latest_ready_resume_fingerprint()
@@ -102,11 +134,59 @@ def run_stuck_job_repair(
                 )
 
         enqueued = {
+            "description_recovery_queued": int(description_recovery_stats.get("claimed", 0)),
+            "description_recovery_processed": int(description_recovery_stats.get("processed", 0)),
+            "description_recovery_found": int(description_recovery_stats.get("description_found", 0)),
+            "description_recovery_posting_not_found": int(
+                description_recovery_stats.get("posting_not_found", 0)
+            ),
+            "description_recovery_skipped": (
+                int(description_recovery_stats.get("source_unsupported", 0))
+                + int(description_recovery_stats.get("source_prohibited", 0))
+                + int(description_recovery_stats.get("source_unmapped", 0))
+                + int(description_recovery_stats.get("source_adapter_missing", 0))
+            ),
+            "description_recovery_failed_retryable": int(
+                description_recovery_stats.get("failed_retryable", 0)
+            ),
+            "description_recovery_failed_terminal": int(
+                description_recovery_stats.get("failed_terminal", 0)
+            ),
+            "description_recovery_source_adapter_missing": int(
+                description_recovery_stats.get("source_adapter_missing", 0)
+            ),
+            "description_recovery_provider_breakdown": description_recovery_stats.get(
+                "provider_breakdown",
+                {},
+            ),
             "extraction_queued": 0,
+            "description_recovery_extraction_queued": 0,
             "embedding_queued": 0,
             "matching_queued": 0,
             "ready_unmatched_count": ready_unmatched_count,
         }
+        if enqueued["description_recovery_queued"]:
+            record_description_recovery_job(
+                "unmapped",
+                "queued",
+                enqueued["description_recovery_queued"],
+            )
+
+        if recovered_extraction_jobs:
+            recovered_ids = [str(job.id) for job in recovered_extraction_jobs]
+            enqueue_job(
+                STREAM_EXTRACTION_BATCH,
+                {
+                    "task_id": f"{task_id}-extract-recovered",
+                    "limit": len(recovered_ids),
+                    "job_ids": recovered_ids,
+                    "description_recovery_run_id": task_id,
+                    **correlation,
+                },
+            )
+            enqueued["extraction_queued"] += len(recovered_ids)
+            enqueued["description_recovery_extraction_queued"] = len(recovered_ids)
+            record_jobs_extraction_queued(len(recovered_ids))
 
         if extraction_jobs:
             enqueue_job(
@@ -117,7 +197,7 @@ def run_stuck_job_repair(
                     **correlation,
                 },
             )
-            enqueued["extraction_queued"] = len(extraction_jobs)
+            enqueued["extraction_queued"] += len(extraction_jobs)
             record_jobs_extraction_queued(len(extraction_jobs))
 
         if embedding_jobs:
@@ -151,7 +231,8 @@ def run_stuck_job_repair(
             stage="repair",
             run_type="repair",
             processed_count=(
-                enqueued["extraction_queued"]
+                enqueued["description_recovery_processed"]
+                + enqueued["extraction_queued"]
                 + enqueued["embedding_queued"]
                 + enqueued["matching_queued"]
             ),

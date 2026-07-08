@@ -24,6 +24,7 @@ describe('candidatePreferencesApi', () => {
             employment_types: ['full-time'],
             soft_preferences: 'Platform roles with developer tooling.',
             preference_mode: 'semantic_rerank' as const,
+            preference_rerank_top_n: 25,
         };
         mockGet.mockResolvedValueOnce({ data: { role_titles: [] } });
         mockPut.mockResolvedValueOnce({ data: payload });

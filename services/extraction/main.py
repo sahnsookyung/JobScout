@@ -273,15 +273,27 @@ class ExtractionBatchConsumer(StreamConsumerWithCompletion):
             return False, {"status": "failed", "error": error}
 
         limit = int(msg.get("limit", 200) or 200)
+        raw_job_ids = msg.get("job_ids")
+        job_ids = raw_job_ids if isinstance(raw_job_ids, list) else None
+        description_recovery_run_id = msg.get("description_recovery_run_id")
+        if description_recovery_run_id is not None:
+            description_recovery_run_id = str(description_recovery_run_id)
         logger.info(
-            "⚙️ Processing extraction batch: task_id=%s, limit=%d",
+            "⚙️ Processing extraction batch: task_id=%s, limit=%d, targeted_jobs=%d, recovery_run=%s",
             msg["task_id"],
             limit,
+            len(job_ids or []),
+            description_recovery_run_id,
         )
 
         try:
             processed = await asyncio.to_thread(
-                run_job_extraction, self.ctx, self.stop_event, limit
+                run_job_extraction,
+                self.ctx,
+                self.stop_event,
+                limit,
+                job_ids=job_ids,
+                description_recovery_run_id=description_recovery_run_id,
             )
         except ProviderQuotaExceeded as exc:
             backoff_seconds = _batch_quota_backoff_seconds(exc)
@@ -330,7 +342,12 @@ class ExtractionBatchConsumer(StreamConsumerWithCompletion):
                 "batch_quota_retry_count": quota_retry_count,
             }
 
-        result = {"status": "completed", "processed": processed}
+        result = {
+            "status": "completed",
+            "processed": processed,
+            "targeted_jobs": len(job_ids or []),
+            "description_recovery_run_id": description_recovery_run_id,
+        }
         try:
             followup_payload = _enqueue_followup_embeddings_batch(msg)
         except Exception as exc:

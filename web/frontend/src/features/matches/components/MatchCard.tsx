@@ -28,6 +28,26 @@ function llmStatusLabel(status?: string | null): string | null {
     return status.replace(/_/g, ' ');
 }
 
+function preferenceStatusLabel(status?: Record<string, any> | null): string | null {
+    if (!status) return null;
+    if (status.applied) return 'Preferences applied';
+
+    const reason = status.reason ?? 'unconfigured';
+    const messages: Record<string, string> = {
+        disabled: 'Preferences disabled',
+        unconfigured: 'Preferences disabled',
+        missing_job_offerings: 'Waiting for job offering extraction',
+        job_offerings_unavailable: 'Waiting for job offering extraction',
+        outside_preference_window: 'Outside preference judging window',
+        preference_scorer_unavailable: 'Preference scorer unavailable',
+        preference_reranker_unavailable: 'Preference scorer unavailable',
+        preference_judge_unavailable: 'Preference scorer unavailable',
+        invalid_llm_output: 'Preference scorer returned invalid output',
+        preference_scorer_failed: 'Preference scorer failed',
+    };
+    return messages[reason] ?? 'Preference scorer failed';
+}
+
 function llmOrderingLabel(match: MatchSummary): string | null {
     if (match.llm_effective_for_rerank && match.llm_original_rank && match.llm_reranked_rank) {
         if (match.llm_original_rank !== match.llm_reranked_rank) {
@@ -115,6 +135,8 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
     const llmScoreTitle = match.llm_ignored_for_rerank_reason
         ? `LLM score not used for ordering: ${match.llm_ignored_for_rerank_reason.replace(/_/g, ' ')}`
         : 'LLM second-pass score';
+    const preferenceStatus = preferenceStatusLabel(match.preference_status);
+    const preferenceStatusTone = match.preference_status?.applied ? 'text-accent' : 'text-ink-muted';
 
     return (
         <article
@@ -229,6 +251,15 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
                             aria-label={llmOrdering}
                         >
                             {llmOrdering}
+                        </span>
+                    )}
+                    {preferenceStatus && (
+                        <span
+                            className={`caption max-w-[14rem] text-right ${preferenceStatusTone}`}
+                            title={preferenceStatus}
+                            aria-label={preferenceStatus}
+                        >
+                            {preferenceStatus}
                         </span>
                     )}
 

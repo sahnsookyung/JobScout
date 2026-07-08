@@ -371,6 +371,39 @@ class TestExtractionConsumer:
         assert result["processed"] == 4
 
     @pytest.mark.asyncio
+    async def test_batch_consumer_processes_targeted_recovery_jobs(self):
+        """Targeted recovery batches pass explicit job IDs into extraction."""
+        from services.extraction.main import ExtractionBatchConsumer
+
+        mock_ctx = Mock()
+        stop_event = threading.Event()
+        consumer = ExtractionBatchConsumer(mock_ctx, stop_event)
+
+        with patch("services.extraction.main.run_job_extraction", return_value=2) as run_job_extraction:
+            success, result = await consumer._do_process(
+                "msg-1",
+                {
+                    "task_id": "extract-recovered-1",
+                    "limit": 25,
+                    "job_ids": ["job-1", "job-2"],
+                    "description_recovery_run_id": "recovery-run-1",
+                },
+            )
+
+        assert success is True
+        assert result["status"] == "completed"
+        assert result["processed"] == 2
+        assert result["targeted_jobs"] == 2
+        assert result["description_recovery_run_id"] == "recovery-run-1"
+        run_job_extraction.assert_called_once_with(
+            mock_ctx,
+            stop_event,
+            25,
+            job_ids=["job-1", "job-2"],
+            description_recovery_run_id="recovery-run-1",
+        )
+
+    @pytest.mark.asyncio
     async def test_batch_consumer_enqueues_followup_embeddings_batch(self):
         """Batch consumer queues embeddings only after extraction completes."""
         from services.extraction.main import ExtractionBatchConsumer

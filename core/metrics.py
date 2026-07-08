@@ -100,7 +100,24 @@ _LLM_JUDGE_CIRCUIT_EVENTS = frozenset({"opened", "skip", "closed", "manual_reset
 _LLM_JUDGE_WAIT_OUTCOMES = frozenset({"waited", "retry_after", "unavailable"})
 _LLM_QUEUE_OPERATOR_ACTIONS = frozenset({"pause", "resume", "retry"})
 _LLM_PROVIDER_CANARY_STATUSES = frozenset({"succeeded", "failed", "rate_limited", "circuit_open"})
+_DESCRIPTION_RECOVERY_PROVIDERS = frozenset(
+    {"greenhouse", "lever", "ashby", "unsupported", "prohibited", "unmapped"}
+)
+_DESCRIPTION_RECOVERY_OUTCOMES = frozenset(
+    {
+        "queued",
+        "processed",
+        "description_found",
+        "posting_not_found",
+        "source_unsupported",
+        "source_prohibited",
+        "source_unmapped",
+        "failed_retryable",
+        "failed_terminal",
+    }
+)
 _OCI_CRITICAL_LOG_EVENT_TYPES = frozenset({
+    "description_recovery",
     "deploy_event",
     "provider_canary",
     "provider_circuit",
@@ -349,6 +366,24 @@ oci_critical_log_budget_usage_ratio = Gauge(
     labelnames=("service",),
 )
 
+description_recovery_jobs_total = Counter(
+    f"{NAMESPACE}_description_recovery_jobs_total",
+    "Missing-description recovery job outcomes by bounded provider.",
+    labelnames=("provider", "outcome"),
+)
+
+description_recovery_oldest_missing_age_seconds = Gauge(
+    f"{NAMESPACE}_description_recovery_oldest_missing_age_seconds",
+    "Age in seconds of the oldest active job still missing a description.",
+)
+
+description_recovery_provider_latency_seconds = Histogram(
+    f"{NAMESPACE}_description_recovery_provider_latency_seconds",
+    "Provider snapshot latency for missing-description recovery.",
+    labelnames=("provider",),
+    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
+)
+
 
 # ---------------------------------------------------------------------------
 # Classifiers
@@ -549,6 +584,23 @@ def record_llm_judge_provider_canary(
         )
     except Exception:
         pass
+
+def record_description_recovery_job(provider: str, outcome: str, count: int | float = 1) -> None:
+    _inc_counter(
+        description_recovery_jobs_total.labels(
+            provider=_safe(provider, _DESCRIPTION_RECOVERY_PROVIDERS),
+            outcome=_safe(outcome, _DESCRIPTION_RECOVERY_OUTCOMES),
+        ),
+        count,
+    )
+
+def set_description_recovery_oldest_missing_age_seconds(seconds: int | float | None) -> None:
+    description_recovery_oldest_missing_age_seconds.set(max(float(seconds or 0), 0.0))
+
+def observe_description_recovery_provider_latency_seconds(provider: str, seconds: float) -> None:
+    description_recovery_provider_latency_seconds.labels(
+        provider=_safe(provider, _DESCRIPTION_RECOVERY_PROVIDERS),
+    ).observe(max(float(seconds or 0.0), 0.0))
 
 
 def record_oci_critical_log_event(event_type: str, outcome: str) -> None:

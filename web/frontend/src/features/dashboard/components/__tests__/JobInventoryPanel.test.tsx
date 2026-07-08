@@ -20,6 +20,8 @@ const mockRetryLlmEvaluationQueue = vi.hoisted(() => vi.fn());
 const mockGetLlmProviderStatus = vi.hoisted(() => vi.fn());
 const mockRunLlmProviderCanaries = vi.hoisted(() => vi.fn());
 const mockResetLlmProviderCircuit = vi.hoisted(() => vi.fn());
+const mockRefreshJobDescriptionNow = vi.hoisted(() => vi.fn());
+const mockSweepDescriptionRecovery = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/useJobs', () => ({
     useJobs: (params: any, enabled: boolean) => mockUseJobs(params, enabled),
@@ -35,6 +37,8 @@ vi.mock('@/services/pipelineApi', () => ({
 vi.mock('@/services/jobsApi', () => ({
     jobsApi: {
         getProcessingBlockers: mockGetProcessingBlockers,
+        refreshJobDescriptionNow: mockRefreshJobDescriptionNow,
+        sweepDescriptionRecovery: mockSweepDescriptionRecovery,
     },
 }));
 
@@ -98,6 +102,26 @@ const readyJob = {
     embedding_attempts: 1,
     embedding_last_error: null,
     embedding_next_retry_at: null,
+};
+
+const missingDescriptionJob = {
+    ...readyJob,
+    job_id: 'job-missing-1',
+    title: 'Platform Engineer',
+    is_extracted: false,
+    is_embedded: false,
+    extraction_status: 'no_description',
+    embedding_status: 'pending',
+    description_completeness: 'missing',
+    description_source: 'unknown',
+    description_recovery_status: 'queued',
+    description_recovery_reason: 'background_sweep',
+    description_recovery_attempts: 1,
+    description_recovery_next_retry_at: null,
+    description_recovery_last_error: null,
+    availability_actions: ['open_posting', 'refresh_availability', 'refresh_description', 'retire'],
+    availability_status: 'active',
+    availability_reason: 'source_sync_active',
 };
 
 const stats = {
@@ -188,6 +212,34 @@ describe('JobInventoryPanel', () => {
         });
         mockGetPipelineStatus.mockResolvedValue({
             data: { task_id: 'process-jobs-1', status: 'completed', stats: { jobs_extracted: 1, jobs_embedded: 1 } },
+        });
+        mockRefreshJobDescriptionNow.mockResolvedValue({
+            data: {
+                success: true,
+                job_id: 'job-missing-1',
+                status: 'active',
+                availability_status: 'active',
+                availability_reason: 'source_sync_active',
+                message: 'Description recovered from the ATS source and extraction was queued.',
+                queued: true,
+                recovery_status: 'description_found',
+                recovery_reason: 'description_found',
+            },
+        });
+        mockSweepDescriptionRecovery.mockResolvedValue({
+            data: {
+                success: true,
+                run_id: 'description-recovery-1',
+                queued_count: 1,
+                processed_count: 1,
+                found_count: 1,
+                skipped_count: 0,
+                retryable_failed_count: 0,
+                terminal_failed_count: 0,
+                provider_breakdown: { greenhouse: { description_found: 1 } },
+                extraction_queued: 1,
+                message: 'Checked 1 missing-description jobs; recovered 1 descriptions.',
+            },
         });
         mockGetPipelineRuns.mockResolvedValue({
             data: { success: true, count: 1, total: 1, limit: 5, offset: 0, runs: [pipelineRun] },
@@ -429,10 +481,17 @@ describe('JobInventoryPanel', () => {
         renderPanel();
         fireEvent.click(screen.getByRole('button', { name: /browse jobs/i }));
 
-        fireEvent.click(screen.getByRole('button', { name: /^Pending extract$/i }));
+        fireEvent.click(screen.getByRole('button', { name: /^Ready extract$/i }));
 
         expect(mockUseJobs).toHaveBeenLastCalledWith(
             expect.objectContaining({ processing_status: 'pending_extraction', offset: 0 }),
+            true,
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: /^Missing desc$/i }));
+
+        expect(mockUseJobs).toHaveBeenLastCalledWith(
+            expect.objectContaining({ processing_status: 'missing_description', offset: 0 }),
             true,
         );
     });
@@ -443,6 +502,36 @@ describe('JobInventoryPanel', () => {
         fireEvent.click(screen.getByRole('button', { name: /process queued imported jobs/i }));
 
         await waitFor(() => expect(mockProcessJobs).toHaveBeenCalledTimes(1));
+    });
+
+    it('starts a bounded missing-description recovery sweep from the inventory header', async () => {
+        renderPanel();
+
+        fireEvent.click(screen.getByRole('button', { name: /recover missing job descriptions/i }));
+
+        await waitFor(() => expect(mockSweepDescriptionRecovery).toHaveBeenCalledTimes(1));
+    });
+
+    it('refreshes one missing-description job from the row action', async () => {
+        mockUseJobs.mockReturnValue({
+            data: {
+                success: true,
+                count: 1,
+                total: 1,
+                limit: 50,
+                offset: 0,
+                jobs: [missingDescriptionJob],
+            },
+            isLoading: false,
+            error: null,
+            refetch: vi.fn(),
+        });
+        renderPanel();
+        fireEvent.click(screen.getByRole('button', { name: /browse jobs/i }));
+
+        fireEvent.click(screen.getByRole('button', { name: /^Refresh now$/i }));
+
+        await waitFor(() => expect(mockRefreshJobDescriptionNow).toHaveBeenCalledWith('job-missing-1'));
     });
 
     it('runs an allowed pipeline retry action from the ops panel', async () => {

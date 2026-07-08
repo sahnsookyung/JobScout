@@ -300,6 +300,42 @@ class TestRunExtractionBatch:
 
                 mock_extract.assert_called_once()
 
+    def test_run_extraction_batch_uses_targeted_job_ids(self):
+        """Targeted recovery batches extract only the requested recovered jobs."""
+        from services.base.extraction import _run_extraction_batch
+        with patch('services.base.extraction.job_uow') as mock_job_uow:
+            with patch('services.base.extraction._extract_single_job') as mock_extract:
+                mock_repo = MagicMock()
+                job1, job2 = MagicMock(id="recovered-1"), MagicMock(id="recovered-2")
+                mock_repo.job_post.get_unextracted_jobs_by_ids.return_value = [job1, job2]
+                mock_repo.get_unextracted_jobs.return_value = []
+
+                mock_context = MagicMock()
+                mock_context.__enter__ = Mock(return_value=mock_repo)
+                mock_context.__exit__ = Mock(return_value=False)
+                mock_job_uow.return_value = mock_context
+
+                mock_extract.return_value = True
+                stop_event = threading.Event()
+
+                result = _run_extraction_batch(
+                    MagicMock(),
+                    stop_event,
+                    limit=10,
+                    job_ids=["recovered-1", "recovered-2"],
+                )
+
+                assert result == 2
+                mock_repo.job_post.get_unextracted_jobs_by_ids.assert_called_once_with(
+                    ["recovered-1", "recovered-2"],
+                    limit=10,
+                )
+                mock_repo.get_unextracted_jobs.assert_not_called()
+                assert [call.args[1] for call in mock_extract.call_args_list] == [
+                    "recovered-1",
+                    "recovered-2",
+                ]
+
 
 class TestRunJobExtraction:
     """Test run_job_extraction function."""
@@ -316,6 +352,13 @@ class TestRunJobExtraction:
             result = run_job_extraction(mock_ctx, stop_event, limit=200)
 
             assert result == 10
+            mock_extraction.assert_called_once_with(
+                mock_ctx,
+                stop_event,
+                200,
+                job_ids=None,
+                description_recovery_run_id=None,
+            )
 
 
 class TestRunResumeExtraction:

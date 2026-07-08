@@ -116,6 +116,7 @@ class MatchSummary(BaseModel):
 
     fit_score: Optional[float] = Field(default=None, ge=0, le=100)
     preference_score: Optional[float] = Field(default=None, ge=0, le=1)
+    preference_status: Optional[Dict[str, Any]] = None
 
     penalties: float = Field(ge=0)
     required_coverage: float = Field(ge=0, le=1)
@@ -181,6 +182,15 @@ class JobDetails(BaseModel):
     description_source: str = "unknown"
     description_completeness: str = "missing"
     description_warning_code: Optional[str] = None
+    description_recovery_status: str = "not_needed"
+    description_recovery_reason: Optional[str] = None
+    description_recovery_provider: Optional[str] = None
+    description_recovery_status_group: Optional[str] = None
+    description_recovery_attempts: int = 0
+    description_recovery_last_attempt_at: Optional[str] = None
+    description_recovery_next_retry_at: Optional[str] = None
+    description_recovery_last_error: Optional[str] = None
+    description_recovery_run_id: Optional[str] = None
     salary_min: Optional[float] = None
     salary_max: Optional[float] = None
     currency: Optional[str] = None
@@ -308,6 +318,15 @@ class JobInventoryItem(BaseModel):
     description_completeness: str = "unknown"
     description_source: str = "unknown"
     description_warning_code: Optional[str] = None
+    description_recovery_status: str = "not_needed"
+    description_recovery_reason: Optional[str] = None
+    description_recovery_provider: Optional[str] = None
+    description_recovery_status_group: Optional[str] = None
+    description_recovery_attempts: int = 0
+    description_recovery_last_attempt_at: Optional[str] = None
+    description_recovery_next_retry_at: Optional[str] = None
+    description_recovery_last_error: Optional[str] = None
+    description_recovery_run_id: Optional[str] = None
     source_site: Optional[str] = None
     source_url: Optional[str] = None
     source_url_direct: Optional[str] = None
@@ -349,8 +368,36 @@ class JobAvailabilityMutationResponse(BaseModel):
     availability_status: str
     availability_reason: str
     message: str
+    accepted: bool = False
     queued: bool = False
     sync_run_id: Optional[str] = None
+    recovery_status: Optional[str] = None
+    recovery_reason: Optional[str] = None
+    recovery_provider: Optional[str] = None
+    recovery_status_group: Optional[str] = None
+    recovery_run_id: Optional[str] = None
+    next_retry_at: Optional[str] = None
+    queued_count: int = 0
+    skipped_count: int = 0
+    provider_breakdown: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DescriptionRecoverySweepResponse(BaseModel):
+    """Response after a bounded missing-description recovery sweep."""
+
+    success: bool
+    accepted: bool = False
+    run_id: str
+    queued: bool = False
+    queued_count: int = 0
+    processed_count: int = 0
+    found_count: int = 0
+    skipped_count: int = 0
+    retryable_failed_count: int = 0
+    terminal_failed_count: int = 0
+    provider_breakdown: Dict[str, Any] = Field(default_factory=dict)
+    extraction_queued: int = 0
+    message: str
 
 
 class ProcessingBlockerItem(BaseModel):
@@ -368,6 +415,9 @@ class ProcessingBlockerItem(BaseModel):
     last_seen_at: Optional[str] = None
     last_attempt_at: Optional[str] = None
     next_retry_at: Optional[str] = None
+    recovery_status: Optional[str] = None
+    recovery_reason: Optional[str] = None
+    recovery_run_id: Optional[str] = None
 
 
 class ProcessingBlockersResponse(BaseModel):
@@ -823,6 +873,9 @@ class CandidatePreferencesResponse(BaseModel):
     soft_preferences: str
     soft_preference_summary: Optional[str] = None
     preference_mode: str
+    preference_rerank_top_n: Optional[int] = None
+    effective_preference_rerank_top_n: int
+    preference_rerank_top_n_bounds: Dict[str, int]
     allowed_preference_modes: List[str] = Field(default_factory=list)
     effective_preference_mode: str
     revision: int

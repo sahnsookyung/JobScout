@@ -156,12 +156,16 @@ class TestExtractOne:
         mock_repo.update_job_metadata.assert_called_once()
         mock_repo.save_requirements.assert_called_once()
         mock_repo.save_benefits.assert_called_once()
+        mock_repo.save_job_offerings_profile.assert_called_once()
         mock_repo.mark_as_extracted.assert_called_once()
 
         update_payload = mock_repo.update_content_metadata.call_args[0][1]
         assert 'canonical_job_summary' in update_payload
         assert 'canonical_job_summary_version' in update_payload
         assert 'canonical_job_summary_hash' in update_payload
+        offerings_payload = mock_repo.save_job_offerings_profile.call_args.args[1]
+        assert offerings_payload["schema_version"] == 1
+        assert offerings_payload["confidence"] <= 0.4
 
     def test_extract_empty_requirements_saves_minimal_extraction(self):
         """Empty requirement extraction should not block later jobs."""
@@ -187,12 +191,35 @@ class TestExtractOne:
         mock_ai.extract_requirements_data.assert_called_once_with(mock_job.description)
         mock_repo.save_requirements.assert_called_once_with(mock_job, [])
         mock_repo.save_benefits.assert_called_once_with(mock_job, [])
+        mock_repo.save_job_offerings_profile.assert_called_once()
         mock_repo.mark_as_extracted.assert_called_once_with(mock_job)
 
         update_payload = mock_repo.update_content_metadata.call_args[0][1]
         assert update_payload["extraction_quality"] == "minimal"
         assert update_payload["extraction_warning"] == "empty_requirements_extraction"
         assert "canonical_job_summary" in update_payload
+
+    def test_sparse_job_offerings_profile_uses_existing_metadata(self):
+        from core.llm.schema_models import JobOfferingsProfile
+        from etl.orchestrator import JobETLService
+
+        profile = JobETLService._sparse_job_offerings_profile(
+            Mock(
+                location_text="Tokyo, Japan",
+                work_from_home_type="Remote",
+                is_remote=True,
+                skills_raw="Python, Java",
+            ),
+            reason="short_description",
+        )
+
+        validated = JobOfferingsProfile.model_validate(profile)
+        assert validated.work_arrangement == "Remote"
+        assert validated.location_timezone[0].label == "location"
+        assert validated.tech_environment[0].label == "tech stack"
+        assert "Python" in validated.tech_environment[0].evidence
+        assert validated.negative_signals[0].label == "low detail description"
+        assert "short_description" in validated.negative_signals[0].evidence
 
     def test_extract_normalizes_top_level_required_alias(self):
         """Provider outputs using required/preferred aliases become requirements."""

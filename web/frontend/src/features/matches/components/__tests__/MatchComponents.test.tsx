@@ -315,6 +315,23 @@ describe('MatchCard', () => {
         expect(screen.getByText('LLM 88%')).toBeInTheDocument();
     });
 
+    it('shows preference status on the result card', () => {
+        render(
+            <MatchCard
+                match={makeMatch({
+                    preference_status: {
+                        applied: false,
+                        reason: 'missing_job_offerings',
+                    },
+                })}
+                onSelect={vi.fn()}
+            />,
+            { wrapper: makeQueryWrapper() }
+        );
+
+        expect(screen.getByText('Waiting for job offering extraction')).toBeInTheDocument();
+    });
+
     it('persists hide changes and reports failures', async () => {
         vi.mocked(matchesApi.toggleHidden).mockResolvedValueOnce({
             data: { is_hidden: true },

@@ -27,6 +27,8 @@ MAX_PREFERENCE_SUMMARY_CHARS = 1800
 MAX_PREFERENCE_COMPANY_DESCRIPTION_CHARS = 1200
 MAX_PREFERENCE_LIST_ITEM_CHARS = 280
 MAX_PREFERENCE_LIST_ITEMS = 8
+MAX_PREFERENCE_OFFERING_ITEMS = 6
+MAX_PREFERENCE_OFFERING_TEXT_CHARS = 220
 
 PREFERENCE_PARSER_SYSTEM_PROMPT = """
 You normalize candidate job preferences into a strict schema.
@@ -97,6 +99,9 @@ class PreferenceJobPayload(BaseModel):
     skills: List[str] = Field(default_factory=list)
     requirements: List[str] = Field(default_factory=list)
     benefits: List[str] = Field(default_factory=list)
+    offerings_profile: Dict[str, Any] = Field(default_factory=dict)
+    offerings_profile_schema_version: Optional[int] = None
+    offerings_source_description_hash: Optional[str] = None
 
 
 class PreferenceAssessment(BaseModel):
@@ -198,6 +203,44 @@ def _truncate_text_list(values: List[str], *, max_chars: int, max_items: int) ->
     return truncated
 
 
+def _compact_offering_signal(value: Any) -> Any:
+    if isinstance(value, dict):
+        compact: Dict[str, Any] = {}
+        for key in ("label", "evidence"):
+            if value.get(key):
+                compact[key] = _truncate_text(value.get(key), MAX_PREFERENCE_OFFERING_TEXT_CHARS)
+        if value.get("confidence") is not None:
+            try:
+                compact["confidence"] = round(max(0.0, min(1.0, float(value["confidence"]))), 3)
+            except (TypeError, ValueError):
+                pass
+        return compact
+    if isinstance(value, str):
+        return _truncate_text(value, MAX_PREFERENCE_OFFERING_TEXT_CHARS)
+    return value
+
+
+def _compact_offerings_profile(profile: Any) -> Dict[str, Any]:
+    if not isinstance(profile, dict):
+        return {}
+    compact: Dict[str, Any] = {}
+    for key, value in profile.items():
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, list):
+            compact[key] = [
+                _compact_offering_signal(item)
+                for item in value[:MAX_PREFERENCE_OFFERING_ITEMS]
+            ]
+        elif isinstance(value, dict):
+            compact[key] = _compact_offering_signal(value)
+        elif isinstance(value, str):
+            compact[key] = _truncate_text(value, MAX_PREFERENCE_OFFERING_TEXT_CHARS)
+        else:
+            compact[key] = value
+    return compact
+
+
 def job_work_mode(job: Any) -> str:
     work_from_home_type = _normalize_text(getattr(job, "work_from_home_type", "")).lower()
     location_text = _normalize_text(getattr(job, "location_text", "")).lower()
@@ -219,7 +262,13 @@ def _job_summary(job: Any) -> str:
     )
 
 
-def serialize_job_for_preference(job: Any) -> PreferenceJobPayload:
+def serialize_job_for_preference(
+    job: Any,
+    *,
+    offerings_profile: Optional[Dict[str, Any]] = None,
+    offerings_profile_schema_version: Optional[int] = None,
+    offerings_source_description_hash: Optional[str] = None,
+) -> PreferenceJobPayload:
     return PreferenceJobPayload(
         job_id=str(getattr(job, "id")),
         title=_truncate_text(getattr(job, "title", ""), MAX_PREFERENCE_TITLE_CHARS),
@@ -241,6 +290,9 @@ def serialize_job_for_preference(job: Any) -> PreferenceJobPayload:
         skills=_normalize_skills(getattr(job, "skills_raw", "")),
         requirements=_normalize_job_text_list(getattr(job, "requirements", []) or []),
         benefits=_normalize_job_text_list(getattr(job, "benefits", []) or []),
+        offerings_profile=_compact_offerings_profile(offerings_profile),
+        offerings_profile_schema_version=offerings_profile_schema_version,
+        offerings_source_description_hash=offerings_source_description_hash,
     )
 
 
@@ -313,6 +365,7 @@ def _truncate_job_payload(
                 max_chars=list_item_budget,
                 max_items=MAX_PREFERENCE_LIST_ITEMS,
             ),
+            "offerings_profile": _compact_offerings_profile(payload.offerings_profile),
         }
     )
 
@@ -357,6 +410,11 @@ def _fit_single_job_payload_to_budget(
                 candidate.skills,
                 max_chars=spec["skill_chars"],
                 max_items=spec["skill_items"],
+            ),
+            "offerings_profile": (
+                {}
+                if spec["list_items"] <= 2
+                else _compact_offerings_profile(candidate.offerings_profile)
             ),
         }
         if "title" in spec:
@@ -717,24 +775,7 @@ def build_preference_semantic_reranker(
     config: PreferencesConfig,
 ) -> Optional[PreferenceSemanticReranker]:
     if config.reranker == "cross_encoder":
-        ce_config = config.cross_encoder
-        if not ce_config.enabled:
-            logger.info("Cross-encoder preference reranker disabled")
-            return None
-        from core.scorer.semantic_fit import get_shared_local_cross_encoder_provider
-
-        # Reuse the scorer's shared provider so we do not load the same model twice.
-        # The heuristic runtime remains opt-in and is only enabled when the explicit
-        # preference config asks for it (for example, the deterministic E2E stack).
-        cross_encoder = get_shared_local_cross_encoder_provider(
-            model_name=ce_config.model_name,
-            cache_path=ce_config.cache_path,
-            runtime=ce_config.runtime,
-            max_batch_size=ce_config.max_batch_size,
-            trust_remote_code=ce_config.trust_remote_code,
-            allow_heuristic=ce_config.runtime == "heuristic",
-        )
-        return CrossEncoderPreferenceReranker(cross_encoder)
+        logger.info("Cross-encoder preference reranker is disabled for semantic preferences; using LLM path")
     llm = build_preference_llm(config.semantic_reranker)
     if llm is None:
         return None

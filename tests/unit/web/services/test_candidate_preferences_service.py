@@ -26,6 +26,11 @@ def _config(allowed_modes=None, default_mode="semantic_rerank"):
             embedding_api_secret=None,
             embedding_headers=None,
         ),
+        semantic_reranker=SimpleNamespace(
+            top_n_default=25,
+            top_n_min=1,
+            top_n_max=100,
+        ),
     )
     prefs.allowed_modes_normalized = lambda: (
         [m for m in dict.fromkeys(str(x).strip().lower() for x in prefs.allowed_modes) if m in _valid]
@@ -71,6 +76,7 @@ def test_update_preferences_falls_back_to_default_mode_when_disallowed(mock_get_
     assert preferences.preference_mode == "semantic_rerank"
     assert response["effective_preference_mode"] == "semantic_rerank"
     assert response["allowed_preference_modes"] == ["semantic_rerank"]
+    assert response["effective_preference_rerank_top_n"] == 25
 
 
 @patch("web.backend.services.candidate_preferences_service.get_config")
@@ -154,6 +160,53 @@ def test_update_preferences_persists_preference_profile_when_available(mock_get_
 
     assert preferences.preference_profile == profile.model_dump(mode="json")
     assert response["soft_preference_summary"] == "Mentorship"
+
+
+@patch("web.backend.services.candidate_preferences_service.get_config")
+def test_update_preferences_clamps_preference_rerank_top_n(mock_get_config):
+    mock_get_config.return_value = _config(allowed_modes=["semantic_rerank"])
+    mock_get_config.return_value.preferences.semantic_reranker.top_n_min = 5
+    mock_get_config.return_value.preferences.semantic_reranker.top_n_max = 50
+    db = Mock()
+    service = CandidatePreferencesService(db)
+    preferences = SimpleNamespace(
+        owner_id="user-1",
+        remote_mode="any",
+        target_locations=[],
+        visa_sponsorship_required=False,
+        salary_min=None,
+        employment_types=[],
+        soft_preferences="",
+        soft_preference_summary=None,
+        preference_mode="semantic_rerank",
+        preference_profile=None,
+        preference_rerank_top_n=None,
+        revision=0,
+    )
+    service.repo.candidate_preferences.get_or_create_preferences = Mock(return_value=preferences)
+
+    response = service.update_preferences(
+        SimpleNamespace(id="user-1"),
+        {
+            "remote_mode": "any",
+            "target_locations": [],
+            "visa_sponsorship_required": False,
+            "salary_min": None,
+            "employment_types": [],
+            "soft_preferences": "",
+            "preference_mode": "semantic_rerank",
+            "preference_rerank_top_n": 250,
+        },
+    )
+
+    assert preferences.preference_rerank_top_n == 50
+    assert response["preference_rerank_top_n"] == 50
+    assert response["effective_preference_rerank_top_n"] == 50
+    assert response["preference_rerank_top_n_bounds"] == {
+        "min": 5,
+        "max": 50,
+        "default": 25,
+    }
 
 
 @patch("web.backend.services.candidate_preferences_service.get_config")

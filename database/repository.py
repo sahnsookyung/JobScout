@@ -1,4 +1,4 @@
-from typing import List, Optional, Any, Tuple
+from typing import List, Optional, Any, Tuple, Dict
 from sqlalchemy.orm import Session
 
 from database.models import JobPost, JobMatch, SYSTEM_OWNER_ID
@@ -159,6 +159,26 @@ class JobRepository:
     def save_benefits(self, job_post: JobPost, benefits: List[dict]) -> None:
         return self.job_post.save_benefits(job_post, benefits)
 
+    def save_job_offerings_profile(
+        self,
+        job_post: JobPost,
+        profile: Dict[str, Any],
+        *,
+        source_description_hash: Optional[str],
+        extraction_provider: Optional[str] = None,
+        extraction_model: Optional[str] = None,
+    ) -> Any:
+        return self.job_post.save_job_offerings_profile(
+            job_post,
+            profile,
+            source_description_hash=source_description_hash,
+            extraction_provider=extraction_provider,
+            extraction_model=extraction_model,
+        )
+
+    def get_job_offerings_profiles_by_job_ids(self, job_post_ids: List[Any]) -> Dict[str, Any]:
+        return self.job_post.get_job_offerings_profiles_by_job_ids(job_post_ids)
+
     def update_job_metadata(self, job_post: JobPost, metadata: dict) -> None:
         return self.job_post.update_job_metadata(job_post, metadata)
 
@@ -232,6 +252,68 @@ class JobRepository:
 
     def quarantine_null_description_jobs(self, older_than_days: int = 7) -> int:
         return self.job_post.quarantine_null_description_jobs(older_than_days)
+
+    def claim_missing_description_recovery_jobs(
+        self,
+        *,
+        limit: int = 50,
+        run_id: str,
+        tenant_id: Optional[Any] = None,
+    ) -> List[JobPost]:
+        return self.job_post.claim_missing_description_recovery_jobs(
+            limit=limit,
+            run_id=run_id,
+            tenant_id=tenant_id,
+        )
+
+    def queue_description_recovery_for_job(self, job: JobPost, *, run_id: str) -> None:
+        return self.job_post.queue_description_recovery_for_job(job, run_id=run_id)
+
+    def mark_description_recovery_refreshing(self, job: JobPost, *, run_id: str) -> None:
+        return self.job_post.mark_description_recovery_refreshing(job, run_id=run_id)
+
+    def mark_description_recovery_status(
+        self,
+        job: JobPost,
+        *,
+        status: str,
+        reason: str,
+        run_id: Optional[str] = None,
+        error: Optional[str] = None,
+        retryable: bool = False,
+    ) -> None:
+        return self.job_post.mark_description_recovery_status(
+            job,
+            status=status,
+            reason=reason,
+            run_id=run_id,
+            error=error,
+            retryable=retryable,
+        )
+
+    def mark_description_recovered(
+        self,
+        job: JobPost,
+        *,
+        run_id: str,
+        reason: str = "description_found",
+    ) -> None:
+        return self.job_post.mark_description_recovered(job, run_id=run_id, reason=reason)
+
+    def mark_description_recovery_posting_not_found(
+        self,
+        job: JobPost,
+        *,
+        source: Any,
+        run_id: str,
+        reason: str = "authoritative_sync_absent",
+    ) -> None:
+        return self.job_post.mark_description_recovery_posting_not_found(
+            job,
+            source=source,
+            run_id=run_id,
+            reason=reason,
+        )
 
     def get_resume_summary_embedding(self, resume_fingerprint: str) -> Optional[List[float]]:
         return self.resume.get_resume_summary_embedding(resume_fingerprint)

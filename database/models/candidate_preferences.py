@@ -52,6 +52,7 @@ class CandidatePreferences(Base):
         default="semantic_rerank",
         server_default=sql_text("'semantic_rerank'"),
     )
+    preference_rerank_top_n = Column(Integer)
     preference_profile = Column(JSONB)
     revision = Column(Integer, nullable=False, default=0, server_default=sql_text("0"))
     created_at = Column(

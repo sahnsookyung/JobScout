@@ -48,6 +48,7 @@ class JobMatchDTO:
     location_text: str
     is_remote: bool
     content_hash: str = ""
+    description_hash: Optional[str] = None
 
 
 @dataclass

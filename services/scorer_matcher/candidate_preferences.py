@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from core.config_loader import PreferencesConfig
+from core.llm.schema_models import JOB_OFFERINGS_PROFILE_VERSION
 from core.metrics import record_preference_status
 from services.scorer_matcher.preference_semantics import (
     PreferenceAssessment,
@@ -42,6 +45,9 @@ class PreferenceStatus:
     reason: Optional[str] = None
     requested_mode: Optional[str] = None
     effective_mode: Optional[str] = None
+    effective_top_n: Optional[int] = None
+    judged_count: Optional[int] = None
+    eligible_count: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         payload: Dict[str, Any] = {"applied": self.applied}
@@ -51,6 +57,12 @@ class PreferenceStatus:
             payload["requested_mode"] = self.requested_mode
         if self.effective_mode:
             payload["effective_mode"] = self.effective_mode
+        if self.effective_top_n is not None:
+            payload["effective_top_n"] = self.effective_top_n
+        if self.judged_count is not None:
+            payload["judged_count"] = self.judged_count
+        if self.eligible_count is not None:
+            payload["eligible_count"] = self.eligible_count
         return payload
 
 @dataclass(frozen=True)
@@ -68,6 +80,12 @@ class PreferenceRerankResult:
 
     def __len__(self) -> int:
         return len(self.matches)
+
+
+@dataclass(frozen=True)
+class OfferingsProfileLoadResult:
+    profiles: Dict[str, Any]
+    failed: bool = False
 
 
 def _normalize_text(value: Any) -> str:
@@ -98,6 +116,7 @@ def load_candidate_preferences(repo, owner_id: Optional[str]) -> Optional[Dict[s
         "soft_preference_summary": getattr(preferences, "soft_preference_summary", None),
         "preference_mode": getattr(preferences, "preference_mode", "semantic_rerank")
         or "semantic_rerank",
+        "preference_rerank_top_n": getattr(preferences, "preference_rerank_top_n", None),
         "preference_profile": getattr(preferences, "preference_profile", None),
         "revision": int(getattr(preferences, "revision", 0) or 0),
     }
@@ -319,31 +338,34 @@ def _fit_only_fallback(
     requested_mode: str,
     effective_mode: str,
     reason: str,
+    effective_top_n: Optional[int] = None,
 ):
-    component_reason = reason
-    if reason.startswith("runtime_error:"):
-        component_reason = f"preference_reranking_failed:{reason.split(':', 1)[1]}"
+    public_reason = _public_preference_reason(reason)
     for match in scored_matches:
         preference_components = dict(getattr(match, "preference_components", {}) or {})
         preference_components.update(
             {
-                "preference_reason_codes": ["fallback_fit_only"],
+                "preference_reason_codes": [public_reason],
                 "preference_explanation": "Preference reranking unavailable for this run.",
                 "preference_mode_requested": requested_mode,
                 "preference_mode_effective": effective_mode,
                 "preference_mode_used": "fit_only_fallback",
-                "preference_fallback_reason": component_reason,
+                "preference_fallback_reason": public_reason,
+                "preference_status": public_reason,
             }
         )
+        if effective_top_n is not None:
+            preference_components["preference_rerank_top_n"] = effective_top_n
         match.preference_components = preference_components
         match.preference_score = None  # NULL = evaluator did not run
     return PreferenceRerankResult(
         matches=scored_matches,
         status=PreferenceStatus(
             applied=False,
-            reason=reason,
+            reason=public_reason,
             requested_mode=requested_mode,
             effective_mode=effective_mode,
+            effective_top_n=effective_top_n,
         ),
     )
 
@@ -354,27 +376,210 @@ def _assessments_by_job_id(
     return {assessment.job_id: assessment for assessment in assessments}
 
 
+def _public_preference_reason(reason: Optional[str]) -> str:
+    if not reason:
+        return "disabled"
+    if reason in {
+        "preference_profile_unavailable",
+        "preference_reranker_unavailable",
+        "preference_judge_unavailable",
+    }:
+        return "preference_scorer_unavailable"
+    if reason == "job_offerings_lookup_failed":
+        return "preference_scorer_failed"
+    if reason in {"invalid_llm_output", "missing_preference_assessment"}:
+        return "invalid_llm_output"
+    if reason in {"missing_job_offerings", "job_offerings_unavailable"}:
+        return "missing_job_offerings"
+    if reason == "outside_preference_window":
+        return "outside_preference_window"
+    if reason.startswith("preference_reranking_failed") or reason.startswith("runtime_error:"):
+        return "preference_scorer_failed"
+    if reason == "disabled":
+        return "disabled"
+    return reason
+
+
+def _profile_hash(profile: PreferenceProfile) -> str:
+    data = json.dumps(profile.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()[:32]
+
+
+def _resolve_effective_top_n(config: PreferencesConfig, preferences: Dict[str, Any]) -> int:
+    requested = preferences.get("preference_rerank_top_n")
+    resolver = getattr(config, "resolve_preference_rerank_top_n", None)
+    if callable(resolver):
+        return resolver(requested)
+    try:
+        return max(1, int(requested or 25))
+    except (TypeError, ValueError):
+        return 25
+
+
+def _match_fit_sort_key(match: Any) -> tuple[float, float, str]:
+    fit_score = float(getattr(match, "fit_score", 0.0) or 0.0)
+    job_similarity = float(getattr(match, "job_similarity", 0.0) or 0.0)
+    return (fit_score, job_similarity, str(getattr(getattr(match, "job", None), "id", "")))
+
+
+def _top_n_window(scored_matches, top_n: int) -> List[Any]:
+    return sorted(scored_matches, key=_match_fit_sort_key, reverse=True)[:top_n]
+
+
+def _load_offerings_profiles(repo: Any, matches: List[Any]) -> OfferingsProfileLoadResult:
+    if repo is None or not hasattr(repo, "get_job_offerings_profiles_by_job_ids"):
+        return OfferingsProfileLoadResult({})
+    job_ids = [
+        getattr(match.job, "id")
+        for match in matches
+        if getattr(getattr(match, "job", None), "id", None) is not None
+    ]
+    try:
+        return OfferingsProfileLoadResult(
+            repo.get_job_offerings_profiles_by_job_ids(job_ids)
+        )
+    except Exception:
+        logger.warning("Loading cached job offerings failed", exc_info=True)
+        return OfferingsProfileLoadResult({}, failed=True)
+
+
+def _job_description_hash(job: Any) -> Optional[str]:
+    for attribute in ("description_hash", "content_hash"):
+        value = getattr(job, attribute, None)
+        if value:
+            return str(value)
+    return None
+
+
+def _is_offerings_profile_fresh(repo: Any, profile: Any, job: Any) -> bool:
+    if profile is None:
+        return False
+
+    source_hash = _job_description_hash(job)
+    freshness_check = getattr(repo, "is_job_offerings_profile_fresh", None)
+    if callable(freshness_check):
+        try:
+            return bool(
+                freshness_check(
+                    profile,
+                    source_description_hash=source_hash,
+                    profile_schema_version=JOB_OFFERINGS_PROFILE_VERSION,
+                )
+            )
+        except Exception:
+            logger.warning("Checking cached job offerings freshness failed", exc_info=True)
+            return False
+
+    return (
+        str(getattr(profile, "source_description_hash", "") or "") == str(source_hash or "")
+        and int(getattr(profile, "profile_schema_version", 0) or 0)
+        == JOB_OFFERINGS_PROFILE_VERSION
+    )
+
+
+def _preference_metadata(
+    *,
+    preferences: Dict[str, Any],
+    profile_hash: str,
+    effective_top_n: int,
+    offerings_profile: Any = None,
+) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {
+        "preference_revision": int(preferences.get("revision") or 0),
+        "preference_profile_hash": profile_hash,
+        "preference_rerank_top_n": effective_top_n,
+    }
+    if offerings_profile is not None:
+        metadata["offerings_profile_schema_version"] = int(
+            getattr(offerings_profile, "profile_schema_version", 0) or 0
+        )
+        metadata["offerings_source_description_hash"] = getattr(
+            offerings_profile,
+            "source_description_hash",
+            None,
+        )
+    return metadata
+
+
+def _mark_preference_skipped(
+    match: Any,
+    *,
+    reason: str,
+    explanation: str,
+    requested_mode: str,
+    effective_mode: str,
+    metadata: Dict[str, Any],
+) -> None:
+    preference_components = dict(getattr(match, "preference_components", {}) or {})
+    public_reason = _public_preference_reason(reason)
+    preference_components.update(
+        {
+            "preference_confidence": None,
+            "preference_reason_codes": [public_reason],
+            "preference_explanation": explanation,
+            "preference_mode_requested": requested_mode,
+            "preference_mode_effective": effective_mode,
+            "preference_mode_used": effective_mode,
+            "preference_status": public_reason,
+            **metadata,
+        }
+    )
+    match.preference_components = preference_components
+    match.preference_score = None
+
+
+def _mark_outside_window(
+    scored_matches,
+    *,
+    window_job_ids: Set[str],
+    requested_mode: str,
+    effective_mode: str,
+    metadata: Dict[str, Any],
+) -> None:
+    for match in scored_matches:
+        if str(getattr(match.job, "id")) in window_job_ids:
+            continue
+        _mark_preference_skipped(
+            match,
+            reason="outside_preference_window",
+            explanation="Outside preference judging window.",
+            requested_mode=requested_mode,
+            effective_mode=effective_mode,
+            metadata=metadata,
+        )
+
+
 def _apply_assessments(
     scored_matches,
     assessments: List[PreferenceAssessment],
     *,
     requested_mode: str,
     effective_mode: str,
+    target_job_ids: Optional[Set[str]] = None,
+    metadata_by_job_id: Optional[Dict[str, Dict[str, Any]]] = None,
+    effective_top_n: Optional[int] = None,
+    judged_count: Optional[int] = None,
+    eligible_count: Optional[int] = None,
 ):
     by_job_id = _assessments_by_job_id(assessments)
     for match in scored_matches:
-        assessment = by_job_id.get(str(getattr(match.job, "id")))
+        job_id = str(getattr(match.job, "id"))
+        if target_job_ids is not None and job_id not in target_job_ids:
+            continue
+        assessment = by_job_id.get(job_id)
         preference_components = dict(getattr(match, "preference_components", {}) or {})
         if assessment is None:
-            preference_score = 0.0
-            preference_confidence = 0.0
-            reason_codes = ["no_preference_signal"]
-            explanation = "The job description did not strongly reflect the saved soft preferences."
+            preference_score = None
+            preference_confidence = None
+            reason_codes = ["invalid_llm_output"]
+            explanation = "Preference scorer returned invalid output."
+            status = "invalid_llm_output"
         else:
             preference_score = float(assessment.preference_score)
             preference_confidence = float(assessment.preference_confidence)
             reason_codes = list(assessment.preference_reason_codes or [])
             explanation = assessment.preference_explanation
+            status = "applied"
 
         preference_components.update(
             {
@@ -384,6 +589,8 @@ def _apply_assessments(
                 "preference_mode_requested": requested_mode,
                 "preference_mode_effective": effective_mode,
                 "preference_mode_used": effective_mode,
+                "preference_status": status,
+                **((metadata_by_job_id or {}).get(job_id, {})),
             }
         )
         match.preference_components = preference_components
@@ -394,6 +601,9 @@ def _apply_assessments(
             applied=True,
             requested_mode=requested_mode,
             effective_mode=effective_mode,
+            effective_top_n=effective_top_n,
+            judged_count=judged_count,
+            eligible_count=eligible_count,
         ),
     )
 
@@ -403,12 +613,14 @@ def apply_preference_semantic_reranking(
     preferences: Optional[Dict[str, Any]],
     *,
     config: PreferencesConfig,
+    repo: Any = None,
 ):
     """Apply semantic preference reranking after fit-qualified scoring."""
     result = _apply_preference_semantic_reranking(
         scored_matches,
         preferences,
         config=config,
+        repo=repo,
     )
     record_preference_status(result.status.applied, result.status.reason)
     return result
@@ -419,6 +631,7 @@ def _apply_preference_semantic_reranking(
     preferences: Optional[Dict[str, Any]],
     *,
     config: PreferencesConfig,
+    repo: Any = None,
 ):
     if not preferences:
         return PreferenceRerankResult(
@@ -437,6 +650,7 @@ def _apply_preference_semantic_reranking(
         preferences.get("preference_mode"),
         config,
     )
+    effective_top_n = _resolve_effective_top_n(config, preferences)
     profile = _resolve_preference_profile(preferences, config)
     if profile is None:
         return _fit_only_fallback(
@@ -444,9 +658,97 @@ def _apply_preference_semantic_reranking(
             requested_mode=requested_mode,
             effective_mode=effective_mode,
             reason="preference_profile_unavailable",
+            effective_top_n=effective_top_n,
         )
 
-    job_payloads = [serialize_job_for_preference(match.job) for match in scored_matches]
+    profile_hash = _profile_hash(profile)
+    base_metadata = _preference_metadata(
+        preferences=preferences,
+        profile_hash=profile_hash,
+        effective_top_n=effective_top_n,
+    )
+    window_matches = _top_n_window(scored_matches, effective_top_n)
+    window_job_ids = {str(getattr(match.job, "id")) for match in window_matches}
+    _mark_outside_window(
+        scored_matches,
+        window_job_ids=window_job_ids,
+        requested_mode=requested_mode,
+        effective_mode=effective_mode,
+        metadata=base_metadata,
+    )
+
+    offerings_load = _load_offerings_profiles(repo, window_matches)
+    if offerings_load.failed:
+        return _fit_only_fallback(
+            scored_matches,
+            requested_mode=requested_mode,
+            effective_mode=effective_mode,
+            reason="job_offerings_lookup_failed",
+            effective_top_n=effective_top_n,
+        )
+
+    offerings_by_job_id = offerings_load.profiles
+    require_cached_offerings = repo is not None
+    job_payloads = []
+    judged_job_ids: Set[str] = set()
+    metadata_by_job_id: Dict[str, Dict[str, Any]] = {}
+
+    for match in window_matches:
+        job_id = str(getattr(match.job, "id"))
+        offerings_profile = offerings_by_job_id.get(job_id)
+        if require_cached_offerings and not _is_offerings_profile_fresh(
+            repo,
+            offerings_profile,
+            match.job,
+        ):
+            _mark_preference_skipped(
+                match,
+                reason="missing_job_offerings",
+                explanation="Waiting for job offering extraction.",
+                requested_mode=requested_mode,
+                effective_mode=effective_mode,
+                metadata=base_metadata,
+            )
+            continue
+
+        metadata = _preference_metadata(
+            preferences=preferences,
+            profile_hash=profile_hash,
+            effective_top_n=effective_top_n,
+            offerings_profile=offerings_profile,
+        )
+        metadata_by_job_id[job_id] = metadata
+        job_payloads.append(
+            serialize_job_for_preference(
+                match.job,
+                offerings_profile=(
+                    getattr(offerings_profile, "profile_json", None)
+                    if offerings_profile is not None
+                    else None
+                ),
+                offerings_profile_schema_version=metadata.get(
+                    "offerings_profile_schema_version"
+                ),
+                offerings_source_description_hash=metadata.get(
+                    "offerings_source_description_hash"
+                ),
+            )
+        )
+        judged_job_ids.add(job_id)
+
+    if window_matches and not job_payloads:
+        return PreferenceRerankResult(
+            matches=scored_matches,
+            status=PreferenceStatus(
+                applied=False,
+                reason="job_offerings_unavailable",
+                requested_mode=requested_mode,
+                effective_mode=effective_mode,
+                effective_top_n=effective_top_n,
+                judged_count=0,
+                eligible_count=len(window_matches),
+            ),
+        )
 
     try:
         if effective_mode == "llm_judge":
@@ -457,6 +759,7 @@ def _apply_preference_semantic_reranking(
                     requested_mode=requested_mode,
                     effective_mode=effective_mode,
                     reason="preference_judge_unavailable",
+                    effective_top_n=effective_top_n,
                 )
             assessments = judge.judge(profile, job_payloads)
         else:
@@ -467,6 +770,7 @@ def _apply_preference_semantic_reranking(
                     requested_mode=requested_mode,
                     effective_mode=effective_mode,
                     reason="preference_reranker_unavailable",
+                    effective_top_n=effective_top_n,
                 )
             assessments = reranker.rerank(profile, job_payloads)
     except Exception as exc:  # noqa: BLE001 - we record the exception class in the reason
@@ -481,11 +785,40 @@ def _apply_preference_semantic_reranking(
             requested_mode=requested_mode,
             effective_mode=effective_mode,
             reason=reason,
+            effective_top_n=effective_top_n,
+        )
+
+    if job_payloads and not any(
+        assessment.job_id in judged_job_ids for assessment in assessments
+    ):
+        for match in window_matches:
+            if str(getattr(match.job, "id")) not in judged_job_ids:
+                continue
+            _mark_preference_skipped(
+                match,
+                reason="invalid_llm_output",
+                explanation="Preference scorer returned invalid output.",
+                requested_mode=requested_mode,
+                effective_mode=effective_mode,
+                metadata=metadata_by_job_id.get(str(getattr(match.job, "id")), base_metadata),
+            )
+        return PreferenceRerankResult(
+            matches=scored_matches,
+            status=PreferenceStatus(
+                applied=False,
+                reason="invalid_llm_output",
+                requested_mode=requested_mode,
+                effective_mode=effective_mode,
+                effective_top_n=effective_top_n,
+                judged_count=0,
+                eligible_count=len(judged_job_ids),
+            ),
         )
 
     logger.info(
-        "Preference reranking applied: effective_judge_mode=%s matches=%d",
+        "Preference reranking applied: effective_judge_mode=%s judged=%d matches=%d",
         effective_mode == "llm_judge",
+        len(judged_job_ids),
         len(scored_matches),
     )
     return _apply_assessments(
@@ -493,4 +826,9 @@ def _apply_preference_semantic_reranking(
         assessments,
         requested_mode=requested_mode,
         effective_mode=effective_mode,
+        target_job_ids=judged_job_ids,
+        metadata_by_job_id=metadata_by_job_id,
+        effective_top_n=effective_top_n,
+        judged_count=len(judged_job_ids),
+        eligible_count=len(window_matches),
     )

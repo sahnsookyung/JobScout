@@ -8,11 +8,12 @@ from datetime import date, datetime, timezone, timedelta
 
 from sqlalchemy import select, delete, func, update
 from sqlalchemy import and_, or_
+from sqlalchemy.orm import selectinload
 
 from database.models import (
     JobMatch, JobPost, JobPostSource,
     JobRequirementUnit, JobRequirementUnitEmbedding,
-    JobBenefit
+    JobBenefit, JobOfferingsProfile,
 )
 from database.repositories.base import BaseRepository
 from core.utils import cosine_similarity_from_distance
@@ -21,7 +22,28 @@ logger = logging.getLogger(__name__)
 
 EXTRACTION_RETRY_DELAYS_SECONDS = [60, 300, 900, 3600, 14400]
 EMBEDDING_RETRY_DELAYS_SECONDS = [60, 300, 900, 3600, 14400]
+DESCRIPTION_RECOVERY_RETRY_DELAYS_SECONDS = [300, 900, 3600, 14400, 86400]
 STAGE_IN_PROGRESS_STALE_MINUTES = 30
+DESCRIPTION_RECOVERY_STATUSES = frozenset(
+    {
+        "not_needed",
+        "pending",
+        "queued",
+        "refreshing",
+        "description_found",
+        "posting_not_found",
+        "source_unsupported",
+        "source_prohibited",
+        "source_unmapped",
+        "source_adapter_missing",
+        "failed_retryable",
+        "failed_terminal",
+    }
+)
+DESCRIPTION_RECOVERY_QUEUEABLE_STATUSES = frozenset(
+    {"not_needed", "pending", "queued", "failed_retryable"}
+)
+DESCRIPTION_RECOVERY_IN_PROGRESS_STATUSES = frozenset({"refreshing"})
 DESCRIPTION_COMPLETENESS_RANK = {
     "missing": 0,
     "unknown": 1,
@@ -35,9 +57,17 @@ DESCRIPTION_SOURCE_RANK = {
     "scrape": 1,
     "external_seed": 3,
     "cloudflare_worker_seed": 3,
+    "ats_description_recovery": 3,
+    "ats.greenhouse": 3,
+    "ats.lever": 3,
+    "ats.ashby": 3,
 }
-TRUSTED_DESCRIPTION_PROVIDERS = frozenset({"cloudflare_worker_seed"})
-TRUSTED_DESCRIPTION_INGEST_MODES = frozenset({"external_seed_fetch"})
+TRUSTED_DESCRIPTION_PROVIDERS = frozenset(
+    {"cloudflare_worker_seed", "ats_description_recovery"}
+)
+TRUSTED_DESCRIPTION_INGEST_MODES = frozenset(
+    {"external_seed_fetch", "description_recovery"}
+)
 
 
 class JobPostRepository(BaseRepository):
@@ -327,6 +357,15 @@ class JobPostRepository(BaseRepository):
                 description=effective_description,
                 metadata=effective_metadata,
             )
+            if job_post.description:
+                job_post.description_recovery_status = (
+                    "description_found"
+                    if job_post.description_recovery_status != "not_needed"
+                    else "not_needed"
+                )
+                job_post.description_recovery_reason = "description_available"
+                job_post.description_recovery_last_error = None
+                job_post.description_recovery_next_retry_at = None
             if job_post.description and job_post.extraction_status == 'no_description':
                 job_post.extraction_status = 'pending'
                 logger.info(
@@ -490,6 +529,76 @@ class JobPostRepository(BaseRepository):
         self.db.flush()
         return jobs
 
+    def get_unextracted_jobs_by_ids(
+        self,
+        job_ids: List[Any],
+        *,
+        limit: int = 100,
+    ) -> List[JobPost]:
+        if not job_ids:
+            return []
+        stmt = (
+            self._unextracted_jobs_stmt(
+                limit=limit,
+                include_queued=True,
+                include_stale_queued=True,
+            )
+            .where(JobPost.id.in_(job_ids))
+        )
+        return self.db.execute(stmt).scalars().all()
+
+    def get_unextracted_jobs_by_description_recovery_run(
+        self,
+        run_id: str,
+        *,
+        limit: int = 100,
+    ) -> List[JobPost]:
+        if not run_id:
+            return []
+        stmt = (
+            self._unextracted_jobs_stmt(
+                limit=limit,
+                include_queued=True,
+                include_stale_queued=True,
+            )
+            .where(JobPost.description_recovery_run_id == run_id)
+        )
+        return self.db.execute(stmt).scalars().all()
+
+    def claim_unextracted_jobs_by_ids_for_queue(
+        self,
+        job_ids: List[Any],
+        *,
+        limit: int = 100,
+    ) -> List[JobPost]:
+        if not job_ids:
+            return []
+        stmt = (
+            self._unextracted_jobs_stmt(
+                limit=limit,
+                include_queued=False,
+                include_stale_queued=True,
+            )
+            .where(JobPost.id.in_(job_ids))
+            .with_for_update(skip_locked=True)
+        )
+        jobs = self.db.execute(stmt).scalars().all()
+        if not jobs:
+            return []
+        claimed_ids = [job.id for job in jobs]
+        now = datetime.now(timezone.utc)
+        self.db.execute(
+            update(JobPost)
+            .where(JobPost.id.in_(claimed_ids))
+            .values(
+                extraction_status="queued",
+                extraction_last_attempt_at=now,
+                extraction_next_retry_at=None,
+            )
+        )
+        self.db.flush()
+        return jobs
+
     def mark_as_extracted(self, job_post: JobPost) -> None:
         job_post.is_extracted = True
         job_post.extraction_status = 'succeeded'
@@ -636,6 +745,70 @@ class JobPostRepository(BaseRepository):
             self.db.add(jb)
 
         self.db.flush()
+
+    @staticmethod
+    def _profile_confidence(profile: Dict[str, Any]) -> Optional[float]:
+        try:
+            raw = profile.get("confidence")
+            if raw is None:
+                return None
+            return max(0.0, min(1.0, float(raw)))
+        except (TypeError, ValueError):
+            return None
+
+    def save_job_offerings_profile(
+        self,
+        job_post: JobPost,
+        profile: Dict[str, Any],
+        *,
+        source_description_hash: Optional[str],
+        extraction_provider: Optional[str] = None,
+        extraction_model: Optional[str] = None,
+    ) -> JobOfferingsProfile:
+        profile_json = copy.deepcopy(profile or {})
+        schema_version = int(profile_json.get("schema_version") or 1)
+        row = self.db.execute(
+            select(JobOfferingsProfile).where(JobOfferingsProfile.job_post_id == job_post.id)
+        ).scalar_one_or_none()
+        if row is None:
+            row = JobOfferingsProfile(job_post_id=job_post.id)
+            self.db.add(row)
+
+        row.profile_json = profile_json
+        row.profile_schema_version = schema_version
+        row.source_description_hash = source_description_hash
+        row.extraction_provider = extraction_provider
+        row.extraction_model = extraction_model
+        row.confidence = self._profile_confidence(profile_json)
+        row.updated_at = datetime.now(timezone.utc)
+        self.db.flush()
+        return row
+
+    def get_job_offerings_profiles_by_job_ids(
+        self,
+        job_post_ids: List[Any],
+    ) -> Dict[str, JobOfferingsProfile]:
+        if not job_post_ids:
+            return {}
+        stmt = select(JobOfferingsProfile).where(
+            JobOfferingsProfile.job_post_id.in_(job_post_ids)
+        )
+        rows = self.db.execute(stmt).scalars().all()
+        return {str(row.job_post_id): row for row in rows}
+
+    @staticmethod
+    def is_job_offerings_profile_fresh(
+        profile: Optional[JobOfferingsProfile],
+        *,
+        source_description_hash: Optional[str],
+        profile_schema_version: int,
+    ) -> bool:
+        if profile is None:
+            return False
+        return (
+            str(profile.source_description_hash or "") == str(source_description_hash or "")
+            and int(profile.profile_schema_version or 0) == int(profile_schema_version)
+        )
 
     def update_job_metadata(self, job_post: JobPost, metadata: Dict[str, Any]) -> None:
         job_post.min_years_experience = metadata.get('min_years_experience')
@@ -947,6 +1120,182 @@ class JobPostRepository(BaseRepository):
                 JobMatch.job_content_hash == JobPost.content_hash,
             )
             .exists()
+        )
+
+    @staticmethod
+    def _missing_description_condition():
+        return or_(
+            JobPost.description.is_(None),
+            func.length(func.trim(JobPost.description)) == 0,
+            JobPost.description_completeness == "missing",
+            JobPost.extraction_status == "no_description",
+        )
+
+    @staticmethod
+    def _coerce_recovery_status(status: str) -> str:
+        cleaned = str(status or "").strip().lower()
+        return cleaned if cleaned in DESCRIPTION_RECOVERY_STATUSES else "failed_terminal"
+
+    def _description_recovery_jobs_stmt(
+        self,
+        *,
+        limit: int,
+        tenant_id: Any | None = None,
+        include_stale_in_progress: bool = True,
+    ):
+        now = datetime.now(timezone.utc)
+        stale_cutoff = now - timedelta(minutes=STAGE_IN_PROGRESS_STALE_MINUTES)
+        queueable = and_(
+            JobPost.description_recovery_status.in_(DESCRIPTION_RECOVERY_QUEUEABLE_STATUSES),
+            or_(
+                JobPost.description_recovery_next_retry_at.is_(None),
+                JobPost.description_recovery_next_retry_at <= now,
+            ),
+        )
+        conditions = [queueable]
+        if include_stale_in_progress:
+            conditions.append(
+                and_(
+                    JobPost.description_recovery_status.in_(
+                        DESCRIPTION_RECOVERY_IN_PROGRESS_STATUSES
+                    ),
+                    or_(
+                        JobPost.description_recovery_last_attempt_at.is_(None),
+                        JobPost.description_recovery_last_attempt_at <= stale_cutoff,
+                    ),
+                )
+            )
+
+        stmt = (
+            select(JobPost)
+            .options(selectinload(JobPost.sources))
+            .where(
+                JobPost.status == "active",
+                self._missing_description_condition(),
+                or_(*conditions),
+            )
+            .order_by(
+                JobPost.description_recovery_next_retry_at.asc().nullsfirst(),
+                JobPost.first_seen_at.asc(),
+                JobPost.id.asc(),
+            )
+            .limit(limit)
+        )
+        if tenant_id is not None:
+            stmt = stmt.where(JobPost.tenant_id == tenant_id)
+        return stmt
+
+    def claim_missing_description_recovery_jobs(
+        self,
+        *,
+        limit: int = 50,
+        run_id: str,
+        tenant_id: Any | None = None,
+    ) -> List[JobPost]:
+        """Claim active missing-description jobs for a bounded recovery page."""
+        stmt = self._description_recovery_jobs_stmt(
+            limit=limit,
+            tenant_id=tenant_id,
+            include_stale_in_progress=True,
+        ).with_for_update(skip_locked=True)
+        jobs = self.db.execute(stmt).scalars().all()
+        if not jobs:
+            return []
+        now = datetime.now(timezone.utc)
+        for job in jobs:
+            job.description_recovery_status = "queued"
+            job.description_recovery_reason = "background_sweep"
+            job.description_recovery_run_id = run_id
+            job.description_recovery_last_attempt_at = now
+            job.description_recovery_next_retry_at = None
+            job.description_recovery_last_error = None
+        self.db.flush()
+        return jobs
+
+    def queue_description_recovery_for_job(self, job: JobPost, *, run_id: str) -> None:
+        job.description_recovery_status = "queued"
+        job.description_recovery_reason = "manual_refresh"
+        job.description_recovery_run_id = run_id
+        job.description_recovery_next_retry_at = None
+        job.description_recovery_last_error = None
+        self.db.flush()
+
+    def mark_description_recovery_refreshing(self, job: JobPost, *, run_id: str) -> None:
+        job.description_recovery_status = "refreshing"
+        job.description_recovery_reason = "sync_in_progress"
+        job.description_recovery_attempts = int(job.description_recovery_attempts or 0) + 1
+        job.description_recovery_last_attempt_at = datetime.now(timezone.utc)
+        job.description_recovery_next_retry_at = None
+        job.description_recovery_last_error = None
+        job.description_recovery_run_id = run_id
+        self.db.flush()
+
+    def mark_description_recovery_status(
+        self,
+        job: JobPost,
+        *,
+        status: str,
+        reason: str,
+        run_id: str | None = None,
+        error: str | None = None,
+        retryable: bool = False,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        attempts = int(job.description_recovery_attempts or 0)
+        final_status = "failed_retryable" if retryable else self._coerce_recovery_status(status)
+        job.description_recovery_status = final_status
+        job.description_recovery_reason = reason
+        job.description_recovery_last_error = error[:500] if error else None
+        job.description_recovery_last_attempt_at = now
+        job.description_recovery_run_id = run_id or job.description_recovery_run_id
+        job.description_recovery_next_retry_at = (
+            self._compute_next_retry_at(
+                max(attempts, 1),
+                DESCRIPTION_RECOVERY_RETRY_DELAYS_SECONDS,
+            )
+            if retryable
+            else None
+        )
+        self.db.flush()
+
+    def mark_description_recovered(
+        self,
+        job: JobPost,
+        *,
+        run_id: str,
+        reason: str = "description_found",
+    ) -> None:
+        job.description_recovery_status = "description_found"
+        job.description_recovery_reason = reason
+        job.description_recovery_last_error = None
+        job.description_recovery_next_retry_at = None
+        job.description_recovery_run_id = run_id
+        if job.description and job.extraction_status == "no_description":
+            job.extraction_status = "pending"
+        self.db.flush()
+
+    def mark_description_recovery_posting_not_found(
+        self,
+        job: JobPost,
+        *,
+        source: JobPostSource | None,
+        run_id: str,
+        reason: str = "authoritative_sync_absent",
+    ) -> None:
+        if source is not None:
+            source.is_active = False
+            source.last_seen_at = datetime.now(timezone.utc)
+        if not any(
+            sibling.is_active
+            for sibling in list(getattr(job, "sources", []) or [])
+            if source is None or sibling.id != source.id
+        ):
+            job.status = "inactive"
+        self.mark_description_recovery_status(
+            job,
+            status="posting_not_found",
+            reason=reason,
+            run_id=run_id,
         )
 
     def quarantine_null_description_jobs(self, older_than_days: int = 7) -> int:

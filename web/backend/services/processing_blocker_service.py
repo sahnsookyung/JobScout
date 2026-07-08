@@ -75,6 +75,9 @@ class ProcessingBlockerService:
         retry_eligible: bool,
         last_attempt_at: Any,
         next_retry_at: Any,
+        recovery_status: str | None = None,
+        recovery_reason: str | None = None,
+        recovery_run_id: str | None = None,
     ) -> ProcessingBlockerItem:
         return ProcessingBlockerItem(
             job_id=str(job.id),
@@ -89,6 +92,9 @@ class ProcessingBlockerService:
             last_seen_at=isoformat(job.last_seen_at),
             last_attempt_at=isoformat(last_attempt_at),
             next_retry_at=isoformat(next_retry_at),
+            recovery_status=recovery_status,
+            recovery_reason=recovery_reason,
+            recovery_run_id=recovery_run_id,
         )
 
     def extraction_blocker(
@@ -102,17 +108,44 @@ class ProcessingBlockerService:
             return None
         status = job.extraction_status or "pending"
         if not (job.description or "").strip():
+            recovery_status = getattr(job, "description_recovery_status", None) or "pending"
+            recovery_reason = getattr(job, "description_recovery_reason", None)
+            retry_eligible = recovery_status in {
+                "pending",
+                "failed_retryable",
+                "source_unmapped",
+            } and is_retry_due(
+                getattr(job, "description_recovery_next_retry_at", None),
+                now=now,
+            )
+            detail_by_status = {
+                "queued": "Job is queued for compliant ATS description recovery.",
+                "refreshing": "Job description recovery is checking the ATS source.",
+                "posting_not_found": "The authoritative ATS source no longer lists this posting.",
+                "source_unsupported": "This source has no compliant description recovery adapter.",
+                "source_adapter_missing": "This source needs a supported API adapter before description recovery can run.",
+                "source_prohibited": "Hosted description recovery is disabled for this source.",
+                "source_unmapped": "This job needs a configured ATS source mapping before recovery can run.",
+                "failed_retryable": "Description recovery failed retryably and will retry after backoff.",
+                "failed_terminal": "Description recovery failed terminally and needs manual review.",
+            }
             return self.item(
                 job,
                 stage="extraction",
                 blocker_code="description_missing",
-                blocker_detail="Job has no description available for extraction.",
+                blocker_detail=detail_by_status.get(
+                    recovery_status,
+                    "Job has no description available for extraction.",
+                ),
                 status=status,
-                attempts=job.extraction_attempts,
-                last_error=job.extraction_last_error,
-                retry_eligible=False,
-                last_attempt_at=job.extraction_last_attempt_at,
-                next_retry_at=job.extraction_next_retry_at,
+                attempts=getattr(job, "description_recovery_attempts", 0),
+                last_error=getattr(job, "description_recovery_last_error", None) or job.extraction_last_error,
+                retry_eligible=retry_eligible,
+                last_attempt_at=getattr(job, "description_recovery_last_attempt_at", None),
+                next_retry_at=getattr(job, "description_recovery_next_retry_at", None),
+                recovery_status=recovery_status,
+                recovery_reason=recovery_reason,
+                recovery_run_id=getattr(job, "description_recovery_run_id", None),
             )
         if status in {"in_progress", "processing"} and is_stale(job.extraction_last_attempt_at, stale_cutoff=stale_cutoff):
             return self.item(

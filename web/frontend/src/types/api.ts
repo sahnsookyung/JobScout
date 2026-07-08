@@ -11,6 +11,7 @@ export interface MatchSummary {
     is_remote: boolean | null;
     fit_score: number | null;
     preference_score: number | null;
+    preference_status?: Record<string, any> | null;
     penalties: number;
     required_coverage: number;
     preferred_requirement_coverage: number;
@@ -70,6 +71,15 @@ export interface JobDetails {
     description_source?: string;
     description_completeness?: string;
     description_warning_code?: string | null;
+    description_recovery_status?: string;
+    description_recovery_reason?: string | null;
+    description_recovery_provider?: string | null;
+    description_recovery_status_group?: string | null;
+    description_recovery_attempts?: number;
+    description_recovery_last_attempt_at?: string | null;
+    description_recovery_next_retry_at?: string | null;
+    description_recovery_last_error?: string | null;
+    description_recovery_run_id?: string | null;
     salary_min: number | null;
     salary_max: number | null;
     currency: string | null;
@@ -248,6 +258,15 @@ export interface JobInventoryItem {
     description_completeness: string;
     description_source: string;
     description_warning_code?: string | null;
+    description_recovery_status?: string;
+    description_recovery_reason?: string | null;
+    description_recovery_provider?: string | null;
+    description_recovery_status_group?: string | null;
+    description_recovery_attempts?: number;
+    description_recovery_last_attempt_at?: string | null;
+    description_recovery_next_retry_at?: string | null;
+    description_recovery_last_error?: string | null;
+    description_recovery_run_id?: string | null;
     source_site?: string | null;
     source_url?: string | null;
     source_url_direct?: string | null;
@@ -274,6 +293,7 @@ export type JobProcessingStatus =
     | 'ready'
     | 'extracted'
     | 'embedded'
+    | 'missing_description'
     | 'pending_extraction'
     | 'pending_embedding'
     | 'failed';
@@ -296,8 +316,34 @@ export interface JobAvailabilityMutationResponse {
     availability_status: string;
     availability_reason: string;
     message: string;
+    accepted?: boolean;
     queued?: boolean;
     sync_run_id?: string | null;
+    recovery_status?: string | null;
+    recovery_reason?: string | null;
+    recovery_provider?: string | null;
+    recovery_status_group?: string | null;
+    recovery_run_id?: string | null;
+    next_retry_at?: string | null;
+    queued_count?: number;
+    skipped_count?: number;
+    provider_breakdown?: Record<string, any>;
+}
+
+export interface DescriptionRecoverySweepResponse {
+    success: boolean;
+    accepted?: boolean;
+    run_id: string;
+    queued?: boolean;
+    queued_count: number;
+    processed_count: number;
+    found_count: number;
+    skipped_count: number;
+    retryable_failed_count: number;
+    terminal_failed_count: number;
+    provider_breakdown: Record<string, any>;
+    extraction_queued: number;
+    message: string;
 }
 
 export interface ProcessingBlockerItem {
@@ -313,6 +359,9 @@ export interface ProcessingBlockerItem {
     last_seen_at?: string | null;
     last_attempt_at?: string | null;
     next_retry_at?: string | null;
+    recovery_status?: string | null;
+    recovery_reason?: string | null;
+    recovery_run_id?: string | null;
 }
 
 export interface ProcessingBlockersResponse {
@@ -524,6 +573,8 @@ export interface StatsResponse {
         active_pending_extraction_job_posts?: number;
         active_retryable_extraction_job_posts?: number;
         inactive_pending_extraction_job_posts?: number;
+        ready_for_extraction_job_posts?: number;
+        active_ready_for_extraction_job_posts?: number;
         pending_embedding_job_posts?: number;
         processing_embedding_job_posts?: number;
         retryable_embedding_job_posts?: number;
@@ -534,6 +585,15 @@ export interface StatsResponse {
         missing_description_job_posts?: number;
         active_missing_description_job_posts?: number;
         inactive_missing_description_job_posts?: number;
+        description_recovery_queued_job_posts?: number;
+        description_recovery_retryable_job_posts?: number;
+        active_recoverable_missing_description_job_posts?: number;
+        description_recovery_posting_not_found_job_posts?: number;
+        description_recovery_adapter_missing_job_posts?: number;
+        description_recovery_prohibited_job_posts?: number;
+        description_recovery_unmapped_job_posts?: number;
+        description_recovery_unavailable_job_posts?: number;
+        oldest_missing_description_age_seconds?: number;
     };
 }
 
@@ -754,6 +814,13 @@ export interface CandidatePreferences {
     soft_preferences: string;
     soft_preference_summary?: string | null;
     preference_mode: 'semantic_rerank' | 'llm_judge';
+    preference_rerank_top_n: number | null;
+    effective_preference_rerank_top_n: number;
+    preference_rerank_top_n_bounds: {
+        min: number;
+        max: number;
+        default: number;
+    };
     allowed_preference_modes: Array<'semantic_rerank' | 'llm_judge'>;
     effective_preference_mode: 'semantic_rerank' | 'llm_judge';
     revision: number;
@@ -767,6 +834,7 @@ export interface CandidatePreferencesUpdateRequest {
     employment_types: string[];
     soft_preferences: string;
     preference_mode: 'semantic_rerank' | 'llm_judge';
+    preference_rerank_top_n: number | null;
 }
 
 export interface ApiFieldError {

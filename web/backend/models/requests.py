@@ -131,6 +131,7 @@ class CandidatePreferencesUpdateRequest(BaseModel):
     employment_types: List[str] = Field(default_factory=list)
     soft_preferences: str = Field(default="")
     preference_mode: Literal["semantic_rerank", "llm_judge"] = Field(default="semantic_rerank")
+    preference_rerank_top_n: Optional[int] = Field(default=None, ge=1)
 
 
 class ResumeHashCheckRequest(BaseModel):

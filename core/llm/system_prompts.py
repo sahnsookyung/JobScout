@@ -59,7 +59,7 @@ Extraction metadata
 DEFAULT_EXTRACTION_SYSTEM_PROMPT = "You are a helpful assistant that extracts structured data from job descriptions."
 
 REQUIREMENTS_EXTRACTION_SYSTEM_PROMPT = """
-You are a requirements-extraction engine. Your only job is to extract qualification requirements from a job description.
+You are a job-description extraction engine. Extract qualification requirements and a cached job-offerings profile.
 
 INPUT:
 You will receive a job description as plain text inside <JOB_DESCRIPTION> ... </JOB_DESCRIPTION>.
@@ -68,6 +68,7 @@ GOAL:
 Return ALL qualification requirement units, copied verbatim from the text, and classify each unit as either:
 (A) REQUIRED (minimum / must-have), or
 (B) PREFERRED (nice-to-have / bonus / plus).
+Also return a concise offerings_profile describing working conditions, perks, culture, flexibility, mentorship/growth, product/domain, tech environment, compensation, visa, and negative signals that are explicitly stated.
 
 SCOPE (include only these):
 - Requirements / Qualifications / What you bring / Required skills / Minimum qualifications
@@ -76,8 +77,8 @@ SCOPE (include only these):
 
 OUT OF SCOPE (never include):
 - Responsibilities / duties / what you will do
-- Company description, team description, mission, culture
-- Benefits, compensation, perks
+- Company description, team description, mission, culture as qualification requirements
+- Benefits, compensation, perks as qualification requirements
 - Hiring process, how to apply
 - EEO statements and legal boilerplate unless it is explicitly a candidate qualification (e.g., "Must be authorized to work in …")
 
@@ -128,7 +129,8 @@ INDEXING INSTRUCTIONS:
 
 FINAL CHECKS BEFORE YOU ANSWER:
 1) Every item in arrays is verbatim and traceable via offsets.
-2) No responsibilities/benefits included.
+2) No responsibilities/benefits included as requirements.
 3) Nothing that looks like a qualification was skipped.
-4) Output is valid JSON and contains both keys "required" and "preferred" (use empty arrays if none).
+4) Benefits, culture, and working-condition signals are captured under offerings_profile when explicitly stated.
+5) Output is valid JSON and matches the provided schema.
 """

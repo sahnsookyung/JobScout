@@ -1058,6 +1058,21 @@ class TestToMatchSummary:
         result = service._to_match_summary(m)
         assert result.preference_score == pytest.approx(0.0)
 
+    def test_preference_status_mapped_from_components(self, service):
+        m = _make_match(preference_score=None)
+        m.preference_components = {
+            "preference_status": "outside_preference_window",
+            "preference_mode_used": "semantic_rerank",
+        }
+
+        result = service._to_match_summary(m)
+
+        assert result.preference_status == {
+            "applied": False,
+            "reason": "outside_preference_window",
+            "effective_mode": "semantic_rerank",
+        }
+
     def test_ranking_explanation_fields_populated(self, service):
         """When ranking_explanation is present the fields are forwarded."""
         from core.ranking.explainability import RankingExplanation
@@ -1544,8 +1559,25 @@ class TestPreferenceStatusHelper:
         result = real_service._preference_status(match)
         assert result == {
             "applied": False,
-            "reason": "preference_reranking_failed:RuntimeError",
+            "reason": "preference_scorer_failed",
             "effective_mode": "fit_only_fallback",
+        }
+
+    def test_sanitizes_raw_snapshot_failure_reason(self, real_service):
+        match = SimpleNamespace(
+            ranking_snapshot={
+                "preference_status": {
+                    "applied": False,
+                    "reason": "runtime_error:TimeoutError",
+                    "effective_mode": "semantic_rerank",
+                }
+            },
+            preference_components=None,
+        )
+        assert real_service._preference_status(match) == {
+            "applied": False,
+            "reason": "preference_scorer_failed",
+            "effective_mode": "semantic_rerank",
         }
 
     def test_returns_applied_when_only_mode_used_present(self, real_service):

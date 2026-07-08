@@ -27,6 +27,9 @@ describe('CandidatePreferencesPanel', () => {
                 soft_preferences: 'Mentorship and backend growth',
                 soft_preference_summary: 'mentorship, backend growth',
                 preference_mode: 'semantic_rerank',
+                preference_rerank_top_n: 25,
+                effective_preference_rerank_top_n: 25,
+                preference_rerank_top_n_bounds: { min: 1, max: 100, default: 25 },
                 allowed_preference_modes: ['semantic_rerank', 'llm_judge'],
                 effective_preference_mode: 'semantic_rerank',
                 revision: 1,
@@ -72,6 +75,8 @@ describe('CandidatePreferencesPanel', () => {
                 preferences: {
                     ...payload,
                     soft_preference_summary: 'updated saved preference',
+                    effective_preference_rerank_top_n: payload.preference_rerank_top_n ?? 25,
+                    preference_rerank_top_n_bounds: { min: 1, max: 100, default: 25 },
                     allowed_preference_modes: ['semantic_rerank', 'llm_judge'],
                     effective_preference_mode: payload.preference_mode,
                     revision: 2,
@@ -91,6 +96,7 @@ describe('CandidatePreferencesPanel', () => {
                 employment_types: ['Full-time'],
                 soft_preferences: 'Updated saved preference',
                 preference_mode: 'semantic_rerank',
+                preference_rerank_top_n: 25,
             });
         });
         expect(toast.success).toHaveBeenCalledWith('Preferences saved.');
@@ -115,6 +121,8 @@ describe('CandidatePreferencesPanel', () => {
         });
         await userEvent.click(screen.getByRole('checkbox'));
         await userEvent.selectOptions(screen.getAllByRole('combobox')[1], 'llm_judge');
+        await userEvent.clear(screen.getByLabelText(/preference judging window/i));
+        await userEvent.type(screen.getByLabelText(/preference judging window/i), '15');
 
         expect(screen.getByText('You have unsaved changes.')).toBeInTheDocument();
 
@@ -129,6 +137,7 @@ describe('CandidatePreferencesPanel', () => {
                 employment_types: ['Contract', 'Part-time'],
                 soft_preferences: 'Mentorship and backend growth',
                 preference_mode: 'llm_judge',
+                preference_rerank_top_n: 15,
             });
         });
     });

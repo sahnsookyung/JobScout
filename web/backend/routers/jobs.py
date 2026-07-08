@@ -11,9 +11,11 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from database.models import JobPost, JobPostSource
+from database.repository import JobRepository
 
 from ..dependencies import TenantContext, get_current_user, get_db, get_tenant_context
 from ..models.responses import (
+    DescriptionRecoverySweepResponse,
     JobAvailabilityMutationResponse,
     JobInventoryItem,
     JobsResponse,
@@ -43,6 +45,7 @@ _VALID_PROCESSING_STATUSES = {
     "ready",
     "extracted",
     "embedded",
+    "missing_description",
     "pending_extraction",
     "pending_embedding",
     "failed",
@@ -112,17 +115,67 @@ def _availability_actions(job: JobPost, source: JobPostSource | None) -> list[st
     refresh_kind = source_refresh_kind(source)
     if refresh_kind == "compliant_ats":
         actions.append("refresh_availability")
+        if _missing_description(job):
+            actions.append("refresh_description")
+    elif refresh_kind == "adapter_missing":
+        actions.append("refresh_unavailable_adapter_missing")
+        if _missing_description(job):
+            actions.append("description_recovery_unavailable_adapter_missing")
     elif refresh_kind == "prohibited":
         actions.append("refresh_unavailable_deployment_disabled")
+        if _missing_description(job):
+            actions.append("description_recovery_unavailable_deployment_disabled")
     elif source is not None:
         actions.append("refresh_unavailable")
+        if _missing_description(job):
+            actions.append("description_recovery_unavailable")
     actions.append("restore" if getattr(job, "status", None) == "expired" else "retire")
     return actions
+
+def _missing_description(job: JobPost) -> bool:
+    description = getattr(job, "description", None)
+    return (
+        not (description or "").strip()
+        or getattr(job, "description_completeness", None) == "missing"
+        or getattr(job, "extraction_status", None) == "no_description"
+    )
+
+
+def _description_recovery_provider(job: JobPost) -> str | None:
+    payload = getattr(job, "raw_payload", None)
+    if not isinstance(payload, dict):
+        return None
+    metadata = payload.get("source_metadata")
+    if not isinstance(metadata, dict):
+        return None
+    provider = metadata.get("description_provider")
+    return str(provider) if provider else None
+
+
+def _description_recovery_status_group(status: str | None) -> str:
+    if status in {"queued", "refreshing"}:
+        return "checking"
+    if status == "description_found":
+        return "found"
+    if status == "posting_not_found":
+        return "gone"
+    if status == "source_unmapped":
+        return "configure_source"
+    if status == "source_adapter_missing":
+        return "adapter_missing"
+    if status in {"source_prohibited", "source_unsupported"}:
+        return "unsupported"
+    if status == "failed_retryable":
+        return "retrying"
+    if status == "failed_terminal":
+        return "failed"
+    return "pending" if status in {"pending", "not_needed", None} else "unknown"
 
 
 def _job_inventory_item(job: JobPost) -> JobInventoryItem:
     source = _primary_source(job)
     availability_status, availability_reason = _availability_status(job, source)
+    recovery_status = getattr(job, "description_recovery_status", None) or "not_needed"
     return JobInventoryItem(
         job_id=str(job.id),
         title=job.title,
@@ -137,6 +190,15 @@ def _job_inventory_item(job: JobPost) -> JobInventoryItem:
         description_completeness=job.description_completeness or "unknown",
         description_source=job.description_source or "unknown",
         description_warning_code=job.description_warning_code,
+        description_recovery_status=recovery_status,
+        description_recovery_reason=getattr(job, "description_recovery_reason", None),
+        description_recovery_provider=_description_recovery_provider(job),
+        description_recovery_status_group=_description_recovery_status_group(recovery_status),
+        description_recovery_attempts=int(getattr(job, "description_recovery_attempts", 0) or 0),
+        description_recovery_last_attempt_at=_isoformat(getattr(job, "description_recovery_last_attempt_at", None)),
+        description_recovery_next_retry_at=_isoformat(getattr(job, "description_recovery_next_retry_at", None)),
+        description_recovery_last_error=_truncate_error(getattr(job, "description_recovery_last_error", None)),
+        description_recovery_run_id=getattr(job, "description_recovery_run_id", None),
         source_site=getattr(source, "site", None),
         source_url=getattr(source, "job_url", None),
         source_url_direct=getattr(source, "job_url_direct", None),
@@ -179,9 +241,25 @@ def _job_inventory_filters(
         filters.append(JobPost.is_extracted.is_(True))
     elif processing_status == "embedded":
         filters.append(JobPost.is_embedded.is_(True))
+    elif processing_status == "missing_description":
+        filters.append(
+            or_(
+                JobPost.description.is_(None),
+                func.length(func.trim(JobPost.description)) == 0,
+                JobPost.description_completeness == "missing",
+                JobPost.extraction_status == "no_description",
+            )
+        )
     elif processing_status == "pending_extraction":
         filters.append(JobPost.extraction_status.in_(_RETRYABLE_OR_PENDING))
         filters.append(JobPost.is_extracted.is_(False))
+        filters.extend(
+            [
+                JobPost.description.isnot(None),
+                func.length(func.trim(JobPost.description)) > 0,
+                JobPost.description_completeness != "missing",
+            ]
+        )
     elif processing_status == "pending_embedding":
         filters.append(JobPost.embedding_status.in_(_RETRYABLE_OR_PENDING))
         filters.append(JobPost.is_embedded.is_(False))
@@ -258,8 +336,12 @@ def _mutation_response(
     job: JobPost,
     message: str,
     *,
+    accepted: bool = False,
     queued: bool = False,
     sync_run_id: str | None = None,
+    queued_count: int = 0,
+    skipped_count: int = 0,
+    provider_breakdown: dict | None = None,
 ) -> JobAvailabilityMutationResponse:
     source = _primary_source(job)
     availability_status, availability_reason = _availability_status(job, source)
@@ -270,8 +352,20 @@ def _mutation_response(
         availability_status=availability_status,
         availability_reason=availability_reason,
         message=message,
+        accepted=accepted,
         queued=queued,
         sync_run_id=sync_run_id,
+        recovery_status=getattr(job, "description_recovery_status", None),
+        recovery_reason=getattr(job, "description_recovery_reason", None),
+        recovery_provider=_description_recovery_provider(job),
+        recovery_status_group=_description_recovery_status_group(
+            getattr(job, "description_recovery_status", None)
+        ),
+        recovery_run_id=getattr(job, "description_recovery_run_id", None),
+        next_retry_at=_isoformat(getattr(job, "description_recovery_next_retry_at", None)),
+        queued_count=queued_count,
+        skipped_count=skipped_count,
+        provider_breakdown=provider_breakdown or {},
     )
 
 
@@ -463,7 +557,7 @@ def get_jobs(
     _user: Annotated[object, Depends(get_current_user)],
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     job_status: Annotated[str, Query(description="Job lifecycle status: active, inactive, expired, unknown, or all")] = "all",
-    processing_status: Annotated[str, Query(description="Processing filter: all, ready, extracted, embedded, pending_extraction, pending_embedding, or failed")] = "all",
+    processing_status: Annotated[str, Query(description="Processing filter: all, ready, extracted, embedded, missing_description, pending_extraction, pending_embedding, or failed")] = "all",
     search: Annotated[str | None, Query(max_length=120, description="Search title, company, or location")] = None,
     limit: Annotated[int, Query(ge=1, le=200, description="Maximum jobs to return")] = 50,
     offset: Annotated[int, Query(ge=0, description="Pagination offset")] = 0,
@@ -496,6 +590,73 @@ def get_jobs(
         limit=limit,
         offset=offset,
         jobs=jobs,
+    )
+
+
+def _recovery_message(outcome: str) -> str:
+    if outcome in {"queued", "pending"}:
+        return "Description recovery was queued. A background worker will check the ATS source."
+    if outcome == "refreshing":
+        return "Description recovery is already checking the ATS source."
+    if outcome == "description_found":
+        return "Description recovered from the ATS source. Extraction will use the recovered job."
+    if outcome == "posting_not_found":
+        return "The ATS source no longer lists this posting; it was marked inactive, not deleted."
+    if outcome == "source_adapter_missing":
+        return "Description recovery needs a supported API adapter for this source."
+    if outcome == "source_prohibited":
+        return "Description recovery is disabled for this source in hosted deployments."
+    if outcome == "source_unmapped":
+        return "Description recovery needs a configured ATS source mapping for this posting."
+    if outcome == "source_unsupported":
+        return "Description recovery is not available for this source."
+    if outcome == "failed_retryable":
+        return "Description recovery could not finish and will retry after backoff."
+    return "Description recovery failed terminally for this posting."
+
+
+@router.post(
+    "/description-recovery/sweep",
+    response_model=DescriptionRecoverySweepResponse,
+    responses={
+        400: {"description": "Invalid tenant header"},
+    },
+)
+def sweep_description_recovery(
+    db: DbSession,
+    _user: Annotated[object, Depends(get_current_user)],
+    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+    limit: Annotated[int, Query(ge=1, le=50, description="Maximum missing-description jobs to recover")] = 25,
+) -> DescriptionRecoverySweepResponse:
+    """Queue one bounded missing-description recovery page for this tenant."""
+    run_id = f"description-recovery-sweep-{tenant_context.tenant_id or 'global'}"
+    repo = JobRepository(db)
+    recovery_jobs = repo.claim_missing_description_recovery_jobs(
+        limit=limit,
+        run_id=run_id,
+        tenant_id=tenant_context.tenant_id,
+    )
+    db.commit()
+
+    queued_count = len(recovery_jobs)
+    return DescriptionRecoverySweepResponse(
+        success=True,
+        accepted=queued_count > 0,
+        run_id=run_id,
+        queued=True,
+        queued_count=queued_count,
+        processed_count=0,
+        found_count=0,
+        skipped_count=0,
+        retryable_failed_count=0,
+        terminal_failed_count=0,
+        provider_breakdown={},
+        extraction_queued=0,
+        message=(
+            f"Queued {queued_count} missing-description jobs for background ATS recovery."
+            if queued_count
+            else "No eligible missing-description jobs were ready for recovery."
+        ),
     )
 
 
@@ -544,6 +705,68 @@ def restore_job(
 
 
 @router.post(
+    "/{job_id}/description-recovery/refresh-now",
+    response_model=JobAvailabilityMutationResponse,
+    responses={
+        400: {"description": "Invalid job id or tenant header"},
+        404: {"description": "Job not found"},
+    },
+)
+def refresh_job_description_now(
+    job_id: str,
+    db: DbSession,
+    _user: Annotated[object, Depends(get_current_user)],
+    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> JobAvailabilityMutationResponse:
+    """Queue compliant ATS recovery for one missing-description job."""
+    job = _get_scoped_job(db, job_id, tenant_id=tenant_context.tenant_id)
+    if not _missing_description(job):
+        return _mutation_response(job, "Description is already available for this job.")
+
+    run_id = f"description-recovery-job-{job.id}"
+    repo = JobRepository(db)
+    refresh_kind = source_refresh_kind(_primary_source(job))
+    if refresh_kind != "compliant_ats":
+        status = {
+            "adapter_missing": "source_adapter_missing",
+            "prohibited": "source_prohibited",
+            "none": "source_unmapped",
+        }.get(refresh_kind, "source_unmapped")
+        repo.mark_description_recovery_status(
+            job,
+            status=status,
+            reason=status,
+            run_id=run_id,
+        )
+        db.commit()
+        db.refresh(job)
+        return _mutation_response(
+            job,
+            _recovery_message(status),
+            accepted=False,
+            queued=False,
+            queued_count=0,
+            skipped_count=1,
+            provider_breakdown={},
+        )
+
+    repo.queue_description_recovery_for_job(job, run_id=run_id)
+    db.commit()
+    db.refresh(job)
+
+    outcome = str(job.description_recovery_status or "queued")
+    return _mutation_response(
+        job,
+        _recovery_message(outcome),
+        accepted=True,
+        queued=True,
+        queued_count=1,
+        skipped_count=0,
+        provider_breakdown={},
+    )
+
+
+@router.post(
     "/{job_id}/refresh-availability",
     response_model=JobAvailabilityMutationResponse,
     responses={
@@ -566,7 +789,19 @@ def refresh_job_availability(
             job,
             "Availability refresh is disabled for this source in hosted deployments.",
         )
+    if refresh_kind == "adapter_missing":
+        return _mutation_response(
+            job,
+            "Availability refresh needs a supported API adapter for this source.",
+        )
     if refresh_kind == "compliant_ats":
+        if _missing_description(job):
+            return refresh_job_description_now(
+                job_id,
+                db,
+                _user,
+                tenant_context,
+            )
         return _mutation_response(
             job,
             "Refresh must be run through the configured ATS source sync for this workspace.",

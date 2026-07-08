@@ -310,7 +310,7 @@ describe('StatsPanel', () => {
         expect(screen.getByText('Imported')).toBeInTheDocument();
         expect(screen.getByText('Ready active')).toBeInTheDocument();
         expect(screen.getByText('Not active')).toBeInTheDocument();
-        expect(screen.getByText('Pending extract')).toBeInTheDocument();
+        expect(screen.getByText('Ready extract')).toBeInTheDocument();
         expect(screen.getByText('Missing desc')).toBeInTheDocument();
         expect(screen.getByText('Active backlog')).toBeInTheDocument();
         expect(screen.getByText('Inactive backlog')).toBeInTheDocument();

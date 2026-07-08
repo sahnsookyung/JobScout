@@ -3,7 +3,8 @@
 from typing import Any
 
 COMPLIANT_REFRESH_SOURCE_SITES = {"greenhouse", "lever", "ashby"}
-PROHIBITED_SCRAPER_SOURCE_SITES = {"tokyodev", "japandev", "jobspy", "workday"}
+PROHIBITED_SCRAPER_SOURCE_SITES = {"tokyodev", "japandev", "jobspy"}
+ADAPTER_MISSING_SOURCE_SITES = {"workday"}
 
 
 def source_site_tokens(source: Any) -> set[str]:
@@ -16,7 +17,11 @@ def source_site_tokens(source: Any) -> set[str]:
     ]
     haystack = " ".join(str(value).lower() for value in values if value)
     tokens: set[str] = set()
-    for site in COMPLIANT_REFRESH_SOURCE_SITES | PROHIBITED_SCRAPER_SOURCE_SITES:
+    for site in (
+        COMPLIANT_REFRESH_SOURCE_SITES
+        | PROHIBITED_SCRAPER_SOURCE_SITES
+        | ADAPTER_MISSING_SOURCE_SITES
+    ):
         if site in haystack:
             tokens.add(site)
     if "greenhouse.io" in haystack or "boards.greenhouse" in haystack:
@@ -32,6 +37,8 @@ def source_refresh_kind(source: Any) -> str:
     tokens = source_site_tokens(source)
     if tokens & PROHIBITED_SCRAPER_SOURCE_SITES:
         return "prohibited"
+    if tokens & ADAPTER_MISSING_SOURCE_SITES:
+        return "adapter_missing"
     if tokens & COMPLIANT_REFRESH_SOURCE_SITES:
         return "compliant_ats"
     if source is None:

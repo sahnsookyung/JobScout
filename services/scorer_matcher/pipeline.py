@@ -1090,30 +1090,29 @@ def _run_matching_and_scoring(
         scored_matches = _run_scorer_service(
             scorer, preliminary_matches, matching_config, stop_event,
         )
+        scored_match_dtos = _convert_matches_to_dtos(scored_matches)
+        selection_candidates = reusable_match_dtos + scored_match_dtos
         rerank_start = time.time()
         rerank_result = apply_preference_semantic_reranking(
-            scored_matches,
+            selection_candidates,
             candidate_preferences,
             config=_resolve_preferences_config(ctx),
+            repo=repo,
         )
         if isinstance(rerank_result, PreferenceRerankResult):
-            scored_matches = rerank_result.matches
+            selection_candidates = rerank_result.matches
             preference_status = rerank_result.status
         else:
-            scored_matches = rerank_result
+            selection_candidates = rerank_result
             preference_status = PreferenceStatus(applied=False, reason="unknown")
+        _apply_preference_status_to_match_dtos(selection_candidates, preference_status)
         logger.info(
             "Preference reranking completed in %.2fs for %d matches (applied=%s reason=%s)",
             time.time() - rerank_start,
-            len(scored_matches),
+            len(selection_candidates),
             preference_status.applied,
             preference_status.reason,
         )
-        scored_match_dtos = _convert_matches_to_dtos(
-            scored_matches,
-            preference_status=preference_status,
-        )
-        selection_candidates = reusable_match_dtos + scored_match_dtos
         selection_result = _prepare_selection_result(
             selection_candidates,
             ctx=ctx,
@@ -1128,17 +1127,17 @@ def _run_matching_and_scoring(
 
         match_dtos = _selection_matches_to_dtos(
             selection_result.selected_matches,
-            fallback_dtos=scored_match_dtos,
+            fallback_dtos=selection_candidates,
         )
         persist_matches = _matches_for_selection_persistence(
-            scored_match_dtos,
+            selection_candidates,
             item_snapshots,
             selected_matches=selection_result.selected_matches,
         )
         persist_match_dtos = (
             persist_matches
             if persist_matches is not selection_result.selected_matches
-            else scored_match_dtos
+            else selection_candidates
         )
 
     step_elapsed = time.time() - scoring_start
@@ -1281,6 +1280,7 @@ def _persisted_match_to_dto(match) -> MatchResultDTO:
             location_text=match.job_post.location_text,
             is_remote=match.job_post.is_remote,
             content_hash=match.job_post.content_hash,
+            description_hash=getattr(match.job_post, "description_hash", None),
         ),
         fit_score=_number(match.fit_score),
         preference_score=(
@@ -1356,6 +1356,19 @@ def _ranking_snapshot_from_match(match, preference_status: PreferenceStatus | No
     return snapshot
 
 
+def _apply_preference_status_to_match_dtos(
+    match_dtos: List[MatchResultDTO],
+    preference_status: PreferenceStatus | None,
+) -> None:
+    if preference_status is None:
+        return
+    status_payload = preference_status.to_dict()
+    for dto in match_dtos:
+        snapshot = dict(getattr(dto, "ranking_snapshot", {}) or {})
+        snapshot["preference_status"] = status_payload
+        dto.ranking_snapshot = snapshot
+
+
 def _convert_matches_to_dtos(
     scored_matches,
     *,
@@ -1377,6 +1390,7 @@ def _convert_matches_to_dtos(
                 location_text=match.job.location_text,
                 is_remote=match.job.is_remote,
                 content_hash=match.job.content_hash,
+                description_hash=getattr(match.job, "description_hash", None),
             ),
             fit_score=match.fit_score or 0.0,
             preference_score=match.preference_score,

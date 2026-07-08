@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 from tests.mocks.fake_service import FakeLLMService
 from services.scorer_matcher.candidate_preferences import (
+    PreferenceRerankResult,
+    PreferenceStatus,
     apply_candidate_preference_filters,
     apply_preference_semantic_reranking,
 )
@@ -60,6 +62,13 @@ def _dto(
         preference_score=preference_score,
         job_similarity=job_similarity,
         jd_required_coverage=0.75,
+    )
+
+
+def _preference_rerank_passthrough(matches, *_args, **_kwargs):
+    return PreferenceRerankResult(
+        list(matches),
+        PreferenceStatus(applied=False, reason="disabled"),
     )
 
 
@@ -755,7 +764,10 @@ class TestRunMatchingAndScoring:
             owner_id="user-1",
         ),
     )
-    @patch("services.scorer_matcher.pipeline.apply_preference_semantic_reranking", return_value=["reranked"])
+    @patch(
+        "services.scorer_matcher.pipeline.apply_preference_semantic_reranking",
+        side_effect=_preference_rerank_passthrough,
+    )
     @patch("services.scorer_matcher.pipeline._run_scorer_service", return_value=["scored"])
     @patch("services.scorer_matcher.pipeline.ScoringService")
     @patch("services.scorer_matcher.pipeline._run_preliminary_matching", return_value=["prelim"])
@@ -791,16 +803,16 @@ class TestRunMatchingAndScoring:
             status_callback=None,
         )
 
-        assert result.match_dtos == [_dto()]
+        assert [dto.job.id for dto in result.match_dtos] == ["job-1"]
         mock_scorer_cls.assert_called_once_with(repo=repo, config=scorer_config, ai_service=None)
         mock_run_scorer.assert_called_once()
-        mock_apply_preferences.assert_called_once_with(
-            ["scored"],
-            None,
-            config=SimpleNamespace(),
-        )
+        mock_apply_preferences.assert_called_once()
+        assert [dto.job.id for dto in mock_apply_preferences.call_args.args[0]] == ["job-1"]
+        assert mock_apply_preferences.call_args.args[1] is None
+        assert mock_apply_preferences.call_args.kwargs["config"] == SimpleNamespace()
+        assert mock_apply_preferences.call_args.kwargs["repo"] is repo
         prepare_args = mock_prepare_selection.call_args.args
-        assert prepare_args[0] == [_dto()]
+        assert [dto.job.id for dto in prepare_args[0]] == ["job-1"]
         assert mock_prepare_selection.call_args.kwargs["matching_config"] == SimpleNamespace(scorer=scorer_config)
 
     @patch("services.scorer_matcher.pipeline._convert_matches_to_dtos", return_value=[_dto()])
@@ -813,7 +825,10 @@ class TestRunMatchingAndScoring:
             owner_id="user-1",
         ),
     )
-    @patch("services.scorer_matcher.pipeline.apply_preference_semantic_reranking", return_value=["scored"])
+    @patch(
+        "services.scorer_matcher.pipeline.apply_preference_semantic_reranking",
+        side_effect=_preference_rerank_passthrough,
+    )
     @patch("services.scorer_matcher.pipeline._run_scorer_service", return_value=["scored"])
     @patch("services.scorer_matcher.pipeline.ScoringService")
     @patch("services.scorer_matcher.pipeline._run_preliminary_matching", return_value=["prelim"])
@@ -868,7 +883,10 @@ class TestRunMatchingAndScoring:
             owner_id="user-1",
         ),
     )
-    @patch("services.scorer_matcher.pipeline.apply_preference_semantic_reranking", return_value=["scored"])
+    @patch(
+        "services.scorer_matcher.pipeline.apply_preference_semantic_reranking",
+        side_effect=_preference_rerank_passthrough,
+    )
     @patch("services.scorer_matcher.pipeline._run_scorer_service", return_value=["scored"])
     @patch("services.scorer_matcher.pipeline.ScoringService")
     @patch("services.scorer_matcher.pipeline._run_preliminary_matching")
@@ -940,10 +958,7 @@ class TestRunMatchingAndScoring:
     )
     @patch(
         "services.scorer_matcher.pipeline.apply_preference_semantic_reranking",
-        return_value=[
-            SimpleNamespace(job=SimpleNamespace(id="job-primary")),
-            SimpleNamespace(job=SimpleNamespace(id="job-excluded")),
-        ],
+        side_effect=_preference_rerank_passthrough,
     )
     @patch(
         "services.scorer_matcher.pipeline._run_scorer_service",
@@ -1015,13 +1030,16 @@ class TestRunMatchingAndScoring:
             owner_id="user-1",
         ),
     )
-    @patch("services.scorer_matcher.pipeline.apply_preference_semantic_reranking", return_value=["scored"])
+    @patch(
+        "services.scorer_matcher.pipeline.apply_preference_semantic_reranking",
+        side_effect=_preference_rerank_passthrough,
+    )
     @patch("services.scorer_matcher.pipeline._run_scorer_service", return_value=["scored"])
     @patch("services.scorer_matcher.pipeline.ScoringService")
     @patch("services.scorer_matcher.pipeline._run_preliminary_matching", return_value=["prelim"])
     @patch("services.scorer_matcher.pipeline._prepare_matching_run")
     @patch("services.scorer_matcher.pipeline.job_uow")
-    def test_ranks_cached_reusable_matches_but_persists_only_new_page(
+    def test_ranks_and_persists_cached_reusable_matches_with_new_page(
         self,
         mock_uow,
         mock_prepare,
@@ -1062,7 +1080,15 @@ class TestRunMatchingAndScoring:
             for dto in mock_prepare_selection.call_args.args[0]
         ]
         assert selection_job_ids == ["job-cached", "job-new"]
-        assert [dto.job.id for dto in result.persist_match_dtos] == ["job-new"]
+        rerank_job_ids = [
+            dto.job.id
+            for dto in _mock_apply_preferences.call_args.args[0]
+        ]
+        assert rerank_job_ids == ["job-cached", "job-new"]
+        assert [dto.job.id for dto in result.persist_match_dtos] == [
+            "job-cached",
+            "job-new",
+        ]
         assert result.cached_job_match_ids_by_job_id == {"job-cached": "cached-match"}
         assert result.matching_page_size == 500
 

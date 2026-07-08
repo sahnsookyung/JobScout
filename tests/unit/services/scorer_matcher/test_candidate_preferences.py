@@ -45,6 +45,8 @@ def _job(**overrides):
         "raw_payload": {},
     }
     defaults.update(overrides)
+    defaults.setdefault("description_hash", f"hash-{defaults['id']}")
+    defaults.setdefault("content_hash", f"hash-{defaults['id']}")
     return SimpleNamespace(**defaults)
 
 
@@ -67,6 +69,45 @@ def _scored_match(
         preference_score=None,
         fit_components=fit_components or {},
         preference_components=preference_components or {},
+    )
+
+
+class _OfferingsRepo:
+    def __init__(self, profiles):
+        self.profiles = profiles
+        self.loaded_job_ids = []
+
+    def get_job_offerings_profiles_by_job_ids(self, job_ids):
+        self.loaded_job_ids = [str(job_id) for job_id in job_ids]
+        return self.profiles
+
+
+class _FailingOfferingsRepo(_OfferingsRepo):
+    def __init__(self):
+        super().__init__({})
+
+    def get_job_offerings_profiles_by_job_ids(self, job_ids):
+        self.loaded_job_ids = [str(job_id) for job_id in job_ids]
+        raise RuntimeError("db unavailable")
+
+
+def _offerings_row(job_id, confidence=0.8):
+    return SimpleNamespace(
+        job_post_id=job_id,
+        profile_json={
+            "schema_version": 1,
+            "work_arrangement": "remote",
+            "benefits_perks": [
+                {
+                    "label": "Learning budget",
+                    "evidence": "Annual learning budget",
+                    "confidence": confidence,
+                }
+            ],
+            "confidence": confidence,
+        },
+        profile_schema_version=1,
+        source_description_hash=f"hash-{job_id}",
     )
 
 
@@ -106,6 +147,7 @@ class TestLoadCandidatePreferences:
             soft_preferences="Mentorship",
             soft_preference_summary="Mentorship",
             preference_mode="semantic_rerank",
+            preference_rerank_top_n=7,
             preference_profile={"raw_text": "Mentorship", "parser_confidence": 0.7},
             revision=7,
         )
@@ -121,6 +163,7 @@ class TestLoadCandidatePreferences:
             "soft_preferences": "Mentorship",
             "soft_preference_summary": "Mentorship",
             "preference_mode": "semantic_rerank",
+            "preference_rerank_top_n": 7,
             "preference_profile": {"raw_text": "Mentorship", "parser_confidence": 0.7},
             "revision": 7,
         }
@@ -258,7 +301,7 @@ class TestResolvePreferenceProfile:
 
 
 class TestApplyAssessments:
-    def test_fills_no_preference_signal_when_job_not_in_assessments(self):
+    def test_missing_assessment_leaves_match_unscored(self):
         match = _scored_match(_job(id="job-99"), fit_components={})
         result = _apply_assessments(
             [match],
@@ -266,8 +309,8 @@ class TestApplyAssessments:
             requested_mode="semantic_rerank",
             effective_mode="semantic_rerank",
         )
-        assert result[0].preference_components["preference_reason_codes"] == ["no_preference_signal"]
-        assert result[0].preference_score == pytest.approx(0.0)
+        assert result[0].preference_components["preference_reason_codes"] == ["invalid_llm_output"]
+        assert result[0].preference_score is None
 
 
 class TestPreferenceSemanticReranking:
@@ -288,7 +331,7 @@ class TestPreferenceSemanticReranking:
 
         assert reranked[0].preference_components["preference_mode_used"] == "fit_only_fallback"
         assert reranked[0].preference_components["preference_mode_effective"] == "semantic_rerank"
-        assert reranked[0].preference_components["preference_fallback_reason"] == "preference_profile_unavailable"
+        assert reranked[0].preference_components["preference_fallback_reason"] == "preference_scorer_unavailable"
 
     @patch("services.scorer_matcher.candidate_preferences.build_preference_semantic_reranker")
     def test_semantic_reranker_stores_scores_preserves_input_order(
@@ -349,6 +392,160 @@ class TestPreferenceSemanticReranking:
         assert reranked[0].preference_score == pytest.approx(0.95)
         assert reranked[1].preference_score == pytest.approx(0.15)
         assert reranked[0].preference_components["preference_mode_used"] == "semantic_rerank"
+
+    @patch("services.scorer_matcher.candidate_preferences.build_preference_semantic_reranker")
+    def test_top_n_window_uses_cached_offerings_and_marks_outside_window(
+        self,
+        mock_build_reranker,
+    ):
+        mock_build_reranker.return_value = Mock(
+            rerank=Mock(
+                return_value=[
+                    PreferenceAssessment(
+                        job_id="job-2",
+                        preference_score=0.9,
+                        preference_confidence=0.8,
+                        preference_reason_codes=["benefits_perks_match"],
+                        preference_explanation="Learning budget matches.",
+                    )
+                ]
+            )
+        )
+        config = _preferences_config().model_copy(
+            update={
+                "semantic_reranker": _preferences_config().parser.model_copy(
+                    update={
+                        "enabled": True,
+                        "model": "fake",
+                        "top_n_default": 1,
+                        "top_n_min": 1,
+                        "top_n_max": 5,
+                    }
+                )
+            }
+        )
+        profile = PreferenceProfile(raw_text="Learning budget", parser_confidence=0.8)
+        outside = _scored_match(_job(id="job-1"), fit_score=80.0, job_similarity=0.7)
+        high_fit = _scored_match(_job(id="job-2"), fit_score=90.0, job_similarity=0.6)
+        repo = _OfferingsRepo({"job-2": _offerings_row("job-2")})
+
+        result = apply_preference_semantic_reranking(
+            [outside, high_fit],
+            {
+                "soft_preferences": "Learning budget",
+                "preference_mode": "semantic_rerank",
+                "preference_profile": profile.model_dump(mode="json"),
+                "preference_rerank_top_n": 1,
+                "revision": 3,
+            },
+            config=config,
+            repo=repo,
+        )
+
+        assert repo.loaded_job_ids == ["job-2"]
+        assert result[0].preference_score is None
+        assert result[0].preference_components["preference_status"] == "outside_preference_window"
+        assert result[1].preference_score == pytest.approx(0.9)
+        assert result[1].preference_components["preference_rerank_top_n"] == 1
+        assert result[1].preference_components["offerings_source_description_hash"] == "hash-job-2"
+
+    def test_missing_offerings_marks_window_match_waiting(self):
+        config = _preferences_config()
+        profile = PreferenceProfile(raw_text="Learning budget", parser_confidence=0.8)
+        match = _scored_match(_job(id="job-1"), fit_score=90.0)
+
+        result = apply_preference_semantic_reranking(
+            [match],
+            {
+                "soft_preferences": "Learning budget",
+                "preference_mode": "semantic_rerank",
+                "preference_profile": profile.model_dump(mode="json"),
+                "preference_rerank_top_n": 1,
+            },
+            config=config,
+            repo=_OfferingsRepo({}),
+        )
+
+        assert result.status.reason == "job_offerings_unavailable"
+        assert result[0].preference_score is None
+        assert result[0].preference_components["preference_status"] == "missing_job_offerings"
+
+    def test_stale_offerings_marks_window_match_waiting(self):
+        config = _preferences_config()
+        profile = PreferenceProfile(raw_text="Learning budget", parser_confidence=0.8)
+        match = _scored_match(
+            _job(id="job-1", description_hash="new-description-hash"),
+            fit_score=90.0,
+        )
+
+        result = apply_preference_semantic_reranking(
+            [match],
+            {
+                "soft_preferences": "Learning budget",
+                "preference_mode": "semantic_rerank",
+                "preference_profile": profile.model_dump(mode="json"),
+                "preference_rerank_top_n": 1,
+            },
+            config=config,
+            repo=_OfferingsRepo({"job-1": _offerings_row("job-1")}),
+        )
+
+        assert result.status.reason == "job_offerings_unavailable"
+        assert result[0].preference_score is None
+        assert result[0].preference_components["preference_status"] == "missing_job_offerings"
+
+    def test_offerings_load_failure_is_scorer_failed_not_waiting(self):
+        config = _preferences_config()
+        profile = PreferenceProfile(raw_text="Learning budget", parser_confidence=0.8)
+        match = _scored_match(_job(id="job-1"), fit_score=90.0)
+
+        result = apply_preference_semantic_reranking(
+            [match],
+            {
+                "soft_preferences": "Learning budget",
+                "preference_mode": "semantic_rerank",
+                "preference_profile": profile.model_dump(mode="json"),
+                "preference_rerank_top_n": 1,
+            },
+            config=config,
+            repo=_FailingOfferingsRepo(),
+        )
+
+        assert result.status.reason == "preference_scorer_failed"
+        assert result[0].preference_score is None
+        assert result[0].preference_components["preference_status"] == "preference_scorer_failed"
+        assert (
+            result[0].preference_components["preference_fallback_reason"]
+            == "preference_scorer_failed"
+        )
+
+    @patch("services.scorer_matcher.candidate_preferences.build_preference_semantic_reranker")
+    def test_empty_llm_output_marks_invalid_instead_of_zero_scores(self, mock_build_reranker):
+        mock_build_reranker.return_value = Mock(rerank=Mock(return_value=[]))
+        config = _preferences_config().model_copy(
+            update={
+                "semantic_reranker": _preferences_config().parser.model_copy(
+                    update={"enabled": True, "model": "fake"}
+                )
+            }
+        )
+        profile = PreferenceProfile(raw_text="Learning budget", parser_confidence=0.8)
+        match = _scored_match(_job(id="job-1"), fit_score=90.0)
+
+        result = apply_preference_semantic_reranking(
+            [match],
+            {
+                "soft_preferences": "Learning budget",
+                "preference_mode": "semantic_rerank",
+                "preference_profile": profile.model_dump(mode="json"),
+            },
+            config=config,
+            repo=_OfferingsRepo({"job-1": _offerings_row("job-1")}),
+        )
+
+        assert result.status.reason == "invalid_llm_output"
+        assert result[0].preference_score is None
+        assert result[0].preference_components["preference_status"] == "invalid_llm_output"
 
     @patch("services.scorer_matcher.candidate_preferences.build_preference_judge")
     def test_llm_judge_mode_uses_judge_builder(self, mock_build_judge):
@@ -459,7 +656,7 @@ class TestPreferenceSemanticReranking:
                 config=config,
             )
         assert result[0].preference_components["preference_mode_used"] == "fit_only_fallback"
-        assert result[0].preference_components["preference_fallback_reason"] == "preference_reranker_unavailable"
+        assert result[0].preference_components["preference_fallback_reason"] == "preference_scorer_unavailable"
 
     def test_reranking_exception_falls_back_to_fit_only(self):
         config = _preferences_config()
@@ -478,7 +675,8 @@ class TestPreferenceSemanticReranking:
                 config=config,
             )
         assert result[0].preference_components["preference_mode_used"] == "fit_only_fallback"
-        assert result[0].preference_components["preference_fallback_reason"] == "preference_reranking_failed:RuntimeError"
+        assert result[0].preference_components["preference_fallback_reason"] == "preference_scorer_failed"
+        assert result.status.reason == "preference_scorer_failed"
 
     def test_empty_soft_preferences_returns_matches_unchanged(self):
         config = _preferences_config()
@@ -544,6 +742,7 @@ class TestPreferenceSemanticReranking:
             "preference_mode_requested": "semantic_rerank",
             "preference_mode_effective": "semantic_rerank",
             "preference_mode_used": "semantic_rerank",
+            "preference_status": "applied",
         }
 
 

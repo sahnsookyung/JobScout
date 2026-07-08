@@ -476,7 +476,10 @@ class OpenAIService(LLMProvider):
             text,
             EXTRACTION_SCHEMA,
             system_prompt=REQUIREMENTS_EXTRACTION_SYSTEM_PROMPT,
-            user_message=f"<JOB_DESCRIPTION>\n{text}\n</JOB_DESCRIPTION>\n\nExtract all qualification requirements."
+            user_message=(
+                f"<JOB_DESCRIPTION>\n{text}\n</JOB_DESCRIPTION>\n\n"
+                "Extract qualification requirements and the job offerings profile."
+            )
         )
 
         logger.debug("=" * 60)

@@ -62,6 +62,9 @@ class CandidatePreferencesService:
         preferences.employment_types = _normalize_string_list(payload.get("employment_types", []))
         preferences.soft_preferences = payload.get("soft_preferences", "").strip()
         preferences.preference_mode = self._resolve_requested_mode(payload.get("preference_mode"))
+        preferences.preference_rerank_top_n = self._resolve_requested_top_n(
+            payload.get("preference_rerank_top_n")
+        )
         # Parse eagerly so the profile is persisted alongside preferences. This is an
         # intentional sync LLM call: preferences are set infrequently and the parsed
         # profile is needed at match time. Failures are swallowed — the scorer-matcher
@@ -83,6 +86,8 @@ class CandidatePreferencesService:
         allowed_modes = self._allowed_modes()
         stored_mode = getattr(preferences, "preference_mode", None) or self.config.preferences.default_mode
         effective_mode = self._resolve_effective_mode(stored_mode, allowed_modes)
+        bounds = self._top_n_bounds()
+        stored_top_n = getattr(preferences, "preference_rerank_top_n", None)
         return {
             "remote_mode": preferences.remote_mode,
             "target_locations": list(preferences.target_locations or []),
@@ -92,6 +97,9 @@ class CandidatePreferencesService:
             "soft_preferences": preferences.soft_preferences or "",
             "soft_preference_summary": getattr(preferences, "soft_preference_summary", None),
             "preference_mode": stored_mode,
+            "preference_rerank_top_n": stored_top_n,
+            "effective_preference_rerank_top_n": self._resolve_top_n(stored_top_n, bounds),
+            "preference_rerank_top_n_bounds": bounds,
             "allowed_preference_modes": allowed_modes,
             "effective_preference_mode": effective_mode,
             "revision": int(preferences.revision or 0),
@@ -126,6 +134,29 @@ class CandidatePreferencesService:
     def _resolve_requested_mode(self, requested_mode: Any) -> str:
         allowed_modes = self._allowed_modes()
         return self._resolve_effective_mode(requested_mode, allowed_modes)
+
+    def _top_n_bounds(self) -> Dict[str, int]:
+        resolver = getattr(self.config.preferences, "preference_rerank_top_n_bounds", None)
+        if callable(resolver):
+            return resolver()
+        semantic_reranker = getattr(self.config.preferences, "semantic_reranker", None)
+        min_value = max(1, int(getattr(semantic_reranker, "top_n_min", 1) or 1))
+        max_value = max(min_value, int(getattr(semantic_reranker, "top_n_max", 100) or 100))
+        default_value = int(getattr(semantic_reranker, "top_n_default", 25) or 25)
+        default_value = max(min_value, min(max_value, default_value))
+        return {"min": min_value, "max": max_value, "default": default_value}
+
+    def _resolve_top_n(self, requested_top_n: Any, bounds: Dict[str, int]) -> int:
+        try:
+            value = int(requested_top_n) if requested_top_n is not None else bounds["default"]
+        except (TypeError, ValueError):
+            value = bounds["default"]
+        return max(bounds["min"], min(bounds["max"], value))
+
+    def _resolve_requested_top_n(self, requested_top_n: Any) -> int | None:
+        if requested_top_n is None:
+            return None
+        return self._resolve_top_n(requested_top_n, self._top_n_bounds())
 
     def _parse_preference_profile(self, raw_text: str):
         if not raw_text.strip():

@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import Mock, patch
 
-from core.config_loader import PreferenceCrossEncoderConfig, PreferenceModelConfig, PreferencesConfig
+from core.config_loader import PreferenceModelConfig, PreferencesConfig
 from tests.mocks.fake_service import FakeLLMService
 from services.scorer_matcher.preference_semantics import (
     CrossEncoderPreferenceReranker,
@@ -276,7 +276,21 @@ def test_serialize_job_for_preference_prefers_canonical_summary():
         raw_payload={"ai_job_summary": "ignored"},
     )
 
-    payload = serialize_job_for_preference(job)
+    payload = serialize_job_for_preference(
+        job,
+        offerings_profile={
+            "schema_version": 1,
+            "benefits_perks": [
+                {
+                    "label": "Learning budget",
+                    "evidence": "Annual learning budget",
+                    "confidence": 0.87,
+                }
+            ],
+        },
+        offerings_profile_schema_version=1,
+        offerings_source_description_hash="desc-hash",
+    )
 
     assert payload.job_id == "job-1"
     assert payload.work_mode == "remote"
@@ -284,6 +298,9 @@ def test_serialize_job_for_preference_prefers_canonical_summary():
     assert payload.skills == ["python", "fastapi"]
     assert payload.requirements == ["Build Python APIs", "Mentor junior engineers"]
     assert payload.benefits == ["Learning budget", "Flexible schedule"]
+    assert payload.offerings_profile["benefits_perks"][0]["label"] == "Learning budget"
+    assert payload.offerings_profile_schema_version == 1
+    assert payload.offerings_source_description_hash == "desc-hash"
 
 
 def test_chunk_jobs_for_budget_splits_large_shortlist():
@@ -615,48 +632,21 @@ def test_cross_encoder_reranker_any_positive_score_emits_reason_code():
     assert "tech_stack_match" in result[0].preference_reason_codes
 
 
-@patch("core.scorer.semantic_fit.get_shared_local_cross_encoder_provider")
-def test_build_preference_semantic_reranker_routes_to_cross_encoder(mock_get_provider):
-    mock_get_provider.return_value = Mock()
+@patch("services.scorer_matcher.preference_semantics.build_preference_llm")
+def test_build_preference_semantic_reranker_ignores_cross_encoder_config(mock_build_llm):
+    llm = Mock()
+    mock_build_llm.return_value = llm
     config = PreferencesConfig(
         reranker="cross_encoder",
-        cross_encoder=PreferenceCrossEncoderConfig(enabled=True),
-    )
-    reranker = build_preference_semantic_reranker(config)
-    assert isinstance(reranker, CrossEncoderPreferenceReranker)
-    mock_get_provider.assert_called_once_with(
-        model_name="cross-encoder/ms-marco-MiniLM-L-6-v2",
-        cache_path=None,
-        runtime="auto",
-        max_batch_size=32,
-        trust_remote_code=False,
-        allow_heuristic=False,
-    )
-
-@patch("core.scorer.semantic_fit.get_shared_local_cross_encoder_provider")
-def test_build_preference_semantic_reranker_allows_explicit_heuristic_runtime(mock_get_provider):
-    mock_get_provider.return_value = Mock()
-    config = PreferencesConfig(
-        reranker="cross_encoder",
-        cross_encoder=PreferenceCrossEncoderConfig(enabled=True, runtime="heuristic"),
+        semantic_reranker=_config(),
     )
 
     reranker = build_preference_semantic_reranker(config)
 
-    assert isinstance(reranker, CrossEncoderPreferenceReranker)
-    mock_get_provider.assert_called_once_with(
-        model_name="cross-encoder/ms-marco-MiniLM-L-6-v2",
-        cache_path=None,
-        runtime="heuristic",
-        max_batch_size=32,
-        trust_remote_code=False,
-        allow_heuristic=True,
-    )
+    assert isinstance(reranker, LLMPreferenceSemanticReranker)
+    assert reranker.llm is llm
 
 
-def test_build_preference_semantic_reranker_returns_none_for_disabled_cross_encoder():
-    config = PreferencesConfig(
-        reranker="cross_encoder",
-        cross_encoder=PreferenceCrossEncoderConfig(enabled=False),
-    )
+def test_build_preference_semantic_reranker_returns_none_when_cross_encoder_config_has_no_llm():
+    config = PreferencesConfig(reranker="cross_encoder")
     assert build_preference_semantic_reranker(config) is None

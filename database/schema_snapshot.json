@@ -67,6 +67,18 @@
       "type": "PRIMARY KEY"
     },
     {
+      "definition": "FOREIGN KEY (job_post_id) REFERENCES job_post(id) ON DELETE CASCADE",
+      "name": "job_offerings_profile_job_post_id_fkey",
+      "table": "job_offerings_profile",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "PRIMARY KEY (job_post_id)",
+      "name": "job_offerings_profile_pkey",
+      "table": "job_offerings_profile",
+      "type": "PRIMARY KEY"
+    },
+    {
       "definition": "PRIMARY KEY (id)",
       "name": "job_post_pkey",
       "table": "job_post",
@@ -604,6 +616,24 @@
     },
     {
       "access_method": "btree",
+      "definition": "CREATE INDEX idx_jop_schema_version ON public.job_offerings_profile USING btree (profile_schema_version)",
+      "name": "idx_jop_schema_version",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_offerings_profile",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_jop_source_hash ON public.job_offerings_profile USING btree (source_description_hash)",
+      "name": "idx_jop_source_hash",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_offerings_profile",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
       "definition": "CREATE INDEX idx_job_post_company ON public.job_post USING btree (company)",
       "name": "idx_job_post_company",
       "predicate": null,
@@ -631,6 +661,15 @@
     },
     {
       "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_post_description_recovery_scan ON public.job_post USING btree (tenant_id, status, description_recovery_status, description_recovery_next_retry_at, first_seen_at)",
+      "name": "idx_job_post_description_recovery_scan",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_post",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
       "definition": "CREATE INDEX idx_job_post_embedding_retry ON public.job_post USING btree (embedding_status, embedding_next_retry_at)",
       "name": "idx_job_post_embedding_retry",
       "predicate": null,
@@ -651,6 +690,15 @@
       "access_method": "btree",
       "definition": "CREATE INDEX idx_job_post_last_seen ON public.job_post USING btree (last_seen_at)",
       "name": "idx_job_post_last_seen",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_post",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_post_missing_description ON public.job_post USING btree (tenant_id, status, extraction_status, first_seen_at)",
+      "name": "idx_job_post_missing_description",
       "predicate": null,
       "reloptions": null,
       "table": "job_post",
@@ -1442,6 +1490,12 @@
           "type": "jsonb"
         },
         {
+          "default": null,
+          "name": "preference_rerank_top_n",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
           "default": "'any'::text",
           "name": "remote_mode",
           "nullable": false,
@@ -1761,6 +1815,64 @@
         }
       ]
     },
+    "job_offerings_profile": {
+      "columns": [
+        {
+          "default": null,
+          "name": "confidence",
+          "nullable": true,
+          "type": "numeric(5,4)"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "created_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "extraction_model",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "extraction_provider",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "job_post_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": "'{}'::jsonb",
+          "name": "profile_json",
+          "nullable": false,
+          "type": "jsonb"
+        },
+        {
+          "default": "1",
+          "name": "profile_schema_version",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "source_description_hash",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "timezone('UTC'::text, now())",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "timestamp with time zone"
+        }
+      ]
+    },
     "job_post": {
       "columns": [
         {
@@ -1881,6 +1993,48 @@
           "default": null,
           "name": "description_hash",
           "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "description_recovery_attempts",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "description_recovery_last_attempt_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "description_recovery_last_error",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "description_recovery_next_retry_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "description_recovery_reason",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "description_recovery_run_id",
+          "nullable": true,
+          "type": "text"
+        },
+        {
+          "default": "'not_needed'::text",
+          "name": "description_recovery_status",
+          "nullable": false,
           "type": "text"
         },
         {

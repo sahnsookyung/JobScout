@@ -60,7 +60,34 @@ function preferenceStatusMessage(preferenceStatus: any): string | null {
         return 'Preferences applied.';
     }
 
-    return `Preferences skipped: ${preferenceStatus.reason ?? 'unconfigured'}.`;
+    const reason = preferenceStatus.reason ?? 'unconfigured';
+    const messages: Record<string, string> = {
+        disabled: 'Preferences disabled.',
+        unconfigured: 'Preferences disabled.',
+        missing_job_offerings: 'Waiting for job offering extraction.',
+        job_offerings_unavailable: 'Waiting for job offering extraction.',
+        outside_preference_window: 'Outside preference judging window.',
+        preference_scorer_unavailable: 'Preference scorer unavailable.',
+        preference_reranker_unavailable: 'Preference scorer unavailable.',
+        preference_judge_unavailable: 'Preference scorer unavailable.',
+        invalid_llm_output: 'Preference scorer returned invalid output.',
+        preference_scorer_failed: 'Preference scorer failed.',
+    };
+    return messages[reason] ?? 'Preference scorer failed.';
+}
+
+function preferenceComponentStatusMessage(preferenceComponents: any): string | null {
+    if (!preferenceComponents) {
+        return null;
+    }
+    const status = preferenceComponents.preference_status;
+    if (status === 'applied') {
+        return 'Preferences applied.';
+    }
+    if (typeof status === 'string') {
+        return preferenceStatusMessage({ applied: false, reason: status });
+    }
+    return null;
 }
 
 
@@ -412,7 +439,9 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
     const scorerName = typeof match.fit_scorer?.name === 'string' ? match.fit_scorer.name : null;
     const retrieval = fitExplanation?.retrieval as RetrievalExplanation | undefined;
     const diagnostics = fitExplanation?.diagnostics as FitDiagnosticsExplanation | undefined;
-    const preferenceSummary = preferenceStatusMessage(match.preference_status);
+    const preferenceSummary =
+        preferenceComponentStatusMessage(match.preference_components) ??
+        preferenceStatusMessage(match.preference_status);
 
     let retrievalMode: string | null = null;
     if (retrieval?.mode === 'hybrid') retrievalMode = 'Hybrid retrieval';

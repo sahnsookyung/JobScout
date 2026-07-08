@@ -249,6 +249,9 @@ preferences:
     model: "qwen3:14b"
     temperature: 0.0
     max_input_tokens: 1200
+    top_n_default: 25
+    top_n_min: 1
+    top_n_max: 100
   llm_judge:
     enabled: false
     provider: "openai_compatible"

@@ -436,6 +436,7 @@ describe('useCandidatePreferences', () => {
                 employment_types: [],
                 soft_preferences: 'Platform work',
                 preference_mode: 'semantic_rerank',
+                preference_rerank_top_n: null,
             });
         });
 
@@ -447,6 +448,7 @@ describe('useCandidatePreferences', () => {
             employment_types: [],
             soft_preferences: 'Platform work',
             preference_mode: 'semantic_rerank',
+            preference_rerank_top_n: null,
         });
 
         await waitFor(() => expect(result.current.preferences).toEqual(updatedPreferences));

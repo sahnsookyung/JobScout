@@ -31,12 +31,22 @@ export interface StatsPanelProps {
         active_pending_extraction_job_posts?: number;
         active_retryable_extraction_job_posts?: number;
         inactive_pending_extraction_job_posts?: number;
+        ready_for_extraction_job_posts?: number;
+        active_ready_for_extraction_job_posts?: number;
         active_pending_embedding_job_posts?: number;
         active_retryable_embedding_job_posts?: number;
         inactive_pending_embedding_job_posts?: number;
         missing_description_job_posts?: number;
         active_missing_description_job_posts?: number;
         inactive_missing_description_job_posts?: number;
+        description_recovery_queued_job_posts?: number;
+        description_recovery_retryable_job_posts?: number;
+        active_recoverable_missing_description_job_posts?: number;
+        description_recovery_posting_not_found_job_posts?: number;
+        description_recovery_adapter_missing_job_posts?: number;
+        description_recovery_prohibited_job_posts?: number;
+        description_recovery_unmapped_job_posts?: number;
+        description_recovery_unavailable_job_posts?: number;
     } | null | undefined;
 }
 
@@ -64,9 +74,9 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
     const hasEmbeddingBreakdown = stats?.active_pending_embedding_job_posts != null
         || stats?.active_retryable_embedding_job_posts != null
         || stats?.inactive_pending_embedding_job_posts != null;
-    const activePendingExtraction = hasExtractionBreakdown
+    const activePendingExtraction = stats?.active_ready_for_extraction_job_posts ?? (hasExtractionBreakdown
         ? (stats?.active_pending_extraction_job_posts ?? 0) + (stats?.active_retryable_extraction_job_posts ?? 0)
-        : pendingExtraction + retryableExtraction;
+        : pendingExtraction + retryableExtraction);
     const inactivePendingExtraction = hasExtractionBreakdown ? stats?.inactive_pending_extraction_job_posts ?? 0 : 0;
     const activePendingEmbedding = hasEmbeddingBreakdown
         ? (stats?.active_pending_embedding_job_posts ?? 0) + (stats?.active_retryable_embedding_job_posts ?? 0)
@@ -75,6 +85,9 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
     const missingDescriptions = stats?.missing_description_job_posts ?? 0;
     const activeMissingDescriptions = stats?.active_missing_description_job_posts ?? 0;
     const inactiveMissingDescriptions = stats?.inactive_missing_description_job_posts ?? 0;
+    const recoveryQueued = stats?.description_recovery_queued_job_posts ?? 0;
+    const recoveryRetryable = stats?.description_recovery_retryable_job_posts ?? 0;
+    const recoveryUnavailable = stats?.description_recovery_unavailable_job_posts ?? 0;
     const notActiveJobs = inactiveJobs + expiredJobs;
     const scoreDist = stats?.score_distribution;
     const radius = 36;
@@ -108,12 +121,12 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
                     <InventoryItem label="Active" value={activeJobs} />
                     <InventoryItem label="Ready active" value={activeReadyToScore} />
                     <InventoryItem label="Not active" value={notActiveJobs} />
-                    <InventoryItem label="Pending extract" value={pendingExtraction + retryableExtraction} />
+                    <InventoryItem label="Ready extract" value={stats?.ready_for_extraction_job_posts ?? pendingExtraction + retryableExtraction} />
                     <InventoryItem label="Missing desc" value={missingDescriptions} />
                     <InventoryItem label="Extracted all" value={extractedJobs} />
                     <InventoryItem label="Embedded all" value={embeddedJobs} />
                 </dl>
-                {(pendingExtraction + retryableExtraction + pendingEmbedding + retryableEmbedding) > 0 && (
+                {(pendingExtraction + retryableExtraction + pendingEmbedding + retryableEmbedding + missingDescriptions) > 0 && (
                     <div className="mt-3 grid gap-2 border-t border-rule pt-3 text-[12px] leading-5 text-ink-muted">
                         <StatusLine
                             label="Active backlog"
@@ -129,6 +142,16 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
                             label="Missing descriptions"
                             value={activeMissingDescriptions + inactiveMissingDescriptions}
                             detail="refresh from ATS or retire"
+                        />
+                        <StatusLine
+                            label="Checking ATS"
+                            value={recoveryQueued + recoveryRetryable}
+                            detail="background description recovery"
+                        />
+                        <StatusLine
+                            label="Needs source setup"
+                            value={recoveryUnavailable}
+                            detail="unmapped or unsupported sources"
                         />
                     </div>
                 )}

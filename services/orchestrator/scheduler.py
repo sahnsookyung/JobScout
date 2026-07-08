@@ -90,11 +90,13 @@ class RepairScheduler:
         extraction_limit: int,
         embedding_limit: int,
         repair_fn: RepairFn,
+        description_recovery_limit: int = 50,
     ) -> None:
         self._pipeline_runs = pipeline_runs
         self._interval_seconds = interval_seconds
         self._extraction_limit = extraction_limit
         self._embedding_limit = embedding_limit
+        self._description_recovery_limit = description_recovery_limit
         self._repair_fn = repair_fn
         self._stop_event = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
@@ -137,6 +139,7 @@ class RepairScheduler:
                 pipeline_runs=self._pipeline_runs,
                 extraction_limit=self._extraction_limit,
                 embedding_limit=self._embedding_limit,
+                description_recovery_limit=self._description_recovery_limit,
             )
         except Exception:
             logger.warning("Scheduled stuck-job repair failed", exc_info=True)

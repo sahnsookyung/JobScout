@@ -58,6 +58,7 @@ class OrchestratorConfig(BaseModel):
     process_imported_embedding_max_batches: int = Field(default=50, ge=1)
     batch_stage_timeout_seconds: int = Field(default=600, ge=1)
     repair_interval_seconds: int = Field(default=900, ge=1)
+    description_recovery_limit: int = Field(default=50, ge=1)
     recent_task_limit: int = Field(default=10, ge=1)
     recent_task_scan_limit: int = Field(default=50, ge=1)
 
@@ -115,6 +116,9 @@ class PreferenceModelConfig(BaseModel):
     embedding_api_key: Optional[str] = None
     embedding_api_secret: Optional[str] = None
     embedding_headers: Optional[Dict[str, str]] = None
+    top_n_default: int = Field(default=25, ge=1)
+    top_n_min: int = Field(default=1, ge=1)
+    top_n_max: int = Field(default=100, ge=1)
 
 
 class PreferenceCrossEncoderConfig(BaseModel):
@@ -151,6 +155,21 @@ class PreferencesConfig(BaseModel):
             if m in _valid
         ]
         return normalized or [self.default_mode]
+
+    def preference_rerank_top_n_bounds(self) -> Dict[str, int]:
+        min_value = max(1, int(self.semantic_reranker.top_n_min or 1))
+        max_value = max(min_value, int(self.semantic_reranker.top_n_max or min_value))
+        default_value = int(self.semantic_reranker.top_n_default or min_value)
+        default_value = max(min_value, min(max_value, default_value))
+        return {"min": min_value, "max": max_value, "default": default_value}
+
+    def resolve_preference_rerank_top_n(self, requested: Any = None) -> int:
+        bounds = self.preference_rerank_top_n_bounds()
+        try:
+            value = int(requested) if requested is not None else bounds["default"]
+        except (TypeError, ValueError):
+            value = bounds["default"]
+        return max(bounds["min"], min(bounds["max"], value))
 
 
 class ResumeConfig(BaseModel):
@@ -874,6 +893,7 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["PROCESS_IMPORTED_EMBEDDING_MAX_BATCHES"], ["orchestrator", "process_imported_embedding_max_batches"]),
     (["BATCH_STAGE_TIMEOUT_SECONDS"], ["orchestrator", "batch_stage_timeout_seconds"]),
     (["REPAIR_INTERVAL_SECONDS"], ["orchestrator", "repair_interval_seconds"]),
+    (["DESCRIPTION_RECOVERY_LIMIT"], ["orchestrator", "description_recovery_limit"]),
     (["RECENT_TASK_LIMIT"], ["orchestrator", "recent_task_limit"]),
     (["RECENT_TASK_SCAN_LIMIT"], ["orchestrator", "recent_task_scan_limit"]),
     (["JOBSPY_URL"], ["jobspy", "url"]),
@@ -901,6 +921,9 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["PREFERENCES_SEMANTIC_RERANKER_API_KEY"], ["preferences", "semantic_reranker", "api_key"]),
     (["PREFERENCES_SEMANTIC_RERANKER_API_SECRET"], ["preferences", "semantic_reranker", "api_secret"]),
     (["PREFERENCES_SEMANTIC_RERANKER_MODEL"], ["preferences", "semantic_reranker", "model"]),
+    (["PREFERENCES_SEMANTIC_RERANKER_TOP_N_DEFAULT"], ["preferences", "semantic_reranker", "top_n_default"]),
+    (["PREFERENCES_SEMANTIC_RERANKER_TOP_N_MIN"], ["preferences", "semantic_reranker", "top_n_min"]),
+    (["PREFERENCES_SEMANTIC_RERANKER_TOP_N_MAX"], ["preferences", "semantic_reranker", "top_n_max"]),
     (["PREFERENCES_LLM_JUDGE_PROVIDER"], ["preferences", "llm_judge", "provider"]),
     (["PREFERENCES_LLM_JUDGE_BASE_URL"], ["preferences", "llm_judge", "base_url"]),
     (["PREFERENCES_LLM_JUDGE_API_KEY"], ["preferences", "llm_judge", "api_key"]),

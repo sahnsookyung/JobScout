@@ -35,8 +35,9 @@ const PAGE_SIZE = 50;
 const PROCESSING_FILTERS: Array<{ key: JobProcessingStatus; label: string }> = [
     { key: 'all', label: 'All' },
     { key: 'ready', label: 'Ready' },
-    { key: 'pending_extraction', label: 'Pending extract' },
-    { key: 'pending_embedding', label: 'Pending embed' },
+    { key: 'pending_extraction', label: 'Ready extract' },
+    { key: 'missing_description', label: 'Missing desc' },
+    { key: 'pending_embedding', label: 'Ready embed' },
     { key: 'failed', label: 'Retry or failed' },
 ];
 
@@ -64,12 +65,23 @@ export interface JobInventoryPanelProps {
         active_pending_extraction_job_posts?: number;
         active_retryable_extraction_job_posts?: number;
         inactive_pending_extraction_job_posts?: number;
+        ready_for_extraction_job_posts?: number;
+        active_ready_for_extraction_job_posts?: number;
         active_pending_embedding_job_posts?: number;
         active_retryable_embedding_job_posts?: number;
         inactive_pending_embedding_job_posts?: number;
         missing_description_job_posts?: number;
         active_missing_description_job_posts?: number;
         inactive_missing_description_job_posts?: number;
+        description_recovery_queued_job_posts?: number;
+        description_recovery_retryable_job_posts?: number;
+        description_recovery_unavailable_job_posts?: number;
+        active_recoverable_missing_description_job_posts?: number;
+        description_recovery_posting_not_found_job_posts?: number;
+        description_recovery_adapter_missing_job_posts?: number;
+        description_recovery_prohibited_job_posts?: number;
+        description_recovery_unmapped_job_posts?: number;
+        oldest_missing_description_age_seconds?: number;
     } | null;
 }
 
@@ -94,6 +106,7 @@ function formatDuration(seconds?: number | null): string {
 }
 
 function statusLabel(job: JobInventoryItem): string {
+    if (isMissingDescription(job)) return 'Missing description';
     if (job.is_extracted && job.is_embedded) return 'Ready';
     if (job.extraction_status === 'in_progress' || job.extraction_status === 'processing') return 'Extracting';
     if (job.embedding_status === 'in_progress' || job.embedding_status === 'processing') return 'Embedding';
@@ -106,6 +119,7 @@ function statusLabel(job: JobInventoryItem): string {
 
 function statusTone(job: JobInventoryItem): string {
     if (job.is_extracted && job.is_embedded) return 'border-success/40 bg-success-soft text-ink';
+    if (isMissingDescription(job)) return 'border-warn/50 bg-warn-soft text-ink';
     if (job.extraction_status === 'failed_terminal' || job.extraction_status === 'failed' || job.embedding_status === 'failed_terminal' || job.embedding_status === 'failed') return 'border-warn/50 bg-warn-soft text-warn';
     if (job.extraction_status === 'failed_retryable' || job.embedding_status === 'failed_retryable') return 'border-warn/50 bg-warn-soft text-ink';
     return 'border-rule bg-surface-sunk text-ink-soft';
@@ -118,20 +132,105 @@ function processingLine(job: JobInventoryItem): string {
 }
 
 function retryLine(job: JobInventoryItem): string | null {
-    const retryAt = job.extraction_next_retry_at || job.embedding_next_retry_at;
+    const retryAt = job.description_recovery_next_retry_at || job.extraction_next_retry_at || job.embedding_next_retry_at;
     if (!retryAt) return null;
     return `Retry ${formatDateTime(retryAt)}`;
 }
 
 function errorLine(job: JobInventoryItem): string | null {
-    return job.extraction_last_error || job.embedding_last_error || null;
+    return job.description_recovery_last_error || job.extraction_last_error || job.embedding_last_error || null;
 }
 
-function InventoryJobRow({ job }: Readonly<{ job: JobInventoryItem }>) {
+function isMissingDescription(job: JobInventoryItem): boolean {
+    return (
+        job.description_completeness === 'missing'
+        || job.extraction_status === 'no_description'
+        || job.description_recovery_status === 'pending'
+        || job.description_recovery_status === 'queued'
+        || job.description_recovery_status === 'refreshing'
+        || job.description_recovery_status === 'failed_retryable'
+        || job.description_recovery_status === 'source_unsupported'
+        || job.description_recovery_status === 'source_prohibited'
+        || job.description_recovery_status === 'source_unmapped'
+        || job.description_recovery_status === 'source_adapter_missing'
+    );
+}
+
+function recoveryLabel(status?: string | null): string {
+    switch (status) {
+        case 'queued':
+            return 'Checking ATS';
+        case 'refreshing':
+            return 'Checking ATS';
+        case 'description_found':
+            return 'Description found';
+        case 'posting_not_found':
+            return 'Posting gone';
+        case 'source_unmapped':
+            return 'Configure ATS source';
+        case 'source_adapter_missing':
+            return 'Adapter missing';
+        case 'source_prohibited':
+            return 'Unsupported hosted';
+        case 'source_unsupported':
+            return 'Unsupported';
+        case 'failed_retryable':
+            return 'Retrying recovery';
+        case 'failed_terminal':
+            return 'Recovery failed';
+        default:
+            return 'Recovery pending';
+    }
+}
+
+function recoveryTone(status?: string | null): string {
+    if (status === 'description_found') return 'border-success/40 bg-success-soft text-ink';
+    if (status === 'queued' || status === 'refreshing' || status === 'failed_retryable') return 'border-accent bg-accent-soft text-ink';
+    if (status === 'posting_not_found' || status === 'source_prohibited' || status === 'source_unsupported' || status === 'source_unmapped' || status === 'source_adapter_missing' || status === 'failed_terminal') {
+        return 'border-warn/50 bg-warn-soft text-warn';
+    }
+    return 'border-rule bg-surface-sunk text-ink-soft';
+}
+
+function recoveryDetail(job: JobInventoryItem): string | null {
+    const status = job.description_recovery_status;
+    if (!isMissingDescription(job) && status !== 'description_found') return null;
+    if (status === 'source_unmapped') return 'Connect or map the ATS source, then retry.';
+    if (status === 'source_adapter_missing') return 'This source needs a supported API adapter before recovery can run.';
+    if (status === 'source_prohibited') return 'Hosted recovery will not scrape this source.';
+    if (status === 'posting_not_found') return 'Marked inactive after authoritative ATS check.';
+    if (status === 'failed_retryable' && job.description_recovery_next_retry_at) {
+        return `Next recovery ${formatDateTime(job.description_recovery_next_retry_at)}`;
+    }
+    if (status === 'queued' || status === 'refreshing') return 'Background recovery is checking the ATS listing.';
+    return job.description_recovery_reason ? job.description_recovery_reason.replace(/_/g, ' ') : null;
+}
+
+function disabledRecoveryCopy(job: JobInventoryItem): string {
+    if (job.availability_actions?.includes('description_recovery_unavailable_deployment_disabled')) {
+        return 'Recovery disabled for this hosted source.';
+    }
+    if (job.availability_actions?.includes('description_recovery_unavailable_adapter_missing')) {
+        return 'This source needs a supported API adapter.';
+    }
+    return 'Connect a supported ATS source to recover this description.';
+}
+
+function InventoryJobRow({
+    job,
+    onRefreshDescription,
+    refreshing,
+}: Readonly<{
+    job: JobInventoryItem;
+    onRefreshDescription: (jobId: string) => void;
+    refreshing: boolean;
+}>) {
     const error = errorLine(job);
     const retry = retryLine(job);
+    const canRefreshDescription = Boolean(job.availability_actions?.includes('refresh_description'));
+    const recoveryText = recoveryDetail(job);
     return (
-        <li className="grid gap-3 border-t border-rule py-4 md:grid-cols-[minmax(0,1fr)_13rem]">
+        <li className="grid gap-3 border-t border-rule py-4 md:grid-cols-[minmax(0,1fr)_14rem]">
             <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                     <span className={`inline-flex min-h-7 items-center border px-2 py-1 text-[11px] uppercase tracking-[0.12em] ${statusTone(job)}`}>
@@ -139,13 +238,18 @@ function InventoryJobRow({ job }: Readonly<{ job: JobInventoryItem }>) {
                     </span>
                     <span className="caption text-[10px] text-ink-muted">{job.status}</span>
                     {job.source_site ? (
-                        <span className="caption text-[10px] text-ink-muted">{job.source_site}</span>
+                        <span className="caption inline-block max-w-[14rem] truncate text-[10px] text-ink-muted">{job.source_site}</span>
                     ) : null}
                     {job.source_is_active === false ? (
                         <span className="caption text-[10px] text-warn">source inactive</span>
                     ) : null}
                     {job.source_job_id ? (
-                        <span className="caption text-[10px] text-ink-muted">id {job.source_job_id}</span>
+                        <span className="caption inline-block max-w-[12rem] truncate text-[10px] text-ink-muted">id {job.source_job_id}</span>
+                    ) : null}
+                    {isMissingDescription(job) || job.description_recovery_status !== 'not_needed' ? (
+                        <span className={`inline-flex min-h-6 max-w-full items-center border px-2 text-[10px] uppercase tracking-[0.1em] ${recoveryTone(job.description_recovery_status)}`}>
+                            <span className="truncate">{recoveryLabel(job.description_recovery_status)}</span>
+                        </span>
                     ) : null}
                 </div>
                 <h4 className="mt-2 break-words text-[15px] font-medium leading-6 text-ink">{job.title}</h4>
@@ -158,11 +262,32 @@ function InventoryJobRow({ job }: Readonly<{ job: JobInventoryItem }>) {
                     {processingLine(job)}
                     {retry ? <span> · {retry}</span> : null}
                 </p>
+                {recoveryText ? (
+                    <p className="mt-1 max-w-[44rem] break-words text-[12px] leading-5 text-ink-muted">{recoveryText}</p>
+                ) : null}
                 {error ? (
                     <p className="mt-2 flex gap-2 text-[12px] leading-5 text-warn">
                         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-none" aria-hidden="true" />
                         <span className="min-w-0 break-words">{error}</span>
                     </p>
+                ) : null}
+                {canRefreshDescription || isMissingDescription(job) ? (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => onRefreshDescription(job.job_id)}
+                            disabled={!canRefreshDescription || refreshing}
+                            className="inline-flex h-8 items-center justify-center gap-2 border border-rule px-3 text-[12px] text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
+                            {refreshing ? 'Checking' : 'Refresh now'}
+                        </button>
+                        {!canRefreshDescription ? (
+                            <span className="min-w-0 break-words text-[11px] text-ink-muted">
+                                {disabledRecoveryCopy(job)}
+                            </span>
+                        ) : null}
+                    </div>
                 ) : null}
             </div>
             <div className="flex items-start justify-between gap-3 md:justify-end">
@@ -589,9 +714,19 @@ function BlockerRow({ blocker }: Readonly<{ blocker: ProcessingBlockerItem }>) {
                     {blocker.stage}
                 </span>
                 <span className="break-words text-[12px] font-medium text-ink">{blocker.blocker_code}</span>
+                {blocker.recovery_status ? (
+                    <span className={`inline-flex min-h-6 max-w-full items-center border px-2 text-[10px] uppercase tracking-[0.1em] ${recoveryTone(blocker.recovery_status)}`}>
+                        <span className="truncate">{recoveryLabel(blocker.recovery_status)}</span>
+                    </span>
+                ) : null}
                 {blocker.retry_eligible ? <span className="text-[11px] text-warn">Retryable</span> : null}
             </div>
             <p className="mt-2 text-[12px] leading-5 text-ink-soft">{blocker.blocker_detail}</p>
+            {blocker.recovery_reason ? (
+                <p className="mt-1 break-words text-[11px] leading-5 text-ink-muted">
+                    Recovery: {blocker.recovery_reason.replace(/_/g, ' ')}
+                </p>
+            ) : null}
             <p className="mt-1 text-[11px] text-ink-muted">
                 {blocker.status} · attempts <span className="num">{blocker.attempts}</span> · {formatDateTime(blocker.last_attempt_at ?? blocker.first_seen_at)}
             </p>
@@ -617,9 +752,9 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
     const hasEmbeddingBreakdown = stats?.active_pending_embedding_job_posts != null
         || stats?.active_retryable_embedding_job_posts != null
         || stats?.inactive_pending_embedding_job_posts != null;
-    const activePendingExtraction = hasExtractionBreakdown
+    const activePendingExtraction = stats?.active_ready_for_extraction_job_posts ?? (hasExtractionBreakdown
         ? (stats?.active_pending_extraction_job_posts ?? 0) + (stats?.active_retryable_extraction_job_posts ?? 0)
-        : pendingExtraction;
+        : pendingExtraction);
     const activePendingEmbedding = hasEmbeddingBreakdown
         ? (stats?.active_pending_embedding_job_posts ?? 0) + (stats?.active_retryable_embedding_job_posts ?? 0)
         : pendingEmbedding;
@@ -629,6 +764,15 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
     const inactiveQueuedWork = inactivePendingExtraction + inactivePendingEmbedding;
     const queuedWork = activeQueuedWork;
     const missingDescriptions = stats?.missing_description_job_posts ?? 0;
+    const activeMissingDescriptions = stats?.active_missing_description_job_posts ?? missingDescriptions;
+    const recoveryQueued = stats?.description_recovery_queued_job_posts ?? 0;
+    const recoveryRetryable = stats?.description_recovery_retryable_job_posts ?? 0;
+    const recoveryUnavailable = stats?.description_recovery_unavailable_job_posts ?? 0;
+    const recoverableMissing = stats?.active_recoverable_missing_description_job_posts ?? activeMissingDescriptions;
+    const recoveryGone = stats?.description_recovery_posting_not_found_job_posts ?? 0;
+    const recoveryAdapterMissing = stats?.description_recovery_adapter_missing_job_posts ?? 0;
+    const recoveryProhibited = stats?.description_recovery_prohibited_job_posts ?? 0;
+    const recoveryUnmapped = stats?.description_recovery_unmapped_job_posts ?? 0;
     const { data, isLoading, error, refetch } = useJobs({
         job_status: jobStatus,
         processing_status: processingStatus,
@@ -752,6 +896,26 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
         },
         onSuccess: invalidatePipelineOps,
     });
+    const invalidateJobInventory = () => {
+        void queryClient.invalidateQueries({ queryKey: ['stats'] });
+        void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        void queryClient.invalidateQueries({ queryKey: ['processing-blockers'] });
+        void queryClient.invalidateQueries({ queryKey: ['pipeline-runs'] });
+    };
+    const refreshDescription = useMutation({
+        mutationFn: async (jobId: string) => {
+            const response = await jobsApi.refreshJobDescriptionNow(jobId);
+            return response.data;
+        },
+        onSuccess: invalidateJobInventory,
+    });
+    const sweepDescriptionRecovery = useMutation({
+        mutationFn: async () => {
+            const response = await jobsApi.sweepDescriptionRecovery(25);
+            return response.data;
+        },
+        onSuccess: invalidateJobInventory,
+    });
     const runLlmCanary = useMutation({
         mutationFn: async () => {
             const response = await pipelineRunsApi.runLlmProviderCanaries();
@@ -852,11 +1016,31 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
                             <dt>Missing desc</dt>
                             <dd className="num text-ink">{missingDescriptions}</dd>
                         </div>
+                        <div className="flex min-w-0 gap-1.5">
+                            <dt>Checking ATS</dt>
+                            <dd className="num text-ink">{recoveryQueued}</dd>
+                        </div>
                     </dl>
-                    {(pendingExtraction + pendingEmbedding) > 0 ? (
+                    {(pendingExtraction + pendingEmbedding + missingDescriptions) > 0 ? (
                         <p className="mt-3 max-w-[44rem] break-words text-[12px] leading-5 text-ink-muted">
-                            Active queued jobs can be processed now. Inactive or missing-description jobs need an ATS refresh,
-                            restore, or retire action before they become matchable.
+                            Ready extraction and embedding jobs can be processed now. Missing-description jobs are recovered through
+                            compliant ATS APIs in the background; unsupported sources need a source mapping or remain inactive.
+                        </p>
+                    ) : null}
+                    {missingDescriptions > 0 ? (
+                        <p className="mt-2 max-w-[44rem] break-words text-[12px] leading-5 text-ink-muted">
+                            <span className="num text-ink">{activeMissingDescriptions}</span> active missing descriptions
+                            {recoverableMissing ? <span> · <span className="num text-ink">{recoverableMissing}</span> recoverable</span> : null}
+                            {recoveryRetryable ? <span> · <span className="num text-ink">{recoveryRetryable}</span> retrying</span> : null}
+                            {recoveryQueued ? <span> · <span className="num text-ink">{recoveryQueued}</span> checking ATS</span> : null}
+                            {recoveryGone ? <span> · <span className="num text-ink">{recoveryGone}</span> postings gone</span> : null}
+                            {recoveryAdapterMissing ? <span> · <span className="num text-ink">{recoveryAdapterMissing}</span> adapter missing</span> : null}
+                            {recoveryUnmapped ? <span> · <span className="num text-ink">{recoveryUnmapped}</span> need source setup</span> : null}
+                            {recoveryProhibited ? <span> · <span className="num text-ink">{recoveryProhibited}</span> hosted-disabled</span> : null}
+                            {recoveryUnavailable && !(recoveryAdapterMissing || recoveryUnmapped || recoveryProhibited) ? <span> · <span className="num text-ink">{recoveryUnavailable}</span> unavailable</span> : null}
+                            {stats?.oldest_missing_description_age_seconds ? (
+                                <span> · oldest {formatDuration(stats.oldest_missing_description_age_seconds)}</span>
+                            ) : null}
                         </p>
                     ) : null}
                     {processStatusText ? (
@@ -873,6 +1057,16 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
                     >
                         <RefreshCw className={`h-4 w-4 ${processingActive ? 'animate-pulse text-accent' : ''}`} aria-hidden="true" />
                         {processingActive ? 'Processing queued' : 'Process queued'}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => sweepDescriptionRecovery.mutate()}
+                        disabled={missingDescriptions <= 0 || sweepDescriptionRecovery.isPending}
+                        aria-label="Recover missing job descriptions"
+                        className="inline-flex h-10 items-center justify-center gap-2 border border-rule px-4 text-[14px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        <RefreshCw className={`h-4 w-4 ${sweepDescriptionRecovery.isPending ? 'animate-spin text-accent' : ''}`} aria-hidden="true" />
+                        {sweepDescriptionRecovery.isPending ? 'Checking ATS' : 'Recover descriptions'}
                     </button>
                     <button
                         type="button"
@@ -1043,7 +1237,12 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
                         ) : (
                             <ol>
                                 {jobs.map((job) => (
-                                    <InventoryJobRow key={job.job_id} job={job} />
+                                    <InventoryJobRow
+                                        key={job.job_id}
+                                        job={job}
+                                        onRefreshDescription={(jobId) => refreshDescription.mutate(jobId)}
+                                        refreshing={refreshDescription.isPending && refreshDescription.variables === job.job_id}
+                                    />
                                 ))}
                             </ol>
                         )}

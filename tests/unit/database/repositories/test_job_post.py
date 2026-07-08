@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 from database.repositories.job_post import JobPostRepository
 from database.models import (
     JobPost, JobPostSource, JobRequirementUnit, JobBenefit,
-    JobRequirementUnitEmbedding,
+    JobRequirementUnitEmbedding, JobOfferingsProfile,
 )
 
 
@@ -95,6 +95,117 @@ def test_job_post_fingerprint_uniqueness_supports_tenant_and_global_rows() -> No
         "fingerprint_version",
         "canonical_fingerprint",
     )
+
+
+def test_job_post_has_missing_description_recovery_indexes() -> None:
+    indexes = {index.name: index for index in JobPost.__table__.indexes if isinstance(index, Index)}
+
+    assert "idx_job_post_description_recovery_scan" in indexes
+    assert tuple(column.name for column in indexes["idx_job_post_description_recovery_scan"].columns) == (
+        "tenant_id",
+        "status",
+        "description_recovery_status",
+        "description_recovery_next_retry_at",
+        "first_seen_at",
+    )
+    assert "idx_job_post_missing_description" in indexes
+    assert tuple(column.name for column in indexes["idx_job_post_missing_description"].columns) == (
+        "tenant_id",
+        "status",
+        "extraction_status",
+        "first_seen_at",
+    )
+
+
+def test_job_offerings_profile_indexes_are_present() -> None:
+    indexes = {
+        index.name: index
+        for index in JobOfferingsProfile.__table__.indexes
+        if isinstance(index, Index)
+    }
+
+    assert "idx_jop_source_hash" in indexes
+    assert tuple(column.name for column in indexes["idx_jop_source_hash"].columns) == (
+        "source_description_hash",
+    )
+    assert "idx_jop_schema_version" in indexes
+    assert tuple(column.name for column in indexes["idx_jop_schema_version"].columns) == (
+        "profile_schema_version",
+    )
+
+
+class TestJobOfferingsProfiles:
+    def test_save_job_offerings_profile_creates_row(self):
+        repo, mock_db = make_repo()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        job = SimpleNamespace(id="job-1")
+
+        row = repo.save_job_offerings_profile(
+            job,
+            {"schema_version": 3, "confidence": 0.82},
+            source_description_hash="desc-hash",
+            extraction_provider="OpenAIService",
+            extraction_model="gpt-4o-mini",
+        )
+
+        mock_db.add.assert_called_once_with(row)
+        mock_db.flush.assert_called_once()
+        assert isinstance(row, JobOfferingsProfile)
+        assert row.job_post_id == "job-1"
+        assert row.profile_schema_version == 3
+        assert row.source_description_hash == "desc-hash"
+        assert row.extraction_provider == "OpenAIService"
+        assert row.extraction_model == "gpt-4o-mini"
+        assert float(row.confidence) == pytest.approx(0.82)
+
+    def test_save_job_offerings_profile_updates_existing_row(self):
+        repo, mock_db = make_repo()
+        existing = JobOfferingsProfile(job_post_id="job-1", profile_json={})
+        mock_db.execute.return_value.scalar_one_or_none.return_value = existing
+
+        row = repo.save_job_offerings_profile(
+            SimpleNamespace(id="job-1"),
+            {"schema_version": 2, "confidence": 1.5},
+            source_description_hash="new-hash",
+        )
+
+        mock_db.add.assert_not_called()
+        assert row is existing
+        assert row.profile_schema_version == 2
+        assert row.source_description_hash == "new-hash"
+        assert float(row.confidence) == pytest.approx(1.0)
+
+    def test_get_job_offerings_profiles_by_job_ids_returns_string_keyed_map(self):
+        repo, mock_db = make_repo()
+        row = JobOfferingsProfile(job_post_id="job-1", profile_json={})
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [row]
+
+        result = repo.get_job_offerings_profiles_by_job_ids(["job-1"])
+
+        assert result == {"job-1": row}
+
+    def test_job_offerings_profile_freshness_checks_hash_and_schema(self):
+        row = JobOfferingsProfile(
+            job_post_id="job-1",
+            source_description_hash="hash-1",
+            profile_schema_version=1,
+        )
+
+        assert JobPostRepository.is_job_offerings_profile_fresh(
+            row,
+            source_description_hash="hash-1",
+            profile_schema_version=1,
+        )
+        assert not JobPostRepository.is_job_offerings_profile_fresh(
+            row,
+            source_description_hash="hash-2",
+            profile_schema_version=1,
+        )
+        assert not JobPostRepository.is_job_offerings_profile_fresh(
+            row,
+            source_description_hash="hash-1",
+            profile_schema_version=2,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1038,6 +1149,41 @@ class TestQuarantineNullDescriptionJobs:
 # ---------------------------------------------------------------------------
 
 class TestSaveJobContentResurrection:
+    def test_ats_recovery_sources_are_trusted_ranked_descriptions(self):
+        repo, _mock_db = make_repo()
+
+        canonical = repo._description_metadata_from_job_data(
+            {
+                "source_provider": "ats_description_recovery",
+                "source_metadata": {
+                    "ingest_mode": "description_recovery",
+                    "description_source": "ats_description_recovery",
+                    "description_provider": "greenhouse",
+                    "description_completeness": "full",
+                    "trusted_description_metadata": True,
+                },
+            },
+            "Full description",
+        )
+        legacy = repo._description_metadata_from_job_data(
+            {
+                "source_provider": "ats_description_recovery",
+                "source_metadata": {
+                    "ingest_mode": "description_recovery",
+                    "description_source": "ats.greenhouse",
+                    "description_completeness": "full",
+                    "trusted_description_metadata": True,
+                },
+            },
+            "Full description",
+        )
+
+        assert canonical["source"] == "ats_description_recovery"
+        assert canonical["source_rank"] == 3
+        assert canonical["completeness_rank"] == 3
+        assert legacy["source"] == "ats.greenhouse"
+        assert legacy["source_rank"] == 3
+
     def test_resets_no_description_status_when_description_arrives(self):
         repo, mock_db = make_repo()
         mock_job = MagicMock(spec=JobPost)
@@ -1050,6 +1196,25 @@ class TestSaveJobContentResurrection:
 
         assert mock_job.description == "Python dev"
         assert mock_job.extraction_status == 'pending'
+
+    def test_marks_description_recovery_found_when_description_arrives(self):
+        repo, mock_db = make_repo()
+        mock_job = MagicMock(spec=JobPost)
+        mock_job.description = None
+        mock_job.content_hash = None
+        mock_job.extraction_status = 'no_description'
+        mock_job.description_recovery_status = "queued"
+        mock_job.description_recovery_reason = "background_sweep"
+        mock_job.description_recovery_last_error = "previous error"
+        mock_job.description_recovery_next_retry_at = "later"
+        mock_db.execute.return_value.scalar_one.return_value = mock_job
+
+        repo.save_job_content("job-id", {"description": "Python dev", "title": "Dev", "company_name": "X"})
+
+        assert mock_job.description_recovery_status == "description_found"
+        assert mock_job.description_recovery_reason == "description_available"
+        assert mock_job.description_recovery_last_error is None
+        assert mock_job.description_recovery_next_retry_at is None
 
     def test_does_not_reset_status_when_description_still_null(self):
         repo, mock_db = make_repo()
@@ -1074,3 +1239,43 @@ class TestSaveJobContentResurrection:
         repo.save_job_content("job-id", {"description": "desc", "title": "Dev", "company_name": "X"})
 
         assert mock_job.extraction_status == 'pending'
+
+
+class TestDescriptionRecoveryMutations:
+    def test_mark_posting_not_found_deactivates_source_and_job_without_active_siblings(self):
+        repo, mock_db = make_repo()
+        source = SimpleNamespace(id="source-1", is_active=True, last_seen_at=None)
+        inactive_sibling = SimpleNamespace(id="source-2", is_active=False)
+        job = SimpleNamespace(
+            status="active",
+            sources=[source, inactive_sibling],
+            description_recovery_attempts=1,
+            description_recovery_run_id=None,
+        )
+
+        repo.mark_description_recovery_posting_not_found(job, source=source, run_id="run-1")
+
+        assert source.is_active is False
+        assert job.status == "inactive"
+        assert job.description_recovery_status == "posting_not_found"
+        assert job.description_recovery_reason == "authoritative_sync_absent"
+        assert job.description_recovery_run_id == "run-1"
+        mock_db.flush.assert_called_once()
+
+    def test_mark_posting_not_found_keeps_job_active_when_sibling_source_active(self):
+        repo, mock_db = make_repo()
+        source = SimpleNamespace(id="source-1", is_active=True, last_seen_at=None)
+        active_sibling = SimpleNamespace(id="source-2", is_active=True)
+        job = SimpleNamespace(
+            status="active",
+            sources=[source, active_sibling],
+            description_recovery_attempts=1,
+            description_recovery_run_id=None,
+        )
+
+        repo.mark_description_recovery_posting_not_found(job, source=source, run_id="run-2")
+
+        assert source.is_active is False
+        assert job.status == "active"
+        assert job.description_recovery_status == "posting_not_found"
+        mock_db.flush.assert_called_once()

@@ -901,6 +901,7 @@ class MatchService:
             is_remote=job_fields["is_remote"],
             fit_score=self._optional_float(match.fit_score),
             preference_score=self._optional_float(match.preference_score),
+            preference_status=self._preference_status(match),
             penalties=self._float_or_zero(match.penalties),
             required_coverage=self._float_or_zero(match.required_coverage),
             preferred_requirement_coverage=preferred_requirement_coverage,
@@ -1046,30 +1047,67 @@ class MatchService:
 
     @staticmethod
     def _preference_status(match: JobMatch) -> Optional[Dict[str, Any]]:
+        preference_components = getattr(match, "preference_components", None)
+        if isinstance(preference_components, dict):
+            mode_used = preference_components.get("preference_mode_used")
+            component_status = preference_components.get("preference_status")
+            if component_status == "applied":
+                return {
+                    "applied": True,
+                    "effective_mode": mode_used,
+                }
+            if isinstance(component_status, str) and component_status:
+                return {
+                    "applied": False,
+                    "reason": MatchService._safe_preference_status_reason(component_status),
+                    "effective_mode": mode_used,
+                }
+
+            fallback_reason = preference_components.get("preference_fallback_reason")
+            if fallback_reason:
+                return {
+                    "applied": False,
+                    "reason": MatchService._safe_preference_status_reason(fallback_reason),
+                    "effective_mode": mode_used,
+                }
+            if mode_used:
+                return {
+                    "applied": True,
+                    "effective_mode": mode_used,
+                }
+
         ranking_snapshot = getattr(match, "ranking_snapshot", None)
         if isinstance(ranking_snapshot, dict):
             status = ranking_snapshot.get("preference_status")
             if isinstance(status, dict):
-                return status
+                sanitized = dict(status)
+                reason = sanitized.get("reason")
+                if reason:
+                    sanitized["reason"] = MatchService._safe_preference_status_reason(reason)
+                return sanitized
 
-        preference_components = getattr(match, "preference_components", None)
-        if not isinstance(preference_components, dict):
-            return None
-
-        fallback_reason = preference_components.get("preference_fallback_reason")
-        mode_used = preference_components.get("preference_mode_used")
-        if fallback_reason:
-            return {
-                "applied": False,
-                "reason": fallback_reason,
-                "effective_mode": mode_used,
-            }
-        if mode_used:
-            return {
-                "applied": True,
-                "effective_mode": mode_used,
-            }
         return None
+
+    @staticmethod
+    def _safe_preference_status_reason(reason: Any) -> str:
+        text = str(reason or "")
+        if text in {
+            "preference_profile_unavailable",
+            "preference_reranker_unavailable",
+            "preference_judge_unavailable",
+        }:
+            return "preference_scorer_unavailable"
+        if text in {"job_offerings_unavailable", "missing_job_offerings"}:
+            return "missing_job_offerings"
+        if text in {"invalid_llm_output", "missing_preference_assessment"}:
+            return "invalid_llm_output"
+        if (
+            text == "job_offerings_lookup_failed"
+            or text.startswith("runtime_error:")
+            or text.startswith("preference_reranking_failed")
+        ):
+            return "preference_scorer_failed"
+        return text
 
     def _latest_evaluation_for_match(
         self,
@@ -1228,12 +1266,66 @@ class MatchService:
         refresh_kind = source_refresh_kind(source)
         if refresh_kind == "compliant_ats":
             actions.append("refresh_availability")
+            if MatchService._missing_description(job):
+                actions.append("refresh_description")
+        elif refresh_kind == "adapter_missing":
+            actions.append("refresh_unavailable_adapter_missing")
+            if MatchService._missing_description(job):
+                actions.append("description_recovery_unavailable_adapter_missing")
         elif refresh_kind == "prohibited":
             actions.append("refresh_unavailable_deployment_disabled")
+            if MatchService._missing_description(job):
+                actions.append("description_recovery_unavailable_deployment_disabled")
         elif source is not None:
             actions.append("refresh_unavailable")
+            if MatchService._missing_description(job):
+                actions.append("description_recovery_unavailable")
         actions.append("restore" if getattr(job, "status", None) == "expired" else "retire")
         return actions
+
+    @staticmethod
+    def _missing_description(job: Optional[JobPost]) -> bool:
+        if job is None:
+            return False
+        description = getattr(job, "description", None)
+        return (
+            not (description or "").strip()
+            or getattr(job, "description_completeness", None) == "missing"
+            or getattr(job, "extraction_status", None) == "no_description"
+        )
+
+    @staticmethod
+    def _description_recovery_provider(job: Optional[JobPost]) -> str | None:
+        if job is None:
+            return None
+        payload = getattr(job, "raw_payload", None)
+        if not isinstance(payload, dict):
+            return None
+        metadata = payload.get("source_metadata")
+        if not isinstance(metadata, dict):
+            return None
+        provider = metadata.get("description_provider")
+        return str(provider) if provider else None
+
+    @staticmethod
+    def _description_recovery_status_group(status: str | None) -> str:
+        if status in {"queued", "refreshing"}:
+            return "checking"
+        if status == "description_found":
+            return "found"
+        if status == "posting_not_found":
+            return "gone"
+        if status == "source_unmapped":
+            return "configure_source"
+        if status == "source_adapter_missing":
+            return "adapter_missing"
+        if status in {"source_prohibited", "source_unsupported"}:
+            return "unsupported"
+        if status == "failed_retryable":
+            return "retrying"
+        if status == "failed_terminal":
+            return "failed"
+        return "pending" if status in {"pending", "not_needed", None} else "unknown"
 
     def _to_job_details(self, job: Optional[JobPost]) -> JobDetails:
         """Convert ORM model to JobDetails response model."""
@@ -1267,6 +1359,10 @@ class MatchService:
         description_warning_code = self._optional_str_attr(job, "description_warning_code")
         source = self._primary_source(job)
         availability_status, availability_reason = self._availability_status(job, source)
+        recovery_status = (
+            self._optional_str_attr(job, "description_recovery_status")
+            or "not_needed"
+        )
 
         return JobDetails(
             job_id=str(job.id),
@@ -1278,6 +1374,34 @@ class MatchService:
             description_source=description_source,
             description_completeness=description_completeness,
             description_warning_code=description_warning_code,
+            description_recovery_status=recovery_status,
+            description_recovery_reason=self._optional_str_attr(
+                job,
+                "description_recovery_reason",
+            ),
+            description_recovery_provider=self._description_recovery_provider(job),
+            description_recovery_status_group=self._description_recovery_status_group(
+                recovery_status
+            ),
+            description_recovery_attempts=safe_int(
+                getattr(job, "description_recovery_attempts", 0) or 0
+            ),
+            description_recovery_last_attempt_at=self._optional_datetime_iso_attr(
+                job,
+                "description_recovery_last_attempt_at",
+            ),
+            description_recovery_next_retry_at=self._optional_datetime_iso_attr(
+                job,
+                "description_recovery_next_retry_at",
+            ),
+            description_recovery_last_error=self._optional_str_attr(
+                job,
+                "description_recovery_last_error",
+            ),
+            description_recovery_run_id=self._optional_str_attr(
+                job,
+                "description_recovery_run_id",
+            ),
             salary_min=safe_float(job.salary_min) if job.salary_min is not None else None,
             salary_max=safe_float(job.salary_max) if job.salary_max is not None else None,
             currency=job.currency,

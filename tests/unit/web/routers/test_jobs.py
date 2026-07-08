@@ -112,6 +112,143 @@ class TestJobsRouter:
         assert response.status_code == 422
         assert "Invalid job_status" in response.json()["detail"]
 
+    def test_description_recovery_sweep_queues_without_provider_fetch(self):
+        client = self._client()
+        repo = Mock()
+        repo.claim_missing_description_recovery_jobs.return_value = [
+            SimpleNamespace(id="job-1"),
+            SimpleNamespace(id="job-2"),
+        ]
+
+        with patch("web.backend.routers.jobs.JobRepository", return_value=repo), \
+             patch("services.orchestrator.description_recovery.fetch_provider_jobs") as fetch_provider_jobs:
+            response = client.post("/api/jobs/description-recovery/sweep", params={"limit": 25})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["accepted"] is True
+        assert data["queued"] is True
+        assert data["queued_count"] == 2
+        assert data["processed_count"] == 0
+        assert data["found_count"] == 0
+        assert data["extraction_queued"] == 0
+        repo.claim_missing_description_recovery_jobs.assert_called_once()
+        fetch_provider_jobs.assert_not_called()
+
+    def test_description_recovery_refresh_now_queues_without_provider_fetch(self):
+        client = self._client()
+        job = SimpleNamespace(
+            id=uuid.uuid4(),
+            title="Backend Engineer",
+            company="Example",
+            location_text="Remote",
+            is_remote=True,
+            status="active",
+            description=None,
+            description_completeness="missing",
+            description_recovery_status="pending",
+            description_recovery_reason=None,
+            description_recovery_run_id=None,
+            description_recovery_next_retry_at=None,
+            raw_payload={},
+            extraction_status="no_description",
+            sources=[
+                SimpleNamespace(
+                    site="greenhouse",
+                    job_url="https://boards.greenhouse.io/example/jobs/1",
+                    job_url_direct=None,
+                    source_job_id="1",
+                    is_active=True,
+                    last_seen_at=None,
+                )
+            ],
+        )
+        repo = Mock()
+
+        def queue_job(queued_job, *, run_id):
+            queued_job.description_recovery_status = "queued"
+            queued_job.description_recovery_reason = "manual_refresh"
+            queued_job.description_recovery_run_id = run_id
+
+        repo.queue_description_recovery_for_job.side_effect = queue_job
+
+        with patch("web.backend.routers.jobs._get_scoped_job", return_value=job), \
+             patch("web.backend.routers.jobs.JobRepository", return_value=repo), \
+             patch("services.orchestrator.description_recovery.fetch_provider_jobs") as fetch_provider_jobs:
+            response = client.post(f"/api/jobs/{job.id}/description-recovery/refresh-now")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["accepted"] is True
+        assert data["queued"] is True
+        assert data["queued_count"] == 1
+        assert data["recovery_status"] == "queued"
+        assert data["recovery_status_group"] == "checking"
+        assert data["recovery_run_id"] == f"description-recovery-job-{job.id}"
+        repo.queue_description_recovery_for_job.assert_called_once_with(
+            job,
+            run_id=f"description-recovery-job-{job.id}",
+        )
+        fetch_provider_jobs.assert_not_called()
+
+    def test_description_recovery_refresh_now_reports_adapter_missing_without_queue(self):
+        client = self._client()
+        job = SimpleNamespace(
+            id=uuid.uuid4(),
+            title="Backend Engineer",
+            company="Example",
+            location_text="Remote",
+            is_remote=True,
+            status="active",
+            description=None,
+            description_completeness="missing",
+            description_recovery_status="pending",
+            description_recovery_reason=None,
+            description_recovery_run_id=None,
+            description_recovery_next_retry_at=None,
+            description_recovery_attempts=0,
+            raw_payload={},
+            extraction_status="no_description",
+            sources=[
+                SimpleNamespace(
+                    site="workday",
+                    job_url="https://example.wd1.myworkdayjobs.com/jobs/job/1",
+                    job_url_direct=None,
+                    source_job_id="1",
+                    is_active=True,
+                    last_seen_at=None,
+                )
+            ],
+        )
+        repo = Mock()
+
+        def mark_status(queued_job, *, status, reason, run_id, **_kwargs):
+            queued_job.description_recovery_status = status
+            queued_job.description_recovery_reason = reason
+            queued_job.description_recovery_run_id = run_id
+
+        repo.mark_description_recovery_status.side_effect = mark_status
+
+        with patch("web.backend.routers.jobs._get_scoped_job", return_value=job), \
+             patch("web.backend.routers.jobs.JobRepository", return_value=repo), \
+             patch("services.orchestrator.description_recovery.fetch_provider_jobs") as fetch_provider_jobs:
+            response = client.post(f"/api/jobs/{job.id}/description-recovery/refresh-now")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["accepted"] is False
+        assert data["queued"] is False
+        assert data["skipped_count"] == 1
+        assert data["recovery_status"] == "source_adapter_missing"
+        assert data["recovery_status_group"] == "adapter_missing"
+        assert data["recovery_run_id"] == f"description-recovery-job-{job.id}"
+        repo.queue_description_recovery_for_job.assert_not_called()
+        repo.mark_description_recovery_status.assert_called_once()
+        fetch_provider_jobs.assert_not_called()
+
     def test_processing_blockers_returns_cursor_metadata(self):
         client = self._client()
         blockers = [
@@ -356,7 +493,8 @@ def test_job_inventory_filters_cover_processing_states_and_search():
     assert len(_job_inventory_filters(tenant_id=None, job_status="active", processing_status="ready", search="  ai ")) == 5
     assert len(_job_inventory_filters(tenant_id=uuid.uuid4(), job_status="all", processing_status="extracted", search=None)) == 2
     assert len(_job_inventory_filters(tenant_id=None, job_status="all", processing_status="embedded", search=None)) == 2
-    assert len(_job_inventory_filters(tenant_id=None, job_status="all", processing_status="pending_extraction", search=None)) == 3
+    assert len(_job_inventory_filters(tenant_id=None, job_status="all", processing_status="pending_extraction", search=None)) == 6
+    assert len(_job_inventory_filters(tenant_id=None, job_status="all", processing_status="missing_description", search=None)) == 2
     assert len(_job_inventory_filters(tenant_id=None, job_status="all", processing_status="pending_embedding", search=None)) == 3
     assert len(_job_inventory_filters(tenant_id=None, job_status="all", processing_status="failed", search=None)) == 2
 

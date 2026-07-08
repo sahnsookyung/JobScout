@@ -241,6 +241,44 @@ class JobBenefit(BaseModel):
     text: str = Field(description="Description of the benefit")
 
 
+JOB_OFFERINGS_PROFILE_VERSION = 1
+
+
+class JobOfferingSignal(BaseModel):
+    """A single evidence-backed working-condition or perk signal."""
+    model_config = ConfigDict(extra='forbid')
+
+    label: str = Field(description="Short normalized offering label")
+    evidence: str = Field(description="Short source snippet from the job description")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in this signal")
+
+
+class JobOfferingsProfile(BaseModel):
+    """Cached job-side profile used for candidate preference matching."""
+    model_config = ConfigDict(extra='forbid')
+
+    schema_version: int = Field(default=JOB_OFFERINGS_PROFILE_VERSION)
+    work_arrangement: Optional[str] = Field(
+        default=None,
+        description="Remote/hybrid/onsite/flexible arrangement when stated",
+    )
+    location_timezone: List[JobOfferingSignal] = Field(default_factory=list)
+    visa_sponsorship: Optional[bool] = Field(
+        default=None,
+        description="Whether the role explicitly offers visa sponsorship",
+    )
+    compensation: List[JobOfferingSignal] = Field(default_factory=list)
+    benefits_perks: List[JobOfferingSignal] = Field(default_factory=list)
+    flexibility: List[JobOfferingSignal] = Field(default_factory=list)
+    team_culture: List[JobOfferingSignal] = Field(default_factory=list)
+    mentorship_growth: List[JobOfferingSignal] = Field(default_factory=list)
+    product_domain: List[JobOfferingSignal] = Field(default_factory=list)
+    tech_environment: List[JobOfferingSignal] = Field(default_factory=list)
+    negative_signals: List[JobOfferingSignal] = Field(default_factory=list)
+    evidence_snippets: List[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
 class JobExtraction(BaseModel):
     """Complete job posting extraction."""
     model_config = ConfigDict(extra='forbid')
@@ -280,6 +318,10 @@ class JobExtraction(BaseModel):
     )
     benefits: List[JobBenefit] = Field(
         description="Job benefits and perks"
+    )
+    offerings_profile: Optional[JobOfferingsProfile] = Field(
+        default=None,
+        description="Cached job-side working conditions, perks, and culture profile",
     )
 
 

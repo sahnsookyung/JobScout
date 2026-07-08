@@ -1,5 +1,6 @@
 import { apiClient } from './api';
 import type {
+    DescriptionRecoverySweepResponse,
     JobAvailabilityMutationResponse,
     JobLifecycleStatus,
     JobProcessingStatus,
@@ -39,6 +40,18 @@ export const jobsApi = {
             shouldUseCloudJobRefresh()
                 ? `/cloud/integrations/jobs/${jobId}/refresh-availability`
                 : `/jobs/${jobId}/refresh-availability`
+        ),
+
+    refreshJobDescriptionNow: (jobId: string) =>
+        apiClient.post<JobAvailabilityMutationResponse>(
+            `/jobs/${jobId}/description-recovery/refresh-now`
+        ),
+
+    sweepDescriptionRecovery: (limit = 25) =>
+        apiClient.post<DescriptionRecoverySweepResponse>(
+            '/jobs/description-recovery/sweep',
+            null,
+            { params: { limit } }
         ),
 
     getProcessingBlockers: (
