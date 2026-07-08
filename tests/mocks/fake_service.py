@@ -13,6 +13,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from core.llm.interfaces import LLMProvider
+from core.llm.schema_models import JOB_OFFERINGS_PROFILE_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +230,51 @@ def _job_preference_haystack(job_payload: Dict[str, Any]) -> str:
     ).lower()
 
 
+def _fake_offering_signal(
+    label: str,
+    evidence: str,
+    confidence: float = 0.75,
+) -> Dict[str, Any]:
+    return {
+        "label": label,
+        "evidence": evidence,
+        "confidence": confidence,
+    }
+
+def _fake_offerings_profile(text: str, tokens: set[str]) -> Dict[str, Any]:
+    work_arrangement = "remote" if "remote" in tokens else "onsite"
+    tech_environment = [
+        _fake_offering_signal(keyword, keyword, 0.8)
+        for keyword in sorted(tokens & set(_KEYWORD_DIMENSIONS.keys()))
+    ]
+    flexibility = (
+        [_fake_offering_signal("remote work", "remote", 0.85)]
+        if "remote" in tokens
+        else []
+    )
+    mentorship_growth = (
+        [_fake_offering_signal("mentorship", "mentorship", 0.8)]
+        if "mentorship" in tokens
+        else []
+    )
+    evidence_snippets = [text[:200]] if text else []
+    return {
+        "schema_version": JOB_OFFERINGS_PROFILE_VERSION,
+        "work_arrangement": work_arrangement,
+        "location_timezone": [],
+        "visa_sponsorship": False,
+        "compensation": [],
+        "benefits_perks": [],
+        "flexibility": flexibility,
+        "team_culture": [],
+        "mentorship_growth": mentorship_growth,
+        "product_domain": [],
+        "tech_environment": tech_environment,
+        "negative_signals": [],
+        "evidence_snippets": evidence_snippets,
+        "confidence": 0.7,
+    }
+
 def _score_job_against_profile(
     job: Dict[str, Any],
     profile: Dict[str, Any],
@@ -421,6 +467,7 @@ class FakeLLMService(LLMProvider):
             "tech_stack": sorted(tokens & set(_KEYWORD_DIMENSIONS.keys())),
             "requirements": requirements,
             "benefits": [],
+            "offerings_profile": _fake_offerings_profile(text, tokens),
         }
 
     def generate_embedding(self, text: str) -> List[float]:

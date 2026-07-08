@@ -294,7 +294,41 @@ class TestOpenAIExampleValidation:
                     "category": "health_insurance",
                     "text": "Comprehensive health coverage"
                 }
-            ]
+            ],
+            "offerings_profile": {
+                "schema_version": 1,
+                "work_arrangement": "Hybrid",
+                "location_timezone": [],
+                "visa_sponsorship": True,
+                "compensation": [
+                    {
+                        "label": "salary range",
+                        "evidence": "$100,000 to $150,000",
+                        "confidence": 0.9,
+                    }
+                ],
+                "benefits_perks": [
+                    {
+                        "label": "health coverage",
+                        "evidence": "Comprehensive health coverage",
+                        "confidence": 0.9,
+                    }
+                ],
+                "flexibility": [],
+                "team_culture": [],
+                "mentorship_growth": [],
+                "product_domain": [],
+                "tech_environment": [
+                    {
+                        "label": "Python",
+                        "evidence": "Python",
+                        "confidence": 0.9,
+                    }
+                ],
+                "negative_signals": [],
+                "evidence_snippets": ["Senior Python Developer for backend microservices"],
+                "confidence": 0.85,
+            },
         }
         
         job = JobExtraction.model_validate(valid_job)

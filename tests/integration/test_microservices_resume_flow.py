@@ -1348,9 +1348,8 @@ def test_preference_cross_encoder_reranking_emits_detail_codes(microservices_sta
         )
         assert preference_components.get("preference_mode_used") == "semantic_rerank", preference_components
         assert "tech_stack_match" in preference_reason_codes, preference_reason_codes
-        # CE path emits detail codes in "category:label|segment" format; LLM path does not.
-        assert any("|" in code for code in preference_reason_codes), (
-            f"Expected CE detail codes with '|' separator, got: {preference_reason_codes}"
+        assert all("|" not in code for code in preference_reason_codes), (
+            f"LLM-only preference reranking should not emit CE segment detail codes: {preference_reason_codes}"
         )
     finally:
         session.close()

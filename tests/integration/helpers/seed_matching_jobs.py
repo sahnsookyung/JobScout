@@ -7,11 +7,13 @@ from dataclasses import dataclass
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from core.llm.schema_models import JOB_OFFERINGS_PROFILE_VERSION
 from tests.mocks.fake_service import FakeLLMService
 from database.models import (
     CandidatePreferences,
     JobMatch,
     JobMatchRequirement,
+    JobOfferingsProfile,
     JobPost,
     JobRequirementUnit,
     JobRequirementUnitEmbedding,
@@ -29,6 +31,52 @@ from database.models import (
 class SeededJobCorpus:
     positive_job_id: str
     negative_job_id: str
+
+def _offering_signal(label: str, evidence: str, confidence: float = 0.8) -> dict:
+    return {
+        "label": label,
+        "evidence": evidence,
+        "confidence": confidence,
+    }
+
+def _offerings_profile(
+    *,
+    work_arrangement: str,
+    tech_labels: list[str],
+    culture_labels: list[str] | None = None,
+    growth_labels: list[str] | None = None,
+    evidence: str,
+    confidence: float = 0.8,
+) -> dict:
+    return {
+        "schema_version": JOB_OFFERINGS_PROFILE_VERSION,
+        "work_arrangement": work_arrangement,
+        "location_timezone": [],
+        "visa_sponsorship": False,
+        "compensation": [],
+        "benefits_perks": [],
+        "flexibility": (
+            [_offering_signal("remote work", "Remote", 0.85)]
+            if work_arrangement == "remote"
+            else []
+        ),
+        "team_culture": [
+            _offering_signal(label, label, 0.8)
+            for label in (culture_labels or [])
+        ],
+        "mentorship_growth": [
+            _offering_signal(label, label, 0.8)
+            for label in (growth_labels or [])
+        ],
+        "product_domain": [],
+        "tech_environment": [
+            _offering_signal(label, label, 0.85)
+            for label in tech_labels
+        ],
+        "negative_signals": [],
+        "evidence_snippets": [evidence[:200]],
+        "confidence": confidence,
+    }
 
 
 def reset_microservices_state(database_url: str) -> None:
@@ -49,6 +97,7 @@ def reset_microservices_state(database_url: str) -> None:
         session.query(ResumeProcessingState).delete()
         session.query(StructuredResume).delete()
         session.query(ResumeUpload).delete()
+        session.query(JobOfferingsProfile).delete()
         session.query(JobPost).delete()
         session.commit()
     except Exception:
@@ -113,6 +162,45 @@ def seed_matcher_ready_jobs(database_url: str) -> SeededJobCorpus:
         )
         session.add(negative_job)
         session.flush()
+
+        session.add_all(
+            [
+                JobOfferingsProfile(
+                    job_post_id=positive_job.id,
+                    profile_json=_offerings_profile(
+                        work_arrangement="remote",
+                        tech_labels=[
+                            "Python",
+                            "FastAPI",
+                            "backend",
+                            "microservices",
+                        ],
+                        culture_labels=["modern engineering"],
+                        growth_labels=["mentorship"],
+                        evidence=positive_job.description,
+                    ),
+                    profile_schema_version=JOB_OFFERINGS_PROFILE_VERSION,
+                    source_description_hash=positive_job.content_hash,
+                    extraction_provider="e2e_seed",
+                    extraction_model="deterministic",
+                    confidence=0.8,
+                ),
+                JobOfferingsProfile(
+                    job_post_id=negative_job.id,
+                    profile_json=_offerings_profile(
+                        work_arrangement="onsite",
+                        tech_labels=["Java", "Spring", "Salesforce"],
+                        evidence=negative_job.description,
+                        confidence=0.7,
+                    ),
+                    profile_schema_version=JOB_OFFERINGS_PROFILE_VERSION,
+                    source_description_hash=negative_job.content_hash,
+                    extraction_provider="e2e_seed",
+                    extraction_model="deterministic",
+                    confidence=0.7,
+                ),
+            ]
+        )
 
         positive_requirements = [
             ("must_have", "Experience with python", ["python"]),

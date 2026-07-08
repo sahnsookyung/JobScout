@@ -257,26 +257,44 @@ class JobOfferingsProfile(BaseModel):
     """Cached job-side profile used for candidate preference matching."""
     model_config = ConfigDict(extra='forbid')
 
-    schema_version: int = Field(default=JOB_OFFERINGS_PROFILE_VERSION)
+    schema_version: int = Field(description="Job offerings profile schema version")
     work_arrangement: Optional[str] = Field(
-        default=None,
         description="Remote/hybrid/onsite/flexible arrangement when stated",
     )
-    location_timezone: List[JobOfferingSignal] = Field(default_factory=list)
+    location_timezone: List[JobOfferingSignal] = Field(
+        description="Location, timezone, relocation, or travel signals"
+    )
     visa_sponsorship: Optional[bool] = Field(
-        default=None,
         description="Whether the role explicitly offers visa sponsorship",
     )
-    compensation: List[JobOfferingSignal] = Field(default_factory=list)
-    benefits_perks: List[JobOfferingSignal] = Field(default_factory=list)
-    flexibility: List[JobOfferingSignal] = Field(default_factory=list)
-    team_culture: List[JobOfferingSignal] = Field(default_factory=list)
-    mentorship_growth: List[JobOfferingSignal] = Field(default_factory=list)
-    product_domain: List[JobOfferingSignal] = Field(default_factory=list)
-    tech_environment: List[JobOfferingSignal] = Field(default_factory=list)
-    negative_signals: List[JobOfferingSignal] = Field(default_factory=list)
-    evidence_snippets: List[str] = Field(default_factory=list)
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    compensation: List[JobOfferingSignal] = Field(
+        description="Salary, equity, bonus, or compensation transparency signals"
+    )
+    benefits_perks: List[JobOfferingSignal] = Field(
+        description="Benefits and perks explicitly offered by the role"
+    )
+    flexibility: List[JobOfferingSignal] = Field(
+        description="Schedule, remote, hybrid, async, PTO, or flexibility signals"
+    )
+    team_culture: List[JobOfferingSignal] = Field(
+        description="Team culture, collaboration style, and working environment signals"
+    )
+    mentorship_growth: List[JobOfferingSignal] = Field(
+        description="Mentorship, learning, promotion, or career growth signals"
+    )
+    product_domain: List[JobOfferingSignal] = Field(
+        description="Product, mission, customer, or domain signals"
+    )
+    tech_environment: List[JobOfferingSignal] = Field(
+        description="Tools, languages, architecture, or engineering-practice signals"
+    )
+    negative_signals: List[JobOfferingSignal] = Field(
+        description="Explicitly stated working-condition signals that may conflict with preferences"
+    )
+    evidence_snippets: List[str] = Field(
+        description="Short source snippets supporting the profile"
+    )
+    confidence: float = Field(ge=0.0, le=1.0, description="Overall confidence in the offerings profile")
 
 
 class JobExtraction(BaseModel):
@@ -320,7 +338,6 @@ class JobExtraction(BaseModel):
         description="Job benefits and perks"
     )
     offerings_profile: Optional[JobOfferingsProfile] = Field(
-        default=None,
         description="Cached job-side working conditions, perks, and culture profile",
     )
 
