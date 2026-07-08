@@ -1,4 +1,5 @@
 import React from 'react';
+import { ChevronDown } from 'lucide-react';
 import { SegmentedCircle } from './SegmentedCircle';
 import { CompactScoreBar } from './CompactScoreBar';
 
@@ -51,6 +52,8 @@ export interface StatsPanelProps {
 }
 
 export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
+    const backlogDetailsId = React.useId();
+    const [showBacklogDetails, setShowBacklogDetails] = React.useState(false);
     const totalMatches = stats?.total_matches ?? 0;
     const activeMatches = stats?.active_matches ?? 0;
     const hiddenMatches = stats?.hidden_count ?? 0;
@@ -103,6 +106,19 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
     const cappedArc = arcFor(beyondTopK);
     const hiddenArc = arcFor(hiddenMatches);
     const belowArc = arcFor(belowThreshold);
+    const backlogDetailTotal = (
+        activePendingExtraction
+        + activePendingEmbedding
+        + inactivePendingExtraction
+        + inactivePendingEmbedding
+        + activeMissingDescriptions
+        + inactiveMissingDescriptions
+        + recoveryQueued
+        + recoveryRetryable
+        + recoveryUnavailable
+    );
+    const hasBacklogDetails = backlogDetailTotal > 0;
+    const showOperationalDetails = hasBacklogDetails && showBacklogDetails;
 
     return (
         <div className="grid grid-cols-1 gap-7 lg:grid-cols-[minmax(15rem,1.05fr)_minmax(14rem,0.8fr)_minmax(16rem,1fr)] lg:items-stretch lg:gap-x-10">
@@ -116,45 +132,70 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
                         matched candidates
                     </span>
                 </div>
-                <dl className="mt-4 grid grid-cols-1 gap-x-5 gap-y-2 border-t border-rule pt-3 text-[12px] min-[520px]:grid-cols-2">
-                    <InventoryItem label="Imported" value={jobPostTotal} />
-                    <InventoryItem label="Active" value={activeJobs} />
-                    <InventoryItem label="Ready active" value={activeReadyToScore} />
-                    <InventoryItem label="Not active" value={notActiveJobs} />
-                    <InventoryItem label="Ready extract" value={stats?.ready_for_extraction_job_posts ?? pendingExtraction + retryableExtraction} />
-                    <InventoryItem label="Missing desc" value={missingDescriptions} />
-                    <InventoryItem label="Extracted all" value={extractedJobs} />
-                    <InventoryItem label="Embedded all" value={embeddedJobs} />
-                </dl>
-                {(pendingExtraction + retryableExtraction + pendingEmbedding + retryableEmbedding + missingDescriptions) > 0 && (
-                    <div className="mt-3 grid gap-2 border-t border-rule pt-3 text-[12px] leading-5 text-ink-muted">
-                        <StatusLine
-                            label="Active backlog"
-                            value={activePendingExtraction + activePendingEmbedding}
-                            detail="eligible for queued processing"
-                        />
-                        <StatusLine
-                            label="Inactive backlog"
-                            value={inactivePendingExtraction + inactivePendingEmbedding}
-                            detail="not used for matching"
-                        />
-                        <StatusLine
-                            label="Missing descriptions"
-                            value={activeMissingDescriptions + inactiveMissingDescriptions}
-                            detail="refresh from ATS or retire"
-                        />
-                        <StatusLine
-                            label="Checking ATS"
-                            value={recoveryQueued + recoveryRetryable}
-                            detail="background description recovery"
-                        />
-                        <StatusLine
-                            label="Needs source setup"
-                            value={recoveryUnavailable}
-                            detail="unmapped or unsupported sources"
-                        />
-                    </div>
-                )}
+                <div className="relative mt-4 border-t border-rule pt-3">
+                    {hasBacklogDetails && (
+                        <button
+                            type="button"
+                            aria-controls={backlogDetailsId}
+                            aria-expanded={showOperationalDetails}
+                            aria-label={showOperationalDetails ? 'Show inventory metrics' : 'Show backlog details'}
+                            title={showOperationalDetails ? 'Show inventory metrics' : 'Show backlog details'}
+                            onClick={() => setShowBacklogDetails((isVisible) => !isVisible)}
+                            className="absolute right-0 top-2 inline-flex h-6 w-6 items-center justify-center border border-rule bg-surface text-ink-muted transition hover:border-accent hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                        >
+                            <ChevronDown
+                                className={`h-3.5 w-3.5 transition-transform ${showOperationalDetails ? 'rotate-180' : ''}`}
+                                aria-hidden="true"
+                            />
+                        </button>
+                    )}
+                    {showOperationalDetails ? (
+                        <dl
+                            id={backlogDetailsId}
+                            className="grid gap-2 pr-8 text-[12px] leading-5 text-ink-muted"
+                        >
+                            <StatusLine
+                                label="Active backlog"
+                                value={activePendingExtraction + activePendingEmbedding}
+                                detail="eligible for queued processing"
+                            />
+                            <StatusLine
+                                label="Inactive backlog"
+                                value={inactivePendingExtraction + inactivePendingEmbedding}
+                                detail="not used for matching"
+                            />
+                            <StatusLine
+                                label="Missing descriptions"
+                                value={activeMissingDescriptions + inactiveMissingDescriptions}
+                                detail="refresh from ATS or retire"
+                            />
+                            <StatusLine
+                                label="Checking ATS"
+                                value={recoveryQueued + recoveryRetryable}
+                                detail="background description recovery"
+                            />
+                            <StatusLine
+                                label="Needs source setup"
+                                value={recoveryUnavailable}
+                                detail="unmapped or unsupported sources"
+                            />
+                        </dl>
+                    ) : (
+                        <dl
+                            id={backlogDetailsId}
+                            className="grid grid-cols-1 gap-x-5 gap-y-2 pr-8 text-[12px] min-[520px]:grid-cols-2"
+                        >
+                            <InventoryItem label="Imported" value={jobPostTotal} />
+                            <InventoryItem label="Active" value={activeJobs} />
+                            <InventoryItem label="Ready active" value={activeReadyToScore} />
+                            <InventoryItem label="Not active" value={notActiveJobs} />
+                            <InventoryItem label="Ready extract" value={stats?.ready_for_extraction_job_posts ?? pendingExtraction + retryableExtraction} />
+                            <InventoryItem label="Missing desc" value={missingDescriptions} />
+                            <InventoryItem label="Extracted all" value={extractedJobs} />
+                            <InventoryItem label="Embedded all" value={embeddedJobs} />
+                        </dl>
+                    )}
+                </div>
             </div>
 
             <div className="min-w-0 border-t border-rule pt-6 md:flex md:items-center md:gap-5 lg:border-t-0 lg:pt-0">

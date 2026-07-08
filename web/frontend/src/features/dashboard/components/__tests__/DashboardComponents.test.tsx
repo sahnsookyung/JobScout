@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ActionButton, type ActionButtonProps } from '../ActionButton';
@@ -23,6 +23,7 @@ vi.mock('lucide-react', () => ({
     TriangleAlert: ({ className, ...props }: any) => <div data-testid="triangle-alert-icon" className={className} {...props} />,
     Play: ({ className, ...props }: any) => <div data-testid="play-icon" className={className} {...props} />,
     Square: ({ className, ...props }: any) => <div data-testid="square-icon" className={className} {...props} />,
+    ChevronDown: ({ className, ...props }: any) => <div data-testid="chevron-down-icon" className={className} {...props} />,
 }));
 
 vi.mock('@shared/constants', () => ({
@@ -312,8 +313,9 @@ describe('StatsPanel', () => {
         expect(screen.getByText('Not active')).toBeInTheDocument();
         expect(screen.getByText('Ready extract')).toBeInTheDocument();
         expect(screen.getByText('Missing desc')).toBeInTheDocument();
-        expect(screen.getByText('Active backlog')).toBeInTheDocument();
-        expect(screen.getByText('Inactive backlog')).toBeInTheDocument();
+        expect(screen.queryByText('Active backlog')).not.toBeInTheDocument();
+        expect(screen.queryByText('Inactive backlog')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Show backlog details' })).toHaveAttribute('aria-expanded', 'false');
         expect(screen.getByText('Fit')).toBeInTheDocument();
         expect(screen.getByText('Below threshold')).toBeInTheDocument();
         expect(screen.getByText('Hidden')).toBeInTheDocument();
@@ -322,6 +324,26 @@ describe('StatsPanel', () => {
         expect(screen.getByText('Good')).toBeInTheDocument();
         expect(screen.getByText('Fair')).toBeInTheDocument();
         expect(screen.getByText('Low')).toBeInTheDocument();
+    });
+
+    it('toggles backlog details in place of inventory metrics', () => {
+        render(<StatsPanel {...defaultProps} />);
+
+        expect(screen.getByText('Imported')).toBeInTheDocument();
+        expect(screen.queryByText('Active backlog')).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Show backlog details' }));
+
+        expect(screen.getByRole('button', { name: 'Show inventory metrics' })).toHaveAttribute('aria-expanded', 'true');
+        expect(screen.getByText('Active backlog')).toBeInTheDocument();
+        expect(screen.getByText('Inactive backlog')).toBeInTheDocument();
+        expect(screen.getByText('Missing descriptions')).toBeInTheDocument();
+        expect(screen.queryByText('Imported')).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Show inventory metrics' }));
+
+        expect(screen.getByText('Imported')).toBeInTheDocument();
+        expect(screen.queryByText('Active backlog')).not.toBeInTheDocument();
     });
 
     it('handles null and undefined stats gracefully', () => {
