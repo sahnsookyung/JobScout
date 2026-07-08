@@ -191,13 +191,6 @@ def _env_float(name: str, default: float) -> float:
     return float(raw)
 
 
-def _allow_seed_fetcher_in_production() -> bool:
-    raw = os.getenv("JOBSCOUT_ALLOW_EXTERNAL_SEED_FETCHER_IN_PRODUCTION")
-    if raw is None:
-        return False
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _production_like() -> bool:
     env = (
         os.getenv("JOBSCOUT_ENV")
@@ -209,11 +202,7 @@ def _production_like() -> bool:
 
 
 def get_external_seed_fetcher_config() -> ExternalSeedFetcherConfig:
-    policy_disabled_reason = (
-        SOURCE_POLICY_DISABLED_REASON
-        if _production_like() and not _allow_seed_fetcher_in_production()
-        else None
-    )
+    policy_disabled_reason = SOURCE_POLICY_DISABLED_REASON if _production_like() else None
     configured_sources = tuple(
         source for source in _split_csv(os.getenv("JOBSCOUT_EXTERNAL_SEED_FETCHER_SOURCES"))
         if source in ALLOWED_SOURCES
