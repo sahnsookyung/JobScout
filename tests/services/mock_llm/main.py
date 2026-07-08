@@ -59,6 +59,11 @@ def _extract_json_suffix(text: str) -> str:
     stripped = text.strip()
     if stripped.startswith("{"):
         return stripped
+    description_marker = "Description:\n"
+    if description_marker in stripped:
+        candidate = stripped.rsplit(description_marker, 1)[-1].strip()
+        if candidate.startswith("{"):
+            return candidate
     parts = stripped.rsplit("\n\n", 1)
     return parts[-1].strip()
 
