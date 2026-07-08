@@ -81,6 +81,12 @@ The runtime configuration lives under `matching.llm_judge` in `config.yaml`. Hos
 | `web/frontend/` | React/TypeScript workbench UI |
 | `scripts/` | Local setup, deployment, smoke checks, and utility entrypoints |
 
+### System Architecture Diagram
+
+For the reader to wrap their mind around how things generally work, the high-level architecture diagram is tracked at `docs/assets/JobScout architecture.png`.
+
+![JobScout architecture](docs/assets/JobScout%20architecture.png)
+
 Runtime services:
 
 - PostgreSQL with pgvector for jobs, resumes, requirements, embeddings, matches, and cached evaluations.
