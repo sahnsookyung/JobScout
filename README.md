@@ -83,7 +83,7 @@ The runtime configuration lives under `matching.llm_judge` in `config.yaml`. Hos
 
 ### System Architecture Diagram
 
-For the reader to wrap their mind around how things generally work, the high-level architecture diagram is tracked at `docs/assets/JobScout architecture.png`.
+For the reader to wrap their mind around how things generally work, the high-level architecture diagram is tracked at `docs/assets/JobScout architecture.png`. Note that the jobscout-cloud is a private repo that deploys this to an actual instance, but is included in the architecture for showing how this repo could be deployed and integrated with various systems conceptually.
 
 ![JobScout architecture](docs/assets/JobScout%20architecture.png)
 
