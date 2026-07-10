@@ -95,7 +95,14 @@ class JobSpyClient:
 
         payload = scraper_cfg.model_dump(
             exclude_none=True,
-            exclude={"enabled", "fetch_mode"},
+            exclude={
+                "description",
+                "display_name",
+                "enabled",
+                "fetch_mode",
+                "seed_url",
+                "tags",
+            },
         )
         site_types = payload.get("site_type") or ["unknown"]
         site_name = site_types[0] if site_types else "unknown"

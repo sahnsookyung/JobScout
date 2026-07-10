@@ -130,6 +130,26 @@ class TestSubmitScrape:
         call_args = client.session.post.call_args
         assert call_args[0][0] == "http://test:8000/scrape"
 
+    def test_submit_excludes_ui_only_source_metadata(self):
+        client = JobSpyClient(base_url="http://test:8000")
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"task_id": "tid"}
+        mock_response.raise_for_status.return_value = None
+        client.session = MagicMock()
+        client.session.post.return_value = mock_response
+
+        cfg = self._make_scraper_config(
+            display_name="LinkedIn",
+            description="UI display text",
+            seed_url="https://example.test/jobs",
+            tags=["ui-only"],
+        )
+        client.submit_scrape(cfg)
+
+        payload = client.session.post.call_args.kwargs["json"]
+        assert payload["site_type"] == ["linkedin"]
+        assert {"display_name", "description", "seed_url", "tags"}.isdisjoint(payload)
+
     def test_submit_raises_on_error_status(self):
         client = JobSpyClient(base_url="http://test:8000")
         mock_response = MagicMock()
