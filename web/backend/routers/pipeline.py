@@ -191,10 +191,18 @@ TASK_ID_PATTERN = re.compile(r'^[a-zA-Z0-9-]{1,50}$')
 SHA256_HEX_PATTERN = re.compile(r'^[0-9a-fA-F]{64}$')
 XXH64_HEX_PATTERN = re.compile(r'^[0-9a-fA-F]{16}$')
 JOB_BOARD_TAG = "job board"
-JOBSPY_SITE_TYPES = {"indeed", "glassdoor", "linkedin", "google", "zip_recruiter"}
+JOBSPY_SITE_TYPES = {
+    "indeed",
+    "glassdoor",
+    "linkedin",
+    "google",
+    "zip_recruiter",
+    "tokyodev",
+    "japandev",
+}
 ATS_SITE_TYPES = {"greenhouse", "lever", "ashby", "hubspot", "workday"}
 SUPPORTED_ATS_API_SITE_TYPES = {"greenhouse", "lever", "ashby"}
-DEPLOYMENT_POLICY_DISABLED_FETCH_MODES = {"seed_website", "jobspy_api"}
+DEPLOYMENT_POLICY_DISABLED_FETCH_MODES = {"seed_website"}
 PROVIDER_NAMES = {
     "jobspy_api": "JobSpy",
     "seed_website": "Seed website",
@@ -440,10 +448,15 @@ def _build_fetch_source_response(
     description = scraper_cfg.description or metadata.get("description")
     tags = _dedupe_strings([*list(metadata.get("tags") or []), *list(scraper_cfg.tags or [])])
     fetch_mode = _source_fetch_mode(site_type, scraper_cfg, str(seed_url) if seed_url else None)
+    enabled = bool(getattr(scraper_cfg, "enabled", True))
     disabled_reason = (
-        SOURCE_POLICY_DISABLED_REASON
-        if _production_like_deployment() and fetch_mode in DEPLOYMENT_POLICY_DISABLED_FETCH_MODES
-        else None
+        "source_disabled"
+        if not enabled
+        else (
+            SOURCE_POLICY_DISABLED_REASON
+            if _production_like_deployment() and fetch_mode in DEPLOYMENT_POLICY_DISABLED_FETCH_MODES
+            else None
+        )
     )
     external_status = (
         (external_statuses or {}).get(site_type)
@@ -454,7 +467,11 @@ def _build_fetch_source_response(
         "fetch_mode": fetch_mode,
         "deployment_allowed": disabled_reason is None,
     }
-    if fetch_mode == "ats_api":
+    if not enabled:
+        availability_status = "disabled"
+        availability_reason = "source_disabled"
+        api_fetch_available = False
+    elif fetch_mode == "ats_api":
         provider_diagnostics["adapter"] = site_type
         if site_type in SUPPORTED_ATS_API_SITE_TYPES:
             availability_status = "available"
@@ -506,6 +523,7 @@ def _build_fetch_source_response(
             scraper_cfg=scraper_cfg,
         ),
         fetch_mode=fetch_mode,
+        enabled=enabled,
         provider_name=_source_provider_name(site_type, fetch_mode, external_status),
         search_term=scraper_cfg.search_term,
         location=scraper_cfg.location,
@@ -648,7 +666,9 @@ def get_fetch_sources(
         if source.seed_url is not None
     ]
     deployment_api_sources_available = any(
-        source.deployment_allowed and source.fetch_mode in {"ats_api", "jobspy_api"}
+        source.enabled
+        and source.deployment_allowed
+        and source.fetch_mode in {"ats_api", "jobspy_api"}
         for source in sources
     )
     return FetchSourcesResponse(

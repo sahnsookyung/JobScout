@@ -62,19 +62,22 @@ class JobSpyClient:
     def __init__(
         self,
         base_url: Optional[str] = None,
+        api_token: Optional[str] = None,
         poll_interval_seconds: int = 10,
         job_timeout_seconds: int = 300,
         request_timeout_seconds: int = 30
     ):
-        self.base_url = base_url or "http://localhost:8000"
+        self.base_url = base_url.rstrip("/") if base_url else None
         self.poll_interval_seconds = poll_interval_seconds
         self.job_timeout_seconds = job_timeout_seconds
         self.request_timeout_seconds = request_timeout_seconds
         
         self.session = requests.Session()
+        if api_token:
+            self.session.headers.update({"X-JobSpy-Token": api_token})
         
         logger.info(
-            f"JobSpyClient initialized: base_url={self.base_url}, "
+            f"JobSpyClient initialized: configured={bool(self.base_url)}, "
             f"poll_interval={poll_interval_seconds}s, "
             f"job_timeout={job_timeout_seconds}s"
         )
@@ -87,7 +90,13 @@ class JobSpyClient:
     )
     def submit_scrape(self, scraper_cfg: ScraperConfig) -> Optional[str]:
         """Submit a scraping job to JobSpy API."""
-        payload = scraper_cfg.model_dump(exclude_none=True)
+        if not self.base_url:
+            raise RuntimeError("JobSpy API URL is not configured")
+
+        payload = scraper_cfg.model_dump(
+            exclude_none=True,
+            exclude={"enabled", "fetch_mode"},
+        )
         site_types = payload.get("site_type") or ["unknown"]
         site_name = site_types[0] if site_types else "unknown"
         
@@ -115,8 +124,18 @@ class JobSpyClient:
         timeout_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Check whether the JobSpy API is reachable without starting a scrape."""
+        if not self.base_url:
+            return {
+                "available": False,
+                "status": "not_configured",
+                "endpoint": None,
+                "status_code": None,
+                "response_time_ms": 0,
+                "error": "JobSpy API URL is not configured",
+            }
+
         timeout = timeout_seconds or self.request_timeout_seconds
-        endpoint = f"{self.base_url.rstrip('/')}/health"
+        endpoint = f"{self.base_url}/health"
         started = time.monotonic()
 
         try:
@@ -167,6 +186,8 @@ class JobSpyClient:
         request_timeout_s: Optional[int] = None
     ) -> Optional[Dict[str, Any]]:
         """Poll job status once."""
+        if not self.base_url:
+            raise RuntimeError("JobSpy API URL is not configured")
         timeout = request_timeout_s or self.request_timeout_seconds
         response = self.session.get(  # codeql[py/partial-ssrf] URL is config-driven (config.yaml), not user-supplied
             f"{self.base_url}/status/{task_id}",

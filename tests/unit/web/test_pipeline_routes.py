@@ -61,10 +61,10 @@ class TestPipelineRoutes(unittest.TestCase):
         self.assertEqual(data["total_count"], 2)
         self.assertEqual(data["filtered_count"], 2)
         self.assertEqual(data["sources"][0]["display_name"], "TokyoDev")
-        self.assertEqual(data["sources"][0]["fetch_mode"], "seed_website")
-        self.assertEqual(data["sources"][0]["provider_name"], "Seed website")
+        self.assertEqual(data["sources"][0]["fetch_mode"], "jobspy_api")
+        self.assertEqual(data["sources"][0]["provider_name"], "JobSpy")
         self.assertIsNone(data["sources"][0]["api_health"])
-        self.assertEqual(data["sources"][0]["external_fetch_status"]["status"], "unconfigured")
+        self.assertIsNone(data["sources"][0]["external_fetch_status"])
         self.assertIn("startup", data["sources"][0]["search_keywords"])
         self.assertEqual(data["sources"][1]["fetch_mode"], "jobspy_api")
         self.assertEqual(data["sources"][1]["provider_name"], "JobSpy")
@@ -188,7 +188,12 @@ class TestPipelineRoutes(unittest.TestCase):
             jobspy=SimpleNamespace(url="http://jobspy:8000"),
             scrapers=[
                 ScraperConfig(site_type=["tokyodev"], search_term="", results_wanted=5),
-                ScraperConfig(site_type=["indeed"], search_term="platform"),
+                ScraperConfig(
+                    site_type=["indeed"],
+                    search_term="platform",
+                    enabled=False,
+                    fetch_mode="jobspy_api",
+                ),
                 ScraperConfig(site_type=["greenhouse"], display_name="Greenhouse"),
             ],
         )
@@ -198,16 +203,13 @@ class TestPipelineRoutes(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         sources = response.json()["sources"]
-        self.assertFalse(sources[0]["deployment_allowed"])
+        self.assertTrue(sources[0]["deployment_allowed"])
         self.assertFalse(sources[0]["api_fetch_available"])
-        self.assertEqual(sources[0]["disabled_reason"], "disabled_by_deployment_policy")
-        self.assertEqual(
-            sources[0]["external_fetch_status"]["disabled_reason"],
-            "disabled_by_deployment_policy",
-        )
+        self.assertEqual(sources[0]["fetch_mode"], "jobspy_api")
+        self.assertIsNone(sources[0]["external_fetch_status"])
         self.assertFalse(sources[1]["deployment_allowed"])
         self.assertFalse(sources[1]["api_fetch_available"])
-        self.assertEqual(sources[1]["disabled_reason"], "disabled_by_deployment_policy")
+        self.assertEqual(sources[1]["disabled_reason"], "source_disabled")
         self.assertTrue(sources[2]["deployment_allowed"])
         self.assertTrue(sources[2]["api_fetch_available"])
         self.assertEqual(sources[2]["fetch_mode"], "ats_api")
@@ -277,9 +279,8 @@ class TestPipelineRoutes(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         source = response.json()["sources"][0]
-        self.assertEqual(source["provider_name"], "Worker seed fetcher")
-        self.assertEqual(source["external_fetch_status"]["status"], "configured")
-        self.assertEqual(source["external_fetch_status"]["budget_remaining"], 42)
+        self.assertEqual(source["provider_name"], "JobSpy")
+        self.assertIsNone(source["external_fetch_status"])
 
     @patch("web.backend.routers.pipeline.get_config")
     def test_fetch_sources_endpoint_does_not_require_database_auth(self, mock_config):

@@ -18,7 +18,7 @@ from sqlalchemy import create_engine, text
 
 from tests.fixtures import schema_snapshot
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.db]
 
 
 def _start_pg():

@@ -76,6 +76,7 @@ class AppContext:
 
         return JobSpyClient(
             base_url=base_url,
+            api_token=getattr(jobspy_config, "api_token", None),
             poll_interval_seconds=poll_interval,
             job_timeout_seconds=job_timeout,
             request_timeout_seconds=request_timeout

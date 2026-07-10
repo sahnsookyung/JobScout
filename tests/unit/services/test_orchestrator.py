@@ -26,6 +26,12 @@ from uuid import UUID
 import redis
 
 
+@pytest.fixture(autouse=True)
+def disable_scraper_scheduler_for_unit_tests(monkeypatch):
+    """Keep endpoint and lifecycle unit tests independent of scraper credentials."""
+    monkeypatch.setenv("DISABLE_SCRAPER", "true")
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -3618,7 +3624,7 @@ class TestScrapeConfiguration:
     def test_scraper_interval_hours_default(self):
         """Test SCRAPER_INTERVAL_HOURS has a sensible default."""
         from services.orchestrator.main import SCRAPER_INTERVAL_HOURS
-        assert SCRAPER_INTERVAL_HOURS == 6.0
+        assert SCRAPER_INTERVAL_HOURS == 12.0
 
     def test_scraper_lock_ttl_seconds(self):
         """Test SCRAPER_LOCK_TTL_SECONDS is 30 minutes."""

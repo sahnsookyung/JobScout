@@ -166,6 +166,24 @@ def _scraper_scheduler_disabled() -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+def _validate_enabled_jobspy_scrapers(ctx: AppContext) -> None:
+    """Fail startup rather than silently scraping an unconfigured localhost URL."""
+    enabled_jobspy_sources = [
+        scraper.site_type
+        for scraper in ctx.config.scrapers
+        if getattr(scraper, "enabled", True)
+        and getattr(scraper, "fetch_mode", None) == "jobspy_api"
+    ]
+    if not enabled_jobspy_sources:
+        return
+
+    jobspy_config = ctx.config.jobspy
+    if not jobspy_config or not jobspy_config.url or not jobspy_config.api_token:
+        raise RuntimeError(
+            "Enabled JobSpy scrapers require JOBSPY_URL and JOBSPY_API_TOKEN"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
@@ -232,6 +250,8 @@ async def lifespan(app: FastAPI):
 
     # Start scraper scheduler unless explicitly disabled (e.g. deterministic E2E runs)
     scrape_service = _scrape_pipeline_service()
+    if not _scraper_scheduler_disabled():
+        _validate_enabled_jobspy_scrapers(app.state.ctx)
 
     async def _scheduled_scrape_loop(
         ctx: AppContext,

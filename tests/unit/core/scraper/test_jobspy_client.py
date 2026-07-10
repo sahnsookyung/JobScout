@@ -64,14 +64,14 @@ class TestIsRetryableError:
 class TestJobSpyClientInit:
     def test_default_base_url(self):
         client = JobSpyClient()
-        assert client.base_url == "http://localhost:8000"
+        assert client.base_url is None
 
     def test_custom_base_url(self):
         client = JobSpyClient(base_url="http://custom:9000")
         assert client.base_url == "http://custom:9000"
 
     def test_default_intervals(self):
-        client = JobSpyClient()
+        client = JobSpyClient(base_url="http://jobspy:8000")
         assert client.poll_interval_seconds == 10
         assert client.job_timeout_seconds == 300
         assert client.request_timeout_seconds == 30
@@ -87,7 +87,7 @@ class TestJobSpyClientInit:
         assert client.request_timeout_seconds == 15
 
     def test_session_created(self):
-        client = JobSpyClient()
+        client = JobSpyClient(base_url="http://jobspy:8000")
         assert client.session is not None
 
 
@@ -212,7 +212,7 @@ class TestCheckHealth:
 
 class TestPollStatus:
     def test_200_returns_json(self):
-        client = JobSpyClient()
+        client = JobSpyClient(base_url="http://jobspy:8000")
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"status": "pending"}
@@ -223,7 +223,7 @@ class TestPollStatus:
         assert result == {"status": "pending"}
 
     def test_404_raises_value_error(self):
-        client = JobSpyClient()
+        client = JobSpyClient(base_url="http://jobspy:8000")
         mock_response = MagicMock()
         mock_response.status_code = 404
         client.session = MagicMock()
@@ -233,7 +233,7 @@ class TestPollStatus:
             client._poll_status.__wrapped__(client, "task-missing")
 
     def test_5xx_raises_http_error(self):
-        client = JobSpyClient()
+        client = JobSpyClient(base_url="http://jobspy:8000")
         mock_response = MagicMock()
         mock_response.status_code = 503
         client.session = MagicMock()
@@ -243,7 +243,7 @@ class TestPollStatus:
             client._poll_status.__wrapped__(client, "task-error")
 
     def test_other_status_returns_none(self):
-        client = JobSpyClient()
+        client = JobSpyClient(base_url="http://jobspy:8000")
         mock_response = MagicMock()
         mock_response.status_code = 202
         client.session = MagicMock()

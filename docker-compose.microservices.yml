@@ -199,6 +199,7 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:-jobscoutredis}@redis:6379/0
       - PYTHONUNBUFFERED=1
       - JOBSPY_URL=http://jobspy:8000
+      - JOBSPY_API_TOKEN=${JOBSPY_API_TOKEN:?set JOBSPY_API_TOKEN}
       - EXTRACTION_URL=http://extraction:8081
       - EMBEDDINGS_URL=http://embeddings:8082
       - SCRAPER_INTERVAL_HOURS=${SCRAPER_INTERVAL_HOURS:-6}

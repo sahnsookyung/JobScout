@@ -160,6 +160,17 @@ class ScrapePipelineService:
         scraper_cfg: Any,
     ) -> Dict[str, Any]:
         scraper_id = str(scraper_cfg.site_type[0])
+        if not getattr(scraper_cfg, "enabled", True):
+            self.logger.info("Scraper %s is disabled by configuration", scraper_id)
+            return {
+                "scraper_id": scraper_id,
+                "jobs_scraped": 0,
+                "jobs_imported": 0,
+                "ingest_failed": 0,
+                "ingest_errors": [],
+                "skipped": True,
+                "error": None,
+            }
         lock_key = f"scraper:lock:{scraper_id}"
         owner_id = await self.acquire_scraper_lock(redis_client, scraper_id)
         if not owner_id:
@@ -244,6 +255,18 @@ class ScrapePipelineService:
         errors: List[str] = []
 
         for scraper_cfg in ctx.config.scrapers:
+            if not getattr(scraper_cfg, "enabled", True):
+                result = {
+                    "scraper_id": str(scraper_cfg.site_type[0]),
+                    "jobs_scraped": 0,
+                    "jobs_imported": 0,
+                    "ingest_failed": 0,
+                    "ingest_errors": [],
+                    "skipped": True,
+                    "error": None,
+                }
+                results_by_scraper.append(result)
+                continue
             result = await self.scrape_single_scraper(ctx, redis_client, scraper_cfg)
             results_by_scraper.append(result)
             total_scraped += int(result.get("jobs_scraped", 0) or 0)

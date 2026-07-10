@@ -10,6 +10,8 @@ web:
 jobspy:
   # JobSpy scraping service URL (can be overridden by JOBSPY_URL env var)
   url: "http://localhost:8000" 
+  job_timeout_seconds: 900
+  # Set JOBSPY_API_TOKEN in the environment whenever scheduled scraping is enabled.
   health_timeout_seconds: 2.0
 
 etl:
@@ -358,29 +360,41 @@ ranking:
     balanced: "Balanced blend of preference and fit"
 
 schedule:
-  interval_seconds: 3600  # Run every hour
+  interval_seconds: 43200  # Run every 12 hours
+
+orchestrator:
+  # The scheduler that invokes the JobSpy API uses this explicit cadence.
+  scraper_interval_hours: 12
 
 scrapers:
   - site_type: ["tokyodev"]
+    enabled: true
+    fetch_mode: "jobspy_api"
     description: "English-friendly software roles in Japan."
     tags: ["japan", "tokyo", "english", "software", "startup"]
     search_term: ""
-    results_wanted: 250
+    results_wanted: 25
+    request_timeout: 45
     options:
       japanese_requirements: ["none"]
       seniorities: ["intern", "junior", "intermediate"]
       
   - site_type: ["japandev"]
+    enabled: true
+    fetch_mode: "jobspy_api"
     description: "Japan-focused developer roles with language and seniority filters."
     tags: ["japan", "developer", "english", "visa", "software"]
     search_term: ""
-    results_wanted: 250
+    results_wanted: 25
+    request_timeout: 45
     options:
       japanese_levels: ["japanese_level_not_required"]
       seniorities: ["seniority_level_junior", "seniority_level_mid_level"]
       applicant_locations: ["candidate_location_anywhere"]
 
   - site_type: ["indeed"]
+    enabled: false
+    fetch_mode: "jobspy_api"
     description: "Broad JobSpy API job-board search for Tokyo software roles."
     tags: ["job board", "tokyo", "japan", "api", "software"]
     search_term: "software engineer"
@@ -390,6 +404,8 @@ scrapers:
     hours_old: 168 # 24 * 7
   
   - site_type: ["glassdoor"]
+    enabled: false
+    fetch_mode: "jobspy_api"
     description: "Company and salary-aware JobSpy API listings for Tokyo roles."
     tags: ["job board", "tokyo", "company", "salary", "software"]
     search_term: "software engineer"
@@ -399,6 +415,8 @@ scrapers:
     request_timeout: 300 # 5 mins
 
   - site_type: ["linkedin"]
+    enabled: false
+    fetch_mode: "jobspy_api"
     description: "Professional network listings through the JobSpy API."
     tags: ["job board", "tokyo", "professional", "network", "software"]
     search_term: "software engineer"

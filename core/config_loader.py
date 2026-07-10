@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence
 from urllib.parse import urlparse
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,13 @@ CEREBRAS_DEFAULT_MAX_INPUT_TOKENS = 24_000
 
 
 class ScraperConfig(BaseModel):
+    """One configured JobSpy source and its scheduler policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
     site_type: List[str]
+    enabled: bool = True
+    fetch_mode: Optional[Literal["seed_website", "jobspy_api", "ats_api", "custom_source"]] = None
     display_name: Optional[str] = None
     seed_url: Optional[str] = None
     description: Optional[str] = None
@@ -39,6 +45,8 @@ class ScraperConfig(BaseModel):
     country: Optional[str] = None
     results_wanted: int = 10
     hours_old: Optional[int] = None
+    request_timeout: Optional[int] = Field(default=None, ge=1)
+    linkedin_fetch_description: Optional[bool] = None
     options: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -76,6 +84,7 @@ class DatabaseConfig(BaseModel):
 
 class JobSpyConfig(BaseModel):
     url: str
+    api_token: Optional[str] = None
     poll_interval_seconds: int = 10
     job_timeout_seconds: int = 300
     request_timeout_seconds: int = 30
@@ -1012,17 +1021,19 @@ DEFAULT_HEADER_MAPPINGS: tuple[HeaderMapping, ...] = (
 
 
 def _apply_jobspy_env_override(data: Dict[str, Any]) -> None:
-    if "JOBSPY_URL" not in os.environ:
-        return
+    if "JOBSPY_URL" in os.environ:
+        value = os.environ.get("JOBSPY_URL", "").strip()
+        if value:
+            _set_nested(data, ["jobspy", "url"], value)
+        else:
+            # A deliberately empty JOBSPY_URL disables the optional JobSpy service.
+            # This keeps lean deployments from inheriting the local-dev localhost default.
+            data["jobspy"] = None
+            return
 
-    value = os.environ.get("JOBSPY_URL", "").strip()
-    if value:
-        _set_nested(data, ["jobspy", "url"], value)
-        return
-
-    # A deliberately empty JOBSPY_URL disables the optional JobSpy service.
-    # This keeps lean deployments from inheriting the local-dev localhost default.
-    data["jobspy"] = None
+    token = os.environ.get("JOBSPY_API_TOKEN", "").strip()
+    if token and data.get("jobspy") is not None:
+        _set_nested(data, ["jobspy", "api_token"], token)
 
 
 def _get_nested(data: Dict[str, Any], keys: Sequence[str]) -> Any:

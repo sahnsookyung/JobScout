@@ -135,6 +135,7 @@ function externalSeedLabel(source: FetchSource): string {
 }
 
 function availabilityLabel(source: FetchSource): string {
+    if (source.enabled === false) return 'Disabled in configuration';
     if (source.availability_reason === 'not_supported_api_adapter_missing') return 'API adapter missing';
     if (source.availability_reason === 'ats_api_available') return 'ATS API available';
     if (source.availability_reason === 'jobspy_api_available') return 'JobSpy API available';
@@ -307,6 +308,7 @@ function sourceHasAction(source: FetchSource, action: string): boolean {
 }
 
 function sourceIsPaused(source: FetchSource): boolean {
+    if (source.enabled === false) return true;
     if (source.deployment_allowed === false) return true;
     if (atsStatus(source) === 'disabled') return true;
     return source.fetch_mode === 'seed_website' && source.external_fetch_status?.status === 'disabled';
@@ -572,7 +574,8 @@ function sourceMatchesSearch(source: FetchSource, query: string): boolean {
 
 function canFetchExternalSeed(source: FetchSource): boolean {
     const status = source.external_fetch_status;
-    return source.deployment_allowed !== false
+    return source.enabled !== false
+        && source.deployment_allowed !== false
         && source.fetch_mode === 'seed_website'
         && Boolean(status?.enabled && status.configured);
 }

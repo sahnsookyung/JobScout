@@ -915,6 +915,7 @@ export interface FetchSource {
     tags: string[];
     search_keywords: string[];
     fetch_mode: string;
+    enabled?: boolean;
     provider_name?: string | null;
     search_term?: string | null;
     location?: string | null;
