@@ -382,15 +382,11 @@ scrapers:
   - site_type: ["japandev"]
     enabled: true
     fetch_mode: "jobspy_api"
-    description: "Japan-focused developer roles with language and seniority filters."
+    description: "Japan-focused developer roles."
     tags: ["japan", "developer", "english", "visa", "software"]
     search_term: ""
     results_wanted: 25
     request_timeout: 45
-    options:
-      japanese_levels: ["japanese_level_not_required"]
-      seniorities: ["seniority_level_junior", "seniority_level_mid_level"]
-      applicant_locations: ["candidate_location_anywhere"]
 
   - site_type: ["indeed"]
     enabled: false
