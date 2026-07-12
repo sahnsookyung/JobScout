@@ -162,7 +162,12 @@ class CandidatePreferencesService:
         if not raw_text.strip():
             return None
 
-        parser = build_preference_parser(self.config.preferences.parser)
+        matching = getattr(self.config, "matching", None)
+        llm_judge = getattr(matching, "llm_judge", None)
+        parser = build_preference_parser(
+            self.config.preferences.parser,
+            provider_route=getattr(llm_judge, "runtime", None),
+        )
         if parser is None:
             return None
         try:

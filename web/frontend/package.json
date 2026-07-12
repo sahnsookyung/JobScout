@@ -10,7 +10,8 @@
         "type-check": "tsc --noEmit",
         "test": "vitest",
         "test:coverage": "vitest --coverage",
-        "test:ui": "vitest --ui"
+        "test:ui": "vitest --ui",
+        "test:e2e": "playwright test"
     },
     "dependencies": {
         "@fontsource-variable/geist": "^5.2.9",
@@ -26,6 +27,8 @@
         "tailwind-merge": "^3.6.0"
     },
     "devDependencies": {
+        "@axe-core/playwright": "^4.12.1",
+        "@playwright/test": "^1.61.1",
         "@tailwindcss/postcss": "^4.3.1",
         "@testing-library/jest-dom": "^6.6.3",
         "@testing-library/react": "^16.3.0",

@@ -1,7 +1,13 @@
 import pytest
 from unittest.mock import Mock, patch
 
-from core.config_loader import PreferenceModelConfig, PreferencesConfig
+from core.config_loader import (
+    LlmJudgeRuntimeConfig,
+    PreferenceCrossEncoderConfig,
+    PreferenceModelConfig,
+    PreferencesConfig,
+)
+from core.llm.provider_chain import LLMProviderChain
 from tests.mocks.fake_service import FakeLLMService
 from services.scorer_matcher.preference_semantics import (
     CrossEncoderPreferenceReranker,
@@ -103,7 +109,7 @@ def test_preference_reranker_returns_structured_assessments():
         "results": [
             {
                 "job_id": "job-1",
-                "preference_score": 0.81,
+                "preference_score": 81,
                 "preference_confidence": 0.76,
                 "preference_reason_codes": ["team_culture_match"],
                 "preference_explanation": "Matches mentorship preferences.",
@@ -121,7 +127,7 @@ def test_preference_reranker_returns_structured_assessments():
     assert results == [
         PreferenceAssessment(
             job_id="job-1",
-            preference_score=0.81,
+            preference_score=81,
             preference_confidence=0.76,
             preference_reason_codes=["team_culture_match"],
             preference_explanation="Matches mentorship preferences.",
@@ -134,7 +140,7 @@ def test_preference_judge_returns_structured_assessments():
         "results": [
             {
                 "job_id": "job-1",
-                "preference_score": 0.91,
+                "preference_score": 91,
                 "preference_confidence": 0.82,
                 "preference_reason_codes": ["tech_stack_match"],
                 "preference_explanation": "Strong Python preference match.",
@@ -149,12 +155,46 @@ def test_preference_judge_returns_structured_assessments():
         [PreferenceJobPayload(job_id="job-1", title="Python Engineer")],
     )
 
-    assert results[0].preference_score == 0.91
+    assert results[0].preference_score == 91
     assert results[0].preference_reason_codes == ["tech_stack_match"]
 
 
 def test_build_preference_llm_returns_none_when_disabled():
     assert build_preference_llm(_config(enabled=False)) is None
+
+
+def test_build_preference_llm_uses_nvidia_first_with_configured_model(monkeypatch):
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvidia-key")
+    monkeypatch.setenv("NVIDIA_MODEL", "mistralai/mistral-medium-3.5-128b")
+    monkeypatch.setenv("GROQ_API_KEY", "groq-key")
+    monkeypatch.setenv("CEREBRAS_API_KEY", "cerebras-key")
+    route = LlmJudgeRuntimeConfig()
+
+    llm = build_preference_llm(_config(), provider_route=route)
+
+    assert isinstance(llm, LLMProviderChain)
+    assert [candidate.name for candidate in llm._candidates] == [
+        "nvidia",
+        "groq",
+        "cerebras",
+    ]
+    assert llm._candidates[0].model == "mistralai/mistral-medium-3.5-128b"
+
+
+@patch("services.scorer_matcher.preference_semantics.build_match_judge_provider")
+@patch("services.scorer_matcher.preference_semantics.build_llm_provider")
+def test_build_preference_llm_falls_back_to_local_config_without_eligible_chain(
+    mock_build_llm,
+    mock_build_chain,
+):
+    local_provider = FakeLLMService(embedding_dimensions=1024)
+    mock_build_chain.return_value = None
+    mock_build_llm.return_value = local_provider
+
+    llm = build_preference_llm(_config(), provider_route=LlmJudgeRuntimeConfig(providers=[]))
+
+    assert llm is local_provider
+    mock_build_llm.assert_called_once()
 
 
 @patch("services.scorer_matcher.preference_semantics.build_preference_llm")
@@ -632,21 +672,50 @@ def test_cross_encoder_reranker_any_positive_score_emits_reason_code():
     assert "tech_stack_match" in result[0].preference_reason_codes
 
 
-@patch("services.scorer_matcher.preference_semantics.build_preference_llm")
-def test_build_preference_semantic_reranker_ignores_cross_encoder_config(mock_build_llm):
-    llm = Mock()
-    mock_build_llm.return_value = llm
+@patch("core.scorer.semantic_fit.get_shared_local_cross_encoder_provider")
+def test_build_preference_semantic_reranker_routes_to_cross_encoder(mock_get_provider):
+    mock_get_provider.return_value = Mock()
     config = PreferencesConfig(
         reranker="cross_encoder",
-        semantic_reranker=_config(),
+        cross_encoder=PreferenceCrossEncoderConfig(enabled=True),
     )
 
     reranker = build_preference_semantic_reranker(config)
 
-    assert isinstance(reranker, LLMPreferenceSemanticReranker)
-    assert reranker.llm is llm
+    assert isinstance(reranker, CrossEncoderPreferenceReranker)
+    mock_get_provider.assert_called_once_with(
+        model_name="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        cache_path=None,
+        runtime="auto",
+        max_batch_size=32,
+        trust_remote_code=False,
+        allow_heuristic=False,
+    )
 
 
-def test_build_preference_semantic_reranker_returns_none_when_cross_encoder_config_has_no_llm():
+@patch("core.scorer.semantic_fit.get_shared_local_cross_encoder_provider")
+def test_build_preference_semantic_reranker_allows_explicit_heuristic_runtime(
+    mock_get_provider,
+):
+    mock_get_provider.return_value = Mock()
+    config = PreferencesConfig(
+        reranker="cross_encoder",
+        cross_encoder=PreferenceCrossEncoderConfig(enabled=True, runtime="heuristic"),
+    )
+
+    reranker = build_preference_semantic_reranker(config)
+
+    assert isinstance(reranker, CrossEncoderPreferenceReranker)
+    mock_get_provider.assert_called_once_with(
+        model_name="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        cache_path=None,
+        runtime="heuristic",
+        max_batch_size=32,
+        trust_remote_code=False,
+        allow_heuristic=True,
+    )
+
+
+def test_build_preference_semantic_reranker_returns_none_for_disabled_cross_encoder():
     config = PreferencesConfig(reranker="cross_encoder")
     assert build_preference_semantic_reranker(config) is None

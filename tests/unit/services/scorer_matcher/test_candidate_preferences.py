@@ -344,14 +344,14 @@ class TestPreferenceSemanticReranking:
                 return_value=[
                     PreferenceAssessment(
                         job_id="job-2",
-                        preference_score=0.95,
+                        preference_score=95,
                         preference_confidence=0.9,
                         preference_reason_codes=["team_culture_match"],
                         preference_explanation="Matches mentorship preferences.",
                     ),
                     PreferenceAssessment(
                         job_id="job-1",
-                        preference_score=0.15,
+                        preference_score=15,
                         preference_confidence=0.5,
                         preference_reason_codes=["no_preference_signal"],
                         preference_explanation="Weak preference signal.",
@@ -389,8 +389,8 @@ class TestPreferenceSemanticReranking:
         assert reranked[0].job.id == "job-2"
         assert reranked[1].job.id == "job-1"
         # Scores written to both matches
-        assert reranked[0].preference_score == pytest.approx(0.95)
-        assert reranked[1].preference_score == pytest.approx(0.15)
+        assert reranked[0].preference_score == pytest.approx(95)
+        assert reranked[1].preference_score == pytest.approx(15)
         assert reranked[0].preference_components["preference_mode_used"] == "semantic_rerank"
 
     @patch("services.scorer_matcher.candidate_preferences.build_preference_semantic_reranker")
@@ -403,7 +403,7 @@ class TestPreferenceSemanticReranking:
                 return_value=[
                     PreferenceAssessment(
                         job_id="job-2",
-                        preference_score=0.9,
+                        preference_score=90,
                         preference_confidence=0.8,
                         preference_reason_codes=["benefits_perks_match"],
                         preference_explanation="Learning budget matches.",
@@ -445,7 +445,7 @@ class TestPreferenceSemanticReranking:
         assert repo.loaded_job_ids == ["job-2"]
         assert result[0].preference_score is None
         assert result[0].preference_components["preference_status"] == "outside_preference_window"
-        assert result[1].preference_score == pytest.approx(0.9)
+        assert result[1].preference_score == pytest.approx(90)
         assert result[1].preference_components["preference_rerank_top_n"] == 1
         assert result[1].preference_components["offerings_source_description_hash"] == "hash-job-2"
 
@@ -554,7 +554,7 @@ class TestPreferenceSemanticReranking:
                 return_value=[
                     PreferenceAssessment(
                         job_id="job-1",
-                        preference_score=0.8,
+                        preference_score=80,
                         preference_confidence=0.88,
                         preference_reason_codes=["tech_stack_match"],
                         preference_explanation="Strong Python preference match.",
@@ -586,7 +586,7 @@ class TestPreferenceSemanticReranking:
         )
 
         assert reranked[0].preference_components["preference_mode_used"] == "llm_judge"
-        assert reranked[0].preference_score == pytest.approx(0.8)
+        assert reranked[0].preference_score == pytest.approx(80)
 
     def test_disallowed_requested_mode_resolves_to_allowed_mode_before_matching(self):
         config = _preferences_config().model_copy(update={"allowed_modes": ["semantic_rerank"]})
@@ -606,7 +606,7 @@ class TestPreferenceSemanticReranking:
                 return_value=[
                     PreferenceAssessment(
                         job_id="job-1",
-                        preference_score=0.7,
+                        preference_score=70,
                         preference_confidence=0.8,
                         preference_reason_codes=["work_style_match"],
                         preference_explanation="Good mentorship signal.",
@@ -693,11 +693,11 @@ class TestPreferenceSemanticReranking:
         """_apply_assessments writes preference_score to every match; no sorting."""
         assessments = [
             PreferenceAssessment(
-                job_id="job-1", preference_score=0.7, preference_confidence=0.8,
+                job_id="job-1", preference_score=70, preference_confidence=0.8,
                 preference_reason_codes=["tech_match"], preference_explanation="ok",
             ),
             PreferenceAssessment(
-                job_id="job-2", preference_score=0.7, preference_confidence=0.8,
+                job_id="job-2", preference_score=70, preference_confidence=0.8,
                 preference_reason_codes=["tech_match"], preference_explanation="ok",
             ),
         ]
@@ -713,14 +713,14 @@ class TestPreferenceSemanticReranking:
         # Order unchanged
         assert [m.job.id for m in result] == ["job-2", "job-1"]
         # Both scores written
-        assert result[0].preference_score == pytest.approx(0.7)
-        assert result[1].preference_score == pytest.approx(0.7)
+        assert result[0].preference_score == pytest.approx(70)
+        assert result[1].preference_score == pytest.approx(70)
 
     def test_apply_assessments_exposes_full_preference_signal_independently_of_fit(self):
         match = _scored_match(_job(id="job-1"), fit_components={"core": 0.8})
         assessment = PreferenceAssessment(
             job_id="job-1",
-            preference_score=0.83,
+            preference_score=83,
             preference_confidence=0.74,
             preference_reason_codes=["tech_stack_match", "team_culture_match"],
             preference_explanation="Strong alignment with Python and mentorship preferences.",
@@ -734,7 +734,7 @@ class TestPreferenceSemanticReranking:
         )
 
         assert result[0].fit_components == {"core": 0.8}
-        assert result[0].preference_score == pytest.approx(0.83)
+        assert result[0].preference_score == pytest.approx(83)
         assert result[0].preference_components == {
             "preference_confidence": 0.74,
             "preference_reason_codes": ["tech_stack_match", "team_culture_match"],

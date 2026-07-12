@@ -71,6 +71,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-groups
 
+      - name: Lint database migration surface
+        run: |
+          uv run ruff check \
+            database \
+            tests/unit/database/test_bootstrap.py \
+            tests/unit/database/test_migrate.py \
+            tests/unit/test_migrations.py
+
       - name: Run Python unit tests
         run: |
           uv run python -m pytest tests/ -q \
@@ -237,6 +245,14 @@ jobs:
       - name: Build production frontend
         working-directory: web/frontend
         run: npm run build
+
+      - name: Install Playwright Chromium
+        working-directory: web/frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser smoke and accessibility tests
+        working-directory: web/frontend
+        run: npm run test:e2e
 
   integration:
     name: Integration Tests

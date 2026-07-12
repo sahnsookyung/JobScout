@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Annotated, cast
 
+from core.config_loader import RankingConfig
 from core.metrics import record_match_query_degraded
 
 from ..dependencies import TenantContext, get_current_user, get_db, get_tenant_context
@@ -110,11 +111,13 @@ def _policy_response(
     policy,
     llm_policy,
     *,
+    ranking_config: RankingConfig | None = None,
     llm_enqueue_stats: dict[str, int] | None = None,
     llm_enqueue_state: str | None = None,
     llm_enqueue_job_id: str | None = None,
     degraded_reasons: list[dict[str, str]] | None = None,
 ) -> PolicyResponse:
+    ranking_config = ranking_config or RankingConfig()
     unavailable_reason = getattr(llm_policy, "unavailable_reason", "available")
     if not isinstance(unavailable_reason, str):
         unavailable_reason = "available" if getattr(llm_policy, "available", False) else "unknown"
@@ -123,6 +126,9 @@ def _policy_response(
         min_fit=policy.min_fit,
         top_k=policy.top_k,
         min_jd_required_coverage=policy.min_jd_required_coverage,
+        active_default_mode=ranking_config.active_default_mode,
+        balanced_w_pref=ranking_config.balanced_w_pref,
+        balanced_w_fit=ranking_config.balanced_w_fit,
         llm_judge_enabled=llm_policy.enabled,
         llm_judge_auto_enqueue_enabled=getattr(llm_policy, "auto_enqueue_enabled", False),
         llm_judge_top_n=llm_policy.top_n,
@@ -138,6 +144,37 @@ def _policy_response(
     )
 
 
+def _get_ranking_config(policy_service) -> RankingConfig:
+    try:
+        ranking_config = policy_service.get_ranking_config()
+    except Exception:
+        logger.warning("Could not load ranking configuration; using defaults", exc_info=True)
+        return RankingConfig()
+    return ranking_config if isinstance(ranking_config, RankingConfig) else RankingConfig()
+
+
+def _updated_ranking_config(
+    current: RankingConfig,
+    policy_update: PolicyUpdate,
+) -> RankingConfig:
+    fields_set = policy_update.model_fields_set
+    data = current.model_dump()
+    if "active_default_mode" in fields_set and policy_update.active_default_mode is not None:
+        data["active_default_mode"] = policy_update.active_default_mode
+
+    preference_updated = "balanced_w_pref" in fields_set
+    fit_updated = "balanced_w_fit" in fields_set
+    if preference_updated and policy_update.balanced_w_pref is not None:
+        data["balanced_w_pref"] = policy_update.balanced_w_pref
+        if not fit_updated:
+            data["balanced_w_fit"] = 1.0 - policy_update.balanced_w_pref
+    if fit_updated and policy_update.balanced_w_fit is not None:
+        data["balanced_w_fit"] = policy_update.balanced_w_fit
+        if not preference_updated:
+            data["balanced_w_pref"] = 1.0 - policy_update.balanced_w_fit
+    return RankingConfig(**data)
+
+
 @router.get("/v1/policy", response_model=PolicyResponse)
 def get_policy(user: Annotated[object, Depends(get_current_user)]):
     """
@@ -148,8 +185,9 @@ def get_policy(user: Annotated[object, Depends(get_current_user)]):
     policy_service = get_policy_service()
     policy = policy_service.get_current_policy()
     llm_policy = policy_service.get_llm_judge_policy(getattr(user, "id", None))
+    ranking_config = _get_ranking_config(policy_service)
 
-    return _policy_response(policy, llm_policy)
+    return _policy_response(policy, llm_policy, ranking_config=ranking_config)
 
 
 @router.put("/v1/policy", response_model=PolicyResponse)
@@ -170,6 +208,7 @@ def update_policy(
     """
     policy_service = get_policy_service()
     current_policy = policy_service.get_current_policy()
+    current_ranking_config = _get_ranking_config(policy_service)
     previous_llm_policy = policy_service.get_llm_judge_policy(getattr(user, "id", None))
     fields_set = policy_update.model_fields_set
 
@@ -198,6 +237,13 @@ def update_policy(
         auto_enqueue_enabled=policy_update.llm_judge_auto_enqueue_enabled,
         top_n=policy_update.llm_judge_top_n,
     )
+    ranking_fields = {"active_default_mode", "balanced_w_pref", "balanced_w_fit"}
+    try:
+        ranking_config = _updated_ranking_config(current_ranking_config, policy_update)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if fields_set & ranking_fields:
+        ranking_config = policy_service.update_ranking_config(ranking_config)
     enqueue_stats, degraded_reasons, enqueue_state, enqueue_job_id = (
         _enqueue_llm_top_n_after_policy_update(
             db,
@@ -211,6 +257,7 @@ def update_policy(
     return _policy_response(
         policy,
         llm_policy,
+        ranking_config=ranking_config,
         llm_enqueue_stats=enqueue_stats,
         llm_enqueue_state=enqueue_state,
         llm_enqueue_job_id=enqueue_job_id,
@@ -249,8 +296,9 @@ def apply_preset(
     policy_service = get_policy_service()
     policy = policy_service.apply_preset(normalized_preset)
     llm_policy = policy_service.get_llm_judge_policy(getattr(user, "id", None))
+    ranking_config = _get_ranking_config(policy_service)
 
-    return _policy_response(policy, llm_policy)
+    return _policy_response(policy, llm_policy, ranking_config=ranking_config)
 
 
 @router.get("/config/scoring-weights", response_model=ScoringWeightsResponse)

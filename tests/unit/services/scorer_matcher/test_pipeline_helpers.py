@@ -325,8 +325,8 @@ class TestPrepareSelectionResult:
     )
     def test_applies_ranking_before_top_k(self, _mock_policy_store, _mock_notification_floor):
         matches = [
-            _dto("job-fit", fit_score=90.0, preference_score=0.1),
-            _dto("job-pref", fit_score=80.0, preference_score=0.95),
+            _dto("job-fit", fit_score=90.0, preference_score=10),
+            _dto("job-pref", fit_score=80.0, preference_score=95),
         ]
 
         result = _prepare_selection_result(
@@ -585,14 +585,14 @@ class TestCandidatePreferenceHelpers:
                 return_value=[
                     SimpleNamespace(
                         job_id="job-high-preference",
-                        preference_score=0.95,
+                        preference_score=95,
                         preference_confidence=0.91,
                         preference_reason_codes=["team_culture_match"],
                         preference_explanation="Matches mentorship preferences.",
                     ),
                     SimpleNamespace(
                         job_id="job-low-preference",
-                        preference_score=0.2,
+                        preference_score=20,
                         preference_confidence=0.55,
                         preference_reason_codes=["no_preference_signal"],
                         preference_explanation="Weak preference signal.",
@@ -675,8 +675,8 @@ class TestCandidatePreferenceHelpers:
         assert reranked[0].job.title == "Platform Engineer"
         assert reranked[1].job.title == "Product Backend Engineer"
         # Preference scores written to each match
-        assert reranked[0].preference_score == pytest.approx(0.2)
-        assert reranked[1].preference_score == pytest.approx(0.95)
+        assert reranked[0].preference_score == pytest.approx(20)
+        assert reranked[1].preference_score == pytest.approx(95)
 
 
 class TestConvertMatchesToDtos:
@@ -1655,7 +1655,7 @@ class TestDtoRankingSnapshot:
         explanation = RankingExplanation(
             ranking_mode_used="balanced",
             config_version="cfg-1",
-            preference_score=0.7,
+            preference_score=70,
             fit_score=0.8,
             similarity_score=0.6,
             explanation_label="Balanced fit and preference",
@@ -1666,7 +1666,7 @@ class TestDtoRankingSnapshot:
         assert _ranking_snapshot_from_match(SimpleNamespace(ranking_explanation=explanation)) == {
             "ranking_mode_used": "balanced",
             "config_version": "cfg-1",
-            "preference_score": 0.7,
+            "preference_score": 70,
             "fit_score": 0.8,
             "similarity_score": 0.6,
             "balanced_primary_score": None,

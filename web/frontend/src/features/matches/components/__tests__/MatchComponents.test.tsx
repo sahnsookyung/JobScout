@@ -160,7 +160,7 @@ describe('MatchFilters', () => {
         expect(screen.getByText('Balanced')).toBeInTheDocument();
         expect(screen.getByText('Preference First')).toBeInTheDocument();
         expect(screen.getByText('Fit First')).toBeInTheDocument();
-        expect(screen.getByText('LLM order')).toBeInTheDocument();
+        expect(screen.getByText('Judge boost')).toBeInTheDocument();
         expect(screen.getByText('Remote only')).toBeInTheDocument();
         expect(screen.getByText('Hidden')).toBeInTheDocument();
     });
@@ -458,11 +458,11 @@ describe('MatchList', () => {
                 min_fit: 55,
                 top_k: 50,
                 limit: 50,
-                cursor: null,
-                page_mode: 'cursor',
+                offset: 0,
+                page_mode: 'offset',
                 view: 'compact',
                 include: 'llm',
-                llm_ordering: true,
+                llm_ordering: false,
             }),
         );
         expect(screen.getByText(/remote cross-encoder is unreachable/i)).toBeInTheDocument();
@@ -481,14 +481,36 @@ describe('MatchList', () => {
                 min_fit: undefined,
                 top_k: undefined,
                 limit: 100,
-                cursor: null,
-                page_mode: 'cursor',
-                llm_ordering: true,
+                offset: 0,
+                page_mode: 'offset',
+                llm_ordering: false,
             }),
         );
     });
 
-    it('persists base ordering and sends the LLM ordering flag', async () => {
+    it('requests a newly selected ranking mode through computed ordering', () => {
+        mockUseMatches.mockReturnValue({
+            data: { matches: [makeMatch()] },
+            isLoading: false,
+            error: null,
+            refetch: vi.fn(),
+        });
+        render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        fireEvent.change(screen.getByLabelText('Ranking'), {
+            target: { value: 'preference_first' },
+        });
+
+        expect(mockUseMatches).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                ranking_mode: 'preference_first',
+                page_mode: 'offset',
+            }),
+        );
+        expect(screen.getByText('Sorted by Preference First')).toBeInTheDocument();
+    });
+
+    it('defaults to direct score ordering and persists judge boost changes', async () => {
         mockUseMatches.mockReturnValue({
             data: { matches: [makeMatch()], llm_rerank: { enabled: true, reason: 'ordering_disabled' } },
             isLoading: false,
@@ -499,17 +521,17 @@ describe('MatchList', () => {
         render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
 
         expect(mockUseMatches).toHaveBeenLastCalledWith(
-            expect.objectContaining({ include: 'llm', llm_ordering: true }),
-        );
-        fireEvent.click(screen.getByRole('checkbox', { name: /llm order/i }));
-
-        await waitFor(() => {
-            expect(localStorage.getItem('jobscout_llm_ordering')).toBe('false');
-        });
-        expect(mockUseMatches).toHaveBeenLastCalledWith(
             expect.objectContaining({ include: 'llm', llm_ordering: false }),
         );
-        expect(screen.getByText('base order')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('checkbox', { name: /judge boost/i }));
+
+        await waitFor(() => {
+            expect(localStorage.getItem('jobscout_llm_ordering')).toBe('true');
+        });
+        expect(mockUseMatches).toHaveBeenLastCalledWith(
+            expect.objectContaining({ include: 'llm', llm_ordering: true }),
+        );
+        expect(screen.getByText('judge boost on')).toBeInTheDocument();
     });
 
     it('loads all matched candidates in pages after the user opts in', async () => {
@@ -519,13 +541,12 @@ describe('MatchList', () => {
                 ? {
                     matches: [
                         makeMatch({
-                            match_id: params.cursor ? 'match-1' : 'match-0',
-                            title: params.cursor ? 'Candidate 1' : 'Candidate 0',
+                            match_id: params.offset ? 'match-1' : 'match-0',
+                            title: params.offset ? 'Candidate 1' : 'Candidate 0',
                         }),
                     ],
                     total: 3,
-                    has_more: !params.cursor,
-                    next_cursor: params.cursor ? null : 'cursor-1',
+                    has_more: !params.offset,
                 }
                 : {
                     matches: [makeMatch({ match_id: 'base-1', title: 'Base Candidate' })],
@@ -545,8 +566,8 @@ describe('MatchList', () => {
                 tier: 'primary',
                 top_k: 50,
                 limit: 50,
-                cursor: null,
-                page_mode: 'cursor',
+                offset: 0,
+                page_mode: 'offset',
             }),
         );
 
@@ -557,14 +578,14 @@ describe('MatchList', () => {
         });
         expect(screen.getByText('1 of 3 matched candidates')).toBeInTheDocument();
         expect(mockUseMatches).toHaveBeenLastCalledWith(
-            expect.objectContaining({ top_k: undefined, limit: 100, cursor: null }),
+            expect.objectContaining({ top_k: undefined, limit: 100, offset: 0 }),
         );
 
         fireEvent.click(screen.getByRole('button', { name: /load more candidates/i }));
 
         await waitFor(() => {
             expect(mockUseMatches).toHaveBeenLastCalledWith(
-                expect.objectContaining({ top_k: undefined, limit: 100, cursor: 'cursor-1' }),
+                expect.objectContaining({ top_k: undefined, limit: 100, offset: 1 }),
             );
         });
     });
@@ -621,8 +642,8 @@ describe('MatchList', () => {
                 min_fit: 0,
                 top_k: 100,
                 limit: 100,
-                cursor: null,
-                page_mode: 'cursor',
+                offset: 0,
+                page_mode: 'offset',
             }),
         );
         expect(screen.getByText('Backend Engineer')).toBeInTheDocument();
@@ -648,7 +669,7 @@ function makeModalData(overrides: Record<string, any> = {}) {
         },
         match: {
             fit_score: 86,
-            preference_score: 0.74,
+            preference_score: 74,
             required_coverage: 0.8,
             preferred_requirement_coverage: 0.5,
             matched_requirements_count: 9,

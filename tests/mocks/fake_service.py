@@ -349,7 +349,7 @@ def _fake_preference_rerank_response(payload: Dict[str, Any], *, judge_mode: boo
         results.append(
             {
                 "job_id": str(job.get("job_id", "")),
-                "preference_score": round(score, 4),
+                "preference_score": round(score * 100.0, 2),
                 "preference_confidence": round(confidence, 4),
                 "preference_reason_codes": sorted(set(reason_codes))[:4] or ["no_preference_signal"],
                 "preference_explanation": explanation,

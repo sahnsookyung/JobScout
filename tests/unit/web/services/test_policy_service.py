@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import Mock
 
-from core.config_loader import ResultPolicy
+from core.config_loader import RankingConfig, ResultPolicy
 from core.policy import POLICY_PRESETS
 from web.backend.exceptions import InvalidPolicyException
 from web.backend.services.policy_service import (
@@ -38,6 +38,23 @@ class TestPolicyService:
             top_k=25,
             min_jd_required_coverage=0.8,
         )
+
+    def test_ranking_config_delegates_to_ranking_store(self):
+        store = Mock()
+        ranking_store = Mock()
+        config = RankingConfig(
+            active_default_mode="preference_first",
+            balanced_w_pref=0.7,
+            balanced_w_fit=0.3,
+        )
+        ranking_store.get_current_config.return_value = config
+        ranking_store.update_config.return_value = config
+        service = PolicyService(store=store, ranking_store=ranking_store)
+
+        assert service.get_ranking_config() is config
+        assert service.update_ranking_config(config) is config
+        ranking_store.get_current_config.assert_called_once_with()
+        ranking_store.update_config.assert_called_once_with(config)
 
     def test_update_llm_judge_policy_delegates_to_store(self):
         store = Mock()

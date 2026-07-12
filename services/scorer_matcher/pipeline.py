@@ -797,6 +797,12 @@ def _resolve_preferences_config(ctx: AppContext) -> PreferencesConfig:
     return PreferencesConfig()
 
 
+def _resolve_preference_provider_route(ctx: AppContext):
+    matching = getattr(getattr(ctx, "config", None), "matching", None)
+    llm_judge = getattr(matching, "llm_judge", None)
+    return getattr(llm_judge, "runtime", None)
+
+
 def _resolve_result_policy(matching_config):
     """Resolve the active result policy from the shared store with config fallback."""
     fallback_policy = getattr(matching_config, "result_policy", None)
@@ -1098,6 +1104,7 @@ def _run_matching_and_scoring(
             candidate_preferences,
             config=_resolve_preferences_config(ctx),
             repo=repo,
+            provider_route=_resolve_preference_provider_route(ctx),
         )
         if isinstance(rerank_result, PreferenceRerankResult):
             selection_candidates = rerank_result.matches

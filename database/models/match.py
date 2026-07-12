@@ -41,7 +41,7 @@ class JobMatch(Base):
     job_similarity = Column(Numeric(3, 2))
 
     fit_score = Column(Numeric(5, 2))
-    preference_score = Column(Numeric(5, 4), nullable=True)  # 0–1; NULL = not evaluated
+    preference_score = Column(Numeric(5, 2), nullable=True)  # 0–100; NULL = not evaluated
 
     fit_components = Column(JSONB, default=dict)
     preference_components = Column(JSONB, nullable=True, default=dict)

@@ -465,7 +465,7 @@ function ScoresSection({ match }: Readonly<{ match: any }>) {
 
             <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
                 <ScoreDisplay label="Fit" value={match.fit_score ?? 0} emphasis />
-                <ScoreDisplay label="Preference" value={(match.preference_score ?? 0) * 100} />
+                <ScoreDisplay label="Preference" value={match.preference_score ?? 0} />
             </div>
 
             <dl className="mt-4 grid grid-cols-2 gap-px overflow-hidden border border-rule bg-rule md:grid-cols-4">

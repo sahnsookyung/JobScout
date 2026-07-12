@@ -61,58 +61,58 @@ class TestPreferenceFirstMode:
         return rank_matches(matches, _ctx(RankingMode.PREFERENCE_FIRST))
 
     def test_higher_pref_sorts_before_lower_pref(self):
-        low = FakeMatch("low", fit_score=80, preference_score=0.3)
-        high = FakeMatch("high", fit_score=80, preference_score=0.9)
+        low = FakeMatch("low", fit_score=80, preference_score=30)
+        high = FakeMatch("high", fit_score=80, preference_score=90)
         result = self._run([low, high])
         assert result[0].id == "high"
         assert result[1].id == "low"
 
     def test_null_pref_sorts_after_nonzero_pref(self):
-        scored = FakeMatch("scored", fit_score=90, preference_score=0.1)
+        scored = FakeMatch("scored", fit_score=90, preference_score=10)
         no_pref = FakeMatch("no_pref", fit_score=90, preference_score=None)
         result = self._run([no_pref, scored])
         assert result[0].id == "scored"
         assert result[1].id == "no_pref"
 
     def test_null_pref_sorts_after_zero_pref(self):
-        zero = FakeMatch("zero", fit_score=90, preference_score=0.0)
+        zero = FakeMatch("zero", fit_score=90, preference_score=0)
         null = FakeMatch("null", fit_score=90, preference_score=None)
         result = self._run([null, zero])
         assert result[0].id == "zero"
         assert result[1].id == "null"
 
     def test_higher_fit_breaks_equal_pref_tie(self):
-        low_fit = FakeMatch("low_fit", fit_score=60, preference_score=0.8)
-        high_fit = FakeMatch("high_fit", fit_score=80, preference_score=0.8)
+        low_fit = FakeMatch("low_fit", fit_score=60, preference_score=80)
+        high_fit = FakeMatch("high_fit", fit_score=80, preference_score=80)
         result = self._run([low_fit, high_fit])
         assert result[0].id == "high_fit"
 
     def test_invariant_increasing_pref_never_worsens_rank(self):
         """Increasing preference_score for a match must not move it down."""
-        a = FakeMatch("a", fit_score=70, preference_score=0.3)
-        b = FakeMatch("b", fit_score=70, preference_score=0.7)
+        a = FakeMatch("a", fit_score=70, preference_score=30)
+        b = FakeMatch("b", fit_score=70, preference_score=70)
         result = self._run([a, b])
         assert result[0].id == "b"
 
         # Now give a a higher preference_score than b
-        a.preference_score = 0.9
+        a.preference_score = 90
         result2 = self._run([a, b])
         assert result2[0].id == "a"
 
     def test_similarity_cannot_reverse_large_pref_gap(self):
-        high_sim_low_pref = FakeMatch("h_sim", fit_score=80, preference_score=0.1, job_similarity=0.99)
-        low_sim_high_pref = FakeMatch("l_sim", fit_score=80, preference_score=0.9, job_similarity=0.01)
+        high_sim_low_pref = FakeMatch("h_sim", fit_score=80, preference_score=10, job_similarity=0.99)
+        low_sim_high_pref = FakeMatch("l_sim", fit_score=80, preference_score=90, job_similarity=0.01)
         result = self._run([high_sim_low_pref, low_sim_high_pref])
         assert result[0].id == "l_sim"
 
     def test_attaches_explanation(self):
-        m = FakeMatch("m", fit_score=75, preference_score=0.5)
+        m = FakeMatch("m", fit_score=75, preference_score=50)
         rank_matches([m], _ctx(RankingMode.PREFERENCE_FIRST))
         assert m.ranking_explanation is not None
         assert m.ranking_explanation.ranking_mode_used == "preference_first"
 
     def test_explanation_code_preference_first_when_pref_available(self):
-        m = FakeMatch("m", preference_score=0.5)
+        m = FakeMatch("m", preference_score=50)
         rank_matches([m], _ctx(RankingMode.PREFERENCE_FIRST))
         assert m.ranking_explanation.dominant_reason_code == "preference_first"
 
@@ -132,32 +132,32 @@ class TestFitFirstMode:
         return rank_matches(matches, _ctx(RankingMode.FIT_FIRST))
 
     def test_higher_fit_sorts_first(self):
-        low = FakeMatch("low", fit_score=60, preference_score=0.9)
-        high = FakeMatch("high", fit_score=85, preference_score=0.1)
+        low = FakeMatch("low", fit_score=60, preference_score=90)
+        high = FakeMatch("high", fit_score=85, preference_score=10)
         result = self._run([low, high])
         assert result[0].id == "high"
 
     def test_null_fit_treated_as_zero(self):
-        no_fit = FakeMatch("no_fit", fit_score=None, preference_score=0.9)
-        scored = FakeMatch("scored", fit_score=10, preference_score=0.0)
+        no_fit = FakeMatch("no_fit", fit_score=None, preference_score=90)
+        scored = FakeMatch("scored", fit_score=10, preference_score=0)
         result = self._run([no_fit, scored])
         assert result[0].id == "scored"
 
     def test_pref_breaks_equal_fit_tie(self):
-        low_pref = FakeMatch("low_pref", fit_score=80, preference_score=0.2)
-        high_pref = FakeMatch("high_pref", fit_score=80, preference_score=0.8)
+        low_pref = FakeMatch("low_pref", fit_score=80, preference_score=20)
+        high_pref = FakeMatch("high_pref", fit_score=80, preference_score=80)
         result = self._run([low_pref, high_pref])
         assert result[0].id == "high_pref"
 
     def test_null_pref_sorts_after_nonzero_pref_when_fit_equal(self):
-        scored_pref = FakeMatch("scored", fit_score=80, preference_score=0.5)
+        scored_pref = FakeMatch("scored", fit_score=80, preference_score=50)
         no_pref = FakeMatch("no_pref", fit_score=80, preference_score=None)
         result = self._run([no_pref, scored_pref])
         assert result[0].id == "scored"
 
     def test_invariant_increasing_fit_never_worsens_rank(self):
-        a = FakeMatch("a", fit_score=50, preference_score=0.9)
-        b = FakeMatch("b", fit_score=80, preference_score=0.1)
+        a = FakeMatch("a", fit_score=50, preference_score=90)
+        b = FakeMatch("b", fit_score=80, preference_score=10)
         result = self._run([a, b])
         assert result[0].id == "b"
 
@@ -167,13 +167,13 @@ class TestFitFirstMode:
         assert result2[0].id == "a"
 
     def test_similarity_cannot_reverse_large_fit_gap(self):
-        high_sim_low_fit = FakeMatch("h_sim", fit_score=50, preference_score=0.5, job_similarity=0.99)
-        low_sim_high_fit = FakeMatch("l_sim", fit_score=90, preference_score=0.5, job_similarity=0.01)
+        high_sim_low_fit = FakeMatch("h_sim", fit_score=50, preference_score=50, job_similarity=0.99)
+        low_sim_high_fit = FakeMatch("l_sim", fit_score=90, preference_score=50, job_similarity=0.01)
         result = self._run([high_sim_low_fit, low_sim_high_fit])
         assert result[0].id == "l_sim"
 
     def test_explanation_code_is_fit_first(self):
-        m = FakeMatch("m", fit_score=70, preference_score=0.5)
+        m = FakeMatch("m", fit_score=70, preference_score=50)
         rank_matches([m], _ctx(RankingMode.FIT_FIRST))
         assert m.ranking_explanation.dominant_reason_code == "fit_first"
 
@@ -192,8 +192,8 @@ class TestBalancedMode:
     def test_blend_formula_determines_order(self):
         # primary_a = 0.6*0.9 + 0.4*(50/100) = 0.54 + 0.20 = 0.74
         # primary_b = 0.6*0.4 + 0.4*(90/100) = 0.24 + 0.36 = 0.60
-        a = FakeMatch("a", fit_score=50, preference_score=0.9)
-        b = FakeMatch("b", fit_score=90, preference_score=0.4)
+        a = FakeMatch("a", fit_score=50, preference_score=90)
+        b = FakeMatch("b", fit_score=90, preference_score=40)
         result = self._run([a, b])
         assert result[0].id == "a"
 
@@ -201,7 +201,7 @@ class TestBalancedMode:
         # With pref=None → 0.0: primary = 0.6*0 + 0.4*(80/100) = 0.32
         # b: primary = 0.6*0.4 + 0.4*(80/100) = 0.24 + 0.32 = 0.56
         null_pref = FakeMatch("null", fit_score=80, preference_score=None)
-        has_pref = FakeMatch("has_pref", fit_score=80, preference_score=0.4)
+        has_pref = FakeMatch("has_pref", fit_score=80, preference_score=40)
         result = self._run([null_pref, has_pref])
         assert result[0].id == "has_pref"
 
@@ -217,7 +217,7 @@ class TestBalancedMode:
         assert m.ranking_explanation.preference_score is None
 
     def test_balanced_primary_score_in_explanation(self):
-        m = FakeMatch("m", fit_score=80, preference_score=0.5)
+        m = FakeMatch("m", fit_score=80, preference_score=50)
         # primary = 0.6*0.5 + 0.4*0.8 = 0.30 + 0.32 = 0.62
         self._run([m])
         assert m.ranking_explanation.balanced_primary_score == pytest.approx(0.62, abs=1e-6)
@@ -230,23 +230,23 @@ class TestBalancedMode:
         assert m.ranking_explanation.balanced_primary_score == pytest.approx(0.32, abs=1e-6)
 
     def test_explanation_code_balanced_blend(self):
-        m = FakeMatch("m", fit_score=70, preference_score=0.6)
+        m = FakeMatch("m", fit_score=70, preference_score=60)
         self._run([m])
         assert m.ranking_explanation.dominant_reason_code == "balanced_blend"
 
     def test_invariant_increasing_pref_never_worsens_balanced_rank(self):
-        a = FakeMatch("a", fit_score=70, preference_score=0.2)
-        b = FakeMatch("b", fit_score=70, preference_score=0.8)
+        a = FakeMatch("a", fit_score=70, preference_score=20)
+        b = FakeMatch("b", fit_score=70, preference_score=80)
         result = self._run([a, b])
         assert result[0].id == "b"
 
-        a.preference_score = 0.95
+        a.preference_score = 95
         result2 = self._run([a, b])
         assert result2[0].id == "a"
 
     def test_invariant_increasing_fit_never_worsens_balanced_rank(self):
-        a = FakeMatch("a", fit_score=40, preference_score=0.5)
-        b = FakeMatch("b", fit_score=80, preference_score=0.5)
+        a = FakeMatch("a", fit_score=40, preference_score=50)
+        b = FakeMatch("b", fit_score=80, preference_score=50)
         result = self._run([a, b])
         assert result[0].id == "b"
 
@@ -257,8 +257,8 @@ class TestBalancedMode:
     def test_weights_50_50(self):
         # primary_a = 0.5*0.8 + 0.5*(60/100) = 0.40 + 0.30 = 0.70
         # primary_b = 0.5*0.6 + 0.5*(80/100) = 0.30 + 0.40 = 0.70 → tie → stable by id
-        a = FakeMatch("a", fit_score=60, preference_score=0.8)
-        b = FakeMatch("b", fit_score=80, preference_score=0.6)
+        a = FakeMatch("a", fit_score=60, preference_score=80)
+        b = FakeMatch("b", fit_score=80, preference_score=60)
         result = self._run([a, b], w_pref=0.5, w_fit=0.5)
         # Tied primary; stable tie-break by id string: "a" < "b"
         assert result[0].id == "a"
@@ -272,9 +272,9 @@ class TestBalancedMode:
 class TestStableTieBreak:
     def test_equal_scores_use_id_as_tiebreak(self):
         matches = [
-            FakeMatch("zzz", fit_score=80, preference_score=0.5, job_similarity=0.5),
-            FakeMatch("aaa", fit_score=80, preference_score=0.5, job_similarity=0.5),
-            FakeMatch("mmm", fit_score=80, preference_score=0.5, job_similarity=0.5),
+            FakeMatch("zzz", fit_score=80, preference_score=50, job_similarity=0.5),
+            FakeMatch("aaa", fit_score=80, preference_score=50, job_similarity=0.5),
+            FakeMatch("mmm", fit_score=80, preference_score=50, job_similarity=0.5),
         ]
         result = rank_matches(matches, _ctx(RankingMode.BALANCED))
         assert [m.id for m in result] == ["aaa", "mmm", "zzz"]
@@ -293,7 +293,7 @@ class TestStableTieBreak:
 
 class TestScoreNormalisation:
     def test_null_job_similarity_treated_as_zero(self):
-        m = FakeMatch("m", fit_score=70, preference_score=0.5, job_similarity=None)
+        m = FakeMatch("m", fit_score=70, preference_score=50, job_similarity=None)
         rank_matches([m], _ctx(RankingMode.BALANCED))
         assert m.ranking_explanation.similarity_score == pytest.approx(0.0)
 
@@ -308,10 +308,10 @@ class TestScoreNormalisation:
         rank_matches([m], _ctx(RankingMode.BALANCED))
         assert m.ranking_explanation.fit_score == pytest.approx(0.0)
 
-    def test_preference_score_clamped_to_0_1(self):
-        m = FakeMatch("m", preference_score=1.5)
+    def test_preference_score_clamped_to_0_100(self):
+        m = FakeMatch("m", preference_score=150)
         rank_matches([m], _ctx(RankingMode.BALANCED))
-        assert m.ranking_explanation.preference_score == pytest.approx(1.0)
+        assert m.ranking_explanation.preference_score == pytest.approx(100.0)
 
 
 # ---------------------------------------------------------------------------
@@ -321,8 +321,8 @@ class TestScoreNormalisation:
 class TestAggregateLogging:
     def test_debug_when_null_ratio_below_50_percent(self, caplog):
         matches = [
-            FakeMatch("a", preference_score=0.5),
-            FakeMatch("b", preference_score=0.5),
+            FakeMatch("a", preference_score=50),
+            FakeMatch("b", preference_score=50),
             FakeMatch("c", preference_score=None),  # 1/3 ≈ 33% → DEBUG
         ]
         with caplog.at_level(logging.DEBUG, logger="core.ranking.engine"):
@@ -335,7 +335,7 @@ class TestAggregateLogging:
         matches = [
             FakeMatch("a", preference_score=None),
             FakeMatch("b", preference_score=None),
-            FakeMatch("c", preference_score=0.5),  # 2/3 ≈ 67% → WARNING
+            FakeMatch("c", preference_score=50),  # 2/3 ≈ 67% → WARNING
         ]
         with caplog.at_level(logging.WARNING, logger="core.ranking.engine"):
             rank_matches(matches, _ctx(RankingMode.BALANCED))
@@ -344,7 +344,7 @@ class TestAggregateLogging:
         assert len(warning_records) >= 1
 
     def test_no_log_when_all_pref_present(self, caplog):
-        matches = [FakeMatch("a", preference_score=0.5), FakeMatch("b", preference_score=0.8)]
+        matches = [FakeMatch("a", preference_score=50), FakeMatch("b", preference_score=80)]
         with caplog.at_level(logging.DEBUG, logger="core.ranking.engine"):
             rank_matches(matches, _ctx(RankingMode.BALANCED))
 

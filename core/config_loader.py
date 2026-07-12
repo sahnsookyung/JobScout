@@ -119,6 +119,7 @@ class PreferenceModelConfig(BaseModel):
     temperature: float = 0.0
     timeout_seconds: int = 30
     max_input_tokens: int = 2048
+    structured_output_mode: Optional[Literal["auto", "json_schema", "json_object"]] = None
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1024
     embedding_base_url: Optional[str] = None
@@ -925,11 +926,13 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["PREFERENCES_PARSER_API_KEY"], ["preferences", "parser", "api_key"]),
     (["PREFERENCES_PARSER_API_SECRET"], ["preferences", "parser", "api_secret"]),
     (["PREFERENCES_PARSER_MODEL"], ["preferences", "parser", "model"]),
+    (["PREFERENCES_PARSER_STRUCTURED_OUTPUT_MODE"], ["preferences", "parser", "structured_output_mode"]),
     (["PREFERENCES_SEMANTIC_RERANKER_PROVIDER"], ["preferences", "semantic_reranker", "provider"]),
     (["PREFERENCES_SEMANTIC_RERANKER_BASE_URL"], ["preferences", "semantic_reranker", "base_url"]),
     (["PREFERENCES_SEMANTIC_RERANKER_API_KEY"], ["preferences", "semantic_reranker", "api_key"]),
     (["PREFERENCES_SEMANTIC_RERANKER_API_SECRET"], ["preferences", "semantic_reranker", "api_secret"]),
     (["PREFERENCES_SEMANTIC_RERANKER_MODEL"], ["preferences", "semantic_reranker", "model"]),
+    (["PREFERENCES_SEMANTIC_RERANKER_STRUCTURED_OUTPUT_MODE"], ["preferences", "semantic_reranker", "structured_output_mode"]),
     (["PREFERENCES_SEMANTIC_RERANKER_TOP_N_DEFAULT"], ["preferences", "semantic_reranker", "top_n_default"]),
     (["PREFERENCES_SEMANTIC_RERANKER_TOP_N_MIN"], ["preferences", "semantic_reranker", "top_n_min"]),
     (["PREFERENCES_SEMANTIC_RERANKER_TOP_N_MAX"], ["preferences", "semantic_reranker", "top_n_max"]),
@@ -938,6 +941,7 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["PREFERENCES_LLM_JUDGE_API_KEY"], ["preferences", "llm_judge", "api_key"]),
     (["PREFERENCES_LLM_JUDGE_API_SECRET"], ["preferences", "llm_judge", "api_secret"]),
     (["PREFERENCES_LLM_JUDGE_MODEL"], ["preferences", "llm_judge", "model"]),
+    (["PREFERENCES_LLM_JUDGE_STRUCTURED_OUTPUT_MODE"], ["preferences", "llm_judge", "structured_output_mode"]),
     (["PREFERENCES_RERANKER"], ["preferences", "reranker"]),
     (["PREFERENCES_CROSS_ENCODER_ENABLED"], ["preferences", "cross_encoder", "enabled"]),
     (["PREFERENCES_CROSS_ENCODER_MODEL_NAME"], ["preferences", "cross_encoder", "model_name"]),

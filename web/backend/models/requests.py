@@ -30,6 +30,21 @@ class PolicyUpdate(BaseModel):
         le=100,
         description="Requested top-N matches to LLM judge, capped by the server",
     )
+    active_default_mode: Optional[
+        Literal["preference_first", "fit_first", "balanced"]
+    ] = Field(None, description="Default ordering applied to new match lists")
+    balanced_w_pref: Optional[float] = Field(
+        None,
+        ge=0,
+        le=1,
+        description="Preference share of balanced ranking (0-1)",
+    )
+    balanced_w_fit: Optional[float] = Field(
+        None,
+        ge=0,
+        le=1,
+        description="Fit share of balanced ranking (0-1)",
+    )
 
 
 class MatchLlmEvaluationRequest(BaseModel):

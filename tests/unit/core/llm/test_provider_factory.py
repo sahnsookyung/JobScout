@@ -62,6 +62,16 @@ def test_runtime_llm_config_from_preference_maps_timeout_and_embeddings():
     assert runtime_config.embedding_model == "embed-model"
     assert runtime_config.embedding_dimensions == 512
 
+def test_runtime_llm_config_from_preference_maps_structured_output_mode():
+    config = PreferenceModelConfig(
+        model="gpt-preferences",
+        structured_output_mode="json_object",
+    )
+
+    runtime_config = runtime_llm_config_from_preference(config)
+
+    assert runtime_config.structured_output_mode == "json_object"
+
 
 def test_runtime_llm_config_from_fit_maps_llm_fields():
     config = SemanticFitLlmConfig(

@@ -226,7 +226,7 @@ export function CandidatePreferencesPanel() {
                         </label>
 
                         <label className="block">
-                            <span className="caption">Preference judging window</span>
+                            <span className="caption">Candidates scored for preference</span>
                             <input
                                 type="number"
                                 min={topNBounds.min}
@@ -246,6 +246,9 @@ export function CandidatePreferencesPanel() {
                                 }}
                                 className={`${inputClasses} mt-2`}
                             />
+                            <p className="mt-2 text-[13px] text-ink-soft">
+                                Score the top N candidates by fit. A larger window finds more preference matches but takes longer.
+                            </p>
                         </label>
 
                         <label className="block">

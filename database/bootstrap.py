@@ -7,6 +7,7 @@ import hashlib
 import logging
 import os
 import uuid
+from pathlib import Path
 
 from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.engine import Connection, Engine
@@ -23,6 +24,7 @@ SCHEMA_MIGRATIONS_TABLE = "schema_migrations"
 MIGRATION_LOCK_KEY = 485_199_421
 CURRENT_SCHEMA_VERSION = "orm_bootstrap"
 CURRENT_SCHEMA_CHECKSUM_SOURCE = SNAPSHOT_PATH
+NUMBERED_MIGRATIONS_DIR = Path(__file__).resolve().parent / "schema"
 APP_TABLE_NAMES = set(Base.metadata.tables.keys())
 DEV_BYPASS_IDENTITY_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 LEGACY_MIGRATION_SUFFIXES = (".py", ".sql")
@@ -38,6 +40,7 @@ DELETE_SCHEMA_MIGRATIONS_SQL = "DELETE FROM schema_migrations"
 INSERT_SCHEMA_MIGRATIONS_SQL = """
     INSERT INTO schema_migrations (version, checksum)
     VALUES (:version, :checksum)
+    ON CONFLICT (version) DO UPDATE SET checksum = EXCLUDED.checksum
 """
 
 
@@ -47,6 +50,56 @@ class DatabaseSchemaError(RuntimeError):
 
 def _schema_checksum() -> str:
     return hashlib.sha256(CURRENT_SCHEMA_CHECKSUM_SOURCE.read_bytes()).hexdigest()
+
+
+def _numbered_migration_paths() -> list[Path]:
+    return sorted(NUMBERED_MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql"))
+
+
+def _migration_checksum(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _expected_schema_versions() -> dict[str, str]:
+    return {
+        CURRENT_SCHEMA_VERSION: _schema_checksum(),
+        **{path.name: _migration_checksum(path) for path in _numbered_migration_paths()},
+    }
+
+
+def _record_migration(conn: Connection, *, version: str, checksum: str) -> None:
+    conn.execute(
+        text(INSERT_SCHEMA_MIGRATIONS_SQL),
+        {"version": version, "checksum": checksum},
+    )
+
+
+def _run_sql_migration(conn: Connection, path: Path) -> None:
+    sql = path.read_text(encoding="utf-8").strip()
+    if sql:
+        conn.exec_driver_sql(sql.replace("%", "%%"))
+
+
+def _apply_pending_numbered_migrations(
+    conn: Connection,
+    applied: dict[str, str],
+) -> list[str]:
+    applied_now: list[str] = []
+    for path in _numbered_migration_paths():
+        checksum = _migration_checksum(path)
+        stored_checksum = applied.get(path.name)
+        if stored_checksum is not None:
+            if stored_checksum != checksum:
+                raise DatabaseSchemaError(
+                    f"Immutable migration checksum mismatch for {path.name}."
+                )
+            continue
+
+        logger.info("Applying database migration %s", path.name)
+        _run_sql_migration(conn, path)
+        _record_migration(conn, version=path.name, checksum=checksum)
+        applied_now.append(path.name)
+    return applied_now
 
 
 def _schema_migrations_exists(conn: Connection) -> bool:
@@ -95,7 +148,8 @@ def _missing_schema_error() -> DatabaseSchemaError:
 
 
 def _validate_known_versions(applied: dict[str, str]) -> None:
-    unknown_versions = sorted(set(applied) - {CURRENT_SCHEMA_VERSION})
+    expected = _expected_schema_versions()
+    unknown_versions = sorted(set(applied) - set(expected))
     if unknown_versions:
         raise DatabaseSchemaError(
             "Database contains unknown schema versions: "
@@ -108,13 +162,26 @@ def _validate_known_versions(applied: dict[str, str]) -> None:
 
 
 def _validate_applied_checksums(applied: dict[str, str]) -> None:
-    expected_checksum = _schema_checksum()
-    actual_checksum = applied[CURRENT_SCHEMA_VERSION]
-    if actual_checksum != expected_checksum:
+    expected = _expected_schema_versions()
+    missing_versions = sorted(set(expected) - set(applied))
+    if missing_versions:
         raise DatabaseSchemaError(
-            "Database schema stamp does not match the current checked-in schema. "
-            "Recreate the database and rerun `uv run python -m database.bootstrap`."
+            "Database schema is behind the repository head. Run "
+            "`uv run python -m database.bootstrap`; missing versions: "
+            + ", ".join(missing_versions)
         )
+
+    for version, expected_checksum in expected.items():
+        actual_checksum = applied[version]
+        if actual_checksum != expected_checksum:
+            if version == CURRENT_SCHEMA_VERSION:
+                raise DatabaseSchemaError(
+                    "Database schema stamp does not match the current checked-in schema. "
+                    "Run `uv run python -m database.bootstrap` to apply pending migrations."
+                )
+            raise DatabaseSchemaError(
+                f"Immutable migration checksum mismatch for {version}."
+            )
 
 
 def _is_legacy_migration_version(version: str) -> bool:
@@ -196,140 +263,9 @@ def _upgrade_legacy_schema_to_current(conn: Connection) -> None:
 
 
 def _apply_current_additive_schema_upgrades(conn: Connection) -> None:
-    """Apply idempotent additive changes that create_all() cannot add to old tables."""
-    conn.execute(
-        text(
-            """
-            ALTER TABLE job_post
-            ADD COLUMN IF NOT EXISTS description_source TEXT DEFAULT 'unknown' NOT NULL;
-
-            ALTER TABLE job_post
-            ADD COLUMN IF NOT EXISTS description_completeness TEXT DEFAULT 'unknown' NOT NULL;
-
-            ALTER TABLE job_post
-            ADD COLUMN IF NOT EXISTS description_warning_code TEXT;
-
-            ALTER TABLE job_post
-            ADD COLUMN IF NOT EXISTS description_hash TEXT;
-
-            ALTER TABLE job_post
-            ADD COLUMN IF NOT EXISTS description_recovery_status TEXT DEFAULT 'not_needed' NOT NULL;
-
-            ALTER TABLE job_post
-            ADD COLUMN IF NOT EXISTS description_recovery_reason TEXT;
-
-            ALTER TABLE job_post
-            ADD COLUMN IF NOT EXISTS description_recovery_attempts INTEGER DEFAULT 0 NOT NULL;
-
-            ALTER TABLE job_post
-            ADD COLUMN IF NOT EXISTS description_recovery_last_attempt_at TIMESTAMPTZ;
-
-            ALTER TABLE job_post
-            ADD COLUMN IF NOT EXISTS description_recovery_next_retry_at TIMESTAMPTZ;
-
-            ALTER TABLE job_post
-            ADD COLUMN IF NOT EXISTS description_recovery_last_error TEXT;
-
-            ALTER TABLE job_post
-            ADD COLUMN IF NOT EXISTS description_recovery_run_id TEXT;
-
-            ALTER TABLE candidate_preferences
-            ADD COLUMN IF NOT EXISTS preference_rerank_top_n INTEGER;
-
-            CREATE TABLE IF NOT EXISTS job_offerings_profile (
-                job_post_id UUID PRIMARY KEY
-                    REFERENCES job_post(id) ON DELETE CASCADE,
-                profile_json JSONB DEFAULT '{}'::jsonb NOT NULL,
-                profile_schema_version INTEGER DEFAULT 1 NOT NULL,
-                source_description_hash TEXT,
-                extraction_provider TEXT,
-                extraction_model TEXT,
-                confidence NUMERIC(5, 4),
-                created_at TIMESTAMPTZ DEFAULT timezone('UTC', now()) NOT NULL,
-                updated_at TIMESTAMPTZ DEFAULT timezone('UTC', now()) NOT NULL
-            );
-
-            ALTER TABLE llm_match_evaluation
-            ADD COLUMN IF NOT EXISTS analysis JSONB DEFAULT '{}'::jsonb NOT NULL;
-
-            CREATE INDEX IF NOT EXISTS idx_job_post_description_hash
-            ON job_post (description_hash);
-
-            CREATE INDEX IF NOT EXISTS idx_job_post_description_recovery_scan
-            ON job_post (
-                tenant_id,
-                status,
-                description_recovery_status,
-                description_recovery_next_retry_at,
-                first_seen_at
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_job_post_missing_description
-            ON job_post (tenant_id, status, extraction_status, first_seen_at);
-
-            CREATE INDEX IF NOT EXISTS idx_jop_source_hash
-            ON job_offerings_profile (source_description_hash);
-
-            CREATE INDEX IF NOT EXISTS idx_jop_schema_version
-            ON job_offerings_profile (profile_schema_version);
-
-            CREATE INDEX IF NOT EXISTS idx_llm_eval_owner_match_created
-            ON llm_match_evaluation (owner_id, job_match_id, created_at);
-
-            CREATE INDEX IF NOT EXISTS idx_llm_eval_backlog_status_created
-            ON llm_match_evaluation (status, created_at)
-            WHERE deleted_at IS NULL;
-
-            CREATE INDEX IF NOT EXISTS idx_llm_eval_retryable_failed_created
-            ON llm_match_evaluation (created_at)
-            WHERE deleted_at IS NULL
-              AND status = 'failed'
-              AND retryable = TRUE;
-
-            CREATE INDEX IF NOT EXISTS idx_msi_run_tier_rank_id
-            ON match_selection_item (selection_run_id, selection_tier, rank_position, id);
-            """
-        )
-    )
-    conn.execute(
-        text(
-            """
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1
-                    FROM pg_constraint
-                    WHERE conname = 'msi_selection_tier_chk'
-                      AND conrelid = 'match_selection_item'::regclass
-                ) THEN
-                    ALTER TABLE match_selection_item
-                    ADD CONSTRAINT msi_selection_tier_chk
-                    CHECK (selection_tier = ANY (ARRAY['primary'::text, 'excluded'::text]));
-                END IF;
-
-                IF NOT EXISTS (
-                    SELECT 1
-                    FROM pg_constraint
-                    WHERE conname = 'msi_excluded_reason_chk'
-                      AND conrelid = 'match_selection_item'::regclass
-                ) THEN
-                    ALTER TABLE match_selection_item
-                    ADD CONSTRAINT msi_excluded_reason_chk
-                    CHECK (
-                        (
-                            selection_tier = 'primary'::text
-                            AND excluded_reason IS NULL
-                        )
-                        OR (
-                            selection_tier = 'excluded'::text
-                            AND excluded_reason IS NOT NULL
-                        )
-                    );
-                END IF;
-            END $$;
-            """
-        )
-    )
+    """Apply the first immutable migration through the legacy bridge."""
+    migration = NUMBERED_MIGRATIONS_DIR / "100_current_additive_schema.sql"
+    _run_sql_migration(conn, migration)
 
 
 def _adopt_legacy_schema_if_current(conn: Connection, applied: dict[str, str]) -> bool:
@@ -338,20 +274,37 @@ def _adopt_legacy_schema_if_current(conn: Connection, applied: dict[str, str]) -
 
     _upgrade_legacy_schema_to_current(conn)
     _verify_bootstrapped_schema(conn)
-    _stamp_current_schema(conn)
+    _stamp_current_schema(conn, reset=True, include_numbered=True)
     return True
 
 
-def _upgrade_stamped_schema_if_current(conn: Connection, applied: dict[str, str]) -> bool:
+def _upgrade_stamped_schema_if_current(
+    conn: Connection,
+    applied: dict[str, str],
+) -> list[str]:
     _validate_known_versions(applied)
-    if applied[CURRENT_SCHEMA_VERSION] == _schema_checksum():
-        return False
+    baseline_changed = applied[CURRENT_SCHEMA_VERSION] != _schema_checksum()
+    pending = [
+        path.name
+        for path in _numbered_migration_paths()
+        if path.name not in applied
+    ]
+    if not baseline_changed and not pending:
+        _validate_applied_checksums(applied)
+        return []
+    if baseline_changed and not pending:
+        raise DatabaseSchemaError(
+            "The ORM schema changed without a pending numbered migration. "
+            "Add an immutable migration under database/schema/."
+        )
 
     Base.metadata.create_all(bind=conn)
-    _apply_current_additive_schema_upgrades(conn)
+    applied_now = _apply_pending_numbered_migrations(conn, applied)
     _verify_bootstrapped_schema(conn)
     _stamp_current_schema(conn)
-    return True
+    if baseline_changed:
+        applied_now.append(CURRENT_SCHEMA_VERSION)
+    return applied_now
 
 
 def _validate_schema_state(conn: Connection) -> None:
@@ -414,15 +367,26 @@ def _seed_dev_bypass_user(conn: Connection) -> None:
         session.close()
 
 
-def _stamp_current_schema(conn: Connection) -> None:
-    conn.execute(text(DELETE_SCHEMA_MIGRATIONS_SQL))
-    conn.execute(
-        text(INSERT_SCHEMA_MIGRATIONS_SQL),
-        {
-            "version": CURRENT_SCHEMA_VERSION,
-            "checksum": _schema_checksum(),
-        },
+def _stamp_current_schema(
+    conn: Connection,
+    *,
+    reset: bool = False,
+    include_numbered: bool = False,
+) -> None:
+    if reset:
+        conn.execute(text(DELETE_SCHEMA_MIGRATIONS_SQL))
+    _record_migration(
+        conn,
+        version=CURRENT_SCHEMA_VERSION,
+        checksum=_schema_checksum(),
     )
+    if include_numbered:
+        for path in _numbered_migration_paths():
+            _record_migration(
+                conn,
+                version=path.name,
+                checksum=_migration_checksum(path),
+            )
 
 
 def _snapshot_limited_to_expected_tables(
@@ -496,7 +460,7 @@ def _bootstrap_schema(conn: Connection) -> None:
     _seed_dev_bypass_user(conn)
     _verify_bootstrapped_schema(conn)
     _ensure_schema_migrations_table(conn)
-    _stamp_current_schema(conn)
+    _stamp_current_schema(conn, include_numbered=True)
 
 
 def check_database_schema(*, engine: Engine | None = None) -> None:
@@ -540,18 +504,19 @@ def bootstrap_database(*, engine: Engine | None = None) -> list[str]:
                     logger.info("Bootstrapping database schema from ORM metadata")
                     _bootstrap_schema(conn)
                     conn.commit()
-                    return [CURRENT_SCHEMA_VERSION]
+                    return list(_expected_schema_versions())
 
                 applied = _applied_migrations(conn)
                 if _adopt_legacy_schema_if_current(conn, applied):
                     logger.info("Adopted legacy migration history as %s", CURRENT_SCHEMA_VERSION)
                     conn.commit()
-                    return [CURRENT_SCHEMA_VERSION]
+                    return list(_expected_schema_versions())
 
-                if _upgrade_stamped_schema_if_current(conn, applied):
+                applied_now = _upgrade_stamped_schema_if_current(conn, applied)
+                if applied_now:
                     logger.info("Upgraded stamped schema to %s", CURRENT_SCHEMA_VERSION)
                     conn.commit()
-                    return [CURRENT_SCHEMA_VERSION]
+                    return applied_now
 
                 _validate_schema_state(conn)
                 return []

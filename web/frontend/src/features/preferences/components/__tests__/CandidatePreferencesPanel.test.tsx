@@ -121,8 +121,8 @@ describe('CandidatePreferencesPanel', () => {
         });
         await userEvent.click(screen.getByRole('checkbox'));
         await userEvent.selectOptions(screen.getAllByRole('combobox')[1], 'llm_judge');
-        await userEvent.clear(screen.getByLabelText(/preference judging window/i));
-        await userEvent.type(screen.getByLabelText(/preference judging window/i), '15');
+        await userEvent.clear(screen.getByLabelText(/candidates scored for preference/i));
+        await userEvent.type(screen.getByLabelText(/candidates scored for preference/i), '15');
 
         expect(screen.getByText('You have unsaved changes.')).toBeInTheDocument();
 

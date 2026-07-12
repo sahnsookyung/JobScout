@@ -18,6 +18,7 @@ coverage/
 .coverage
 coverage.xml
 web/frontend/coverage/
+web/frontend/test-results/
 
 # Static analysis / local code intelligence
 .scannerwork/

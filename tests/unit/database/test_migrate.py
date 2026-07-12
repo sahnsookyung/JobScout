@@ -1,26 +1,34 @@
-"""Unit tests for the deprecated migration shim."""
+"""Unit tests for the stable database migration entrypoint."""
 
-import pytest
+from unittest.mock import patch
 
 
-def test_migrate_module_rejects_check_calls() -> None:
+def test_migrate_module_delegates_check_calls() -> None:
     import database.migrate as migrate_module
 
-    with pytest.raises(migrate_module.DatabaseMigrationError, match="no longer supported"):
+    with patch.object(migrate_module, "_check_database_schema") as check_schema:
         migrate_module.check_database_schema()
 
+    check_schema.assert_called_once_with(engine=None)
 
-def test_migrate_module_rejects_migrate_calls() -> None:
+
+def test_migrate_module_delegates_migrate_calls() -> None:
     import database.migrate as migrate_module
 
-    with pytest.raises(migrate_module.DatabaseMigrationError, match="no longer supported"):
-        migrate_module.migrate_database()
+    with patch.object(
+        migrate_module,
+        "bootstrap_database",
+        return_value=["100_example.sql"],
+    ) as bootstrap:
+        assert migrate_module.migrate_database() == ["100_example.sql"]
+
+    bootstrap.assert_called_once_with(engine=None)
 
 
-def test_migrate_main_returns_non_zero(caplog) -> None:
+def test_migrate_main_returns_zero() -> None:
     import database.migrate as migrate_module
 
-    result = migrate_module.main()
+    with patch.object(migrate_module, "migrate_database", return_value=[]):
+        result = migrate_module.main()
 
-    assert result == 1
-    assert migrate_module.UNSUPPORTED_MESSAGE in caplog.text
+    assert result == 0

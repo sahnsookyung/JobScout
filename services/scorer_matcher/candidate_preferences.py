@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set
 
-from core.config_loader import PreferencesConfig
+from core.config_loader import LlmJudgeRuntimeConfig, PreferencesConfig
 from core.llm.schema_models import JOB_OFFERINGS_PROFILE_VERSION
 from core.metrics import record_preference_status
 from services.scorer_matcher.preference_semantics import (
@@ -274,6 +274,7 @@ def _stored_preference_profile(preferences: Dict[str, Any]) -> Optional[Preferen
 def _resolve_preference_profile(
     preferences: Dict[str, Any],
     config: PreferencesConfig,
+    provider_route: Optional[LlmJudgeRuntimeConfig] = None,
 ) -> Optional[PreferenceProfile]:
     stored = _stored_preference_profile(preferences)
     if stored is not None:
@@ -283,7 +284,10 @@ def _resolve_preference_profile(
     if not raw_text:
         return None
 
-    parser = build_preference_parser(config.parser)
+    parser = build_preference_parser(
+        config.parser,
+        provider_route=provider_route,
+    )
     if parser is None:
         return None
     try:
@@ -594,7 +598,7 @@ def _apply_assessments(
             }
         )
         match.preference_components = preference_components
-        match.preference_score = preference_score  # 0.0 = scored poor; None = not evaluated
+        match.preference_score = preference_score  # 0-100; None = not evaluated
     return PreferenceRerankResult(
         matches=scored_matches,
         status=PreferenceStatus(
@@ -614,6 +618,7 @@ def apply_preference_semantic_reranking(
     *,
     config: PreferencesConfig,
     repo: Any = None,
+    provider_route: Optional[LlmJudgeRuntimeConfig] = None,
 ):
     """Apply semantic preference reranking after fit-qualified scoring."""
     result = _apply_preference_semantic_reranking(
@@ -621,6 +626,7 @@ def apply_preference_semantic_reranking(
         preferences,
         config=config,
         repo=repo,
+        provider_route=provider_route,
     )
     record_preference_status(result.status.applied, result.status.reason)
     return result
@@ -632,6 +638,7 @@ def _apply_preference_semantic_reranking(
     *,
     config: PreferencesConfig,
     repo: Any = None,
+    provider_route: Optional[LlmJudgeRuntimeConfig] = None,
 ):
     if not preferences:
         return PreferenceRerankResult(
@@ -651,7 +658,11 @@ def _apply_preference_semantic_reranking(
         config,
     )
     effective_top_n = _resolve_effective_top_n(config, preferences)
-    profile = _resolve_preference_profile(preferences, config)
+    profile = _resolve_preference_profile(
+        preferences,
+        config,
+        provider_route,
+    )
     if profile is None:
         return _fit_only_fallback(
             scored_matches,
@@ -752,7 +763,10 @@ def _apply_preference_semantic_reranking(
 
     try:
         if effective_mode == "llm_judge":
-            judge = build_preference_judge(config.llm_judge)
+            judge = build_preference_judge(
+                config.llm_judge,
+                provider_route=provider_route,
+            )
             if judge is None:
                 return _fit_only_fallback(
                     scored_matches,
@@ -763,7 +777,10 @@ def _apply_preference_semantic_reranking(
                 )
             assessments = judge.judge(profile, job_payloads)
         else:
-            reranker = build_preference_semantic_reranker(config)
+            reranker = build_preference_semantic_reranker(
+                config,
+                provider_route=provider_route,
+            )
             if reranker is None:
                 return _fit_only_fallback(
                     scored_matches,

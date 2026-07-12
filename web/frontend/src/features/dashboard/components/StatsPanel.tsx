@@ -265,10 +265,10 @@ function Legend({ swatch, label, value }: Readonly<{ swatch: 'accent' | 'ink-sof
     }[swatch];
 
     return (
-        <div className="grid grid-cols-[0.5rem_auto_minmax(0,1fr)] items-center gap-2.5">
+        <div className="grid grid-cols-[0.5rem_minmax(0,1fr)_auto] items-center gap-2.5">
             <span className={`h-2 w-2 rounded-full ${swatchBg}`} aria-hidden="true" />
-            <span className="num tabular-nums text-ink">{value}</span>
-            <span className="text-ink-muted">{label}</span>
+            <dt className="text-ink-muted">{label}</dt>
+            <dd className="num tabular-nums text-ink">{value}</dd>
         </div>
     );
 }

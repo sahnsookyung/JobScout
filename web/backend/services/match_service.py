@@ -878,6 +878,14 @@ class MatchService:
             return None
         return safe_datetime_iso(value)
 
+    @staticmethod
+    def _preference_score_percent(value: Any) -> Optional[float]:
+        """Clamp a stored preference score to the public 0-100 contract."""
+        if value is None:
+            return None
+        score = safe_float(value)
+        return max(0.0, min(100.0, score))
+
     def _to_match_summary(self, match: JobMatch) -> MatchSummary:
         """Convert ORM model to MatchSummary response model."""
         job_fields = self._extract_summary_job_fields(match)
@@ -900,7 +908,7 @@ class MatchService:
             location=job_fields["location"],
             is_remote=job_fields["is_remote"],
             fit_score=self._optional_float(match.fit_score),
-            preference_score=self._optional_float(match.preference_score),
+            preference_score=self._preference_score_percent(match.preference_score),
             preference_status=self._preference_status(match),
             penalties=self._float_or_zero(match.penalties),
             required_coverage=self._float_or_zero(match.required_coverage),
@@ -960,7 +968,7 @@ class MatchService:
             match_id=str(match.id),
             resume_fingerprint=safe_str(match.resume_fingerprint),
             fit_score=safe_float(match.fit_score) if match.fit_score is not None else None,
-            preference_score=safe_float(match.preference_score) if match.preference_score is not None else None,
+            preference_score=self._preference_score_percent(match.preference_score),
             scoring_degraded_reason=self._scoring_degraded_reason(match.fit_components),
             fit_components=fit_components,
             preference_components=self._preference_components(match),

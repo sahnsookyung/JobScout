@@ -1,38 +1,41 @@
-"""Deprecated migration entrypoint.
-
-JobScout no longer supports in-place database upgrades through numbered
-migration scripts. The schema is bootstrapped for empty databases via
-`python -m database.bootstrap`.
-"""
+"""Stable migration entrypoint for empty and existing JobScout databases."""
 
 from __future__ import annotations
 
 import logging
 
-logger = logging.getLogger(__name__)
+from sqlalchemy.engine import Engine
 
-UNSUPPORTED_MESSAGE = (
-    "In-place database migrations are no longer supported in this repository. "
-    "For a fresh database, run `uv run python -m database.bootstrap`. "
-    "For an existing database, export/import data separately or recreate it."
+from database.bootstrap import (
+    DatabaseSchemaError,
+    bootstrap_database,
+    check_database_schema as _check_database_schema,
 )
 
+logger = logging.getLogger(__name__)
 
-class DatabaseMigrationError(RuntimeError):
-    """Raised when callers attempt to use the removed migration flow."""
-
-
-def check_database_schema(*args, **kwargs):
-    raise DatabaseMigrationError(UNSUPPORTED_MESSAGE)
+DatabaseMigrationError = DatabaseSchemaError
 
 
-def migrate_database(*args, **kwargs):
-    raise DatabaseMigrationError(UNSUPPORTED_MESSAGE)
+def check_database_schema(*, engine: Engine | None = None) -> None:
+    _check_database_schema(engine=engine)
+
+
+def migrate_database(*, engine: Engine | None = None) -> list[str]:
+    return bootstrap_database(engine=engine)
 
 
 def main() -> int:
-    logger.error(UNSUPPORTED_MESSAGE)
-    return 1
+    try:
+        applied = migrate_database()
+        if applied:
+            logger.info("Applied migrations: %s", ", ".join(applied))
+        else:
+            logger.info("Database schema is already up to date.")
+        return 0
+    except DatabaseSchemaError:
+        logger.exception("Database migration failed")
+        return 1
 
 
 if __name__ == "__main__":  # pragma: no cover

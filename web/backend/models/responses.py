@@ -4,7 +4,7 @@ Response models for API endpoints.
 """
 
 from pydantic import BaseModel, ConfigDict, Field
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Literal, Optional
 
 
 class ApiFieldError(BaseModel):
@@ -91,7 +91,7 @@ class MatchSummary(BaseModel):
                 "location": "Remote",
                 "is_remote": True,
                 "fit_score": 82.5,
-                "preference_score": 0.74,
+                "preference_score": 74.0,
                 "penalties": 9.5,
                 "required_coverage": 0.9,
                 "preferred_requirement_coverage": 0.8,
@@ -115,7 +115,7 @@ class MatchSummary(BaseModel):
     is_remote: Optional[bool] = None
 
     fit_score: Optional[float] = Field(default=None, ge=0, le=100)
-    preference_score: Optional[float] = Field(default=None, ge=0, le=1)
+    preference_score: Optional[float] = Field(default=None, ge=0, le=100)
     preference_status: Optional[Dict[str, Any]] = None
 
     penalties: float = Field(ge=0)
@@ -219,8 +219,8 @@ class MatchDetail(BaseModel):
     match_id: str
     resume_fingerprint: str
 
-    fit_score: Optional[float] = None
-    preference_score: Optional[float] = None
+    fit_score: Optional[float] = Field(default=None, ge=0, le=100)
+    preference_score: Optional[float] = Field(default=None, ge=0, le=100)
 
     # Score breakdowns
     fit_components: Optional[Dict[str, Any]] = None
@@ -641,6 +641,9 @@ class PolicyResponse(BaseModel):
     min_fit: float
     top_k: int
     min_jd_required_coverage: Optional[float] = None
+    active_default_mode: Literal["preference_first", "fit_first", "balanced"] = "balanced"
+    balanced_w_pref: float = Field(default=0.6, ge=0, le=1)
+    balanced_w_fit: float = Field(default=0.4, ge=0, le=1)
     llm_judge_enabled: bool = False
     llm_judge_auto_enqueue_enabled: bool = False
     llm_judge_top_n: int = 5

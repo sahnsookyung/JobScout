@@ -54,7 +54,7 @@ def test_bootstrap_creates_empty_database() -> None:
     ):
         applied = bootstrap_module.bootstrap_database(engine=engine)
 
-    assert applied == [bootstrap_module.CURRENT_SCHEMA_VERSION]
+    assert applied == list(bootstrap_module._expected_schema_versions())
     ensure_extension.assert_called_once()
     bootstrap_schema.assert_called_once()
 
@@ -85,7 +85,11 @@ def test_check_fails_on_checksum_mismatch() -> None:
             "_applied_migrations",
             return_value={bootstrap_module.CURRENT_SCHEMA_VERSION: "incorrect-checksum"},
         ),
-        patch.object(bootstrap_module, "_schema_checksum", return_value="expected-checksum"),
+        patch.object(
+            bootstrap_module,
+            "_expected_schema_versions",
+            return_value={bootstrap_module.CURRENT_SCHEMA_VERSION: "expected-checksum"},
+        ),
     ):
         with pytest.raises(bootstrap_module.DatabaseSchemaError, match="schema stamp"):
             bootstrap_module.check_database_schema(engine=engine)
@@ -96,15 +100,15 @@ def test_bootstrap_returns_empty_when_schema_is_current() -> None:
     import database.bootstrap as bootstrap_module
 
     engine, _ = _mock_engine_with_connection()
+    expected = bootstrap_module._expected_schema_versions()
     with (
         patch.object(bootstrap_module, "_schema_migrations_exists", return_value=True),
         patch.object(bootstrap_module, "_app_tables_present", return_value={"job_post"}),
         patch.object(
             bootstrap_module,
             "_applied_migrations",
-            return_value={bootstrap_module.CURRENT_SCHEMA_VERSION: "expected-checksum"},
+            return_value=expected,
         ),
-        patch.object(bootstrap_module, "_schema_checksum", return_value="expected-checksum"),
     ):
         assert bootstrap_module.bootstrap_database(engine=engine) == []
 
@@ -126,9 +130,9 @@ def test_bootstrap_adopts_matching_legacy_migration_history() -> None:
         patch.object(bootstrap_module, "_verify_bootstrapped_schema") as verify_schema,
         patch.object(bootstrap_module, "_stamp_current_schema") as stamp_schema,
     ):
-        assert bootstrap_module.bootstrap_database(engine=engine) == [
-            bootstrap_module.CURRENT_SCHEMA_VERSION
-        ]
+        assert bootstrap_module.bootstrap_database(engine=engine) == list(
+            bootstrap_module._expected_schema_versions()
+        )
 
     upgrade_schema.assert_called_once()
     verify_schema.assert_called_once()
@@ -152,8 +156,9 @@ def test_bootstrap_upgrades_stamped_schema_checksum_mismatch() -> None:
         patch.object(bootstrap_module.Base.metadata, "create_all") as create_all,
         patch.object(
             bootstrap_module,
-            "_apply_current_additive_schema_upgrades",
-        ) as apply_additive_upgrades,
+            "_apply_pending_numbered_migrations",
+            return_value=[],
+        ) as apply_numbered_migrations,
         patch.object(bootstrap_module, "_verify_bootstrapped_schema") as verify_schema,
         patch.object(bootstrap_module, "_stamp_current_schema") as stamp_schema,
     ):
@@ -162,9 +167,65 @@ def test_bootstrap_upgrades_stamped_schema_checksum_mismatch() -> None:
         ]
 
     create_all.assert_called_once()
-    apply_additive_upgrades.assert_called_once()
+    apply_numbered_migrations.assert_called_once()
     verify_schema.assert_called_once()
     stamp_schema.assert_called_once()
+
+
+def test_apply_pending_numbered_migration_records_checksum(tmp_path) -> None:
+    import database.bootstrap as bootstrap_module
+
+    migration = tmp_path / "101_example.sql"
+    migration.write_text("SELECT 1;", encoding="utf-8")
+    conn = MagicMock()
+
+    with patch.object(bootstrap_module, "NUMBERED_MIGRATIONS_DIR", tmp_path):
+        applied = bootstrap_module._apply_pending_numbered_migrations(conn, {})
+
+    assert applied == [migration.name]
+    conn.exec_driver_sql.assert_called_once_with("SELECT 1;")
+    assert any(
+        call.kwargs.get("params", {}).get("version") == migration.name
+        or (len(call.args) > 1 and call.args[1].get("version") == migration.name)
+        for call in conn.execute.call_args_list
+    )
+
+
+def test_apply_pending_numbered_migration_rejects_changed_checksum(tmp_path) -> None:
+    import database.bootstrap as bootstrap_module
+
+    migration = tmp_path / "101_example.sql"
+    migration.write_text("SELECT 1;", encoding="utf-8")
+
+    with (
+        patch.object(bootstrap_module, "NUMBERED_MIGRATIONS_DIR", tmp_path),
+        pytest.raises(bootstrap_module.DatabaseSchemaError, match="checksum mismatch"),
+    ):
+        bootstrap_module._apply_pending_numbered_migrations(
+            MagicMock(),
+            {migration.name: "changed"},
+        )
+
+
+def test_changed_orm_schema_requires_pending_numbered_migration(tmp_path) -> None:
+    import database.bootstrap as bootstrap_module
+
+    applied = {bootstrap_module.CURRENT_SCHEMA_VERSION: "previous-checksum"}
+
+    with (
+        patch.object(bootstrap_module, "NUMBERED_MIGRATIONS_DIR", tmp_path),
+        pytest.raises(bootstrap_module.DatabaseSchemaError, match="without a pending"),
+    ):
+        bootstrap_module._upgrade_stamped_schema_if_current(MagicMock(), applied)
+
+def test_stamp_current_schema_preserves_numbered_history() -> None:
+    import database.bootstrap as bootstrap_module
+
+    conn = MagicMock()
+    bootstrap_module._stamp_current_schema(conn)
+
+    executed_sql = [str(call.args[0]) for call in conn.execute.call_args_list]
+    assert not any("DELETE FROM schema_migrations" in sql for sql in executed_sql)
 
 
 def test_verify_bootstrapped_schema_ignores_non_oss_tables() -> None:

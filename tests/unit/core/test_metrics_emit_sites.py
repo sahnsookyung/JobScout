@@ -80,7 +80,7 @@ class TestSelectionTierEmits:
             {"tier": "primary", "reason": "none"},
         )
         matches = [
-            _match("top", fit_score=90.0, preference_score=0.2, job_similarity=0.8, required_coverage=0.9),
+            _match("top", fit_score=90.0, preference_score=20, job_similarity=0.8, required_coverage=0.9),
         ]
         select_matches(
             matches,
@@ -105,8 +105,8 @@ class TestSelectionTierEmits:
             {"tier": "excluded", "reason": "beyond_top_k"},
         )
         matches = [
-            _match("a", fit_score=90.0, preference_score=0.2, job_similarity=0.8, required_coverage=0.9),
-            _match("b", fit_score=80.0, preference_score=0.2, job_similarity=0.7, required_coverage=0.9),
+            _match("a", fit_score=90.0, preference_score=20, job_similarity=0.8, required_coverage=0.9),
+            _match("b", fit_score=80.0, preference_score=20, job_similarity=0.7, required_coverage=0.9),
         ]
         select_matches(
             matches,
@@ -131,9 +131,9 @@ class TestSelectionTierEmits:
             {"tier": "excluded", "reason": "truncated"},
         )
         matches = [
-            _match("primary", fit_score=90.0, preference_score=0.2, job_similarity=0.8, required_coverage=0.9),
-            _match("excluded-low", fit_score=35.0, preference_score=0.2, job_similarity=0.4, required_coverage=0.9),
-            _match("excluded-high", fit_score=49.0, preference_score=0.2, job_similarity=0.4, required_coverage=0.9),
+            _match("primary", fit_score=90.0, preference_score=20, job_similarity=0.8, required_coverage=0.9),
+            _match("excluded-low", fit_score=35.0, preference_score=20, job_similarity=0.4, required_coverage=0.9),
+            _match("excluded-high", fit_score=49.0, preference_score=20, job_similarity=0.4, required_coverage=0.9),
         ]
         with patch("core.match_selection.engine.EXCLUDED_STORAGE_CAP", 1):
             select_matches(

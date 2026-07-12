@@ -340,14 +340,14 @@ class TestPersistedNotificationHelpers:
             SimpleNamespace(
                 job_match_id="m1",
                 fit_score_at_selection=80.0,
-                preference_score_at_selection=0.9,
+                preference_score_at_selection=90,
                 job_similarity_at_selection=0.8,
                 alert_eligible=True,
             ),
             SimpleNamespace(
                 job_match_id="m2",
                 fit_score_at_selection=60.0,
-                preference_score_at_selection=0.1,
+                preference_score_at_selection=10,
                 job_similarity_at_selection=0.5,
                 alert_eligible=False,
             ),

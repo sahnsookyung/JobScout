@@ -3,8 +3,8 @@ import { Minus, Plus } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { usePolicy } from '@/hooks/usePolicy';
 import { pipelineRunsApi } from '@/services/pipelineRunsApi';
-import { POLICY_PRESETS, POLICY_PRESET_VALUES } from '@/utils/constants';
-import type { PolicyConfig, PolicyPreset } from '@/types/api';
+import { POLICY_PRESETS, POLICY_PRESET_VALUES, RANKING_MODE_OPTIONS } from '@/utils/constants';
+import type { PolicyConfig, PolicyPreset, RankingMode } from '@/types/api';
 
 function presetForPolicy(policy: PolicyConfig): PolicyPreset | null {
     const coverage = policy.min_jd_required_coverage ?? null;
@@ -32,6 +32,8 @@ export const PolicyPanel: React.FC = () => {
     });
     const [minFit, setMinFit] = useState(55);
     const [topK, setTopK] = useState(50);
+    const [rankingMode, setRankingMode] = useState<RankingMode>('balanced');
+    const [balancedPreferencePercent, setBalancedPreferencePercent] = useState(60);
     const [llmJudgeEnabled, setLlmJudgeEnabled] = useState(false);
     const [llmJudgeAutoEnqueueEnabled, setLlmJudgeAutoEnqueueEnabled] = useState(false);
     const [llmJudgeTopN, setLlmJudgeTopN] = useState(5);
@@ -46,6 +48,8 @@ export const PolicyPanel: React.FC = () => {
         if (policy) {
             setMinFit(policy.min_fit);
             setTopK(policy.top_k);
+            setRankingMode(policy.active_default_mode ?? 'balanced');
+            setBalancedPreferencePercent(Math.round((policy.balanced_w_pref ?? 0.6) * 100));
             if (!hasUserAdjustedLlmSettings.current) {
                 setLlmJudgeEnabled(Boolean(policy.llm_judge_enabled));
                 setLlmJudgeAutoEnqueueEnabled(Boolean(policy.llm_judge_auto_enqueue_enabled));
@@ -62,6 +66,9 @@ export const PolicyPanel: React.FC = () => {
                 min_fit: minFit,
                 top_k: topK,
                 min_jd_required_coverage: policy?.min_jd_required_coverage ?? null,
+                active_default_mode: rankingMode,
+                balanced_w_pref: balancedPreferencePercent / 100,
+                balanced_w_fit: 1 - balancedPreferencePercent / 100,
             });
         }, 250);
 
@@ -70,6 +77,8 @@ export const PolicyPanel: React.FC = () => {
         minFit,
         topK,
         policy?.min_jd_required_coverage,
+        rankingMode,
+        balancedPreferencePercent,
         updatePolicy,
     ]);
 
@@ -80,7 +89,7 @@ export const PolicyPanel: React.FC = () => {
 
         const cleanup = autoApplyResultPolicy();
         return cleanup;
-    }, [autoApplyResultPolicy, minFit, topK]);
+    }, [autoApplyResultPolicy, balancedPreferencePercent, minFit, rankingMode, topK]);
 
     const llmDraftDirty = Boolean(policy) && (
         Boolean(policy?.llm_judge_enabled) !== llmJudgeEnabled ||
@@ -114,6 +123,18 @@ export const PolicyPanel: React.FC = () => {
         hasHydratedPolicy.current = true;
         setTopK(value);
         setPreset('balanced');
+    };
+
+    const handleRankingModeChange = (value: RankingMode) => {
+        hasUserAdjustedResultSettings.current = true;
+        hasHydratedPolicy.current = true;
+        setRankingMode(value);
+    };
+
+    const handleBalancedPreferenceChange = (value: number) => {
+        hasUserAdjustedResultSettings.current = true;
+        hasHydratedPolicy.current = true;
+        setBalancedPreferencePercent(Math.max(0, Math.min(100, value)));
     };
 
     const handleLlmEnabledChange = (value: boolean) => {
@@ -276,6 +297,70 @@ export const PolicyPanel: React.FC = () => {
                     <div className="mt-1 flex justify-between text-[11px] text-ink-muted tabular-nums">
                         <span>10</span>
                         <span>200</span>
+                    </div>
+                </section>
+
+                <section className="border-t border-rule pt-5">
+                    <p className="caption">Ranking</p>
+                    <p className="mt-1 text-[13px] leading-relaxed text-ink-muted">
+                        Choose the default ordering. You can still switch modes on the match list.
+                    </p>
+
+                    <label className="mt-4 block" htmlFor="ranking-default-mode">
+                        <span className="caption">Default order</span>
+                        <select
+                            id="ranking-default-mode"
+                            value={rankingMode}
+                            onChange={(event) => handleRankingModeChange(event.target.value as RankingMode)}
+                            className="mt-2 w-full border border-rule bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-accent"
+                        >
+                            {RANKING_MODE_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                    {option.label}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+
+                    <div className="mt-4 space-y-1 text-[12px] text-ink-muted">
+                        <p className={rankingMode === 'preference_first' ? 'text-accent' : ''}>
+                            Preference first: preference → fit → similarity
+                        </p>
+                        <p className={rankingMode === 'fit_first' ? 'text-accent' : ''}>
+                            Fit first: fit → preference → similarity
+                        </p>
+                        <p className={rankingMode === 'balanced' ? 'text-accent' : ''}>
+                            Balanced: weighted preference + normalized fit
+                        </p>
+                    </div>
+
+                    <div className="mt-5">
+                        <div className="mb-2 flex items-baseline justify-between gap-3">
+                            <label htmlFor="balanced-preference-weight" className="caption">
+                                Balanced split
+                            </label>
+                            <span className="num text-[13px] text-ink tabular-nums">
+                                {balancedPreferencePercent}% preference · {100 - balancedPreferencePercent}% fit
+                            </span>
+                        </div>
+                        <input
+                            id="balanced-preference-weight"
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="5"
+                            value={balancedPreferencePercent}
+                            onChange={(event) => handleBalancedPreferenceChange(Number(event.target.value))}
+                            className="wm-slider w-full"
+                            aria-label="Balanced preference weight"
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={balancedPreferencePercent}
+                        />
+                        <div className="mt-1 flex justify-between text-[11px] text-ink-muted">
+                            <span>Fit</span>
+                            <span>Preference</span>
+                        </div>
                     </div>
                 </section>
 

@@ -111,6 +111,9 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
     };
 
     const fitScore = match.fit_score ?? 0;
+    const preferenceScore = typeof match.preference_score === 'number'
+        ? match.preference_score
+        : null;
     const reqCoverage = Math.round((match.required_coverage ?? 0) * 100);
     const tier = match.selection_tier ?? 'primary';
     const isExcluded = tier !== 'primary';
@@ -167,6 +170,14 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
                         {formatScore(fitScore)}
                     </span>
                     <span className="caption mt-0.5">Fit</span>
+                    {preferenceScore !== null && (
+                        <span
+                            className="num mt-1 text-[12px] leading-tight text-ink-soft tabular-nums"
+                            aria-label={`Preference score ${formatScore(preferenceScore)} out of 100`}
+                        >
+                            Preference {formatScore(preferenceScore)}
+                        </span>
+                    )}
                     {llmDisplayScore !== null && (
                         <span
                             className={`num mt-1 text-[12px] leading-tight tabular-nums ${llmScoreTone}`}

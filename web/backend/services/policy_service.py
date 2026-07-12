@@ -2,12 +2,13 @@
 
 from typing import Dict, Optional
 
-from core.config_loader import ResultPolicy
+from core.config_loader import RankingConfig, ResultPolicy
 from core.policy import (
     LlmJudgePolicy,
     ResultPolicyStore,
     get_result_policy_store,
 )
+from core.ranking.policy import RankingPolicyStore, get_ranking_policy_store
 
 from ..exceptions import InvalidPolicyException
 
@@ -15,11 +16,25 @@ from ..exceptions import InvalidPolicyException
 class PolicyService:
     """Web-facing wrapper around the shared result policy store."""
 
-    def __init__(self, store: ResultPolicyStore | None = None):
+    def __init__(
+        self,
+        store: ResultPolicyStore | None = None,
+        ranking_store: RankingPolicyStore | None = None,
+    ):
         self._store = store or get_result_policy_store()
+        self._ranking_store = ranking_store or get_ranking_policy_store()
 
     def get_current_policy(self) -> ResultPolicy:
         return self._store.get_current_policy()
+
+    def get_ranking_config(self) -> RankingConfig:
+        return self._ranking_store.get_current_config()
+
+    def update_ranking_config(self, config: RankingConfig) -> RankingConfig:
+        try:
+            return self._ranking_store.update_config(config)
+        except ValueError as exc:
+            raise InvalidPolicyException(str(exc)) from exc
 
     def get_llm_judge_policy(self, owner_id: object | None = None) -> LlmJudgePolicy:
         return self._store.get_llm_judge_policy(owner_id)

@@ -7,8 +7,9 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.config_loader import PreferenceModelConfig, PreferencesConfig
+from core.config_loader import LlmJudgeRuntimeConfig, PreferenceModelConfig, PreferencesConfig
 from core.llm.interfaces import LLMProvider
+from core.llm.provider_chain import build_match_judge_provider
 from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_preference
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ You score how well each shortlisted job matches a candidate's soft preferences.
 
 Rules:
 - Use fit-qualified jobs only as candidates; do not reason about eligibility.
-- Score soft preference alignment from 0 to 1.
+- Score soft preference alignment from 0 to 100.
 - Return short user-safe explanations and terse reason codes.
 - Prefer deterministic, schema-following output.
 """.strip()
@@ -57,7 +58,7 @@ You act as an advanced preference judge for already fit-qualified jobs.
 
 Rules:
 - Evaluate only soft preference alignment.
-- Keep scores between 0 and 1.
+- Keep scores between 0 and 100.
 - Use concise reason codes and short user-safe explanations.
 - Do not invent hard constraints or candidate qualifications.
 """.strip()
@@ -108,7 +109,7 @@ class PreferenceAssessment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     job_id: str
-    preference_score: float = Field(ge=0.0, le=1.0)
+    preference_score: float = Field(ge=0.0, le=100.0)
     preference_confidence: float = Field(ge=0.0, le=1.0)
     preference_reason_codes: List[str] = Field(default_factory=list)
     preference_explanation: str = ""
@@ -727,7 +728,10 @@ class CrossEncoderPreferenceReranker(PreferenceSemanticReranker):
 
         return PreferenceAssessment(
             job_id=job.job_id,
-            preference_score=round(min(1.0, max(0.0, aggregate_preference_score)), 4),
+            preference_score=round(
+                100.0 * min(1.0, max(0.0, aggregate_preference_score)),
+                2,
+            ),
             preference_confidence=round(min(1.0, confidence), 4),
             preference_reason_codes=reason_codes,
             preference_explanation=(
@@ -753,9 +757,18 @@ class CrossEncoderPreferenceReranker(PreferenceSemanticReranker):
         return [self._assess_job(job, pref_labels, negative_labels) for job in jobs]
 
 
-def build_preference_llm(config: PreferenceModelConfig) -> Optional[LLMProvider]:
+def build_preference_llm(
+    config: PreferenceModelConfig,
+    *,
+    provider_route: Optional[LlmJudgeRuntimeConfig] = None,
+) -> Optional[LLMProvider]:
     if not config.enabled:
         return None
+
+    if provider_route is not None:
+        provider_chain = build_match_judge_provider(provider_route)
+        if provider_chain is not None:
+            return provider_chain
 
     if not config.model:
         logger.info("Preference model disabled because no model is configured")
@@ -764,8 +777,12 @@ def build_preference_llm(config: PreferenceModelConfig) -> Optional[LLMProvider]
     return build_llm_provider(runtime_llm_config_from_preference(config))
 
 
-def build_preference_parser(config: PreferenceModelConfig) -> Optional[PreferenceParser]:
-    llm = build_preference_llm(config)
+def build_preference_parser(
+    config: PreferenceModelConfig,
+    *,
+    provider_route: Optional[LlmJudgeRuntimeConfig] = None,
+) -> Optional[PreferenceParser]:
+    llm = build_preference_llm(config, provider_route=provider_route)
     if llm is None:
         return None
     return LLMPreferenceParser(llm)
@@ -773,17 +790,40 @@ def build_preference_parser(config: PreferenceModelConfig) -> Optional[Preferenc
 
 def build_preference_semantic_reranker(
     config: PreferencesConfig,
+    *,
+    provider_route: Optional[LlmJudgeRuntimeConfig] = None,
 ) -> Optional[PreferenceSemanticReranker]:
     if config.reranker == "cross_encoder":
-        logger.info("Cross-encoder preference reranker is disabled for semantic preferences; using LLM path")
-    llm = build_preference_llm(config.semantic_reranker)
+        ce_config = config.cross_encoder
+        if not ce_config.enabled:
+            logger.info("Cross-encoder preference reranker disabled")
+            return None
+        from core.scorer.semantic_fit import get_shared_local_cross_encoder_provider
+
+        cross_encoder = get_shared_local_cross_encoder_provider(
+            model_name=ce_config.model_name,
+            cache_path=ce_config.cache_path,
+            runtime=ce_config.runtime,
+            max_batch_size=ce_config.max_batch_size,
+            trust_remote_code=ce_config.trust_remote_code,
+            allow_heuristic=ce_config.runtime == "heuristic",
+        )
+        return CrossEncoderPreferenceReranker(cross_encoder)
+    llm = build_preference_llm(
+        config.semantic_reranker,
+        provider_route=provider_route,
+    )
     if llm is None:
         return None
     return LLMPreferenceSemanticReranker(llm, max_input_tokens=config.semantic_reranker.max_input_tokens)
 
 
-def build_preference_judge(config: PreferenceModelConfig) -> Optional[PreferenceJudge]:
-    llm = build_preference_llm(config)
+def build_preference_judge(
+    config: PreferenceModelConfig,
+    *,
+    provider_route: Optional[LlmJudgeRuntimeConfig] = None,
+) -> Optional[PreferenceJudge]:
+    llm = build_preference_llm(config, provider_route=provider_route)
     if llm is None:
         return None
     return LLMPreferenceJudge(llm, max_input_tokens=config.max_input_tokens)

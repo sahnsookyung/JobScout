@@ -51,7 +51,7 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
             />
             <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 md:justify-end">
                 <Toggle
-                    label="LLM order"
+                    label="Judge boost"
                     checked={llmOrdering}
                     onChange={onLlmOrderingChange}
                 />

@@ -13,7 +13,8 @@ NULL semantics for preference_score:
 
 Normalisation:
   fit_score is stored as 0–100; divided by 100.0 before comparison.
-  preference_score and job_similarity are already 0–1.
+  preference_score is stored as 0–100 and divided by 100.0 before comparison.
+  job_similarity is already 0–1.
 
 Aggregate logging:
   One DEBUG line per call reporting how many matches had NULL preference_score.
@@ -59,7 +60,7 @@ def rank_matches(matches: List[Any], ctx: RankingContext) -> List[Any]:
     Each element must expose (via attribute access):
         .fit_score        float | None  — 0–100 scale
         .job_similarity   float | None  — 0–1 scale
-        .preference_score float | None  — 0–1, or None if not evaluated
+        .preference_score float | None  — 0–100, or None if not evaluated
         .id               str | UUID    — used when stable_tie_break_key="match_id" (default)
         .job_id           str | UUID    — used when stable_tie_break_key="job_id"
 
@@ -97,7 +98,7 @@ def rank_matches(matches: List[Any], ctx: RankingContext) -> List[Any]:
 def _resolve_scores(match: Any) -> tuple[Optional[float], float, float, list[str]]:
     """Return (preference_01, fit_01, sim_01, missing_fields).
 
-    preference_score: returned as-is (None preserved).
+    preference_score: divided by 100.0 (None preserved).
     fit_score: divided by 100.0; defaults to 0.0 if None.
     job_similarity: defaults to 0.0 if None.
     """
@@ -106,7 +107,7 @@ def _resolve_scores(match: Any) -> tuple[Optional[float], float, float, list[str
     # preference_score — None means not evaluated, not "poor match"
     pref = getattr(match, "preference_score", None)
     if pref is not None:
-        pref = max(0.0, min(1.0, float(pref)))
+        pref = max(0.0, min(1.0, float(pref) / 100.0))
     else:
         missing.append("preference_score")
 
@@ -187,7 +188,7 @@ def _attach_explanation(
     match.ranking_explanation = RankingExplanation(
         ranking_mode_used=mode.value,
         config_version=config.config_version,
-        preference_score=pref,
+        preference_score=None if pref is None else pref * 100.0,
         fit_score=fit,
         similarity_score=sim,
         balanced_primary_score=balanced_primary,

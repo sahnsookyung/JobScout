@@ -109,7 +109,7 @@ class MatchSelectionItem(Base):
     )
     rank_position = Column(Integer, nullable=False)
     fit_score_at_selection = Column(Numeric(5, 2), nullable=False, default=0, server_default=sql_text("0"))
-    preference_score_at_selection = Column(Numeric(5, 4), nullable=True)
+    preference_score_at_selection = Column(Numeric(5, 2), nullable=True)
     job_similarity_at_selection = Column(Numeric(3, 2), nullable=False, default=0, server_default=sql_text("0"))
     required_coverage_at_selection = Column(
         Numeric(3, 2), nullable=False, default=0, server_default=sql_text("0")

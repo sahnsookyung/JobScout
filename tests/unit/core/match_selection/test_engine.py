@@ -36,9 +36,9 @@ def test_select_matches_applies_fit_floor_ranking_and_top_k() -> None:
         ),
     )
     matches = [
-        _match("fit-only", fit_score=95.0, preference_score=0.1, job_similarity=0.8, required_coverage=0.9),
-        _match("preferred", fit_score=80.0, preference_score=0.95, job_similarity=0.8, required_coverage=0.9),
-        _match("below-floor", fit_score=45.0, preference_score=1.0, job_similarity=0.9, required_coverage=0.9),
+        _match("fit-only", fit_score=95.0, preference_score=10, job_similarity=0.8, required_coverage=0.9),
+        _match("preferred", fit_score=80.0, preference_score=95, job_similarity=0.8, required_coverage=0.9),
+        _match("below-floor", fit_score=45.0, preference_score=100.0, job_similarity=0.9, required_coverage=0.9),
     ]
 
     result = select_matches(
@@ -66,8 +66,8 @@ def test_select_matches_applies_required_coverage_floor() -> None:
         config=RankingConfig(active_default_mode="fit_first"),
     )
     matches = [
-        _match("kept", fit_score=75.0, preference_score=0.2, job_similarity=0.6, required_coverage=0.8),
-        _match("dropped", fit_score=90.0, preference_score=0.9, job_similarity=0.9, required_coverage=0.4),
+        _match("kept", fit_score=75.0, preference_score=20, job_similarity=0.6, required_coverage=0.8),
+        _match("dropped", fit_score=90.0, preference_score=90, job_similarity=0.9, required_coverage=0.4),
     ]
 
     result = select_matches(
@@ -90,8 +90,8 @@ def test_select_matches_with_zero_top_k_promotes_all_candidates_to_excluded() ->
         config=RankingConfig(active_default_mode="balanced"),
     )
     matches = [
-        _match("first", fit_score=80.0, preference_score=0.2, job_similarity=0.7, required_coverage=0.9),
-        _match("second", fit_score=75.0, preference_score=0.1, job_similarity=0.6, required_coverage=0.8),
+        _match("first", fit_score=80.0, preference_score=20, job_similarity=0.7, required_coverage=0.9),
+        _match("second", fit_score=75.0, preference_score=10, job_similarity=0.6, required_coverage=0.8),
     ]
 
     result = select_matches(
@@ -115,9 +115,9 @@ def test_select_matches_truncates_excluded_by_best_fit_not_input_order() -> None
         config=RankingConfig(active_default_mode="fit_first"),
     )
     matches = [
-        _match("excluded-low", fit_score=35.0, preference_score=0.2, job_similarity=0.4, required_coverage=0.9),
-        _match("excluded-high", fit_score=49.0, preference_score=0.2, job_similarity=0.4, required_coverage=0.9),
-        _match("primary", fit_score=90.0, preference_score=0.2, job_similarity=0.8, required_coverage=0.9),
+        _match("excluded-low", fit_score=35.0, preference_score=20, job_similarity=0.4, required_coverage=0.9),
+        _match("excluded-high", fit_score=49.0, preference_score=20, job_similarity=0.4, required_coverage=0.9),
+        _match("primary", fit_score=90.0, preference_score=20, job_similarity=0.8, required_coverage=0.9),
     ]
 
     with patch("core.match_selection.engine.EXCLUDED_STORAGE_CAP", 1):
@@ -141,8 +141,8 @@ def test_select_matches_disabled_two_tier_does_not_report_truncation() -> None:
         config=RankingConfig(active_default_mode="fit_first"),
     )
     matches = [
-        _match("primary", fit_score=90.0, preference_score=0.2, job_similarity=0.8, required_coverage=0.9),
-        _match("excluded", fit_score=45.0, preference_score=0.2, job_similarity=0.4, required_coverage=0.9),
+        _match("primary", fit_score=90.0, preference_score=20, job_similarity=0.8, required_coverage=0.9),
+        _match("excluded", fit_score=45.0, preference_score=20, job_similarity=0.4, required_coverage=0.9),
     ]
 
     result = select_matches(

@@ -605,6 +605,9 @@ export interface PolicyConfig {
     min_fit: number;
     top_k: number;
     min_jd_required_coverage: number | null;
+    active_default_mode?: RankingMode;
+    balanced_w_pref?: number;
+    balanced_w_fit?: number;
     llm_judge_enabled?: boolean;
     llm_judge_auto_enqueue_enabled?: boolean;
     llm_judge_top_n?: number;
@@ -625,10 +628,13 @@ export interface PolicyConfig {
     degraded_reasons?: Array<{ reason: string; detail?: string }>;
 }
 
-export type PolicyUpdatePayload = Pick<
+export type PolicyUpdatePayload = Partial<Pick<
     PolicyConfig,
     'min_fit' | 'top_k' | 'min_jd_required_coverage'
-> & {
+>> & {
+    active_default_mode?: RankingMode;
+    balanced_w_pref?: number;
+    balanced_w_fit?: number;
     llm_judge_enabled?: boolean;
     llm_judge_auto_enqueue_enabled?: boolean;
     llm_judge_top_n?: number;

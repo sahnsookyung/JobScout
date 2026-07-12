@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from core.config_loader import RankingConfig
 from web.backend.dependencies import get_db
 from web.backend.routers import policy as policy_router
 from web.backend.routers.policy import router
@@ -310,6 +311,38 @@ class TestPolicyRouter:
             top_k=100,
             min_jd_required_coverage=None
         )
+
+    def test_update_policy_updates_ranking_configuration(self, client, mock_policy_service):
+        current_policy = Mock(min_fit=55.0, top_k=50, min_jd_required_coverage=0.6)
+        current_ranking = RankingConfig()
+        updated_ranking = RankingConfig(
+            active_default_mode="preference_first",
+            balanced_w_pref=0.7,
+            balanced_w_fit=0.3,
+        )
+        mock_policy_service.get_current_policy.return_value = current_policy
+        mock_policy_service.update_policy.return_value = current_policy
+        mock_policy_service.get_ranking_config.return_value = current_ranking
+        mock_policy_service.update_ranking_config.return_value = updated_ranking
+
+        response = client.put(
+            '/api/v1/policy',
+            json={
+                'active_default_mode': 'preference_first',
+                'balanced_w_pref': 0.7,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data['active_default_mode'] == 'preference_first'
+        assert data['balanced_w_pref'] == pytest.approx(0.7)
+        assert data['balanced_w_fit'] == pytest.approx(0.3)
+        mock_policy_service.update_ranking_config.assert_called_once()
+        saved = mock_policy_service.update_ranking_config.call_args.args[0]
+        assert saved.active_default_mode == 'preference_first'
+        assert saved.balanced_w_pref == pytest.approx(0.7)
+        assert saved.balanced_w_fit == pytest.approx(0.3)
 
     def test_update_policy_null_coverage(self, client, mock_policy_service):
         """Test policy update with null min_jd_required_coverage."""

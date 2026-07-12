@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useMatches } from '@/hooks/useMatches';
 import { usePolicy } from '@/hooks/usePolicy';
 import { useStats } from '@/hooks/useStats';
@@ -46,22 +46,36 @@ function primaryPageSize(policy: PolicyConfig): number {
     return Math.max(1, Math.min(Math.floor(parsed), 500));
 }
 
+function rankingModeLabel(mode: RankingMode): string {
+    if (mode === 'preference_first') return 'Preference First';
+    if (mode === 'fit_first') return 'Fit First';
+    return 'Balanced';
+}
+
 export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
     const [status, setStatus] = useState<MatchStatus>('active');
     const [remoteOnly, setRemoteOnly] = useState(false);
     const [rankingMode, setRankingMode] = useState<RankingMode>('balanced');
     const [showAllProcessed, setShowAllProcessed] = useState(false);
-    const [allCandidatesCursor, setAllCandidatesCursor] = useState<string | null>(null);
+    const [allCandidatesOffset, setAllCandidatesOffset] = useState(0);
     const [allCandidates, setAllCandidates] = useState<MatchSummary[]>([]);
+    const rankingModeInitialized = useRef(false);
     const [showHidden, setShowHidden] = useState(() => {
         const saved = localStorage.getItem('jobscout_show_hidden');
         return saved === 'true';
     });
     const [llmOrderingEnabled, setLlmOrderingEnabled] = useState(() => {
         const saved = localStorage.getItem('jobscout_llm_ordering');
-        return saved !== 'false';
+        return saved === 'true';
     });
     const { policy } = usePolicy();
+
+    useEffect(() => {
+        if (!rankingModeInitialized.current && policy?.active_default_mode) {
+            setRankingMode(policy.active_default_mode);
+            rankingModeInitialized.current = true;
+        }
+    }, [policy?.active_default_mode]);
 
     useEffect(() => {
         localStorage.setItem('jobscout_show_hidden', showHidden.toString());
@@ -72,7 +86,7 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
 
     const effectivePolicy = policy ?? DEFAULT_POLICY;
     useEffect(() => {
-        setAllCandidatesCursor(null);
+        setAllCandidatesOffset(0);
         setAllCandidates([]);
     }, [status, remoteOnly, rankingMode, showHidden, showAllProcessed, llmOrderingEnabled]);
 
@@ -87,8 +101,8 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
         ranking_mode: rankingMode,
         tier: showAllProcessed ? 'all' : 'primary',
         limit: showAllProcessed ? ALL_CANDIDATES_PAGE_SIZE : primaryLimit,
-        cursor: showAllProcessed ? allCandidatesCursor : null,
-        page_mode: 'cursor',
+        offset: showAllProcessed ? allCandidatesOffset : 0,
+        page_mode: 'offset',
         view: 'compact',
         include: 'llm',
         llm_ordering: llmOrderingEnabled,
@@ -101,7 +115,7 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
     useEffect(() => {
         if (!showAllProcessed || !data?.matches) return;
         setAllCandidates((previous) => {
-            if (!allCandidatesCursor) {
+            if (allCandidatesOffset === 0) {
                 const samePage = (
                     previous.length === data.matches.length
                     && previous.every((match, index) => match.match_id === data.matches[index]?.match_id)
@@ -113,7 +127,7 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
             if (next.length === 0) return previous;
             return [...previous, ...next];
         });
-    }, [allCandidatesCursor, data?.matches, showAllProcessed]);
+    }, [allCandidatesOffset, data?.matches, showAllProcessed]);
 
     const matches = showAllProcessed ? allCandidates : (data?.matches ?? []);
     const degradedReason = matches.find((m) => m.scoring_degraded_reason)?.scoring_degraded_reason ?? null;
@@ -123,9 +137,7 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
         ? processedCount
         : 0;
     const totalAvailable = data?.total ?? processedCount;
-    const hasMoreAllCandidates = showAllProcessed && (
-        data?.has_more === true || Boolean(data?.next_cursor)
-    );
+    const hasMoreAllCandidates = showAllProcessed && data?.has_more === true;
     const llmOrderingSummary = llmRerankSummary(data?.llm_rerank);
 
     const strongCount = matches.filter((m) => !m.is_hidden && (m.fit_score ?? 0) >= 80).length;
@@ -173,7 +185,10 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                 remoteOnly={remoteOnly}
                 onRemoteOnlyChange={setRemoteOnly}
                 rankingMode={rankingMode}
-                onRankingModeChange={setRankingMode}
+                onRankingModeChange={(mode) => {
+                    rankingModeInitialized.current = true;
+                    setRankingMode(mode);
+                }}
                 showHidden={showHidden}
                 onShowHiddenChange={setShowHidden}
                 llmOrdering={llmOrderingEnabled}
@@ -211,12 +226,12 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                 </div>
                 <span
                     className="caption max-w-full text-left sm:max-w-[28rem] sm:text-right"
-                    aria-label={llmOrderingSummary ? `Sorted by ${rankingMode}. ${llmOrderingSummary}` : undefined}
+                    aria-label={llmOrderingSummary ? `Sorted by ${rankingModeLabel(rankingMode)}. ${llmOrderingSummary}` : undefined}
                 >
-                    Sorted by {rankingMode}
+                    Sorted by {rankingModeLabel(rankingMode)}
                     <span className="mx-2 text-ink-faint">·</span>
                     <span className={llmOrderingEnabled ? 'text-accent' : 'text-ink-muted'}>
-                        {llmOrderingEnabled ? 'LLM order' : 'base order'}
+                        {llmOrderingEnabled ? 'judge boost on' : 'direct score order'}
                     </span>
                     {llmOrderingSummary && (
                         <>
@@ -251,8 +266,8 @@ export const MatchList: React.FC<MatchListProps> = ({ onMatchSelect }) => {
                     <Button
                         variant="secondary"
                         size="sm"
-                        disabled={isFetching || !data?.next_cursor}
-                        onClick={() => setAllCandidatesCursor(data?.next_cursor ?? null)}
+                        disabled={isFetching}
+                        onClick={() => setAllCandidatesOffset(allCandidates.length)}
                     >
                         {isFetching ? 'Loading candidates' : 'Load more candidates'}
                     </Button>

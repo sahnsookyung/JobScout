@@ -63,6 +63,7 @@ def runtime_llm_config_from_preference(config: PreferenceModelConfig) -> Runtime
         model=config.model,
         temperature=config.temperature,
         timeout_seconds=config.timeout_seconds,
+        structured_output_mode=config.structured_output_mode,
         embedding_model=config.embedding_model,
         embedding_dimensions=config.embedding_dimensions,
         embedding_base_url=config.embedding_base_url,

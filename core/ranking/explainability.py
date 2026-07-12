@@ -23,7 +23,7 @@ class RankingExplanation:
 
     ranking_mode_used: str
     config_version: str
-    preference_score: Optional[float]   # None when evaluator did not run
+    preference_score: Optional[float]   # 0-100; None when evaluator did not run
     fit_score: float                    # normalised [0, 1]
     similarity_score: float             # normalised [0, 1]
     balanced_primary_score: Optional[float] = None   # set only for "balanced" mode

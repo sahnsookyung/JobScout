@@ -76,7 +76,7 @@ describe('PolicyPanel', () => {
         it('renders three preset buttons', () => {
             render(<PolicyPanel />);
             expect(screen.getByText('Strict')).toBeTruthy();
-            expect(screen.getByText('Balanced')).toBeTruthy();
+            expect(screen.getByRole('button', { name: 'Balanced' })).toBeTruthy();
             expect(screen.getByText('Discovery')).toBeTruthy();
         });
 
@@ -122,6 +122,25 @@ describe('PolicyPanel', () => {
             render(<PolicyPanel />);
             const slider = screen.getByRole('slider', { name: /maximum number of results/i });
             expect((slider as HTMLInputElement).value).toBe('150');
+        });
+
+        it('hydrates ranking mode and balanced weights from policy', () => {
+            mockUsePolicy.mockReturnValue({
+                ...defaultHook,
+                policy: {
+                    min_fit: 55,
+                    top_k: 50,
+                    min_jd_required_coverage: null,
+                    active_default_mode: 'preference_first',
+                    balanced_w_pref: 0.7,
+                    balanced_w_fit: 0.3,
+                },
+            });
+            render(<PolicyPanel />);
+
+            expect(screen.getByLabelText(/default order/i)).toHaveValue('preference_first');
+            expect(screen.getByRole('slider', { name: /balanced preference weight/i })).toHaveValue('70');
+            expect(screen.getByText('70% preference · 30% fit')).toBeInTheDocument();
         });
 
         it('marks the matching preset active when hydrated from policy', () => {
@@ -339,9 +358,40 @@ describe('PolicyPanel', () => {
             );
         });
 
+        it('saves ranking mode and complementary balanced weights', async () => {
+            mockUsePolicy.mockReturnValue({
+                ...defaultHook,
+                policy: {
+                    min_fit: 55,
+                    top_k: 50,
+                    min_jd_required_coverage: null,
+                    active_default_mode: 'balanced',
+                    balanced_w_pref: 0.6,
+                    balanced_w_fit: 0.4,
+                },
+            });
+            render(<PolicyPanel />);
+
+            fireEvent.change(screen.getByLabelText(/default order/i), {
+                target: { value: 'fit_first' },
+            });
+            fireEvent.change(screen.getByRole('slider', { name: /balanced preference weight/i }), {
+                target: { value: '35' },
+            });
+            await act(async () => { vi.advanceTimersByTime(300); });
+
+            expect(defaultHook.updatePolicy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    active_default_mode: 'fit_first',
+                    balanced_w_pref: 0.35,
+                    balanced_w_fit: 0.65,
+                }),
+            );
+        });
+
         it('marks Balanced preset as aria-pressed=true by default', () => {
             render(<PolicyPanel />);
-            const balancedBtn = screen.getByText('Balanced').closest('button');
+            const balancedBtn = screen.getByRole('button', { name: 'Balanced' });
             expect(balancedBtn?.getAttribute('aria-pressed')).toBe('true');
         });
 
@@ -370,7 +420,7 @@ describe('PolicyPanel', () => {
             const slider = screen.getByRole('slider', { name: /minimum fit score/i });
             fireEvent.change(slider, { target: { value: '60' } });
             // Balanced should be active again
-            const balancedBtn = screen.getByText('Balanced').closest('button');
+            const balancedBtn = screen.getByRole('button', { name: 'Balanced' });
             expect(balancedBtn?.getAttribute('aria-pressed')).toBe('true');
         });
     });

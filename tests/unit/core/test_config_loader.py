@@ -356,6 +356,32 @@ class TestConfigLoader(unittest.TestCase):
 
         self.assertEqual(config.etl.llm.structured_output_mode, "json_object")
 
+    def test_preference_structured_output_mode_env_overrides(self):
+        config_yaml = yaml.dump({
+            "database": {"url": "test"},
+            "schedule": {"interval_seconds": 60},
+            "preferences": {
+                "parser": {"model": "parser"},
+                "semantic_reranker": {"model": "reranker"},
+            },
+            "scrapers": [],
+        })
+        env = {
+            "PREFERENCES_PARSER_STRUCTURED_OUTPUT_MODE": "json_object",
+            "PREFERENCES_SEMANTIC_RERANKER_STRUCTURED_OUTPUT_MODE": "json_object",
+        }
+
+        with patch("builtins.open", mock_open(read_data=config_yaml)):
+            with patch("os.path.exists", return_value=True):
+                with patch.dict(os.environ, env, clear=True):
+                    config = load_config("dummy")
+
+        self.assertEqual(config.preferences.parser.structured_output_mode, "json_object")
+        self.assertEqual(
+            config.preferences.semantic_reranker.structured_output_mode,
+            "json_object",
+        )
+
     def test_semantic_fit_defaults_are_loaded(self):
         config_yaml = yaml.dump({
             "database": {"url": "test"},

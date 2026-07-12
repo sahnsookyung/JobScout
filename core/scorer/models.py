@@ -18,7 +18,7 @@ class ScoredJobMatch:
     job: JobPost
 
     fit_score: float = 0.0
-    preference_score: Optional[float] = None  # 0–1 or None (not evaluated)
+    preference_score: Optional[float] = None  # 0–100 or None (not evaluated)
 
     fit_components: Dict[str, Any] = field(default_factory=dict)
     preference_components: Dict[str, Any] = field(default_factory=dict)

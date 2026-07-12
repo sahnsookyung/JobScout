@@ -572,7 +572,7 @@ class TestThreeStagePipeline:
         repo.match_selection.get_items_for_run.return_value = [
             SimpleNamespace(
                 fit_score_at_selection=82.0,
-                preference_score_at_selection=0.7,
+                preference_score_at_selection=70,
                 job_similarity_at_selection=0.8,
                 required_coverage_at_selection=0.9,
                 job_match=SimpleNamespace(
@@ -635,7 +635,7 @@ class TestThreeStagePipeline:
                 selection_item_id=uuid.uuid4(),
                 rank_position=rank,
                 fit_score_at_selection=90 - rank,
-                preference_score_at_selection=0.7,
+                preference_score_at_selection=70,
                 job_similarity_at_selection=0.8,
                 required_coverage_at_selection=0.9,
                 selection_tier="primary",
@@ -731,7 +731,7 @@ class TestThreeStagePipeline:
                 selection_item_id=uuid.uuid4(),
                 rank_position=rank,
                 fit_score_at_selection=90 - rank,
-                preference_score_at_selection=0.7,
+                preference_score_at_selection=70,
                 job_similarity_at_selection=0.8,
                 required_coverage_at_selection=0.9,
                 selection_tier="primary",
@@ -1053,8 +1053,8 @@ class TestToMatchSummary:
         assert result.preferred_requirement_coverage == pytest.approx(0.60)
 
     def test_preference_score_zero_preserved(self, service):
-        """preference_score=0.0 (scored poorly) must remain 0.0, not collapsed to None."""
-        m = _make_match(preference_score=0.0)
+        """preference_score=0 (scored poorly) must remain 0.0, not collapsed to None."""
+        m = _make_match(preference_score=0)
         result = service._to_match_summary(m)
         assert result.preference_score == pytest.approx(0.0)
 
@@ -1076,11 +1076,11 @@ class TestToMatchSummary:
     def test_ranking_explanation_fields_populated(self, service):
         """When ranking_explanation is present the fields are forwarded."""
         from core.ranking.explainability import RankingExplanation
-        m = _make_match(preference_score=0.7)
+        m = _make_match(preference_score=70)
         m.ranking_explanation = RankingExplanation(
             ranking_mode_used="balanced",
             config_version="1.0.0",
-            preference_score=0.7,
+            preference_score=70,
             fit_score=0.85,
             similarity_score=0.7,
             balanced_primary_score=0.76,

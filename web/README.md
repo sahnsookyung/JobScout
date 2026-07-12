@@ -226,7 +226,7 @@ FastAPI uses Pydantic models for automatic validation and documentation:
 - `location`: Location text (optional)
 - `is_remote`: Boolean (optional)
 - `fit_score`: Float 0-100
-- `preference_score`: Float 0-1 or null when preference reranking did not run
+- `preference_score`: Float 0-100 or null when preference reranking did not run
 - `base_score`: Float 0-100
 - `penalties`: Float >= 0
 - `required_coverage`: Float 0-1

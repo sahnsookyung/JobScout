@@ -67,7 +67,7 @@ class MatchResultDTO:
     requirement_matches: List[RequirementMatchDTO]
     missing_requirements: List[RequirementMatchDTO]
     resume_fingerprint: str
-    preference_score: Optional[float] = None  # None = evaluator did not run
+    preference_score: Optional[float] = None  # 0-100; None = evaluator did not run
     fit_components: dict = field(default_factory=dict)
     preference_components: dict = field(default_factory=dict)
     ranking_snapshot: dict = field(default_factory=dict)

@@ -1693,7 +1693,7 @@
           "default": null,
           "name": "preference_score",
           "nullable": true,
-          "type": "numeric(5,4)"
+          "type": "numeric(5,2)"
         },
         {
           "default": null,
@@ -2649,7 +2649,7 @@
           "default": null,
           "name": "preference_score_at_selection",
           "nullable": true,
-          "type": "numeric(5,4)"
+          "type": "numeric(5,2)"
         },
         {
           "default": null,
