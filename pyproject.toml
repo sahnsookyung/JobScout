@@ -48,7 +48,7 @@ fit-models = [
     # breaks FlagAutoReranker or CrossEncoder import paths.
     "FlagEmbedding==1.4.0",
     "sentence-transformers==5.6.0",
-    "transformers==5.13.0",
+    "transformers==5.13.1",
 ]
 
 [build-system]
